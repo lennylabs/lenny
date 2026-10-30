@@ -111,7 +111,7 @@ func TestAuditQueryMetricsEmittedPerEndpoint_spec_25_9_metrics(t *testing.T) {
 
 // TestAuditListMetricsRecordsBroken confirms the list endpoint increments
 // the broken-segment counter when a returned row's chainIntegrity verdict
-// is broken (the §25.9 line 3653 chainIntegrityReport tally). F-25.9.10,
+// is broken (the §25.9 chainIntegrityReport tally). F-25.9.10,
 // F-25.9.13.
 func TestAuditListMetricsRecordsBroken_spec_25_9_metrics(t *testing.T) {
 	rec := &fakeAuditMetrics{}

@@ -27,7 +27,7 @@ var meService = me.NewService(adminToolCatalog())
 func (r *Router) handleMe(w http.ResponseWriter, req *http.Request) {
 	p, ok := authmw.FromContext(req.Context())
 	if !ok {
-		// spec: §15.1 line 986 — UNAUTHORIZED (401) is the canonical
+		// spec: §15.1 — UNAUTHORIZED (401) is the canonical
 		// "missing or invalid auth" code.
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED",
 			"endpoint requires authentication",
@@ -43,7 +43,7 @@ func (r *Router) handleMe(w http.ResponseWriter, req *http.Request) {
 func (r *Router) handleAuthorizedTools(w http.ResponseWriter, req *http.Request) {
 	p, ok := authmw.FromContext(req.Context())
 	if !ok {
-		// spec: §15.1 line 986 — UNAUTHORIZED (401) is the canonical
+		// spec: §15.1 — UNAUTHORIZED (401) is the canonical
 		// "missing or invalid auth" code.
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED",
 			"endpoint requires authentication",
@@ -75,7 +75,7 @@ func adminToolCatalog() []me.AuthorizedTool {
 		{Tool: "admin.get_runtime", Scope: "tools:runtime:read", Category: "runtime-management", MinRole: auth.RolePlatformAdmin, Description: "Get a runtime"},
 		{Tool: "admin.update_runtime", Scope: "tools:runtime:write", Category: "runtime-management", MinRole: auth.RolePlatformAdmin, Description: "Update a runtime"},
 		{Tool: "admin.soft_delete_runtime", Scope: "tools:runtime:write", Category: "runtime-management", MinRole: auth.RolePlatformAdmin, Description: "Soft-delete a runtime"},
-		// spec: §24.3 / §15.1:778-780 — runtime tenant-access management.
+		// spec: §24.3 / §15.1 — runtime tenant-access management.
 		{Tool: "admin.grant_runtime_tenant_access", Scope: "tools:runtime:write", Category: "runtime-management", MinRole: auth.RolePlatformAdmin, Description: "Grant a tenant access to a runtime"},
 		{Tool: "admin.list_runtime_tenant_access", Scope: "tools:runtime:read", Category: "runtime-management", MinRole: auth.RolePlatformAdmin, Description: "List tenants with access to a runtime"},
 		{Tool: "admin.revoke_runtime_tenant_access", Scope: "tools:runtime:write", Category: "runtime-management", MinRole: auth.RolePlatformAdmin, Description: "Revoke a tenant's access to a runtime"},
@@ -89,7 +89,7 @@ func adminToolCatalog() []me.AuthorizedTool {
 		{Tool: "admin.get_pool", Scope: "tools:pool:read", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Get a pool"},
 		{Tool: "admin.update_pool", Scope: "tools:pool:write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Update a pool"},
 		{Tool: "admin.soft_delete_pool", Scope: "tools:pool:write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Soft-delete a pool"},
-		// spec: §24.4 / §15.1:798-800 — the §25.14 agent-discovery catalog
+		// spec: §24.4 / §15.1 — the §25.14 agent-discovery catalog
 		// advertises every mounted pool action so an AI DevOps agent can
 		// discover the warm-pool-exhaustion and PoolScalingAdmissionStuck
 		// remediation surface. The upgrade/drain/circuit-breaker/
@@ -97,19 +97,19 @@ func adminToolCatalog() []me.AuthorizedTool {
 		// (F-24.4.2); the catalog mirrors the OpenAPI document so a
 		// discovered tool resolves to a real route.
 		{Tool: "admin.set_pool_warm_count", Scope: "tools:pool:write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Override minWarm for emergency scaling"},
-		{Tool: "admin.drain_pool", Scope: "tools:pool:write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Drain a pool (§15.1 line 797): stop admitting new sessions and report the in-flight count"},
+		{Tool: "admin.drain_pool", Scope: "tools:pool:write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Drain a pool (§15.1): stop admitting new sessions and report the in-flight count"},
 		{Tool: "admin.pool_sync_status", Scope: "tools:pool:read", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Show a pool's CRD reconciliation state"},
 		{Tool: "admin.resume_pool_reconciliation", Scope: "tools:pool:write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Clear a pool's admission-denial backoff"},
-		// spec: §15.1:802 — pool tenant-access management (the §24.3
+		// spec: §15.1 — pool tenant-access management (the §24.3
 		// runtime commands have a pool sibling on the same join table).
 		{Tool: "admin.grant_pool_tenant_access", Scope: "tools:pool:write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Grant a tenant access to a pool"},
 		{Tool: "admin.list_pool_tenant_access", Scope: "tools:pool:read", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "List tenants with access to a pool"},
 		{Tool: "admin.revoke_pool_tenant_access", Scope: "tools:pool:write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Revoke a tenant's access to a pool"},
 		{Tool: "admin.bootstrap", Scope: "tools:bootstrap:write", Category: "platform-management", MinRole: auth.RolePlatformAdmin, Description: "Apply seed configuration (upsert)"},
-		// spec: §24.5 / §15.1:805-812, 876-878 — credential-pool admin
+		// spec: §24.5 / §15.1 — credential-pool admin
 		// operations. The CRUD and per-credential management ops are gated
 		// on the §10.2 manage_credential_pools permission (held by
-		// tenant-admin); re-enable is platform-admin per §15.1 line 811.
+		// tenant-admin); re-enable is platform-admin per §15.1.
 		// The catalog mirrors the OpenAPI x-lenny-mcp-tool declarations so a
 		// §25.14 agent discovers every mounted credential-pool route.
 		{Tool: "admin.create_credential_pool", Scope: "tools:credential_pool:write", Category: "policy-management", MinRole: auth.RoleTenantAdmin, Description: "Create a credential pool"},

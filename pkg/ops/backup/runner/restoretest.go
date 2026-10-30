@@ -22,9 +22,9 @@ import (
 // without MinIO, pg_restore, or a Postgres server; the lenny-backup
 // binary wires the production implementations.
 //
-// spec: §25.11 lines 4098, 4128-4133, 4254-4256.
+// spec: §25.11.
 
-// artifactSuccessFloor is the §25.11 line 4098 sampled-HEAD success
+// artifactSuccessFloor is the §25.11 sampled-HEAD success
 // floor: a sampled ArtifactStore success rate below 99% fails the
 // restore test (sets lenny_restore_test_success = 0).
 const artifactSuccessFloor = 0.99
@@ -91,7 +91,7 @@ type ScratchRestorer interface {
 	RestoreAndSmoke(ctx context.Context, dumps [][]byte) error
 }
 
-// ArtifactSampler performs the §25.11 line 4098 sampled-HEAD
+// ArtifactSampler performs the §25.11 sampled-HEAD
 // ArtifactStore check against the replication target. It returns how
 // many of the sampled object keys were present and how many were
 // sampled. A nil ArtifactSampler skips the check.
@@ -123,7 +123,7 @@ type VerifyConfig struct {
 	// lands. A verification failure has no §16.7 catalog event — it is
 	// surfaced through the status:verification_failed transition and the
 	// §25.11 restore-test gauges — so no audit row is written on failure.
-	// spec: §25.11 line 4343.
+	// spec: §25.11.
 	Audit backup.AuditSink
 }
 
@@ -136,7 +136,7 @@ type VerifyConfig struct {
 // verification_failed on every failure path so an operator sees the
 // outcome.
 //
-// spec: §25.11 lines 4128-4133.
+// spec: §25.11.
 func RunVerify(ctx context.Context, cfg VerifyConfig) error {
 	if cfg.BackupID == "" {
 		return errors.New("runner: verify requires a BackupID")
@@ -183,7 +183,7 @@ func RunVerify(ctx context.Context, cfg VerifyConfig) error {
 	if err := cfg.Reporter.MarkVerified(ctx, cfg.BackupID); err != nil {
 		return fmt.Errorf("record verified: %w", err)
 	}
-	// spec: §25.11 line 4343, §16.7 backup.verified — the durable audit
+	// spec: §25.11, §16.7 backup.verified — the durable audit
 	// row for the successful verification, written from the Job pod
 	// alongside the ops_backups status:verified update.
 	emitBackupAudit(cfg.Audit, backup.AuditEvent{
@@ -234,7 +234,7 @@ type RestoreTestConfig struct {
 // recording (e.g. the Store write itself failed); a failed restore test
 // returns a Result with Success=false and a nil error.
 //
-// spec: §25.11 lines 4098, 4254-4256.
+// spec: §25.11.
 func RunRestoreTest(ctx context.Context, cfg RestoreTestConfig) (restoretest.Result, error) {
 	if cfg.JobID == "" {
 		return restoretest.Result{}, errors.New("runner: restore-test requires a JobID")

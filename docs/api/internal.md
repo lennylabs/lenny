@@ -10,7 +10,7 @@ nav_order: 6
 {: .warning }
 > **Audience: Runtime adapter authors only.** These are internal APIs for gateway-to-pod communication. They are not for external clients. Unlike the stable external APIs, internal APIs may change between versions.
 
-The gateway communicates with agent pods over **gRPC + mTLS**. This page documents the protobuf service definitions, lifecycle channel messages, connection semantics, and error handling that runtime adapter authors need to implement.
+The gateway communicates with agent pods over **gRPC + mTLS**. This page documents the protobuf service definitions, CH-RUNTIMEOPS messages, connection semantics, and error handling that runtime adapter authors need to implement.
 
 ---
 
@@ -58,7 +58,7 @@ Each pod is issued a SPIFFE identity at startup -- a cryptographic identity enco
 
 - The gateway validates the pod's **SPIFFE URI** against the expected pool and pod name on each connection. A mismatch refuses the connection.
 - Each gateway replica has a **distinct certificate** so compromise of one replica can be detected and revoked independently.
-- Pods cannot forge or extend session JWTs. The gateway validates JWT signatures on every pod-to-gateway request.
+- The gateway validates the signature, expiry, and audience of the pod's projected ServiceAccount token on every pod-to-gateway request.
 
 ### Trust domain
 
@@ -79,7 +79,10 @@ service RuntimeAdapter {
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
 
   // StopSession gracefully terminates the current session.
-  // The adapter sends shutdown to the agent binary and waits for exit.
+  // The adapter writes the session's session_end frame and ends the
+  // session's use of the runtime process. On a keep pod the process stays
+  // alive for the pod's life unless DemoteSDK ends it, and on a restart pod
+  // the whole-pod scrub ends it.
   rpc StopSession(StopSessionRequest) returns (StopSessionResponse);
 
   // Attach opens a bidirectional stream for real-time communication
@@ -186,19 +189,24 @@ message AttachMessage {
 
 **Streaming semantics:**
 
-- The gateway opens the Attach stream after `StartSession` succeeds.
+- The gateway opens a session's Attach stream when it first delivers a message to the session, and holds that one stream until it releases the session's binding to the pod. After a session ends, the gateway ends the stream when it starts exporting the session's final workspace. The end of the client request that delivered a message does not end the stream.
 - Messages flow in both directions concurrently.
 - The gateway sends `MessageEnvelope` objects containing `MessagePart` arrays as input.
 - The pod sends `AgentOutput` objects containing `MessagePart` arrays as streaming output.
-- The stream remains open for the duration of the session.
-- If the stream is interrupted (network partition, pod restart), the gateway attempts reconnection. The pod must accept a new Attach stream for an in-progress session.
 
 **Heartbeat protocol:**
 
-- The gateway sends periodic heartbeat pings on the Attach stream.
-- The adapter must respond with `HeartbeatAck` within **10 seconds**.
-- Failure to ack triggers SIGTERM to the agent process.
+- The adapter sends a periodic `heartbeat` frame to the runtime for each session, from the session's `session_start`, whether or not an Attach stream for the session is open. The runtime must answer with `heartbeat_ack` within **10 seconds**.
+- When the runtime misses the acknowledgment for a session, the adapter ends that session's Attach stream with `DEADLINE_EXCEEDED` when one is open and refuses each later Attach for the session with `DEADLINE_EXCEEDED` until the adapter releases the session, and the runtime process receives no signal.
 - Heartbeat interval is configurable (default: 30 seconds).
+
+**Stream end:**
+
+- A stream the gateway did not end that ends with `DEADLINE_EXCEEDED` or `INTERNAL` is a stream failure. The gateway reports it as a runtime crash whether or not a message is outstanding, releases the session's binding, and moves the session to the state its retry policy selects: `resume_pending` while retries remain, `awaiting_client_action` when they are exhausted, or `failed` for a non-retryable failure.
+- A session in `resume_pending` is restored onto a replacement pod by the gateway's resume driver, from its last checkpoint or, when it has neither a checkpoint nor a minimal state record, by rebuilding its workspace from the session's workspace plan with no carried conversation state, and enters `awaiting_client_action` when its `maxResumeWindowSeconds` resume window elapses.
+- A stream that ends with `UNAVAILABLE` is discarded without a failure report, and a later message delivery opens a new stream only while the gateway replica still holds the session's binding.
+- A stream that closes when the runtime's output ends, or that ends with any other status, is discarded without a report. A runtime that has exited is reported when the next message delivery's Attach ends with `INTERNAL`.
+- A stream the gateway ends itself, when it releases the session's binding or discards its cached streams, is not a failure. The gateway does not redial Attach against the same pod after a stream failure.
 
 #### Checkpoint
 
@@ -226,7 +234,7 @@ message CheckpointResponse {
 }
 ```
 
-For `consistency: "consistent"` (Full integration level), the adapter first sends a `checkpoint_request` on the lifecycle channel, waits for `checkpoint_ready` from the runtime, performs the snapshot, then sends `checkpoint_complete`. See [Lifecycle channel messages](#lifecycle-channel-messages) below.
+For `consistency: "consistent"` (Full integration level), the adapter first sends a `checkpoint_request` on the CH-RUNTIMEOPS, waits for `checkpoint_ready` from the runtime, performs the snapshot, then sends `checkpoint_complete`. See [CH-RUNTIMEOPS messages](#lifecycle-channel-messages) below.
 
 For `consistency: "best-effort"` (Standard integration level), the adapter takes the snapshot immediately without pausing the runtime. Minor workspace inconsistencies are possible.
 
@@ -284,7 +292,7 @@ message DemoteSDKResponse {
 }
 ```
 
-**Timeout:** Default 10 seconds. If the SDK process does not exit within this window, the adapter sends SIGKILL.
+**Timeout:** Default 10 seconds. In the sidecar model the runtime supervisor ends the SDK process with a SIGTERM grace that ends within this window, then SIGKILL.
 
 ---
 
@@ -314,17 +322,18 @@ The gateway uses `Watch` to monitor pod health continuously and `Check` for poin
 
 ---
 
-## Lifecycle channel messages (Full integration level only)
+## CH-RUNTIMEOPS messages (Full integration level only)
 {: #lifecycle-channel-messages }
 
-Runtimes that implement the Full integration level open a **lifecycle channel** -- an abstract Unix socket (`@lenny-lifecycle`) -- for operational signals that require runtime cooperation. The lifecycle channel runs alongside the stdin/stdout binary protocol and the MCP connections.
+Runtimes that implement the Full integration level open a **CH-RUNTIMEOPS** -- an abstract Unix socket (`@lenny-runtime-ops`) -- for operational signals that require runtime cooperation. The CH-RUNTIMEOPS runs alongside the stdin/stdout binary protocol and the MCP connections.
 
 ### Channel setup
 
-1. The adapter opens the lifecycle channel socket.
-2. The adapter sends `lifecycle_capabilities` listing available signals.
-3. The runtime responds with `lifecycle_support` listing capabilities it supports.
-4. The channel remains open for the session duration.
+1. The adapter listens on the CH-RUNTIMEOPS socket, and the runtime dials it.
+2. The runtime sends the connection handshake: its first line is `{"_lennyNonce":"<nonce_hex>"}` with the manifest's `mcpNonce`, and in nonce-only mode it answers the adapter's `_lennyChallenge` (see the [Adapter Contract](../reference/adapter-contract.md#connection-handshake)).
+3. The adapter sends `lifecycle_capabilities` listing available signals.
+4. The runtime responds with `lifecycle_support` listing capabilities it supports.
+5. The channel stays open for the life of the runtime process and serves every session on the pod. Each session-scoped message carries the `sessionId` of the session it concerns. The [Adapter Contract](../reference/adapter-contract.md#ch-runtimeops-full-level-only) states how these messages are ordered against the runtime's `session_started` answer to the session's `session_start`.
 
 ### Messages
 
@@ -335,6 +344,7 @@ Requests the runtime to quiesce for a consistent checkpoint.
 ```json
 {
   "type": "checkpoint_request",
+  "sessionId": "sess_01J5K9...",
   "checkpointId": "ckpt_01J5K9..."
 }
 ```
@@ -357,6 +367,7 @@ Signals that the snapshot is complete and the runtime may resume.
 ```json
 {
   "type": "checkpoint_complete",
+  "sessionId": "sess_01J5K9...",
   "checkpointId": "ckpt_01J5K9..."
 }
 ```
@@ -368,6 +379,7 @@ Requests the runtime to reach a safe stop point.
 ```json
 {
   "type": "interrupt_request",
+  "sessionId": "sess_01J5K9...",
   "interruptId": "int_01J5K9..."
 }
 ```
@@ -388,9 +400,10 @@ Notifies the runtime that credentials have been rotated in place.
 ```json
 {
   "type": "credentials_rotated",
+  "sessionId": "sess_01J5K9...",
   "leaseId": "lease_01J5K9...",
   "provider": "anthropic",
-  "credentialsPath": "/run/lenny/credentials/anthropic.json"
+  "credentialsPath": "/run/lenny/slots/sess_01J5K9.../credentials.json"
 }
 ```
 
@@ -411,27 +424,13 @@ Warning signal before forced session termination.
 ```json
 {
   "type": "deadline_approaching",
-  "remainingMs": 60000
+  "sessionId": "sess_01J5K9...",
+  "remainingMs": 60000,
+  "trigger": "session_age"
 }
 ```
 
-The runtime should begin wrapping up long-running work.
-
-#### terminate (gateway to runtime)
-
-Ordered shutdown signal.
-
-```json
-{
-  "type": "terminate",
-  "reason": "session_complete",
-  "deadlineMs": 10000
-}
-```
-
-Valid `reason` values: `session_complete`, `budget_exhausted`, `eviction`, `operator`. The runtime must exit within `deadlineMs`; the adapter sends SIGTERM on timeout.
-
-The runtime must exit within `deadlineMs`.
+The runtime should begin wrapping up the named session's long-running work, and keeps running.
 
 ---
 
@@ -443,31 +442,22 @@ The runtime must exit within `deadlineMs`.
 2. **Version negotiation:** The adapter sends `AdapterInit` with `adapterProtocolVersion` (semver, e.g., `"1.0.0"`). The gateway responds with `AdapterInitAck` carrying `selectedVersion` or closes with `PROTOCOL_VERSION_INCOMPATIBLE`.
 3. **Readiness signal:** The adapter signals `READY` via the Health service. The pod enters the warm pool.
 4. **Session assignment:** The gateway calls `StartSession`. The adapter transitions to `ACTIVE`.
-5. **Active session:** The gateway opens an `Attach` bidirectional stream. All content flows through this stream.
-6. **Session end:** The gateway calls `StopSession` or the agent exits naturally. The adapter transitions to `TERMINATED`.
-
-### Reconnection
-
-If the `Attach` stream is interrupted during an active session:
-
-1. The gateway detects the stream break via heartbeat timeout.
-2. For Full-level sessions with checkpoint support, the gateway may attempt to resume on the same pod (if the pod is still healthy) by opening a new `Attach` stream.
-3. If the pod is unhealthy, the gateway claims a new pod, restores from the last checkpoint, and starts a new session.
-4. For Basic- and Standard-level sessions without checkpoint support, pod failure results in session failure.
+5. **Active session:** At the session's first message delivery, the gateway opens the session's `Attach` bidirectional stream. All content flows through this stream.
+6. **Session end:** The gateway calls `StopSession`. On a recycled pod the adapter returns to `READY` for the pod's next session; otherwise the pod drains through `DRAINING` to `TERMINATED`.
 
 ---
 
 ## RPC lifecycle state machine
 
-![RPC lifecycle: INIT, READY, ACTIVE, DRAINING, TERMINATED. When a session ends normally, ACTIVE transitions directly to TERMINATED.](../assets/diagrams/rpc-lifecycle.svg)
+![RPC lifecycle: INIT, READY, ACTIVE, DRAINING, TERMINATED. When a session ends on a recycled pod, ACTIVE returns to READY.](../assets/diagrams/rpc-lifecycle.svg)
 
 <!--
 ASCII fallback for the diagram above (rpc-lifecycle):
 
   INIT ===> READY ===> ACTIVE ===> DRAINING ===> TERMINATED
-                        |                            ^
-                        +============================+
-                          (session ends normally)
+             ^           |
+             +===========+
+      (session ends; the pod is recycled)
 -->
 
 
@@ -475,11 +465,11 @@ ASCII fallback for the diagram above (rpc-lifecycle):
 |:------|:------------|
 | `INIT` | Adapter starts, opens gRPC connection, sends `AdapterInit` with protocol version |
 | `READY` | Adapter signals readiness. Pod enters warm pool. Gateway may assign sessions. |
-| `ACTIVE` | Session in progress. Adapter manages MCP servers, lifecycle channel, stdin/stdout. |
-| `DRAINING` | Graceful shutdown requested. Finishes current exchange, signals agent to stop. |
+| `ACTIVE` | Session in progress. Adapter manages MCP servers, CH-RUNTIMEOPS, stdin/stdout. |
+| `DRAINING` | Graceful shutdown requested. Finishes current exchange. No drain coordination exists at pod exit at any integration level: the runtime process ends with the pod. |
 | `TERMINATED` | Adapter has exited. Gateway marks pod as unavailable. |
 
-Transitions are initiated by the gateway (session assignment, drain request) or the adapter (readiness signal, exit on completion).
+Transitions are initiated by the gateway (session assignment, drain request) or the adapter (readiness signal).
 
 ---
 
@@ -518,10 +508,12 @@ The runtime adapter communicates with the agent binary over **stdin/stdout** usi
 
 | Type | Description |
 |:-----|:------------|
+| `session_start` | Opens a session and carries the session's own context; precedes every other frame addressed to the session |
 | `message` | All content delivery (initial task, injection, replies) |
 | `tool_result` | Result of a tool call requested by the agent |
 | `heartbeat` | Liveness ping; agent must respond with `heartbeat_ack` |
-| `shutdown` | Graceful shutdown signal |
+| `session_end` | Ends a session; the runtime releases the session's context and keeps serving the pod's other sessions |
+| `shutdown` | Process-scoped graceful shutdown signal, written when the pod drains |
 
 ### Outbound messages (binary to adapter via stdout)
 
@@ -530,6 +522,7 @@ The runtime adapter communicates with the agent binary over **stdin/stdout** usi
 | `response` | Complete or streamed response with `MessagePart[]` |
 | `tool_call` | Agent requests tool execution |
 | `heartbeat_ack` | Acknowledges heartbeat |
+| `session_started` | Acknowledges a `session_start`; written by a runtime that keeps per-session context or has opened the CH-RUNTIMEOPS |
 | `status` | Optional status/trace update |
 
 ### Exit codes
@@ -539,9 +532,9 @@ The runtime adapter communicates with the agent binary over **stdin/stdout** usi
 | `0` | Normal completion |
 | `1` | Runtime error |
 | `2` | Protocol error (could not parse messages) |
-| `137` | SIGKILL (pod not reused) |
+| `137` | SIGKILL |
 
-For the complete binary protocol specification, including `MessagePart` format, `MessageEnvelope` schema, and level-specific behavior, see the technical design document Section 15.4.
+For the complete binary protocol specification, including the `MessagePart` format, see the technical design document Section 28.5.3, the `CH-MSGSOCK` card. For the `MessageEnvelope` schema and level-specific behavior, see the technical design document Section 15.4.
 
 ---
 

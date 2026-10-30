@@ -17,7 +17,7 @@ import (
 // coordination *Error (conflict, not-owned) propagates to the caller
 // unchanged.
 //
-// spec: §25.4 lines 2164-2172.
+// spec: §25.4.
 var ErrStoreUnavailable = errors.New("remediation-lock store unavailable")
 
 // Store is one §25.4 remediation-lock storage tier. The Service composes
@@ -32,7 +32,7 @@ var ErrStoreUnavailable = errors.New("remediation-lock store unavailable")
 // window: a non-expired lock on the same scope yields a *Error with
 // ErrCodeConflict; a backend outage yields ErrStoreUnavailable.
 //
-// spec: §25.4 lines 2164-2202.
+// spec: §25.4.
 type Store interface {
 	// Tier returns this store's §25.4 lockStore label (StorePostgres,
 	// StoreRedis, or StoreMemory).
@@ -62,7 +62,7 @@ type Store interface {
 }
 
 // EpochManager mutates a tier's §25.4 outage-epoch counter. Both the
-// Postgres and Redis tiers store the epoch (§25.4 line 2218: "stored in
+// Postgres and Redis tiers store the epoch (§25.4: "stored in
 // both Postgres and Redis"); the Service increments the Redis side on a
 // Postgres→Tier-2 transition and writes the reconciled MAX back to
 // Postgres on recovery.
@@ -94,7 +94,7 @@ type ReconcileOutcome struct {
 // post-outage Redis lock at reconciliation time. It mirrors a row written
 // to ops_lock_conflicts.
 //
-// spec: §25.4 lines 2255-2267.
+// spec: §25.4.
 type SplitBrainConflict struct {
 	Scope          string
 	Winner         string // "pre_outage" | "post_outage"
@@ -133,7 +133,7 @@ type epochStore interface {
 
 // redisLockRemover is an optional Tier 2 (Redis) capability: it removes a
 // lock by id regardless of holder. The Service type-asserts for it during
-// reconciliation to drop a losing split-brain Redis lock (§25.4 line 2267,
+// reconciliation to drop a losing split-brain Redis lock (§25.4,
 // "The Redis lock is removed"). Only the Redis store implements it.
 type redisLockRemover interface {
 	RemoveByID(ctx context.Context, lockID string) error
@@ -143,7 +143,7 @@ type redisLockRemover interface {
 // Metrics drops every signal; cmd/lenny-ops wires a Prometheus-backed
 // implementation so the documented gauges and counters carry data.
 //
-// spec: §25.4 lines 2328-2336.
+// spec: §25.4.
 type Metrics interface {
 	// SetActiveStore raises lenny_ops_lock_store_active{store} for the
 	// currently serving tier and clears the others.
@@ -172,14 +172,14 @@ func (NoopMetrics) SetClockSkew(string, float64) {}
 // drops the event; cmd/lenny-ops wires an implementation that emits onto
 // the operational-event stream and the durable audit store.
 //
-// spec: §25.4 lines 2338-2340.
+// spec: §25.4.
 type AuditSink interface {
 	// LockEvent records one lock audit event (remediation.lock_acquired,
 	// _extended, _released, _stolen, _expired, or _split_brain_detected).
 	LockEvent(ctx context.Context, event string, lock Lock, detail map[string]any)
 }
 
-// §25.4 line 2338 audit event names.
+// §25.4 audit event names.
 const (
 	AuditLockAcquired           = "remediation.lock_acquired"
 	AuditLockExtended           = "remediation.lock_extended"
@@ -195,7 +195,7 @@ const (
 // concrete name with "{name}" so the label cardinality stays bounded:
 // "pool:default-gvisor" → "pool:{name}", "platform:*" → "platform:*".
 //
-// spec: §25.4 lines 2114-2120.
+// spec: §25.4.
 func scopePattern(scope string) string {
 	if scope == "" {
 		return "unknown"

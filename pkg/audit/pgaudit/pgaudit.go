@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package pgaudit is the §4.4 line 232 / §11.7 pgaudit sink consumer.
+// Package pgaudit is the §4.4 / §11.7 pgaudit sink consumer.
 // It tails a Postgres-emitted pgaudit log file, parses each line,
 // translates it into an OCSF v1.1.0 record (preserving the
 // pgaudit-source classification under unmapped.lenny.pgaudit_class so
@@ -17,11 +17,11 @@
 // pipeline, not a Postgres extension manager. Deployers run pgaudit
 // against their Postgres instance and point the shipper at the log
 // file; the shipper handles parsing, translation, and delivery. The
-// §11.7 line 375 startup pre-flight (verifying the pgaudit extension is
+// §11.7 startup pre-flight (verifying the pgaudit extension is
 // installed and `pgaudit.log` is configured with the DDL and ROLE
 // classes) is implemented in preflight.go.
 //
-// spec: §4.4 line 232 — "pgaudit sink consumers" listed among OCSF
+// spec: §4.4 — "pgaudit sink consumers" listed among OCSF
 // egress targets.
 package pgaudit
 
@@ -145,7 +145,7 @@ type Config struct {
 	Now func() time.Time
 }
 
-// Shipper is the §4.4 line 232 pgaudit log shipper. It tails the
+// Shipper is the §4.4 pgaudit log shipper. It tails the
 // configured log file, parses each line, translates to OCSF, and
 // delivers to the sink. Construct with New.
 type Shipper struct {
@@ -405,7 +405,7 @@ func (c Class) IsValid() bool {
 // `unmapped.lenny.pgaudit_*` so downstream consumers see the original
 // pgaudit payload without lossy re-mapping.
 //
-// spec: §4.4 line 232 — pgaudit sink consumers receive OCSF records.
+// spec: §4.4 — pgaudit sink consumers receive OCSF records.
 func Translate(r Record, tenantID string) ocsf.Record {
 	classUID, categoryUID, activityID := classifyOCSF(r.Class, r.Command)
 	rec := ocsf.Record{

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §17.6 line 503. F-17.6.1.
+// spec: §17.6. F-17.6.1.
 func TestKubernetesVersionCheck_spec_17_6_503(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -39,16 +39,20 @@ func TestKubernetesVersionCheck_spec_17_6_503(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 517. F-17.6.1.
+// spec: §17.6. F-17.6.1.
+// spec: 17.9.1 (Composition Dimensions) "Production mode"
 func TestSIEMEndpointCheck_spec_17_6_517(t *testing.T) {
 	// Production with no endpoint warns (still passes — non-blocking).
 	d := SIEMEndpointCheck{Environment: "prod", SIEMEndpoint: ""}.Decide()
 	if !d.Passed || !strings.Contains(d.Reason, "audit.siem.endpoint is not configured") {
 		t.Fatalf("prod-no-siem: want non-blocking warning, got passed=%v reason=%q", d.Passed, d.Reason)
 	}
-	// "production" spelling matches LENNY_ENV=production too.
-	if d := (SIEMEndpointCheck{Environment: "production"}).Decide(); d.Reason == "" {
-		t.Fatalf("production spelling should warn")
+	// Production mode is the exact value prod (§17.9.1): the retired
+	// "production" spelling and a case variant are silent, as is staging.
+	for _, env := range []string{"production", "PROD", "staging"} {
+		if d := (SIEMEndpointCheck{Environment: env}).Decide(); !d.Passed || d.Reason != "" {
+			t.Fatalf("%s-no-siem: want silent pass, got reason=%q", env, d.Reason)
+		}
 	}
 	// Production with an endpoint: silent pass.
 	if d := (SIEMEndpointCheck{Environment: "prod", SIEMEndpoint: "https://siem.acme:443"}).Decide(); !d.Passed || d.Reason != "" {
@@ -60,7 +64,7 @@ func TestSIEMEndpointCheck_spec_17_6_517(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 504; §12.6. F-17.6.1.
+// spec: §17.6; §12.6. F-17.6.1.
 func TestStorageRouterRegionCoverageCheck_spec_17_6_504(t *testing.T) {
 	if d := (StorageRouterRegionCoverageCheck{}).Decide(); !d.Passed || !strings.Contains(d.Reason, "SKIPPED") {
 		t.Fatalf("empty regions should skip, got passed=%v reason=%q", d.Passed, d.Reason)
@@ -81,7 +85,7 @@ func TestStorageRouterRegionCoverageCheck_spec_17_6_504(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 505; §12.8 Phase 3.5. F-17.6.1.
+// spec: §17.6; §12.8 Phase 3.5. F-17.6.1.
 func TestLegalHoldEscrowCheck_spec_17_6_505(t *testing.T) {
 	if d := (LegalHoldEscrowCheck{Enabled: false}).Decide(); !d.Passed || !strings.Contains(d.Reason, "SKIPPED") {
 		t.Fatalf("disabled should skip, got %q", d.Reason)
@@ -118,7 +122,7 @@ func (f fakePgBouncerProber) ProbePgBouncer(context.Context) (string, bool, erro
 	return f.mode, f.sentinel, f.err
 }
 
-// spec: §17.6 lines 487-488. F-17.6.1.
+// spec: §17.6. F-17.6.1.
 func TestPgBouncerConfigCheck_spec_17_6_487(t *testing.T) {
 	ctx := context.Background()
 	if d := (PgBouncerConfigCheck{}).Decide(ctx); !d.Passed || !strings.Contains(d.Reason, "SKIPPED") {
@@ -147,7 +151,7 @@ func (f fakeBillingProber) ProbeBillingTriggers(context.Context) (bool, error) {
 	return f.enabled, f.err
 }
 
-// spec: §17.6 line 489. F-17.6.1.
+// spec: §17.6. F-17.6.1.
 func TestBillingTriggerCheck_spec_17_6_489(t *testing.T) {
 	ctx := context.Background()
 	if d := (BillingTriggerCheck{}).Decide(ctx); !d.Passed || !strings.Contains(d.Reason, "SKIPPED") {
@@ -161,5 +165,54 @@ func TestBillingTriggerCheck_spec_17_6_489(t *testing.T) {
 	}
 	if d := (BillingTriggerCheck{Prober: fakeBillingProber{err: errors.New("no perms")}}).Decide(ctx); d.Passed || !strings.Contains(d.Reason, "no perms") {
 		t.Fatalf("prober error should fail, got %q", d.Reason)
+	}
+}
+
+// TestUnverifiableEncryptionWarnings_spec_17_6 pins the §17.6 etcd Secret
+// encryption and node disk encryption rows: production mode emits the
+// row's warning text verbatim, every other environment value is silent,
+// and the check never blocks.
+//
+// spec: 17.6 (Packaging and Installation) "etcd Secret encryption (warning)", "Node disk encryption (warning)"
+// spec: 17.9.1 (Composition Dimensions) "Production mode"
+func TestUnverifiableEncryptionWarnings_spec_17_6(t *testing.T) {
+	checks := []struct {
+		name    string
+		decide  func(env string) Decision
+		warning string
+	}{
+		{"etcd-secret-encryption", func(env string) Decision { return EtcdSecretEncryptionCheck{Environment: env}.Decide() }, EtcdSecretEncryptionWarning},
+		{"node-disk-encryption", func(env string) Decision { return NodeDiskEncryptionCheck{Environment: env}.Decide() }, NodeDiskEncryptionWarning},
+	}
+	for _, c := range checks {
+		t.Run(c.name, func(t *testing.T) {
+			if !strings.HasPrefix(c.warning, "WARNING: ") {
+				t.Fatalf("warning text must carry the §17.6 WARNING prefix, got %q", c.warning)
+			}
+			d := c.decide("prod")
+			if !d.Passed {
+				t.Fatalf("prod: the warning must not block, got passed=false reason=%q", d.Reason)
+			}
+			if d.Reason != c.warning {
+				t.Fatalf("prod: want the §17.6 warning verbatim, got %q", d.Reason)
+			}
+			// Production mode is the exact value prod (§17.9.1): every other
+			// closed-set value, the empty value, the retired "production"
+			// spelling, and case or whitespace variants are silent.
+			for _, env := range []string{"", "local", "dev", "staging", "production", "PROD", "Prod", " prod", "prod "} {
+				if d := c.decide(env); !d.Passed || d.Reason != "" {
+					t.Errorf("env %q: want silent pass, got passed=%v reason=%q", env, d.Passed, d.Reason)
+				}
+			}
+		})
+	}
+	// The two texts are the two distinct §17.6 rows.
+	if !strings.Contains(EtcdSecretEncryptionWarning, "does not encrypt Secrets in etcd") ||
+		!strings.Contains(EtcdSecretEncryptionWarning, "'etcdctl get /registry/secrets/lenny-system/<name> | hexdump'") {
+		t.Errorf("etcd warning text drifted from §17.6: %q", EtcdSecretEncryptionWarning)
+	}
+	if !strings.Contains(NodeDiskEncryptionWarning, "Node-level disk encryption (LUKS/dm-crypt") ||
+		!strings.Contains(NodeDiskEncryptionWarning, "encrypted scratch volumes.") {
+		t.Errorf("node disk warning text drifted from §17.6: %q", NodeDiskEncryptionWarning)
 	}
 }

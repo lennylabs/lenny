@@ -26,14 +26,14 @@ func connectorID(t *testing.T) string {
 	return "conn-" + newUUID(t)[:8]
 }
 
-// spec: 9.3, §4.2 line 173
+// spec: 9.3, §4.2
 // diagnosis: the Postgres-backed connector registry in
 // pkg/gateway/connectorstore/pgstore did not behave as specified.
 // Create and Get must round-trip a connector under its owning tenant,
 // the §9.3 validation must reject SSRF-prone http:// endpoints and
 // inline client secrets, Update must re-validate and advance
 // updated_at, and the soft-delete lifecycle must honor the
-// IncludeDeleted list filter. §4.2 line 173 scopes the registry by
+// IncludeDeleted list filter. §4.2 scopes the registry by
 // tenant, so every operation threads a tenant id.
 func TestConnectorStoreContract(t *testing.T) {
 	t.Parallel()
@@ -219,7 +219,7 @@ func TestConnectorStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §4.2 line 173 — tenant-isolation: a connector created in
+	// spec: §4.2 — tenant-isolation: a connector created in
 	// tenant A is not visible from tenant B, and the AllTenantsSentinel
 	// surfaces both rows to platform-admin readers.
 	t.Run("tenant isolation and AllTenantsSentinel", func(t *testing.T) {

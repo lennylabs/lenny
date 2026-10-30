@@ -18,7 +18,7 @@ import (
 // spec: 5.2 (combined failed+leaked unhealthy threshold), 6.2 (leaked-slot semantics)
 func TestNewHonorsInjectedSlotHealth_spec_5_2(t *testing.T) {
 	shared := slothealth.New()
-	s := New(memstore.New(), Options{SlotHealth: shared})
+	s := New(memstore.New(), Options{DevTenantHeader: true, SlotHealth: shared})
 	if s.slotHealth != shared {
 		t.Error("New did not use the injected SlotHealth tracker; the slot-bind-failure path and the scrub-report ledger would observe disjoint windows")
 	}
@@ -30,7 +30,7 @@ func TestNewHonorsInjectedSlotHealth_spec_5_2(t *testing.T) {
 // tracker.
 // spec: 5.2 (whole-pod replacement trigger)
 func TestNewDefaultsSlotHealthWhenNil_spec_5_2(t *testing.T) {
-	s := New(memstore.New(), Options{})
+	s := New(memstore.New(), Options{DevTenantHeader: true})
 	if s.slotHealth == nil {
 		t.Error("New left slotHealth nil with no injected tracker; the slot retry policy would panic")
 	}

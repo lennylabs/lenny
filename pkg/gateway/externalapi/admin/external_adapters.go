@@ -18,7 +18,7 @@ import (
 // AdapterValidator runs the §24.8 / §15.2.1 conformance suite against a
 // registered external adapter and returns the per-test report. The
 // production implementation drives the lenny-compliance harness via
-// compliance.RunSuite in a subprocess (the §15 line 1414 sandboxed
+// compliance.RunSuite in a subprocess (the §15 sandboxed
 // environment seam); tests inject a fake.
 //
 // A non-nil error means the suite could not be executed at all (harness
@@ -26,14 +26,14 @@ import (
 // count is a successful run that found conformance violations — the
 // handler transitions the adapter to validation_failed in that case.
 //
-// spec: §24.8 line 113; §15 line 1414.
+// spec: §24.8; §15.
 type AdapterValidator interface {
 	Validate(ctx context.Context, binaryPath, level string) (compliance.Report, error)
 }
 
 // ComplianceValidator is the production AdapterValidator. It drives the
 // lenny-compliance harness via compliance.RunSuite as a subprocess —
-// the §15 line 1414 sandboxed-environment seam. HarnessPath, when empty,
+// the §15 sandboxed-environment seam. HarnessPath, when empty,
 // resolves `lenny-compliance` on $PATH; when the harness is absent,
 // compliance.RunSuite returns compliance.ErrHarnessNotFound and the
 // validate handler reports 503 (the adapter stays pending_validation).
@@ -57,7 +57,7 @@ type ExternalAdapterPayload struct {
 	BinaryPath  string `json:"binaryPath,omitempty"`
 	Level       string `json:"level,omitempty"`
 	// Status is read-only on the wire — the store owns the lifecycle
-	// transition (§15 line 1414). A value supplied on create/update is
+	// transition (§15). A value supplied on create/update is
 	// ignored.
 	Status         string                   `json:"status,omitempty"`
 	LastValidation *ValidationReportPayload `json:"lastValidation,omitempty"`
@@ -67,7 +67,7 @@ type ExternalAdapterPayload struct {
 	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
 	// decimal version. List and GET responses carry it so a client can
 	// supply it as the If-Match header on a later PUT.
-	// spec: §15.1 lines 1207-1209.
+	// spec: §15.1.
 	ETag string `json:"etag,omitempty"`
 }
 
@@ -82,7 +82,7 @@ type ValidationReportPayload struct {
 }
 
 // ValidationFailurePayload is one failed conformance check on the wire.
-// Per §24.8 line 113 each failure cites the specific assertion that
+// Per §24.8 each failure cites the specific assertion that
 // failed.
 type ValidationFailurePayload struct {
 	Name   string `json:"name"`
@@ -101,7 +101,7 @@ func fromExternalAdapter(a externaladapterstore.ExternalAdapter) ExternalAdapter
 		Status:      string(a.Status),
 		CreatedAt:   rfc3339Nano(a.CreatedAt),
 		UpdatedAt:   rfc3339Nano(a.UpdatedAt),
-		// spec: §15.1 line 1207 — the ETag is the quoted decimal version,
+		// spec: §15.1 — the ETag is the quoted decimal version,
 		// carried per-item on list responses and in the GET header.
 		ETag: formatETag(a.Version),
 	}
@@ -156,13 +156,13 @@ func (r *Router) handleCreateExternalAdapter(w http.ResponseWriter, req *http.Re
 		Level:       body.Level,
 		CreatedAt:   r.clock(),
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// spec: §15.1 — ?dryRun=true validates without persisting or auditing.
 	if req.URL.Query().Get("dryRun") == "true" {
 		if err := externaladapterstore.Validate(a); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 			return
 		}
-		// §15 line 1414 — a newly registered adapter enters
+		// §15 — a newly registered adapter enters
 		// pending_validation; the preview reports the same status the
 		// persisted record would carry.
 		a.Status = externaladapterstore.StatusPendingValidation
@@ -172,7 +172,7 @@ func (r *Router) handleCreateExternalAdapter(w http.ResponseWriter, req *http.Re
 	}
 	if err := r.externalAdapters.Create(req.Context(), a); err != nil {
 		if errors.Is(err, externaladapterstore.ErrAlreadyExists) {
-			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			// spec: §15.1 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
 			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS", "external adapter with this name already exists", nil)
 			return
 		}
@@ -200,7 +200,7 @@ func (r *Router) handleListExternalAdapters(w http.ResponseWriter, req *http.Req
 	for _, a := range rows {
 		out = append(out, fromExternalAdapter(a))
 	}
-	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope. F-15.1.6.
+	// spec: §15.1 — canonical cursor-paginated envelope. F-15.1.6.
 	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
 		func(x ExternalAdapterPayload, s pagination.Sort) (string, string) {
 			switch s.Field {
@@ -225,7 +225,7 @@ func (r *Router) handleGetExternalAdapter(w http.ResponseWriter, req *http.Reque
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1209 — GET responses for an admin resource carry the
+	// spec: §15.1 — GET responses for an admin resource carry the
 	// ETag header so the client can use it as the next PUT's If-Match.
 	w.Header().Set("ETag", formatETag(a.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -249,8 +249,8 @@ func applyExternalAdapterUpdate(a *externaladapterstore.ExternalAdapter, body Ex
 	}
 	// A change to the adapter under test (binary or level) invalidates
 	// the prior validation. Reset to pending_validation so the gate is
-	// re-run before the adapter receives traffic (§15.1 line 1199
-	// "Validates update"; §15 line 1414).
+	// re-run before the adapter receives traffic (§15.1
+	// "Validates update"; §15).
 	if (body.BinaryPath != "" && body.BinaryPath != a.BinaryPath) ||
 		(body.Level != "" && body.Level != a.Level) {
 		if body.BinaryPath != "" {
@@ -290,13 +290,13 @@ func (r *Router) handleUpdateExternalAdapter(w http.ResponseWriter, req *http.Re
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
 		return
 	}
-	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match. Enforce
+	// spec: §15.1 — every admin PUT requires If-Match. Enforce
 	// the optimistic-concurrency precondition before the dry-run branch so a
 	// dryRun=true combined with a missing/stale If-Match still fails here.
 	if !enforceIfMatch(w, req, current.Version) {
 		return
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// spec: §15.1 — ?dryRun=true validates without persisting or auditing.
 	if req.URL.Query().Get("dryRun") == "true" {
 		preview := current
 		if err := applyExternalAdapterUpdate(&preview, body); err != nil {
@@ -320,7 +320,7 @@ func (r *Router) handleUpdateExternalAdapter(w http.ResponseWriter, req *http.Re
 	r.emit(req.Context(), principal, audit.EventAdminExternalAdapterUpdated.String(), name, map[string]any{
 		"status": string(updated.Status),
 	})
-	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so the
+	// spec: §15.1 — a successful PUT carries the bumped ETag so the
 	// client can chain a subsequent write without a refresh GET.
 	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -345,7 +345,7 @@ func (r *Router) handleDeleteExternalAdapter(w http.ResponseWriter, req *http.Re
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1213 — DELETE honours If-Match only when present: a
+	// spec: §15.1 — DELETE honours If-Match only when present: a
 	// stale tag returns 412 ETAG_MISMATCH, an absent header proceeds.
 	if !enforceIfMatchIfPresent(w, req, current.Version) {
 		return
@@ -363,7 +363,7 @@ func (r *Router) handleDeleteExternalAdapter(w http.ResponseWriter, req *http.Re
 }
 
 // handleValidateExternalAdapter runs the §24.8 conformance suite against
-// the registered adapter and transitions its status. Per §15 line 1414
+// the registered adapter and transitions its status. Per §15
 // it transitions pending_validation/validation_failed → active on a
 // passing run, or → validation_failed (with per-test details) on
 // failure. When no validator is wired, or the harness cannot run, the

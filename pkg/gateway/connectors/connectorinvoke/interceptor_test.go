@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
-// spec: §4.8 lines 1057-1058, 1077, §15.1 lines 1014-1015 — the
+// spec: §4.8, §15.1 — the
 // PreConnectorRequest and PostConnectorResponse interceptor phases on the
 // gateway-proxied connector path. A REJECT returns
 // CONNECTOR_REQUEST_REJECTED / CONNECTOR_RESPONSE_REJECTED, a MODIFY

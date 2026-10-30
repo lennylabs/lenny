@@ -96,7 +96,7 @@ type Store interface {
 	// the oldest pending request is first. The §7.2 `children_reattached`
 	// emitter calls this to surface a child session's pending request
 	// id to a resumed parent.
-	// spec: §7.2 line 153 (ReattachedChild.pending_request_id).
+	// spec: §7.2.
 	ListPending(ctx context.Context, tenantID, sessionID string) ([]Interaction, error)
 
 	// DeleteByUser removes every interaction directed at userID within
@@ -110,7 +110,7 @@ type Store interface {
 	// adapter. Mandatory at the interface per §12.1 so the production
 	// pgstore (not only the in-memory store) carries it. A tenant with no
 	// interactions is a no-op returning (0, nil).
-	// spec: §12.1 line 5 (mandatory primitive); §12.8 Phase 4.
+	// spec: §12.1; §12.8 Phase 4.
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 
 	// DismissByUser sets every pending elicitation directed at userID
@@ -119,7 +119,22 @@ type Store interface {
 	// elicitations. Pending tool-use interactions are left untouched;
 	// §11.4 step 7 scopes the dismissal to elicitations.
 	DismissByUser(ctx context.Context, tenantID, userID string) (int, error)
+
+	// ExpireRaisedBy deletes every pending elicitation the session
+	// originSessionID raised within tenantID and returns the count. The
+	// raising session is the elicitation's detail["originPod"], which the
+	// lenny/request_elicitation handler records; it is never the row's
+	// session_id, which names the chain resolver, so an elicitation a child
+	// raised and the chain holds for this session is not matched. A
+	// lease-extension elicitation carries no originPod and is never
+	// matched. A later Resolve or Get of a deleted row returns ErrNotFound.
+	// spec: §9.2 (Elicitation Chain).
+	ExpireRaisedBy(ctx context.Context, tenantID, originSessionID string) (int, error)
 }
+
+// DetailOriginPod is the elicitation detail key naming the session whose
+// pod raised it. spec: §9.2 (Elicitation Chain).
+const DetailOriginPod = "originPod"
 
 // Memory is the in-memory Store implementation.
 type Memory struct {
@@ -196,7 +211,7 @@ func (m *Memory) CountElicitations(_ context.Context, tenantID, sessionID string
 }
 
 // ListPending implements Store. Pending entries are returned oldest
-// first (CreatedAt ascending) so the §7.2 line 153
+// first (CreatedAt ascending) so the §7.2
 // `ReattachedChild.pending_request_id` surface picks the longest-
 // waiting request when a session carries several.
 func (m *Memory) ListPending(_ context.Context, tenantID, sessionID string) ([]Interaction, error) {
@@ -228,7 +243,7 @@ func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, 
 	return deleted, nil
 }
 
-// DeleteByTenant implements the §12.1 / §14.10 mandatory-erasure
+// DeleteByTenant implements the §12.1 mandatory-erasure
 // interface. Removes every interaction belonging to tenantID.
 func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
 	m.mu.Lock()
@@ -258,4 +273,22 @@ func (m *Memory) DismissByUser(_ context.Context, tenantID, userID string) (int,
 		}
 	}
 	return dismissed, nil
+}
+
+// ExpireRaisedBy implements Store. It deletes under the store's mutex.
+func (m *Memory) ExpireRaisedBy(_ context.Context, tenantID, originSessionID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	expired := 0
+	for k, in := range m.interactions {
+		if in.TenantID != tenantID || in.Kind != KindElicitation || in.Phase != PhasePending {
+			continue
+		}
+		if origin, _ := in.Detail[DetailOriginPod].(string); origin != originSessionID || origin == "" {
+			continue
+		}
+		delete(m.interactions, k)
+		expired++
+	}
+	return expired, nil
 }

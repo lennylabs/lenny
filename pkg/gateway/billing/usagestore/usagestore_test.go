@@ -72,7 +72,7 @@ func TestByTenantSorted(t *testing.T) {
 	}
 }
 
-// TestAggregateLabelFilter_spec_14_106 exercises the §14 line 106
+// TestAggregateLabelFilter_spec_14_106 exercises the §14
 // label-scoped usage report: a non-empty label filter narrows the rollup
 // to the records whose denormalized labels contain every requested pair
 // (AND-containment), and an empty filter aggregates everything. F-14.1.13.

@@ -18,7 +18,7 @@ import (
 // over `.gitignore`. Only the root file is read; nested ignore files are
 // not consulted.
 //
-// spec: §26.2 line 114.
+// spec: §26.2.
 var IgnoreFileNames = []string{".lennyignore", ".gitignore"}
 
 // vcsMetadataDir is the version-control metadata directory the packer
@@ -47,7 +47,7 @@ type Result struct {
 // relative (no leading directory component), so the gateway extracts them
 // under an `uploadArchive` source's pathPrefix.
 //
-// spec: §26.2 lines 95-114; §14 uploadArchive.
+// spec: §26.2; §14 uploadArchive.
 func Pack(dir string) (*Result, error) {
 	info, err := os.Stat(dir)
 	if err != nil {

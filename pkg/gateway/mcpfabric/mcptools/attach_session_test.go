@@ -16,7 +16,7 @@ import (
 // TestAttachSessionSnapshot verifies the non-streaming attach_session
 // snapshot: a WebSocket or plain-JSON caller receives the session's
 // current state and the resumeFromSeq cursor (the durable last_seq) to
-// reconnect the SSE stream with. spec: §15.2 lines 1289, 1331. F-15.2.2.
+// reconnect the SSE stream with. spec: §15.2. F-15.2.2.
 func TestAttachSessionSnapshot_spec_15_2(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_a", session.StateRunning, "")

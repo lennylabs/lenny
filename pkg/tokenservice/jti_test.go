@@ -5,6 +5,9 @@ package tokenservice
 import (
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 )
 
 // TestNewJTICollisionSafeAcrossInvocations confirms that the
@@ -12,7 +15,7 @@ import (
 // sequential population, matching the §4.3 "any replica can handle any
 // request with no affinity requirements" guarantee on the
 // issued_tokens.jti primary key.
-// spec: §4.3 line 209.
+// spec: §4.3.
 func TestNewJTICollisionSafeAcrossInvocations(t *testing.T) {
 	t.Parallel()
 	const n = 100_000
@@ -37,7 +40,7 @@ func TestNewJTICollisionSafeAcrossInvocations(t *testing.T) {
 // same instant) and asserts no collisions. Pre-fix, the timestamp +
 // per-process counter could produce identical JTIs across replicas; the
 // crypto/rand path has no such window.
-// spec: §4.3 line 209 ("no affinity requirements").
+// spec: §4.3.
 func TestNewJTICollisionSafeAcrossGoroutines(t *testing.T) {
 	t.Parallel()
 	const goroutines = 32
@@ -80,7 +83,7 @@ func TestNewJTICollisionSafeAcrossGoroutines(t *testing.T) {
 // TestNewJTIPrefixAndShape asserts the format guarantee callers rely
 // on: the value starts with "jti_" and the suffix is 32 lowercase hex
 // characters (128 random bits).
-// spec: §4.3 line 209.
+// spec: §4.3.
 func TestNewJTIPrefixAndShape(t *testing.T) {
 	t.Parallel()
 	for i := 0; i < 32; i++ {
@@ -108,7 +111,7 @@ func TestNewJTIPrefixAndShape(t *testing.T) {
 // or the discarded sync.Mutex guard. Compilation enforces the
 // invariant — adding a new field would require a deliberate edit to
 // this test.
-// spec: §4.3 line 209.
+// spec: §4.3.
 func TestServerHasNoInProcessJTICache(t *testing.T) {
 	t.Parallel()
 	// Construct a Server through the public constructor; the zero
@@ -116,10 +119,11 @@ func TestServerHasNoInProcessJTICache(t *testing.T) {
 	// shape) must be inaccessible. A successful build of this test
 	// file confirms the fields are gone — if either is reintroduced,
 	// the package must drop the corresponding line below.
-	s := NewServer(Options{})
-	// signer is the only required field guaranteed to be populated
-	// after NewServer; everything else is optional. Dereference
-	// nothing about the removed fields here — the test exists to
-	// catch their reintroduction at the type level, not at runtime.
+	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
+	s := mustNewServer(t, Options{Verifier: signer, CapabilityTokenTTL: 15 * time.Minute})
+	// The verifier is the only required option; everything else is
+	// optional. Dereference nothing about the removed fields here: the
+	// test exists to catch their reintroduction at the type level, not
+	// at runtime.
 	_ = s
 }

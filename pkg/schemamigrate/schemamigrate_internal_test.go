@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// spec: §15.1 line 891 — buildStatus reports every applied migration as
+// spec: §15.1 — buildStatus reports every applied migration as
 // `complete` with a `not_run` gate, omitting versions above the current
 // one.
 func TestBuildStatusAppliedAreComplete(t *testing.T) {
@@ -55,7 +55,7 @@ func TestBuildStatusNoVersion(t *testing.T) {
 	}
 }
 
-// spec: §24.13 line 150 — a Job-recorded phase row overlays the real
+// spec: §24.13 — a Job-recorded phase row overlays the real
 // applied-at timestamp, the resolved phase, the Phase 3 gate result, and
 // the Job name onto the synthesized projection; versions with no row keep
 // the synthesized `complete` / `not_run` values.

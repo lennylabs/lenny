@@ -8,11 +8,11 @@ import (
 )
 
 // DefaultInterval is the checkpoint cadence used when Interval is unset.
-// It matches the §11.2 line 44 quotaSyncIntervalSeconds default (30s);
+// It matches the §11.2 quotaSyncIntervalSeconds default (30s);
 // production threads the configured value.
 const DefaultInterval = 30 * time.Second
 
-// Reconciler drives the §11.2 periodic checkpoint and the §11.2 line 48
+// Reconciler drives the §11.2 periodic checkpoint and the §11.2
 // recovery reconstruction for delegation tree budget counters. It probes
 // Redis reachability on the checkpoint cadence: while Redis is reachable
 // it snapshots every active tree's counters into Postgres, and on a
@@ -23,7 +23,7 @@ const DefaultInterval = 30 * time.Second
 // required seam makes Run a no-op so a partial wiring degrades to the
 // prior behavior rather than panicking.
 //
-// spec: §11.2 lines 44, 48; §12.4 line 218.
+// spec: §11.2; §12.4.
 type Reconciler struct {
 	// Probe reports whether the Redis delegation-counter backend is
 	// reachable this tick. Required.
@@ -47,7 +47,7 @@ type Reconciler struct {
 	// Interval is the checkpoint cadence and the base unit for the
 	// 2 x Interval staleness threshold. Zero selects DefaultInterval.
 	Interval time.Duration
-	// NodeMemoryBytes is the §11.2 line 48 per-node footprint estimate.
+	// NodeMemoryBytes is the §11.2 per-node footprint estimate.
 	// Zero selects DefaultNodeMemoryFootprintBytes.
 	NodeMemoryBytes int64
 	// Now is the injectable clock for the checkpoint-age computation.
@@ -106,7 +106,7 @@ func (r *Reconciler) tick(ctx context.Context, wasReachable bool) bool {
 // so the table tracks only trees with real budget state. A per-tree
 // snapshot error skips that tree rather than aborting the sweep.
 //
-// spec: §11.2 line 44 (durable checkpoint).
+// spec: §11.2.
 func (r *Reconciler) Checkpoint(ctx context.Context) {
 	refs, err := r.Trees.ListActiveTrees(ctx)
 	if err != nil {
@@ -141,7 +141,7 @@ func (r *Reconciler) Checkpoint(ctx context.Context) {
 	r.logf("delegationbudget: checkpointed %d delegation tree(s)", len(rows))
 }
 
-// Reconcile runs the §11.2 line 48 two-source reconstruction for every
+// Reconcile runs the §11.2 two-source reconstruction for every
 // checkpointed tree on a Redis-recovery edge. For each tree it loads the
 // Postgres checkpoint, derives the live estimate from the SessionStore,
 // and either restores the Redis counters to max(checkpoint, live) per
@@ -150,7 +150,7 @@ func (r *Reconciler) Checkpoint(ctx context.Context) {
 // with reason BUDGET_STATE_UNRECOVERABLE. Each tree emits one
 // reconstruction outcome metric.
 //
-// spec: §11.2 line 48; §12.4 line 218.
+// spec: §11.2; §12.4.
 func (r *Reconciler) Reconcile(ctx context.Context) {
 	rows, err := r.Store.ListActive(ctx)
 	if err != nil {
@@ -168,7 +168,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) {
 		}
 		canEnumerate := r.Live != nil && liveErr == nil && live.RootExists
 
-		// §11.2 line 48 irrecoverability: stale checkpoint AND no live
+		// §11.2 irrecoverability: stale checkpoint AND no live
 		// enumeration possible.
 		checkpointAge := now.Sub(row.CheckpointAt)
 		if !canEnumerate && checkpointAge > staleThreshold {

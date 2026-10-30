@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
 )
 
-// spec: §15.1 lines 1228-1253 — cursor envelope, limit clamp [1, 200],
+// spec: §15.1 — cursor envelope, limit clamp [1, 200],
 // 24-hour cursor TTL, opaque cursors.
 
 func TestParseLimitClampsToSpecRange_spec_15_1_1236(t *testing.T) {

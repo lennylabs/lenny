@@ -215,7 +215,7 @@ func TestToolsCallScopeForbidden(t *testing.T) {
 	if data["code"] != "SCOPE_FORBIDDEN" {
 		t.Errorf("data.code = %v, want SCOPE_FORBIDDEN", data["code"])
 	}
-	// spec: §25.2 lines 302-329 — a scope rejection carries the AUTH
+	// spec: §25.2 — a scope rejection carries the AUTH
 	// error category alongside code/retryable. F-25.2.6.
 	if data["category"] != "AUTH" {
 		t.Errorf("data.category = %v, want AUTH", data["category"])
@@ -317,7 +317,7 @@ func TestToolsCallEndpointUnavailable(t *testing.T) {
 	if data["code"] != "ENDPOINT_UNAVAILABLE" {
 		t.Errorf("data.code = %v, want ENDPOINT_UNAVAILABLE", data["code"])
 	}
-	// spec: §25.2 lines 302-329 — an unavailable endpoint is a TRANSIENT
+	// spec: §25.2 — an unavailable endpoint is a TRANSIENT
 	// failure; the category rides alongside code/retryable. F-25.2.6.
 	if data["category"] != "TRANSIENT" {
 		t.Errorf("data.category = %v, want TRANSIENT", data["category"])

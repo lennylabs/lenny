@@ -91,7 +91,7 @@ func handleStubToolCall(w http.ResponseWriter, req mcpRPCEnvelope) {
 		}
 		writeRPC(w, req.ID, toolResultMap(`{"sessionId":"sess_mcp_1","state":"running"}`, false), nil)
 	case "lenny/send_message":
-		// §8.5 line 537 wire contract: the tool arguments are `to`
+		// §8.5 wire contract: the tool arguments are `to`
 		// (target session id) and `message` (content). F-8.5.16 renamed
 		// them from the legacy `sessionId`/`content`.
 		var args struct {
@@ -113,7 +113,7 @@ func handleStubToolCall(w http.ResponseWriter, req mcpRPCEnvelope) {
 			writeRPC(w, req.ID, toolResultMap("sessionId is required", true), nil)
 			return
 		}
-		writeRPC(w, req.ID, toolResultMap(`{"sessionId":"`+args.SessionID+`","state":"suspended"}`, false), nil)
+		writeRPC(w, req.ID, toolResultMap(`{"id":"`+args.SessionID+`","tenantId":"acme","state":"suspended","createdAt":"2026-10-14T00:00:00Z","updatedAt":"2026-10-14T00:00:00Z"}`, false), nil)
 	case "lenny/cancel_session":
 		var args struct {
 			SessionID string `json:"sessionId"`
@@ -254,7 +254,7 @@ func TestMCPCallToolDrivesSession(t *testing.T) {
 
 // TestMCPInterruptSession_spec_24_17_216 confirms the §24.17 `lenny
 // session interrupt` MCP transport drives lenny/interrupt_session and
-// decodes the {sessionId, state} envelope. F-24.17.5.
+// decodes the REST session body the tool answers (§15.2.1). F-24.17.5.
 func TestMCPInterruptSession_spec_24_17_216(t *testing.T) {
 	ts := httptest.NewServer(mcpStub(t))
 	defer ts.Close()
@@ -264,8 +264,8 @@ func TestMCPInterruptSession_spec_24_17_216(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InterruptSession: %v", err)
 	}
-	if res.SessionID != "sess_x" || res.State != "suspended" {
-		t.Errorf("interrupt result: got %+v, want sessionId=sess_x state=suspended", res)
+	if res.ID != "sess_x" || res.State != "suspended" {
+		t.Errorf("interrupt result: got %+v, want id=sess_x state=suspended", res)
 	}
 }
 
@@ -348,7 +348,7 @@ func TestMCPCallToolFailureIsResultNotError(t *testing.T) {
 	}
 }
 
-// spec: §15.2.1 rule 5(d), §15.2 line 944, 972 — every MCP tool
+// spec: §15.2.1 rule 5(d), §15.2 — every MCP tool
 // failure that carries a `lenny/error` block surfaces the §15.2.1
 // parity triple (code, category, retryable). The SDK helper parses
 // the block so callers do not hand-decode the JSON. F-15.2.10.

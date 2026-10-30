@@ -12,7 +12,7 @@ import "sort"
 // Candidate of the runtime it runs, carrying the pool's own name and
 // isolation rank for the monotonicity comparison.
 //
-// spec: §24.14 line 172 (rule × pool isolation audit); §8.3 line 346
+// spec: §24.14; §8.3
 // (isolation monotonicity: standard < sandboxed < microvm).
 type PoolCandidate struct {
 	// PoolName is the pool's identifier, reported in the violation rows.
@@ -66,7 +66,7 @@ type IsolationViolation struct {
 // Results are sorted by (policy, tenant, rule index, source pool,
 // target pool) so the report is stable across runs.
 //
-// spec: §24.14 line 172; §8.3 lines 346-352.
+// spec: §24.14; §8.3.
 func AuditIsolation(policies []DelegationPolicy, pools []PoolCandidate) []IsolationViolation {
 	var out []IsolationViolation
 	for _, p := range policies {
@@ -127,7 +127,7 @@ func AuditIsolation(policies []DelegationPolicy, pools []PoolCandidate) []Isolat
 	return out
 }
 
-// ProactiveWarningsForPool runs the §8.3 line 350 proactive
+// ProactiveWarningsForPool runs the §8.3 proactive
 // pool-registration audit for a single newly registered or updated pool:
 // it returns the subset of the full monotonicity audit where poolName is
 // the less-restrictive delegation target a more-restrictive parent pool
@@ -135,7 +135,7 @@ func AuditIsolation(policies []DelegationPolicy, pools []PoolCandidate) []Isolat
 // pool.isolation_warning per returned violation after a pool create or
 // update. pools must include the registered pool itself.
 //
-// spec: §8.3 lines 349-352 (proactive pool-registration enforcement).
+// spec: §8.3.
 func ProactiveWarningsForPool(policies []DelegationPolicy, pools []PoolCandidate, poolName string) []IsolationViolation {
 	all := AuditIsolation(policies, pools)
 	out := all[:0]

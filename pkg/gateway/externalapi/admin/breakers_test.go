@@ -151,7 +151,7 @@ func TestListBreakers(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 673 — the operator-managed breaker lifecycle
+// spec: §16.7 — the operator-managed breaker lifecycle
 // event is `circuit_breaker.state_changed` with `old_state` /
 // `new_state`. The open transition writes `closed → open` carrying
 // the spec-mandated payload fields. F-16.7.4.
@@ -188,7 +188,7 @@ func TestOpenBreakerEmitsStateChangedAuditPayload_spec_16_7_673(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 673 — close transition writes `open → closed` with
+// spec: §16.7 — close transition writes `open → closed` with
 // the platform-generated `"operator close"` reason and the persisted
 // `limit_tier` / `scope` so the SIEM joins the pair on `limit_tier`.
 // F-16.7.4.

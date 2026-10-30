@@ -47,7 +47,7 @@ func introspectionTestToken(t *testing.T, signer *jwt.HMACSigner) string {
 	return tok
 }
 
-// spec: §10.6 line 661 — when the tenant enables introspection, the
+// spec: §10.6 — when the tenant enables introspection, the
 // provider's real-time group set replaces the JWT groups claim.
 func TestIntrospectionReplacesJWTGroups_spec_10_6(t *testing.T) {
 	signer := jwt.NewHMACSigner("k", []byte("plat"))
@@ -76,7 +76,7 @@ func TestIntrospectionReplacesJWTGroups_spec_10_6(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 661 — a tenant that leaves introspection off keeps the
+// spec: §10.6 — a tenant that leaves introspection off keeps the
 // JWT groups claim untouched.
 func TestIntrospectionDisabledKeepsJWTGroups_spec_10_6(t *testing.T) {
 	signer := jwt.NewHMACSigner("k", []byte("plat"))
@@ -99,7 +99,7 @@ func TestIntrospectionDisabledKeepsJWTGroups_spec_10_6(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 661 — an inactive-token verdict rejects the bearer
+// spec: §10.6 — an inactive-token verdict rejects the bearer
 // (401) rather than honoring the stale JWT groups.
 func TestIntrospectionInactiveTokenRejects_spec_10_6(t *testing.T) {
 	signer := jwt.NewHMACSigner("k", []byte("plat"))
@@ -119,7 +119,7 @@ func TestIntrospectionInactiveTokenRejects_spec_10_6(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 661 — a transport/config failure fails closed with 503
+// spec: §10.6 — a transport/config failure fails closed with 503
 // rather than falling back to the JWT groups, because the operator
 // enabled the real-time check for a security reason.
 func TestIntrospectionFailsClosedOnError_spec_10_6(t *testing.T) {

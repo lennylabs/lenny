@@ -40,7 +40,7 @@ func passHandler() (grpc.UnaryHandler, *bool) {
 
 const testAud = "lenny-gateway-acme"
 
-// spec: §10.3 line 334 — an empty configured audience disables the
+// spec: §10.3 — an empty configured audience disables the
 // check; every call passes through (local-development path).
 func TestSATokenInterceptorEmptyAudiencePasses_spec_10_3_334(t *testing.T) {
 	h, called := passHandler()
@@ -53,7 +53,7 @@ func TestSATokenInterceptorEmptyAudiencePasses_spec_10_3_334(t *testing.T) {
 	}
 }
 
-// spec: §10.3 line 334 — a token whose aud (string form) matches the
+// spec: §10.3 — a token whose aud (string form) matches the
 // deployment audience is admitted.
 func TestSATokenInterceptorStringAudienceMatches_spec_10_3_334(t *testing.T) {
 	h, called := passHandler()
@@ -67,7 +67,7 @@ func TestSATokenInterceptorStringAudienceMatches_spec_10_3_334(t *testing.T) {
 	}
 }
 
-// spec: §10.3 line 334 — RFC 7519 allows aud as an array; a match within
+// spec: §10.3 — RFC 7519 allows aud as an array; a match within
 // the array is admitted.
 func TestSATokenInterceptorArrayAudienceMatches_spec_10_3_334(t *testing.T) {
 	h, called := passHandler()
@@ -81,7 +81,7 @@ func TestSATokenInterceptorArrayAudienceMatches_spec_10_3_334(t *testing.T) {
 	}
 }
 
-// spec: §10.3 line 334 — a token minted for another deployment's gateway
+// spec: §10.3 — a token minted for another deployment's gateway
 // is rejected (cross-deployment replay protection).
 func TestSATokenInterceptorAudienceMismatchRejected_spec_10_3_334(t *testing.T) {
 	h, called := passHandler()
@@ -96,7 +96,7 @@ func TestSATokenInterceptorAudienceMismatchRejected_spec_10_3_334(t *testing.T) 
 	}
 }
 
-// spec: §10.3 line 334 — a request with no SA token is rejected when the
+// spec: §10.3 — a request with no SA token is rejected when the
 // audience check is active.
 func TestSATokenInterceptorMissingTokenRejected_spec_10_3_334(t *testing.T) {
 	h, called := passHandler()
@@ -110,7 +110,7 @@ func TestSATokenInterceptorMissingTokenRejected_spec_10_3_334(t *testing.T) {
 	}
 }
 
-// spec: §10.3 line 334 — a non-JWT bearer value is rejected rather than
+// spec: §10.3 — a non-JWT bearer value is rejected rather than
 // silently admitted.
 func TestSATokenInterceptorMalformedTokenRejected_spec_10_3_334(t *testing.T) {
 	h, _ := passHandler()

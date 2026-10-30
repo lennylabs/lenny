@@ -54,8 +54,8 @@ func scrubWiringScheme(t *testing.T) *runtime.Scheme {
 // mirror, and that a clean whole-pod scrub on a schedulable host drives the
 // recycle disposition onto the SandboxClaim (recycling → reserved).
 //
-// spec: §4.7 (ReportSessionScrub/ReportPodScrub gateway side), §3.4
-// (recycle disposition), §5.2 (scrub model), §6.39 (host-node schedulability).
+// spec: §4.7 (ReportSessionScrub/ReportPodScrub gateway side), §5.2 (scrub
+// model), §6.2 (host-node schedulability).
 //
 // diagnosis: a failure means the gateway either left the scrub-report RPCs
 // unwired (returning Unimplemented to every adapter), mis-wired the recycle
@@ -119,10 +119,11 @@ func TestScrubReportServiceWiringDrivesRecycle_spec_4_7(t *testing.T) {
 		Name:          poolName,
 		RuntimeRef:    "rt",
 		ExecutionMode: runtimestore.ExecutionModeSession,
-		SessionPolicy: &runtimestore.SessionPolicy{Recycle: &runtimestore.RecyclePolicy{
+		SessionPolicy: &runtimestore.SessionPolicy{AcknowledgeProcessLevelIsolation: true, Recycle: &runtimestore.RecyclePolicy{
 			Enabled: true, AcknowledgeBestEffortScrub: true,
 			OnScrubFailure:   runtimestore.CleanupFailureWarn,
 			MaxScrubFailures: 3, MaxSessionsPerPod: 50,
+			RuntimeProcess: runtimestore.RuntimeProcessKeep,
 		}},
 	}); err != nil {
 		t.Fatalf("create pool: %v", err)
@@ -154,10 +155,12 @@ func TestScrubReportServiceWiringDrivesRecycle_spec_4_7(t *testing.T) {
 	}
 
 	// A clean whole-pod scrub on a schedulable host drives the recycle
-	// disposition: the non-preConnect claim is reserved.
+	// disposition: the non-preConnect claim is reserved. The adapter reports
+	// its runtime live; an omitted runtime_live would retire the pod.
 	if _, err := svc.ReportPodScrub(ctx, &adapterv1.ReportPodScrubRequest{
-		PodId:   podID,
-		Outcome: adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_SUCCEEDED,
+		PodId:       podID,
+		Outcome:     adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_SUCCEEDED,
+		RuntimeLive: true,
 	}); err != nil {
 		if status.Code(err) == codes.Unimplemented {
 			t.Fatal("ReportPodScrub returned Unimplemented: the scrub-report service is not wired")
@@ -183,8 +186,8 @@ func TestScrubReportServiceWiringDrivesRecycle_spec_4_7(t *testing.T) {
 // four leaked sessions in the window.
 //
 // spec: §4.7 (ReportSessionScrub leaked feeds the drain ledger), §5.2
-// (ceil(maxConcurrentSessions/2) unhealthy threshold), §3.4 (recycle
-// disposition), §6.39 (gateway stamps drain-request).
+// (ceil(maxConcurrentSessions/2) unhealthy threshold, recycle
+// disposition), §6.2 (gateway stamps drain-request).
 //
 // diagnosis: a failure means the gateway hard-wires the drain threshold to 1
 // instead of resolving the pod's pool maxConcurrentSessions, so a recycling
@@ -235,6 +238,7 @@ func TestScrubReportServiceWiringResolvesPerPoolDrainThreshold_spec_5_2(t *testi
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled: true, AcknowledgeBestEffortScrub: true,
 				OnScrubFailure: runtimestore.CleanupFailureWarn, MaxSessionsPerPod: 50,
+				RuntimeProcess: runtimestore.RuntimeProcessKeep,
 			},
 		},
 	}); err != nil {
@@ -292,7 +296,7 @@ func TestScrubReportServiceWiringResolvesPerPoolDrainThreshold_spec_5_2(t *testi
 //
 // spec: §5.2 (failed_slots + leaked_slots >= ceil(maxConcurrentSessions/2)),
 // §6.2 (leaked slots combine with failed slots in the rolling window), §4.7
-// (ReportSessionScrub leaked feeds the same ledger), §6.39 (gateway stamps
+// (ReportSessionScrub leaked feeds the same ledger), §6.2 (gateway stamps
 // drain-request).
 //
 // diagnosis: a failure means the gateway wired two disjoint trackers, so the
@@ -343,6 +347,7 @@ func TestScrubReportServiceWiringCombinesSlotFailuresAndLeaks_spec_5_2(t *testin
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled: true, AcknowledgeBestEffortScrub: true,
 				OnScrubFailure: runtimestore.CleanupFailureWarn, MaxSessionsPerPod: 50,
+				RuntimeProcess: runtimestore.RuntimeProcessKeep,
 			},
 		},
 	}); err != nil {
@@ -404,16 +409,14 @@ func newScrubServiceWithTracker(t *testing.T, cl client.Client, counters *memsto
 	t.Helper()
 	// holdTTL 0 falls back to the driver's DefaultClaimHoldTTL; nil HoldRegistrar
 	// leaves reserved-claim expiry to the §4.6.1 orphan GC and nil boundary
-	// leaves the §3.4 missing-report timeout and re-warm completion unwired (the
+	// leaves the missing-report timeout and re-warm completion unwired (the
 	// wiring tests do not exercise the in-process timers).
 	scrubReports, err := newScrubReportService(cl, counters, pools, runtimes, nil, tracker, scrubWiringNS, 0, nil, nil, func() time.Time { return time.Unix(0, 0) })
 	if err != nil {
 		t.Fatalf("newScrubReportService: %v", err)
 	}
-	budgets := leasecontrol.NewMemoryBudgetSource()
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
-		Budgets:      budgets,
-		Tenants:      budgets,
+		Budgets:      emptyLeaseBudgets(t),
 		ScrubReports: scrubReports,
 	})
 	if err != nil {

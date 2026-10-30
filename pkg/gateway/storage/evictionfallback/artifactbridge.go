@@ -10,12 +10,12 @@ import (
 
 // CatalogBridge adapts a *artifactcatalog.PgStore to the
 // ArtifactCatalog interface so the gateway can wire the production
-// §12.5 catalog into the §4.4 line 291 eviction-context accounting
+// §12.5 catalog into the §4.4 eviction-context accounting
 // path. The bridge is a thin translation layer: it builds the catalog
 // Record with `artifact_type = eviction_context` and the URI / size
 // passed in from the writer.
 //
-// spec: §4.4 line 291 — "MinIO eviction-context-object write paired
+// spec: §4.4 — "MinIO eviction-context-object write paired
 // in the same Postgres transaction with `artifact_store` row insert
 // (artifact_type = eviction_context)".
 type CatalogBridge struct {
@@ -47,10 +47,9 @@ func (b *CatalogBridge) RecordEvictionContext(ctx context.Context, tenantID, ses
 
 // QuotaBridge adapts a storagequota.Counter to the StorageQuotaSink
 // interface. The bridge maps the writer's Adjust call onto the
-// per-tenant counter's Adjust method, which is the §11.2 / §4.4 line
-// 291 surface the gateway uses for post-upload byte accounting.
+// per-tenant counter's Adjust method, which is the §11.2 / §4.4 surface the gateway uses for post-upload byte accounting.
 //
-// spec: §4.4 line 291 — "After both rows are durably committed, the
+// spec: §4.4 — "After both rows are durably committed, the
 // gateway follows the standard post-upload increment and increments
 // the tenant's Redis `storage_bytes_used` counter by the confirmed
 // object size."

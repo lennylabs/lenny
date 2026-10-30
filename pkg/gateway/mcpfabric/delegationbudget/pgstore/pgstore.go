@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 
 // Package pgstore is the Postgres-backed delegationbudget.Store: the
-// §11.2 line 29 durable checkpoint of the §8.2 delegation tree budget
+// §11.2 durable checkpoint of the §8.2 delegation tree budget
 // counters. It persists the tree-wide counters to the
-// delegation_tree_budget table so the §11.2 line 48 reconstruction can
+// delegation_tree_budget table so the §11.2 reconstruction can
 // restore them via the MAX rule on Redis recovery.
 //
 // The checkpoint Write touches only the counter columns and
@@ -11,9 +11,9 @@
 // cool_off_expiry columns on the same row (a separate Postgres-backed
 // BudgetSource owns those). checkpoint_at is stamped server-side with
 // clock_timestamp() so the reconstruction's staleness test compares
-// against the database clock per §8.6 line 733.
+// against the database clock per §8.6.
 //
-// spec: §11.2 lines 29, 44, 48; §12.4 lines 193, 218.
+// spec: §11.2; §12.4.
 package pgstore
 
 import (
@@ -120,6 +120,33 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 		return nil
 	}); err != nil {
 		return 0, fmt.Errorf("delegationbudget/pgstore: delete by tenant %q: %w", tenantID, err)
+	}
+	return deleted, nil
+}
+
+// DeleteByRoot removes the delegation_tree_budget row of one root session
+// within tenantID, which carries the tree's counter checkpoint, its §8.6
+// denial and cool-off, and its cumulative extension grants. The DELETE runs
+// under the tenant's RLS transaction and names the tenant in its predicate,
+// so a call under another tenant deletes nothing. The returned count is the
+// rows removed; a root with no row, or a session id that is not a root, is a
+// no-op returning (0, nil).
+//
+// spec: §12.8 (Compliance Interfaces: DeleteByUser dependency-ordered
+// deletion sequence).
+func (s *Store) DeleteByRoot(ctx context.Context, tenantID, rootSessionID string) (int, error) {
+	var deleted int
+	if err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM delegation_tree_budget WHERE tenant_id = $1 AND root_session_id = $2`,
+			tenantID, rootSessionID)
+		if err != nil {
+			return err
+		}
+		deleted = int(tag.RowsAffected())
+		return nil
+	}); err != nil {
+		return 0, fmt.Errorf("delegationbudget/pgstore: delete tree %q of tenant %q: %w", rootSessionID, tenantID, err)
 	}
 	return deleted, nil
 }

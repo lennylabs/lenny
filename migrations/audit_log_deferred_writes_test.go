@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §25.9 lines 3684-3691. Migration 0125 creates the
+// spec: §25.9. Migration 0125 creates the
 // audit_log_deferred_writes table that tracks audit events generated
 // during a Postgres outage for original-timestamp-order reconciliation.
 // Platform-scoped (no RLS, no tenant column); the down migration drops it.

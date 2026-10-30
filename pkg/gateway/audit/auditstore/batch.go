@@ -12,20 +12,19 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 )
 
-// AppendBatch is the §12.3 line 81 batched-insert flush callback for the
+// AppendBatch is the §12.3 batched-insert flush callback for the
 // opt-in T2 audit batching buffer (auditbatch.FlushFunc). It groups the
 // buffered items by tenant chain and seals each group under one
 // per-tenant advisory lock in a single transaction, reusing the same
 // prev_hash chain construction as the synchronous Append: sealAndInsert
 // reads the chain tail on each call, so iterating it within one locked
-// transaction chains the batch correctly. The write runs on the §12.3
-// line 79 dedicated audit sync write pool when one is wired.
+// transaction chains the batch correctly. The write runs on the §12.3 dedicated audit sync write pool when one is wired.
 //
 // A whole tenant group fails atomically (one transaction): the buffer
 // reports the loss and drops the batch, the accepted T2 data-loss
-// tradeoff of batching (§12.3 lines 81-83).
+// tradeoff of batching (§12.3).
 //
-// spec: §12.3 line 81 (T2 batched inserts); §11.7 item 3 (per-tenant
+// spec: §12.3; §11.7 item 3 (per-tenant
 // advisory lock).
 func (s *Store) AppendBatch(ctx context.Context, items []auditbatch.Item) error {
 	if len(items) == 0 {

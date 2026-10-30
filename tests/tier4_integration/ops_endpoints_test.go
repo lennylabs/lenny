@@ -54,11 +54,10 @@ import (
 // which shows the drift endpoints diverged from §25.10 when driven against
 // a real store rather than an httptest stub.
 func TestOpsDriftEndpointsAgainstPostgresE2E(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 
 	ops := opsprocess.StartWith(
@@ -244,8 +243,12 @@ func TestOpsDriftEndpointsAgainstPostgresE2E(t *testing.T) {
 // fail closed with 503 DRIFT_DESIRED_STATE_MISSING once the snapshot
 // store became unreachable.
 func TestOpsDriftDegradesUnderPostgresOutage(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
+	// A container of its own rather than sharedDatabase: the test stops
+	// Postgres to inject an outage, and a shared container cannot stop for
+	// one test (T-17.4.33).
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
 		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
 	})
@@ -357,9 +360,10 @@ func TestOpsDriftDegradesUnderPostgresOutage(t *testing.T) {
 // the requested grouping, or the summary did not reject an unsupported
 // groupBy value with the documented 400.
 func TestGatewayAuditQueryEndpointsE2E(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
-	gw := gateway.StartWith(t, "--dev-mode")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	base := gw.BaseURL()
 	client := http.DefaultClient
 
@@ -543,15 +547,14 @@ func TestGatewayAuditQueryEndpointsE2E(t *testing.T) {
 // event buffer did not round-trip a monotonic cursor over a real emitted
 // event.
 func TestGatewaySideOpsEndpointsE2E(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 
 	gw := gateway.StartWith(
-		t, "--dev-mode",
+		t, "--no-environment-policy", "allow-all", "--dev-mode",
 		"--postgres-dsn="+pg.DSN,
 		"--redis-url=redis://"+rd.Addr+"/0",
 	)
@@ -859,11 +862,10 @@ func TestGatewaySideOpsEndpointsE2E(t *testing.T) {
 // response was not persisted to ops_idempotency_keys, or the
 // (key, caller_id) binding leaked one caller's cached response to another.
 func TestOpsRemediationIdempotencyReplayAgainstPostgresE2E(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 
 	ops := opsprocess.StartWith(

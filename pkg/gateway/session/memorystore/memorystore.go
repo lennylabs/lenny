@@ -158,7 +158,7 @@ func (m *InMemory) SetObserver(obs Observer) {
 	m.observer = obs
 }
 
-// MaxPerUser returns the §9.4 line 202 per-user capacity bound. It is
+// MaxPerUser returns the §9.4 per-user capacity bound. It is
 // the value used when evaluating whether a Write commit crossed the
 // 80%-of-cap headroom threshold.
 func (m *InMemory) MaxPerUser() int {
@@ -171,7 +171,7 @@ func (m *InMemory) MaxPerUser() int {
 // pool is configured).
 const inMemoryBackendLabel = "memory"
 
-// Write implements Store. spec: §9.4 line 200.
+// Write implements Store. spec: §9.4.
 func (m *InMemory) Write(_ context.Context, scope MemoryScope, memories []Memory) (err error) {
 	defer m.observe(OpWrite, time.Now(), &err)
 	if scope.TenantID == "" {
@@ -204,7 +204,7 @@ func (m *InMemory) Write(_ context.Context, scope MemoryScope, memories []Memory
 		m.memories[mem.ID] = cloneMemory(mem)
 	}
 	m.evictOldest(scope.TenantID, scope.UserID)
-	// §9.4 line 202 — surface the per-user 80% headroom counter once
+	// §9.4 — surface the per-user 80% headroom counter once
 	// the write has committed. The user's count is computed against
 	// the post-eviction map so an unbounded series of writes never
 	// double-counts the threshold crossing.
@@ -244,8 +244,8 @@ func (m *InMemory) countTenantLocked(tenantID string) int {
 	return n
 }
 
-// observe records the §16.1 line 151 duration histogram observation
-// and (when err points at a non-nil error) the §16.1 line 152 error
+// observe records the §16.1 duration histogram observation
+// and (when err points at a non-nil error) the §16.1 error
 // counter. The caller defers it at function entry. A nil observer is
 // a no-op.
 func (m *InMemory) observe(op string, start time.Time, err *error) {
@@ -435,7 +435,7 @@ func (m *InMemory) DeleteByTenant(_ context.Context, tenantID string) (err error
 }
 
 // TenantRecordCounts returns the per-tenant memory record count map.
-// The §9.4 line 202 record-count gauge sampler calls this method to
+// The §9.4 record-count gauge sampler calls this method to
 // refresh the gauge.
 func (m *InMemory) TenantRecordCounts(_ context.Context) (map[string]int, error) {
 	m.mu.RLock()

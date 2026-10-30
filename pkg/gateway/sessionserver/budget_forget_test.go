@@ -23,7 +23,8 @@ func TestTerminalPipelineForgetsBudgetAccounting_spec_11_2(t *testing.T) {
 	store := memstore.New()
 	var forgotten []string
 	srv := sessionserver.New(store, sessionserver.Options{
-		BudgetForget: func(sessionID string) { forgotten = append(forgotten, sessionID) },
+		DevTenantHeader: true,
+		BudgetForget:    func(sessionID string) { forgotten = append(forgotten, sessionID) },
 	})
 	row := sessionstore.Session{
 		ID: "s_1", TenantID: "acme", State: session.StateCompleted,
@@ -33,6 +34,9 @@ func TestTerminalPipelineForgetsBudgetAccounting_spec_11_2(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	srv.OnSessionTerminal(ctx, session.StateRunning, row)
+	if err := srv.WaitTerminalWork(context.Background()); err != nil {
+		t.Fatalf("WaitTerminalWork: %v", err)
+	}
 
 	if len(forgotten) != 1 || forgotten[0] != "s_1" {
 		t.Fatalf("BudgetForget calls = %v, want [s_1]", forgotten)
@@ -43,7 +47,7 @@ func TestTerminalPipelineForgetsBudgetAccounting_spec_11_2(t *testing.T) {
 func TestTerminalPipelineNilBudgetForgetIsSafe_spec_11_2(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	row := sessionstore.Session{
 		ID: "s_1", TenantID: "acme", State: session.StateCompleted,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
@@ -52,4 +56,7 @@ func TestTerminalPipelineNilBudgetForgetIsSafe_spec_11_2(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	srv.OnSessionTerminal(ctx, session.StateRunning, row) // must not panic
+	if err := srv.WaitTerminalWork(context.Background()); err != nil {
+		t.Fatalf("WaitTerminalWork: %v", err)
+	}
 }

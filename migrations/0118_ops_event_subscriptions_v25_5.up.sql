@@ -12,7 +12,7 @@
 -- rebuilt as the spec's TEXT[]. The reshape replaces both columns rather than
 -- casting in place.
 --
--- §10.5 Phase 3 column drop (spec §10.5 line 417). The DROP COLUMN is
+-- §10.5 Phase 3 column drop (spec §10.5). The DROP COLUMN is
 -- irreversible, so it is fronted by a PL/pgSQL DO $$ preflight gate that counts
 -- un-migrated rows and RAISE EXCEPTIONs when any remain. The reshape carries no
 -- per-row backfill of the stub `secret`/`types` values into the new
@@ -22,7 +22,7 @@
 -- RAISE EXCEPTION rolls back the entire migration. The drops are idempotent
 -- (DROP COLUMN IF EXISTS) so a re-run after the gate passes is a no-op.
 --
--- spec: §25.5 lines 2613-2664, §10.5 line 417 (Phase 3 enforcement gate).
+-- spec: §25.5, §10.5.
 -- gate-index: ops_event_subscriptions_pkey
 DO $$
 DECLARE remaining bigint;

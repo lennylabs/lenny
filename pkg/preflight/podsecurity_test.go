@@ -24,7 +24,7 @@ func compliantContainer(name string) corev1.Container {
 	}
 }
 
-// spec: §13.1 lines 6-8 — a workload whose containers run as non-root,
+// spec: §13.1 — a workload whose containers run as non-root,
 // drop all capabilities, and mount a read-only root filesystem passes
 // the baseline. F-13.1.12.
 func TestCheckPodSecurityBaseline_compliant_spec_13_1(t *testing.T) {
@@ -39,7 +39,7 @@ func TestCheckPodSecurityBaseline_compliant_spec_13_1(t *testing.T) {
 	}
 }
 
-// spec: §13.1 lines 6-8 — each missing control fails fail-closed with
+// spec: §13.1 — each missing control fails fail-closed with
 // POD_SPEC_SECURITY_BASELINE_VIOLATION. F-13.1.12.
 func TestCheckPodSecurityBaseline_violations_spec_13_1(t *testing.T) {
 	base := ContainerSecurity{Name: "gateway", RunAsNonRoot: true, ReadOnlyRootFilesystem: true, DropsAllCapabilities: true}
@@ -78,7 +78,7 @@ func TestCheckPodSecurityBaseline_empty_passes(t *testing.T) {
 	}
 }
 
-// spec: §13.1 lines 6-8 — projectPodSecurity resolves each container's
+// spec: §13.1 — projectPodSecurity resolves each container's
 // effective runAsNonRoot from the container securityContext when set,
 // else the pod-level securityContext, and reads the capability and
 // root-filesystem fields from the container. F-13.1.12.

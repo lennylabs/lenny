@@ -23,7 +23,9 @@ The sections below follow the source in order: a line-by-line walkthrough of eac
 // This implements the Basic level of the Lenny adapter contract:
 //   - Reads JSON Lines from stdin
 //   - Handles "message" by echoing input with a sequence number
-//   - Handles "heartbeat" by responding with "heartbeat_ack"
+//   - Handles "heartbeat" by responding with "heartbeat_ack"; the echo runtime
+//     finishes each message before it reads the next frame, so it is never
+//     busy for a session when it reads a heartbeat
 //   - Handles "shutdown" by exiting cleanly
 //   - Ignores unknown message types for forward compatibility
 //
@@ -45,15 +47,19 @@ import (
 // We only parse the fields we need; unknown fields are silently ignored
 // by encoding/json (this is the forward-compatibility rule).
 type InboundMessage struct {
-	Type  string          `json:"type"`
-	ID    string          `json:"id,omitempty"`
-	Input []MessagePart    `json:"input,omitempty"`
-	TS    int64           `json:"ts,omitempty"`         // heartbeat timestamp
-	Reason string         `json:"reason,omitempty"`     // shutdown reason
-	DeadlineMs int        `json:"deadline_ms,omitempty"` // shutdown deadline
+	Type  string        `json:"type"`
+	ID    string        `json:"id,omitempty"`
+	Input []MessagePart `json:"input,omitempty"`
+	// SessionID names the session this frame is addressed to. The adapter
+	// populates it on every pod, and a Basic-level runtime echoes it on the
+	// frames it emits in response.
+	SessionID  string `json:"sessionId,omitempty"`
+	TS         int64  `json:"ts,omitempty"`          // heartbeat timestamp
+	Reason     string `json:"reason,omitempty"`      // shutdown reason
+	DeadlineMs int    `json:"deadline_ms,omitempty"` // shutdown deadline
 
 	// tool_result fields
-	Content []MessagePart  `json:"content,omitempty"`
+	Content []MessagePart `json:"content,omitempty"`
 	IsError bool          `json:"isError,omitempty"`
 }
 
@@ -68,13 +74,18 @@ type MessagePart struct {
 
 // Response is the primary output message, signaling task completion.
 type Response struct {
-	Type   string       `json:"type"`
-	Output []MessagePart `json:"output"`
+	Type      string        `json:"type"`
+	SessionID string        `json:"sessionId,omitempty"`
+	Output    []MessagePart `json:"output"`
 }
 
-// HeartbeatAck acknowledges a heartbeat ping.
+// HeartbeatAck acknowledges a heartbeat ping. SessionID and Busy report
+// that the runtime is doing work for the session the heartbeat names; a
+// runtime that is idle omits both.
 type HeartbeatAck struct {
-	Type string `json:"type"`
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId,omitempty"`
+	Busy      bool   `json:"busy,omitempty"`
 }
 
 // ---- Main loop ----
@@ -94,7 +105,7 @@ func main() {
 		// Parse the inbound message.
 		var msg InboundMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			// Log parse errors to stderr (captured by adapter for diagnostics).
+			// Log parse errors to stderr, which goes to the container's log.
 			fmt.Fprintf(os.Stderr, "echo-runtime: failed to parse message: %v\n", err)
 			continue
 		}
@@ -111,6 +122,9 @@ func main() {
 			seq++
 			resp := Response{
 				Type: "response",
+				// Echo the inbound sessionId on every session-scoped frame
+				// emitted in response.
+				SessionID: msg.SessionID,
 				Output: []MessagePart{
 					{
 						Type:   "text",
@@ -127,7 +141,9 @@ func main() {
 			fmt.Fprintf(os.Stderr, "echo-runtime: received tool_result id=%s (ignored)\n", msg.ID)
 
 		case "heartbeat":
-			// Respond immediately. Failure to ack within 10 seconds causes SIGTERM.
+			// Respond immediately, within 10 seconds. The echo runtime has
+			// finished every message it read, so it does no work for the
+			// session the heartbeat names and reports no busy session.
 			writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
 
 		case "shutdown":
@@ -174,26 +190,27 @@ func writeJSON(v interface{}) {
 
 ```go
 type InboundMessage struct {
-    Type  string          `json:"type"`
-    ID    string          `json:"id,omitempty"`
-    Input []MessagePart    `json:"input,omitempty"`
-    // ...
+	Type      string        `json:"type"`
+	ID        string        `json:"id,omitempty"`
+	Input     []MessagePart `json:"input,omitempty"`
+	SessionID string        `json:"sessionId,omitempty"`
+	// ...
 }
 ```
 
-We define a single struct that can hold fields from any inbound message type. Go's `encoding/json` silently ignores unknown fields, which satisfies the forward-compatibility rule: your runtime MUST ignore fields it does not recognize. We dispatch on `msg.Type` to determine which fields are relevant.
+We define a single struct that can hold fields from any inbound message type. Go's `encoding/json` silently ignores unknown fields, which satisfies the forward-compatibility rule: your runtime MUST ignore fields it does not recognize. We dispatch on `msg.Type` to determine which fields are relevant. `sessionId` is the exception to the ignore permission: it names the session the frame is addressed to, the adapter populates it on every pod, and the runtime echoes it on the session-scoped frames it emits in response.
 
 ### The Main Loop
 
 ```go
 scanner := bufio.NewScanner(os.Stdin)
 for scanner.Scan() {
-    line := scanner.Bytes()
-    var msg InboundMessage
-    json.Unmarshal(line, &msg)
-    switch msg.Type {
-    // ...
-    }
+	line := scanner.Bytes()
+	var msg InboundMessage
+	json.Unmarshal(line, &msg)
+	switch msg.Type {
+	// ...
+	}
 }
 ```
 
@@ -203,42 +220,45 @@ The loop reads one line at a time from stdin. Each line is a complete JSON objec
 
 ```go
 case "message":
-    inputText := msg.Input[0].Inline
-    seq++
-    resp := Response{
-        Type: "response",
-        Output: []MessagePart{{Type: "text", Inline: fmt.Sprintf("echo [seq=%d]: %s", seq, inputText)}},
-    }
-    writeJSON(resp)
+	inputText := msg.Input[0].Inline
+	seq++
+	resp := Response{
+		Type:      "response",
+		SessionID: msg.SessionID,
+		Output:    []MessagePart{{Type: "text", Inline: fmt.Sprintf("echo [seq=%d]: %s", seq, inputText)}},
+	}
+	writeJSON(resp)
 ```
 
-We extract the text from the first `MessagePart` in the `input` array. We write a `response` message to stdout. The `response` signals task completion --- the adapter forwards the output to the gateway and the gateway delivers it to the client.
+We extract the text from the first `MessagePart` in the `input` array. We write a `response` message to stdout, carrying the `sessionId` the inbound `message` was addressed with. The `response` signals task completion --- the adapter forwards the output to the gateway and the gateway delivers it to the client. Echoing `sessionId` is the Basic-level echo obligation: the adapter resolves each session-scoped frame against the session it names, and a `response` that names no session is rejected on a pod holding more than one slot.
 
 ### Handling `heartbeat`
 
 ```go
 case "heartbeat":
-    writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
+	writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
 ```
 
-The adapter sends periodic heartbeats to check liveness. You MUST respond within 10 seconds or the adapter sends SIGTERM. The heartbeat handler should be immediate --- do not do any heavy work here.
+The adapter sends a `heartbeat` once per interval for each session it holds, naming the session in `sessionId`. You MUST respond within 10 seconds. If no acknowledgment arrives within 10 seconds, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy. The heartbeat handler should be immediate --- do not do any heavy work here.
+
+The echo runtime handles each message to completion before it reads the next frame, so when it reads a heartbeat it is doing no work for any session, and a bare `heartbeat_ack` is correct. A runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for the session the heartbeat names, as in `{"type":"heartbeat_ack","sessionId":"sess_abc","busy":true}`. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../reference/glossary#slot); each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. See [Idle suspension](lifecycle.md#idle-suspension). A runtime that waits for a `tool_result` or does other work across frames reports it, as [How to Modify It for Your Own Runtime](#how-to-modify-it-for-your-own-runtime) shows.
 
 ### Handling `shutdown`
 
 ```go
 case "shutdown":
-    os.Exit(0)
+	os.Exit(0)
 ```
 
-The adapter sends `shutdown` when the pod is being drained, the session has completed, or the budget is exhausted. Exit cleanly within `deadline_ms`. For the echo runtime, there is no cleanup needed, so we exit immediately.
+The adapter sends `shutdown` when the pod is being drained. Exit cleanly within `deadline_ms`. For the echo runtime, there is no cleanup needed, so we exit immediately.
 
 ### Writing to stdout
 
 ```go
 func writeJSON(v interface{}) {
-    data, _ := json.Marshal(v)
-    os.Stdout.Write(data)
-    os.Stdout.Write([]byte("\n"))
+	data, _ := json.Marshal(v)
+	os.Stdout.Write(data)
+	os.Stdout.Write([]byte("\n"))
 }
 ```
 
@@ -254,14 +274,15 @@ When the pod starts, the adapter:
 2. Writes the adapter manifest to `/run/lenny/adapter-manifest.json`.
 3. Signals readiness to the gateway (pod enters the warm pool).
 4. Waits for session assignment.
-5. Receives workspace files from the gateway and materializes them to `/workspace/current/`.
-6. Spawns your binary with stdin/stdout pipes connected.
-7. Delivers the first `message` on stdin.
-8. Relays your `response` from stdout to the gateway.
-9. Sends periodic `heartbeat` messages.
-10. On session end, sends `shutdown` and waits for your binary to exit.
+5. Receives workspace files from the gateway and materializes them to `/workspace/slots/{sessionId}/current/`.
+6. Asks the runtime supervisor to launch your binary when the pod has launched no runtime process since its creation or since the platform last ended one, and the adapter has not marked the runtime not live, after the manifest is written, and accepts the connection your binary dials. A session that starts while a process is live reaches that process.
+7. Writes the session's `session_start` frame on stdin, before the session's first message.
+8. Delivers the first `message` on stdin.
+9. Relays your `response` from stdout to the gateway.
+10. Sends periodic `heartbeat` messages.
+11. At the session's end, writes the session's `session_end` frame on stdin; the process keeps serving the pod.
 
-Your binary does not handle any of these steps. It reads from stdin and writes to stdout, and the adapter does the rest.
+Your binary does not handle any of these steps. It reads from stdin and writes to stdout, and the adapter does the rest. The echo runtime keeps no per-session context, so it ignores `session_start` and `session_end` under its unknown-type rule. Because it also opens no CH-RUNTIMEOPS connection, it writes no `session_started` acknowledgement. The [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) defines both frames.
 
 ---
 
@@ -331,27 +352,41 @@ docker compose run smoke-test
 
 ```go
 case "message":
-    // Read a file from the workspace
-    readCall := ToolCall{
-        Type:      "tool_call",
-        ID:        "tc_001",
-        Name:      "read_file",
-        Arguments: map[string]string{"path": "/workspace/current/input.txt"},
-    }
-    writeJSON(readCall)
+	// Read a file from the workspace
+	readCall := ToolCall{
+		Type:      "tool_call",
+		ID:        "tc_001",
+		SessionID: msg.SessionID,
+		Name:      "read_file",
+		Arguments: map[string]string{"path": "/workspace/slots/" + msg.SessionID + "/current/input.txt"},
+	}
+	writeJSON(readCall)
+	pending[msg.SessionID]++ // pending := map[string]int{} in main
 
-    // Continue reading stdin for the tool_result
-    // (heartbeats may arrive before the result)
+	// Continue reading stdin for the tool_result
+	// (heartbeats may arrive before the result)
+```
+
+While a tool call is pending, the runtime is doing work for the session, so its heartbeat acknowledgement reports `busy: true` with the heartbeat's `sessionId`:
+
+```go
+case "heartbeat":
+	if pending[msg.SessionID] > 0 {
+		writeJSON(HeartbeatAck{Type: "heartbeat_ack", SessionID: msg.SessionID, Busy: true})
+	} else {
+		writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
+	}
 ```
 
 3. **Handle `tool_result`** to process the results of your tool calls:
 
 ```go
 case "tool_result":
-    if msg.ID == "tc_001" {
-        fileContent := msg.Content[0].Inline
-        // Process the file content...
-    }
+	if msg.ID == "tc_001" {
+		pending[msg.SessionID]--
+		fileContent := msg.Content[0].Inline
+		// Process the file content...
+	}
 ```
 
 4. **Add error handling** for malformed input, missing files, and LLM failures. Use the `error` field on the `response` message to report structured errors.

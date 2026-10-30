@@ -6,7 +6,7 @@
 // resolves the escrow objects to delete — so the store reads and writes
 // through the pool directly without the §12.3 per-tenant RLS guard.
 //
-// spec: §12.8 lines 884-885.
+// spec: §12.8.
 package pgstore
 
 import (

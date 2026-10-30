@@ -7,10 +7,10 @@
 // the process. Deployed as a native sidecar sharing an agent pod's
 // network namespace, it makes the adapter's own self-test bind fail with
 // EADDRINUSE, so PeercredSelftest returns an error and the adapter
-// crash-loops. This exercises the §4.7 fail-closed contract ("If the
+// crash-loops. This exercises the §4.7.11 fail-closed contract ("If the
 // call fails (error) ... the adapter logs FATAL ... and exits non-zero.
-// The pod enters CrashLoopBackOff, preventing session assignment") in a
-// real pod, which the pkg/adapter unit tests cannot reach.
+// The pod is never marked `idle`.") in a real pod, which the pkg/adapter
+// unit tests cannot reach.
 //
 // After binding the abstract socket the hog opens a plain TCP listener
 // on --ready-port. The negative-path test wires that port to a

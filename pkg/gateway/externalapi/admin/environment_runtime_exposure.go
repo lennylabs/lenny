@@ -85,7 +85,7 @@ func (r *Router) handleEnvironmentRuntimeExposure(w http.ResponseWriter, req *ht
 		}
 	}
 	if r.connectors != nil {
-		// spec: §4.2 line 173 — connectors are tenant-scoped; the
+		// spec: §4.2 — connectors are tenant-scoped; the
 		// environment's runtime-exposure view filters connectors that
 		// belong to the same tenant as the environment.
 		connectors, err := r.connectors.List(req.Context(), env.TenantID, connectorstore.ListFilter{})

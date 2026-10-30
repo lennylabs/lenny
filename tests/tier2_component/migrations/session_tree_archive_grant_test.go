@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
-// spec: §4.2 line 163, §12.8 step 11
+// spec: §4.2, §12.8 step 11
 // diagnosis: migration 0100 did not grant the lenny_app application role
 // the SELECT/INSERT/UPDATE/DELETE privileges on session_tree_archive, or
 // its .down.sql left the table behind. The gateway treearchive pgstore

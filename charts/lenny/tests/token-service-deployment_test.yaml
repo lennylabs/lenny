@@ -146,6 +146,57 @@ tests:
             name: metrics
             containerPort: 9090
 
+  # spec: §10.2 (Authentication) — the Token Service default lifetime for a
+  # request without expires_in comes from auth.capabilityTokenTtlSeconds,
+  # the same value the gateway's playground bearer lifetime reads.
+  - it: renders --capability-token-ttl-seconds from the shared lifetime value
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --capability-token-ttl-seconds=900
+
+  - it: renders an operator-set capability token lifetime
+    set:
+      auth.capabilityTokenTtlSeconds: 1800
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --capability-token-ttl-seconds=1800
+
+  # spec: §10.2 (Authentication), §27 — the values schema bounds
+  # auth.capabilityTokenTtlSeconds to 120..3600, so 119 fails the install
+  # before either binary sees it, and the retired playground key is gone.
+  - it: rejects auth.capabilityTokenTtlSeconds of 119 at schema validation
+    set:
+      auth.capabilityTokenTtlSeconds: 119
+    asserts:
+      - failedTemplate:
+          errorPattern: "/auth/capabilityTokenTtlSeconds.: minimum: got 119, want 120"
+
+  - it: accepts auth.capabilityTokenTtlSeconds at the 120 floor
+    set:
+      auth.capabilityTokenTtlSeconds: 120
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --capability-token-ttl-seconds=120
+
+  - it: rejects the retired playground.bearerTtlSeconds key
+    set:
+      playground.bearerTtlSeconds: 900
+    asserts:
+      - failedTemplate:
+          errorPattern: "bearerTtlSeconds"
+
   # spec: F-4.3.11 / F-17.5.2 — the Token Service receives its KMS
   # provider selector from kms.provider, defaulting to local for the
   # dev install. environment carries the production-rejection gate.
@@ -165,7 +216,8 @@ tests:
     set:
       kms.provider: aws
       kms.awsRegion: us-east-1
-      kms.aliases: "platform:token-service-signing=alias/lenny/token-service"
+      kms.signQuotaPerSecond: 50
+      kms.aliases: "platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab"
       environment: prod
     documentSelector:
       path: kind
@@ -179,10 +231,112 @@ tests:
           content: --kms-aws-region=us-east-1
       - contains:
           path: spec.template.spec.containers[0].args
-          content: --kms-alias=platform:token-service-signing=alias/lenny/token-service
+          content: --kms-alias=platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab
       - contains:
           path: spec.template.spec.containers[0].args
           content: --environment=prod
+      # §17.9.1 "Production mode": --environment is the one carrier; the
+      # chart sets no environment variable that names production mode.
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_ENV
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_PRODUCTION
+          any: true
+
+  # spec: §17.4, §10.2 "Signing key and algorithm" — under kms.provider=local
+  # the Token Service mounts the shared master key Secret (never optional) and
+  # passes --kms-master-key-file, so it derives the same signing key as the
+  # Token Service and lenny-ops.
+  - it: mounts the generated master key Secret and passes --kms-master-key-file under local
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-master-key-file=/etc/lenny/kms/master-key
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+            secret:
+              secretName: lenny-kms-master-key
+              items:
+                - key: master-key
+                  path: master-key
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: kms-master-key
+            mountPath: /etc/lenny/kms
+            readOnly: true
+
+  - it: mounts the Secret kms.masterKeySecret names
+    set:
+      kms.masterKeySecret: acme-kms-master-key
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+            secret:
+              secretName: acme-kms-master-key
+              items:
+                - key: master-key
+                  path: master-key
+
+  - it: renders no master key mount or flag under a cloud provider
+    set:
+      kms.provider: aws
+      kms.signQuotaPerSecond: 50
+      kms.aliases: "platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --kms-master-key-file=/etc/lenny/kms/master-key
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: kms-master-key
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: kms-master-key
+          any: true
+
+  # spec: §10.2 "Signing topology" — the ServiceAccount binds to the provider
+  # identity holding the KMS Sign and GetPublicKey permissions.
+  - it: renders tokenService.serviceAccount.annotations on lenny-token-service
+    set:
+      tokenService.serviceAccount.annotations:
+        eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/lenny-token-service
+    documentSelector:
+      path: kind
+      value: ServiceAccount
+    asserts:
+      - equal:
+          path: metadata.annotations["eks.amazonaws.com/role-arn"]
+          value: arn:aws:iam::111122223333:role/lenny-token-service
+
+  - it: renders no annotations on lenny-token-service by default
+    documentSelector:
+      path: kind
+      value: ServiceAccount
+    asserts:
+      - notExists:
+          path: metadata.annotations
 
   - it: protects the token-service with a PodDisruptionBudget
     documentSelector:
@@ -199,7 +353,7 @@ tests:
           path: spec.selector.matchLabels["lenny.dev/component"]
           value: token-service
 
-  # spec: §4.3 line 195 / §10.3 — when mtls.enabled the chart mounts
+  # spec: §4.3 / §10.3 — when mtls.enabled the chart mounts
   # the lenny-token-service-tls Secret and passes the --tls-* flags so
   # the gRPC listener requires and verifies gateway client certs.
   - it: mounts the lenny-token-service-tls Secret when mtls.enabled (default)
@@ -261,7 +415,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --tls-ca=/etc/lenny/mtls/ca.crt
 
-  # spec: §4.3 line 195 / §10.3 — when mtls.enabled=false (mesh-managed
+  # spec: §4.3 / §10.3 — when mtls.enabled=false (mesh-managed
   # mTLS) the chart skips the volume mounts and the --tls-* flags so
   # the binary runs in dev mode.
   - it: omits mTLS volume mounts and flags when mtls.enabled=false
@@ -274,12 +428,18 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].args
           content: --tls-cert=/etc/lenny/mtls/tls.crt
-      - isNull:
+      - notContains:
           path: spec.template.spec.volumes
-      - isNull:
+          content:
+            name: lenny-token-service-tls
+          any: true
+      - notContains:
           path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: lenny-token-service-tls
+          any: true
 
-  # spec: §10.5 line 544 ("Token Service: Rolling Deployment update") /
+  # spec: §10.5 /
   # §17.1 — the Token Service declares an explicit RollingUpdate
   # strategy with maxUnavailable 0 so a rollout keeps full token-minting
   # capacity on the gateway auth path. F-10.5.9.
@@ -312,3 +472,285 @@ tests:
       - equal:
           path: spec.strategy.rollingUpdate.maxSurge
           value: 50%
+
+  # spec: §13.3 (Credential Flow) "Write-before-issue ordering", §4.3 (Token
+  # Service) — the Token Service reads the Postgres DSN from the shared
+  # datastore Secret so it writes issued_tokens and token.exchanged rows.
+  # F-4.3.21.
+  - it: renders LENNY_POSTGRES_DSN from lenny-datastore-conn when postgres.dsn is set
+    set:
+      postgres.dsn: "postgres://lenny_app@lenny-pgbouncer:5432/lenny"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_DSN
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: postgres-dsn
+
+  - it: renders no datastore env when neither postgres.dsn nor a Redis connection is set
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env
+
+  # spec: §13.3 (Credential Flow) "Token rotation and revocation", §17.9.3 —
+  # the external Redis URL the gateway uses.
+  - it: renders LENNY_REDIS_URL from lenny-datastore-conn on the external topology
+    set:
+      redis.provider: external
+      redis.url: "rediss://:pw@redis-master:6380"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_URL
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-url
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-allow-insecure
+
+  # spec: §12.4 (Redis HA and Failure Modes) "Logical separation of Redis
+  # concerns", §13.3 — revocations go to the Cache/Pub-Sub concern the
+  # gateway replicas and lenny-ops subscribe on.
+  - it: renders LENNY_REDIS_CACHE_PUBSUB_URL when redis.concerns.cachePubSubUrl is set
+    set:
+      redis.provider: external
+      redis.url: "rediss://:pw@redis-master:6380"
+      redis.concerns.cachePubSubUrl: "rediss://:pw@redis-cache:6380"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_CACHE_PUBSUB_URL
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-cache-pubsub-url
+
+  # spec: §17.9.3 (Redis topology), §12.4 — the Sentinel topology with TLS
+  # and the AUTH credentials from the datastore Secret.
+  - it: renders the Sentinel connection on the sentinel topology
+    set:
+      redis.provider: sentinel
+      redis.sentinels: ["s-0:26379", "s-1:26379"]
+      redis.sentinelMaster: lenny-master
+      redis.password: data-pw
+      redis.sentinelPassword: sentinel-pw
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SENTINEL_ADDRS
+            value: "s-0:26379,s-1:26379"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SENTINEL_MASTER
+            value: lenny-master
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_TLS
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-password
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SENTINEL_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-sentinel-password
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_URL
+          any: true
+
+  # spec: §12.4 (Redis HA and Failure Modes) — the Cluster seed nodes.
+  - it: renders LENNY_REDIS_CLUSTER_ADDRS on the cluster topology
+    set:
+      redis.provider: cluster
+      redis.cluster.addrs: "c-0:6379,c-1:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_CLUSTER_ADDRS
+            value: "c-0:6379,c-1:6379"
+
+  # spec: §12.4 (Redis HA and Failure Modes) "Security" (AUTH and TLS are
+  # required on every Redis instance), §17.9.3 — the Cluster topology
+  # requests TLS and reads the AUTH password from the datastore Secret, so
+  # the binary passes the §12.4 startup invariant outside dev mode. F-12.4.37.
+  - it: requests TLS and reads the AUTH password on the cluster topology
+    set:
+      redis.provider: cluster
+      redis.cluster.addrs: "c-0:6379,c-1:6379"
+      redis.password: cluster-pw
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_TLS
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-password
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SENTINEL_ADDRS
+          any: true
+
+  # spec: §12.4 (Redis HA and Failure Modes) "Security" — with no password
+  # the Cluster topology still requests TLS and reads no Secret key, so the
+  # binary refuses to start with the §12.4 AUTH error rather than a missing
+  # Secret key. F-12.4.37.
+  - it: requests TLS and reads no password key on the cluster topology without a password
+    set:
+      redis.provider: cluster
+      redis.cluster.addrs: "c-0:6379,c-1:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_TLS
+            value: "true"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_PASSWORD
+          any: true
+
+  # spec: §12.4 (Redis HA and Failure Modes) "Security" — the external
+  # topology carries AUTH and TLS in the rediss:// URL, so a stray password
+  # renders neither env entry. F-12.4.37.
+  - it: renders no Redis password or TLS env on the external topology
+    set:
+      redis.provider: external
+      redis.url: "rediss://:pw@r.svc:6380/0"
+      redis.password: stray
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_PASSWORD
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_TLS
+          any: true
+
+  # spec: §12.4, §17.4 (Local Development Mode) "Dev mode guard rails" —
+  # the AUTH-and-TLS opt-out renders only under global.devMode.
+  - it: passes --redis-allow-insecure only under global.devMode with a Redis connection
+    set:
+      global.devMode: true
+      redis.provider: external
+      redis.url: "redis://redis:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-allow-insecure
+
+  - it: passes no --redis-allow-insecure under global.devMode without a Redis connection
+    set:
+      global.devMode: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-allow-insecure
+
+  # spec: §13.3 (Credential Flow) "Client authentication on /v1/oauth/token",
+  # §10.2 (Authentication) "`tenant_id` extraction" — the Token Service
+  # admits the upstream IdP's ID token as the bootstrap caller credential, so
+  # it receives the same IdP issuer, client id, and tenant claim the gateway
+  # does. F-13.3.21.
+  - it: passes the IdP issuer, client id, and tenant claim from auth.*
+    set:
+      auth.oidc.issuerUrl: "https://idp.acme.com"
+      auth.oidc.clientId: lenny-gateway
+      auth.tenantIdClaim: "https://acme.example/tenant"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --oidc-issuer-url=https://idp.acme.com
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --oidc-client-id=lenny-gateway
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --tenant-id-claim=https://acme.example/tenant
+
+  - it: passes no IdP issuer or client id when auth.oidc is unset
+    set:
+      auth.oidc.issuerUrl: ""
+      auth.oidc.clientId: ""
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --oidc-issuer-url=
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --oidc-client-id=
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --tenant-id-claim=tenant_id

@@ -66,7 +66,7 @@ func TestCreateBackupEndpoint(t *testing.T) {
 	}
 }
 
-// spec: §25.2 lines 287-300, §25.11 line 3883 — a full backup in
+// spec: §25.2, §25.11 — a full backup in
 // production without confirm:true returns 200 with a dry-run preview
 // (not an error); with confirm:true it is accepted. F-25.2.5.
 func TestCreateBackupConfirmGateInProduction_spec_25_2_300(t *testing.T) {
@@ -401,8 +401,7 @@ func TestRestoreStatusEndpoint(t *testing.T) {
 
 // TestBackupUnavailableUsesCanonicalErrorCode_spec_25_11_4335 asserts
 // that when lenny-ops has no BackupService wired (s.backups == nil),
-// the §25.11 routes return BACKUP_STORAGE_UNREACHABLE — the closest
-// catalogued code (Error Codes table line 4335, TRANSIENT 503).
+// the §25.11 routes return BACKUP_STORAGE_UNREACHABLE — the closest catalogued code.
 // Returning a non-catalogued code would break the agent-operability
 // contract that the response is one of the spec's enumerated set.
 func TestBackupUnavailableUsesCanonicalErrorCode_spec_25_11_4335(t *testing.T) {
@@ -435,7 +434,7 @@ func TestBackupUnavailableUsesCanonicalErrorCode_spec_25_11_4335(t *testing.T) {
 			continue
 		}
 		if resp.Error.Code != backup.ErrCodeStorageUnreachable {
-			t.Errorf("%s %s code = %q, want %q (spec §25.11 line 4335)",
+			t.Errorf("%s %s code = %q, want %q (spec §25.11)",
 				tc.method, tc.path, resp.Error.Code, backup.ErrCodeStorageUnreachable)
 		}
 		if resp.Error.Category != "TRANSIENT" {
@@ -477,7 +476,7 @@ func setupFailedRestore(t *testing.T, svc *backup.Service, store *backup.MemStor
 }
 
 // TestConfirmLegalHoldLedgerRequiresPlatformAdmin_spec_25_11_3897 covers
-// the §25.11 line 3897 narrowing: confirm-legal-hold-ledger requires the
+// the §25.11 narrowing: confirm-legal-hold-ledger requires the
 // platform-admin role specifically, not the general admin role gate that
 // also admits tenant-admin.
 func TestConfirmLegalHoldLedgerRequiresPlatformAdmin_spec_25_11_3897(t *testing.T) {
@@ -553,8 +552,8 @@ func auditEventOfType(t *testing.T, events []backup.AuditEvent, eventType string
 	return backup.AuditEvent{}
 }
 
-// spec: §25.1 line 121 (operationId on every request audit event),
-// §25.2 line 350 (operationId propagated to audit events).
+// spec: §25.1,
+// §25.2.
 // diagnosis: handleCreateBackup did not propagate the caller
 // X-Lenny-Operation-ID onto the BackupRequest, so the §25.17 watchdog
 // operation correlation never reached the backup row or the
@@ -592,8 +591,8 @@ func TestCreateBackupPropagatesOperationID_spec_25_1_121(t *testing.T) {
 	}
 }
 
-// spec: §25.1 line 121 (operationId on every request audit event),
-// §25.2 line 350 (operationId propagated to audit events).
+// spec: §25.1,
+// §25.2.
 // diagnosis: handleRestoreExecute did not propagate the caller
 // X-Lenny-Operation-ID onto the RestoreRequest, so the §25.17 watchdog
 // operation correlation never reached the ops_restore_state row or the

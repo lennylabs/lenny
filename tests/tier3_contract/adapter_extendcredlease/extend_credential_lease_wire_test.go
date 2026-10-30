@@ -19,7 +19,7 @@
 // request with an empty session_id is rejected InvalidArgument, mirroring
 // RotateCredentials's session-id guard.
 //
-// spec: §4.9 (line 1470, ExtendCredentialLease wire contract), §4.7 (Gateway
+// spec: §4.9, §4.7 (Gateway
 // → Adapter RPC surface), §6.1 (per-slot credential lease timer).
 package adapter_extendcredlease_test
 
@@ -50,7 +50,7 @@ const (
 
 	// directPayload is a direct-mode lease payload: a direct-mode lease with
 	// a positive expiry arms the adapter expiry timer ExtendCredentialLease
-	// re-arms. spec: §4.9 line 1149.
+	// re-arms. spec: §4.9.
 	directPayload = `{"deliveryMode":"direct","materializedConfig":{"apiKey":"sk-ant-x"}}`
 )
 
@@ -139,7 +139,7 @@ func fileProviders(t *testing.T, path string) map[string]bool {
 // so the request re-arms a live expiry timer, the §4.9 guard's direct-mode
 // enforcement point.
 //
-// spec: §4.9 (line 1470 ExtendCredentialLease wire contract), §4.7 (Gateway →
+// spec: §4.9, §4.7 (Gateway →
 // Adapter RPC surface)
 //
 // diagnosis: the ExtendCredentialLease RPC is not registered on the Adapter
@@ -155,8 +155,9 @@ func TestExtendCredentialLeaseAcceptedOverWire_spec_4_9(t *testing.T) {
 	defer cancel()
 
 	if _, err := client.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: sessionID},
-		Leases:    map[string]*adapterv1.CredentialLease{provider: directLease("l1", time.Now().Add(time.Hour))},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: sessionID},
+		Leases:      map[string]*adapterv1.CredentialLease{provider: directLease("l1", time.Now().Add(time.Hour))},
 	}); err != nil {
 		t.Fatalf("AssignCredentials: %v", err)
 	}
@@ -186,15 +187,15 @@ func TestExtendCredentialLeaseAcceptedOverWire_spec_4_9(t *testing.T) {
 // short timer would fire and delete the entry, so the survival assertion fails
 // against a non-slot-aware handler.
 //
-// spec: §4.9 (line 1470 ExtendCredentialLease wire contract), §6.1 (per-slot
+// spec: §4.9, §6.1 (per-slot
 // credential lease timer)
 //
 // diagnosis: ExtendCredentialLease ignores slot_id and takes the
 // single-session path, so a concurrent-pool slot's lease deadline is never
 // extended and its still-valid credential is torn down under a transient Token
-// Service outage. Confirm Server.ExtendCredentialLease dispatches to
-// extendCredentialLeaseSlot when slot_id is set.
-func TestExtendCredentialLeaseSlotRoutesToSlotDispatch_spec_6_1(t *testing.T) {
+// Service outage. Confirm Server.ExtendCredentialLease resolves the
+// session's own timer from the session identifier the request carries.
+func TestExtendCredentialLeaseRoutesToTheSessionsOwnTimer_spec_6_1(t *testing.T) {
 	client, credsDir := adapterServer(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -202,9 +203,9 @@ func TestExtendCredentialLeaseSlotRoutesToSlotDispatch_spec_6_1(t *testing.T) {
 	const slotID = "slot-a"
 	shortExpiry := time.Now().Add(time.Second)
 	if _, err := client.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: slotID},
-		SlotId:    &adapterv1.SlotId{Value: slotID},
-		Leases:    map[string]*adapterv1.CredentialLease{provider: directLease("la", shortExpiry)},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: slotID},
+		Leases:      map[string]*adapterv1.CredentialLease{provider: directLease("la", shortExpiry)},
 	}); err != nil {
 		t.Fatalf("AssignCredentials(slot): %v", err)
 	}
@@ -220,7 +221,6 @@ func TestExtendCredentialLeaseSlotRoutesToSlotDispatch_spec_6_1(t *testing.T) {
 
 	resp, err := client.ExtendCredentialLease(ctx, &adapterv1.ExtendCredentialLeaseRequest{
 		SessionId:       &adapterv1.SessionId{Value: slotID},
-		SlotId:          &adapterv1.SlotId{Value: slotID},
 		Provider:        provider,
 		LeaseId:         "la",
 		ExpiresAtUnixMs: time.Now().Add(2 * time.Hour).UnixMilli(),
@@ -252,7 +252,7 @@ func TestExtendCredentialLeaseSlotRoutesToSlotDispatch_spec_6_1(t *testing.T) {
 // attributed to a pod's credential state, so the adapter fails it closed
 // rather than re-arming an unrelated provider's timer.
 //
-// spec: §4.9 (line 1470 ExtendCredentialLease wire contract), §4.7 (Gateway →
+// spec: §4.9, §4.7 (Gateway →
 // Adapter RPC surface)
 //
 // diagnosis: ExtendCredentialLease accepts an empty session_id, so a

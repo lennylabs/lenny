@@ -33,16 +33,17 @@ SESSION_ID=$(curl -s -X POST http://localhost:8080/v1/sessions \
 
 UPLOAD_TOKEN=$(curl -s http://localhost:8080/v1/sessions/${SESSION_ID} | jq -r '.uploadToken')
 
-# Upload a file
+# Upload a file; the response carries its uploadRef
 echo "package main\nfunc main() { println(\"hello\") }" > /tmp/main.go
-curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/upload" \
-  -H "X-Upload-Token: ${UPLOAD_TOKEN}" \
-  -F "files=@/tmp/main.go;filename=main.go"
+UPLOAD_REF=$(curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/upload" \
+  -H "X-Lenny-Upload-Token: ${UPLOAD_TOKEN}" \
+  --data-binary @/tmp/main.go | jq -r '.uploadRef')
 
-# Finalize and start
+# Finalize with a workspace plan that places the upload at main.go, then start
 curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/finalize" \
-  -H "X-Upload-Token: ${UPLOAD_TOKEN}" \
-  -H "Content-Type: application/json" -d '{}'
+  -H "X-Lenny-Upload-Token: ${UPLOAD_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "{\"workspacePlan\":{\"schemaVersion\":1,\"sources\":[{\"type\":\"uploadFile\",\"path\":\"main.go\",\"uploadRef\":\"${UPLOAD_REF}\"}]}}"
 
 curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/start" \
   -H "Content-Type: application/json" -d '{}'
@@ -57,7 +58,7 @@ curl -s -X POST "http://localhost:8080/v1/sessions/${SESSION_ID}/terminate" \
   -H "Content-Type: application/json" -d '{}'
 ```
 
-The session is now in `completed` state with a sealed workspace snapshot.
+The session is now in `completed` state, and the gateway exports its final workspace to durable storage.
 
 ---
 
@@ -84,14 +85,14 @@ Expected response:
 }
 ```
 
-The derived session starts in `created` state with the source's workspace already staged. You can upload additional files, finalize, and start it:
+The derived session starts in `created` state and holds a copy of the source's workspace. Files you upload are applied over that copy, so an uploaded file replaces the copied file at the same path. You can upload additional files, finalize, and start it:
 
 ```bash
 DERIVED_ID=$(echo $DERIVED | jq -r '.session_id')
 DERIVED_TOKEN=$(echo $DERIVED | jq -r '.uploadToken')
 
 curl -s -X POST "http://localhost:8080/v1/sessions/${DERIVED_ID}/finalize" \
-  -H "X-Upload-Token: ${DERIVED_TOKEN}" \
+  -H "X-Lenny-Upload-Token: ${DERIVED_TOKEN}" \
   -H "Content-Type: application/json" -d '{}'
 
 curl -s -X POST "http://localhost:8080/v1/sessions/${DERIVED_ID}/start" \

@@ -46,14 +46,15 @@ func embeddedCRDs(t *testing.T) []apiextensionsv1.CustomResourceDefinition {
 // package documents: the embedded .yaml files are byte-for-byte copies
 // of charts/lenny/crds/, which remain the source of truth. The §17.4
 // Embedded Mode stack installs these copies, so any field, enum, or
-// annotation present in the chart manifest (including the hand-applied
-// `lenny.dev/schema-version` annotation and the
-// x-kubernetes-preserve-unknown-fields markers that controller-gen does
-// not emit) must also be present in the embedded copy. A drift here
+// annotation present in the chart manifest (including the
+// `lenny.dev/schema-version` annotation and the top-level
+// x-kubernetes-preserve-unknown-fields markers, which come from
+// +kubebuilder markers on the root types) must also be present in the
+// embedded copy. `make generate` writes both copies. A drift here
 // means Embedded Mode installs a CRD whose schema differs from a cluster
 // install, silently stripping fields the controllers and gateway write.
 //
-// spec: §10 line 437 — every embedded Lenny CRD MUST match the
+// spec: §10 — every embedded Lenny CRD MUST match the
 // chart-installed schema. §17.4 (Embedded Mode CRD install). F-15.5.12.
 func TestEmbeddedCRDsAreCopiesOfChartManifests_spec_10_437(t *testing.T) {
 	chartDir := filepath.Join(schematest.RepoRoot(t), "charts", "lenny", "crds")
@@ -87,7 +88,7 @@ func TestEmbeddedCRDsAreCopiesOfChartManifests_spec_10_437(t *testing.T) {
 	}
 }
 
-// spec: §10 line 437 / line 443 — every embedded Lenny CRD MUST
+// spec: §10 — every embedded Lenny CRD MUST
 // declare the `lenny.dev/schema-version` annotation. F-15.5.12.
 func TestEmbeddedCRDsCarrySchemaVersionAnnotation_spec_10_437(t *testing.T) {
 	crds := embeddedCRDs(t)
@@ -112,7 +113,7 @@ func TestEmbeddedCRDsCarrySchemaVersionAnnotation_spec_10_437(t *testing.T) {
 	}
 }
 
-// spec: §15.5 line 2433 — "All Lenny CRDs ... ship initially at
+// spec: §15.5 — "All Lenny CRDs ... ship initially at
 // v1alpha1 and follow the graduation path v1alpha1 → v1beta1 → v1."
 // Every shipped CRD MUST therefore serve and store exactly the
 // v1alpha1 version; a CRD published directly at v1 forfeits the
@@ -130,7 +131,7 @@ func TestEmbeddedCRDsServeV1Alpha1_spec_15_5_2433(t *testing.T) {
 		}
 		v := crd.Spec.Versions[0]
 		if v.Name != "v1alpha1" {
-			t.Errorf("CRD %s: served version %q; want v1alpha1 (§15.5 line 2433)", crd.Name, v.Name)
+			t.Errorf("CRD %s: served version %q; want v1alpha1 (§15.5)", crd.Name, v.Name)
 		}
 		if !v.Served {
 			t.Errorf("CRD %s: version %s is not served", crd.Name, v.Name)
@@ -149,7 +150,7 @@ func versionNames(crd apiextensionsv1.CustomResourceDefinition) []string {
 	return out
 }
 
-// spec: §10 line 437 — every embedded CRD MUST carry
+// spec: §10 — every embedded CRD MUST carry
 // `x-kubernetes-preserve-unknown-fields: true` on extensible sub-objects
 // (spec, status) so an older controller does not crash on fields a
 // newer gateway introduces. F-15.5.12.
@@ -173,5 +174,51 @@ func TestEmbeddedCRDsPreserveUnknownFields_spec_10_437(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestSandboxClaimDescriptionsStateEndOfOccupancyOutcome_spec_4_6_3 pins
+// the SandboxClaim CRD descriptions that operators read with `kubectl
+// explain` to the §4.6.3 end-of-occupancy outcome. The `failed` phase is
+// the scrub-failure retirement under `onScrubFailure: fail` only: a
+// crashed session no longer writes it, because a release that ends the
+// occupancy without reuse deletes the claim instead. The `spec`
+// description lists that delete among the claim's deletion steps. A
+// failure means the generated description drifted from the Go doc
+// comments on SandboxClaimSpec and SandboxClaimStatus.Phase, or those
+// comments regressed to the retired outcome; re-run `make generate` and
+// re-copy the chart manifest.
+//
+// spec: §4.6.3 (SandboxClaim.status.phase enumeration), §4.6.3 (CRD field
+// ownership).
+func TestSandboxClaimDescriptionsStateEndOfOccupancyOutcome_spec_4_6_3(t *testing.T) {
+	var claim *apiextensionsv1.CustomResourceDefinition
+	for _, crd := range embeddedCRDs(t) {
+		if crd.Name == "sandboxclaims.lenny.dev" {
+			claim = &crd
+			break
+		}
+	}
+	if claim == nil || len(claim.Spec.Versions) == 0 || claim.Spec.Versions[0].Schema == nil {
+		t.Fatal("embedded sandboxclaims.lenny.dev CRD with a schema not found")
+	}
+	root := claim.Spec.Versions[0].Schema.OpenAPIV3Schema
+	specDesc := strings.Join(strings.Fields(root.Properties["spec"].Description), " ")
+	phaseDesc := strings.Join(strings.Fields(root.Properties["status"].Properties["phase"].Description), " ")
+
+	cases := []struct {
+		name, desc, want string
+		present          bool
+	}{
+		{"spec lists the release delete", specDesc, "a release that ends the occupancy without reuse", true},
+		{"phase failed is scrub failure only", phaseDesc, "`failed` on a scrub-failure retirement (`onScrubFailure: fail`)", true},
+		{"phase omits crashed-session retirement", phaseDesc, "crashed-session", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := strings.Contains(tc.desc, tc.want); got != tc.present {
+				t.Errorf("description contains %q = %v; want %v\ndescription: %s", tc.want, got, tc.present, tc.desc)
+			}
+		})
 	}
 }

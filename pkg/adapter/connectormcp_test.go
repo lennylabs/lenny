@@ -17,7 +17,7 @@ import (
 
 // fakeConnectorForwarder records the session/connector/tool it is
 // forwarded with and returns a canned ref list, catalog, and result.
-// spec: §9.3 lines 142-164. F-9.1.2.
+// spec: §9.3. F-9.1.2.
 type fakeConnectorForwarder struct {
 	refs       []mcp.ConnectorRef
 	list       []mcp.Tool
@@ -45,7 +45,7 @@ func (f *fakeConnectorForwarder) CallConnectorTool(_ context.Context, sessionID,
 	return f.result, nil
 }
 
-// spec: §9.3 line 142 + lines 142-164 — when a ConnectorForwarder is
+// spec: §9.3 — when a ConnectorForwarder is
 // wired, StartSession lists each policy-permitted connector in the
 // manifest connectorServers array and opens a per-connector MCP server
 // whose tools/list and tools/call forward to the gateway scoped to the
@@ -55,6 +55,7 @@ func TestConnectorMCPForwardsToGateway_spec_9_3_142(t *testing.T) {
 	s.ManifestDir = t.TempDir()
 	// The derived per-connector sun_path must fit darwin's ~104-byte limit.
 	s.MCPSocket = shortSocketName(t, "m")
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 	fwd := &fakeConnectorForwarder{
 		refs:   []mcp.ConnectorRef{{ID: "github", DisplayName: "GitHub"}},
 		list:   []mcp.Tool{{Name: "list_repos", Description: "list"}},
@@ -67,7 +68,8 @@ func TestConnectorMCPForwardsToGateway_spec_9_3_142(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-			SessionId: &adapterv1.SessionId{Value: "sess-1"},
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 		})
 	})
 
@@ -142,17 +144,19 @@ func TestConnectorMCPForwardsToGateway_spec_9_3_142(t *testing.T) {
 
 // spec: §4.7 connectorServers is never absent — with no forwarder wired,
 // the manifest still carries an empty array. F-9.1.2.
-func TestConnectorServersEmptyWithoutForwarder_spec_9_3_142(t *testing.T) {
+func TestConnectorServersEmptyWithoutForwarder_spec_4_7(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	s.ManifestDir = t.TempDir()
 	s.MCPSocket = shortSocketName(t, "m")
+	s.PeerAuth = adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}
 
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	t.Cleanup(func() {
 		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-			SessionId: &adapterv1.SessionId{Value: "sess-1"},
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 		})
 	})
 	b, err := os.ReadFile(filepath.Join(s.ManifestDir, adapter.ManifestFilename))

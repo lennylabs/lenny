@@ -5,11 +5,15 @@ package admin_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
+	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
 // fakeReleaser is an in-memory admin.EscrowReleaser recording the release
@@ -17,6 +21,7 @@ import (
 type fakeReleaser struct {
 	sessionReleases  int
 	artifactReleases int
+	artifactErr      error
 	calls            []string
 }
 
@@ -27,10 +32,10 @@ func (f *fakeReleaser) ReleaseForSession(_ context.Context, tenantID, sessionID,
 
 func (f *fakeReleaser) ReleaseForArtifact(_ context.Context, tenantID, artifactURI, by string) (int, error) {
 	f.calls = append(f.calls, "artifact:"+tenantID+":"+artifactURI+":"+by)
-	return f.artifactReleases, nil
+	return f.artifactReleases, f.artifactErr
 }
 
-// spec: §12.8 line 884 — clearing a live session hold runs the escrow-GC
+// spec: §12.8 — clearing a live session hold runs the escrow-GC
 // release and reports the count of released objects.
 func TestClearSessionHold_releasesEscrow_spec_12_8_line884(t *testing.T) {
 	router, sessions, _ := newLegalHoldAdmin(t)
@@ -57,7 +62,7 @@ func TestClearSessionHold_releasesEscrow_spec_12_8_line884(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 884 — the clear is accepted on a tombstoned tenant
+// spec: §12.8 — the clear is accepted on a tombstoned tenant
 // (the session row is gone) for the express purpose of releasing escrow.
 func TestClearSessionHold_tombstonedTenant_releasesEscrow(t *testing.T) {
 	router, _, _ := newLegalHoldAdmin(t)
@@ -109,4 +114,62 @@ func TestClearSessionHold_noEscrowRecords_clearsFlagOnly(t *testing.T) {
 	if got.LegalHold {
 		t.Error("flag must be cleared")
 	}
+}
+
+// TestClearArtifactHoldAfterPhase4ReleasesEscrow_spec_12_8 covers an
+// artifact-hold clear after tenant-deletion Phase 4 deleted the artifact's
+// catalog row: the clear releases the escrow by tenant and artifact ID and
+// answers 200 with escrowReleased, finds nothing to release and answers 404,
+// or fails the release and answers 500 with no legal-hold audit event.
+//
+// spec: 12.8 (Compliance Interfaces: Legal hold interaction during deletion), 12.8 (Compliance Interfaces: Tenant deletion lifecycle)
+func TestClearArtifactHoldAfterPhase4ReleasesEscrow_spec_12_8(t *testing.T) {
+	const uri = "blob://acme/s1/file"
+	newRouter := func(rel *fakeReleaser) (*admin.Router, *recordingAudit) {
+		audit := &recordingAudit{}
+		// The holder has no row for the artifact: Phase 4 deleted it.
+		r := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+			Clock: func() time.Time { return time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC) },
+			Audit: audit,
+		}).WithSessions(memstore.New()).WithArtifactLegalHold(newFakeArtifactHolder()).WithEscrowReleaser(rel)
+		return r, audit
+	}
+	clear := admin.LegalHoldRequest{TenantID: "acme", ArtifactID: uri, Hold: false}
+
+	t.Run("released", func(t *testing.T) {
+		rel := &fakeReleaser{artifactReleases: 1}
+		router, audit := newRouter(rel)
+		rr := setLegalHold(t, router.Handler(), clear, withAdminPrincipal)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status %d, body %s", rr.Code, rr.Body.String())
+		}
+		var resp map[string]any
+		_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+		if resp["escrowReleased"] != float64(1) {
+			t.Errorf("escrowReleased = %v, want 1", resp["escrowReleased"])
+		}
+		if len(rel.calls) != 1 || rel.calls[0] != "artifact:acme:"+uri+":admin@acme.com" {
+			t.Errorf("releaser calls = %v, want one artifact release for acme", rel.calls)
+		}
+		if snap := audit.snapshot(); len(snap) != 1 {
+			t.Errorf("audit events = %+v, want one legal-hold clear", snap)
+		}
+	})
+
+	t.Run("nothing to release", func(t *testing.T) {
+		router, _ := newRouter(&fakeReleaser{})
+		if rr := setLegalHold(t, router.Handler(), clear, withAdminPrincipal); rr.Code != http.StatusNotFound {
+			t.Fatalf("status %d, want 404", rr.Code)
+		}
+	})
+
+	t.Run("release error", func(t *testing.T) {
+		router, audit := newRouter(&fakeReleaser{artifactErr: errors.New("escrow store unreachable")})
+		if rr := setLegalHold(t, router.Handler(), clear, withAdminPrincipal); rr.Code != http.StatusInternalServerError {
+			t.Fatalf("status %d, want 500", rr.Code)
+		}
+		if snap := audit.snapshot(); len(snap) != 0 {
+			t.Errorf("audit events = %+v, want none after a failed release", snap)
+		}
+	})
 }

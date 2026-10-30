@@ -117,7 +117,7 @@ func TestConcurrentOccupancyCollapsesToClaimed_spec_6_2(t *testing.T) {
 
 // TestCoarseEnumIsTheAuthoritativeSet_spec_6_2 pins that All() is exactly the
 // §6.2 coarse pod-occupancy enum and that the fine session/setup states the
-// proposal moved to the Postgres session model (spec §6.2, §6.37) are no
+// proposal moved to the Postgres session model (spec §6.2) are no
 // longer coarse CRD phases: they carry no coarse mapping and no transition.
 func TestCoarseEnumIsTheAuthoritativeSet_spec_6_2(t *testing.T) {
 	t.Parallel()
@@ -270,7 +270,7 @@ func TestIsValidIllegalTransitionsRejected(t *testing.T) {
 		// A terminal phase cannot return to the claimable set.
 		{state.Terminated, state.Draining},
 		// The fine session/setup states are not CRD phases, so no edge names
-		// them (spec §6.2, §6.37).
+		// them (spec §6.2).
 		{state.Claimed, "attached"},
 		{state.Claimed, "task_cleanup"},
 	}
@@ -287,5 +287,27 @@ func TestIsValidIllegalTransitionsRejected(t *testing.T) {
 				t.Errorf("IsValid(%q, %q) returned %T, want *InvalidTransitionError", tr.From, tr.To, err)
 			}
 		})
+	}
+}
+
+// TestRuntimeProcessLifetimeMapsThePoolValue pins the pod label value the
+// WarmPoolController records: restart only for a pool whose
+// recycle.runtimeProcess is restart, and keep for keep, for a pool carrying
+// no value, and for any other value.
+//
+// spec: 5.2 (Runtime-process lifetime), 17.2 item 5
+func TestRuntimeProcessLifetimeMapsThePoolValue_spec_5_2(t *testing.T) {
+	for _, tc := range []struct{ pool, want string }{
+		{state.RuntimeProcessRestart, state.RuntimeProcessRestart},
+		{state.RuntimeProcessKeep, state.RuntimeProcessKeep},
+		{"", state.RuntimeProcessKeep},
+		{"Restart", state.RuntimeProcessKeep},
+	} {
+		if got := state.RuntimeProcessLifetime(tc.pool); got != tc.want {
+			t.Errorf("RuntimeProcessLifetime(%q) = %q, want %q", tc.pool, got, tc.want)
+		}
+	}
+	if state.LabelRuntimeProcess != "lenny.dev/runtime-process" {
+		t.Errorf("LabelRuntimeProcess = %q, want lenny.dev/runtime-process", state.LabelRuntimeProcess)
 	}
 }

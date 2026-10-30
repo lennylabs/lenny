@@ -181,7 +181,7 @@ func (s *Store) CountElicitations(ctx context.Context, tenantID, sessionID strin
 }
 
 // ListPending returns every pending interaction recorded for the
-// (tenant, session) tuple, ordered oldest first. The §7.2 line 153
+// (tenant, session) tuple, ordered oldest first. The §7.2
 // `ReattachedChild.pending_request_id` surface calls this so a
 // resumed parent learns which request its child is waiting on.
 func (s *Store) ListPending(ctx context.Context, tenantID, sessionID string) ([]interactionstore.Interaction, error) {
@@ -234,7 +234,7 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 // returns the count deleted — the §12.8 Phase-4 tenant-deletion adapter.
 // A tenant with no interactions is a no-op returning (0, nil).
 //
-// spec: §12.1 line 5 (mandatory primitive); §12.8 Phase 4.
+// spec: §12.1; §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	deleted := 0
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
@@ -271,6 +271,35 @@ func (s *Store) DismissByUser(ctx context.Context, tenantID, userID string) (int
 		return nil
 	})
 	return dismissed, err
+}
+
+// ExpireRaisedBy deletes every pending elicitation originSessionID raised
+// within tenantID and returns the count. kind and phase are literals so the
+// planner matches the predicate of the partial index
+// idx_interactions_pending_elicitation_origin (tenant_id,
+// detail->>'originPod'), and the delete reads only the tenant's pending
+// elicitations with that origin, whatever the tenant's resolved history.
+// spec: §9.2 (Elicitation Chain).
+func (s *Store) ExpireRaisedBy(ctx context.Context, tenantID, originSessionID string) (int, error) {
+	if originSessionID == "" {
+		return 0, nil
+	}
+	expired := 0
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM interactions WHERE tenant_id = $1 AND kind = 'elicitation' AND phase = 'pending'
+			 AND detail->>'originPod' = $2`,
+			tenantID, originSessionID)
+		if err != nil {
+			return err
+		}
+		expired = int(tag.RowsAffected())
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("expire elicitations raised by session %s: %w", originSessionID, err)
+	}
+	return expired, nil
 }
 
 // scanInteraction reads one row in selectList order into an

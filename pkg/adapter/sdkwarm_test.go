@@ -8,12 +8,15 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
+	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -41,7 +44,13 @@ type fakeSDKWarmRuntime struct {
 	configured   []string // cwd of each ConfigureWorkspace call
 	configErr    error
 	demoted      int
-	demoteErr    error
+	// demoteCalls counts every DemoteSDK call, including one that returns
+	// demoteErr, so a case can tell an attempted demotion from none.
+	demoteCalls int
+	demoteErr   error
+	// onConfigure runs inside ConfigureWorkspace on the calling goroutine,
+	// between the handler's claim and its start confirmation.
+	onConfigure func()
 }
 
 func (f *fakeSDKWarmRuntime) PreConnect(_ context.Context) error {
@@ -53,6 +62,9 @@ func (f *fakeSDKWarmRuntime) PreConnect(_ context.Context) error {
 }
 
 func (f *fakeSDKWarmRuntime) ConfigureWorkspace(_ context.Context, _ string, cwd string) error {
+	if f.onConfigure != nil {
+		f.onConfigure()
+	}
 	if f.configErr != nil {
 		return f.configErr
 	}
@@ -61,6 +73,7 @@ func (f *fakeSDKWarmRuntime) ConfigureWorkspace(_ context.Context, _ string, cwd
 }
 
 func (f *fakeSDKWarmRuntime) DemoteSDK(_ context.Context) error {
+	f.demoteCalls++
 	if f.demoteErr != nil {
 		return f.demoteErr
 	}
@@ -79,7 +92,7 @@ func sdkWarmServer(t *testing.T) (*adapter.Server, *fakeSDKWarmRuntime) {
 	t.Helper()
 	rt := &fakeSDKWarmRuntime{}
 	s := adapter.New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.Runtime = rt
 	return s, rt
 }
@@ -88,7 +101,7 @@ func sdkWarmServer(t *testing.T) (*adapter.Server, *fakeSDKWarmRuntime) {
 // pod-warm adapter returns Unimplemented.
 func TestConfigureWorkspacePodWarmUnimplemented_spec_4_7(t *testing.T) {
 	s, _, _ := sessionServer(t) // plain fakeRuntime: pod-warm
-	_, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/current"))
+	_, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current"))
 	if status.Code(err) != codes.Unimplemented {
 		t.Errorf("ConfigureWorkspace on pod-warm pod: code = %v, want Unimplemented", status.Code(err))
 	}
@@ -108,11 +121,11 @@ func TestDemoteSDKPodWarmUnimplemented_spec_4_7(t *testing.T) {
 // finalized cwd and claims the session.
 func TestConfigureWorkspaceConfiguresPreConnected_spec_4_7(t *testing.T) {
 	s, rt := sdkWarmServer(t)
-	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/current")); err != nil {
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); err != nil {
 		t.Fatalf("ConfigureWorkspace: %v", err)
 	}
-	if len(rt.configured) != 1 || rt.configured[0] != "/workspace/current" {
-		t.Errorf("runtime configured = %v, want [/workspace/current]", rt.configured)
+	if len(rt.configured) != 1 || rt.configured[0] != "/workspace/slots/sess-1/current" {
+		t.Errorf("runtime configured = %v, want [/workspace/slots/sess-1/current]", rt.configured)
 	}
 	// The pod now holds the session: a StartSession for another session is
 	// Unavailable.
@@ -128,12 +141,12 @@ func TestConfigureWorkspaceIdempotent_spec_4_7(t *testing.T) {
 	s, rt := sdkWarmServer(t)
 	s.ManifestDir = t.TempDir()
 
-	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/current")); err != nil {
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); err != nil {
 		t.Fatalf("first ConfigureWorkspace: %v", err)
 	}
 	first := readManifest(t, s.ManifestDir).MCPNonce
 
-	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/current")); err != nil {
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); err != nil {
 		t.Fatalf("repeat ConfigureWorkspace: %v", err)
 	}
 	second := readManifest(t, s.ManifestDir).MCPNonce
@@ -149,10 +162,10 @@ func TestConfigureWorkspaceIdempotent_spec_4_7(t *testing.T) {
 // spec: §4.7 — a different session on an already-claimed pod is Unavailable.
 func TestConfigureWorkspaceDifferentSessionUnavailable_spec_4_7(t *testing.T) {
 	s, _ := sdkWarmServer(t)
-	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/current")); err != nil {
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); err != nil {
 		t.Fatalf("ConfigureWorkspace sess-1: %v", err)
 	}
-	_, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-2", "/workspace/current"))
+	_, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-2", "/workspace/slots/sess-1/current"))
 	if status.Code(err) != codes.Unavailable {
 		t.Errorf("ConfigureWorkspace for a second session: code = %v, want Unavailable", status.Code(err))
 	}
@@ -164,12 +177,12 @@ func TestConfigureWorkspaceDifferentSessionUnavailable_spec_4_7(t *testing.T) {
 func TestConfigureWorkspaceRuntimeErrorReleases_spec_4_7(t *testing.T) {
 	s, rt := sdkWarmServer(t)
 	rt.configErr = errors.New("sdk rejected workspace")
-	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/current")); status.Code(err) != codes.Internal {
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); status.Code(err) != codes.Internal {
 		t.Fatalf("ConfigureWorkspace error: code = %v, want Internal", status.Code(err))
 	}
 	// The session was released: a fresh ConfigureWorkspace can claim the pod.
 	rt.configErr = nil
-	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/current")); err != nil {
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); err != nil {
 		t.Errorf("ConfigureWorkspace after a released failure: %v", err)
 	}
 }
@@ -178,7 +191,7 @@ func TestConfigureWorkspaceRuntimeErrorReleases_spec_4_7(t *testing.T) {
 // pod to pod-warm (idle), so a subsequent StartSession can claim it.
 func TestDemoteSDKTearsDown_spec_4_7(t *testing.T) {
 	s, rt := sdkWarmServer(t)
-	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/current")); err != nil {
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); err != nil {
 		t.Fatalf("ConfigureWorkspace: %v", err)
 	}
 	resp, err := s.DemoteSDK(context.Background(), &adapterv1.DemoteSDKRequest{Reason: "blocking-path"})
@@ -199,7 +212,7 @@ func TestDemoteSDKTearsDown_spec_4_7(t *testing.T) {
 
 func TestConfigureWorkspaceMissingArgs_spec_4_7(t *testing.T) {
 	s, _ := sdkWarmServer(t)
-	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("", "/workspace/current")); status.Code(err) != codes.InvalidArgument {
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("", "/workspace/slots/sess-1/current")); status.Code(err) != codes.InvalidArgument {
 		t.Errorf("ConfigureWorkspace with no session id: code = %v, want InvalidArgument", status.Code(err))
 	}
 	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "")); status.Code(err) != codes.InvalidArgument {
@@ -243,7 +256,7 @@ func contains(s []string, v string) bool {
 	return false
 }
 
-// spec: §6.1 line 30 — PreConnect starts the SDK at warm time for a
+// spec: §6.1 — PreConnect starts the SDK at warm time for a
 // preConnect runtime and is idempotent; SDKWarmReady gates claimability.
 func TestPreConnect_spec_6_1(t *testing.T) {
 	t.Run("preConnect starts the SDK once and reports ready", func(t *testing.T) {
@@ -305,4 +318,178 @@ func TestPreConnect_spec_6_1(t *testing.T) {
 			t.Fatalf("DemoteSDK must clear SDKWarmReady")
 		}
 	})
+}
+
+// countingScrubReporter records the sessions a §5.2 cleanup-outcome report
+// was filed for.
+type countingScrubReporter struct {
+	mu       sync.Mutex
+	sessions []string
+}
+
+func (r *countingScrubReporter) ReportSessionScrub(_ context.Context, _, sessionID string, _ gatewaycontrol.SessionScrubOutcome) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sessions = append(r.sessions, sessionID)
+	return nil
+}
+
+func (r *countingScrubReporter) reportsFor(sessionID string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, id := range r.sessions {
+		if id == sessionID {
+			n++
+		}
+	}
+	return n
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §6.1 (SDK-warm pre-connect); §7.1 (normal flow)
+//
+// Rule 8 on the SDK-warm start. A ConfigureWorkspace whose claimed entry
+// leaves the registry while the pre-connected SDK is being pointed at the
+// workspace takes the runtime half of the §6.1 demotion and refuses on
+// Aborted. It files no cleanup-outcome report for the session, and it
+// removes nothing: a successor that re-created the entry under the same
+// slot identifier keeps its entry, its cwd and its credential file.
+func TestTheSDKWarmConfirmationRefusesWithoutReleasing_spec_4_7_1(t *testing.T) {
+	for _, withSuccessor := range []bool{false, true} {
+		name := "removed"
+		if withSuccessor {
+			name = "successor"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, rt := sdkWarmServer(t)
+			s.CredentialsDir = t.TempDir()
+			reporter := &countingScrubReporter{}
+			s.SessionScrubReporter = reporter
+			if err := s.PreConnect(t.Context()); err != nil {
+				t.Fatalf("PreConnect: %v", err)
+			}
+			rt.onConfigure = func() {
+				rt.onConfigure = nil
+				if _, err := s.Shutdown(t.Context(), &adapterv1.ShutdownRequest{
+					SessionId:             &adapterv1.SessionId{Value: "alice"},
+					UnconditionalTeardown: true,
+				}); err != nil {
+					t.Errorf("unconditional Shutdown from the hook: %v", err)
+				}
+				if withSuccessor {
+					if _, err := s.AssignCredentials(t.Context(), &adapterv1.AssignCredentialsRequest{
+						BindAttempt: "attempt-b",
+						SessionId:   &adapterv1.SessionId{Value: "alice"},
+						Leases: map[string]*adapterv1.CredentialLease{
+							"anthropic": credLease("l-b", "anthropic", `{}`),
+						},
+					}); err != nil {
+						t.Errorf("successor AssignCredentials: %v", err)
+					}
+				}
+			}
+
+			_, err := s.ConfigureWorkspace(t.Context(), configureReq("alice", "/workspace/slots/alice/current"))
+			if status.Code(err) != codes.Aborted {
+				t.Fatalf("ConfigureWorkspace = %v, want Aborted for a refused start confirmation", err)
+			}
+			if rt.demoted != 1 {
+				t.Errorf("SDKWarmRuntime.DemoteSDK calls = %d, want 1", rt.demoted)
+			}
+			if s.SDKWarmReady() {
+				t.Error("SDKWarmReady is still true after the refusal demoted the SDK")
+			}
+			if n := reporter.reportsFor("alice"); n != 0 {
+				t.Errorf("cleanup-outcome reports for alice = %d, want 0", n)
+			}
+			if !withSuccessor {
+				return
+			}
+			paths, err := slotlayout.Resolve(slotlayout.Roots{
+				Workspace:   s.WorkspaceBase,
+				Credentials: s.CredentialsDir,
+			}, "alice")
+			if err != nil {
+				t.Fatalf("resolve alice's slot paths: %v", err)
+			}
+			if _, err := os.Stat(paths.Current); err != nil {
+				t.Errorf("the successor's cwd is gone: %v", err)
+			}
+			if _, err := os.Stat(paths.CredentialsFile); err != nil {
+				t.Errorf("the successor's credential file is gone: %v", err)
+			}
+			resp, err := s.Shutdown(t.Context(), &adapterv1.ShutdownRequest{
+				SessionId:   &adapterv1.SessionId{Value: "alice"},
+				BindAttempt: "attempt-b",
+			})
+			if err != nil {
+				t.Fatalf("Shutdown naming the successor: %v", err)
+			}
+			if got := resp.GetSlotReclaim(); got != adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_RECLAIMED {
+				t.Errorf("Shutdown naming the successor = %v, want RECLAIMED; the refusal released the successor's entry", got)
+			}
+		})
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §6.1; §7.1 (normal flow)
+//
+// The SDK-warm refusal answers Aborted whatever the runtime half of the
+// demotion returns. A ConfigureWorkspace whose claimed entry leaves the
+// registry while the SDK is being pointed at the workspace attempts the
+// demotion, and when that demotion fails it still clears the warm-readiness
+// flag and refuses on Aborted, so the gateway classifies the refusal as the
+// transient reclaim it is rather than as an adapter fault. It files no
+// cleanup-outcome report for the session.
+func TestTheSDKWarmConfirmationRefusesOnAbortedWhenTheDemotionFails_spec_4_7_1(t *testing.T) {
+	s, rt := sdkWarmServer(t)
+	s.CredentialsDir = t.TempDir()
+	reporter := &countingScrubReporter{}
+	s.SessionScrubReporter = reporter
+	if err := s.PreConnect(t.Context()); err != nil {
+		t.Fatalf("PreConnect: %v", err)
+	}
+	rt.demoteErr = errors.New("sdk demotion failed")
+	rt.onConfigure = func() {
+		rt.onConfigure = nil
+		if _, err := s.Shutdown(t.Context(), &adapterv1.ShutdownRequest{
+			SessionId:             &adapterv1.SessionId{Value: "alice"},
+			UnconditionalTeardown: true,
+		}); err != nil {
+			t.Errorf("unconditional Shutdown from the hook: %v", err)
+		}
+	}
+
+	_, err := s.ConfigureWorkspace(t.Context(), configureReq("alice", "/workspace/slots/alice/current"))
+	if status.Code(err) != codes.Aborted {
+		t.Fatalf("ConfigureWorkspace = %v, want Aborted when the refusal's demotion fails", err)
+	}
+	if rt.demoteCalls != 1 {
+		t.Errorf("SDKWarmRuntime.DemoteSDK attempts = %d, want 1", rt.demoteCalls)
+	}
+	if s.SDKWarmReady() {
+		t.Error("SDKWarmReady is still true after the refusal, although its demotion failed")
+	}
+	if n := reporter.reportsFor("alice"); n != 0 {
+		t.Errorf("cleanup-outcome reports for alice = %d, want 0", n)
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §6.1; §7.1 (normal flow)
+//
+// The DemoteSDK RPC surfaces a failed runtime demotion to the gateway as
+// Internal rather than reporting the pod demoted.
+func TestDemoteSDKAnswersInternalWhenTheRuntimeDemotionFails_spec_4_7_1(t *testing.T) {
+	s, rt := sdkWarmServer(t)
+	if err := s.PreConnect(t.Context()); err != nil {
+		t.Fatalf("PreConnect: %v", err)
+	}
+	rt.demoteErr = errors.New("sdk demotion failed")
+	_, err := s.DemoteSDK(t.Context(), &adapterv1.DemoteSDKRequest{Reason: "blocking-path"})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("DemoteSDK = %v, want Internal for a failed runtime demotion", err)
+	}
+	if rt.demoteCalls != 1 {
+		t.Errorf("SDKWarmRuntime.DemoteSDK attempts = %d, want 1", rt.demoteCalls)
+	}
 }

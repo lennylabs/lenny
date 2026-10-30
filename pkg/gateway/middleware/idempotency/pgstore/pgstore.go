@@ -111,7 +111,7 @@ func (s *Store) Put(ctx context.Context, rec idempotency.Record) error {
 // concurrent retry that arrives between Claim and the matching Put
 // observes the pending row (response_status = 0) and the middleware
 // rejects it with IDEMPOTENCY_KEY_IN_FLIGHT, preventing double
-// execution. spec: §11.5 line 277; F-11.5.2.
+// execution. spec: §11.5; F-11.5.2.
 //
 // The implementation uses `INSERT … ON CONFLICT DO UPDATE WHERE expired`
 // so an expired pending row (e.g., from a previous request that crashed
@@ -192,7 +192,7 @@ WHERE tenant_id = $1 AND idempotency_key = $2
 // calls it when the inner handler returned a 5xx (release so a retry
 // can re-execute) or when the response was streamed (a frozen snapshot
 // is not safely replayable). Releasing a row that no longer exists is
-// not an error. spec: §11.5 line 277; F-11.5.2.
+// not an error. spec: §11.5; F-11.5.2.
 func (s *Store) Release(ctx context.Context, tenantID, key string) error {
 	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,

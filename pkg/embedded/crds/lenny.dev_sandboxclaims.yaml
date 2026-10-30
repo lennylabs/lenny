@@ -4,7 +4,6 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
-    # spec: §10 line 437 / §10 line 443 — F-15.5.12.
     lenny.dev/schema-version: "1"
   name: sandboxclaims.lenny.dev
 spec:
@@ -61,10 +60,10 @@ spec:
               Postgres session row's `pod_assignment` column, so the claim carries no
               session identifier. A SandboxClaim deliberately omits an ownerReference
               so its deletion is an explicit step of the claim lifecycle (hold expiry,
-              orphan GC, or pod termination) rather than a cascade from pod deletion;
-              the WarmPoolController garbage-collects orphaned claims.
+              a hold the acquisition path ends, a release that ends the occupancy
+              without reuse, orphan GC, or pod termination) rather than a cascade from
+              pod deletion; the WarmPoolController garbage-collects orphaned claims.
               spec: §4.6.3 (CRD field ownership), §5.2 (execution modes).
-            x-kubernetes-preserve-unknown-fields: true
             properties:
               sandboxRef:
                 description: |-
@@ -81,13 +80,13 @@ spec:
             required:
             - sandboxRef
             type: object
+            x-kubernetes-preserve-unknown-fields: true
           status:
             description: |-
               SandboxClaimStatus is the observed state of a SandboxClaim. Per §4.6.3
               the status carries the gateway-owned binding state of the pod-occupancy
               claim, distinct from the Sandbox pod lifecycle state machine (§6.2) that
               the WarmPoolController projects from this binding state.
-            x-kubernetes-preserve-unknown-fields: true
             properties:
               bindingStateTransitionTime:
                 description: |-
@@ -165,10 +164,13 @@ spec:
                   stamps when it patches the claim to `reserved`: the reservation time
                   plus the deployment-level hold TTL (`gateway.claimHoldTTLSeconds`,
                   default 10s). A same-tenant session arriving before this deadline
-                  rebinds the claim (`reserved → bound`); after it the holder deletes
-                  the claim and the pod returns to `idle`. Empty until the claim
-                  enters `reserved`. spec: §4.6.3 (reserved hold), §6.2 (pod state
-                  machine).
+                  rebinds the claim (`reserved → bound`); when an acquisition refuses
+                  the reserved pod under the runtime-process acknowledgment, it ends the
+                  hold by deleting the claim instead. After the deadline the
+                  holder deletes the claim and the pod returns to `idle`. Empty until
+                  the claim enters `reserved`. spec: §4.6.3 (reserved hold), §4.6.1
+                  (Reserved hold), §5.2 (Deployer acknowledgment (runtime process kept
+                  across sessions)), §6.2 (pod state machine).
                 format: date-time
                 type: string
               observedGeneration:
@@ -186,10 +188,11 @@ spec:
                   `recycle.maxPodUptimeSeconds` reached) under which the
                   WarmPoolController projects the pod to `draining` then `terminated`,
                   retiring it rather than returning it to the pool; `failed` on a
-                  scrub-failure or crashed-session retirement, which likewise drains
-                  and terminates the pod. Per §4.6.3 only `released` and `failed` are
-                  terminal. Returning a pod to the pool (`reserved → idle` on hold
-                  expiry) is the claim DELETE edge, not a phase value.
+                  scrub-failure retirement (`onScrubFailure: fail`), which likewise
+                  drains and terminates the pod. Per §4.6.3 only `released` and
+                  `failed` are terminal. Returning a pod to the pool (`reserved → idle`
+                  on hold expiry) is the claim DELETE edge, not a phase value.
+                  spec: §4.6.3 (SandboxClaim.status.phase enumeration)
                 enum:
                 - bound
                 - recycling
@@ -209,6 +212,7 @@ spec:
                 format: date-time
                 type: string
             type: object
+            x-kubernetes-preserve-unknown-fields: true
         type: object
     served: true
     storage: true

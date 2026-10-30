@@ -20,7 +20,7 @@ import (
 // crdSchemaScheme builds a runtime scheme including
 // apiextensions.k8s.io/v1 so the fake reader can host CRDs alongside
 // the §17.9 baseline resources.
-// spec: §10 line 437 — F-15.5.12.
+// spec: §10 — F-15.5.12.
 func crdSchemaScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
@@ -50,7 +50,7 @@ func crdWithoutAnnotation(name string) *apiextensionsv1.CustomResourceDefinition
 	}
 }
 
-// spec: §10 line 443 — every Lenny CRD MUST declare the schema-version
+// spec: §10 — every Lenny CRD MUST declare the schema-version
 // annotation matching the expected version. F-15.5.12.
 func TestCRDSchemaVersionCheckPasses_spec_10_443(t *testing.T) {
 	var objs []client.Object
@@ -68,7 +68,7 @@ func TestCRDSchemaVersionCheckPasses_spec_10_443(t *testing.T) {
 	}
 }
 
-// spec: §10 line 443 — a missing CRD aborts the install with the
+// spec: §10 — a missing CRD aborts the install with the
 // runbook-grep message that names the absent CRD. F-15.5.12.
 func TestCRDSchemaVersionCheckFailsOnMissingCRD_spec_10_443(t *testing.T) {
 	// Install all CRDs except runtimes.lenny.dev so the check
@@ -94,7 +94,7 @@ func TestCRDSchemaVersionCheckFailsOnMissingCRD_spec_10_443(t *testing.T) {
 	}
 }
 
-// spec: §10 line 443 — a CRD without the schema-version annotation
+// spec: §10 — a CRD without the schema-version annotation
 // fails fail-closed so the controller never starts against unlabeled
 // CRDs. F-15.5.12.
 func TestCRDSchemaVersionCheckFailsOnMissingAnnotation_spec_10_443(t *testing.T) {
@@ -117,7 +117,7 @@ func TestCRDSchemaVersionCheckFailsOnMissingAnnotation_spec_10_443(t *testing.T)
 	}
 }
 
-// spec: §10 line 443 — the operator runbook greps for the exact
+// spec: §10 — the operator runbook greps for the exact
 // message text "schema version is <installed>; expected <expected>".
 // F-15.5.12.
 func TestCRDSchemaVersionCheckFailsOnMismatch_spec_10_443(t *testing.T) {
@@ -140,7 +140,7 @@ func TestCRDSchemaVersionCheckFailsOnMismatch_spec_10_443(t *testing.T) {
 	}
 }
 
-// spec: §10 line 437 — the embedded version constant matches the
+// spec: §10 — the embedded version constant matches the
 // annotation the chart-shipped CRDs declare. A bump to one without the
 // other fails this test. F-15.5.12.
 func TestCurrentCRDSchemaVersionConstant_spec_10_437(t *testing.T) {

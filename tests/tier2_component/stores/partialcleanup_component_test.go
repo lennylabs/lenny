@@ -63,7 +63,7 @@ func countObjectsUnderPrefix(t *testing.T, mc *containers.MinIO, prefix string) 
 	return n
 }
 
-// spec: §4.4 line 236 / §12.5 GC rule 4 — "On resume — whether the partial
+// spec: §4.4 / §12.5 GC rule 4 — "On resume — whether the partial
 // reconstruction succeeds or fails — the gateway MUST delete every chunk object
 // listed under the manifest's chunk_object_key_prefix via per-key DeleteObject
 // calls, then soft-delete the Postgres row"; the catalog soft-delete is the

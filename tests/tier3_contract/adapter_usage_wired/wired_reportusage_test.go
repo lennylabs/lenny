@@ -18,7 +18,7 @@
 // contracts the fix couples: the runtime→adapter llm_request_completed
 // JSONL frame (the direct-mode token source) and the gateway→adapter
 // ReportUsage gRPC pull. It stands up the production-assembled adapter
-// over a real gRPC connection and a real lifecycle-channel socket, folds
+// over a real gRPC connection and a real CH-RUNTIMEOPS socket, folds
 // a completed direct-mode LLM call's token counts through the wired sink,
 // and asserts the gateway's ReportUsage pull returns the folded delta with
 // cumulative unset and the running cumulative total with it set, rather
@@ -49,9 +49,10 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
-// echoLoop is a minimal §15.4.1 runtime loop for the InProcessRuntime the
+// echoLoop is a minimal §28.5.3 runtime loop for the InProcessRuntime the
 // wired adapter runs. StartSession only needs a runtime to Start; the loop
 // drains inbound frames until EOF so it exits cleanly on teardown.
 func echoLoop(_ context.Context, in io.Reader, _ io.Writer) error {
@@ -78,7 +79,7 @@ func shortSocket(t *testing.T, name string) string {
 }
 
 // wiredAdapter builds the adapter the way cmd/lenny-adapter does for a
-// direct-mode Full-level pod: a lifecycle channel on a real socket, the
+// direct-mode Full-level pod: a CH-RUNTIMEOPS on a real socket, the
 // production direct-mode usage wiring (WireDirectModeUsage sets the meter
 // and the token sink), and an in-process runtime so StartSession can claim
 // the pod. It registers the server over bufconn and returns the gateway
@@ -87,9 +88,13 @@ func wiredAdapter(t *testing.T) (adapterv1.AdapterClient, string) {
 	t.Helper()
 
 	sock := shortSocket(t, "lifecycle.sock")
-	lc, err := adapter.NewLifecycleChannel(sock)
+	// The listener compares each connection's nonce line with a test
+	// manifest published beside the socket, which the dialing runtime reads.
+	// spec: 4.7.11 (Runtime connection handshake).
+	manifest := runtimenonce.PublishIn(t, filepath.Dir(sock), nil)
+	lc, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, adapter.PublishedManifestNonce(manifest.Dir))
 	if err != nil {
-		t.Fatalf("NewLifecycleChannel: %v", err)
+		t.Fatalf("NewRuntimeOps: %v", err)
 	}
 	lcCtx, lcCancel := context.WithCancel(context.Background())
 	t.Cleanup(lcCancel)
@@ -102,7 +107,7 @@ func wiredAdapter(t *testing.T) (adapterv1.AdapterClient, string) {
 
 	root := t.TempDir()
 	s := adapter.New("contract")
-	s.WorkspaceRoot = root
+	s.WorkspaceBase = root
 	s.Lifecycle = lc
 	// The production assembly: set the UsageMeter and the token sink the
 	// lifecycle read loop folds llm_request_completed counts into. Before
@@ -130,7 +135,8 @@ func wiredAdapter(t *testing.T) (adapterv1.AdapterClient, string) {
 	client := adapterv1.NewAdapterClient(conn)
 
 	// Claim the pod for the session so ReportUsage's checkSession passes
-	// and the token sink resolves the folded counts to this session.
+	// and the token sink, which folds only for a bound session, accepts
+	// the counts the frames attribute to it.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if _, err := client.StartSession(ctx, &adapterv1.StartSessionRequest{
@@ -152,6 +158,7 @@ const sessionID = "sess-direct-1"
 // direct-mode llm_request_completed token counts.
 type lifecycleFrame struct {
 	Type            string   `json:"type"`
+	SessionID       string   `json:"sessionId,omitempty"`
 	ProtocolVersion string   `json:"protocolVersion,omitempty"`
 	Capabilities    []string `json:"capabilities,omitempty"`
 	RequestID       string   `json:"requestId,omitempty"`
@@ -171,6 +178,13 @@ func dialRuntime(t *testing.T, sock string) *json.Encoder {
 		t.Fatalf("dial lifecycle socket: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	nonce, err := runtimenonce.ReadNonce(filepath.Join(filepath.Dir(sock), runtimenonce.ManifestFilename))
+	if err != nil {
+		t.Fatalf("read the published nonce: %v", err)
+	}
+	if err := runtimenonce.Write(conn, nonce); err != nil {
+		t.Fatal(err)
+	}
 
 	r := bufio.NewReader(conn)
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -197,13 +211,22 @@ func dialRuntime(t *testing.T, sock string) *json.Encoder {
 	return enc
 }
 
-// sendCompleted emits one direct-mode llm_request_completed frame carrying
-// the token counts, the way a direct-mode runtime reports a settled
-// provider call (§4.7).
+// sendCompleted emits one direct-mode llm_request_completed frame for the
+// wired session carrying the token counts, the way a direct-mode runtime
+// reports a settled provider call (§4.7).
 func sendCompleted(t *testing.T, enc *json.Encoder, requestID string, in, out int64) {
+	t.Helper()
+	sendCompletedFor(t, enc, sessionID, requestID, in, out)
+}
+
+// sendCompletedFor emits one llm_request_completed frame naming session.
+// The frame is session-scoped, and the adapter folds its counts into the
+// session it names. spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+func sendCompletedFor(t *testing.T, enc *json.Encoder, session, requestID string, in, out int64) {
 	t.Helper()
 	if err := enc.Encode(lifecycleFrame{
 		Type:         "llm_request_completed",
+		SessionID:    session,
 		RequestID:    requestID,
 		Provider:     "anthropic",
 		Status:       "ok",
@@ -289,6 +312,32 @@ func TestWiredReportUsageReturnsDelta_spec_4_7(t *testing.T) {
 	}
 }
 
+// spec: 28.5.3 (CH-RUNTIMEOPS, Messages), 11.2 (direct-mode usage)
+//
+// diagnosis: the wired adapter folded the token counts of an
+// llm_request_completed frame that names a session the pod holds no
+// binding for, or that names no session, into the bound session's total,
+// so a runtime could charge one session's budget with another's tokens.
+// Confirm the token sink keys the meter by the frame's sessionId and drops
+// an empty or unbound one.
+func TestWiredReportUsageDropsFramesForOtherSessions_spec_28_5_3(t *testing.T) {
+	client, sock := wiredAdapter(t)
+	enc := dialRuntime(t, sock)
+
+	sendCompletedFor(t, enc, "sess-unbound", "req-x", 900, 900)
+	sendCompletedFor(t, enc, "", "req-y", 800, 800)
+	// A frame naming the bound session follows on the same connection; the
+	// read loop handles frames in order, so once its counts arrive the two
+	// frames before it have been handled.
+	sendCompleted(t, enc, "req-1", 7, 3)
+
+	delta := pollUntilFolded(t, client, 7, 3)
+	if delta.GetInputTokens() != 7 || delta.GetOutputTokens() != 3 {
+		t.Fatalf("delta = (%d,%d), want (7,3): the counts of frames naming another session or none were folded into %s",
+			delta.GetInputTokens(), delta.GetOutputTokens(), sessionID)
+	}
+}
+
 // TestWiredReportUsageCumulativeReturnsRunningTotal pins that the wired
 // adapter's cumulative ReportUsage pull (the flag a reconnected gateway
 // replica sets) returns the session's running cumulative total over the
@@ -340,7 +389,7 @@ func TestWiredReportUsageCumulativeReturnsRunningTotal_spec_11_2(t *testing.T) {
 
 	// After a cumulative read advances the watermark to the running total,
 	// the next steady-state delta returns zero rather than re-adding the
-	// already-recovered tokens (the §11.2:46 no-double-count invariant).
+	// already-recovered tokens (the §11.2 no-double-count invariant).
 	after := reportUsage(t, client, false)
 	if after.GetInputTokens() != 0 || after.GetOutputTokens() != 0 {
 		t.Errorf("delta after cumulative = (%d,%d), want (0,0): a cumulative read must advance the watermark",

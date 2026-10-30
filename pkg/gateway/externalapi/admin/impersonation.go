@@ -13,23 +13,27 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 )
 
 // ImpersonationService is the §13.3 platform-admin impersonation issuer
 // the admin router drives. *impersonation.Service satisfies it. A nil
 // service leaves the /v1/admin/impersonation routes unregistered.
 //
-// spec: §13.3 line 585; §16.7 line 680.
+// spec: §13.3 (Platform-admin impersonation); §16.7.
 type ImpersonationService interface {
 	Issue(ctx context.Context, req impersonation.IssueRequest) (impersonation.Ticket, string, error)
-	End(ctx context.Context, id, endedBy string) (impersonation.Ticket, error)
-	ListActive(ctx context.Context) ([]impersonation.Ticket, error)
+	End(ctx context.Context, id, endedBy string) (impersonation.EndResult, error)
+	ListActive(ctx context.Context, callerSub string) ([]impersonation.Session, error)
 }
 
 // WithImpersonation wires the §13.3 impersonation issuer onto the Router.
-// A nil service leaves the routes unregistered (the cold-start posture for
-// a gateway without a JWT signer).
+// A nil interface value leaves the routes unregistered: the posture of a
+// gateway without a Postgres pool, a signer, the revocation propagator, or
+// the durable audit store. Callers must never pass a typed-nil service,
+// which passes the nil check and registers routes that panic on first use.
 func (r *Router) WithImpersonation(s ImpersonationService) *Router {
 	r.impersonation = s
 	return r
@@ -62,24 +66,20 @@ type startImpersonationResponse struct {
 	ExpiresAt              string `json:"expiresAt"`
 }
 
-// handleStartImpersonation implements POST /v1/admin/impersonation — the
+// handleStartImpersonation implements POST /v1/admin/impersonation, the
 // §13.3 platform-admin impersonation flow. It is platform-admin only: a
 // tenant-admin cannot impersonate a user (cross-tenant by design). The
-// admin.impersonation_started audit row is written before the bearer is
-// minted, and a CMP-058 unresolvable target region fails the issuance
-// closed with PLATFORM_AUDIT_REGION_UNRESOLVABLE (no session, no bearer).
+// caller's own bearer identity is passed so the service refuses an
+// impersonation or revoked caller bearer with 403 FORBIDDEN before any
+// audit write. The admin.impersonation_started audit row is written
+// before the bearer is minted, and a CMP-058 unresolvable target region
+// fails the issuance closed with PLATFORM_AUDIT_REGION_UNRESOLVABLE (no
+// session, no bearer).
 //
-// spec: §13.3 line 585; §16.7 line 680; §11.7 lines 430-433.
+// spec: §13.3 (Platform-admin impersonation, rule 1); §15.1; §16.7; §11.7.
 func (r *Router) handleStartImpersonation(w http.ResponseWriter, req *http.Request) {
-	principal, ok := authmw.FromContext(req.Context())
+	principal, ok := r.requireImpersonationAdmin(w, req)
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"admin handler reached without authenticated principal", nil)
-		return
-	}
-	if !principal.HasRole(auth.RolePlatformAdmin) {
-		writeError(w, http.StatusForbidden, "FORBIDDEN",
-			"impersonation requires the platform-admin role", nil)
 		return
 	}
 	var body StartImpersonationRequest
@@ -142,7 +142,14 @@ func (r *Router) handleStartImpersonation(w http.ResponseWriter, req *http.Reque
 		TicketRef:      body.TicketRef,
 		Duration:       time.Duration(body.DurationSeconds) * time.Second,
 		TargetRoles:    targetRoles,
+		CallerTenantID: principal.TenantID,
+		CallerJTI:      principal.JTI,
 	})
+	if errors.Is(err, impersonation.ErrIssuanceRefused) {
+		writeError(w, http.StatusForbidden, "FORBIDDEN",
+			"the impersonation request is refused for the calling bearer or an invalidated user", nil)
+		return
+	}
 	if err != nil {
 		r.writeImpersonationError(w, err)
 		return
@@ -157,87 +164,121 @@ func (r *Router) handleStartImpersonation(w http.ResponseWriter, req *http.Reque
 	})
 }
 
-// handleEndImpersonation implements DELETE /v1/admin/impersonation/{id} —
-// an operator-initiated end. It is platform-admin only and emits
-// admin.impersonation_ended (reason=explicit).
+// handleEndImpersonation implements DELETE /v1/admin/impersonation/{id}:
+// it ends the session by revoking its bearer from any replica. It is
+// platform-admin only, so no other caller reaches the __all__ lookup. The
+// not-found and not-active outcomes are checked before the default
+// branch, so a joined cross_tenant_read emit error still yields 404 or
+// 409. An ended-event failure after the revoke reaches the default branch
+// and its error is returned while the bearer stays revoked.
+//
+// spec: §13.3 (Platform-admin impersonation, rules 3 and 7); §15.1.
 func (r *Router) handleEndImpersonation(w http.ResponseWriter, req *http.Request) {
-	principal, ok := authmw.FromContext(req.Context())
+	principal, ok := r.requireImpersonationAdmin(w, req)
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"admin handler reached without authenticated principal", nil)
 		return
 	}
-	if !principal.HasRole(auth.RolePlatformAdmin) {
-		writeError(w, http.StatusForbidden, "FORBIDDEN",
-			"impersonation requires the platform-admin role", nil)
-		return
-	}
-	id := req.PathValue("id")
-	ticket, err := r.impersonation.End(req.Context(), id, principal.Subject)
+	res, err := r.impersonation.End(req.Context(), req.PathValue("id"), principal.Subject)
 	if err != nil {
-		switch {
-		case errors.Is(err, impersonation.ErrNotFound):
-			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "impersonation session not found", nil)
-		case errors.Is(err, impersonation.ErrAlreadyEnded):
-			writeError(w, http.StatusConflict, "CONFLICT", "impersonation session already ended", nil)
-		default:
-			r.writeImpersonationError(w, err)
-		}
+		writeEndImpersonationError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"impersonationSessionId": ticket.ID,
-		"endedAt":                ticket.EndedAt.UTC().Format(time.RFC3339),
-		"endReason":              string(ticket.EndReason),
+	writeJSON(w, http.StatusOK, endImpersonationResponse{
+		ImpersonationSessionID: res.SessionID,
+		EndedAt:                res.EndedAt.UTC().Format(time.RFC3339),
 	})
 }
 
-// impersonationEntry is one row of the GET /v1/admin/impersonation active
-// listing. The minted bearer is never echoed back.
+// endImpersonationResponse is the DELETE /v1/admin/impersonation/{id}
+// success body.
+type endImpersonationResponse struct {
+	ImpersonationSessionID string `json:"impersonationSessionId"`
+	EndedAt                string `json:"endedAt"`
+}
+
+// writeEndImpersonationError maps an End error: 409 INVALID_STATE_TRANSITION
+// for a revoked or expired bearer, 404 for an unknown id, and the shared
+// impersonation mapping otherwise.
+//
+// spec: §15.1 (DELETE /v1/admin/impersonation/{id}).
+func writeEndImpersonationError(w http.ResponseWriter, r *Router, err error) {
+	var notActive *issuedtokenstore.NotActiveError
+	switch {
+	case errors.Is(err, impersonation.ErrAlreadyEnded) && errors.As(err, &notActive):
+		writeError(w, http.StatusConflict, "INVALID_STATE_TRANSITION",
+			"the impersonation session's bearer is "+notActive.State,
+			map[string]any{"currentState": notActive.State, "allowedStates": []string{"active"}})
+	case errors.Is(err, impersonation.ErrNotFound):
+		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "impersonation session not found", nil)
+	default:
+		r.writeImpersonationError(w, err)
+	}
+}
+
+// impersonationEntry is one item of the GET /v1/admin/impersonation
+// listing: the fields the issued_tokens row holds. The minted bearer is
+// never echoed back.
 type impersonationEntry struct {
 	ImpersonationSessionID string `json:"impersonationSessionId"`
 	AdminSub               string `json:"adminSub"`
 	TargetTenantID         string `json:"targetTenantId"`
 	TargetUserID           string `json:"targetUserId"`
-	Reason                 string `json:"reason"`
-	TicketID               string `json:"ticketId"`
 	IssuedAt               string `json:"issuedAt"`
 	ExpiresAt              string `json:"expiresAt"`
 }
 
-// handleListImpersonation implements GET /v1/admin/impersonation — the
-// active-session listing. platform-admin only.
+// handleListImpersonation implements GET /v1/admin/impersonation, the
+// active-session listing across every tenant. It is platform-admin only,
+// and the service emits cross_tenant_read before it reads any row. The
+// items go out in the §15.1 cursor-paginated envelope, sortable on
+// created_at (the bearer's issuedAt) with the session id as tiebreaker.
+//
+// spec: §13.3 (Platform-admin impersonation, rules 2 and 7); §15.1.
 func (r *Router) handleListImpersonation(w http.ResponseWriter, req *http.Request) {
-	principal, ok := authmw.FromContext(req.Context())
+	principal, ok := r.requireImpersonationAdmin(w, req)
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"admin handler reached without authenticated principal", nil)
 		return
 	}
-	if !principal.HasRole(auth.RolePlatformAdmin) {
-		writeError(w, http.StatusForbidden, "FORBIDDEN",
-			"impersonation requires the platform-admin role", nil)
-		return
-	}
-	tickets, err := r.impersonation.ListActive(req.Context())
+	sessions, err := r.impersonation.ListActive(req.Context(), principal.Subject)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	entries := make([]impersonationEntry, 0, len(tickets))
-	for _, t := range tickets {
+	entries := make([]impersonationEntry, 0, len(sessions))
+	for _, s := range sessions {
 		entries = append(entries, impersonationEntry{
-			ImpersonationSessionID: t.ID,
-			AdminSub:               t.AdminSub,
-			TargetTenantID:         t.TargetTenantID,
-			TargetUserID:           t.TargetUserID,
-			Reason:                 t.Reason,
-			TicketID:               t.TicketRef,
-			IssuedAt:               t.IssuedAt.UTC().Format(time.RFC3339),
-			ExpiresAt:              t.ExpiresAt.UTC().Format(time.RFC3339),
+			ImpersonationSessionID: s.ID,
+			AdminSub:               s.AdminSub,
+			TargetTenantID:         s.TargetTenantID,
+			TargetUserID:           s.TargetUserID,
+			IssuedAt:               s.IssuedAt.UTC().Format(time.RFC3339),
+			ExpiresAt:              s.ExpiresAt.UTC().Format(time.RFC3339),
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": entries})
+	writePaginatedList(w, req, r.clock(), entries, []string{"created_at"}, adminListDefaultSort,
+		func(e impersonationEntry, _ pagination.Sort) (string, string) {
+			return e.IssuedAt, e.ImpersonationSessionID
+		})
+}
+
+// requireImpersonationAdmin resolves the authenticated principal and
+// refuses a caller without platform-admin with 403 FORBIDDEN, before any
+// cross-tenant read.
+//
+// spec: §13.3 (Platform-admin impersonation, rule 7).
+func (r *Router) requireImpersonationAdmin(w http.ResponseWriter, req *http.Request) (authmw.Principal, bool) {
+	principal, ok := authmw.FromContext(req.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"admin handler reached without authenticated principal", nil)
+		return authmw.Principal{}, false
+	}
+	if !principal.HasRole(auth.RolePlatformAdmin) {
+		writeError(w, http.StatusForbidden, "FORBIDDEN",
+			"impersonation requires the platform-admin role", nil)
+		return authmw.Principal{}, false
+	}
+	return principal, true
 }
 
 // auditRegionUnresolvable is the §11.7 CMP-058 fail-closed error surface
@@ -250,9 +291,14 @@ type auditRegionUnresolvable interface {
 }
 
 // writeImpersonationError maps an issuer error to the canonical admin
-// envelope. A CMP-058 fail-closed surfaces as PLATFORM_AUDIT_REGION_UNRESOLVABLE
-// (HTTP 422); a duration error as 400; everything else as 500.
+// envelope. A bearer the KMS could not sign surfaces as
+// KMS_SIGNING_UNAVAILABLE (HTTP 503 with Retry-After, §10.2); a CMP-058
+// fail-closed as PLATFORM_AUDIT_REGION_UNRESOLVABLE (HTTP 422); a
+// duration error as 400; everything else as 500.
 func (r *Router) writeImpersonationError(w http.ResponseWriter, err error) {
+	if writeSigningUnavailable(w, err) {
+		return
+	}
 	var unresolvable auditRegionUnresolvable
 	switch {
 	case errors.As(err, &unresolvable):

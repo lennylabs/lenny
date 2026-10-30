@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 )
 
-// errResolverDown is the sentinel a §12.5 line 303 unit test passes
+// errResolverDown is the sentinel a §12.5 unit test passes
 // through to assert the fail-closed branch fires when a T4 tenant's
 // KMS lookup errors before reaching MinIO.
 var errResolverDown = errors.New("test: resolver KMS unavailable")

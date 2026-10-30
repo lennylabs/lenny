@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/auth"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -33,7 +35,7 @@ import (
 // surfaces are not part of the OpenAI Chat wire shape — a consumer of
 // this adapter is treated as stateless across calls and cannot resolve
 // elicitations or approve tool use through the OpenAI envelope.
-// spec: §9.1 line 35; §15.1 line 575. F-9.1.6 / F-9.1.8.
+// spec: §9.1; §15.1. F-9.1.6 / F-9.1.8.
 func OpenAIChatAdapterCapabilities() adapter.Capabilities {
 	return adapter.Capabilities{
 		PathPrefix:                "/v1/chat/completions",
@@ -128,6 +130,8 @@ type OpenAIChatHandler struct {
 	defaultRuntime string
 	binder         SingleShotBinder
 	releaseTimeout time.Duration
+	// devTenantHeader mirrors OpenAIChatOptions.DevTenantHeader.
+	devTenantHeader bool
 }
 
 // OpenAIChatOptions configures OpenAIChatHandler.
@@ -158,6 +162,15 @@ type OpenAIChatOptions struct {
 	// Operator-tunable so a deployment can widen or narrow the drain
 	// window that survives a request-context timeout or client disconnect.
 	ReleaseTimeout time.Duration
+
+	// DevTenantHeader, when true, lets a request with no authenticated
+	// principal name its tenant through the X-Lenny-Tenant-ID dev header
+	// and resolves a request with neither to `default`. The gateway sets
+	// it only under --dev-mode. When false, the default, the tenant comes
+	// only from the principal and a request without one is refused with
+	// 401 before any session is created or read (F-10.2.21).
+	// spec: §10.2 (Authentication); §17.4 (dev mode).
+	DevTenantHeader bool
 }
 
 // NewOpenAIChatHandler returns a configured handler.
@@ -183,12 +196,13 @@ func NewOpenAIChatHandler(store sessionstore.Store, exec executor.Executor, opts
 		releaseTimeout = defaultSingleShotReleaseTimeout
 	}
 	return &OpenAIChatHandler{
-		store:          store,
-		exec:           exec,
-		clock:          clock,
-		defaultRuntime: rt,
-		binder:         binder,
-		releaseTimeout: releaseTimeout,
+		store:           store,
+		exec:            exec,
+		clock:           clock,
+		defaultRuntime:  rt,
+		binder:          binder,
+		releaseTimeout:  releaseTimeout,
+		devTenantHeader: opts.DevTenantHeader,
 	}
 }
 
@@ -221,8 +235,12 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 			"messages must contain at least one entry")
 		return
 	}
-	tenantID := resolveTenant(r)
-	// spec: §10.6 line 557 — a model named "environments/{name}/{model}"
+	tenantID, ok := resolveTenant(r, h.devTenantHeader)
+	if !ok {
+		writeUnauthenticated(w)
+		return
+	}
+	// spec: §10.6 — a model named "environments/{name}/{model}"
 	// scopes the implicit session to the named environment; the bare
 	// model is the runtime reference. F-10.6.11.
 	envScope, runtimeRef := splitEnvModel(req.Model)
@@ -258,7 +276,7 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 	// where r.Context() is already cancelled.
 	// spec: §15 built-in adapter single-shot compute model; §6.2 release.
 	disp := executor.DispositionFailed
-	defer releaseSingleShot(r.Context(), h.exec, h.releaseTimeout, sessionID, &disp)
+	defer releaseSingleShot(r.Context(), singleShotRelease{exec: h.exec, store: h.store, clock: h.clock, timeout: h.releaseTimeout}, tenantID, sessionID, &disp)
 
 	// Translate the OpenAI messages array into executor messages.
 	// System/user/assistant roles round-trip unchanged.
@@ -281,8 +299,14 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 	// Mark the session completed — the translator runs a single
 	// request/response cycle and does not maintain conversation
 	// state across calls.
+	// spec: §7.2, §8.8 — the completion records the Terminated fact in its
+	// own write. It runs no post-terminal hook: the handler's deferred
+	// single-shot release releases the executor.
+	completedAt := h.clock()
 	_, _ = h.store.Update(r.Context(), tenantID, sessionID, func(s *sessionstore.Session) error {
+		from := s.State
 		s.State = session.StateCompleted
+		sessionstore.MarkTerminated(s, from, completedAt)
 		return nil
 	})
 	disp = executor.DispositionCompleted
@@ -472,6 +496,16 @@ func openAIErrorType(status int) string {
 	}
 }
 
+// singleShotRelease is what a translator handler's deferred release needs:
+// the executor that releases the pod, the session store and clock that
+// record the §7.1 release marker, and the release timeout.
+type singleShotRelease struct {
+	exec    executor.Executor
+	store   sessionstore.RowUpdater
+	clock   func() time.Time
+	timeout time.Duration
+}
+
 // releaseSingleShot releases the single-shot pod and its §4.9 lease on a
 // context detached from the request context, so the pod drain and lease
 // release complete even when the request context is already cancelled (a
@@ -480,24 +514,57 @@ func openAIErrorType(status int) string {
 // successful turn, failed on a dispatch error or timeout). An ErrUnsupported
 // release (the in-memory EchoExecutor, which is not a SessionReleaser) is
 // tolerated.
-// spec: §6.2 release; §15 built-in adapter single-shot compute model.
-func releaseSingleShot(reqCtx context.Context, exec executor.Executor, timeout time.Duration, sessionID string, disp *executor.Disposition) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(reqCtx), timeout)
+//
+// After the release returns, whatever its error, it records the release on
+// the session row, which ends the session's §7.1 post-terminal window: a
+// built-in adapter session's completed write runs no post-terminal hook, so
+// no session-server release site reaches it. A row that is not terminal (a
+// dispatch that failed before the completion write) or is gone records
+// nothing, and a store error is discarded like a release error; the window
+// cap ends that session's window.
+// spec: §6.2 release; §15 built-in adapter single-shot compute model; §7.1
+// (Post-terminal window).
+func releaseSingleShot(reqCtx context.Context, rel singleShotRelease, tenantID, sessionID string, disp *executor.Disposition) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(reqCtx), rel.timeout)
 	defer cancel()
-	if err := executor.ReleaseSession(ctx, exec, sessionID, *disp); err != nil && !errors.Is(err, executor.ErrUnsupported) {
+	if err := executor.ReleaseSession(ctx, rel.exec, sessionID, *disp); err != nil && !errors.Is(err, executor.ErrUnsupported) {
 		// Non-fatal; the gateway logs release failures in production.
 		_ = err
 	}
+	if rel.store == nil {
+		return
+	}
+	_ = sessionstore.RecordPodRelease(reqCtx, rel.store, tenantID, sessionID, rel.clock())
 }
 
-// resolveTenant reads the X-Lenny-Tenant-ID dev header, defaulting
-// to "default" for single-tenant mode. Production resolves the
-// tenant from the §10.2 Bearer token.
-func resolveTenant(r *http.Request) string {
-	if v := r.Header.Get("X-Lenny-Tenant-ID"); v != "" {
-		return v
+// resolveTenant returns the tenant the request runs as and reports
+// whether one resolved. The §10.2 authenticated principal is canonical.
+// Without one, only a dev-mode handler (devTenantHeader) reads the
+// X-Lenny-Tenant-ID dev header, when it passes the §10.2 format check,
+// and otherwise falls back to `default`, the dev-mode single-tenant
+// default. Outside dev mode a request with no principal resolves no
+// tenant, rather than the header or `default`, so an unauthenticated
+// caller cannot choose the tenant its session is created or read under.
+//
+// spec: §10.2 (Authentication); §17.4 (dev mode). F-10.2.21.
+func resolveTenant(r *http.Request, devTenantHeader bool) (string, bool) {
+	if p, ok := authmw.FromContext(r.Context()); ok && p.TenantID != "" {
+		return p.TenantID, true
 	}
-	return "default"
+	if !devTenantHeader {
+		return "", false
+	}
+	if v := r.Header.Get("X-Lenny-Tenant-ID"); v != "" && auth.ValidateTenantID(v) == nil {
+		return v, true
+	}
+	return auth.DefaultTenantID, true
+}
+
+// writeUnauthenticated writes the OpenAI-dialect 401 for a request that
+// carries no authenticated principal. spec: §10.2; §15.1 (UNAUTHORIZED).
+func writeUnauthenticated(w http.ResponseWriter) {
+	writeOpenAIError(w, http.StatusUnauthorized, "authentication_error",
+		"request requires a bearer token")
 }
 
 // defaultChatID returns a fresh §12.6 UUIDv8 session identifier. The

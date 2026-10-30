@@ -20,7 +20,7 @@ import (
 	memorypg "github.com/lennylabs/lenny/pkg/gateway/session/memorystore/pgstore"
 )
 
-// spec: §12.8 lines 743-758 — the startup erasure preflight passes against
+// spec: §12.8 — the startup erasure preflight passes against
 // the default Postgres backend: the seeded probe row under the reserved
 // __preflight__ tenant is written and then fully erased by both
 // DeleteByUser and DeleteByTenant.
@@ -40,7 +40,7 @@ func TestMemoryStoreErasurePreflightPostgres(t *testing.T) {
 	}
 }
 
-// spec: §9.4 lines 200, 204 — the published contract helper passes against
+// spec: §9.4 — the published contract helper passes against
 // the default Postgres backend, covering tenant isolation, empty-scope
 // rejection, the six-label instrumentation contract, and the §12.8 erasure
 // stub-detection.

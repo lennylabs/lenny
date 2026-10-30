@@ -75,7 +75,7 @@ func TestAvailable_spec_4_9_1347(t *testing.T) {
 }
 
 // TestAvailable_revoked_spec_4_9_1379 confirms a revoked credential is
-// treated as not-found per §4.9 line 1379.
+// treated as not-found per §4.9.
 func TestAvailable_revoked_spec_4_9_1379(t *testing.T) {
 	m, store, _, _ := newMaterializer(t, testProxyURL)
 	c := register(t, store, credential.ProviderAnthropicDirect, "sk-ant-xyz")
@@ -106,7 +106,7 @@ func TestMintProto_spec_4_9_1347(t *testing.T) {
 	register(t, store, credential.ProviderAnthropicDirect, "sk-ant-secret")
 	ctx := context.Background()
 
-	proto, err := m.MintProto(ctx, "acme", "alice", "sess-1", "spiffe://acme/pod/p1", string(credential.ProviderAnthropicDirect))
+	proto, err := m.MintProto(ctx, "acme", "alice", "sess-1", "spiffe://acme/pod/p1", string(credential.ProviderAnthropicDirect), 0)
 	if err != nil {
 		t.Fatalf("MintProto: %v", err)
 	}
@@ -184,27 +184,27 @@ func TestMintProto_errors_spec_4_9_1379(t *testing.T) {
 		if _, err := store.Revoke(ctx, "acme", c.Ref); err != nil {
 			t.Fatalf("revoke: %v", err)
 		}
-		if _, err := m.MintProto(ctx, "acme", "alice", "s", "", string(credential.ProviderAnthropicDirect)); err == nil {
+		if _, err := m.MintProto(ctx, "acme", "alice", "s", "", string(credential.ProviderAnthropicDirect), 0); err == nil {
 			t.Fatal("MintProto on a revoked credential should error")
 		}
 	})
 	t.Run("missing", func(t *testing.T) {
 		m, _, _, _ := newMaterializer(t, testProxyURL)
-		if _, err := m.MintProto(ctx, "acme", "alice", "s", "", string(credential.ProviderAnthropicDirect)); err == nil {
+		if _, err := m.MintProto(ctx, "acme", "alice", "s", "", string(credential.ProviderAnthropicDirect), 0); err == nil {
 			t.Fatal("MintProto on a missing credential should error")
 		}
 	})
 	t.Run("no-dialect", func(t *testing.T) {
 		m, store, _, _ := newMaterializer(t, testProxyURL)
 		register(t, store, credential.ProviderGitHub, "ghp")
-		if _, err := m.MintProto(ctx, "acme", "alice", "s", "", string(credential.ProviderGitHub)); err == nil {
+		if _, err := m.MintProto(ctx, "acme", "alice", "s", "", string(credential.ProviderGitHub), 0); err == nil {
 			t.Fatal("MintProto on a no-dialect provider should error")
 		}
 	})
 	t.Run("no-proxy-url", func(t *testing.T) {
 		m, store, _, _ := newMaterializer(t, "")
 		register(t, store, credential.ProviderAnthropicDirect, "sk")
-		if _, err := m.MintProto(ctx, "acme", "alice", "s", "", string(credential.ProviderAnthropicDirect)); err != usercreds.ErrProxyUnavailable {
+		if _, err := m.MintProto(ctx, "acme", "alice", "s", "", string(credential.ProviderAnthropicDirect), 0); err != usercreds.ErrProxyUnavailable {
 			t.Fatalf("MintProto with no proxy URL err = %v, want ErrProxyUnavailable", err)
 		}
 	})
@@ -217,7 +217,7 @@ func TestRotateUser_spec_4_9_1350(t *testing.T) {
 	m, store, leases, creds := newMaterializer(t, testProxyURL)
 	c := register(t, store, credential.ProviderAnthropicDirect, "sk-old")
 	ctx := context.Background()
-	proto, err := m.MintProto(ctx, "acme", "alice", "sess-1", "", string(credential.ProviderAnthropicDirect))
+	proto, err := m.MintProto(ctx, "acme", "alice", "sess-1", "", string(credential.ProviderAnthropicDirect), 0)
 	if err != nil {
 		t.Fatalf("MintProto: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestRevokeUser_spec_4_9_1351(t *testing.T) {
 	m.SetRevoker(rev)
 	c := register(t, store, credential.ProviderAnthropicDirect, "sk")
 	ctx := context.Background()
-	proto, err := m.MintProto(ctx, "acme", "alice", "sess-1", "", string(credential.ProviderAnthropicDirect))
+	proto, err := m.MintProto(ctx, "acme", "alice", "sess-1", "", string(credential.ProviderAnthropicDirect), 0)
 	if err != nil {
 		t.Fatalf("MintProto: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestRevokeUser_nilRevoker_spec_4_9_1351(t *testing.T) {
 	m, store, leases, _ := newMaterializer(t, testProxyURL)
 	c := register(t, store, credential.ProviderAnthropicDirect, "sk")
 	ctx := context.Background()
-	proto, err := m.MintProto(ctx, "acme", "alice", "sess-1", "", string(credential.ProviderAnthropicDirect))
+	proto, err := m.MintProto(ctx, "acme", "alice", "sess-1", "", string(credential.ProviderAnthropicDirect), 0)
 	if err != nil {
 		t.Fatalf("MintProto: %v", err)
 	}
@@ -319,5 +319,23 @@ func TestRevokeUser_nilRevoker_spec_4_9_1351(t *testing.T) {
 	}
 	if _, ok := leases.GetByID(proto.LeaseId); !ok {
 		t.Fatal("RevokeUser must retain the lease even with no revoker")
+	}
+}
+
+// TestMintProtoRecordsTheCoordinationGeneration_spec_7_3 asserts that the
+// user-credential mint stores the generation the caller passed on the lease,
+// so the session's pod release scopes it by generation.
+//
+// spec: §7.3 (Credential leases on the replacement pod), §4.9 (Credential
+// Leasing Service)
+func TestMintProtoRecordsTheCoordinationGeneration_spec_7_3(t *testing.T) {
+	m, store, leases, _ := newMaterializer(t, testProxyURL)
+	register(t, store, credential.ProviderAnthropicDirect, "sk-ant-secret")
+	proto, err := m.MintProto(context.Background(), "acme", "alice", "sess-1", "", string(credential.ProviderAnthropicDirect), 5)
+	if err != nil {
+		t.Fatalf("MintProto: %v", err)
+	}
+	if lease, ok := leases.GetByID(proto.LeaseId); !ok || lease.CoordinationGeneration != 5 {
+		t.Errorf("stored lease = %+v ok %v, want generation 5", lease, ok)
 	}
 }

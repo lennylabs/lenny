@@ -2,13 +2,13 @@
 
 //go:build security
 
-// Tier-9 §12.9.8 credential-leakage probe. Three adversarial checks
+// Tier-9 TESTING.md §12.9.8 credential-leakage probe. Three adversarial checks
 // against a cred-shell-echo pod running on the Kind cluster:
 //
-//   - Environment: dump the runtime container's /proc/1/environ and
-//     assert no LLM-provider credential prefix appears. The
-//     cred-shell-echo image is the only test runtime that retains
-//     /bin/sh so the probe can read its environment from inside.
+//   - Environment: dump the environment the runtime container's
+//     processes receive and assert no LLM-provider credential prefix
+//     appears. The cred-shell-echo image is the only test runtime that
+//     retains /bin/sh so the probe can read the environment from inside.
 //   - Filesystem: list /run/lenny, the §4.7 credential mount, and
 //     assert the credential file (when present) is group-readable
 //     under the lenny-cred-readers GID and unreadable by anyone
@@ -17,7 +17,7 @@
 //   - Network egress: locate the egress-capture sidecar in the same
 //     pod, parse the JSONL capture file the sidecar writes for each
 //     accepted forward, and assert no captured payload hash matches
-//     a known credential. The §12.9.8 sidecar (see
+//     a known credential. The TESTING.md §12.9.8 sidecar (see
 //     pkg/controller/sandbox/podspec.EgressCapture) is the network-
 //     side analogue of the environment and filesystem probes.
 //
@@ -33,13 +33,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
-// credShellPoolSuffix is the pool name suffix the §12.9.8 probe
+// credShellPoolSuffix is the pool name suffix the TESTING.md §12.9.8 probe
 // looks for: agent-workload.yaml names the pool
 // cred-shell-echo-pool.
 const credShellPoolSuffix = "cred-shell-echo-pool"
@@ -75,8 +77,8 @@ func findCredShellPod(t *testing.T, c *kind.Cluster) string {
 			return p.Name
 		}
 	}
-	t.Skip("§12.9.8 probe: no cred-shell-echo agent pod present; install.sh applies agent-workload.yaml " +
-		"which declares the cred-shell-echo-pool. Without the pool the §12.9.8 boundary cannot be probed.")
+	t.Skip("TESTING.md §12.9.8 probe: no cred-shell-echo agent pod present; install.sh applies agent-workload.yaml " +
+		"which declares the cred-shell-echo-pool. Without the pool the TESTING.md §12.9.8 boundary cannot be probed.")
 	return ""
 }
 
@@ -109,30 +111,51 @@ func scanCredentialPrefix(body string) string {
 	return ""
 }
 
+// credEnvDumpScript prints the environment of the shell it runs in, then
+// the environment of every process in the container whose environ the
+// calling UID can read. It exits 0 when its own environment was read,
+// because an unreadable environ, such as the non-dumpable supervisor's,
+// is expected and skipped.
+const credEnvDumpScript = `cat /proc/self/environ || exit 1
+for f in /proc/[0-9]*/environ; do cat "$f" 2>/dev/null; done
+exit 0`
+
 // spec: 12.9.8
-// diagnosis: a §12.9.8 credential-leakage probe dumps the runtime
+// diagnosis: a TESTING.md §12.9.8 credential-leakage probe dumps the runtime
 // container's environment and asserts no LLM-provider credential
 // prefix surfaces. The cred-shell-echo runtime retains /bin/sh so the
-// probe can read /proc/1/environ from inside; an adversarial dump that
+// probe can read the environment from inside; an adversarial dump that
 // returns a known credential prefix breaches §13.1 by exposing
 // upstream secrets through the agent pod's environment.
+//
+// PID 1 of the runtime container is the §4.7.11 supervisor, which marks
+// itself non-dumpable, so its /proc/1/environ is owned by root and is
+// unreadable at the agent UID by design. The probe therefore reads the
+// environment of the shell it execs, which the container runtime gives
+// the container's configured environment, and the environment of every
+// other process in the container whose environ the agent UID can read,
+// such as a runtime process the supervisor started for a session.
 func TestCredentialLeakageEnvironment(t *testing.T) {
 	c := kind.InstallLenny(t)
 	pod := findCredShellPod(t, c)
 
-	env, err := execContainer(t, c, pod, "runtime", "cat", "/proc/1/environ")
+	env, err := execContainer(t, c, pod, "runtime", "sh", "-c", credEnvDumpScript)
 	if err != nil {
-		t.Skipf("§12.9.8 (env): could not read /proc/1/environ from cred-shell-echo pod %s: %v\noutput:\n%s",
+		t.Skipf("blocked: TESTING.md §12.9.8 (env): could not read the runtime container environment from cred-shell-echo pod %s; the route back is a cred-shell-echo pod whose runtime container accepts exec: %v\noutput:\n%s",
 			pod, err, env)
 	}
+	if !strings.Contains(env, "PATH=") {
+		t.Fatalf("TESTING.md §12.9.8 (env): the environment dump from cred-shell-echo pod %s carries no PATH entry, "+
+			"so the probe did not read an environment; output:\n%s", pod, env)
+	}
 	if hit := scanCredentialPrefix(env); hit != "" {
-		t.Errorf("§12.9.8 (env) FAIL: cred-shell-echo runtime container exposes a credential matching prefix %q in /proc/1/environ; "+
+		t.Errorf("TESTING.md §12.9.8 (env) FAIL: cred-shell-echo runtime container exposes a credential matching prefix %q in a process environment; "+
 			"upstream LLM credentials MUST NOT appear in the agent pod's environment", hit)
 	}
 }
 
 // spec: 12.9.8
-// diagnosis: a §12.9.8 filesystem probe lists the §4.7 credential
+// diagnosis: a TESTING.md §12.9.8 filesystem probe lists the §4.7 credential
 // mount (/run/lenny) and asserts no LLM-provider credential prefix
 // is readable from inside the runtime container. The runtime mounts
 // the credential tmpfs read-only per §13.1, so the only legitimate
@@ -154,31 +177,37 @@ func TestCredentialLeakageFilesystem(t *testing.T) {
 	listing, err := execContainer(t, c, pod, "runtime", "sh", "-c",
 		"ls -la /run/lenny 2>/dev/null || true; find /run/lenny -type f 2>/dev/null -exec cat {} +; true")
 	if err != nil {
-		t.Skipf("§12.9.8 (filesystem): probe failed against cred-shell-echo pod %s: %v\noutput:\n%s",
+		t.Skipf("TESTING.md §12.9.8 (filesystem): probe failed against cred-shell-echo pod %s: %v\noutput:\n%s",
 			pod, err, listing)
 	}
 	if hit := scanCredentialPrefix(listing); hit != "" {
-		t.Errorf("§12.9.8 (filesystem) FAIL: /run/lenny in cred-shell-echo runtime container exposes credential prefix %q; "+
+		t.Errorf("TESTING.md §12.9.8 (filesystem) FAIL: /run/lenny in cred-shell-echo runtime container exposes credential prefix %q; "+
 			"the §4.7 credential file MUST contain only the per-session lease material, not standing LLM credentials", hit)
 	}
 }
 
 // spec: 12.9.8
-// diagnosis: the §12.9.8 network-egress probe reads the
+// diagnosis: the TESTING.md §12.9.8 network-egress probe reads the
 // lenny-egress-capture sidecar's JSONL capture file (mounted
 // read-only on the runtime container at /run/lenny-capture/egress.jsonl)
 // and asserts every captured connection's SentHash is a stable
 // SHA-256 digest, not a passthrough of credential bytes. The hash
 // itself is irreversible so the capture artifact cannot leak
 // credentials; this test asserts the capture is well-formed and the
-// sidecar is reachable on the standard mount path so the §12.9.8
+// sidecar is reachable on the standard mount path so the TESTING.md §12.9.8
 // boundary is exercised end-to-end. A missing sidecar or unparseable
 // capture is the probe's failure mode.
 //
-// spec: §12.9.8.
-// diagnosis: a failure means the egress-capture sidecar is unreachable
-// or its JSONL capture is malformed, so the §12.9.8 SentHash boundary
-// (hashed, never raw credential bytes) cannot be verified end-to-end.
+// spec: TESTING.md §12.9.8, 13.1 (Pod Security)
+// diagnosis: a failure means the egress-capture sidecar is unreachable,
+// its JSONL capture is malformed, or the runtime cannot read it. The
+// capture container runs at its own UID rather than the agent UID
+// (§13.1 Container identity reserves the agent UID to the runtime), so
+// the runtime reads the file only through the lenny-cred-readers group:
+// a mode other than 0640, a group other than that GID, or a cat that
+// fails for any reason but a missing file means the runtime has lost
+// read access and the TESTING.md §12.9.8 SentHash boundary (hashed, never
+// raw credential bytes) cannot be verified end-to-end.
 func TestCredentialLeakageNetworkEgress(t *testing.T) {
 	c := kind.InstallLenny(t)
 	pod := findCredShellPod(t, c)
@@ -187,17 +216,30 @@ func TestCredentialLeakageNetworkEgress(t *testing.T) {
 	// itself and the runtime mounts the same volume read-only.
 	listing, err := execContainer(t, c, pod, "runtime", "ls", "-la", "/run/lenny-capture")
 	if err != nil {
-		t.Skipf("§12.9.8 (egress): /run/lenny-capture not mounted on cred-shell-echo pod %s; the §12.9.8 sidecar may not be injected (check controller.egressCaptureImage and the template annotation). %v\noutput:\n%s",
+		t.Skipf("TESTING.md §12.9.8 (egress): /run/lenny-capture not mounted on cred-shell-echo pod %s; the TESTING.md §12.9.8 sidecar may not be injected (check controller.egressCaptureImage and the template annotation). %v\noutput:\n%s",
 			pod, err, listing)
 	}
 
-	body, err := execContainer(t, c, pod, "runtime", "cat", "/run/lenny-capture/egress.jsonl")
+	stat, err := execContainer(t, c, pod, "runtime", "ls", "-ln", egressCapturePath)
 	if err != nil {
-		// Sidecar present but no capture yet — the pod has not emitted
-		// any outbound TCP. The mount existing is the meaningful
-		// assertion at this point.
-		t.Logf("§12.9.8 (egress): /run/lenny-capture/egress.jsonl not yet written (no egress traffic from cred-shell-echo); mount is in place. %v", err)
-		return
+		if strings.Contains(stat, missingFileMessage) {
+			// Sidecar present but no capture yet: the pod has not
+			// emitted any outbound TCP. The mount existing is the
+			// meaningful assertion at this point.
+			t.Logf("TESTING.md §12.9.8 (egress): %s not yet written (no egress traffic from cred-shell-echo); mount is in place.", egressCapturePath)
+			return
+		}
+		t.Fatalf("TESTING.md §12.9.8 (egress): ls -ln %s in the runtime container of pod %s failed: %v\noutput:\n%s",
+			egressCapturePath, pod, err, stat)
+	}
+	assertCaptureFileReadableByRuntime(t, stat)
+
+	// The file exists, so any cat failure (a permission denial above
+	// all) means the runtime cannot read the capture.
+	body, err := execContainer(t, c, pod, "runtime", "cat", egressCapturePath)
+	if err != nil {
+		t.Fatalf("TESTING.md §12.9.8 (egress) FAIL: the runtime container of pod %s cannot read %s: %v\noutput:\n%s",
+			pod, egressCapturePath, err, body)
 	}
 
 	// Parse each JSONL row. A malformed capture is a sidecar bug.
@@ -215,18 +257,18 @@ func TestCredentialLeakageNetworkEgress(t *testing.T) {
 		}
 		var rec record
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			t.Errorf("§12.9.8 (egress) FAIL: lenny-egress-capture wrote a malformed JSONL row %q: %v",
+			t.Errorf("TESTING.md §12.9.8 (egress) FAIL: lenny-egress-capture wrote a malformed JSONL row %q: %v",
 				line, err)
 			continue
 		}
 		if rec.SentHash == "" || rec.Upstream == "" {
-			t.Errorf("§12.9.8 (egress) FAIL: capture row missing sent_hash or upstream: %+v", rec)
+			t.Errorf("TESTING.md §12.9.8 (egress) FAIL: capture row missing sent_hash or upstream: %+v", rec)
 		}
 		// Defense in depth: the sent_hash field must NOT itself
 		// contain a credential prefix; only hex digits and dashes
 		// are legitimate.
 		if hit := scanCredentialPrefix(rec.SentHash); hit != "" {
-			t.Errorf("§12.9.8 (egress) FAIL: capture row hash %q contains credential prefix %q (sidecar bug); hashes must be SHA-256 hex",
+			t.Errorf("TESTING.md §12.9.8 (egress) FAIL: capture row hash %q contains credential prefix %q (sidecar bug); hashes must be SHA-256 hex",
 				rec.SentHash, hit)
 		}
 	}
@@ -235,8 +277,63 @@ func TestCredentialLeakageNetworkEgress(t *testing.T) {
 	// prefix. The sidecar writes only hashes, but a copy-paste bug
 	// could leak raw bytes; the probe catches that regression.
 	if hit := scanCredentialPrefix(body); hit != "" {
-		t.Errorf("§12.9.8 (egress) FAIL: capture file body contains credential prefix %q; lenny-egress-capture MUST only write SHA-256 hashes", hit)
+		t.Errorf("TESTING.md §12.9.8 (egress) FAIL: capture file body contains credential prefix %q; lenny-egress-capture MUST only write SHA-256 hashes", hit)
 	}
+}
+
+// egressCapturePath is the capture file lenny-egress-capture writes,
+// as the runtime container sees it through its read-only mount.
+const egressCapturePath = "/run/lenny-capture/egress.jsonl"
+
+// missingFileMessage is the coreutils and busybox error text for a path
+// that does not exist, the one ls or cat failure that means "not yet
+// written" rather than "not readable".
+const missingFileMessage = "No such file or directory"
+
+// captureFileMode is the mode lenny-egress-capture creates the capture
+// file with, as ls -l renders it: owner read-write, group read, nothing
+// for other.
+const captureFileMode = "-rw-r-----"
+
+// assertCaptureFileReadableByRuntime checks the ls -ln line for the
+// capture file. The capture container runs at a UID of its own, so the
+// runtime reads the file only through the group: the fsGroup-managed
+// emptyDir gives it the lenny-cred-readers GID, which the runtime holds
+// as a supplementary group, and mode 0640 grants that group read.
+//
+// spec: 13.1 (Pod Security)
+func assertCaptureFileReadableByRuntime(t *testing.T, lsLine string) {
+	t.Helper()
+	mode, gid, err := parseLsLn(lsLine)
+	if err != nil {
+		t.Fatalf("TESTING.md §12.9.8 (egress): %v", err)
+	}
+	if mode != captureFileMode {
+		t.Errorf("§13.1 (egress capture) FAIL: %s has mode %s, want %s (0640) so the runtime reads it through the lenny-cred-readers group",
+			egressCapturePath, mode, captureFileMode)
+	}
+	if gid != podspec.CredReadersGID {
+		t.Errorf("§13.1 (egress capture) FAIL: %s is group-owned by GID %d, want the lenny-cred-readers GID %d",
+			egressCapturePath, gid, podspec.CredReadersGID)
+	}
+}
+
+// parseLsLn extracts the mode string and the numeric group from one
+// `ls -ln` line, for example "-rw-r----- 1 65531 65534 120 Oct  3 06:00 x".
+// Busybox and coreutils both print mode, link count, uid, and gid as the
+// first four fields.
+func parseLsLn(line string) (mode string, gid int64, err error) {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) < 4 {
+		return "", 0, fmt.Errorf("unexpected ls -ln output %q", line)
+	}
+	gid, err = strconv.ParseInt(fields[3], 10, 64)
+	if err != nil {
+		return "", 0, fmt.Errorf("parse group %q from ls -ln output %q: %w", fields[3], line, err)
+	}
+	// A trailing "." or "+" marks an SELinux context or an ACL and is
+	// not part of the permission bits.
+	return strings.TrimRight(fields[0], ".+"), gid, nil
 }
 
 // guard: keep static-analysis happy even if the only callers are
@@ -245,3 +342,40 @@ var (
 	_ = errors.New
 	_ = fmt.Sprintf
 )
+
+// spec: 13.1 (Pod Security)
+// diagnosis: parseLsLn misreads the ls -ln line the egress-capture check
+// relies on, so the mode and group assertions on the capture file would
+// compare the wrong fields. The test needs no cluster.
+func TestParseLsLnReadsModeAndGroup(t *testing.T) {
+	cases := []struct {
+		name     string
+		line     string
+		wantMode string
+		wantGID  int64
+		wantErr  bool
+	}{
+		{name: "busybox", line: "-rw-r-----    1 65531    65534          120 Oct  3 06:00 /run/lenny-capture/egress.jsonl\n", wantMode: "-rw-r-----", wantGID: 65534},
+		{name: "coreutils with ACL marker", line: "-rw-r-----+ 1 65531 65534 120 Oct  3 06:00 egress.jsonl", wantMode: "-rw-r-----", wantGID: 65534},
+		{name: "too few fields", line: "-rw-r----- 1 65531", wantErr: true},
+		{name: "non-numeric group", line: "-rw-r----- 1 65531 lenny 120 Oct  3 06:00 egress.jsonl", wantErr: true},
+		{name: "empty", line: "", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mode, gid, err := parseLsLn(tc.line)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("parseLsLn(%q) = (%q, %d, nil), want an error", tc.line, mode, gid)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseLsLn(%q): %v", tc.line, err)
+			}
+			if mode != tc.wantMode || gid != tc.wantGID {
+				t.Errorf("parseLsLn(%q) = (%q, %d), want (%q, %d)", tc.line, mode, gid, tc.wantMode, tc.wantGID)
+			}
+		})
+	}
+}

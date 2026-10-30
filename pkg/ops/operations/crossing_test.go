@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/operations"
 )
 
-// spec §25.2 line 401: percent crossing a named threshold (10, 25, 50,
+// spec §25.2: percent crossing a named threshold (10, 25, 50,
 // 75, 90, 95, 99) raises operation_progressed.
 func TestCrossedThresholds(t *testing.T) {
 	cases := []struct {
@@ -36,7 +36,7 @@ func TestCrossedThresholds(t *testing.T) {
 	}
 }
 
-// spec §25.2 line 396: the expected cadence is defined for the
+// spec §25.2: the expected cadence is defined for the
 // long-running operation kinds and zero for the rest (stall detection
 // disabled).
 func TestExpectedCadence(t *testing.T) {

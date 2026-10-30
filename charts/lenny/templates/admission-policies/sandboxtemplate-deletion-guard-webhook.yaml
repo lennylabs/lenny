@@ -1,6 +1,6 @@
 {{- /*
 lenny-sandboxtemplate-deletion-guard ValidatingAdmissionWebhook
-(§10.5 line 508, the "key safety invariant"). Blocks a SandboxTemplate
+(§10.5, the "key safety invariant"). Blocks a SandboxTemplate
 DELETE while a RuntimeUpgrade record that references the template's
 SandboxWarmPool is still active. The decider lists the referencing
 SandboxWarmPools through the API-server reader and probes the gateway

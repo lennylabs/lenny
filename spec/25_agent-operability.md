@@ -18,6 +18,7 @@ The operability surface defined in this section is implemented by two components
 External dependencies and their requirement levels are summarized in Section 25.4 (Dependencies) and Section 25.15 (Failure Mode Analysis):
 
 - **Postgres, Redis, K8s API, gateway admin API** — required for full functionality; `lenny-ops` degrades gracefully when each is transiently unavailable.
+- **KMS**, when `kms.provider` is not `local`, is required at process start.
 - **Prometheus** (or any Prometheus-HTTP-API-compatible time-series backend) — optional at Tier 1 (dev), **required at Tier 2/3** (production). Several `lenny-ops` features are functionally broken without persistent time-series storage; see Section 25.4, Prometheus Requirement.
 - **MinIO** (or any S3-compatible object store) — required for backup storage; degraded only for backup verification.
 
@@ -1046,7 +1047,7 @@ startupProbe:
   periodSeconds: 2          # 60s total — covers Postgres connection establishment
 readinessProbe:
   httpGet:
-    path: /healthz?strict=true
+    path: /healthz
     port: 8090
   failureThreshold: 3
   periodSeconds: 5
@@ -1058,8 +1059,8 @@ livenessProbe:
   periodSeconds: 10
 ```
 
-- **`/healthz`** (permissive): 200 if the process is alive and at least one of {Postgres, K8s API} is reachable. Used by liveness and startup.
-- **`/healthz?strict=true`** (strict): 200 only when both Postgres connection AND K8s API are reachable. Used by readiness — traffic is not routed to replicas that can't serve the full API.
+- **`/healthz`** (permissive): 200 if the process is alive and at least one of {Postgres, K8s API} is reachable. Used by liveness, startup, and readiness ("Startup and Readiness" below).
+- **`/healthz?strict=true`** (strict): 200 only when both the Postgres connection and the K8s API are reachable. No probe uses it. It is a diagnostic check that an operator or an agent runs against a replica to learn whether that replica can serve the full API.
 
 When the `strict=true` check returns 503, the response body identifies which dependencies are degraded so operators reading endpoint logs can diagnose the cause.
 
@@ -1256,6 +1257,10 @@ egress:
       - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
         podSelector: { matchLabels: { k8s-app: kube-dns } }
     ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+  # KMS endpoint for GetPublicKey on the §10.2 JWT signing keys. Rendered when
+  # kms.provider is not local; §13.2.4 (Gateway row) states the CIDR rule.
+  - to: [{ ipBlock: { cidr: "{{ .Values.kms.endpointCIDR }}" } }]
+    ports: [{ protocol: TCP, port: 443 }]
   # Webhook delivery (egress to internet) — host filtering enforced at the application layer (SSRF checks).
   # Two parallel `ipBlock` peers are emitted — one per address family — because
   # Kubernetes NetworkPolicy requires every `except` entry to share the address
@@ -1313,7 +1318,7 @@ egress:
 
 The internet egress for webhooks excludes cluster pod/service CIDRs, RFC1918, IPv4 link-local, IPv6 ULA, IPv6 link-local, and IMDS addresses at the network layer in addition to the application-layer SSRF checks. The two parallel `ipBlock` peers (one per address family) are required by the Kubernetes NetworkPolicy schema, which constrains every `except` entry to the enclosing `cidr`'s address family; the chart partitions the shared `egressCIDRs.excludePrivate`, `egressCIDRs.excludeIMDS`, and cluster pod/service CIDR values at render time (NET-062). Operators with stricter requirements can replace this rule with a domain-based egress policy (requires CNI support like Cilium or service mesh egress gateway). The `except` block is the same list rendered into the gateway `allow-gateway-egress-llm-upstream` NetworkPolicy (§13.2) via the shared `egressCIDRs.excludePrivate`, `excludeClusterPodCIDR`/`excludeClusterServiceCIDR`, and `excludeIMDS` Helm values — see the §13.2 normative note under `allow-gateway-egress-llm-upstream` for the SSRF symmetry guarantee and the `lenny-preflight` check that enforces it (NET-057, NET-065). The cluster-CIDR exclusion closes an SSRF gap specific to CGNAT-range pod CIDRs (`100.64.0.0/10`, the default on several managed Kubernetes providers) and custom non-RFC1918 pod CIDRs, where `excludePrivate` alone would permit an operability-plane pod — through a tenant-influenced webhook target URL resolving to an in-cluster pod IP — to dial gateway, controller, or token-service pod IPs directly on their service ports (NET-065). Cluster-CIDR discovery and drift detection re-use the NET-022 mechanism documented in §13.2 (preflight reads the cluster's actual pod/service CIDRs; WarmPoolController re-reads every 5 minutes and fires `NetworkPolicyCIDRDrift` on change); the `lenny-preflight` Job extends the NET-022 `except`-block audit to cover the `lenny-ops-egress` webhook rule as well, failing the install if either cluster CIDR is absent from the rendered `except` list.
 
-> **Normative operability-plane selector requirement (NET-061).** Any Lenny-rendered NetworkPolicy that originates from the operability plane (`lenny-ops` Deployment pods, `lenny-backup` Job pods, or any future operability-plane workload) and targets a storage, monitoring, or in-cluster platform-component destination MUST pair a `namespaceSelector` (keyed on the immutable `kubernetes.io/metadata.name` label per NET-054) with a `podSelector` on the destination pod's canonical label (`lenny.dev/component: <component>` for Lenny-rendered platform components per NET-047/NET-050, or the documented `app: <component>` key for storage/monitoring workloads rendered by upstream subcharts — `app: redis`, `app: prometheus` — matching the idiom established by `lenny-backup-job`). A `to:` clause that carries only a `namespaceSelector` permits egress to every pod in the destination namespace on the listed ports: in any deployment where storage or monitoring co-locates with `lenny-system` (including the default single-namespace install), this exposes gateway, token-service, controller, admission-webhook, and CoreDNS pods to the operability plane on Postgres/Redis/MinIO/Prometheus-shaped ports, defeating the containment boundary that §13.2's default-deny plus per-component allow-lists establish. This requirement is the operability-plane analogue of the `lenny-backup-job` two-selector rule (NET-056) and extends the NET-047/NET-050 selector-consistency audit. The `lenny-preflight` Job enforces it via the `ops-egress-selector-parity` check: it enumerates every `to:` clause in `lenny-ops-egress` and `lenny-backup-job` (and any future operability-plane NetworkPolicy registered in the chart's `operabilityEgressPolicies` list) and fails the install/upgrade if a storage/monitoring/platform-component destination clause omits the `podSelector`, if the `podSelector` uses a non-canonical label key for a Lenny-rendered platform component (Exception: the `app:` key is permitted for storage/monitoring destinations rendered by upstream subcharts — `app: redis`, `app: prometheus` — or where the operability plane's own identity is the selector target, per §13.2 line 201), or if the resolved selector matches zero pods for a component expected to be running given the rendered Helm values. The preflight deliberately fails the install rather than warning because a silently over-broad `lenny-ops-egress` rule is strictly more dangerous than a missing one — it grants access that will not be revoked until a future policy edit is deployed.
+> **Normative operability-plane selector requirement (NET-061).** Any Lenny-rendered NetworkPolicy that originates from the operability plane (`lenny-ops` Deployment pods, `lenny-backup` Job pods, or any future operability-plane workload) and targets a storage, monitoring, or in-cluster platform-component destination MUST pair a `namespaceSelector` (keyed on the immutable `kubernetes.io/metadata.name` label per NET-054) with a `podSelector` on the destination pod's canonical label (`lenny.dev/component: <component>` for Lenny-rendered platform components per NET-047/NET-050, or the documented `app: <component>` key for storage/monitoring workloads rendered by upstream subcharts — `app: redis`, `app: prometheus` — matching the idiom established by `lenny-backup-job`). A `to:` clause that carries only a `namespaceSelector` permits egress to every pod in the destination namespace on the listed ports: in any deployment where storage or monitoring co-locates with `lenny-system` (including the default single-namespace install), this exposes gateway, token-service, controller, admission-webhook, and CoreDNS pods to the operability plane on Postgres/Redis/MinIO/Prometheus-shaped ports, defeating the containment boundary that §13.2's default-deny plus per-component allow-lists establish. This requirement is the operability-plane analogue of the `lenny-backup-job` two-selector rule (NET-056) and extends the NET-047/NET-050 selector-consistency audit. The `lenny-preflight` Job enforces it via the `ops-egress-selector-parity` check: it enumerates every `to:` clause in `lenny-ops-egress` and `lenny-backup-job` (and any future operability-plane NetworkPolicy registered in the chart's `operabilityEgressPolicies` list) and fails the install/upgrade if a storage/monitoring/platform-component destination clause omits the `podSelector`, if the `podSelector` uses a non-canonical label key for a Lenny-rendered platform component (Exception: the `app:` key is permitted for storage/monitoring destinations rendered by upstream subcharts — `app: redis`, `app: prometheus` — or where the operability plane's own identity is the selector target, per §13.2), or if the resolved selector matches zero pods for a component expected to be running given the rendered Helm values. The preflight deliberately fails the install rather than warning because a silently over-broad `lenny-ops-egress` rule is strictly more dangerous than a missing one — it grants access that will not be revoked until a future policy edit is deployed.
 
 **Cross-namespace deployments.** When `lenny-system` and `lenny-agents` are separate namespaces (for tenant workload isolation), no NetworkPolicy change is required — `lenny-ops` only talks to gateway and storage, both of which live in `lenny-system`. The agent pods themselves never reach `lenny-ops`.
 
@@ -1428,8 +1433,9 @@ For clusters without internet access:
 
 | Dependency | Required | Used by |
 |---|---|---|
-| Postgres | No (degraded) | Backup jobs and upgrade state are unavailable. Diagnostics fall back to K8s API. Drift detection works with caller-supplied desired state. Remediation locks and escalations fall back to Redis or in-memory. Event subscriptions served from cache. |
+| Postgres | No (degraded) | Backup jobs and upgrade state are unavailable. Diagnostics fall back to K8s API. Drift detection works with caller-supplied desired state. Remediation locks and escalations fall back to Redis or in-memory. Event subscriptions served from cache. Lenny-issued tokens are accepted as "Authentication" **Revocation set** rules 4, 5, and 7 state. |
 | Redis | No (degraded) | Event stream falls back to gateway in-memory buffer. Remediation locks fall back to in-memory. Escalation creation falls back to in-memory. |
+| KMS (when `kms.provider` is not `local`) | Yes, at startup | Loading the verifier key set ([Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation") |
 | K8s API | Yes | Diagnostics (pod events, pod state fallback), upgrade orchestration, backup jobs, version introspection |
 | Gateway admin API | Yes | Drift reconciliation, diagnostics (pool config, connectors), version aggregation, event buffer fallback |
 | Prometheus (or compatible) | Required at Tier 2/3; optional at Tier 1 | Cross-replica health aggregation, capacity recommendations, diagnostics (pool bottleneck analysis), bundled alerting rules (Section 25.13). Has fallback paths for transient outages, but several features are functionally broken without persistent time-series storage — see Prometheus Requirement below. |
@@ -1510,7 +1516,7 @@ The "transient" column is acceptable for short outages (minutes to a few hours).
 | Data | StoreRouter method | Rationale |
 |------|-------------------|-----------|
 | Event stream (`ops:events:stream`) | `PlatformRedis()` | Platform-scoped event stream, not tenant-routed. |
-| Remediation locks (`ops:lock:{scope}`) | `PlatformRedis()` | Platform-scoped coordination keys. |
+| Remediation locks (`ops:{lock}:*`, see Tier 2 — Redis) | `PlatformRedis()` | Platform-scoped coordination keys under one hash tag. |
 | Escalation buffer (`ops:escalations:{id}`) | `PlatformRedis()` | Platform-scoped operational records. |
 | Webhook cursor tracking | `PlatformRedis()` | Platform-scoped delivery state. |
 
@@ -1560,11 +1566,21 @@ For most deployments, the answer to question 1 is "no" and a single-replica depl
 
 ### Startup and Readiness
 
-`lenny-ops` starts its HTTP listener immediately. Individual endpoint handlers report dependency status rather than crashing — same philosophy as the gateway health endpoint. Readiness probe: `GET /healthz` returns 200 when the Postgres connection is established or when the K8s API is reachable (either dependency suffices for readiness, since most endpoints can operate in degraded mode without Postgres).
+`lenny-ops` starts its HTTP listener immediately after it loads the verifier key set of [Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation". The revocation set ("Authentication" below) is an input to neither the listener nor readiness. Individual endpoint handlers report dependency status rather than crashing — same philosophy as the gateway health endpoint. Readiness probe: `GET /healthz` returns 200 when the Postgres connection is established or when the K8s API is reachable (either dependency suffices for readiness, since most endpoints can operate in degraded mode without Postgres).
 
 ### Authentication
 
-Same OIDC middleware as the gateway admin API. `lenny-ops` validates JWT tokens using the same OIDC issuer and JWKS endpoint. Requires `platform-admin` or `tenant-admin` role on all endpoints. No anonymous access except `/healthz`.
+Same OIDC middleware as the gateway admin API. `lenny-ops` validates upstream IdP tokens against the same OIDC issuer as the gateway, and validates Lenny-issued tokens, whatever their audience, against the verifier key set defined in [Section 10.2](10_gateway-internals.md#102-authentication) "Verifier key set and rotation". Requires `platform-admin` or `tenant-admin` role on all endpoints. No anonymous access except `/healthz`.
+
+**Revocation set.** `lenny-ops` checks each Lenny-issued token the key set verifies against an in-memory revocation set:
+
+1. The set holds the `jti` of every row that [Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation" says a starting gateway replica loads. `lenny-ops` reads those rows from Postgres at startup and every 30 seconds after, and each successful read replaces the set with the rows it returns and the `jti` of each event rule 2 added after the read began.
+2. While Redis is reachable, `lenny-ops` adds the `jti` of each `token.revoked` event ([Section 13.3](13_security-model.md#133-credential-flow) "Token rotation and revocation") when the event arrives.
+3. A token whose `jti` is in the set is refused with the response a gateway replica returns for a revoked token ([Section 13.3](13_security-model.md#133-credential-flow) "Token rotation and revocation").
+4. Until the first successful read since the process started, every Lenny-issued token is refused with the response a gateway replica returns when it cannot reach Postgres to validate a token ([Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation"). Rule 4 takes precedence over rules 3 and 7.
+5. After that read, a failed read leaves the set unchanged and a token not in the set is accepted unless rule 7 refuses it. `lenny-ops` does not apply the gateway replica's refusal to validate while Postgres is unreachable ([Section 13.3](13_security-model.md#133-credential-flow) "Authoritative durability for revocation"), and it makes no per-request `issued_tokens` read.
+6. Rules 1 to 5 do not apply to upstream IdP tokens.
+7. A token that carries the `origin: "playground"` claim ([Section 27.3](27_web-playground.md#273-authentication)) is refused with the response that [Section 27.3.1](27_web-playground.md#2731-oidc-cookie-to-mcp-bearer-exchange) "Per-request revocation check" gives a revoked bearer, because a gateway replica checks its revocation in the playground revocation key, which `lenny-ops` does not read.
 
 Callers are also subject to the optional `scope` JWT claim (Section 25.1, Scoped Tokens; RFC 9068). When present, the claim narrows the caller's effective tool surface below the role ceiling — a `platform-admin` token with `"scope": "tools:pool:* tools:health:read"` can call only pool tools and health reads despite its role theoretically permitting more.
 
@@ -2174,7 +2190,7 @@ The lock service attempts storage tiers in order, falling back on failure. Each 
 | Tier | Store | Acquire mechanism | Coordination scope | When used |
 |------|-------|-------------------|--------------------|-----------|
 | 1 | Postgres | `INSERT ... ON CONFLICT (scope) DO NOTHING RETURNING *` | All replicas (shared table) | Default — both stores available |
-| 2 | Redis | `SET NX EX` with Lua script writing `{lockID, epoch, revision}` atomically | All replicas (shared keyspace) | Postgres unreachable |
+| 2 | Redis | Lua script over the `ops:{lock}:` keys that checks the scope key and writes the lock with the current outage epoch atomically | All replicas (shared keyspace) | Postgres unreachable |
 | 3 | In-memory | `sync.Map` + per-replica TTL wheel | Depends on `ops.locks.memoryTier` (see below) | Both Postgres and Redis unreachable |
 
 **Tier 1 — Postgres (default):**
@@ -2200,12 +2216,30 @@ Acquisitions at Tier 1 use `epoch = 0` (reserved for the Postgres tier). `Acquir
 
 **Tier 2 — Redis:**
 
-Uses a Lua script on key `ops:lock:{scope}` that atomically:
-1. Reads the current outage epoch from `ops:lock-epoch:current` (see Tier Transitions).
-2. Checks for an existing non-expired lock.
-3. On no conflict, writes `{lockID, scope, operation, acquiredBy, operationID, acquiredAt, expiresAt, epoch, revision}` with `PEXPIREAT`.
+Every Tier 2 key starts with `ops:{lock}:`, whose `{lock}` segment is a Redis Cluster hash tag ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes) **Braces in key patterns**), so every Tier 2 key hashes to one slot:
 
-`acquiredAt` and `expiresAt` are derived from `redis.call('TIME')` so locks across replicas use a consistent clock source. Release uses a similar CAS script that verifies the lock ID matches before deleting.
+- `ops:{lock}:scope:<scope>` (the scope key) is a hash whose `id` field holds the lock ID and whose `data` field holds the serialized lock record.
+- `ops:{lock}:id:<lockID>` (the ID key) holds the scope, so a lock ID resolves to its scope key.
+- `ops:{lock}:epoch` (the epoch key) holds the Redis-side outage epoch (see Tier Transitions).
+
+`<scope>` and `<lockID>` are placeholders: the key carries the value without angle brackets.
+
+Acquire runs one Lua script over the scope key, the ID key, and the epoch key that atomically:
+1. Returns `409 REMEDIATION_LOCK_CONFLICT` with the existing lock record when the scope key exists.
+2. Reads the current outage epoch from the epoch key, treating an absent key as 0, and stamps it as the record's `epoch`.
+3. Writes the serialized `Lock` record (see Lock Struct) to the scope key and the scope to the ID key, and sets both keys to expire after the requested TTL.
+
+`lenny-ops` computes `acquiredAt` and `expiresAt` from a Redis `TIME` reading (see Clock Source) taken immediately before it runs a script that writes a lock record, and that script sets the expiry of the keys it writes as a TTL relative to the moment it runs.
+
+Extend, steal, and release resolve the lock ID through the ID key, read the stored lock record, and apply their change with one compare-and-set script over the scope key and the ID key. The script writes the new record, or deletes both keys on release, only when the stored record is identical to the record that was read. A lock ID whose scope key holds a different lock ID is treated as absent. When the comparison fails, `lenny-ops` reads the lock again and decides again:
+1. An absent lock returns `404 REMEDIATION_LOCK_NOT_FOUND`.
+2. On extend and release, a lock whose `acquiredBy` is no longer the caller returns `403 LOCK_NOT_OWNED`.
+3. Any other change retries the operation.
+4. After three failed comparisons the operation returns `409 REMEDIATION_LOCK_CONFLICT` and writes nothing.
+
+The split-brain reconciliation (see Tier Transitions) removes a losing Redis lock with a script that deletes the scope key and the ID key only when the stored lock ID matches, regardless of `acquiredBy`.
+
+The Redis client re-sends a command whose reply it lost, so each Tier 2 write in this section tolerates a repeat: an acquire whose scope key already holds its own lock ID at revision 0 returns that lock in place of the conflict that acquire step 1 returns, a compare-and-set whose stored record is identical to the new record counts as success without a write, a repeated release finds the lock absent, a repeated reconciliation removal deletes nothing, and a repeated `INCR` of the epoch key (see Tier Transitions) advances the epoch twice, which keeps it monotonic.
 
 **Tier 3 — In-memory:**
 
@@ -2221,10 +2255,10 @@ The default (`"single-replica-only"`) matches the recommendation for the v1 depl
 
 The critical failure mode in a naive tiered design is split-brain: agent A holds a lock in Postgres; Postgres fails; agent B acquires the same lock in Redis; both run concurrently. Lenny prevents this with **outage epochs**:
 
-**Outage epochs.** A monotonically-increasing integer stored **in both Postgres (`ops_lock_epoch.current`) and Redis (`ops:lock-epoch:current`)**. The dual-store epoch is the foundation of split-brain detection — storing it only in Redis would leave a gap during simultaneous Postgres+Redis outages. Maintenance:
+**Outage epochs.** A monotonically-increasing integer stored **in both Postgres (`ops_lock_epoch.current`) and Redis (`ops:{lock}:epoch`)**. The dual-store epoch is the foundation of split-brain detection — storing it only in Redis would leave a gap during simultaneous Postgres+Redis outages. Maintenance:
 
-- On Postgres → Tier 2 transition: the service increments the Redis-side epoch via `INCR ops:lock-epoch:current`, stamps the new value onto every Tier 2 acquisition. The Postgres-side epoch will be brought up to date during the next reconciliation pass (see below).
-- On Tier 2 → Postgres recovery: the service reads `MAX(ops:lock-epoch:current_redis, ops_lock_epoch.current_postgres)`, writes the max back to Postgres in the same transaction that performs reconciliation, and resumes Tier 1 service.
+- On Postgres → Tier 2 transition: the service increments the Redis-side epoch via `INCR ops:{lock}:epoch`, stamps the new value onto every Tier 2 acquisition. The Postgres-side epoch will be brought up to date during the next reconciliation pass (see below).
+- On Tier 2 → Postgres recovery: the service reads the maximum of `ops:{lock}:epoch` and `ops_lock_epoch.current`, writes the max back to Postgres in the same transaction that performs reconciliation, and resumes Tier 1 service.
 - On Tier 3 (both stores down) operation: `lenny-ops` records the outage start time and an in-memory `pendingEpochIncrement` flag. When **either** Redis or Postgres recovers first, the recovering store's epoch counter is incremented by 1 and stamped with the outage start time. When the second store recovers, the standard `MAX(redis_epoch, postgres_epoch)` reconciliation brings them into sync.
 
 Because both stores hold the epoch and reconciliation uses the maximum, the system is **safe under any single-store outage and any out-of-order recovery sequence**. The only failure mode is "neither store ever recovers," in which case Lenny is effectively offline.
@@ -2278,9 +2312,9 @@ The losing holder (always notified via the heartbeat path) can either back off (
 
 #### Clock Source
 
-All TTLs and `expiresAt` timestamps are authored by a single clock per tier:
+All TTLs and `expiresAt` timestamps are authored by a server-side clock source per tier:
 - Tier 1: Postgres `now() at time zone 'UTC'`.
-- Tier 2: Redis `TIME` command (via Lua script).
+- Tier 2: Redis `TIME` command, which any primary of a Redis Cluster may answer.
 - Tier 3: the `lenny-ops` process clock.
 
 Agents do not pass `expiresAt` in the request body; they pass `ttlSeconds`. The server computes `expiresAt = server_clock + ttlSeconds`. This removes client-side clock dependence and most clock-skew failure modes. Clock skew between nodes running Postgres and Redis is bounded by NTP (operator-managed); `lenny-ops` monitors drift and alerts when Postgres ↔ Redis skew exceeds 10s (see Self-Monitoring).
@@ -2325,7 +2359,7 @@ Deployers scaling `lenny-ops` beyond a single replica should review `ops.locks.m
 
 | Code | Category | HTTP | Description |
 |------|----------|------|-------------|
-| `REMEDIATION_LOCK_CONFLICT` | `POLICY` | 409 | Another agent holds a lock on this scope. Response includes `splitBrain: true` if a split-brain condition was detected. |
+| `REMEDIATION_LOCK_CONFLICT` | `POLICY` | 409 | Another agent holds a lock on this scope, or a Tier 2 extend, steal, or release exhausted its compare-and-set retries (see Storage Tiers). Response includes `splitBrain: true` if a split-brain condition was detected. |
 | `REMEDIATION_LOCK_NOT_FOUND` | `PERMANENT` | 404 | Lock ID not found or already expired. |
 | `LOCK_SCOPE_FORBIDDEN` | `AUTH` | 403 | The caller's role does not authorize this lock scope. |
 | `LOCK_NOT_OWNED` | `AUTH` | 403 | Caller is not the lock's `acquiredBy`; use `Steal` to take over an existing lock. |
@@ -4342,7 +4376,7 @@ If Postgres is down: backup creation, listing, and scheduling all fail (503). Ba
 | `BACKUP_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | A shard's resolved `dataResidencyRegion` has no corresponding `backups.regions.<region>` entry, or the region's MinIO endpoint / KMS key is unreachable. Fail-closed mirror of `REGION_CONSTRAINT_UNRESOLVABLE`; emits `DataResidencyViolationAttempt` audit event ([§12.8](12_storage-architecture.md#128-compliance-interfaces) "Backup pipeline residency"). |
 | `ARTIFACT_REPLICATION_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | The ArtifactStore replication runtime residency preflight ([§25.11](#2511-backup-and-restore-api) "Runtime residency preflight") observed a jurisdiction-tag mismatch between the source region's `dataResidencyRegion` and the destination bucket's advertised `lenny.dev/jurisdiction-region` tag, a missing tag, a DNS rebinding outside `backups.regions.<region>.allowedDestinationCidrs` (when set), or a failed tag-probe against the destination. Fail-closed mirror of `BACKUP_REGION_UNRESOLVABLE` for the continuous-replication surface. Replication for the affected region is suspended and does not auto-resume; operator must fix the jurisdiction mismatch and invoke `POST /v1/admin/artifact-replication/{region}/resume` (`platform-admin`, audited). Emits `DataResidencyViolationAttempt` audit event (`operation: "artifact_replication"`) and increments `lenny_minio_replication_residency_violation_total`; raises the `ArtifactReplicationResidencyViolation` critical alert ([§16.5](16_observability.md#165-alerting-rules-and-slos)). |
 | `LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | Phase 3.5 of the tenant force-delete lifecycle ([§12.8](12_storage-architecture.md#128-compliance-interfaces) tenant deletion lifecycle, **Legal hold interaction during deletion**) aborted because the tenant's resolved `dataResidencyRegion` has no corresponding `storage.regions.<region>.legalHoldEscrow` entry, the regional escrow bucket endpoint is unreachable, or the regional escrow KMS key (`platform:legal_hold_escrow:<region>`) cannot be resolved. Fail-closed mirror of `BACKUP_REGION_UNRESOLVABLE` / `ARTIFACT_REPLICATION_REGION_UNRESOLVABLE` applied to the legal-hold escrow surface, so that EU-pinned held evidence is never migrated to a non-EU escrow bucket under the platform `legal_hold_escrow_kek`. Emits `DataResidencyViolationAttempt` audit event (`operation: "legal_hold_escrow"`) and raises the `LegalHoldEscrowResidencyViolation` critical alert ([§16.5](16_observability.md#165-alerting-rules-and-slos)). The tenant is left in Phase 3.5 `deleting` state; operator must add the missing `storage.regions.<region>.legalHoldEscrow` configuration (or restore endpoint/KMS reachability) and re-invoke `POST /v1/admin/tenants/{id}/force-delete` with `acknowledgeHoldOverride: true`. |
-| `PLATFORM_AUDIT_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | A platform-tenant audit event referencing a non-platform `target_tenant_id` (see [§11.7](11_policy-and-controls.md#117-audit-logging) "Platform-tenant audit event residency") could not be written because the target tenant's `dataResidencyRegion` has no corresponding `storage.regions.<region>.postgresEndpoint` entry, or that region's platform-Postgres is unreachable. Fail-closed mirror of `BACKUP_REGION_UNRESOLVABLE` for the platform-tenant audit-write surface (CMP-058). The originating operation halts (impersonation issuance, Phase 3.5 escrow ledger write, `compliance.profile_decommissioned`, etc.). Emits `DataResidencyViolationAttempt` audit event (`operation: "platform_audit_write"`) and raises the `PlatformAuditResidencyViolation` critical alert. Operator must configure the missing `storage.regions.<region>.postgresEndpoint` entry (chart render validation rejects the release if missing) and retry. See [Section 11.7](11_policy-and-controls.md#117-audit-logging) and Storage Routing above. |
+| `PLATFORM_AUDIT_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | A platform-tenant audit event referencing a non-platform `target_tenant_id` (see [§11.7](11_policy-and-controls.md#117-audit-logging) "Platform-tenant audit event residency") could not be written because the target tenant's `dataResidencyRegion` has no corresponding `storage.regions.<region>.postgresEndpoint` entry, or that region's platform-Postgres is unreachable. Fail-closed mirror of `BACKUP_REGION_UNRESOLVABLE` for the platform-tenant audit-write surface (CMP-058). Emits `DataResidencyViolationAttempt` audit event (`operation: "platform_audit_write"`) and raises the `PlatformAuditResidencyViolation` critical alert. Operator must configure the missing `storage.regions.<region>.postgresEndpoint` entry (chart render validation rejects the release if missing) and retry. See [Section 11.7](11_policy-and-controls.md#117-audit-logging) and Storage Routing above. |
 
 ### Audit Events
 
@@ -4995,9 +5029,9 @@ The following command groups wrap the operability APIs. Same conventions as Sect
 |---|---|
 | **Gateway crash-loop** | `lenny-ops` stays up. Watchdog calls diagnostics and fetches runbooks. Remediation steps that call the gateway admin API will fail, as will audit queries (the audit query API is gateway-resident, Section 25.9) — the agent sees this and escalates or waits for gateway recovery. Gateway appears as unreachable in connectivity check. Event stream loses the gateway buffer fallback — if Redis is also down, events are unavailable. |
 | **Gateway overloaded** | `lenny-ops` has an independent resource budget. Zero contention with client traffic. Health and recommendations on the gateway remain lightweight (in-process reads). |
-| **Postgres down** | Backup management and upgrade state machine are unavailable. Diagnostics degrade to K8s API data (partial results, 207). Drift detection works when caller supplies desired state. Remediation locks fall back to Redis (or in-memory). Escalation creation works (Redis or in-memory fallback). Event stream and webhook delivery are unaffected. Health endpoint on gateway still works (in-process metrics). |
+| **Postgres down** | Backup management and upgrade state machine are unavailable. Diagnostics degrade to K8s API data (partial results, 207). Drift detection works when caller supplies desired state. Remediation locks fall back to Redis (or in-memory). Escalation creation works (Redis or in-memory fallback). Event stream and webhook delivery are unaffected. Health endpoint on gateway still works (in-process metrics). `lenny-ops` accepts Lenny-issued tokens as [Section 25.4](#254-the-lenny-ops-service) "Authentication" **Revocation set** rules 4, 5, and 7 state. |
 | **Redis down** | Event stream falls back to gateway in-memory event buffer — degraded but functional. Webhook delivery continues from buffer with cached subscriptions. Remediation locks fall back to in-memory (if Postgres also down). Health endpoint still works (in-process circuit breaker cache fallback). |
-| **Postgres + Redis both down** | Core operational loop still functions in degraded mode: event stream via gateway buffer, diagnostics via K8s API (partial), remediation locks in-memory (single-replica only), escalation creation in-memory (202 Accepted), drift detection with caller-supplied desired state, webhook delivery from buffer with cached subscriptions **provided `lenny-ops` was running with a populated cache before the outage** (a `lenny-ops` cold start during the outage produces an empty subscription cache and no webhook deliveries until Postgres recovers). Unavailable: backup management, upgrade state machine, subscription CRUD, retry history, idempotency-required endpoints (including `restore/execute` — see Total-Outage Recovery for the manual recovery path). |
+| **Postgres + Redis both down** | Core operational loop still functions in degraded mode: event stream via gateway buffer, diagnostics via K8s API (partial), remediation locks in-memory (single-replica only), escalation creation in-memory (202 Accepted), drift detection with caller-supplied desired state, webhook delivery from buffer with cached subscriptions **provided `lenny-ops` was running with a populated cache before the outage** (a `lenny-ops` cold start during the outage produces an empty subscription cache and no webhook deliveries until Postgres recovers). Unavailable: backup management, upgrade state machine, subscription CRUD, retry history, idempotency-required endpoints (including `restore/execute` — see Total-Outage Recovery for the manual recovery path). `lenny-ops` accepts Lenny-issued tokens as [Section 25.4](#254-the-lenny-ops-service) "Authentication" **Revocation set** rules 4, 5, and 7 state. |
 | **`lenny-ops` degraded** | Self-monitoring detects internal degradation (Postgres pool, Redis lag, memory pressure) and emits `ops_health_status_changed` to the event stream (Redis or gateway buffer). Watchdog receives this event and can poll `GET /v1/admin/ops/health` for details. |
 | **`lenny-ops` crash** | Gateway continues serving client traffic unaffected. Diagnostics, runbook index, drift, backup, and upgrade APIs are unavailable. The audit query API stays available because it is gateway-resident (Section 25.9). Watchdog detects ops service down via Ingress health check failure (no response from `/healthz`). In-memory escalations and remediation locks are lost (Redis/Postgres copies survive if those stores are up). |
 | **`lenny-ops` + gateway both down** | Total platform outage. Watchdog detects both unreachable. |

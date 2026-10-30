@@ -5,7 +5,7 @@ release:
 templates:
   - admission-policies/conversion-webhook.yaml
 tests:
-  # spec: §17.2 lines 53/68/82 — lenny-crd-conversion is a Phase 3.5
+  # spec: §17.2 — lenny-crd-conversion is a Phase 3.5
   # baseline (always-rendered) webhook. It renders the shared workload
   # (Deployment, Service, PodDisruptionBudget, Certificate) with no
   # feature-flag gate. F-15.5.2 / F-17.2.4 / F-10.5.6.
@@ -27,7 +27,7 @@ tests:
       - hasDocuments:
           count: 4
 
-  # spec: §17.2 line 56 — every webhook (and the CRD conversion webhook)
+  # spec: §17.2 — every webhook (and the CRD conversion webhook)
   # runs replicas: 2 with the canonical admission-webhook pod label so the
   # §13.2 admission-webhook NetworkPolicy and the per-webhook unavailability
   # alert match it. The workload runs the same lenny-webhook image that
@@ -62,7 +62,7 @@ tests:
           path: spec.ports[0].port
           value: 443
 
-  # spec: §17.2 line 56 — HA posture: PodDisruptionBudget minAvailable 1.
+  # spec: §17.2 — HA posture: PodDisruptionBudget minAvailable 1.
   - it: ships a PodDisruptionBudget with minAvailable 1
     documentIndex: 2
     asserts:
@@ -72,7 +72,7 @@ tests:
           path: spec.minAvailable
           value: 1
 
-  # spec: §15.5 line 2436 — the webhook serving cert is issued by the
+  # spec: §15.5 — the webhook serving cert is issued by the
   # shared self-signed Issuer so cert-manager injects the CA.
   - it: provisions a cert-manager Certificate for the serving cert
     documentIndex: 3

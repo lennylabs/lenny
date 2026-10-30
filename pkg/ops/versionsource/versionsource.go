@@ -119,7 +119,7 @@ func Controller(clientset kubernetes.Interface, namespace string) func(context.C
 
 // CRD resolves the installed Lenny CRD schema version from the
 // `lenny.dev/schema-version` annotation the chart stamps on every CRD in
-// preflight.LennyCRDNames (the same annotation the §10 line 443 preflight
+// preflight.LennyCRDNames (the same annotation the §10 preflight
 // schema-version check reads). Every installed CRD is expected to carry
 // the same annotation value; a missing CRD, a missing annotation, or a
 // disagreement between CRDs marks the source unavailable rather than

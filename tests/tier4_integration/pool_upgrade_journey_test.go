@@ -21,12 +21,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"path/filepath"
 	"testing"
 
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // poolUpgradeClient issues admin requests against a running gateway with
@@ -81,10 +78,8 @@ func newPoolUpgradeGateway(t *testing.T) (poolUpgradeClient, func(pool string)) 
 	t.Helper()
 	gateway.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
-	gw := gateway.StartWith(t, "--dev-mode", "--postgres-dsn="+pg.DSN)
+	pg := sharedDatabase(t)
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN)
 	c := poolUpgradeClient{t: t, base: gw.BaseURL()}
 
 	if code, body := c.do(http.MethodPost, "/v1/admin/bootstrap", map[string]any{
@@ -124,6 +119,7 @@ func phaseOf(t *testing.T, body map[string]any) string {
 // full linear §10.5 upgrade progression against a durable Postgres-backed
 // store, or a terminal Complete upgrade still accepts a further proceed.
 func TestPoolUpgradeJourney_ExpandDrainContractComplete(t *testing.T) {
+	t.Parallel()
 	c, createPool := newPoolUpgradeGateway(t)
 	const pool = "worker-pool-linear"
 	createPool(pool)
@@ -178,6 +174,7 @@ func TestPoolUpgradeJourney_ExpandDrainContractComplete(t *testing.T) {
 // restore the exact phase pause captured, over the real HTTP admin surface
 // against Postgres.
 func TestPoolUpgradeJourney_PauseResume(t *testing.T) {
+	t.Parallel()
 	c, createPool := newPoolUpgradeGateway(t)
 	const pool = "worker-pool-pause"
 	createPool(pool)
@@ -239,6 +236,7 @@ func TestPoolUpgradeJourney_PauseResume(t *testing.T) {
 // is at Expanding does not transition the record to Paused with a rollback
 // reason over the real HTTP admin surface.
 func TestPoolUpgradeJourney_RollbackFromExpanding(t *testing.T) {
+	t.Parallel()
 	c, createPool := newPoolUpgradeGateway(t)
 	const pool = "worker-pool-rollback-expanding"
 	createPool(pool)
@@ -275,6 +273,7 @@ func TestPoolUpgradeJourney_RollbackFromExpanding(t *testing.T) {
 // require restoring) or the live record does not actually carry the
 // preserved previousPoolSpec a --restore-old-pool rollback depends on.
 func TestPoolUpgradeJourney_RollbackFromDrainingRequiresRestoreOldPool(t *testing.T) {
+	t.Parallel()
 	c, createPool := newPoolUpgradeGateway(t)
 	const pool = "worker-pool-rollback-draining"
 	createPool(pool)

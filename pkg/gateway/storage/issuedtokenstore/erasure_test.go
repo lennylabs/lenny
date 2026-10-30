@@ -12,7 +12,7 @@ import (
 // load-bearing guarantee and exercises the guard clauses that run
 // before any database access.
 
-// spec: §12.1 line 5 — DeleteByUser rejects empty scope ids so a
+// spec: §12.1 — DeleteByUser rejects empty scope ids so a
 // malformed erasure cannot widen to every row. The guard clause runs
 // before pgtenant.InTx, so the nil pool is never dereferenced.
 func TestDeleteByUserEmptyScopeRejected_spec_12_1(t *testing.T) {
@@ -25,7 +25,7 @@ func TestDeleteByUserEmptyScopeRejected_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByTenant rejects the empty tenant id so an
+// spec: §12.1 — DeleteByTenant rejects the empty tenant id so an
 // unscoped tenant deletion never runs.
 func TestDeleteByTenantEmptyRejected_spec_12_1(t *testing.T) {
 	s := New(nil)
@@ -34,7 +34,7 @@ func TestDeleteByTenantEmptyRejected_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — the TokenIssuanceStore satisfies the Eraser
+// spec: §12.1 — the TokenIssuanceStore satisfies the Eraser
 // contract; this makes the compile-time assertion explicit in a test so
 // the intent survives a refactor.
 func TestStoreSatisfiesEraser_spec_12_1(t *testing.T) {

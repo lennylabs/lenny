@@ -23,7 +23,8 @@
 //
 // spec: §12.4 (canonical key-prefix table, exception-class summary),
 // §12.6 (infrastructure pub/sub exclusion), §11.4 (user invalidation
-// fan-out), §11.6 (circuit breakers), §25.5 (operational event stream),
+// fan-out), §28.5.7 (binding-release fan-out `CH-BINDRELEASE`), §11.6
+// (circuit breakers), §25.5 (operational event stream),
 // §27.3.1 (session record backing store), §27.6 (session lifecycle).
 
 package tier11_docs_test
@@ -44,9 +45,11 @@ type wiredGatewayPrefix struct {
 	home   string // human label for the documented home (for diagnostics)
 }
 
-// table12_4Prefixes are the prefixes proposal 0032 dispositions as §12.4
-// canonical-registry rows. Each MUST appear literally in the §12.4 table
-// body.
+// table12_4Prefixes are the prefixes §12.4 registers as canonical-registry
+// rows: the families proposal 0032 dispositioned there, and the
+// platform-scoped `lenny:session:terminate` channel that carries the
+// binding-release fan-out `CH-BINDRELEASE`. Each MUST appear literally in
+// the §12.4 table body.
 var table12_4Prefixes = []wiredGatewayPrefix{
 	{"rl:{key}:{minute_epoch}", "§12.4 rate-limit row"},
 	{"sq:{tenant_id}", "§12.4 storage-quota row"},
@@ -59,17 +62,20 @@ var table12_4Prefixes = []wiredGatewayPrefix{
 	{"pg:sess-tenant:{session_id}", "§12.4 playground fan-in row"},
 	{"conn:oauth:state:{state}", "§12.4 connector-OAuth row"},
 	{"{root_session_id}:dlg:tokens", "§12.4 delegation row"},
+	{"lenny:session:terminate", "§12.4 binding-release fan-out row"},
 }
 
 // spec: 12.4 (canonical key-prefix table), 11.4 (user invalidation fan-out),
-// 25.5 (operational event stream)
+// 28.5.7 (binding-release fan-out), 25.5 (operational event stream), 25.4
+// (Storage Tiers, Storage Routing)
 // diagnosis: a Redis key or channel prefix emitted by wired gateway code
 // has no documented home, or a §12.4 registry row names a prefix no code
-// emits. Proposal 0032 established that every wired gateway prefix resolves
-// to exactly one home: a §12.4 table row, the §12.6 "Infrastructure pub/sub
-// exclusion" paragraph (`cb:events`), or a documented fan-out mechanism in
-// its owning section (`ops:events:stream` in §25.5, `lenny:session:terminate`
-// in §11.4). A failure here means the registry drifted from the code — a
+// emits. Every wired gateway prefix resolves to exactly one home: a §12.4
+// table row (including the `lenny:session:terminate` channel of the
+// binding-release fan-out `CH-BINDRELEASE`, which the §11.4 full-revoke note
+// names by its channel identifier), the §12.6 "Infrastructure pub/sub
+// exclusion" paragraph (`cb:events`), or a documented mechanism in its
+// owning section (`ops:events:stream` in §25.5). A failure here means the registry drifted from the code — a
 // wired prefix went undocumented (the F-0032 completeness defect) or a stale
 // row survived a prefix the code no longer emits. The unwired `lenny:route:`
 // prefix and the component-owned Token Service / lenny-ops prefixes are
@@ -83,6 +89,7 @@ func TestRedisKeyPrefixRegistryCompleteness_0032(t *testing.T) {
 	s126 := specSection(t, filepath.Join(specDir, "12_storage-architecture.md"), "### 12.6 ")
 	s114 := specSection(t, filepath.Join(specDir, "11_policy-and-controls.md"), "### 11.4 ")
 	s255 := specSection(t, filepath.Join(specDir, "25_agent-operability.md"), "## 25.5 ")
+	s254 := specSection(t, filepath.Join(specDir, "25_agent-operability.md"), "## 25.4 ")
 
 	// (a) Every §12.4-dispositioned prefix appears as a literal in the §12.4
 	// table body.
@@ -102,22 +109,21 @@ func TestRedisKeyPrefixRegistryCompleteness_0032(t *testing.T) {
 		t.Errorf("§12.6 \"Infrastructure pub/sub exclusion\" paragraph does not name the `cb:events` channel; it is the documented home for the circuit-breaker replica-sync pathway")
 	}
 
-	// (c) The platform-scoped `ops:events:stream` resolves to §25.5 and the
-	// gateway-internal `lenny:session:terminate` fan-out resolves to the
-	// §11.4 full-revoke propagation note; neither is a §12.4 row.
+	// (c) The platform-scoped `ops:events:stream` resolves to §25.5 rather
+	// than to a §12.4 row, and the §11.4 full-revoke propagation note names
+	// the binding-release fan-out whose channel §12.4 registers.
 	if !strings.Contains(s255, "`ops:events:stream`") {
 		t.Errorf("§25.5 does not name the `ops:events:stream` operational event stream; that gateway-emitted prefix is dispositioned to its owning §25.5 section rather than §12.4")
 	}
 	if strings.Contains(s124, "ops:events:stream") {
 		t.Errorf("§12.4 registers `ops:events:stream`; it is platform-scoped and owned by §25.5, not a tenant-datastore registry row")
 	}
-	// §11.4 documents the cross-replica Terminate pub/sub fan-out mechanism
-	// (the literal channel name lenny:session:terminate is not spelled in the
-	// spec; the note describes the mechanism). The disposition is prose, so
-	// assert the note describes the Redis pub/sub Terminate fan-out.
+	// §11.4 names the channel that carries the step-2 release request by its
+	// canonical identifier; the literal Redis channel is the §12.4 row
+	// assertion (a) checks.
 	requireAllContain(t, "§11.4 full-revoke propagation note", s114, []string{
-		"publishes the step-2 `Terminate` request",
-		"Redis pub/sub channels",
+		"publishes the step-2 release request",
+		"`CH-BINDRELEASE`",
 	})
 
 	// (d) No §12.4 row names the unwired `lenny:route:` routing-cache prefix
@@ -130,11 +136,31 @@ func TestRedisKeyPrefixRegistryCompleteness_0032(t *testing.T) {
 	// (e) The component-owned Token Service and lenny-ops prefixes are owned by
 	// their own sections (§4.3 / §25.4), not by this gateway datastore
 	// registry. The §12.4 table must not register them.
-	for _, componentPrefix := range []string{"lenny:token:", "ops:lock:", "ops:escalations:", "ops:lockidx:"} {
+	// The retired lenny-ops spellings stay on the list so they cannot return
+	// to §12.4, and the current `ops:{lock}:` hash-tagged spelling joins them.
+	for _, componentPrefix := range []string{"lenny:token:", "ops:lock:", "ops:escalations:", "ops:lockidx:", "ops:{lock}:"} {
 		if strings.Contains(s124, componentPrefix) {
 			t.Errorf("§12.4 registers component-owned prefix %q; it is documented in its owning §4.3/§25.4 section, not in the gateway datastore registry", componentPrefix)
 		}
 	}
+	// §12.4 states which braces in a key pattern are hash tags, so a reader
+	// can tell the `ops:{lock}:` tag in §25.4 from a placeholder.
+	if !strings.Contains(s124, "**Braces in key patterns.**") {
+		t.Errorf("§12.4 is missing the **Braces in key patterns.** paragraph that tells a hash tag from a placeholder")
+	}
+	// §25.4 owns the lenny-ops remediation-lock keys. Every one sits under the
+	// `ops:{lock}:` hash tag so the acquire, compare-and-set, and release
+	// scripts stay in one slot on Redis Cluster; the retired untagged spellings
+	// hash to unrelated slots and must not return to the Storage Tiers,
+	// Tier Transitions, or Storage Routing text.
+	if !strings.Contains(s254, "ops:{lock}:epoch") {
+		t.Errorf("§25.4 no longer names the `ops:{lock}:epoch` key; the outage epoch must share the `ops:{lock}:` hash tag with every lock key")
+	}
+	requireNoneContain(t, "§25.4 retired untagged lenny-ops lock keys", s254, []string{
+		"ops:lock:",
+		"ops:lockidx:",
+		"ops:lock-epoch",
+	})
 
 	// (f) The §12.4 intro makes no platform-wide "lists all keys in use"
 	// completeness claim. Proposal 0032 scoped the intro to the tenant-isolation
@@ -174,6 +200,7 @@ func TestRedisKeyPrefixExceptionSummaryAgreesWithTable_0032(t *testing.T) {
 		"`{root_session_id}:dlg:*`",
 		"`rl:{key}:{minute_epoch}`",
 		"`sq:{tenant_id}`",
+		"`lenny:session:terminate`",
 	})
 
 	// The summary uses the two-category framing and names both categories.
@@ -316,4 +343,30 @@ func listSpecMarkdown(t *testing.T, specDir string) []string {
 		t.Fatalf("no spec markdown found under %s", specDir)
 	}
 	return matches
+}
+
+// spec: 12.4 (Redis HA and failure modes), 5.2 (Slot assignment atomicity)
+// diagnosis: a §12.4 row for lenny:pod:{pod_id}:active_slots describes the
+// per-pod slot occupancy as an incremented counter or a value reset to 0
+// rather than the keyed set with leaked: members that §5.2 states, so the
+// key registry and the failure-behavior table disagree with the release the
+// gateway runs.
+func TestSlotSetKeyRowsDescribeASet_spec_12_4(t *testing.T) {
+	root := repoRoot(t)
+	body := readDocPage(t, filepath.Join(root, "spec", "12_storage-architecture.md"))
+	rows := map[string]string{
+		"key registry row":     requireLine(t, body, "| `lenny:pod:{pod_id}:active_slots` |"),
+		"failure-behavior row": requireLine(t, body, "| Session slot set (`lenny:pod:{pod_id}:active_slots`) |"),
+		"rehydrated flag row":  requireLine(t, body, "| `lenny:pod:{pod_id}:rehydrated` |"),
+		"rehydrating lock row": requireLine(t, body, "| `lenny:pod:{pod_id}:rehydrating` |"),
+	}
+	requireAllContain(t, "§12.4 key registry row", rows["key registry row"], []string{"A Redis set", "`leaked:<sessionId>` member", "its cardinality is the pod's slot occupancy"})
+	requireAllContain(t, "§12.4 failure-behavior row", rows["failure-behavior row"], []string{"the slot set is rebuilt"})
+	for label, row := range rows {
+		for _, banned := range []string{"INCR", "DECR", "reset to 0", "resets to 0"} {
+			if strings.Contains(row, banned) {
+				t.Errorf("§12.4 %s names %q", label, banned)
+			}
+		}
+	}
 }

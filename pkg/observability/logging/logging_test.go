@@ -31,7 +31,7 @@ func TestHandlerEmitsRequiredSlogKeys(t *testing.T) {
 	l.InfoContext(context.Background(), "request received")
 
 	rec := mustParse(t, buf.Bytes())
-	// spec: §16.4 line 372 — the timestamp field is `ts`, not slog's
+	// spec: §16.4 — the timestamp field is `ts`, not slog's
 	// default `time`.
 	for _, key := range []string{"ts", "level", "msg"} {
 		if _, ok := rec[key]; !ok {
@@ -43,7 +43,7 @@ func TestHandlerEmitsRequiredSlogKeys(t *testing.T) {
 	}
 }
 
-// spec: §16.4 line 372 — `ts` is renamed from slog's `time` and rendered
+// spec: §16.4 — `ts` is renamed from slog's `time` and rendered
 // in RFC 3339 UTC regardless of the process-local zone.
 func TestHandlerEmitsTimestampAsTSInUTC_spec_16_4_372(t *testing.T) {
 	var buf bytes.Buffer
@@ -81,7 +81,7 @@ func TestTextHandlerRenamesTimeToTS_spec_16_4_372(t *testing.T) {
 	}
 }
 
-// spec: §16.4 lines 370-372 — Setup installs the JSON handler as the slog
+// spec: §16.4 — Setup installs the JSON handler as the slog
 // default and bridges the stdlib log package so legacy log.Printf sites
 // surface as structured records carrying ts, level, msg, and component.
 func TestSetupBridgesStdlibLog_spec_16_4_370(t *testing.T) {

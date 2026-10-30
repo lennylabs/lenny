@@ -25,7 +25,7 @@ type ProviderInput struct {
 
 // PreClaimInput is the §4.9 pre-claim availability check input: the
 // providers in the intersection together with the tenant policy's
-// preferredSource. spec: §4.9 lines 1216-1218.
+// preferredSource. spec: §4.9.
 type PreClaimInput struct {
 	TenantID        string
 	UserID          string
@@ -60,7 +60,7 @@ type PreClaimResult struct {
 
 // Available reports whether at least one provider resolved to an
 // assignable credential. The session can start when this is true.
-// spec: §4.9 line 1326.
+// spec: §4.9.
 func (r PreClaimResult) Available() bool {
 	return len(r.PoolAssignments) > 0 || len(r.UserProviders) > 0
 }
@@ -74,7 +74,7 @@ func (r PreClaimResult) Available() bool {
 // failed because a user-only policy had no user credential; otherwise
 // it returns ErrNoCredentialAvailable (which the gateway maps to
 // CREDENTIAL_POOL_EXHAUSTED). An empty intersection is exhaustion.
-// spec: §4.9 lines 1216-1218, 1326.
+// spec: §4.9.
 func PreClaim(ctx context.Context, router Router, in PreClaimInput) (PreClaimResult, error) {
 	res := PreClaimResult{PoolAssignments: map[string]string{}}
 	if len(in.Providers) == 0 {

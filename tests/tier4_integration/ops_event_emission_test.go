@@ -41,10 +41,11 @@ import (
 // catalog. The subsystem state change succeeded (the breaker opened),
 // so the break is in the event-emission wiring, not the breaker logic.
 func TestOpsEventEmissionCircuitBreakerReachesBuffer(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	rd := containers.StartRedis(t, containers.RedisOptions{})
-	gw := gateway.StartWith(t, "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
 	base := gw.BaseURL()
 
 	// Induce the state change against the live gateway: open a circuit
@@ -74,12 +75,10 @@ func TestOpsEventEmissionCircuitBreakerReachesBuffer(t *testing.T) {
 	}
 }
 
-// spec: §25.3 line 687 ("Health service → health_status_changed") and
-// line 706 ("health_status_changed | Aggregate health transitioned |
-// Old status, new status, triggering component"). The health service
+// spec: §25.3. The health service
 // emits the operational event when the aggregate health verdict
 // transitions between Reports, and the event carries the old and new
-// aggregate status. §25.3 line 677 fixes the in-memory ring buffer as
+// aggregate status. §25.3 fixes the in-memory ring buffer as
 // always written regardless of Redis availability, and §25.3 exposes it
 // at GET /v1/admin/events/buffer; §16.6 fixes the CloudEvents type as
 // dev.lenny.<short_name>.
@@ -94,13 +93,14 @@ func TestOpsEventEmissionCircuitBreakerReachesBuffer(t *testing.T) {
 // to succeed even with Redis unreachable, so a Redis outage inducing the
 // transition must not suppress the buffered event.
 func TestOpsEventEmissionHealthStatusChangedReachesBuffer(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	// A live Redis backend is registered as a health checker on the
 	// aggregate, so terminating it forces a genuine aggregate-health
 	// transition rather than a synthetic one.
 	rd := containers.StartRedis(t, containers.RedisOptions{})
-	gw := gateway.StartWith(t, "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
 	base := gw.BaseURL()
 
 	// Establish the baseline aggregate verdict. The first Report sets the
@@ -144,7 +144,7 @@ func TestOpsEventEmissionHealthStatusChangedReachesBuffer(t *testing.T) {
 	}
 	// The transition is attributable to the Redis component going from
 	// healthy to unhealthy, so the payload's triggeringComponents must
-	// name it. spec: §25.3 line 706 ("triggering component").
+	// name it. spec: §25.3.
 	trig := gjsonStringSlice(t, ev.Event.Data, "triggeringComponents")
 	found := false
 	for _, name := range trig {

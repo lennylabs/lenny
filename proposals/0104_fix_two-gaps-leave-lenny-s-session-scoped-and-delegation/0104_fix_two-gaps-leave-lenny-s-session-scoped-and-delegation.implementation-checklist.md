@@ -1,0 +1,28 @@
+# Implementation checklist — 0104_fix_two-gaps-leave-lenny-s-session-scoped-and-delegation
+
+## Implementation checklist
+
+- [x] **S1 · spec** — SPEC-1. Lands the §10.2 and §10.3 edits, after 0102's spec steps (summary **Impacts on other proposals**, row 0102).
+      Tiers 0, 11. Depends on: —
+- [x] **S2 · spec** — SPEC-3. Lands the §12.8 *Creation fence* edits.
+      Tiers 0, 11. Depends on: —
+- [x] **S3 · spec** — SPEC-2. Lands the §8.1 and §8.2 edits.
+      Tiers 0, 11. Depends on: S1, S2
+- [x] **S4 · spec** — SPEC-4. Lands the §15 edits.
+      Tiers 0, 11. Depends on: S2, S3
+- [x] **S5 · spec** — SPEC-5. Lands the restatement edits across the remaining spec files.
+      Tiers 0, 11. Depends on: S1, S3
+- [x] **S6 · code** — CODE-2. Lands the fence rule in sessionstore, pgstore, and memstore, and the cascade walks' primary read in sessionserver `usage.go` and mcptools `mcptools.go`.
+      Tiers 0, 1, 2, 7. Depends on: S2, S3, S4
+- [x] **S7 · code** — CODE-1, in the same proposal merge as S6.
+      Tiers 0, 1, 3, 11. Depends on: S1, S3, S4, S5, S6
+- [x] **S8 · code** — CODE-3. Lands the caller-check function and its call sites, after 0102 CODE-2 item 7.
+      Tiers 0, 1, 3, 9. Depends on: S1, S5
+- [x] **S9 · code** — CODE-4. Lands the alert description and the regenerated rule files.
+      Tiers 0, 1, 11. Depends on: S5
+- [x] **S10 · test** — TEST-1. Lands the tests in the Testing section, after 0102 CODE-3 item 3.
+      Tiers 0, 1, 2, 3, 7, 8, 9. Depends on: S6, S7, S8
+- [x] **S11 · docs** — DOCS-1. Lands the docs edits.
+      Tiers 11. Depends on: S1, S2, S3, S4, S5, S9
+- [x] **S12 · docs** — REC-1. Lands the record closures and the new BUILD-GAPS finding and queue entry.
+      Tiers 0, 11. Depends on: S6, S7, S8, S9, S10, S11

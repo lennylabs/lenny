@@ -259,7 +259,7 @@ var spec165WarningAlerts = []string{
 	"CycleDetectionModeUnsafe", "CycleDetectionWarnModeBlocking", "AuditSIEMNotConfigured",
 	"AuditChainGap", "AuditRedactionReceiptMissing", "CheckpointStorageHigh", "StorageQuotaHigh",
 	"CheckpointDurationHigh", "PreStopCapFallbackRateHigh", "PodClaimQueueSaturated",
-	"PodStateMirrorStale", "KMSSigningUnavailable", "GatewaySubsystemCircuitOpen",
+	"PodStateMirrorStale", "KMSSigningUnavailable", "KMSSignQuotaApproaching", "GatewaySubsystemCircuitOpen",
 	"GatewayQueueDepthHigh", "GatewayLatencyHigh", "PoolConfigDrift", "PoolConfigValidatorUnavailable",
 	"PoolScalingAdmissionStuck", "LabelImmutabilityWebhookUnavailable", "DirectModeIsolationWebhookUnavailable",
 	"T4NodeIsolationWebhookUnavailable", "DrainReadinessWebhookUnavailable", "CrdConversionWebhookUnavailable",
@@ -408,7 +408,7 @@ func TestPostgresWriteBurstIopsCalibration(t *testing.T) {
 // alert did not exist, so the gauge a producer now publishes had no rule
 // to read it.
 //
-// spec: §16.5 (OpsClockSkewExceeded warning-alert row); §25.4 line 2280
+// spec: §16.5 (OpsClockSkewExceeded warning-alert row); §25.4
 // (Postgres-Redis skew >10s alert).
 func TestOpsClockSkewExceededRule_spec_16_5(t *testing.T) {
 	var got Rule
@@ -431,7 +431,7 @@ func TestOpsClockSkewExceededRule_spec_16_5(t *testing.T) {
 		t.Errorf("expr %q must select the postgres-redis pair label", got.Expr)
 	}
 	if !strings.Contains(got.Expr, "> 10") {
-		t.Errorf("expr %q must fire above the 10s tolerance per §25.4 line 2280", got.Expr)
+		t.Errorf("expr %q must fire above the 10s tolerance per §25.4", got.Expr)
 	}
 	if got.RunbookSlug() != "ops-clock-skew" {
 		t.Errorf("runbook slug = %q, want ops-clock-skew", got.RunbookSlug())
@@ -486,6 +486,130 @@ func TestTokenUsageAnomalyRule_spec_16_5(t *testing.T) {
 	}
 }
 
+// catalogRule returns the Catalog rule named name, failing the test when
+// the catalog has none.
+func catalogRule(t *testing.T, name string) Rule {
+	t.Helper()
+	for _, r := range Catalog() {
+		if r.Name == name {
+			return r
+		}
+	}
+	t.Fatalf("%s missing from Catalog", name)
+	return Rule{}
+}
+
+// TestKMSSignQuotaApproachingRule_spec_16_5 pins the §16.5
+// KMSSignQuotaApproaching warning alert: the fleet-wide rate of sign
+// requests that reach the KMS (every outcome except circuit_open) above
+// 80% of the configured quota for more than 10 minutes. The threshold
+// reads the quota gauge through max() so the gauge every gateway replica
+// publishes collapses to one series, and through a `> 0` filter so an
+// unset quota yields no series and the alert never fires.
+//
+// spec: §16.5 (KMSSignQuotaApproaching warning-alert row); §10.2.
+func TestKMSSignQuotaApproachingRule_spec_16_5(t *testing.T) {
+	got := catalogRule(t, "KMSSignQuotaApproaching")
+	const wantExpr = `sum(rate(lenny_jwt_sign_requests_total{outcome!="circuit_open"}[5m])) > 0.8 * scalar(max(lenny_kms_sign_quota_per_second) > 0)`
+	if got.Expr != wantExpr {
+		t.Errorf("expr = %q, want %q", got.Expr, wantExpr)
+	}
+	if got.For != 10*time.Minute {
+		t.Errorf("for = %v, want 10m per the §16.5 row", got.For)
+	}
+	if got.Severity != SeverityWarning {
+		t.Errorf("severity = %q, want warning", got.Severity)
+	}
+	if got.SpecRef != "§16.5" {
+		t.Errorf("spec ref = %q, want §16.5", got.SpecRef)
+	}
+	const wantURL = "https://docs.lenny.dev/runbooks/jwt-key-rotation#kms-sign-quota"
+	if got.RunbookURL != wantURL {
+		t.Errorf("runbook URL = %q, want the KMS Sign quota section %q", got.RunbookURL, wantURL)
+	}
+	if got.RunbookSlug() != "jwt-key-rotation" {
+		t.Errorf("runbook slug = %q, want jwt-key-rotation", got.RunbookSlug())
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("KMSSignQuotaApproaching does not validate: %v", err)
+	}
+}
+
+// TestKMSSigningUnavailableNamesBothSigners_spec_16_5 pins the §16.5
+// KMSSigningUnavailable text: a JWTSigner breaker on either the gateway
+// or the Token Service trips it, and the operator checks the KMS IAM
+// binding of the ServiceAccount the alert's job label names. The text it
+// replaced described only the gateway signer and session creation.
+//
+// spec: §16.5 (KMSSigningUnavailable warning-alert row); §10.2.
+func TestKMSSigningUnavailableNamesBothSigners_spec_16_5(t *testing.T) {
+	got := catalogRule(t, "KMSSigningUnavailable")
+	if got.Expr != `rate(lenny_gateway_kms_signing_errors_total[30s]) > 1` {
+		t.Errorf("expr = %q, want the unchanged signing-error rate expression", got.Expr)
+	}
+	if got.For != 60*time.Second {
+		t.Errorf("for = %v, want 60s", got.For)
+	}
+	text := got.Summary + " " + got.Description
+	for _, want := range []string{"gateway", "Token Service", "KMS_SIGNING_UNAVAILABLE", "IAM binding", "ServiceAccount", "job label"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("summary and description %q do not mention %q", text, want)
+		}
+	}
+	if strings.Contains(got.Description, "new session creation") {
+		t.Errorf("description %q still scopes the failure to session creation", got.Description)
+	}
+}
+
+// TestTokenStoreUnavailableNamesNoDelegationMint_spec_16_5 pins the
+// TokenStoreUnavailable description to the §16.5 row: an unreachable
+// Postgres primary fails session creation and credential leasing.
+// Internal delegation through lenny/delegate_task mints no token (§8.2),
+// so the description must not name a delegation mint among the failing
+// paths. The pre-fix description listed "delegation minting" and fails
+// this test.
+//
+// spec: §16.5 (TokenStoreUnavailable critical-alert row); §8.2; §13.3.
+func TestTokenStoreUnavailableNamesNoDelegationMint_spec_16_5(t *testing.T) {
+	got := catalogRule(t, "TokenStoreUnavailable")
+	const want = "session creation and credential leasing are both failing."
+	if !strings.Contains(got.Description, want) {
+		t.Errorf("description %q does not contain %q", got.Description, want)
+	}
+	if strings.Contains(strings.ToLower(got.Description), "delegation") {
+		t.Errorf("description %q still names a delegation mint", got.Description)
+	}
+	if got.Severity != SeverityCritical {
+		t.Errorf("severity = %q, want critical", got.Severity)
+	}
+}
+
+// TestRunbookSlugDropsSectionFragment pins that a RunbookURL pointing at
+// one section of a runbook page still yields the page slug for the
+// alert_fired payload's runbook field, which routes on the page name.
+//
+// spec: §25.7; §25.17.
+func TestRunbookSlugDropsSectionFragment(t *testing.T) {
+	cases := []struct {
+		name string
+		rule Rule
+		want string
+	}{
+		{"page", Rule{RunbookURL: runbook("kms-unavailable")}, "kms-unavailable"},
+		{"section", Rule{RunbookURL: runbookSection("jwt-key-rotation", "kms-sign-quota")}, "jwt-key-rotation"},
+		{"short name wins", Rule{RunbookURL: runbookSection("a", "b"), RunbookShortName: "c"}, "c"},
+		{"fragment only", Rule{RunbookURL: "#kms-sign-quota"}, ""},
+		{"empty", Rule{}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.rule.RunbookSlug(); got != c.want {
+				t.Errorf("RunbookSlug() = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
 func TestPoolSecurityDegradedRule(t *testing.T) {
 	var got Rule
 	for _, r := range Catalog() {
@@ -514,7 +638,7 @@ func TestPoolSecurityDegradedRule(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 47 / §16.5 line 510 — PgBouncerPoolSaturated must
+// spec: §12.3 / §16.5 — PgBouncerPoolSaturated must
 // evaluate the pgbouncer_exporter sidecar's native client-wait stat
 // (pgbouncer_pools_client_maxwait_seconds). The earlier
 // lenny_pgbouncer_client_waiting_seconds metric was never emitted by any
@@ -538,7 +662,7 @@ func TestPgBouncerPoolSaturatedUsesExporterMetric_spec_12_3_F_12_3_11(t *testing
 	}
 }
 
-// spec: §16.5 line 471, §12.3 line 101, §11.7 audit sequencing — the
+// spec: §16.5, §12.3, §11.7 audit sequencing — the
 // AuditChainGap catalog Description must classify state="broken" as a
 // committed-row tamper or removal (a non-linking prev_hash), must not
 // equate a benign intact-link sequence gap with the broken-chain
@@ -648,7 +772,7 @@ func TestAuditRedactionReceiptMissingDescriptionUsesReceiptModel_spec_16_5_F_12_
 	}
 }
 
-// spec: §6.3 line 356, §16.5 line 637 — TTFTBurnRate must reference
+// spec: §6.3, §16.5 — TTFTBurnRate must reference
 // the lenny_session_time_to_first_token_seconds histogram directly
 // via the le="10" bucket (the 10s TTFT SLO). The earlier
 // lenny_session_time_to_first_token_slow_ratio recording rule was
@@ -669,7 +793,7 @@ func TestTTFTBurnRateUsesInlineHistogramExpression_spec_6_3_F_6_3_3(t *testing.T
 		`le="10"`,
 		"lenny_session_time_to_first_token_seconds_count",
 		"/ 0.05",
-		// §16.5 line 640 — the fast-window page threshold is the
+		// §16.5 — the fast-window page threshold is the
 		// operator-tunable multiplier scalar (default 14). F-16.5.3.
 		"> scalar(lenny_slo_burn_rate_fast_multiplier or vector(14))",
 	}
@@ -714,8 +838,7 @@ func TestBurnRateRulesAreDualWindow(t *testing.T) {
 // TestWarmPoolReplenishmentSlowDerivesFromPerPoolBaseline asserts the
 // alert compares P95 startup against 2× the per-pool
 // lenny_pool_warmup_seconds_baseline gauge the PoolScalingController
-// mirrors, rather than the prior fixed 60s threshold. spec: §16.5 line
-// 488.
+// mirrors, rather than the prior fixed 60s threshold. spec: §16.5.
 func TestWarmPoolReplenishmentSlowDerivesFromPerPoolBaseline_spec_16_5_488(t *testing.T) {
 	var got Rule
 	for _, r := range Catalog() {
@@ -741,5 +864,70 @@ func TestWarmPoolReplenishmentSlowDerivesFromPerPoolBaseline_spec_16_5_488(t *te
 	// baselined pool no longer alerts at the wrong multiple.
 	if strings.Contains(got.Expr, "> 60") {
 		t.Errorf("WarmPoolReplenishmentSlow still uses the fixed > 60 threshold: %q", got.Expr)
+	}
+}
+
+// TestProductionAuditAlertDescriptions_spec_16_5 pins the wording of the
+// two production-only audit alerts. Each description names production mode
+// as the §17.9.1 Environment value prod, so an operator reading a fired
+// alert sees the one setting that turns it on rather than the retired
+// LENNY_ENV=production spelling, and each expression still gates on the
+// lenny_env_production gauge.
+//
+// spec: §16.5 (AuditSIEMNotConfigured and AuditRetentionLow warning-alert
+// rows); §16.4; §17.9.1 (Composition Dimensions) "Production mode".
+func TestProductionAuditAlertDescriptions_spec_16_5(t *testing.T) {
+	cases := []struct {
+		name       string
+		wantPrefix string
+		wantExpr   string
+	}{
+		{
+			name:       "AuditSIEMNotConfigured",
+			wantPrefix: "The deployment runs in production mode (environment prod) and audit.siem.endpoint is not set.",
+			wantExpr:   `lenny_audit_siem_configured == 0 and lenny_env_production == 1`,
+		},
+		{
+			name:       "AuditRetentionLow",
+			wantPrefix: "The deployment runs in production mode (environment prod) and audit.retentionDays is below 365 days without a configured SIEM.",
+			wantExpr:   `lenny_audit_retention_days < 365 and lenny_audit_siem_configured == 0 and lenny_env_production == 1`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := catalogRule(t, tc.name)
+			if !strings.HasPrefix(got.Description, tc.wantPrefix) {
+				t.Errorf("description = %q, want prefix %q", got.Description, tc.wantPrefix)
+			}
+			if strings.Contains(got.Description, "LENNY_ENV") {
+				t.Errorf("description %q names the retired LENNY_ENV spelling", got.Description)
+			}
+			if got.Expr != tc.wantExpr {
+				t.Errorf("expr = %q, want %q unchanged", got.Expr, tc.wantExpr)
+			}
+		})
+	}
+}
+
+// TestWarmPoolReplenishmentFailingNamesNoWarmUpCause_spec_16_5 pins the
+// WarmPoolReplenishmentFailing description to the counter's own scope: the
+// warm-up failure counter is classified by its error_type label, and the
+// description no longer asserts that every failure is a pod failing to
+// reach idle during warm-up. The expression is unchanged.
+//
+// spec: 16.5 (Alerting Rules and SLOs), 16.1 (Metrics)
+func TestWarmPoolReplenishmentFailingNamesNoWarmUpCause_spec_16_5(t *testing.T) {
+	r := catalogRule(t, "WarmPoolReplenishmentFailing")
+	if want := `rate(lenny_warmpool_warmup_failure_total[5m]) * 60 > 1`; r.Expr != want {
+		t.Errorf("Expr = %q, want %q unchanged", r.Expr, want)
+	}
+	if !strings.Contains(r.Description, "error_type") {
+		t.Errorf("Description = %q, want it to name the error_type label", r.Description)
+	}
+	if strings.Contains(r.Description, "reach idle") {
+		t.Errorf("Description = %q, must not attribute every failure to reaching idle", r.Description)
+	}
+	if r.For != 5*time.Minute || r.SpecRef != "§16.5" {
+		t.Errorf("For/SpecRef = %v/%q, want 5m/§16.5 unchanged", r.For, r.SpecRef)
 	}
 }

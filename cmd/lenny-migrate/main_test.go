@@ -113,7 +113,7 @@ func TestMigrateUnknownCommand_spec_24_13(t *testing.T) {
 }
 
 // TestMigrateUpAcceptsJobName_spec_24_13_150 verifies the --job-name flag
-// (the §24.13 line 150 `migrationJobName` source) parses on the `up`
+// (the §24.13 source) parses on the `up`
 // command and the run falls through to the DSN check rather than failing
 // to parse. The phase write itself runs only after a successful up
 // against a real database, so the no-DSN path stops at the DSN gate.

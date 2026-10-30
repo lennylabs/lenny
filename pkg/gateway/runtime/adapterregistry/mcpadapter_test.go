@@ -42,7 +42,7 @@ func TestMCPAdapterOutboundCapabilities_spec_15_2_1335(t *testing.T) {
 }
 
 // TestSessionEventKindClosedEnum_spec_15_318 asserts the closed enum has
-// exactly the six §15.0 kinds and rejects values outside it.
+// exactly the six §15 kinds and rejects values outside it.
 func TestSessionEventKindClosedEnum_spec_15_318(t *testing.T) {
 	if n := len(adapterregistry.AllSessionEventKinds()); n != 6 {
 		t.Fatalf("AllSessionEventKinds has %d kinds, want 6", n)
@@ -70,7 +70,7 @@ func TestMCPAdapterSatisfiesCapabilityConsistency_spec_15_559(t *testing.T) {
 }
 
 // TestCapabilityConsistencyRejectsElicitationWithoutSupport_spec_15_559
-// exercises the §15.0 invariant: declaring the elicitation outbound kind
+// exercises the §15 invariant: declaring the elicitation outbound kind
 // without SupportsElicitation is a misdeclaration.
 func TestCapabilityConsistencyRejectsElicitationWithoutSupport_spec_15_559(t *testing.T) {
 	caps := adapterregistry.Capabilities{PathPrefix: "/x", Protocol: "x", SupportsElicitation: false}

@@ -1,6 +1,5 @@
 -- Rollback for migration 0063. Drops the index, the CHECK
--- constraint, and the artifact_type column added for the §4.4 line
--- 291 eviction-context accounting path.
+-- constraint, and the artifact_type column added for the §4.4 eviction-context accounting path.
 
 DROP INDEX IF EXISTS idx_artifact_store_type_state;
 

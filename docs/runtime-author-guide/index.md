@@ -44,7 +44,7 @@ The rest of this guide is about agent runtimes.
 
 ### The standard model: an adapter sidecar
 
-In the standard model, your agent runtime runs inside a Kubernetes pod next to a small adapter sidecar that Lenny provides. The sidecar handles the platform plumbing: the connection back to the gateway, delivering the session's files into the pod, managing credentials, and answering health checks. Your program reads messages as JSON lines on stdin and writes replies as JSON lines on stdout. That stdin/stdout JSON-lines exchange is the whole contract you implement.
+In the standard model, your agent runtime runs inside a Kubernetes pod next to a small adapter sidecar that Lenny provides. The sidecar handles the platform plumbing: the connection back to the gateway, delivering the session's files into the pod, managing credentials, and answering health checks. Your program reads messages as JSON lines on stdin and writes replies as JSON lines on stdout. That JSON-lines exchange is the contract you implement, together with a one-line [connection handshake](../reference/adapter-contract.md#connection-handshake) when your program dials the sidecar over a socket.
 
 ![Runtime pod: an adapter sidecar (Lenny-provided) and your program (any language) communicate over stdin and stdout. The adapter sends encrypted traffic back to the gateway.](../assets/diagrams/runtime-pod-simple.svg)
 
@@ -147,7 +147,7 @@ Included:
 
 - Messages in, responses out.
 - File access to the session's workspace through a small built-in tool vocabulary (`read_file`, `write_file`, `list_dir`, `delete_file`).
-- A shortcut response format for simple replies: `{"type": "response", "text": "hello"}`.
+- A shortcut response format for simple replies: `{"type": "response", "sessionId": "sess_abc", "text": "hello"}`. The runtime echoes the `sessionId` the adapter handed it on the frames it emits in response, other than `heartbeat_ack`.
 
 Not included:
 
@@ -173,7 +173,7 @@ Use this level when your agent needs to call out to tools, delegate work, or tal
 
 ### Full
 
-On top of Standard, your program also opens a lifecycle channel -- a second connection that carries operational signals from the platform.
+On top of Standard, your program also opens a CH-RUNTIMEOPS -- a second connection that carries operational signals from the platform.
 
 With it, you can support:
 
@@ -181,9 +181,8 @@ With it, you can support:
 - Clean interrupts, where the agent is told to stop and acknowledges when it's reached a safe point.
 - In-place credential rotation: the platform hands you a new credential and you acknowledge the swap, with no restart. At the Standard and Basic levels a credential change instead terminates the pod and starts a replacement, which is a restart; see the Credential Rotation section of [Pod Lifecycle](lifecycle.md) for when and why a restart happens at each level.
 - Advance warning before a deadline, so you can wrap up gracefully instead of being terminated.
-- Coordinated draining when the pool is shutting down.
 
-Pod recycling (`recycle.enabled`) requires no runtime cooperation and works at every integration level; the per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated.
+Pod recycling (`recycle.enabled`) requires no CH-RUNTIMEOPS exchange and works at every integration level; the platform runs the per-slot cleanup and the whole-pod scrub, and the gateway coordinates them. Reuse requires a runtime that serves sequential sessions. On a recycling pool with `recycle.maxSessionsPerPod` above 1 and a `recycle.scrubProfile` other than `vm-restart`, a `keep` pod's runtime process serves the pod's later sessions on its one connection, keyed by `sessionId`, up to `maxSessionsPerPod`, and a `restart` pod's whole-pod scrub ends the runtime process so the next session runs in a newly launched one. Each session opens with its `session_start` frame and ends with its `session_end` frame, and a runtime that exits after its session makes the pod retire at the recycle boundary. See the Recycle Lifecycle section of [Pod Lifecycle](lifecycle.md).
 
 Use this level for agents that need to survive pod failures, handle interrupts, and rotate credentials without restarting. About 300-400 lines of code, including a small background thread or process to handle lifecycle signals.
 
@@ -210,7 +209,7 @@ Read everything above, then:
 
 ### To support checkpoints, clean interrupts, and credential rotation (Full level)
 
-Full integration is the lifecycle channel and the handlers it carries. [Pod Lifecycle](lifecycle.md) walks through each one, with the message formats inline; read its Checkpointing, Interrupt and Suspend, Credential Rotation, and Deadline Signals sections, each of which is marked Full level. Read everything above, then:
+Full integration is the CH-RUNTIMEOPS and the handlers it carries. [Pod Lifecycle](lifecycle.md) walks through each one, with the message formats inline; read its Checkpointing, Interrupt and Suspend, Credential Rotation, and Deadline Signals sections, each of which is marked Full level. Read everything above, then:
 
 10. [Pod Lifecycle](lifecycle.md) -- the checkpoint, interrupt/suspend, credential-rotation, and deadline-signal handshakes you implement at this level.
 11. [Runtime Configuration](runtime-configuration.md) -- the manifest fields and pool settings that enable these capabilities.

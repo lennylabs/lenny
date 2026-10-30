@@ -30,7 +30,7 @@ func rpcWithTenant(t *testing.T, h http.Handler, tenant, body string) *httptest.
 	return rr
 }
 
-// spec: §11.5 line 277 — `idempotencyKey` in MCP tool input collapses
+// spec: §11.5 — `idempotencyKey` in MCP tool input collapses
 // retries of CreateSession / SpawnChild to one execution. The hook
 // replays the cached ToolResult on duplicate; the inner handler runs at
 // most once. Closes F-11.5.1, F-11.5.6.
@@ -66,7 +66,7 @@ func TestMCPIdempotency_ReplaysCachedToolResult_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — a tool error releases the pending row so a
+// spec: §11.5 — a tool error releases the pending row so a
 // retry re-executes against a (hopefully) healthy backend.
 // Closes F-11.5.1, F-11.5.2 (release on MCP error).
 func TestMCPIdempotency_ToolErrorReleasesPending_spec_11_5(t *testing.T) {
@@ -100,7 +100,7 @@ func TestMCPIdempotency_ToolErrorReleasesPending_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — a concurrent retry while the original is
+// spec: §11.5 — a concurrent retry while the original is
 // in-flight is rejected with IDEMPOTENCY_KEY_IN_FLIGHT (POLICY,
 // retryable=true). Closes F-11.5.1, F-11.5.2.
 func TestMCPIdempotency_ConcurrentRetryInFlight_spec_11_5(t *testing.T) {
@@ -141,7 +141,7 @@ func TestMCPIdempotency_ConcurrentRetryInFlight_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — same key with a different arguments body
+// spec: §11.5 — same key with a different arguments body
 // returns IDEMPOTENCY_KEY_REUSED on the MCP path, mirroring the REST
 // 422. Closes F-11.5.1.
 func TestMCPIdempotency_DifferentBodyRejected_spec_11_5(t *testing.T) {
@@ -165,7 +165,7 @@ func TestMCPIdempotency_DifferentBodyRejected_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — calls to tools not in the allow-list ignore
+// spec: §11.5 — calls to tools not in the allow-list ignore
 // idempotencyKey (opt-in per tool). Closes F-11.5.1.
 func TestMCPIdempotency_NonAllowlistedToolIgnoresKey_spec_11_5(t *testing.T) {
 	s := mcp.NewServer()
@@ -189,7 +189,7 @@ func TestMCPIdempotency_NonAllowlistedToolIgnoresKey_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — a missing tenant fails closed with
+// spec: §11.5 — a missing tenant fails closed with
 // errInvalidRequest, matching the REST middleware's tenant_required
 // posture. Closes F-11.5.1.
 func TestMCPIdempotency_FailsClosedWhenTenantMissing_spec_11_5(t *testing.T) {
@@ -211,7 +211,7 @@ func TestMCPIdempotency_FailsClosedWhenTenantMissing_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — with no idempotencyKey field the path falls
+// spec: §11.5 — with no idempotencyKey field the path falls
 // through to the normal handler; no caching. Regression guard for the
 // opt-in surface. Closes F-11.5.1.
 func TestMCPIdempotency_NoKeyFallsThrough_spec_11_5(t *testing.T) {
@@ -236,7 +236,7 @@ func TestMCPIdempotency_NoKeyFallsThrough_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — the per-tool key namespacing prevents REST
+// spec: §11.5 — the per-tool key namespacing prevents REST
 // and MCP cross-transport collisions. A REST "abc-123" and an MCP
 // "abc-123" map to distinct rows. The MCP key is "mcp/<tool>/<caller>"
 // per pkg/gateway/mcp/idempotency.go's mcpKey helper. Regression

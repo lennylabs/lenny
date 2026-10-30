@@ -79,11 +79,7 @@ func bearerHeader(token string) map[string]string {
 	return map[string]string{"Authorization": "Bearer " + token}
 }
 
-// spec: §25.4 (line 1567: "Requires platform-admin or tenant-admin role
-// on all endpoints. No anonymous access except /healthz."), §25.1 (line
-// 89: a request for a tool not permitted by any scope returns 403
-// SCOPE_FORBIDDEN; lines 92-94: the admin-API middleware checks scopes
-// before routing to the handler), §25.7 (the runbook-discovery
+// spec: §25.4, §25.1, §25.7 (the runbook-discovery
 // endpoints).
 //
 // diagnosis: the §25.7 runbook-discovery routes are not gated by the

@@ -121,7 +121,7 @@ func TestSpecNoAdapterTriggerAttribution_F866(t *testing.T) {
 	// paragraph (:629), the auto-mode must-not-retry sentence (:712), the
 	// elicitation-mode terminal-condition (:725), and the "User rejects"
 	// requesting-subtree identifier (:729). Also the §4.7 platform-tool
-	// note (:697), §9.1 control-channel row (:12), §18.23 Phase-9
+	// note (:697), §9.1 runtime-control row (:12), §18.23 Phase-9
 	// deliverable (:431), and §19 row 13 (:19).
 	sites := []struct {
 		file    string
@@ -148,7 +148,7 @@ func TestSpecNoAdapterTriggerAttribution_F866(t *testing.T) {
 		"adapter issued the `ExtendLease`",
 		"adapter must not retry",
 		"adapter knows exactly what was received",
-		// §18.23:431 previously named the removed "adapter↔gateway
+		// §18.23 previously named the removed "adapter↔gateway
 		// `ExtendLease` gRPC" build deliverable. Ban both the backtick-quoted
 		// and plain forms so a revert of that Phase-9 line to the
 		// adapter-as-trigger construction is caught here. The surviving
@@ -176,11 +176,11 @@ func TestSpecNoAdapterTriggerAttribution_F866(t *testing.T) {
 		t.Errorf("§4.7 still names the ExtendLease RPC; the gRPC method was trimmed (F-15.3.6)")
 	}
 
-	// §9.1's gateway↔pod control-channel row must no longer list "lease
+	// §9.1's gateway↔pod runtime-control row must no longer list "lease
 	// extension" as a payload.
 	s91 := specSection(t, filepath.Join(specDir, "09_mcp-integration.md"), "### 9.1 ")
 	if strings.Contains(strings.ToLower(s91), "lease extension") {
-		t.Errorf("§9.1 control-channel row still lists lease extension as a gRPC payload; it is an in-process operation now (F-15.3.6)")
+		t.Errorf("§9.1 gateway↔pod runtime-control row still lists lease extension as a gRPC payload; it is an in-process operation now (F-15.3.6)")
 	}
 
 	// §18.23 Phase-9 lease-extension deliverable must name the gateway LLM
@@ -258,6 +258,20 @@ func requireNoneContain(t *testing.T, label, body string, banned []string) {
 	for _, b := range banned {
 		if strings.Contains(body, b) {
 			t.Errorf("%s still contains the stale phrase %q", label, b)
+		}
+	}
+}
+
+// requireNoneContainFold is requireNoneContain with an ASCII case-insensitive
+// comparison. A retired sentence reintroduced at the start of a paragraph
+// carries a capitalised first word, so a case-sensitive sweep passes over the
+// exact wording it exists to catch.
+func requireNoneContainFold(t *testing.T, label, body string, banned []string) {
+	t.Helper()
+	lowered := strings.ToLower(body)
+	for _, b := range banned {
+		if strings.Contains(lowered, strings.ToLower(b)) {
+			t.Errorf("%s still contains the stale phrase %q (case-insensitive)", label, b)
 		}
 	}
 }

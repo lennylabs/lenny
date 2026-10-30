@@ -22,7 +22,7 @@ func opWithProgress(id string, status operations.Status, pr *conventions.Progres
 func ptrF(v float64) *float64 { return &v }
 func ptrI(v int) *int         { return &v }
 
-// spec §25.2 line 399: the observe loop sets lenny_ops_operations_stalled
+// spec §25.2: the observe loop sets lenny_ops_operations_stalled
 // to the count of in-flight operations with stalledForSeconds > 0.
 func TestObserverCountsStalled(t *testing.T) {
 	stalled := -1.0
@@ -40,7 +40,7 @@ func TestObserverCountsStalled(t *testing.T) {
 	}
 }
 
-// spec §25.2 line 399: with no stalled operations the gauge clears to 0.
+// spec §25.2: with no stalled operations the gauge clears to 0.
 func TestObserverClearsStalledGauge(t *testing.T) {
 	stalled := -1.0
 	lister := &fakeLister{page: operations.Page{Operations: []operations.Operation{
@@ -53,7 +53,7 @@ func TestObserverClearsStalledGauge(t *testing.T) {
 	}
 }
 
-// spec §25.2 line 401: the first sighting only establishes the baseline;
+// spec §25.2: the first sighting only establishes the baseline;
 // a subsequent advance emits operation_progressed with the crossed
 // thresholds and the step transition.
 func TestObserverEmitsOnAdvance(t *testing.T) {

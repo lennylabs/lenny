@@ -58,7 +58,7 @@ func doAdminReq(t *testing.T, h http.Handler, method, path string, body any, as 
 	}
 	req := as(httptest.NewRequest(method, path, rdr))
 	if method == http.MethodPut && req.Header.Get("If-Match") == "" {
-		// spec: §15.1 lines 1207-1211 — pool and experiment PUTs enforce
+		// spec: §15.1 — pool and experiment PUTs enforce
 		// If-Match. Cases that do not exercise the precondition directly
 		// reach the handler by carrying the resource's current ETag, fetched
 		// via a GET against the same resource. A test that drives the
@@ -83,7 +83,7 @@ func doAdminReq(t *testing.T, h http.Handler, method, path string, body any, as 
 // a no-op for a non-PUT request, a request that already carries If-Match,
 // or a path with no ETag-bearing GET (adminETagGetPath returns ""). The
 // GET reuses the request's context so it carries the same authenticated
-// principal. spec: §15.1 lines 1207-1211.
+// principal. spec: §15.1.
 func injectAdminIfMatch(t *testing.T, h http.Handler, req *http.Request) {
 	t.Helper()
 	if req.Method != http.MethodPut || req.Header.Get("If-Match") != "" {
@@ -105,7 +105,7 @@ func injectAdminIfMatch(t *testing.T, h http.Handler, req *http.Request) {
 // resource's current ETag, or "" when the route does not enforce
 // If-Match. Pools read straight off the same path; experiments need the
 // tenantId query (the platform-admin GET requires it) so the lookup
-// resolves the tenant the fixtures use. spec: §15.1 lines 1207-1211.
+// resolves the tenant the fixtures use. spec: §15.1.
 func adminETagGetPath(putPath string) string {
 	if strings.HasPrefix(putPath, "/v1/admin/pools/") {
 		if strings.HasSuffix(putPath, "/warm-count") {
@@ -386,7 +386,7 @@ func TestPatchExperimentRejectsInvalidTransition(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 1094 — concluded experiments are immutable; delete
+// spec: §10.7 — concluded experiments are immutable; delete
 // is permitted only after the operator transitions the experiment to
 // `concluded` via PATCH. F-10.7.17.
 func TestDeleteExperiment(t *testing.T) {
@@ -406,7 +406,7 @@ func TestDeleteExperiment(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 1094 — deleting an active or paused experiment
+// spec: §10.7 — deleting an active or paused experiment
 // would orphan its variant pool and enrolled-session eval attribution;
 // the handler must reject with 409 INVALID_STATE_TRANSITION until the
 // operator PATCHes to `concluded`. F-10.7.17.
@@ -430,7 +430,7 @@ func TestDeleteExperimentRejectsActive(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 703 / §15.1 line 1005 — reserved-identifier
+// spec: §10.7 / §15.1 — reserved-identifier
 // violation surfaces as 422 RESERVED_IDENTIFIER with details.field +
 // details.value, distinct from VALIDATION_ERROR. F-10.7.11.
 func TestCreateExperimentReservedIdentifierCode(t *testing.T) {
@@ -458,7 +458,7 @@ func TestCreateExperimentReservedIdentifierCode(t *testing.T) {
 	}
 }
 
-// spec: §4.6.2 line 545 — Σ variant_weights ≥ 1 surfaces as 422
+// spec: §4.6.2 — Σ variant_weights ≥ 1 surfaces as 422
 // INVALID_VARIANT_WEIGHTS, distinct from VALIDATION_ERROR. F-10.7.11.
 func TestCreateExperimentInvalidVariantWeightsCode(t *testing.T) {
 	router, _, _ := newExperimentAdmin(t)
@@ -522,7 +522,7 @@ func weightedPayload(id, baseRuntime string, weight float64) admin.ExperimentPay
 }
 
 // TestCreateExperimentRejectsCrossExperimentWeights_spec_4_6_2 pins
-// §4.6.2 line 545: Σ variant_weights across all active experiments on
+// §4.6.2: Σ variant_weights across all active experiments on
 // the same base runtime must stay < 1, rejected at admission with
 // INVALID_VARIANT_WEIGHTS. F-10.7.8.
 func TestCreateExperimentRejectsCrossExperimentWeights_spec_4_6_2(t *testing.T) {
@@ -578,7 +578,7 @@ func TestCreateExperimentCrossWeightsIgnoresInactiveSibling_spec_4_6_2(t *testin
 	}
 }
 
-// TestCreateExperimentDryRun_spec_15_1_1140 pins §15.1 line 1140:
+// TestCreateExperimentDryRun_spec_15_1_1140 pins §15.1:
 // ?dryRun=true performs validation, returns the computed representation
 // with X-Dry-Run: true, but persists nothing and emits no audit event.
 // F-10.7.15.

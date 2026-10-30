@@ -31,6 +31,9 @@ tmp/
 # Makefile `build` target output directory.
 /bin/
 
+# The runtime supervisor's default build output (supervisor/Makefile OUT).
+/supervisor/bin/
+
 tests/results/
 
 # Terraform working state — never committed. Operators applying the
@@ -61,6 +64,7 @@ scripts/cloud/*/values-cloud-*.yaml
 # digests and stays out of git.
 tests/testinfra/kind/bootstrap-overlay.gen.yaml
 tests/testinfra/kind/minio-ca.gen.crt
+tests/testinfra/kind/image-tags.gen.yaml
 .claude/scheduled_tasks.lock
 
 # Beads / Dolt files (added by bd init)
@@ -76,3 +80,13 @@ tests/testinfra/kind/minio-ca.gen.crt
 .itest.log
 .covss.log
 .covmr.log
+
+# One-off operator workflow for the channel migration; deleted when it completes.
+.claude/workflows/apply-0064.js
+
+# Python bytecode from the review tooling under scripts/.
+__pycache__/
+*.pyc
+
+# Spec write lease, created and released per implementation step
+proposals/.spec-lease.json

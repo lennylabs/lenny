@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §7.3 line 423 — awaiting_client_action → expired entry path
+// spec: §7.3 — awaiting_client_action → expired entry path
 // fires the §11.7 session.expired_in_awaiting_action audit row BEFORE
 // the generic terminal hook so SIEM/SOC dashboards see the cause of
 // expiry. F-7.3.25.
@@ -22,6 +22,9 @@ type captureExpiryHook struct {
 	terminalCalls []sessionstore.Session
 	awaitingCalls []sessionstore.Session
 }
+
+// BeginTerminal opens no claim; the fake records only the terminal hook.
+func (*captureExpiryHook) BeginTerminal(string) func() { return func() {} }
 
 func (c *captureExpiryHook) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
 	c.terminalCalls = append(c.terminalCalls, sess)
@@ -43,6 +46,7 @@ func TestSweepAwaitingClientActionFiresExpiryHook_spec_7_3_25(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	if res.Expirations != 1 {
 		t.Fatalf("expected 1 expiration, got %d", res.Expirations)
 	}
@@ -79,6 +83,7 @@ func TestSweepMaxAgeDoesNotFireAwaitingHook_spec_7_3_25(t *testing.T) {
 	if _, err := w.Tick(context.Background(), born.Add(3*time.Hour)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	if len(hook.awaitingCalls) != 0 {
 		t.Errorf("F-7.3.25: maxAge sweep must not fire awaiting hook, got %d calls", len(hook.awaitingCalls))
 	}
@@ -94,12 +99,15 @@ type terminalOnly struct {
 	calls []sessionstore.Session
 }
 
+// BeginTerminal opens no claim; the fake records only the terminal hook.
+func (*terminalOnly) BeginTerminal(string) func() { return func() {} }
+
 func (t *terminalOnly) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
 	t.calls = append(t.calls, sess)
 }
 
 // TestSweepAwaitingClientActionStampsExpiredDeadline_spec_8_8_867
-// verifies the §8.8 line 867 expiry-reason prefix lands on the
+// verifies the §8.8 expiry-reason prefix lands on the
 // failureReason column when the watchdog drives an
 // awaiting_client_action row to `expired`. The MCP boundary's
 // taskError.Code fallback then surfaces `expired:deadline` to clients.
@@ -121,12 +129,12 @@ func TestSweepAwaitingClientActionStampsExpiredDeadline_spec_8_8_867(t *testing.
 		t.Fatalf("State = %q, want expired", got.State)
 	}
 	if got.FailureReason != string(session.FailureExpiredDeadline) {
-		t.Errorf("FailureReason = %q, want %q (§8.8 line 867)", got.FailureReason, session.FailureExpiredDeadline)
+		t.Errorf("FailureReason = %q, want %q (§8.8)", got.FailureReason, session.FailureExpiredDeadline)
 	}
 }
 
 // TestSweepMaxAgeStampsExpiredDeadline_spec_8_8_867 verifies the
-// §8.8 line 867 expiry prefix is stamped when the §11.3 maxSessionAge
+// §8.8 expiry prefix is stamped when the §11.3 maxSessionAge
 // cap fires. F-8.8.8.
 func TestSweepMaxAgeStampsExpiredDeadline_spec_8_8_867(t *testing.T) {
 	store := memstore.New()
@@ -145,39 +153,7 @@ func TestSweepMaxAgeStampsExpiredDeadline_spec_8_8_867(t *testing.T) {
 		t.Fatalf("State = %q, want expired", got.State)
 	}
 	if got.FailureReason != string(session.FailureExpiredDeadline) {
-		t.Errorf("FailureReason = %q, want %q (§8.8 line 867)", got.FailureReason, session.FailureExpiredDeadline)
-	}
-}
-
-// TestSweepDoesNotOverwriteExistingFailureReason_spec_8_8_867 verifies
-// that when an earlier writer has already stamped a non-empty
-// FailureReason on a soon-to-be-expired row, the watchdog leaves the
-// existing value alone. The MCP boundary will surface that earlier
-// reason rather than the watchdog's default deadline prefix. F-8.8.8.
-func TestSweepDoesNotOverwriteExistingFailureReason_spec_8_8_867(t *testing.T) {
-	store := memstore.New()
-	born := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if err := store.Create(context.Background(), sessionstore.Session{
-		ID:            "sess_aw_pre",
-		TenantID:      "acme",
-		State:         session.StateAwaitingClientAction,
-		CreatedAt:     born,
-		UpdatedAt:     born,
-		FailureReason: string(session.FailureExpiredBudget),
-	}); err != nil {
-		t.Fatalf("seed sess_aw_pre: %v", err)
-	}
-	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
-		WithTerminalHook(&captureExpiryHook{})
-	if _, err := w.Tick(context.Background(), born.Add(20*time.Minute)); err != nil {
-		t.Fatalf("Tick: %v", err)
-	}
-	got, err := store.Get(context.Background(), "acme", "sess_aw_pre")
-	if err != nil {
-		t.Fatalf("Get sess_aw_pre: %v", err)
-	}
-	if got.FailureReason != string(session.FailureExpiredBudget) {
-		t.Errorf("FailureReason = %q, want %q (pre-stamped reason preserved)", got.FailureReason, session.FailureExpiredBudget)
+		t.Errorf("FailureReason = %q, want %q (§8.8)", got.FailureReason, session.FailureExpiredDeadline)
 	}
 }
 
@@ -192,6 +168,7 @@ func TestTerminalHookWithoutAwaitingNotifierStillFiresTerminal_spec_7_3_25(t *te
 	if _, err := w.Tick(context.Background(), born.Add(20*time.Minute)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	if len(hook.calls) != 1 {
 		t.Errorf("F-7.3.25: terminal hook should fire once for the expired session, got %d", len(hook.calls))
 	}

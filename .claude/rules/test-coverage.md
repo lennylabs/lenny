@@ -1,3 +1,15 @@
+---
+paths:
+  - "pkg/**"
+  - "cmd/**"
+  - "sdks/**"
+  - "migrations/**"
+  - "charts/**"
+  - "tests/**"
+  - "proposals/**"
+  - "docs/**"
+---
+
 # Test coverage
 
 Project-wide rules for testing code changes. They apply to every change under `pkg/`, `cmd/`, `sdks/`, `migrations/`, and `charts/`, and to any agent or workflow that writes or modifies code in this repository.
@@ -45,7 +57,7 @@ A change usually touches several of these. Implement the tests for each tier the
 
 ## Coverage target
 
-New code carries at least 80% line coverage, measured by `go-cover` and enforced by CI (TESTING.md §12.1). The target is on new code; refactoring that does not change behavior is not penalized. Before declaring a change done, check the coverage of the lines you changed:
+New code carries at least 80% line coverage, measured by `go-cover` and enforced by CI (the coverage policy in TESTING.md). The target is on new code; refactoring that does not change behavior is not penalized. Before declaring a change done, check the coverage of the lines you changed:
 
 ```
 lenny-test coverage --diff <base-ref>
@@ -55,7 +67,7 @@ Coverage is a floor, not the goal. Cover the empty, error, concurrent, boundary,
 
 ## Test conventions
 
-- Every test carries a `// spec:` annotation naming the spec sections it exercises (form: `// spec: 4.6.1 (warm pool controller), 12.3 (postgres ha)`). The harness maps tests to spec sections through this annotation.
+- Every test carries a `// spec:` annotation naming the spec sections it exercises (form: `// spec: N.M.K (section heading), N.M (section heading)`). The harness maps tests to spec sections through this annotation.
 - Every tier-2-and-higher test carries a `// diagnosis:` comment immediately above the function declaration, stating what a failure means. The harness surfaces it in the verdict.
 - Name tests for the behavior and the spec section, not the function under test alone.
 
@@ -64,6 +76,7 @@ Coverage is a floor, not the goal. Cover the empty, error, concurrent, boundary,
 - `lenny-test --changed --max-tier <tier>` runs every tier up to `<tier>` for the packages your diff touches; start here.
 - `lenny-test --tier <name>` runs one tier; `--pkg <path>` scopes to a package.
 - Bring infrastructure up with `lenny-test infra up --profile compose|kind|all` before integration and higher tiers; see the AVAILABLE INFRASTRUCTURE the build loops document for standing clusters and stacks.
+- Check the environment before running any tier above 1, and read a failure there as an environment failure until you have ruled that out. The checks are in "Environment preflight" below.
 - `lenny-test stress --test <Name> --runs <N>` exercises a flake budget for concurrency-sensitive tests.
 
 ## How to apply when editing
@@ -73,6 +86,117 @@ Coverage is a floor, not the goal. Cover the empty, error, concurrent, boundary,
 3. Run tier 0 and tier 1 plus each reached tier; fix the code until they pass.
 4. Run `lenny-test coverage --diff <base-ref>` and raise coverage of changed lines to the target.
 5. Add the `// spec:` annotation to every test and the `// diagnosis:` comment to tier-2-and-up tests.
+
+## Environment preflight
+
+A tier above 1 runs against a cluster or a compose stack whose images were built from some earlier revision
+of this tree. When the two drift apart the tests fail for reasons that have nothing to do with the change
+under test, and the failure looks exactly like a code defect: the container exits immediately, the pod never
+reaches Ready, and every `kubectl wait` burns its full timeout. One run spent 1400 seconds waiting on pods
+that had already failed 2,741 times because the pod spec rendered a flag the loaded image did not define.
+Run these checks first, and when one fails, fix the environment rather than the code.
+
+**1. The images match the renderer.** The pod spec is rendered from the current tree and the image is not.
+Any argument the renderer passes that the image's binary does not define makes the container exit
+immediately with status 2 from Go's flag package, and the first line of its log names the flag. Compare the
+flags the controller's pod-spec renderer emits against the flags the runtime and adapter binaries define, and
+rebuild and reload when a flag was added, removed, or renamed since the images were built. A flag rename is
+the common case, because it changes both sides and neither fails to compile.
+
+On Kind, re-running `tests/testinfra/kind/install.sh` from the tree under test is the fix. By default it tags
+each image with a content tag computed from the image's build inputs, rebuilds and reloads only the images
+whose inputs changed, and deploys the content tags, so the chart's Deployments roll onto the new images. A
+re-run with no change rebuilds nothing. The cluster still drifts from the tree when it was last installed from
+another worktree or revision, with `LENNY_IMAGE_TAG` set, or with `LENNY_SKIP_BUILD=1`, which deploys whatever
+the `e2e` alias tag names. To check, compare the tag a Deployment runs, for example
+`kubectl -n lenny-system get deploy -o jsonpath='{..image}'`, with the tags the tree computes, which
+`go run ./tests/testinfra/kind/imagetag/cmd/image-tags --install-script tests/testinfra/kind/install.sh`
+prints. The base images the Dockerfiles name are not hashed, so set `LENNY_FORCE_BUILD=1` after
+pulling a newer base image.
+
+**2. The cluster is not carrying wreckage from an earlier run.** Count the agent pods by phase before
+starting:
+
+```
+kubectl -n lenny-agents get pods --no-headers | awk '{print $3}' | sort | uniq -c | sort -rn
+```
+
+Terminal pods are not harmless. A test that waits on a label selector waits on every pod the selector
+matches, so a pile of `Error` pods makes each wait run to its timeout. Delete them with
+`kubectl -n lenny-agents delete pods --field-selector=status.phase=Failed --wait=false`. An
+`ImagePullBackOff` pod usually means a fixture pinned an image digest that was never pushed; delete the pool
+that owns it, not only the pod, or the controller recreates it.
+
+**3. The warm pools can actually reach Ready.** A pool whose `READY` column is zero while its desired count
+is not will recreate a failing pod indefinitely, so the pile in check 2 rebuilds itself. Read the pool list
+and, for any pool at zero ready, read one of its pods' logs before running anything.
+
+**4. No orphaned test infrastructure is still running.** An envtest run killed part-way leaves its etcd and
+kube-apiserver behind, holding memory and ports. Any such process reparented to init (`ppid` of 1) is
+orphaned; reap them with `pkill -f kubebuilder-envtest` before starting, and again after each tier-2
+package.
+
+**5. The failure you are looking at is yours.** Before treating a tier failure above 1 as a defect in the
+change, confirm the same tier fails on a clean checkout of the merge base. A failure that predates the
+change is a pre-existing condition to record, not work for this step, and rebuilding a landed step to make
+somebody else's broken fixture pass is how a step enters a loop it cannot leave.
+
+**6. A test that creates cluster-scoped state sweeps it at START, not only at exit.** `t.Cleanup` does not
+run when the process is killed, and between the harness watchdog, the wall-clock timeout around a tier, and
+an interrupted run, that happens routinely. A fixture that mints a unique name per run — which it must when
+the name is a database primary key and a soft-deleted row keeps it occupied — therefore does not leak a name
+the next run reclaims by reusing it. It leaks a whole object nothing will ever collect, once per killed run.
+Three such pools had accumulated on the long-lived e2e cluster before anyone noticed, each holding a warm
+member that could never become Ready.
+
+The leak is not inert. Any pod it leaves carries the platform's `lenny.dev/managed=true` label, so every
+later test that waits on that label waits on the wreckage until the wait times out. Exit-time cleanup stays,
+because it keeps a passing run tidy, but it cannot be the only cleanup. Give the fixture a start-time sweep
+that lists objects matching its own prefix or its own label, deletes every one that is not this run's, and
+logs what it reclaimed. Make it best-effort and never fatal: a sweep failure must not fail a run whose own
+subject is intact. The pattern is a helper called at the top of the test that lists the objects carrying
+the fixture's name prefix or label, skips the ones this run created, deletes the rest, and logs each deletion
+without failing the test when the sweep itself errors.
+
+**7. Every image the environment needs can be built or pulled.** An image a fixture pulls from a public
+registry can disappear upstream, and a cluster or a Docker host that still caches it hides the loss until a
+fresh environment fails to install with `ImagePullBackOff` or `pull access denied`. MinIO is the known case:
+the community `minio/minio` and `minio/mc` images are no longer distributed, so the fixtures and the chart
+defaults run the maintained forks `pgsty/silo` (server) and `pgsty/mc` (client), each pinned by release tag
+and by the digest of its multi-arch index. `tests/testinfra/kind/minioimages.go` holds the references, and
+`TestMinIOImagePinsAgree` keeps `install.sh`, the data-store manifests, the compose files,
+`containers.StartMinIO`, and the chart defaults on the same references. The Kind install pulls both images on
+the host, loads them onto the nodes, and registers each digest-pinned name in the node's containerd, because
+the nodes cannot pull. `LENNY_MINIO_IMAGE` points `StartMinIO` at another copy of the server image. Do not
+repoint a fixture at a community MinIO image, because none can be pulled. To move to a new release, update
+the references in `minioimages.go` and every carrier the test names in the same change.
+
+**8. The shared database is clean and not ahead of the branch.** Parallel worktrees install onto the one
+`lenny-e2e` cluster, and each install migrates its Postgres to the installing branch's migrations. A database
+another branch migrated further, or one a stopped migrate left dirty, fails or skips every kind-backed test with
+no defect in the code under test. `tests/testinfra/kind/install.sh` reads `schema_migrations` before it
+migrates and stops, naming the version and the remedy, when the row is dirty or ahead of the branch's highest
+migration. It also stops when a migration recorded in the `lenny-e2e-migrations` ConfigMap at or below the
+database version differs in name or content from the branch's file of the same number.
+`LENNY_SKIP_MIGRATION_GUARD=1` overrides it for deliberate use. Do not edit `schema_migrations` by
+hand. The step-back procedure for an ahead database and the reset procedure for a dirty one are in
+`tests/testinfra/README.md` under "Shared Kind cluster database", and both run only with the owner's approval
+because every worktree tests against the same database.
+
+**9. The host disk has room, so the object store accepts writes.** The Kind nodes run as containers on the
+host disk, and the in-cluster MinIO stores objects in an `emptyDir` on that disk. When the host disk is nearly
+full, MinIO answers every PUT with `507 Insufficient Storage`. The adapter retries that status silently, the
+terminal seal fails inside its short e2e window, and the gateway releases the pod with the failed
+disposition. The symptom is far from the cause: a pod that should recycle or hold `reserved` after a session
+ends is retired instead, its claim disappears, and a wait on the claim reports an empty phase. Check
+`df -h /` before a tier above 1. The usual consumer is the Docker build cache that repeated content-tagged
+image builds leave behind; `docker system df` shows it, and `docker builder prune --filter until=12h` frees
+the unused part without touching an image a cluster runs.
+
+When a check fails and fixing the environment is out of scope for the work in hand, record the precondition
+and skip the affected case with a reason, in the register at `tests/registers/skip-reasons.yaml`. A test
+skipped with a recorded reason is honest; one that fails for an environmental reason teaches everyone to
+ignore red.
 
 ## Escape hatches
 

@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 )
 
-// spec: §16.1 lines 51, 53, 55 — the assignment service emits the
+// spec: §16.1 — the assignment service emits the
 // credential lease-assignment counter (provider, pool, source), the
 // lease-duration histogram (provider, pool), and the pool-utilization
 // gauge (pool, in [0,1]).
@@ -49,7 +49,7 @@ func TestAssignEmitsLeaseAssignmentCounter_spec_16_1(t *testing.T) {
 	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
 		healthyCred("key-1", "sk-ant-real")))
 
-	if _, err := svc.Assign("claude-prod", "s_1", "", ""); err != nil {
+	if _, err := svc.Assign("claude-prod", "s_1", "", "", 0); err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
 	if len(m.assignments) != 1 {
@@ -73,11 +73,13 @@ func TestReleaseObservesLeaseDuration_spec_16_1(t *testing.T) {
 	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
 		healthyCred("key-1", "sk-ant-real")))
 
-	lease, err := svc.Assign("claude-prod", "s_1", "", "")
+	lease, err := svc.Assign("claude-prod", "s_1", "", "", 0)
 	if err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
-	svc.Release(lease.LeaseID)
+	if err := svc.Release(lease.LeaseID); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
 
 	if len(m.durations) != 1 {
 		t.Fatalf("durations = %d, want 1", len(m.durations))
@@ -105,20 +107,22 @@ func TestPoolUtilizationTracksInUseCredentials_spec_16_1(t *testing.T) {
 	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
 		healthyCred("key-1", "sk-1"), healthyCred("key-2", "sk-2")))
 
-	l1, err := svc.Assign("claude-prod", "s_1", "", "")
+	l1, err := svc.Assign("claude-prod", "s_1", "", "", 0)
 	if err != nil {
 		t.Fatalf("Assign s_1: %v", err)
 	}
 	if m.utilization["claude-prod"] != 0.5 {
 		t.Errorf("after 1 assign utilization = %v, want 0.5", m.utilization["claude-prod"])
 	}
-	if _, err := svc.Assign("claude-prod", "s_2", "", ""); err != nil {
+	if _, err := svc.Assign("claude-prod", "s_2", "", "", 0); err != nil {
 		t.Fatalf("Assign s_2: %v", err)
 	}
 	if m.utilization["claude-prod"] != 1.0 {
 		t.Errorf("after 2 assigns utilization = %v, want 1.0", m.utilization["claude-prod"])
 	}
-	svc.Release(l1.LeaseID)
+	if err := svc.Release(l1.LeaseID); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
 	if m.utilization["claude-prod"] != 0.5 {
 		t.Errorf("after release utilization = %v, want 0.5", m.utilization["claude-prod"])
 	}
@@ -129,9 +133,11 @@ func TestNilMetricsIsNoOp_spec_16_1(t *testing.T) {
 	// No SetMetrics call: Assign and Release must not panic.
 	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
 		healthyCred("key-1", "sk-ant-real")))
-	lease, err := svc.Assign("claude-prod", "s_1", "", "")
+	lease, err := svc.Assign("claude-prod", "s_1", "", "", 0)
 	if err != nil {
 		t.Fatalf("Assign with nil metrics: %v", err)
 	}
-	svc.Release(lease.LeaseID)
+	if err := svc.Release(lease.LeaseID); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
 }

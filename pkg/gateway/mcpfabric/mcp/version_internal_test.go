@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// spec: §15.2 lines 1310-1315 — negotiate the highest mutually supported
+// spec: §15.2 — negotiate the highest mutually supported
 // MCP spec version; reject too-old/retired versions with the structured
 // lenny error. F-15.2.1, F-15.5.4.
 func TestNegotiateVersion_spec_15_2_1310(t *testing.T) {
@@ -68,7 +68,7 @@ func TestNegotiateVersion_retired_spec_15_2(t *testing.T) {
 	}
 }
 
-// spec: §15.2 line 1316 — the deprecation warning header is set on a POST
+// spec: §15.2 — the deprecation warning header is set on a POST
 // /mcp initialize that negotiates the previous version, and absent on the
 // current version. F-15.5.4.
 func TestInitializeDeprecationHeader_spec_15_2_1316(t *testing.T) {
@@ -94,7 +94,7 @@ func TestInitializeDeprecationHeader_spec_15_2_1316(t *testing.T) {
 	}
 }
 
-// spec: §15.2 line 1313 — an unsupported (too-old) initialize is rejected
+// spec: §15.2 — an unsupported (too-old) initialize is rejected
 // with the structured lenny error carrying the supported version list.
 // F-15.2.1.
 func TestInitializeUnsupportedRejected_spec_15_2_1313(t *testing.T) {
@@ -120,7 +120,7 @@ func TestInitializeUnsupportedRejected_spec_15_2_1313(t *testing.T) {
 	}
 }
 
-// spec: §15.2 lines 1310-1315 — the WebSocket transport negotiates with
+// spec: §15.2 — the WebSocket transport negotiates with
 // the same rules and surfaces the structured lenny error on rejection.
 // F-15.2.1.
 func TestWebSocketInitializeNegotiation_spec_15_2_1310(t *testing.T) {

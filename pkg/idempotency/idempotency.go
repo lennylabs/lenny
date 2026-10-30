@@ -20,7 +20,7 @@ import (
 	"unicode/utf8"
 )
 
-// MaxKeyLength is the §11.5 line 277 cap on the Idempotency-Key string,
+// MaxKeyLength is the §11.5 cap on the Idempotency-Key string,
 // measured in Unicode code points (runes) rather than UTF-8 bytes so a
 // multi-byte key (e.g. a UUID written with non-ASCII alphabets) is
 // admitted on the same character budget as an ASCII key. Keys whose
@@ -48,7 +48,7 @@ func (k Key) Validate() error {
 	if k.Value == "" {
 		return fmt.Errorf("idempotency: key value is required")
 	}
-	// spec: §11.5 line 277 — the cap is 128 characters; we measure in
+	// spec: §11.5 — the cap is 128 characters; we measure in
 	// Unicode code points (runes) so a non-ASCII key is not silently
 	// truncated against a tighter byte budget. Length carries the same
 	// rune count surfaced via KeyTooLongError so the error message and
@@ -98,8 +98,7 @@ type Record struct {
 // the full canonical http.Header value slice (every value of a
 // multi-valued header such as Set-Cookie / Vary / WWW-Authenticate is
 // preserved) so replay reproduces the original wire response byte for
-// byte. spec: §11.5 line 277 "cached response (same HTTP status and
-// body)".
+// byte. spec: §11.5.
 type Response struct {
 	StatusCode int
 	Headers    map[string][]string
@@ -107,7 +106,7 @@ type Response struct {
 }
 
 // IsExpired reports whether the record has aged out of the §11.5 TTL
-// window. spec: §11.5 line 277.
+// window. spec: §11.5.
 //
 // MUST-NOT-RELAX: this method returns false for the zero Record
 // (StoredAt.IsZero()) by design. Every store implementation

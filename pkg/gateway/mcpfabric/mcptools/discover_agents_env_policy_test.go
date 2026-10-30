@@ -21,7 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §10.6 line 601, line 629 — defaultDelegationPolicy is the
+// spec: §10.6 — defaultDelegationPolicy is the
 // DelegationPolicy applied to sessions created in an environment, and the
 // §10.6 effective scope is `(environment definition ∪ cross-environment
 // permitted runtimes) ∩ delegation policy`. lenny/discover_agents
@@ -68,15 +68,16 @@ func envPolicyHarness(t *testing.T, parentRuntimeRef, envName, envDefaultPolicy 
 	})
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        store,
-		Executor:     executor.NewEchoExecutor(),
-		Runtimes:     runtimes,
-		Delegation:   svc,
-		Environments: envs,
-		Tenants:      tenants,
-		Clock:        func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:       func() string { return "sess_mcp" },
-		TenantID:     "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		Delegation:        svc,
+		Environments:      envs,
+		Tenants:           tenants,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
 	return srv, runtimes, policies
 }
@@ -119,8 +120,7 @@ func TestDiscoverAgentsAppliesEnvironmentDefaultPolicy_spec_10_6_601(t *testing.
 
 func TestDiscoverAgentsIntersectsRuntimeAndEnvironmentPolicy_spec_10_6_629(t *testing.T) {
 	// Two governing policies: the runtime-level rt-policy allows tier:gold,
-	// the environment default env-scoped allows access:read. The §10.6 line
-	// 629 intersection admits only a target both permit.
+	// the environment default env-scoped allows access:read. The §10.6 intersection admits only a target both permit.
 	srv, runtimes, policies := envPolicyHarness(t, "orchestrator", "security-team", "env-scoped")
 	ctx := context.Background()
 	seedAgent(t, runtimes, "orchestrator", nil, "rt-policy")

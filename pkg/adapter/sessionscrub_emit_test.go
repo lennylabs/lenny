@@ -14,26 +14,32 @@ import (
 )
 
 // recordingSessionScrubReporter is a SessionScrubReporter double capturing
-// every ReportSessionScrub call so a test can assert the pod id, session id,
-// slot id, and outcome the adapter reported (and how many reports it emitted,
+// every ReportSessionScrub call so a test can assert the pod id, session
+// id, and outcome the adapter reported (and how many reports it emitted,
 // since the withhold and terminate paths emit none).
 type recordingSessionScrubReporter struct {
 	mu      sync.Mutex
 	reports []sessionScrubCall
 	err     error
+	// beforeReport runs at the head of every ReportSessionScrub call, so a
+	// case can observe the pod at the moment the cleanup outcome is
+	// reported rather than only after the handler has returned.
+	beforeReport func()
 }
 
 type sessionScrubCall struct {
 	podID     string
 	sessionID string
-	slotID    string
 	outcome   gatewaycontrol.SessionScrubOutcome
 }
 
-func (r *recordingSessionScrubReporter) ReportSessionScrub(_ context.Context, podID, sessionID, slotID string, outcome gatewaycontrol.SessionScrubOutcome) error {
+func (r *recordingSessionScrubReporter) ReportSessionScrub(_ context.Context, podID, sessionID string, outcome gatewaycontrol.SessionScrubOutcome) error {
+	if r.beforeReport != nil {
+		r.beforeReport()
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.reports = append(r.reports, sessionScrubCall{podID: podID, sessionID: sessionID, slotID: slotID, outcome: outcome})
+	r.reports = append(r.reports, sessionScrubCall{podID: podID, sessionID: sessionID, outcome: outcome})
 	return r.err
 }
 
@@ -64,21 +70,20 @@ func concurrentReportServer(t *testing.T, closeErr error) (*Server, *recordingSe
 	return s, reporter
 }
 
-func startSlot(t *testing.T, s *Server, sessionID, slotID string) {
+func startSlot(t *testing.T, s *Server, sessionID string) {
 	t.Helper()
 	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
 		SessionId: &adapterv1.SessionId{Value: sessionID},
 		Runtime:   "echo",
-		SlotId:    &adapterv1.SlotId{Value: slotID},
 	}); err != nil {
-		t.Fatalf("StartSession(slot %s): %v", slotID, err)
+		t.Fatalf("StartSession(%s): %v", sessionID, err)
 	}
 }
 
-func shutdownSlotReq(sessionID, slotID string) *adapterv1.ShutdownRequest {
+func shutdownSlotReq(sessionID string) *adapterv1.ShutdownRequest {
 	return &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: sessionID},
-		SlotId:    &adapterv1.SlotId{Value: slotID},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: sessionID},
 	}
 }
 
@@ -86,7 +91,7 @@ func shutdownSlotReq(sessionID, slotID string) *adapterv1.ShutdownRequest {
 // report: a concurrent-slot Shutdown whose runtime Close returns cleanly emits
 // exactly one ReportSessionScrub for the slot carrying outcome=released, the
 // cached pod id, the released session, and the slot id. This advances
-// sessions_served (feeding maxSessionsPerPod) on every clean release.
+// sessions_served (feeding maxSessionsPerPod) on each cleanup-outcome report.
 //
 // diagnosis: a failure means a concurrent pool no longer reports a clean slot
 // release, so sessions_served never advances and the maxSessionsPerPod
@@ -94,9 +99,9 @@ func shutdownSlotReq(sessionID, slotID string) *adapterv1.ShutdownRequest {
 // spec: 5.2 (ReportSessionScrub, maxSessionsPerPod), 4.7 (per-slot cleanup outcome)
 func TestShutdownSlotEmitsReleasedOnCleanClose_spec_5_2(t *testing.T) {
 	s, reporter := concurrentReportServer(t, nil)
-	startSlot(t, s, "sess-a", "slot-a")
+	startSlot(t, s, "sess-a")
 
-	resp, err := s.Shutdown(context.Background(), shutdownSlotReq("sess-a", "slot-a"))
+	resp, err := s.Shutdown(context.Background(), shutdownSlotReq("sess-a"))
 	if err != nil {
 		t.Fatalf("Shutdown(slot-a): %v", err)
 	}
@@ -114,8 +119,8 @@ func TestShutdownSlotEmitsReleasedOnCleanClose_spec_5_2(t *testing.T) {
 	if got.podID != "pod-concurrent" {
 		t.Errorf("pod id = %q, want the cached pod identity", got.podID)
 	}
-	if got.sessionID != "sess-a" || got.slotID != "slot-a" {
-		t.Errorf("report = {session %q, slot %q}, want {sess-a, slot-a}", got.sessionID, got.slotID)
+	if got.sessionID != "sess-a" {
+		t.Errorf("report session = %q, want sess-a", got.sessionID)
 	}
 }
 
@@ -132,9 +137,9 @@ func TestShutdownSlotEmitsReleasedOnCleanClose_spec_5_2(t *testing.T) {
 // spec: 5.2 (per-slot cleanup outcome), 4.7 (leaked determination)
 func TestShutdownSlotEmitsLeakedOnFailedClose_spec_5_2(t *testing.T) {
 	s, reporter := concurrentReportServer(t, errors.New("shred timed out reclaiming slot tree"))
-	startSlot(t, s, "sess-a", "slot-a")
+	startSlot(t, s, "sess-a")
 
-	resp, err := s.Shutdown(context.Background(), shutdownSlotReq("sess-a", "slot-a"))
+	resp, err := s.Shutdown(context.Background(), shutdownSlotReq("sess-a"))
 	if err != nil {
 		t.Fatalf("Shutdown(slot-a): %v", err)
 	}
@@ -164,9 +169,9 @@ func TestShutdownSlotEmitsLeakedOnFailedClose_spec_5_2(t *testing.T) {
 func TestShutdownSlotWithdrawsReportWhenPodIDEmpty_spec_5_2(t *testing.T) {
 	s, reporter := concurrentReportServer(t, nil)
 	s.podID = "" // simulate an unset POD_NAME env
-	startSlot(t, s, "sess-a", "slot-a")
+	startSlot(t, s, "sess-a")
 
-	if _, err := s.Shutdown(context.Background(), shutdownSlotReq("sess-a", "slot-a")); err != nil {
+	if _, err := s.Shutdown(context.Background(), shutdownSlotReq("sess-a")); err != nil {
 		t.Fatalf("Shutdown(slot-a): %v", err)
 	}
 	if got := reporter.snapshot(); len(got) != 0 {
@@ -187,9 +192,9 @@ func TestShutdownSlotWithdrawsReportWhenPodIDEmpty_spec_5_2(t *testing.T) {
 func TestShutdownSlotToleratesReporterError_spec_5_2(t *testing.T) {
 	s, reporter := concurrentReportServer(t, nil)
 	reporter.err = errors.New("gateway-control unavailable")
-	startSlot(t, s, "sess-a", "slot-a")
+	startSlot(t, s, "sess-a")
 
-	resp, err := s.Shutdown(context.Background(), shutdownSlotReq("sess-a", "slot-a"))
+	resp, err := s.Shutdown(context.Background(), shutdownSlotReq("sess-a"))
 	if err != nil {
 		t.Fatalf("Shutdown returned an error for a failed report; the release must not fail: %v", err)
 	}
@@ -202,10 +207,10 @@ func TestShutdownSlotToleratesReporterError_spec_5_2(t *testing.T) {
 	}
 }
 
-// TestBaseRecycleShutdownEmitsSessionScrub asserts CODE-B in base mode: a base
+// TestBaseRecycleShutdownEmitsSessionScrub asserts that in base mode a base
 // (maxConcurrentSessions == 1) recycling Shutdown emits exactly one
-// ReportSessionScrub with an empty slot id for the ending session before the
-// whole-pod scrub, so advanceScrubCounters reads back a non-zero sessions_served
+// ReportSessionScrub for the ending session, addressed by its session
+// identifier, before the whole-pod scrub, so advanceScrubCounters reads back a non-zero sessions_served
 // and maxSessionsPerPod becomes functional in base mode. Base-mode
 // maxSessionsPerPod was inert because this path never emitted the report.
 //
@@ -221,8 +226,9 @@ func TestBaseRecycleShutdownEmitsSessionScrub_spec_5_2(t *testing.T) {
 	startRecycleSession(t, s, "sess-1")
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		Recycle:   &adapterv1.RecycleScrub{PodId: "pod-base"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
+		Recycle:               &adapterv1.RecycleScrub{PodId: "pod-base"},
 	}); err != nil {
 		t.Fatalf("Shutdown(recycle): %v", err)
 	}
@@ -233,9 +239,6 @@ func TestBaseRecycleShutdownEmitsSessionScrub_spec_5_2(t *testing.T) {
 		t.Fatalf("ReportSessionScrub calls = %d, want exactly 1 for a base recycle release", len(reports))
 	}
 	got := reports[0]
-	if got.slotID != "" {
-		t.Errorf("slot id = %q, want empty for a base (non-concurrent) pod", got.slotID)
-	}
 	if got.sessionID != "sess-1" {
 		t.Errorf("session id = %q, want sess-1", got.sessionID)
 	}
@@ -244,16 +247,19 @@ func TestBaseRecycleShutdownEmitsSessionScrub_spec_5_2(t *testing.T) {
 	}
 }
 
-// TestBaseTerminateShutdownEmitsNoSessionScrub asserts the terminate path (no
-// recycle disposition) emits no ReportSessionScrub: a session-mode pod is
-// replaced rather than reused, so it advances no sessions_served and runs no
-// scrub. Only the recycle boundary reports.
+// TestTerminateShutdownEmitsTheSessionScrub asserts that a teardown
+// carrying no recycle disposition still reports its cleanup outcome. A
+// session's teardown is one sequence whatever the pool's concurrency and
+// whatever the pod's disposition, so the report is emitted from the
+// teardown clause rather than from the recycle clause beside it.
 //
-// diagnosis: a failure means the adapter reports a session scrub on the
-// terminate path, inflating sessions_served for pods that are being replaced
-// and never recycled, corrupting the maxSessionsPerPod accounting.
-// spec: 5.2 (ReportSessionScrub on the recycle boundary only)
-func TestBaseTerminateShutdownEmitsNoSessionScrub_spec_5_2(t *testing.T) {
+// diagnosis: a failure means the adapter reports a session's cleanup
+// outcome only on the recycle boundary again, so sessions_served never
+// advances on a pod that is replaced and the leaked outcome that feeds the
+// unhealthy-threshold ledger is lost on every terminate.
+// spec: 5.2 (ReportSessionScrub, maxSessionsPerPod), 4.7 (per-session
+// cleanup outcome)
+func TestTerminateShutdownEmitsTheSessionScrub_spec_5_2(t *testing.T) {
 	s, _, _, _ := recycleServer(t)
 	reporter := &recordingSessionScrubReporter{}
 	s.SessionScrubReporter = reporter
@@ -262,11 +268,16 @@ func TestBaseTerminateShutdownEmitsNoSessionScrub_spec_5_2(t *testing.T) {
 
 	// No Recycle disposition: the terminate path.
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 	}); err != nil {
 		t.Fatalf("Shutdown(terminate): %v", err)
 	}
-	if got := reporter.snapshot(); len(got) != 0 {
-		t.Errorf("ReportSessionScrub emitted %d reports on the terminate path, want 0: %+v", len(got), got)
+	got := reporter.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("ReportSessionScrub emitted %d reports on the terminate path, want 1: %+v", len(got), got)
+	}
+	if got[0].sessionID != "sess-1" || got[0].outcome != gatewaycontrol.SessionScrubReleased {
+		t.Errorf("report = %+v, want sess-1 released", got[0])
 	}
 }

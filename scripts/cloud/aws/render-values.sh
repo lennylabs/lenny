@@ -91,6 +91,7 @@ controller:
     tag: "${TAG}"
     pullPolicy: IfNotPresent
   adapterImage: ${ECR_REGISTRY}/lenny-adapter:${TAG}
+  supervisorImage: ${ECR_REGISTRY}/lenny-supervisor:${TAG}
 
 admissionWebhooks:
   image:

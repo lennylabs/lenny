@@ -78,7 +78,7 @@ tests:
       - matchRegex:
           path: data["bootstrap-values.yaml"]
           pattern: "cacheScope: per-user"
-      # §17.6 lines 408-411 / F-17.6.2: pools, delegationPolicies, and
+      # §17.6 / F-17.6.2: pools, delegationPolicies, and
       # environments are seedable through the bootstrap ConfigMap.
       - matchRegex:
           path: data["bootstrap-values.yaml"]
@@ -159,13 +159,10 @@ tests:
     template: bootstrap-job.yaml
     asserts:
       - equal:
-          path: spec.template.spec.volumes[0].name
-          value: bootstrap-values
-      - equal:
-          path: spec.template.spec.volumes[0].configMap.name
+          path: spec.template.spec.volumes[?(@.name == "bootstrap-values")].configMap.name
           value: lenny-bootstrap-values
       - equal:
-          path: spec.template.spec.containers[0].volumeMounts[0].mountPath
+          path: spec.template.spec.containers[0].volumeMounts[?(@.name == "bootstrap-values")].mountPath
           value: /etc/lenny
 
   - it: applies the restricted pod security posture
@@ -213,16 +210,13 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --bearer-file
       - equal:
-          path: spec.template.spec.volumes[1].name
-          value: operator-token
-      - equal:
-          path: spec.template.spec.volumes[1].secret.secretName
+          path: spec.template.spec.volumes[?(@.name == "operator-token")].secret.secretName
           value: lenny-operator-token
       - equal:
-          path: spec.template.spec.containers[0].volumeMounts[1].mountPath
+          path: spec.template.spec.containers[0].volumeMounts[?(@.name == "operator-token")].mountPath
           value: /var/run/lenny/operator-token
 
-  # §26.2 line 119 / F-26.2.5: the v1 built-in `github` VCS credential
+  # §26.2 / F-26.2.5: the v1 built-in `github` VCS credential
   # pool is seeded into credentialPools when enabled with a secretRef.
   - it: seeds the default github VCS credential pool when enabled
     template: bootstrap-configmap.yaml
@@ -261,7 +255,7 @@ tests:
           secretRef: ""
     asserts:
       - failedTemplate:
-          errorMessage: "bootstrap.defaultGithubVcsPool.enabled is true but secretRef is empty; set secretRef to the name of a Secret holding a GitHub App installation token or PAT (§26.2 line 119)."
+          errorMessage: "bootstrap.defaultGithubVcsPool.enabled is true but secretRef is empty; set secretRef to the name of a Secret holding a GitHub App installation token or PAT (§26.2)."
 
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment

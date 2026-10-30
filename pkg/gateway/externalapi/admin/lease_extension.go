@@ -8,62 +8,47 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // LeaseDenialClearer clears the §8.6 extension-denied flag for a
-// delegation subtree. The gateway's leasecontrol budget source
-// satisfies it. The §15.1 line 868 admin endpoint
+// delegation subtree. The gateway's leasecontrol.StoreBudgetSource
+// satisfies it. The §15.1 admin endpoint
 // DELETE /v1/admin/trees/{rootSessionId}/subtrees/{sessionId}/extension-denial
 // calls it to reset a denied subtree to normal extension behaviour,
-// bypassing the rejection cool-off window §8.6 line 734 starts after a
+// bypassing the rejection cool-off window §8.6 starts after a
 // user denies an extension elicitation.
-// spec: §8.6 line 735; §15.1 line 868
+// spec: §8.6; §15.1
 type LeaseDenialClearer interface {
 	// ClearSubtreeDenial clears the extension-denied flag for the subtree
 	// rooted at sessionID inside the delegation tree rooted at
-	// rootSessionID. found is false when rootSessionID names no known
-	// tree, so the handler answers 404; a non-nil err is a storage
+	// rootSessionID, owned by tenantID. A non-nil err is a storage
 	// failure the handler surfaces as 500.
-	ClearSubtreeDenial(ctx context.Context, rootSessionID, sessionID string) (found bool, err error)
+	ClearSubtreeDenial(ctx context.Context, tenantID, rootSessionID, sessionID string) error
 }
 
 // WithLeaseDenials wires the §8.6 / §15.1 extension-denial clear handler
-// onto the Router. Passing a nil clearer leaves the endpoint
-// unregistered (the gateway runs no GatewayControl lease-extension
-// control plane), so a request returns 404 from the mux.
-// spec: §15.1 line 868
+// onto the Router. The route registers only when WithSessions is also
+// wired, because the handler resolves the root row before the clear.
+// Passing a nil clearer leaves the endpoint unregistered, so a request
+// returns 404 from the mux.
+// spec: §15.1
 func (r *Router) WithLeaseDenials(c LeaseDenialClearer) *Router {
 	r.leaseDenials = c
 	return r
 }
 
-// WithTenantResolver wires the session-to-tenant resolver onto the
-// Router so handleClearExtensionDenial can confine a tenant-admin caller
-// to its own tenant before clearing the durable extension-denial row.
-// The gateway's leasecontrol budget source satisfies it (its TenantOf
-// method maps a tree's root session id to the owning tenant). Passing a
-// nil resolver fails closed: a non-platform-admin caller is rejected
-// because the owner tenant cannot be resolved (§10.2 confinement).
-// spec: §10.2 line 261
-func (r *Router) WithTenantResolver(t leasecontrol.TenantResolver) *Router {
-	r.tenantResolver = t
-	return r
-}
-
-// handleClearExtensionDenial implements §15.1 line 868
+// handleClearExtensionDenial implements §15.1
 // DELETE /v1/admin/trees/{rootSessionId}/subtrees/{sessionId}/extension-denial.
 // It clears the §8.6 extension-denied flag on the named subtree,
 // immediately re-enabling extension requests regardless of the
 // rejection cool-off window. RBAC (platform-admin or tenant-admin) is
-// enforced by the requireTenantResourceAdmin gate at registration, and a
-// non-platform-admin caller is additionally confined to its own tenant
-// here: the tree is keyed by an opaque session UUID, so the role gate
-// alone would let a tenant-admin of one tenant clear another tenant's
-// denial row. The clear is therefore gated on the resolved tree owner
-// before it runs.
-// spec: §8.6 line 735; §15.1 line 868
+// enforced by the requireTenantResourceAdmin gate at registration. The
+// handler then resolves the root row: a tenant-admin reads it under its
+// own tenant, so another tenant's tree is a 404, and a platform-admin
+// reads it across tenants. The clear runs under the row's tenant.
+// spec: §8.6; §15.1; §24.11
 func (r *Router) handleClearExtensionDenial(w http.ResponseWriter, req *http.Request) {
 	rootSessionID := req.PathValue("rootSessionId")
 	sessionID := req.PathValue("sessionId")
@@ -78,44 +63,18 @@ func (r *Router) handleClearExtensionDenial(w http.ResponseWriter, req *http.Req
 			"admin handler reached without authenticated principal", nil)
 		return
 	}
-	// Confine a non-platform-admin caller to its own tenant before the
-	// durable clear. A platform-admin clears across tenants; every other
-	// admin must own the tree. Resolving the tree's tenant first means a
-	// foreign tenant-admin is rejected before the row is touched, so the
-	// clear cannot leak across tenants (§10.2 line 261). Fail closed when
-	// the resolver is unwired: a misconfigured gateway must not reopen the
-	// cross-tenant clear, so a non-platform-admin caller is rejected.
-	// spec: §10.2 line 261; §15.1 line 869
-	if !principal.HasRole(auth.RolePlatformAdmin) {
-		if r.tenantResolver == nil {
-			writeError(w, http.StatusForbidden, "FORBIDDEN",
-				"caller may only manage their own tenant", nil)
-			return
-		}
-		ownerTenant, terr := r.tenantResolver.TenantOf(req.Context(), rootSessionID)
-		if errors.Is(terr, leasecontrol.ErrSessionNotFound) {
-			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
-				"delegation tree not found", nil)
-			return
-		}
-		if terr != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", terr.Error(), nil)
-			return
-		}
-		if ownerTenant != principal.TenantID {
-			writeError(w, http.StatusForbidden, "FORBIDDEN",
-				"caller may only manage their own tenant", nil)
-			return
-		}
+	root, err := r.readDenialRoot(req.Context(), principal, rootSessionID)
+	if errors.Is(err, sessionstore.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
+			"delegation tree not found", nil)
+		return
 	}
-	found, err := r.leaseDenials.ClearSubtreeDenial(req.Context(), rootSessionID, sessionID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	if !found {
-		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
-			"delegation tree not found", nil)
+	if err := r.leaseDenials.ClearSubtreeDenial(req.Context(), root.TenantID, rootSessionID, sessionID); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
 	// Audit the bypass: clearing the denial overrides a user's prior
@@ -128,4 +87,16 @@ func (r *Router) handleClearExtensionDenial(w http.ResponseWriter, req *http.Req
 		"session_id":      sessionID,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// readDenialRoot reads the tree's root row. A tenant-admin reads under its
+// own tenant, so a cross-tenant id is sessionstore.ErrNotFound. A
+// platform-admin reads by id alone, which the §24.11 contract permits on a
+// platform-admin-gated path.
+// spec: §15.1; §24.11
+func (r *Router) readDenialRoot(ctx context.Context, principal authmw.Principal, rootSessionID string) (sessionstore.Session, error) {
+	if principal.HasRole(auth.RolePlatformAdmin) {
+		return r.sessions.GetByID(ctx, rootSessionID)
+	}
+	return r.sessions.Get(ctx, principal.TenantID, rootSessionID)
 }

@@ -40,11 +40,12 @@ In `make run` dev mode, authentication is disabled.
 | :------- | :---------------------------- | :----------------------------------------- |
 | `POST`   | `/v1/sessions`                | Create a new session                       |
 | `GET`    | `/v1/sessions`                | List sessions (filterable)                 |
-| `POST`   | `/v1/sessions/{id}/upload`    | Upload workspace files                     |
-| `POST`   | `/v1/sessions/{id}/finalize`  | Finalize workspace and run setup           |
+| `POST`   | `/v1/sessions/{id}/upload`    | Upload a workspace file                    |
+| `POST`   | `/v1/sessions/{id}/upload-archive` | Upload a workspace archive            |
+| `POST`   | `/v1/sessions/{id}/finalize`  | Bind the workspace plan if none is bound, materialize the workspace, and run setup |
 | `POST`   | `/v1/sessions/{id}/start`     | Start the agent runtime                    |
 | `POST`   | `/v1/sessions/{id}/interrupt` | Interrupt current agent work               |
-| `POST`   | `/v1/sessions/{id}/resume`    | Explicitly resume after retry exhaustion   |
+| `POST`   | `/v1/sessions/{id}/resume`    | Resume a session in `awaiting_client_action` or `suspended` |
 | `POST`   | `/v1/sessions/{id}/terminate` | Graceful session termination               |
 | `DELETE` | `/v1/sessions/{id}`           | Force cancel and clean up                  |
 | `GET`    | `/v1/sessions/{id}`           | Get session status and metadata            |
@@ -61,7 +62,7 @@ Create a new session. Claims a warm pod, assigns credentials, and returns a sess
 | :-------------------- | :----- | :------- | :----------------------------------------------------------- |
 | `runtime`             | string | Yes      | Name of a registered runtime                                 |
 | `pool`                | string | No       | Specific pool (defaults to runtime's default pool)           |
-| `workspacePlan`       | object | No       | Workspace configuration (sources, maxSizeMB, setup commands) |
+| `workspacePlan`       | object | No       | Workspace plan (sources and setup commands). A plan here cannot carry `uploadFile` or `uploadArchive` sources, because uploads happen after creation; a plan that names uploads binds in the [finalize](#post-v1sessionsidfinalize) body instead. |
 | `labels`              | object | No       | Key-value labels for filtering                               |
 | `environment`         | string | No       | Environment name to scope the session                        |
 | `callbackUrl`         | string | No       | Webhook URL for completion notification                      |
@@ -77,27 +78,86 @@ For idempotent creation, set the `Idempotency-Key` request header (see [Idempote
 | `isolationProfile` | string | `runc`, `gvisor`, or `microvm` |
 | `podReuse` | boolean | `true` when the pool recycles pods (`recycle.enabled`), runs `maxConcurrentSessions > 1`, or is service mode |
 | `scrubPolicy` | string | Present only when `podReuse: true`; `best-effort`, `vm-restart`, `best-effort-in-place`, `best-effort-per-slot`, or `none` (service mode) |
-| `residualStateWarning` | boolean | `true` when the pod may carry residual state from prior sessions, sibling slots, or same-tenant concurrent requests |
+| `residualStateWarning` | boolean | `true` when the pod may carry residual state from prior sessions, sibling slots, or same-tenant concurrent requests. On a recycling pool whose pod keeps its runtime process across sessions, a session may run in a runtime process that served an earlier session of the same tenant. |
 | `conversationContinuity` | string | `platform` for session mode; `none` for service mode |
 
 In service mode (`conversationContinuity: none`) every message is self-contained and the gateway may route successive messages to different replicas. A client of a `multi_turn` runtime in service mode must re-inject any needed context into each message's `input`. `GET /v1/sessions/{id}` returns the same `sessionIsolationLevel` object.
 
-**Key error codes:** `VALIDATION_ERROR` (400), `RUNTIME_UNAVAILABLE` (503), `WARM_POOL_EXHAUSTED` (503), `QUOTA_EXCEEDED` (429), `CREDENTIAL_POOL_EXHAUSTED` (503), `ERASURE_IN_PROGRESS` (403).
+**Key error codes:** `VALIDATION_ERROR` (400), `RUNTIME_UNAVAILABLE` (503), `WARM_POOL_EXHAUSTED` (503), `QUOTA_EXCEEDED` (429), `CREDENTIAL_POOL_EXHAUSTED` (503), `ERASURE_IN_PROGRESS` (403), `USER_INVALIDATED` (403), `TENANT_SUSPENDED` (403), and `TENANT_NOT_ACTIVE` (403).
 
 ### POST /v1/sessions/{id}/upload
 
-Upload workspace files before finalization (or mid-session if `capabilities.midSessionUpload: true`). Uses multipart form data. Requires the `UploadToken` from session creation.
+Upload one workspace file before finalization (or mid-session if `capabilities.midSessionUpload: true`). The request body is the raw file content; it is not multipart form data. The request carries the upload token from session creation in the `X-Lenny-Upload-Token` header.
 
-**Key error codes:** `UPLOAD_TOKEN_EXPIRED` (401), `UPLOAD_TOKEN_MISMATCH` (403), `UPLOAD_TOKEN_CONSUMED` (410), `STORAGE_QUOTA_EXCEEDED` (429), `INVALID_STATE_TRANSITION` (409).
+```bash
+curl -X POST "https://lenny.example.com/v1/sessions/$SESSION_ID/upload" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Lenny-Upload-Token: $UPLOAD_TOKEN" \
+  --data-binary @src/main.py
+```
+
+**Response** (`201 Created`) is an `UploadResponse`. Its `uploadRef` field is an opaque reference to the stored upload; the other fields are listed in the OpenAPI document. Pass `uploadRef` verbatim as the `uploadRef` of an `uploadFile` source in the workspace plan that the session binds at finalize. An `uploadRef` is valid only in a plan bound to the session it was uploaded to. Uploading a file does not place it in the workspace: the gateway materializes only the uploads that a source of the bound plan names (see [Workspace sources](../getting-started/concepts.md#workspace-sources)).
+
+```json
+{
+  "uploadRef": "<uploadRef>",
+  "size": 2048
+}
+```
+
+**Valid precondition states:** `created`; also `running` if the runtime declares `capabilities.midSessionUpload: true`.
+
+**Key error codes:** `UPLOAD_TOKEN_INVALID` (401), `UPLOAD_TOKEN_EXPIRED` (401), `UPLOAD_TOKEN_MISMATCH` (403), `UPLOAD_TOKEN_CONSUMED` (410), `PAYLOAD_TOO_LARGE` (413), `STORAGE_QUOTA_EXCEEDED` (429), and `INVALID_STATE_TRANSITION` (409).
+
+### POST /v1/sessions/{id}/upload-archive
+
+Upload one workspace archive in `tar`, `tar.gz`, or `zip` format. The request body is the raw archive, and the request carries the `X-Lenny-Upload-Token` header. The gateway extracts the archive itself at materialization, with zip-slip protection and size ceilings.
+
+**Response** (`201 Created`) is an `UploadResponse` whose `uploadRef` names the archive in an `uploadArchive` source of the plan the session binds at finalize. The precondition states and error codes are the same as for `POST /v1/sessions/{id}/upload`.
 
 ### POST /v1/sessions/{id}/finalize
 
-Seal the workspace and run setup commands. Moves uploaded files from staging to `/workspace/current`. After finalization, no further pre-start uploads are accepted.
+Bind the session's workspace plan when creation carried none, materialize the workspace into `/workspace/slots/{sessionId}/current`, and run setup commands. After finalization, no further pre-start uploads are accepted. Finalize requests carry the `X-Lenny-Upload-Token` header.
+
+**Request body** (optional):
+
+| Parameter       | Type   | Required | Description |
+| :-------------- | :----- | :------- | :---------- |
+| `workspacePlan` | object | No       | The [workspace plan](../reference/workspace-plan.md) to bind. Its `uploadFile` and `uploadArchive` sources name uploads to this session by their `uploadRef`. Allowed only when the session was created without a plan. |
+
+```bash
+curl -X POST "https://lenny.example.com/v1/sessions/$SESSION_ID/finalize" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "X-Lenny-Upload-Token: $UPLOAD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workspacePlan": {
+      "schemaVersion": 1,
+      "sources": [
+        { "type": "uploadFile", "path": "src/main.py", "uploadRef": "<uploadRef>" }
+      ]
+    }
+  }'
+```
+
+`<uploadRef>` is the value from the upload response. A request without a body, or whose `workspacePlan` is absent or `null`, carries no plan: finalize materializes the plan bound at creation, or the empty plan when the session has none. The gateway validates a plan in the body, and resolves each `gitClone.ref` to a commit SHA, before it changes the session. A request rejected for its plan binds nothing and leaves the session in `created`, so the client can correct the plan and finalize again. The gateway materializes only the uploads that a source of the bound plan names (see [Workspace sources](../getting-started/concepts.md#workspace-sources)).
 
 **Valid precondition states:** `created`.
 **Resulting transition:** `finalizing` then `ready`.
 
-**Key error codes:** `RESOURCE_NOT_FOUND` (404), `INVALID_STATE_TRANSITION` (409).
+**Key error codes:**
+
+| Code | Status | Meaning |
+| :--- | :----- | :------ |
+| `VALIDATION_ERROR` | 400 | `details.reason` is `plan_already_set` when the body carries a plan for a session created with one, `invalid_upload_ref` when an `uploadRef` is not an upload reference, or `upload_ref_foreign_session` when an `uploadRef` names another session's upload. `details.field` names the source, such as `sources[0].uploadRef`. |
+| `WORKSPACE_PLAN_INVALID` | 400 | The plan in the body fails schema validation. |
+| `GIT_CLONE_AUTH_UNSUPPORTED_HOST`, `GIT_CLONE_AUTH_HOST_AMBIGUOUS`, `GIT_CLONE_REF_UNRESOLVABLE` | 422 | A `gitClone` source cannot be authenticated for its host, or its `ref` cannot be resolved to a commit. The [Error Catalog](../reference/error-catalog.html) lists the `details` of each code. |
+| `GIT_CLONE_REF_RESOLVE_TRANSIENT`, `SERVICE_UNAVAILABLE` | 503 | A `gitClone.ref` or the runtime's workspace defaults could not be read because of a transient failure. Retry after the `Retry-After` interval. |
+| `SETUP_COMMAND_FAILED` | 422 | A setup command exited non-zero. |
+| `RESOURCE_NOT_FOUND` | 404 | The session does not exist. |
+| `INVALID_STATE_TRANSITION` | 409 | The session is not in `created`. |
+
+A finalize call that is still running when the session ends, for example through `POST /v1/sessions/{id}/terminate`, `DELETE /v1/sessions/{id}`, an administrator force-terminate, or the gateway's finalizing timeout (`maxFinalizingTimeoutSeconds`), returns `INVALID_STATE_TRANSITION` (409), even when its own finalization also failed. The session stays in the state it ended in, and the error's `details.currentState` names that state.
 
 ### POST /v1/sessions/{id}/start
 
@@ -125,12 +185,18 @@ Pause a session mid-execution. The pod is held (up to `maxSuspendedPodHoldSecond
 
 ### POST /v1/sessions/{id}/resume
 
-Explicitly resume a session after automatic retries have been exhausted (`awaiting_client_action`). To wake a `suspended` session, send a message (optionally with `delivery: "immediate"`) instead.
+The gateway recovers a session automatically. After a pod or stream failure, the session enters `resume_pending`, and the gateway's resume driver restores it onto a replacement pod. A session whose automatic retries are exhausted, or whose `maxResumeWindowSeconds` resume window elapses, moves to `awaiting_client_action` and waits for the client.
 
-**Valid precondition states:** `awaiting_client_action` (and `suspended` when released from the pod).
-**Resulting transition:** `resume_pending` then `running`.
+This endpoint is the client override. It resumes a session in `awaiting_client_action` or a `suspended` session. A message to a `suspended` session also resumes it, whatever its `delivery` value (see [POST /v1/sessions/{id}/messages](#post-v1sessionsidmessages)).
 
-**Key error codes:** `RESOURCE_NOT_FOUND` (404), `INVALID_STATE_TRANSITION` (409).
+The call returns `200` with the session in its new state. From `awaiting_client_action`, and from a `suspended` session whose pod was released, the session is returned in `resume_pending`: the resume driver performs the restore, and the restore's outcome arrives on the event stream as a `status_change` event. From a `suspended` session whose pod is still held, the session is returned in `running`. The internal `resuming` state between `resume_pending` and `running` is not reported.
+
+A `suspended` session does not count toward the concurrent-session limits, and resuming it counts it again. The gateway therefore runs the admission check that session creation runs before it resumes a `suspended` session. When a limit the session counts toward is full, the call returns `429 QUOTA_EXCEEDED` with the details a refused creation carries, and the session stays `suspended`. A client that sent an `Idempotency-Key` with a refused call retries with a new key, because the gateway returns the cached refusal for the original key until that key expires.
+
+**Valid precondition states:** `awaiting_client_action`, `suspended`.
+**Resulting transition:** `awaiting_client_action` to `resume_pending`; `suspended` to `resume_pending` when the pod was released; `suspended` to `running` when the pod is still held.
+
+**Key error codes:** `RESOURCE_NOT_FOUND` (404), `INVALID_STATE_TRANSITION` (409), `QUOTA_EXCEEDED` (429).
 
 ### POST /v1/sessions/{id}/terminate
 
@@ -183,7 +249,7 @@ Create a new session pre-populated with this session's workspace snapshot.
 
 ### POST /v1/sessions/{id}/replay
 
-Re-run a session against a different runtime version using the same workspace and prompt history. Used for regression testing and controlled A/B comparison. Replayed sessions receive experiment context in their adapter manifest so runtime-native eval platforms can attribute the replay to the correct experiment.
+Re-run a session against a different runtime version using the same workspace and prompt history. Used for regression testing and controlled A/B comparison. Replayed sessions receive experiment context in their [`session_start` frame](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) so runtime-native eval platforms can attribute the replay to the correct experiment.
 
 **Request body:**
 
@@ -196,7 +262,7 @@ Re-run a session against a different runtime version using the same workspace an
 
 **Valid precondition states:** terminal states only.
 
-**Key error codes:** `REPLAY_ON_LIVE_SESSION` (409), `INCOMPATIBLE_RUNTIME` (400).
+**Key error codes:** `REPLAY_ON_LIVE_SESSION` (409), `INCOMPATIBLE_RUNTIME` (400), and `DERIVE_SNAPSHOT_UNAVAILABLE` (503).
 
 ---
 
@@ -213,7 +279,7 @@ Re-run a session against a different runtime version using the same workspace an
 
 ### POST /v1/sessions/{id}/messages
 
-Send a message to a running or suspended session.
+Send a message to a running or suspended session. A message to a `suspended` session resumes the session, whatever its `delivery` value. Before it holds or delivers the message, the gateway runs the concurrent-session admission check that a resume runs (see [POST /v1/sessions/{id}/resume](#post-v1sessionsidresume)). When a limit the session counts toward is full, the message is neither held nor delivered, the call returns `429 QUOTA_EXCEEDED`, and the session stays `suspended`.
 
 **Request body:**
 
@@ -225,7 +291,7 @@ Send a message to a running or suspended session.
 
 **Valid precondition states:** any non-terminal state. Delivery semantics vary by state.
 
-**Key error codes:** `INJECTION_REJECTED` (403), `SCOPE_DENIED` (403), `TARGET_TERMINAL` (409), `TARGET_NOT_READY` (409), `DUPLICATE_MESSAGE_ID` (400).
+**Key error codes:** `INJECTION_REJECTED` (403), `SCOPE_DENIED` (403), `TARGET_TERMINAL` (409), `TARGET_NOT_READY` (409), `DUPLICATE_MESSAGE_ID` (400), `QUOTA_EXCEEDED` (429).
 
 ### GET /v1/sessions/{id}/messages
 

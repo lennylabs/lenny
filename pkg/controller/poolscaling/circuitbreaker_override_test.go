@@ -14,10 +14,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 )
 
-// TestSyncDisabledOverrideForcesSDKWarmOff covers the §6.1 line 63
+// TestSyncDisabledOverrideForcesSDKWarmOff covers the §6.1
 // `circuitBreakerOverride: disabled`: SDK-warm is forced off regardless of
 // the demotion rate, recorded with the operator_manual reason and no
-// minOpenUntil. spec: §6.1 lines 54, 63.
+// minOpenUntil. spec: §6.1.
 func TestSyncDisabledOverrideForcesSDKWarmOff_spec_6_1(t *testing.T) {
 	s := newScheme(t)
 	c := breakerClient(s)
@@ -80,7 +80,7 @@ func TestSyncDisabledOverridePreservesOpenedAt_spec_6_1(t *testing.T) {
 }
 
 // TestSyncEnabledOverrideClearsTrippedBreakerAheadOfGraceWindow covers
-// the §6.1 lines 63-65 escape hatch: an `enabled` override clears a
+// the §6.1 escape hatch: an `enabled` override clears a
 // persisted breaker even while its minOpenUntil grace window has not
 // elapsed and no DemotionRateSource is wired (the live rate reads 0).
 func TestSyncEnabledOverrideClearsTrippedBreakerAheadOfGraceWindow_spec_6_1(t *testing.T) {
@@ -153,7 +153,7 @@ func TestSyncEnabledOverrideReTripsWhenRateStillHigh_spec_6_1(t *testing.T) {
 	}
 }
 
-// TestSyncEmitsDemotionRateHighEvent covers the §6.1 line 48
+// TestSyncEmitsDemotionRateHighEvent covers the §6.1
 // SDKWarmDemotionRateHigh warning event: it fires when the rolling 1-hour
 // rate exceeds the 60% threshold and the pool has not acknowledged it.
 func TestSyncEmitsDemotionRateHighEvent_spec_6_1(t *testing.T) {
@@ -181,8 +181,7 @@ func TestSyncEmitsDemotionRateHighEvent_spec_6_1(t *testing.T) {
 	}
 }
 
-// TestSyncSuppressesDemotionRateHighWhenAcknowledged covers the §6.1
-// line 48 acknowledgeHighDemotionRate flag: it suppresses the event.
+// TestSyncSuppressesDemotionRateHighWhenAcknowledged covers the §6.1 acknowledgeHighDemotionRate flag: it suppresses the event.
 func TestSyncSuppressesDemotionRateHighWhenAcknowledged_spec_6_1(t *testing.T) {
 	s := newScheme(t)
 	c := breakerClient(s)
@@ -234,7 +233,7 @@ func TestSyncNoDemotionRateHighWithoutHourSample_spec_6_1(t *testing.T) {
 // floatPtr is a small helper for the *float64 demotion-rate threshold.
 func floatPtr(v float64) *float64 { return &v }
 
-// TestSyncDemotionRateHighHonorsHigherThreshold covers the §6.1 line 48
+// TestSyncDemotionRateHighHonorsHigherThreshold covers the §6.1
 // deployer-configurable demotionRateThreshold: a rate that would fire at
 // the 60% default is suppressed when the pool raises the threshold above
 // the observed rate.

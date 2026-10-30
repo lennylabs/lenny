@@ -50,7 +50,7 @@ func newBreakerUpgradeMetrics(reg *prometheus.Registry) (breakerUpgradeMetrics, 
 	if err != nil {
 		return m, err
 	}
-	// spec: §15.1 line 797 — in-flight (non-terminal) sessions on a pool
+	// spec: §15.1 — in-flight (non-terminal) sessions on a pool
 	// while it drains, labelled by pool. Set when a pool enters the
 	// `draining` phase and refreshed on each admin GET until the drain
 	// converges to 0.
@@ -61,7 +61,7 @@ func newBreakerUpgradeMetrics(reg *prometheus.Registry) (breakerUpgradeMetrics, 
 	if err != nil {
 		return m, err
 	}
-	// spec: §16.4 line 378 — 1 when the SIEM delivery guard is holding a
+	// spec: §16.4 — 1 when the SIEM delivery guard is holding a
 	// partition (audit chain) whose rows are past their retention TTL but
 	// undelivered to the forwarder, so the §16.5 AuditPartitionDropBlocked
 	// alert can fire. Labelled by partition; 0 once the forwarder catches
@@ -73,7 +73,7 @@ func newBreakerUpgradeMetrics(reg *prometheus.Registry) (breakerUpgradeMetrics, 
 	if err != nil {
 		return m, err
 	}
-	// spec: §10.5 lines 466-540 / §16.1 line 184 — current phase of the
+	// spec: §10.5 / §16.1 — current phase of the
 	// 6-state RuntimeUpgrade machine per pool. Exactly one state row is 1
 	// per pool; the others are 0. The §16.5 RuntimeUpgradeStuck alert fires
 	// on state{state=~"expanding|draining|contracting"} == 1 held past
@@ -85,7 +85,7 @@ func newBreakerUpgradeMetrics(reg *prometheus.Registry) (breakerUpgradeMetrics, 
 	if err != nil {
 		return m, err
 	}
-	// spec: §16.1 line 185 — wall-clock time spent in the current upgrade
+	// spec: §16.1 — wall-clock time spent in the current upgrade
 	// phase, labelled by pool and phase.
 	runtimeUpgradePhaseDuration, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_runtime_upgrade_phase_duration_seconds",
@@ -94,7 +94,7 @@ func newBreakerUpgradeMetrics(reg *prometheus.Registry) (breakerUpgradeMetrics, 
 	if err != nil {
 		return m, err
 	}
-	// spec: §16.1 line 186 — sessions still draining on the old pool during
+	// spec: §16.1 — sessions still draining on the old pool during
 	// a runtime upgrade, labelled by pool.
 	runtimeUpgradeDrainingSessions, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_runtime_upgrade_draining_sessions",
@@ -103,7 +103,7 @@ func newBreakerUpgradeMetrics(reg *prometheus.Registry) (breakerUpgradeMetrics, 
 	if err != nil {
 		return m, err
 	}
-	// spec: §11.6 line 333 — every breaker-caused admission rejection
+	// spec: §11.6 — every breaker-caused admission rejection
 	// increments rejections_total (including those whose audit row is
 	// elided by sampling); the sampled-away subset increments
 	// rejections_suppressed_total. The limit_tier label carries the
@@ -137,7 +137,7 @@ func newBreakerUpgradeMetrics(reg *prometheus.Registry) (breakerUpgradeMetrics, 
 	if err != nil {
 		return m, err
 	}
-	// spec: §16.1 line 218 — every admission decision served against a
+	// spec: §16.1 — every admission decision served against a
 	// breaker cache that had not refreshed within the 5s poll interval,
 	// labelled by outcome (rejected | admitted). outcome="admitted" is the
 	// security-salient case: a breaker whose state the admission path could

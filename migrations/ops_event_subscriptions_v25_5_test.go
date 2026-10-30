@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §25.5 lines 2613-2664. Migration 0118 brings
+// spec: §25.5. Migration 0118 brings
 // ops_event_subscriptions to the full §25.5 column set (secret hash +
 // fingerprint at rest, the tenant-isolation columns, the generation
 // counter, the severity filter) and adds the ops_event_deliveries
@@ -21,10 +21,10 @@ func TestOpsEventSubscriptionsV25_5Migration_spec_25_5(t *testing.T) {
 	up := string(b)
 	for _, want := range []string{
 		"ALTER TABLE ops_event_subscriptions",
-		// §10.5 line 430: the Phase 3 column drops are idempotent (IF EXISTS).
+		// §10.5: the Phase 3 column drops are idempotent (IF EXISTS).
 		"DROP COLUMN IF EXISTS secret",
 		"DROP COLUMN IF EXISTS types",
-		// §10.5 line 417: the drops are fronted by a DO $$ preflight gate that
+		// §10.5: the drops are fronted by a DO $$ preflight gate that
 		// aborts when any un-migrated ops_event_subscriptions row remains.
 		"DO $$",
 		"RAISE EXCEPTION",

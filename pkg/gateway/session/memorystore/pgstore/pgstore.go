@@ -50,7 +50,7 @@ type Store struct {
 
 // backendLabel is the §16.1 `backend` label this Store stamps on
 // every Observer call. The §9.4 default is Postgres + pgvector;
-// `postgres` matches the catalog enum in §16.1 lines 151–154.
+// `postgres` matches the catalog enum in §16.1.
 const backendLabel = "postgres"
 
 // New returns a Store backed by pool, enforcing the §9.4 default
@@ -87,13 +87,13 @@ func (s *Store) SetObserver(obs memorystore.Observer) {
 	s.observer = obs
 }
 
-// MaxPerUser returns the §9.4 line 202 per-user capacity bound.
+// MaxPerUser returns the §9.4 per-user capacity bound.
 func (s *Store) MaxPerUser() int {
 	return s.maxPerUser
 }
 
-// observe records the §16.1 line 151 duration histogram observation
-// and (on a non-nil error) the §16.1 line 152 error counter. A nil
+// observe records the §16.1 duration histogram observation
+// and (on a non-nil error) the §16.1 error counter. A nil
 // observer is a no-op.
 func (s *Store) observe(op string, start time.Time, err *error) {
 	if s.observer == nil {
@@ -176,7 +176,7 @@ func (s *Store) Write(ctx context.Context, scope memorystore.MemoryScope, memori
 			return err
 		}
 		// Sample the post-commit user and tenant counts inside the
-		// transaction so the §9.4 line 202 over-threshold check and
+		// transaction so the §9.4 over-threshold check and
 		// record-count gauge land in the same snapshot.
 		if s.observer != nil {
 			c, err := countUser(ctx, tx, scope.TenantID, scope.UserID)
@@ -470,7 +470,7 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (err error)
 }
 
 // TenantRecordCounts returns the per-tenant agent_memory record count.
-// The §9.4 line 202 record-count gauge sampler calls this method to
+// The §9.4 record-count gauge sampler calls this method to
 // refresh the gauge.
 func (s *Store) TenantRecordCounts(ctx context.Context) (map[string]int, error) {
 	out := map[string]int{}

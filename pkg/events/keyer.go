@@ -18,10 +18,10 @@ import (
 // per-replica monotonically-increasing counter that increments for every
 // emitted event regardless of the emitting subsystem. Combined with a
 // unique replicaID it makes the key globally unique across replicas and
-// emission paths. spec: §25.3 line 748.
+// emission paths. spec: §25.3.
 
 // nonceCheckpoint persists the per-replica nonce high-water mark to local
-// disk. spec: §25.3 line 748.
+// disk. spec: §25.3.
 type nonceCheckpoint struct {
 	path   string
 	every  uint64
@@ -35,7 +35,7 @@ type nonceCheckpoint struct {
 // and returns it together with the nonce the counter should resume from:
 // last_checkpointed + safe_skip_window, or 0 when the file is absent. A
 // read or parse error is returned so the caller can decide whether to
-// proceed with an in-process-only counter. spec: §25.3 line 748.
+// proceed with an in-process-only counter. spec: §25.3.
 func loadNonceCheckpoint(spec NonceCheckpoint) (*nonceCheckpoint, uint64, error) {
 	every := spec.Every
 	if every == 0 {
@@ -66,7 +66,7 @@ func loadNonceCheckpoint(spec NonceCheckpoint) (*nonceCheckpoint, uint64, error)
 // (temp file + rename) so a crash mid-write never leaves a corrupt
 // checkpoint. A write error is returned so the keyer can log it; a failed
 // persist degrades restart durability but never blocks an emit.
-// spec: §25.3 line 748.
+// spec: §25.3.
 func (c *nonceCheckpoint) record(n uint64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -93,7 +93,7 @@ func (c *nonceCheckpoint) write(n uint64) error {
 // StreamEmitter share this so the buffer and the Redis stream stamp the
 // same eventKey format. It is exported so the concrete emitters in
 // pkg/gateway/eventbuffer, which produce the events this package's
-// vocabulary describes, can build and use it. spec: §25.3 line 748.
+// vocabulary describes, can build and use it. spec: §25.3.
 type Keyer struct {
 	replicaID  string
 	nonce      atomic.Uint64
@@ -115,7 +115,7 @@ func NewKeyer(replicaID string, cp *nonceCheckpoint, start uint64, onError func(
 }
 
 // EventKey composes the §25.3 stable identifier {replicaID}:{at}:{nonce}
-// and, when a disk checkpoint is wired, advances it. spec: §25.3 line 748.
+// and, when a disk checkpoint is wired, advances it. spec: §25.3.
 func (k *Keyer) EventKey(at time.Time) string {
 	n := k.nonce.Add(1)
 	if k.checkpoint != nil {

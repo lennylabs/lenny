@@ -20,7 +20,7 @@ func freshRedis(t *testing.T, addr string) redis.UniversalClient {
 	return c
 }
 
-// spec: §12.4 lines 237-245 — a per-concern split routes each store
+// spec: §12.4 — a per-concern split routes each store
 // role to its own Redis instance. RedisShard returns the dedicated
 // client for a split concern and falls back to the base client for a
 // concern the operator left unsplit. F-12.4.16.
@@ -63,7 +63,7 @@ func TestRedisShardPerConcernSplit_spec_12_4_237(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 52 (storerouter) — RedisConcernDelegation backs the
+// spec: §12.4 — RedisConcernDelegation backs the
 // tree-budget keys {root_session_id}:dlg:*. The router routes it to a
 // dedicated client when split, giving the concern a live owner rather
 // than a dead forward-declaration. F-12.4.18.

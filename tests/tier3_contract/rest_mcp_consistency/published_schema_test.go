@@ -90,7 +90,7 @@ func validateAgainst(t *testing.T, schemaFile, definition string, raw json.RawMe
 // is pinned to that version for its lifetime. The MCPAdapter dispatches
 // to version-specific serialization logic internally — tool schemas,
 // error formats, and streaming behavior conform to the negotiated
-// version."; spec/15_external-api-surface.md:1315)
+// version."; §15.1)
 // diagnosis: a failure here means the gateway-edge `/mcp` `initialize`
 // result no longer satisfies the MCP specification's own
 // `InitializeResult` schema for the negotiated protocol version — a
@@ -125,7 +125,7 @@ func TestMCPInitializeMatchesPublishedSchema(t *testing.T) {
 	}
 }
 
-// spec: §15.2 ("Version negotiation" line 1315, quoted above) — the
+// spec: §15.2 — the
 // negotiated version governs "tool schemas" as well as the
 // `initialize` handshake, so the `tools/list` catalog is checked
 // against the same per-revision published schema.

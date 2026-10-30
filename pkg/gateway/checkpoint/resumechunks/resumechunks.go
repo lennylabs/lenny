@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 
-// Package resumechunks resolves the §10.1 line 155 reassembly-on-resume
+// Package resumechunks resolves the §10.1.7 reassembly-on-resume
 // chunk set for a checkpoint the gateway is restoring onto a replacement
-// pod. Given a checkpoint's manifest row, it lists the committed chunk
+// pod, and the starting snapshot's chunk set for a derived or replayed
+// session's first bind. Given a checkpoint's manifest row, it lists the committed chunk
 // objects under the row's chunk_object_key_prefix, verifies contiguity of
 // the prefix [0, chunk_count), and mints one presigned single-key GET
 // capability per index in [0, chunk_count). The adapter fetches the
@@ -11,11 +12,13 @@
 //
 // The gateway is the sole authority that resolves, lists, validates, and
 // signs the keys; the pod holds no object-store credential, no LIST, and
-// no DELETE. A GET capability names one key the pod's own session
-// authored, so it grants no read the pod did not already have.
+// no DELETE. A GET capability names one key under the session's own
+// prefix in its own tenant: on resume, a key the pod's own session
+// authored; on a derived or replayed session's first bind, a chunk key the
+// derive copy wrote, so it grants read of the snapshot the session starts
+// from and of no other key.
 //
-// spec: §10.1 line 155 (reassembly on resume from presigned chunk GET
-// capabilities), §13.2 (capability model).
+// spec: §10.1, §13.2 (capability model).
 package resumechunks
 
 import (
@@ -36,20 +39,21 @@ import (
 // sequence: a gap (a missing intermediate index) or an out-of-order index
 // below chunk_count. Splicing non-adjacent regions would corrupt both the
 // gzip deflate stream and the tar framing, so reassembly fails atomically
-// before any chunk body is fetched. The caller falls back to the last
-// successful full checkpoint.
+// before any chunk body is fetched. The resume caller falls back to the
+// last successful full checkpoint; a derived or replayed session's restore
+// has no fallback, and its bind fails.
 //
-// spec: §10.1 line 155 — a gap or an out-of-order index below chunk_count
+// spec: §7.1 (Derive restore semantics); §10.1.7 — a gap or an out-of-order index below chunk_count
 // fails reassembly atomically before any chunk body is fetched.
 var ErrReassemblyContiguity = errors.New("resumechunks: chunk set is not a contiguous [0, chunk_count) sequence")
 
 // ErrBelowRecoveryThreshold is returned when a partial checkpoint carries
-// fewer confirmed workspace bytes than the §10.1 line 155 recovery
+// fewer confirmed workspace bytes than the §10.1.7 recovery
 // threshold (`baseline_full_checkpoint_bytes * partialRecoveryThresholdFraction`),
 // or has no confirmed bytes or chunks. The reassembly is not worth the
 // splice; the caller falls back to the last successful full checkpoint.
 //
-// spec: §10.1 line 155 — reassembly is attempted only when
+// spec: §10.1.7 — reassembly is attempted only when
 // workspace_bytes_uploaded >= threshold AND workspace_bytes_uploaded > 0
 // AND chunk_count > 0.
 var ErrBelowRecoveryThreshold = errors.New("resumechunks: partial checkpoint is below the recovery threshold")
@@ -67,8 +71,10 @@ type Presigner interface {
 // ChunkLister lists every object under a checkpoint's chunk prefix. The
 // prefix is the object key of u (its PartID names the checkpoint segment
 // with a trailing slash). The returned BlobInfos carry the full object URI
-// (with PartID = "{checkpoint_id}/chunk-{n}.{enc}") and Size, in the
-// store's native lexicographic list order. miniostore.Store satisfies it.
+// (with PartID = "{checkpoint_id}/chunk-{n}.{enc}") and Size, in
+// ascending lexicographic key order. Every blobstore.CheckpointStore
+// (the MinIO, S3, GCS, and Azure Blob stores) satisfies it through
+// blobstore.PrefixLister.
 type ChunkLister interface {
 	ListByPrefix(ctx context.Context, u blobstore.URI) ([]blobstore.BlobInfo, error)
 }
@@ -82,7 +88,7 @@ type Resolver struct {
 	// capability carries; a fetch that outlives it is re-driven by
 	// re-calling Resume, which re-mints.
 	TTL time.Duration
-	// PartialRecoveryThresholdFraction is the §10.1 line 155
+	// PartialRecoveryThresholdFraction is the §10.1.7
 	// partialRecoveryThresholdFraction (Helm default 0.5): a partial
 	// checkpoint is reassembled only when its confirmed workspace bytes are
 	// at least this fraction of the frozen baseline_full_checkpoint_bytes.
@@ -95,7 +101,7 @@ type Resolver struct {
 // ResolveResult is the outcome of resolving a resume chunk set: the
 // ascending-index GET capabilities the adapter fetches, plus whether the
 // generation-selected manifest was an above-threshold partial checkpoint
-// the resume reassembled. Recovered is the §16.1 line 195
+// the resume reassembled. Recovered is the §16.1
 // lenny_checkpoint_partial_total{recovered=true} signal the session server
 // stamps once per successful partial reassembly; ManifestReason carries the
 // recovered row's manifest_reason so the counter shares the reason the write
@@ -117,13 +123,13 @@ type ResolveResult struct {
 // manifest was a partial = true checkpoint that cleared the recovery
 // threshold and reassembled into at least one chunk.
 //
-// spec: §10.1 line 155; §16.1 line 195 (the recovered signal).
+// spec: §10.1; §16.1.
 func (r *Resolver) Resolve(ctx context.Context, tenantID, sessionID, checkpointID string) (ResolveResult, error) {
 	rec, err := r.Manifests.Get(ctx, tenantID, checkpointID)
 	if err != nil {
 		return ResolveResult{}, fmt.Errorf("resumechunks: resolve manifest %s/%s: %w", tenantID, checkpointID, err)
 	}
-	// spec: §10.1 line 155 — a partial checkpoint is reconstructed only
+	// spec: §10.1.7 — a partial checkpoint is reconstructed only
 	// when it clears the recovery threshold. A full checkpoint (partial =
 	// false) restores whole and skips the gate. The threshold is
 	// baseline_full_checkpoint_bytes * partialRecoveryThresholdFraction when
@@ -151,7 +157,7 @@ func (r *Resolver) Resolve(ctx context.Context, tenantID, sessionID, checkpointI
 	}
 	encoding := rec.ChunkEncoding
 	if encoding == "" {
-		encoding = partialmanifeststore.ChunkEncodingTar
+		encoding = partialmanifeststore.ChunkEncodingTarGz
 	}
 
 	// (1) List objects under the chunk prefix and verify contiguity of the
@@ -189,7 +195,7 @@ func (r *Resolver) Resolve(ctx context.Context, tenantID, sessionID, checkpointI
 			ExpiresAt: grant.ExpiresAt,
 		})
 	}
-	// spec: §16.1 line 195 — a partial = true manifest that cleared the
+	// spec: §16.1 — a partial = true manifest that cleared the
 	// recovery threshold above and reassembled into a contiguous chunk set is
 	// a recovered partial checkpoint. A complete (partial = false) restore is
 	// not a recovery. ManifestReason carries the recovered row's reason so the
@@ -282,7 +288,7 @@ func prefixURI(tenantID, sessionID, checkpointID string) blobstore.URI {
 // from the manifest's chunk_encoding column, not from any object-key
 // suffix. The caller sets TTL when the URI is signed into a capability.
 //
-// spec: §10.1 line 139 (zero-padded 5-digit chunk index), line 155.
+// spec: §10.1.
 func ChunkObjectURI(tenantID, sessionID, checkpointID string, index uint32, encoding partialmanifeststore.ChunkEncoding) blobstore.URI {
 	return blobstore.URI{
 		TenantID:   tenantID,

@@ -41,9 +41,10 @@ func newClientToolsMCP(t *testing.T, svc mcptools.SessionService) *mcp.Server {
 	t.Helper()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:          memstore.New(),
-		SessionService: svc,
-		TenantID:       "acme",
+		DevTenantFallback: true,
+		Store:             memstore.New(),
+		SessionService:    svc,
+		TenantID:          "acme",
 	})
 	return srv
 }
@@ -59,13 +60,14 @@ func dispatch(t *testing.T, srv *mcp.Server, name, args string) (mcp.ToolResult,
 
 // TestClientToolsRegisteredWithService_spec_15_2_3 asserts the §15.2
 // client-facing tools register when a SessionService is wired and are
-// absent when it is nil. spec: §15.2 lines 1284-1306. F-15.2.3.
+// absent when it is nil. spec: §15.2. F-15.2.3.
 func TestClientToolsRegisteredWithService_spec_15_2_3(t *testing.T) {
 	want := []string{
 		"lenny/create_and_start_session", "lenny/start_session", "lenny/finalize_workspace",
 		"lenny/terminate_session", "lenny/resume_session", "lenny/get_session_status",
 		"lenny/list_sessions", "lenny/get_session_logs", "lenny/list_artifacts",
 		"lenny/get_token_usage", "lenny/download_artifact", "lenny/upload_files",
+		"lenny/interrupt_session",
 	}
 
 	with := newClientToolsMCP(t, &fakeService{})
@@ -81,7 +83,7 @@ func TestClientToolsRegisteredWithService_spec_15_2_3(t *testing.T) {
 
 	// Without a SessionService the tools are not registered.
 	withoutSrv := mcp.NewServer()
-	mcptools.Register(withoutSrv, mcptools.Deps{Store: memstore.New(), TenantID: "acme"})
+	mcptools.Register(withoutSrv, mcptools.Deps{DevTenantFallback: true, Store: memstore.New(), TenantID: "acme"})
 	for _, tool := range withoutSrv.Catalog() {
 		for _, name := range want {
 			if tool.Name == name {
@@ -254,5 +256,105 @@ func TestUploadFilesTokenHeader_spec_15_2_3(t *testing.T) {
 	}
 	if svc.contentType != "text/plain" {
 		t.Errorf("content type = %q, want text/plain", svc.contentType)
+	}
+}
+
+// finalizeSchema is the decoded subset of the lenny/finalize_workspace
+// input schema the finalize assertions read.
+type finalizeSchema struct {
+	Type       string   `json:"type"`
+	Required   []string `json:"required"`
+	Properties map[string]struct {
+		Type json.RawMessage `json:"type"`
+	} `json:"properties"`
+}
+
+// catalogInputSchema returns the advertised input schema of the named
+// tool, failing the test when the tool is absent.
+func catalogInputSchema(t *testing.T, srv *mcp.Server, name string) json.RawMessage {
+	t.Helper()
+	for _, tool := range srv.Catalog() {
+		if tool.Name == name {
+			return tool.InputSchema
+		}
+	}
+	t.Fatalf("tool %q not in catalog", name)
+	return nil
+}
+
+// TestFinalizeWorkspaceInputSchemaDeclaresWorkspacePlan_spec_15_2_1 asserts the
+// lenny/finalize_workspace tool advertises the optional workspacePlan it
+// forwards as the REST finalize body: sessionId is the only required
+// property, and workspacePlan is typed ["object","null"]. The other
+// per-session POST tools keep the session-id-only schema.
+//
+// spec: 15.2.1 (REST/MCP Consistency Contract), 14.1 (WorkspacePlan Schema Versioning)
+func TestFinalizeWorkspaceInputSchemaDeclaresWorkspacePlan_spec_15_2_1(t *testing.T) {
+	srv := newClientToolsMCP(t, &fakeService{})
+
+	var got finalizeSchema
+	if err := json.Unmarshal(catalogInputSchema(t, srv, "lenny/finalize_workspace"), &got); err != nil {
+		t.Fatalf("decode finalize_workspace input schema: %v", err)
+	}
+	if got.Type != "object" {
+		t.Errorf("schema type = %q, want object", got.Type)
+	}
+	if len(got.Required) != 1 || got.Required[0] != "sessionId" {
+		t.Errorf("required = %v, want [sessionId] (workspacePlan stays optional)", got.Required)
+	}
+	plan, ok := got.Properties["workspacePlan"]
+	if !ok {
+		t.Fatalf("finalize_workspace input schema does not declare workspacePlan: %+v", got.Properties)
+	}
+	var planTypes []string
+	if err := json.Unmarshal(plan.Type, &planTypes); err != nil {
+		t.Fatalf("workspacePlan type is not a type array: %s (%v)", plan.Type, err)
+	}
+	if len(planTypes) != 2 || planTypes[0] != "object" || planTypes[1] != "null" {
+		t.Errorf("workspacePlan type = %v, want [object null]", planTypes)
+	}
+	if _, ok := got.Properties["sessionId"]; !ok {
+		t.Errorf("finalize_workspace input schema does not declare sessionId")
+	}
+
+	for _, name := range []string{"lenny/start_session", "lenny/terminate_session", "lenny/resume_session", "lenny/interrupt_session"} {
+		var other finalizeSchema
+		if err := json.Unmarshal(catalogInputSchema(t, srv, name), &other); err != nil {
+			t.Fatalf("decode %s input schema: %v", name, err)
+		}
+		if _, ok := other.Properties["workspacePlan"]; ok {
+			t.Errorf("%s input schema declares workspacePlan; only finalize_workspace binds a plan", name)
+		}
+	}
+}
+
+// TestFinalizeWorkspaceForwardsWorkspacePlan_spec_15_2_1 asserts the workspacePlan
+// argument reaches the REST finalize route as the request body, with
+// sessionId stripped.
+//
+// spec: 15.2.1 (REST/MCP Consistency Contract), 14.1 (WorkspacePlan Schema Versioning)
+func TestFinalizeWorkspaceForwardsWorkspacePlan_spec_15_2_1(t *testing.T) {
+	svc := &fakeService{result: sessionserver.ServiceResult{Status: 200, Body: []byte(`{"state":"ready"}`)}}
+	srv := newClientToolsMCP(t, svc)
+
+	args := `{"sessionId":"s1","workspacePlan":{"schemaVersion":1,"sources":[{"type":"uploadFile","path":"a.txt","uploadRef":"ref-1"}]}}`
+	if _, err := dispatch(t, srv, "lenny/finalize_workspace", args); err != nil {
+		t.Fatalf("finalize_workspace: %v", err)
+	}
+	if svc.method != "POST" || svc.target != "/v1/sessions/s1/finalize" {
+		t.Fatalf("routed to %s %s, want POST /v1/sessions/s1/finalize", svc.method, svc.target)
+	}
+	var body struct {
+		SessionID     *string        `json:"sessionId"`
+		WorkspacePlan map[string]any `json:"workspacePlan"`
+	}
+	if err := json.Unmarshal(svc.body, &body); err != nil {
+		t.Fatalf("forwarded body not JSON: %v (%s)", err, svc.body)
+	}
+	if body.SessionID != nil {
+		t.Errorf("forwarded body still carries sessionId: %s", svc.body)
+	}
+	if body.WorkspacePlan == nil || body.WorkspacePlan["sources"] == nil {
+		t.Errorf("forwarded body lost workspacePlan: %s", svc.body)
 	}
 }

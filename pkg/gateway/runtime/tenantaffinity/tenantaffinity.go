@@ -30,11 +30,11 @@ var (
 	// ErrNoAvailablePod reports that the pool's Service exposes no pod
 	// the request can route to: the tenant has no ready pinned pod and
 	// no unpinned ready pod remains. The caller scales the pool up or
-	// rejects the request with WARM_POOL_EXHAUSTED. spec: §5.2 line 500.
+	// rejects the request with WARM_POOL_EXHAUSTED. spec: §5.2.
 	ErrNoAvailablePod = errors.New("tenantaffinity: no available pod for tenant")
 
 	// ErrTenantMismatch reports that the target pod is already pinned to
-	// a tenant other than the requesting one. The §5.2 line 502
+	// a tenant other than the requesting one. The §5.2
 	// isolation invariant forbids cross-tenant routing in stateless
 	// mode because slots share a network namespace and process space.
 	ErrTenantMismatch = errors.New("tenantaffinity: pod is pinned to a different tenant")
@@ -51,7 +51,7 @@ type StatelessMetrics interface {
 
 // Endpoint is one pod behind the pool's Kubernetes Service, as
 // discovered by the EndpointSlice watch. Ready reflects the pod's
-// readiness probe: §5.2 line 500 makes a pod at slot capacity report
+// readiness probe: §5.2 makes a pod at slot capacity report
 // readiness false, which removes it from the route-target set until it
 // recovers.
 type Endpoint struct {
@@ -98,7 +98,7 @@ func New(pool string, metrics StatelessMetrics) *Router {
 // behind the pool's Service. New pods become routable (unpinned); pods
 // absent from the snapshot are removed and unpinned from any tenant
 // they were serving; the readiness of surviving pods is refreshed.
-// spec: §5.2 line 500 (EndpointSlice watch discovers pod IPs).
+// spec: §5.2.
 func (r *Router) UpdateEndpoints(eps []Endpoint) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -119,7 +119,7 @@ func (r *Router) UpdateEndpoints(eps []Endpoint) {
 }
 
 // Route returns the pod IP a concurrent-stateless request for tenantID
-// must use, applying §5.2 line 500: a request first routes to an
+// must use, applying §5.2: a request first routes to an
 // already-pinned, ready pod for the tenant; when the tenant has no
 // pinned pod, or every pinned pod is at slot capacity (readiness
 // false), an unpinned ready pod is selected and pinned. When no
@@ -167,7 +167,7 @@ func (r *Router) Release() {
 	}
 }
 
-// CheckTenant enforces the §5.2 line 502 tenant-pinning invariant: a pod
+// CheckTenant enforces the §5.2 tenant-pinning invariant: a pod
 // serves exactly one tenant for its lifetime. It returns
 // ErrTenantMismatch when podIP is already pinned to a tenant other than
 // tenantID. A pod not yet pinned passes — Route pins it on first use.
@@ -181,7 +181,7 @@ func (r *Router) CheckTenant(podIP, tenantID string) error {
 }
 
 // PinnedPods returns the sorted set of pod IPs currently pinned to
-// tenantID — the §5.2 line 500 "tenantId → set of pinned pod IPs" map
+// tenantID — the §5.2 map
 // projected for one tenant.
 func (r *Router) PinnedPods(tenantID string) []string {
 	r.mu.Lock()

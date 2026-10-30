@@ -4,14 +4,14 @@
 // A request goroutine panic on the gateway request path defaults — via
 // net/http — to a recover that silently truncates the response. The
 // active streaming session on that goroutine then sees an abrupt EOF
-// with no diagnostic. §10.4 line 377 sets the contract that a gateway
+// with no diagnostic. §10.4 sets the contract that a gateway
 // pod failure must be observable to the client (broken stream and
 // reconnect) and must never lose session state. A request-scoped
 // recover that converts a panic into an explicit 500 response and a
 // structured server log keeps a single-handler crash from masquerading
 // as a client-side disconnect.
 //
-// spec: §10.4 line 377. F-10.4.9.
+// spec: §10.4. F-10.4.9.
 package recover
 
 import (
@@ -52,7 +52,7 @@ func (stdLogger) Printf(format string, args ...any) {
 // line carries the request method, URL, recovered value, and a
 // goroutine stack trace so the panic is forensically reconstructable.
 //
-// spec: §10.4 line 377. F-10.4.9.
+// spec: §10.4. F-10.4.9.
 func Middleware(next http.Handler) http.Handler {
 	return MiddlewareWithLogger(next, stdLogger{})
 }
@@ -126,7 +126,7 @@ func (w *recordingResponseWriter) Flush() {
 // nhooyr.io/websocket performs a direct http.Hijacker type assertion on
 // the ResponseWriter it is handed, so every wrapper between net/http and
 // the upgrade handler must re-expose Hijack or the upgrade fails. spec:
-// §27.5 / §27.3.1 line 142.
+// §27.5 / §27.3.1.
 func (w *recordingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if hj, ok := w.ResponseWriter.(http.Hijacker); ok {
 		return hj.Hijack()

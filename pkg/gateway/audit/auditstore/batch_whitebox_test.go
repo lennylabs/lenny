@@ -4,6 +4,8 @@ package auditstore
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -29,7 +31,7 @@ func (f *fakeRouter) AllAuditShards(context.Context) ([]storerouter.ShardHandle,
 	return []storerouter.ShardHandle{{Pool: f.audit}}, nil
 }
 
-// spec: §12.3 line 79 — the synchronous audit write path prefers the
+// spec: §12.3 — the synchronous audit write path prefers the
 // dedicated sync write pool when one is wired, and otherwise falls back
 // to the router's audit shard.
 func TestWriteShard_PrefersSyncPool_spec_12_3(t *testing.T) {
@@ -71,7 +73,7 @@ type fakeEnqueuer struct {
 
 func (f *fakeEnqueuer) Enqueue(it auditbatch.Item) { f.items = append(f.items, it) }
 
-// spec: §12.3 line 81 — when batching is enabled, the non-PII T2
+// spec: §12.3 — when batching is enabled, the non-PII T2
 // cross_tenant_read receipt is enqueued onto the batch buffer instead
 // of a synchronous write (which would require the pool).
 func TestEmitCrossTenantRead_RoutesToBatchBuffer_spec_12_3(t *testing.T) {
@@ -93,5 +95,57 @@ func TestEmitCrossTenantRead_RoutesToBatchBuffer_spec_12_3(t *testing.T) {
 	if !strings.Contains(string(it.Payload), `"audit_siem_forwarder"`) ||
 		!strings.Contains(string(it.Payload), `"row_count":7`) {
 		t.Errorf("enqueued payload = %s, want category + row_count", it.Payload)
+	}
+}
+
+// failingShardRouter answers every AuditShard with err.
+type failingShardRouter struct{ err error }
+
+func (f failingShardRouter) AuditShard(context.Context, storerouter.TenantID) (*pgxpool.Pool, error) {
+	return nil, f.err
+}
+
+func (f failingShardRouter) AuditReadShard(context.Context, storerouter.TenantID) (*pgxpool.Pool, error) {
+	return nil, f.err
+}
+
+func (f failingShardRouter) AllAuditShards(context.Context) ([]storerouter.ShardHandle, error) {
+	return nil, f.err
+}
+
+// TestEmitCrossTenantRead_ExportedWritesSynchronously_spec_12_3 pins that
+// the exported EmitCrossTenantRead, which can carry a caller subject,
+// bypasses the batch buffer even when batching is enabled and returns the
+// write error, while the workers' unexported path still enqueues a payload
+// of exactly category and row_count.
+// spec: 12.3 (Postgres HA Requirements)
+func TestEmitCrossTenantRead_ExportedWritesSynchronously_spec_12_3(t *testing.T) {
+	buf := &fakeEnqueuer{}
+	shardErr := errors.New("audit shard unreachable")
+	s := New(failingShardRouter{err: shardErr}, WithBatchBuffer(buf))
+
+	err := s.EmitCrossTenantRead(context.Background(), CrossTenantRead{
+		Category: "erasure_job", RowCount: 1,
+		Endpoint: "GET /v1/admin/erasure-jobs/{jobId}", CallerSubject: "alice@acme.com",
+	})
+	if !errors.Is(err, shardErr) {
+		t.Fatalf("EmitCrossTenantRead = %v, want the shard error", err)
+	}
+	if len(buf.items) != 0 {
+		t.Fatalf("buffer received %d items, want 0", len(buf.items))
+	}
+
+	if err := s.emitCrossTenantRead(context.Background(), "audit_siem_forwarder", 3); err != nil {
+		t.Fatalf("emitCrossTenantRead: %v", err)
+	}
+	if len(buf.items) != 1 {
+		t.Fatalf("buffer received %d items, want 1", len(buf.items))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(buf.items[0].Payload, &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(payload) != 2 || payload["category"] != "audit_siem_forwarder" || payload["row_count"] != float64(3) {
+		t.Errorf("payload = %v, want exactly category and row_count", payload)
 	}
 }

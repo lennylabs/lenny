@@ -12,7 +12,7 @@
 -- catalog) rather than per-tenant: it carries no tenant column, no
 -- per-tenant write guard, and no row-level isolation policy, matching
 -- the ca_rotation precedent.
--- See spec/10_gateway-internals.md §10.5 lines 466-540.
+-- See spec/10_gateway-internals.md §10.5.
 CREATE TABLE IF NOT EXISTS runtime_upgrade (
     pool                          TEXT        PRIMARY KEY,
     phase                         TEXT        NOT NULL

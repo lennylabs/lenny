@@ -16,8 +16,11 @@ import (
 // satisfies it, and ConnectGateway wires the dialed client onto the Server.
 // spec: §4.7 (ReportPodScrub); §5.2 (whole-pod scrub). F-5.2.15.
 type PodScrubReporter interface {
-	// ReportPodScrub reports the whole-pod scrub outcome for podID. detail
-	// carries an optional failure description for the audit trail on a failed
-	// outcome. A transport or gateway failure is returned as a wrapped error.
-	ReportPodScrub(ctx context.Context, podID string, outcome gatewaycontrol.PodScrubOutcome, detail string) error
+	// ReportPodScrub reports the whole-pod scrub outcome for podID.
+	// runtimeLive states whether the runtime process can serve the pod's
+	// next session, sampled after the scrub. detail carries an optional
+	// failure description for the audit trail on a failed outcome. A
+	// transport or gateway failure is returned as a wrapped error.
+	// spec: §5.2 (Pod retirement policy, Runtime not live).
+	ReportPodScrub(ctx context.Context, podID string, outcome gatewaycontrol.PodScrubOutcome, runtimeLive bool, detail string) error
 }

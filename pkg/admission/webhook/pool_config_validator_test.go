@@ -127,7 +127,7 @@ func TestPoolConfigValidatorRejectsUnknownKind(t *testing.T) {
 	}
 }
 
-// spec: §4.6.3 line 601 (spec/04_system-components.md) — rule set 2:
+// spec: §4.6.3 — rule set 2:
 // manual writes to a SandboxWarmPool/SandboxTemplate spec from any
 // principal other than the PoolScalingController SA are rejected with
 // HTTP 403 and the UNAUTHORIZED_POOL_CONFIG_WRITE reason code, even when
@@ -201,7 +201,7 @@ func graceFloor(maxConcurrent int32, workspaceBytes int64) int64 {
 	return int64(maxConcurrent)*pcv.MaxTieredCheckpointCapSeconds(workspaceBytes) + testMinStreamDrainSeconds
 }
 
-// spec: §5.2 line 542 (spec/05_runtime-registry-and-pool-model.md) — a
+// spec: §5.2 — a
 // concurrent-workspace pool whose computed terminationGracePeriodSeconds
 // floor exceeds 600s is admitted with an advisory warning on the
 // AdmissionResponse, not rejected. The floor omits the BarrierAck term,
@@ -231,7 +231,7 @@ func TestPoolConfigValidatorPropagatesTerminationGraceWarning_spec_5_2_516(t *te
 	}
 }
 
-// spec: §5.2 line 542 / §10.1 line 119 — an omitted
+// spec: §5.2 / §10.1 — an omitted
 // terminationGracePeriodSeconds is evaluated against the §4.6.1 120s
 // agent default; a multi-slot pool whose floor exceeds that default is
 // rejected fail-closed rather than admitted through the old nil-bypass.
@@ -258,7 +258,7 @@ func TestPoolConfigValidatorRejectsOmittedGraceBelowFloor_spec_5_2_516(t *testin
 	}
 }
 
-// spec: §5.2 line 542 — a deployer who sets
+// spec: §5.2 — a deployer who sets
 // maxTerminationGracePeriodSeconds gets a hard rejection when the floor
 // breaches the ceiling.
 func TestPoolConfigValidatorRejectsTerminationGraceCeilingBreach_spec_5_2_516(t *testing.T) {
@@ -284,7 +284,7 @@ func TestPoolConfigValidatorRejectsTerminationGraceCeilingBreach_spec_5_2_516(t 
 	}
 }
 
-// spec: §16.1 line 129 / §10.1 line 119 — every SandboxTemplate write
+// spec: §16.1 / §10.1 — every SandboxTemplate write
 // the webhook rejects on the termination-budget inequality increments
 // lenny_pool_termination_budget_exceeded_total, labeled by pool. The
 // BarrierAck-floor and execution-mode rejections must NOT increment it.

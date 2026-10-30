@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/externaladapterstore"
 )
 
-// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or
+// spec: §15.1 — ?dryRun=true validates without persisting or
 // auditing, returns the computed resource, and sets X-Dry-Run: true.
 
 func TestCreateExternalAdapterDryRun_spec_15_1(t *testing.T) {

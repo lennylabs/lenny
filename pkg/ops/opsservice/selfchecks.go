@@ -218,7 +218,7 @@ func (e *TokenError) Unwrap() error { return e.Err }
 // healthy, matching the treatment of an unconfigured optional
 // dependency.
 //
-// spec: §25.4 lines 1956-1971 (the gateway-auth self-health component).
+// spec: §25.4.
 func GatewayAuthCheck(probe GatewayAuthProbe) SelfCheck {
 	return func() CheckResult {
 		res := CheckResult{Name: CheckGatewayAuth, Status: StatusHealthy}

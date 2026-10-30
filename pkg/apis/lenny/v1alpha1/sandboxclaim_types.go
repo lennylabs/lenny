@@ -14,8 +14,9 @@ import (
 // Postgres session row's `pod_assignment` column, so the claim carries no
 // session identifier. A SandboxClaim deliberately omits an ownerReference
 // so its deletion is an explicit step of the claim lifecycle (hold expiry,
-// orphan GC, or pod termination) rather than a cascade from pod deletion;
-// the WarmPoolController garbage-collects orphaned claims.
+// a hold the acquisition path ends, a release that ends the occupancy
+// without reuse, orphan GC, or pod termination) rather than a cascade from
+// pod deletion; the WarmPoolController garbage-collects orphaned claims.
 // spec: §4.6.3 (CRD field ownership), §5.2 (execution modes).
 type SandboxClaimSpec struct {
 	// SandboxRef names the Sandbox this claim binds. The
@@ -45,10 +46,11 @@ type SandboxClaimStatus struct {
 	// `recycle.maxPodUptimeSeconds` reached) under which the
 	// WarmPoolController projects the pod to `draining` then `terminated`,
 	// retiring it rather than returning it to the pool; `failed` on a
-	// scrub-failure or crashed-session retirement, which likewise drains
-	// and terminates the pod. Per §4.6.3 only `released` and `failed` are
-	// terminal. Returning a pod to the pool (`reserved → idle` on hold
-	// expiry) is the claim DELETE edge, not a phase value.
+	// scrub-failure retirement (`onScrubFailure: fail`), which likewise
+	// drains and terminates the pod. Per §4.6.3 only `released` and
+	// `failed` are terminal. Returning a pod to the pool (`reserved → idle`
+	// on hold expiry) is the claim DELETE edge, not a phase value.
+	// spec: §4.6.3 (SandboxClaim.status.phase enumeration)
 	// +kubebuilder:validation:Enum=bound;recycling;reserved;released;failed
 	// +optional
 	Phase string `json:"phase,omitempty"`
@@ -57,10 +59,13 @@ type SandboxClaimStatus struct {
 	// stamps when it patches the claim to `reserved`: the reservation time
 	// plus the deployment-level hold TTL (`gateway.claimHoldTTLSeconds`,
 	// default 10s). A same-tenant session arriving before this deadline
-	// rebinds the claim (`reserved → bound`); after it the holder deletes
-	// the claim and the pod returns to `idle`. Empty until the claim
-	// enters `reserved`. spec: §4.6.3 (reserved hold), §6.2 (pod state
-	// machine).
+	// rebinds the claim (`reserved → bound`); when an acquisition refuses
+	// the reserved pod under the runtime-process acknowledgment, it ends the
+	// hold by deleting the claim instead. After the deadline the
+	// holder deletes the claim and the pod returns to `idle`. Empty until
+	// the claim enters `reserved`. spec: §4.6.3 (reserved hold), §4.6.1
+	// (Reserved hold), §5.2 (Deployer acknowledgment (runtime process kept
+	// across sessions)), §6.2 (pod state machine).
 	// +optional
 	HoldExpiresAt *metav1.Time `json:"holdExpiresAt,omitempty"`
 
@@ -95,6 +100,14 @@ type SandboxClaimStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// The lenny.dev/schema-version annotation is read at controller startup and
+// by lenny-preflight, and a mismatch with preflight.CurrentCRDSchemaVersion
+// is fatal, so a stale CRD never silently strips new fields. Bump the value
+// here and in that constant together. The top-level spec and status fields
+// carry +kubebuilder:pruning:PreserveUnknownFields for the same reason: a CRD
+// older than the controller does not prune fields a newer controller writes.
+// spec: §10.5 (Upgrade and Rollback Strategy). F-15.5.12.
+// +kubebuilder:metadata:annotations="lenny.dev/schema-version=1"
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=sbxc
 // +kubebuilder:printcolumn:name="Sandbox",type=string,JSONPath=`.spec.sandboxRef`
@@ -108,7 +121,9 @@ type SandboxClaim struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   SandboxClaimSpec   `json:"spec,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Spec SandboxClaimSpec `json:"spec,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
 	Status SandboxClaimStatus `json:"status,omitempty"`
 }
 

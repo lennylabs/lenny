@@ -22,13 +22,14 @@ This page covers the conformance suite, the test categories per integration leve
 | Category | What is validated |
 |----------|-------------------|
 | **Protocol framing** | JSON Lines format, message parsing, field presence, type correctness, stdout flushing |
-| **Message handling** | Correct response to `message`, `tool_result`, `heartbeat`, `shutdown` |
+| **Message handling** | Correct response to `message`, `tool_result`, `heartbeat`, and `shutdown` |
+| **Session lifetime** | One process serves sequential and concurrent sessions opened by `session_start` and released by `session_end` |
 | **Forward compatibility** | Unknown message types are ignored rather than rejected |
-| **Heartbeat liveness** | `heartbeat_ack` arrives within 10 seconds |
+| **Heartbeat liveness** | `heartbeat_ack` arrives within 10 seconds, and carries `busy: true` with the heartbeat's `sessionId` while a `message` for that session is outstanding |
 | **Shutdown behavior** | Clean exit within `deadline_ms` on `shutdown` |
 | **Schema compliance** | Every emitted frame and every `MessagePart` validates against the published JSON Schemas |
 | **MCP integration** (Standard and Full) | Platform MCP server connection, nonce authentication, tool invocation, connector reachability |
-| **Lifecycle channel** (Full) | Capability handshake, checkpoint, interrupt, credential rotation, deadline signal |
+| **CH-RUNTIMEOPS** (Full) | Connection handshake, capability handshake, `session_started` acknowledgement, checkpoint, interrupt, credential rotation, and deadline signal |
 
 The validator also reconciles the level your runtime declares against the level it actually demonstrates. See [Declared versus observed level](#declared-versus-observed-level).
 
@@ -69,15 +70,19 @@ To stabilize the conformance surface across releases, pin a specific `lenny` ver
 
 The validator runs a set of test categories for the declared level. Each higher level inherits every category from the levels below it: Standard runs the Basic categories plus its own, and Full runs the Standard categories plus its own. The tables below name the categories at each level.
 
+A category that sends a session-scoped frame first writes `session_start` for the session that frame names, and before it writes a session-scoped CH-RUNTIMEOPS frame it reads the `session_started` that answers that `session_start`. A process-scoped frame, such as `lifecycle_capabilities`, has no such precondition. The [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) defines the session frames.
+
 ### Basic-level categories
 
 | Category | What it asserts |
 |----------|-----------------|
 | stdin/stdout protocol framing | The binary reads newline-delimited JSON on stdin and writes newline-delimited JSON on stdout, flushes every outbound message before the next read, and ignores unknown inbound `type` values rather than aborting. |
-| `message` / `response` round-trip | A canonical `message` produces a structurally valid `response`, either the full form with an `output` array of `MessagePart` or the Basic-level shorthand `{"type":"response","text":"..."}`. The response validates against the published JSON Lines schema. |
-| heartbeat ack | Within 10 seconds of receiving a `heartbeat`, the binary writes a `heartbeat_ack`. Missing the window triggers the adapter's unresponsive-agent escalation. |
-| shutdown within `deadline_ms` | On `shutdown` with a `deadline_ms`, the binary exits cleanly before the deadline elapses. Failing this means the adapter SIGKILLs the process in production, losing unflushed output. |
+| `message` / `response` round-trip | A canonical `message` produces a structurally valid `response` carrying the `sessionId` the inbound `message` was addressed with, either the full form with an `output` array of `MessagePart` or the Basic-level shorthand `{"type":"response","sessionId":"...","text":"..."}`. The response validates against the published JSON Lines schema. |
+| heartbeat ack | Within 10 seconds of receiving a `heartbeat`, the binary writes a `heartbeat_ack`. If no acknowledgment arrives, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy. |
+| heartbeat busy | After `session_start` for a session, the harness writes a `message` for the session and then a `heartbeat` naming it, before it reads the `response`. When the binary writes the `heartbeat_ack` before that `response`, the ack carries `busy: true` and the session's `sessionId`. The harness does not fail a `heartbeat_ack` that carries `busy: true` with no `message` outstanding. |
+| shutdown within `deadline_ms` | On `shutdown` with a `deadline_ms`, the binary exits cleanly before the deadline elapses. Failing this means the runtime supervisor sends the process SIGTERM and then SIGKILL 10 seconds later in production, losing unflushed output. |
 | `MessagePart` schema compliance | Every `MessagePart` the runtime produces validates against the published `MessagePart` schema, including the canonical type registry and the `x-<vendor>/` namespace convention for custom types. |
+| session lifetime | On one connection the harness writes `session_start` and a `message` for session A, reads the `response`, and writes `session_end`; then does the same for session B; then writes `session_start` for sessions C and D followed by alternating `message` frames for C and D before it reads any response. The binary answers every `message` with a `response`, answers a `heartbeat` written after each `session_end` with `heartbeat_ack`, and neither exits nor closes its stdout before the harness closes stdin. |
 
 ### Standard-level categories (in addition to Basic)
 
@@ -92,11 +97,11 @@ The validator runs a set of test categories for the declared level. Each higher 
 
 | Category | What it asserts |
 |----------|-----------------|
-| lifecycle channel opening | The runtime connects to the lifecycle channel named in the manifest (`@lenny-lifecycle`) and completes the `lifecycle_capabilities` / `lifecycle_support` exchange. |
+| CH-RUNTIMEOPS opening | The runtime connects to the CH-RUNTIMEOPS named in the manifest (`@lenny-runtime-ops`) and completes the `lifecycle_capabilities` / `lifecycle_support` exchange. After that exchange, the runtime answers a `session_start` with a `session_started` that carries the same `sessionId` and `startId` and no `error`. |
 | checkpoint quiesce/resume | On `checkpoint_request`, the runtime quiesces output, replies with `checkpoint_ready`, waits for `checkpoint_complete`, and resumes. |
 | interrupt acknowledgement | On `interrupt_request`, the runtime reaches a safe stop point and replies with `interrupt_acknowledged` carrying the original `interruptId` within the deadline. |
-| credential rotation handling | A runtime that declares `credential_rotation` support re-reads refreshed credentials on `credentials_rotated` and services the next message without a restart. |
-| deadline signal handling | On `deadline_signal`, the runtime writes a final `response` (optionally carrying `error.code: "DEADLINE_EXCEEDED"`) and exits cleanly before the deadline elapses. |
+| credential rotation handling | A runtime that declares `credential_rotation` support re-reads the credential file at the `credentialsPath` that `credentials_rotated` carries for the named session, and services the next message without a restart. |
+| deadline signal handling | A runtime that declares the `deadline_signal` capability in `lifecycle_support` receives, after the session's `session_started`, a `message` for the session and then `deadline_approaching` with that session's `sessionId`. The runtime writes the response to that `message` (optionally carrying `error.code: "DEADLINE_EXCEEDED"`) before `remainingMs` elapses, writes no other `response` for that session after `deadline_approaching`, and still answers a later `heartbeat` with `heartbeat_ack`. |
 
 Each failure is classified as `schema_violation`, `timeout`, `missing_capability`, or `unexpected_error`, and the report lists the failing category with its classification and a reproduction command.
 
@@ -106,8 +111,8 @@ Each failure is classified as `schema_violation`, `timeout`, `missing_capability
 
 Alongside running the declared level's categories, the validator probes the running runtime to determine the level it actually demonstrates, then compares the two:
 
-- It starts the runtime with the full Full-level fixture set available: the lifecycle channel listening, the platform MCP server and connector fixtures reachable, and the manifest written.
-- If the runtime completes the `lifecycle_capabilities` / `lifecycle_support` exchange on `@lenny-lifecycle` within the grace window, the observed level is at least Full.
+- It starts the runtime with the full Full-level fixture set available: the CH-RUNTIMEOPS listening, the platform MCP server and connector fixtures reachable, and the manifest written.
+- If the runtime completes the `lifecycle_capabilities` / `lifecycle_support` exchange on `@lenny-runtime-ops` within the grace window, the observed level is at least Full.
 - Otherwise, if it connects to the platform MCP server and presents a valid `_lennyNonce` during `initialize`, the observed level is at least Standard.
 - Otherwise the observed level is Basic.
 
@@ -130,11 +135,11 @@ The conformance suite carries its own fixtures, so `lenny runtime validate` runs
 lenny runtime validate
 ```
 
-This needs no Docker, Kubernetes, or external infrastructure for any level. The Standard and Full categories connect to the fake MCP server and lifecycle channel the validator hosts itself.
+This needs no Docker, Kubernetes, or external infrastructure for any level. The Standard and Full categories connect to the fake MCP server and CH-RUNTIMEOPS the validator hosts itself.
 
 Use a local development mode when you want to exercise your runtime end-to-end against the platform rather than against the conformance fixtures. The recommended path is `lenny up`, which runs the whole platform from one binary and starts your runtime in a real Kubernetes pod. `make run` and `docker compose up` give tighter loops in specific cases. For the differences and when to use each, see [Local Development](local-development.md).
 
-The Standard and Full categories rely on Linux abstract Unix sockets for the platform MCP server and the lifecycle channel. When you exercise a runtime end-to-end on macOS or Windows, `make run` cannot host those sockets because it runs your runtime as a plain host process, so use `lenny up` or `docker compose up`, which provide a Linux environment.
+The Standard and Full categories rely on Linux abstract Unix sockets for the platform MCP server and the CH-RUNTIMEOPS. When you exercise a runtime end-to-end on macOS or Windows, `make run` cannot host those sockets because it runs your runtime as a plain host process, so use `lenny up` or `docker compose up`, which provide a Linux environment.
 
 ### Smoke test
 
@@ -220,8 +225,10 @@ When the registry CI validates a submission, it runs the same `lenny runtime val
 | Shutdown exceeds `deadline_ms` | Runtime does not exit within the deadline | Ensure your shutdown handler finishes work and exits within `deadline_ms`. |
 | `tool_call` fails schema validation | Missing required fields in `tool_call` | Ensure `type`, `id`, `name`, and `arguments` are all present. |
 | MCP connection refused on macOS or Windows | A runtime run under `make run` reaches the platform MCP server over a Linux abstract Unix socket, which the host process cannot use off Linux | Validate with `lenny runtime validate`, which carries its own fixtures, or run the runtime end-to-end with `lenny up` or `docker compose up`. |
-| MCP nonce rejected | The runtime cached a stale manifest | Re-read `/run/lenny/adapter-manifest.json` at startup. The nonce is regenerated per session. |
+| MCP nonce rejected | The presented value is not the one the running server was armed with | Read `/run/lenny/adapter-manifest.json` at startup and present the nonce it carried then. The intra-pod MCP servers are pod-wide and started at most once per pod, so a server validates against the nonce the manifest carried at the start that bound it, and a later session's manifest write does not re-arm a running server. |
 | Manifest not found | Manifest path incorrect | The manifest is at `/run/lenny/adapter-manifest.json`, not under `/workspace/`. |
+| Socket connection closed before the first frame | The nonce line was missing, late, or stale, or a nonce-only challenge went unanswered | Send `{"_lennyNonce":"<nonce_hex>"}` with the manifest's `mcpNonce` as the first line within 500 ms, answer a `_lennyChallenge` that arrives before the first protocol frame, and read the manifest again and redial when the adapter closes the connection. See the [connection handshake](../reference/adapter-contract.md#connection-handshake). |
+| Sessions fail to start on a runtime that opened the CH-RUNTIMEOPS | The runtime does not answer `session_start` with `session_started` before the adapter's bounded wait ends | Write `session_started` with the session's `sessionId` and `startId` for every `session_start`, once the session's context exists. |
 | Checkpoint quiesce times out | `checkpoint_ready` not sent within the deadline | Ensure your checkpoint handler quiesces state and replies with `checkpoint_ready` within `deadlineMs`. |
 
 ---
@@ -241,8 +248,8 @@ func TestMyRuntime_ProcessesInput(t *testing.T) {
     cmd.Start()
     defer cmd.Process.Kill()
 
-    // Send a message
-    msg := `{"type":"message","id":"msg_001","input":[{"type":"text","inline":"Hello"}]}` + "\n"
+    // Send a message addressed to a session
+    msg := `{"type":"message","id":"msg_001","sessionId":"sess_abc","input":[{"type":"text","inline":"Hello"}]}` + "\n"
     stdin.Write([]byte(msg))
 
     // Read response
@@ -255,10 +262,17 @@ func TestMyRuntime_ProcessesInput(t *testing.T) {
     if resp["type"] != "response" {
         t.Errorf("expected response, got %s", resp["type"])
     }
+    // The response echoes the address the inbound message carried. A response
+    // that names no session is rejected on a pod holding more than one slot.
+    if resp["sessionId"] != "sess_abc" {
+        t.Errorf("expected sessionId sess_abc, got %v", resp["sessionId"])
+    }
 }
 ```
 
 ### Testing Heartbeat
+
+The adapter sends a `heartbeat` for each session, naming the session in `sessionId`. If no acknowledgment arrives within 10 seconds, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy. A runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for the session the heartbeat names, as in `{"type":"heartbeat_ack","sessionId":"sess_abc","busy":true}`. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../reference/glossary#slot); each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. See [Idle suspension](lifecycle.md#idle-suspension).
 
 ```go
 func TestMyRuntime_RespondsToHeartbeat(t *testing.T) {
@@ -269,7 +283,7 @@ func TestMyRuntime_RespondsToHeartbeat(t *testing.T) {
     defer cmd.Process.Kill()
 
     // Send heartbeat
-    stdin.Write([]byte(`{"type":"heartbeat","ts":1234567890}` + "\n"))
+    stdin.Write([]byte(`{"type":"heartbeat","ts":1234567890,"sessionId":"sess_test"}` + "\n"))
 
     // Read response with timeout
     scanner := bufio.NewScanner(stdout)
@@ -296,6 +310,6 @@ func TestMyRuntime_RespondsToHeartbeat(t *testing.T) {
 
 ## `type: mcp` runtimes
 
-The integration levels and the agent test categories on this page apply to `type: agent` runtimes. A `type: mcp` runtime hosts an MCP server behind the platform and does not participate in the stdin/stdout protocol, the platform tool client, or the lifecycle channel, so the Basic, Standard, and Full categories do not apply to it. For how `type: mcp` runtimes differ, see [Integration Levels](integration-levels.md#type-mcp-runtimes).
+The integration levels and the agent test categories on this page apply to `type: agent` runtimes. A `type: mcp` runtime hosts an MCP server behind the platform and does not participate in the stdin/stdout protocol, the platform tool client, or the CH-RUNTIMEOPS, so the Basic, Standard, and Full categories do not apply to it. For how `type: mcp` runtimes differ, see [Integration Levels](integration-levels.md#type-mcp-runtimes).
 
 Test a `type: mcp` runtime the way you test any MCP server: exercise its `initialize`, `tools/list`, and `tools/call` handlers directly with an MCP client, and add your own functional tests for the tools it exposes.

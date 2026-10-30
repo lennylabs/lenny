@@ -27,6 +27,11 @@ import (
 
 const name = "oversized_request_rejection_recovery"
 
+// scenarioSession is the session whose §6.4 slot cwd the validator
+// canonicalizes symlink targets against. The pod-global directory is
+// retired, so a containment root always names one session's slot tree.
+const scenarioSession = "sess-oversized-load"
+
 func init() {
 	loadgen.Register(name, func() loadgen.Scenario { return &Scenario{counters: scenkit.NewCounters()} })
 }
@@ -50,7 +55,9 @@ func (s *Scenario) RampProfiles() []loadgen.Profile {
 }
 
 func (s *Scenario) Setup(ctx context.Context) error {
-	s.allow = upload.RuntimeAllow{WorkspaceRoot: "/workspace/current"}
+	// spec: §6.4 — the containment root is a session's own slot cwd; the
+	// pod-global directory is retired, so the scenario names a slot tree.
+	s.allow = upload.RuntimeAllow{WorkspaceRoot: "/workspace/slots/" + scenarioSession + "/current"}
 	return nil
 }
 func (s *Scenario) Teardown(ctx context.Context) error { return nil }

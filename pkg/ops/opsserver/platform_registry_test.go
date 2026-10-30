@@ -21,7 +21,7 @@ func newRegistryServer(withStore bool) *opsserver.Server {
 	return opsserver.New(opsserver.Options{Registry: registryservice.New(opts)})
 }
 
-// spec: §25.8 line 3362 — GET returns the effective registry config with
+// spec: §25.8 — GET returns the effective registry config with
 // the pull-secret name.
 func TestRegistryGet_ReturnsEffective_spec_25_8(t *testing.T) {
 	s := newRegistryServer(true)
@@ -39,7 +39,7 @@ func TestRegistryGet_ReturnsEffective_spec_25_8(t *testing.T) {
 	}
 }
 
-// spec: §25.8 line 3362 — PUT persists a runtime override and the next GET
+// spec: §25.8 — PUT persists a runtime override and the next GET
 // returns it.
 func TestRegistryPut_PersistsOverride_spec_25_8(t *testing.T) {
 	s := newRegistryServer(true)

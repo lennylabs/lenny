@@ -27,7 +27,8 @@ import (
 // the GET /v1/sessions/{id}/tree walker diverged from §8.2 when driven
 // through one process.
 func TestDelegation(t *testing.T) {
-	gw := gateway.StartWith(t, "--dev-mode")
+	t.Parallel()
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 
 	t.Run("spawn_child_appears_in_tree", func(t *testing.T) {
 		c := mcpClient{t: t, base: gw.BaseURL()}
@@ -42,7 +43,7 @@ func TestDelegation(t *testing.T) {
 		if root == nil {
 			t.Fatalf("tree response carried no root: %v", body)
 		}
-		// spec: §8.5 line 540 — each tree node's wire field is `taskId`
+		// spec: §8.5 — each tree node's wire field is `taskId`
 		// (the external-protocol name for the session's execution under
 		// the §4.2 "task record == session row" invariant), not the
 		// internal `sessionId`. The tree projection emits `taskId`.

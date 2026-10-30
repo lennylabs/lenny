@@ -25,7 +25,7 @@ func newTestTimer(t *testing.T, clk *fakeClock, max time.Duration) *CumulativeTi
 	})
 }
 
-// spec: §12.4 line 224 — cumulative time accumulates across episodes.
+// spec: §12.4 — cumulative time accumulates across episodes.
 func TestCumulativeAccumulatesAcrossEpisodes_spec_12_4(t *testing.T) {
 	clk := &fakeClock{t: time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)}
 	tm := newTestTimer(t, clk, 300*time.Second)
@@ -53,7 +53,7 @@ func TestCumulativeAccumulatesAcrossEpisodes_spec_12_4(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 224 — Exceeded trips at the configured maximum.
+// spec: §12.4 — Exceeded trips at the configured maximum.
 func TestCumulativeExceeded_spec_12_4(t *testing.T) {
 	clk := &fakeClock{t: time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)}
 	tm := newTestTimer(t, clk, 300*time.Second)
@@ -79,7 +79,7 @@ func TestCumulativeMaxDisabled(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 224 — a rolling window drops time older than the window.
+// spec: §12.4 — a rolling window drops time older than the window.
 func TestCumulativeSlidingWindowPrunes_spec_12_4(t *testing.T) {
 	clk := &fakeClock{t: time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)}
 	tm := NewCumulativeTimer(CumulativeConfig{
@@ -101,7 +101,7 @@ func TestCumulativeSlidingWindowPrunes_spec_12_4(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 224 — only the overlap with the rolling window counts.
+// spec: §12.4 — only the overlap with the rolling window counts.
 func TestCumulativePartialWindowOverlap_spec_12_4(t *testing.T) {
 	clk := &fakeClock{t: time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)}
 	tm := NewCumulativeTimer(CumulativeConfig{
@@ -142,7 +142,7 @@ func TestCumulativeOnChange(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 224 — a fresh state file resumes the cumulative value
+// spec: §12.4 — a fresh state file resumes the cumulative value
 // across restart so a CrashLoopBackOff replica cannot reset the timer.
 func TestCumulativePersistenceResumesFreshFile_spec_12_4(t *testing.T) {
 	dir := t.TempDir()
@@ -162,7 +162,7 @@ func TestCumulativePersistenceResumesFreshFile_spec_12_4(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 224 — a state file older than the rolling window is a
+// spec: §12.4 — a state file older than the rolling window is a
 // cold start and the timer resets to zero.
 func TestCumulativePersistenceStaleFileColdStart_spec_12_4(t *testing.T) {
 	dir := t.TempDir()
@@ -196,7 +196,7 @@ func TestCumulativePersistenceCorruptFileColdStart(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 224 — a crash mid-episode (OpenSince persisted) credits
+// spec: §12.4 — a crash mid-episode (OpenSince persisted) credits
 // the fail-open time elapsed before the crash so the bypass is closed.
 func TestCumulativePersistenceDanglingOpenEpisode_spec_12_4(t *testing.T) {
 	dir := t.TempDir()

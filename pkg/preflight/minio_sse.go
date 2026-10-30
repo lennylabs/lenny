@@ -8,14 +8,14 @@ import (
 	"fmt"
 )
 
-// MinIOEncryptionProber reports the §12.5 line 297 server-side
+// MinIOEncryptionProber reports the §12.5 server-side
 // encryption posture of the MinIO artifact bucket. It implements
 // `GetBucketEncryption` against the configured bucket and returns the
 // SSE algorithm (`AES256` for SSE-S3, `aws:kms` or `SSE-KMS` for
 // SSE-KMS) when configured. Empty algorithm with nil error reports no
 // SSE.
 //
-// spec: §12.5 line 297.
+// spec: §12.5.
 type MinIOEncryptionProber interface {
 	GetBucketEncryption(ctx context.Context, bucket string) (algorithm string, err error)
 }
@@ -28,7 +28,7 @@ func (f MinIOEncryptionProbeFunc) GetBucketEncryption(ctx context.Context, bucke
 	return f(ctx, bucket)
 }
 
-// MinIOEncryptionCheck is the §12.5 line 297 SSE posture audit. It
+// MinIOEncryptionCheck is the §12.5 SSE posture audit. It
 // fails the preflight when:
 //
 //   - the deployment runs with a regulated complianceProfile
@@ -41,7 +41,7 @@ func (f MinIOEncryptionProbeFunc) GetBucketEncryption(ctx context.Context, bucke
 // check returns a passing decision and includes the algorithm in the
 // reason so operators see the configuration in the preflight report.
 //
-// spec: §12.5 line 297.
+// spec: §12.5.
 type MinIOEncryptionCheck struct {
 	// Bucket is the artifact bucket the gateway writes to. Required.
 	Bucket string
@@ -62,10 +62,10 @@ func regulatedComplianceProfile(profile string) bool {
 	return false
 }
 
-// Decide evaluates the §12.5 line 297 SSE posture and returns a
+// Decide evaluates the §12.5 SSE posture and returns a
 // preflight Decision.
 //
-// spec: §12.5 line 297.
+// spec: §12.5.
 func (c MinIOEncryptionCheck) Decide(ctx context.Context) Decision {
 	if c.Prober == nil {
 		return Decision{Passed: false, Reason: "MinIO encryption prober is nil"}
@@ -77,8 +77,7 @@ func (c MinIOEncryptionCheck) Decide(ctx context.Context) Decision {
 	regulated := regulatedComplianceProfile(c.ComplianceProfile)
 	if err != nil {
 		// A regulated profile must fail closed: the chain is
-		// unreachable, so the gateway cannot guarantee the §12.5
-		// line 297 SSE invariant. Non-regulated deployments degrade
+		// unreachable, so the gateway cannot guarantee the §12.5 SSE invariant. Non-regulated deployments degrade
 		// to advisory so a dev cluster without SSE configured still
 		// installs.
 		if regulated {
@@ -98,7 +97,7 @@ func (c MinIOEncryptionCheck) Decide(ctx context.Context) Decision {
 		if regulated {
 			return Decision{
 				Passed: false,
-				Reason: fmt.Sprintf("§12.5 line 297: MinIO bucket %q has no server-side encryption enabled; required for complianceProfile %q",
+				Reason: fmt.Sprintf("§12.5: MinIO bucket %q has no server-side encryption enabled; required for complianceProfile %q",
 					c.Bucket, c.ComplianceProfile),
 			}
 		}

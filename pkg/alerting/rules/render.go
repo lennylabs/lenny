@@ -132,7 +132,7 @@ func RenderRuleGroups(groupName string, catalog []Rule) ([]byte, error) {
 // fragment carrying one rule group per §16.5 severity (critical,
 // warning, info). The split lets Prometheus evaluate the three buckets
 // in parallel rather than serialising the full catalog through a
-// single group — the §25.13 line 4822 "~40 rules at ~10ms p95" budget
+// single group — the §25.13 budget
 // applies per group, and the catalog has now grown well past forty
 // rules.
 //
@@ -143,7 +143,7 @@ func RenderRuleGroups(groupName string, catalog []Rule) ([]byte, error) {
 // (e.g. "lenny" → "lenny.critical", "lenny.warning", "lenny.info");
 // every rule is validated first.
 //
-// spec: §25.13 line 4822 (per-group evaluation cost); F-25.13.9.
+// spec: §25.13; F-25.13.9.
 func RenderRuleGroupsBySeverity(namePrefix string, catalog []Rule) ([]byte, error) {
 	if namePrefix == "" {
 		return nil, fmt.Errorf("rules: rule group name prefix is required")

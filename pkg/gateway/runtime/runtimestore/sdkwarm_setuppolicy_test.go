@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// spec: §5.1 line 24 — sdkWarmBlockingPaths defaults to
+// spec: §5.1 — sdkWarmBlockingPaths defaults to
 // ["CLAUDE.md", ".claude/*"] when capabilities.preConnect is true and the
 // runtime declares none; the field is ignored (no default) otherwise.
 func TestApplyDefaultsSeedsSDKWarmBlockingPaths(t *testing.T) {
@@ -52,7 +52,7 @@ func TestApplyDefaultsSeedsSDKWarmBlockingPaths(t *testing.T) {
 	}
 }
 
-// spec: §5.1 lines 22-24 — a derived runtime inherits the base's
+// spec: §5.1 — a derived runtime inherits the base's
 // sdkWarmBlockingPaths, the companion of the inherited capabilities.preConnect.
 func TestMergeInheritsSDKWarmBlockingPaths(t *testing.T) {
 	base := runtimestore.Runtime{
@@ -80,8 +80,8 @@ func TestMergeInheritsSDKWarmBlockingPaths(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 195 — setupPolicy.timeoutSeconds is a Maximum merge in
-// which zero ("no aggregate cap", §5.1 line 260) is the largest possible
+// spec: §5.1 — setupPolicy.timeoutSeconds is a Maximum merge in
+// which zero ("no aggregate cap", §5.1) is the largest possible
 // bound and wins over any finite value, so a base "no cap" floor survives.
 func TestMergeSetupPolicyZeroIsNoCap(t *testing.T) {
 	mk := func(sec int) *runtimestore.SetupPolicy {

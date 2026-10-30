@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
 )
 
 var (
@@ -24,7 +26,15 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	tmp, err := os.MkdirTemp("", "compliance-standard-test-*")
+	// A test that sets complianceStubEnv runs this test binary as the
+	// runtime under test; the child plays the stub instead of the tests.
+	if mode := os.Getenv(complianceStubEnv); mode != "" {
+		os.Exit(runComplianceStub(mode))
+	}
+	// The fixture binaries live under the harness temp root rather than
+	// /tmp, which a host cleanup can empty while the battery runs
+	// (TEST-GAPS T-4.7.23).
+	tmp, err := testtmp.MkdirTemp("compliance-standard-test-*")
 	if err != nil {
 		panic("standard battery TestMain: mkdtemp: " + err.Error())
 	}
@@ -35,6 +45,7 @@ func TestMain(m *testing.M) {
 		bin := filepath.Join(tmp, name)
 		cmd := exec.Command("go", "build", "-o", bin, pkg)
 		cmd.Dir = root
+		cmd.Env = append(os.Environ(), testtmp.Env(filepath.Dir(tmp))...)
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
 			panic("standard battery TestMain: build " + pkg + ": " + err.Error())
@@ -113,7 +124,7 @@ func TestStandardBatteryReusesBasicChecks(t *testing.T) {
 		"binary_exists_and_executes", "empty_stdin_exits_cleanly",
 		"message_emits_response", "heartbeat_emits_ack",
 		"unknown_type_ignored", "shutdown_exits_within_deadline",
-		"sequential_messages_handled", "response_matches_jsonl_schema",
+		"session_lifetime", "response_matches_jsonl_schema",
 		"messagepart_schema_compliance",
 	}
 	got := map[string]Check{}

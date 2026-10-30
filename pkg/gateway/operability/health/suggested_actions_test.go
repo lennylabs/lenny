@@ -14,7 +14,7 @@ import (
 // while every other known issue presents a single canonical
 // suggestedAction. The catalog and conventions.UsesRankedActions must
 // agree on which form each issue uses.
-// spec: §25.3 lines 459-501, 484-487.
+// spec: §25.3.
 func TestActionsForIssue_RankedVsSingular_spec_25_3_484(t *testing.T) {
 	ranked := []string{
 		"WARM_POOL_EXHAUSTED", "WARM_POOL_LOW",
@@ -80,7 +80,7 @@ func TestActionsForIssue_RankedVsSingular_spec_25_3_484(t *testing.T) {
 // TestActionsForIssue_PrimaryRunbookMatchesPathB guards against drift
 // between the catalog's primary action and the §25.7 issueRunbooks
 // table for the ranked issues.
-// spec: §25.7 line 3234.
+// spec: §25.7.
 func TestActionsForIssue_PrimaryRunbookMatchesPathB_spec_25_7_3234(t *testing.T) {
 	for _, issue := range []string{
 		"WARM_POOL_EXHAUSTED", "WARM_POOL_LOW",
@@ -96,7 +96,7 @@ func TestActionsForIssue_PrimaryRunbookMatchesPathB_spec_25_7_3234(t *testing.T)
 // TestActionsForIssue_TargetSubstitution covers the endpoint
 // templating: a named target lands in the path, and an empty target
 // leaves a legible placeholder rather than an empty path segment.
-// spec: §25.3 lines 459-501.
+// spec: §25.3.
 func TestActionsForIssue_TargetSubstitution(t *testing.T) {
 	_, named := health.ActionsForIssue("WARM_POOL_EXHAUSTED", "default-gvisor")
 	if named[0].Endpoint != "PUT /v1/admin/pools/default-gvisor/warm-count" {

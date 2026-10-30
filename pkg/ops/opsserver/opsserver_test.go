@@ -6,34 +6,44 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
 )
 
-func TestHealthzReportsOK(t *testing.T) {
+// spec: §25.4 "Probes" — the permissive /healthz cannot confirm either
+// dependency reachable when neither probe is registered, so it returns
+// 503 rather than an unconditional 200.
+func TestHealthzPermissive503WithNoProbes(t *testing.T) {
 	rec := httptest.NewRecorder()
 	opsserver.New(opsserver.Options{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 with no dependency probe registered", rec.Code)
 	}
-	var body map[string]string
+	var body struct {
+		Status   string   `json:"status"`
+		Degraded []string `json:"degraded"`
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body["status"] != "ok" {
-		t.Errorf("status = %q, want ok", body["status"])
+	if body.Status != "degraded" {
+		t.Errorf("status = %q, want degraded", body.Status)
+	}
+	if !sameSet(body.Degraded, []string{"postgres", "kubernetes"}) {
+		t.Errorf("degraded = %v, want postgres and kubernetes", body.Degraded)
 	}
 }
 
-// spec: §25.4 line 1055 — F-25.4.10. The strict gate (?strict=true)
+// spec: §25.4 — F-25.4.10. The strict diagnostic check (?strict=true)
 // returns 200 only when both Postgres and the Kubernetes API are
-// reachable; the readiness probe uses it so traffic is not routed to a
-// replica that cannot serve the full §25 API.
+// reachable.
 func TestHealthzStrictReadyWhenCriticalDepsUp(t *testing.T) {
 	probes := map[string]probe.Func{
 		"postgres":   func(context.Context) error { return nil },
@@ -58,7 +68,7 @@ func TestHealthzStrictReadyWhenCriticalDepsUp(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1055 — F-25.4.10. A strict-gate dependency that is
+// spec: §25.4 — F-25.4.10. A strict-gate dependency that is
 // down yields 503 with the degraded dependency named.
 func TestHealthzStrict503WhenCriticalDepDown(t *testing.T) {
 	probes := map[string]probe.Func{
@@ -93,7 +103,7 @@ func TestHealthzStrict503WhenCriticalDepDown(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1055 — F-25.4.10. A strict-gate dependency that is
+// spec: §25.4 — F-25.4.10. A strict-gate dependency that is
 // not even registered cannot be confirmed reachable and counts as
 // degraded (the production binary always wires both).
 func TestHealthzStrict503WhenCriticalDepAbsent(t *testing.T) {
@@ -123,10 +133,10 @@ func TestHealthzStrict503WhenCriticalDepAbsent(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 1054-1057 — F-25.4.10. The permissive /healthz
-// (liveness, startup) stays 200 even when a dependency is down so a
-// transient outage does not restart an otherwise-healthy pod.
-func TestHealthzPermissiveIgnoresDependencyOutage(t *testing.T) {
+// spec: §25.4 "Probes" — the permissive /healthz returns 503 naming both
+// dependencies when neither Postgres nor the Kubernetes API is
+// reachable, so liveness restarts a pod that can reach no dependency.
+func TestHealthzPermissive503WhenBothDepsDown(t *testing.T) {
 	probes := map[string]probe.Func{
 		"postgres":   func(context.Context) error { return errors.New("down") },
 		"kubernetes": func(context.Context) error { return errors.New("down") },
@@ -135,9 +145,156 @@ func TestHealthzPermissiveIgnoresDependencyOutage(t *testing.T) {
 	opsserver.New(opsserver.Options{Probes: probes}).ServeHTTP(rec,
 		httptest.NewRequest(http.MethodGet, "/healthz", nil))
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 for the permissive liveness probe", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 when both dependencies are down", rec.Code)
 	}
+	body := decodeHealthz(t, rec)
+	if body.Status != "degraded" {
+		t.Errorf("status = %q, want degraded", body.Status)
+	}
+	if !sameSet(body.Degraded, []string{"postgres", "kubernetes"}) {
+		t.Errorf("degraded = %v, want postgres and kubernetes", body.Degraded)
+	}
+	for _, dep := range []string{"postgres", "kubernetes"} {
+		if _, ok := body.Dependencies[dep]; !ok {
+			t.Errorf("dependencies = %v, want an entry for %s", body.Dependencies, dep)
+		}
+	}
+}
+
+// healthDepState is how a /healthz dependency probe behaves in
+// TestHealthzPermissiveEitherDependency.
+type healthDepState int
+
+const (
+	depReachable healthDepState = iota
+	depFailing
+	depBlocking
+	depAbsent
+)
+
+func (st healthDepState) String() string {
+	return [...]string{"reachable", "failing", "blocking", "absent"}[st]
+}
+
+// register adds a probe named name behaving as st to probes.
+func (st healthDepState) register(probes map[string]probe.Func, name string) {
+	switch st {
+	case depReachable:
+		probes[name] = func(context.Context) error { return nil }
+	case depFailing:
+		probes[name] = func(context.Context) error { return errors.New("connection refused") }
+	case depBlocking:
+		probes[name] = func(ctx context.Context) error {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+	case depAbsent:
+	}
+}
+
+// countingProbe returns a reachable probe that counts its invocations.
+func countingProbe(calls *atomic.Int32) probe.Func {
+	return func(context.Context) error {
+		calls.Add(1)
+		return nil
+	}
+}
+
+// spec: §25.4 "Probes" — the permissive /healthz returns 200 exactly
+// when at least one of Postgres and the Kubernetes API is reachable, and
+// otherwise 503 with a body naming both. A blocking probe is bounded by
+// the probe timeout and counts as unreachable, and an absent probe counts
+// as unreachable. The permissive check never invokes the Redis, MinIO,
+// or gateway probes.
+func TestHealthzPermissiveEitherDependency(t *testing.T) {
+	states := []healthDepState{depReachable, depFailing, depBlocking, depAbsent}
+	for _, pg := range states {
+		for _, k8s := range states {
+			t.Run(fmt.Sprintf("postgres=%s/kubernetes=%s", pg, k8s), func(t *testing.T) {
+				t.Parallel()
+				probes := map[string]probe.Func{}
+				pg.register(probes, "postgres")
+				k8s.register(probes, "kubernetes")
+				var others [3]atomic.Int32
+				for i, name := range []string{"redis", "minio", "gateway"} {
+					probes[name] = countingProbe(&others[i])
+				}
+
+				rec := httptest.NewRecorder()
+				opsserver.New(opsserver.Options{Probes: probes}).ServeHTTP(rec,
+					httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+				assertEitherDependencyOutcome(t, rec, pg, k8s)
+				for i, name := range []string{"redis", "minio", "gateway"} {
+					if n := others[i].Load(); n != 0 {
+						t.Errorf("%s probe invoked %d times, want 0", name, n)
+					}
+				}
+			})
+		}
+	}
+}
+
+// assertEitherDependencyOutcome checks the permissive /healthz response
+// for the given dependency states.
+func assertEitherDependencyOutcome(t *testing.T, rec *httptest.ResponseRecorder, pg, k8s healthDepState) {
+	t.Helper()
+	body := decodeHealthz(t, rec)
+	if pg == depReachable || k8s == depReachable {
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 when a dependency is reachable", rec.Code)
+		}
+		if body.Status != "ok" {
+			t.Errorf("status = %q, want ok", body.Status)
+		}
+		return
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 when neither dependency is reachable", rec.Code)
+	}
+	if body.Status != "degraded" {
+		t.Errorf("status = %q, want degraded", body.Status)
+	}
+	if !sameSet(body.Degraded, []string{"postgres", "kubernetes"}) {
+		t.Errorf("degraded = %v, want postgres and kubernetes", body.Degraded)
+	}
+	if body.Dependencies == nil {
+		t.Errorf("body carries no dependencies field")
+	}
+}
+
+// healthzBody is the decoded /healthz response.
+type healthzBody struct {
+	Status       string                    `json:"status"`
+	Degraded     []string                  `json:"degraded"`
+	Dependencies map[string]map[string]any `json:"dependencies"`
+}
+
+func decodeHealthz(t *testing.T, rec *httptest.ResponseRecorder) healthzBody {
+	t.Helper()
+	var body healthzBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	return body
+}
+
+// sameSet reports whether got and want hold the same strings.
+func sameSet(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	seen := make(map[string]bool, len(got))
+	for _, g := range got {
+		seen[g] = true
+	}
+	for _, w := range want {
+		if !seen[w] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestReadyzReportsReady(t *testing.T) {

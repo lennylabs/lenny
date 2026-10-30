@@ -175,12 +175,12 @@ func New(sources ...Source) *Inventory {
 // With it set, every in-progress operation's Progress is recomputed
 // through the canonical ETA chain on each List/Get: the historical_p50
 // method draws on the baseline store, and stalledForSeconds is derived
-// from the kind's expected cadence (§25.2 lines 393-396). clock supplies
+// from the kind's expected cadence (§25.2). clock supplies
 // the current time; a nil clock keeps time.Now. A nil store leaves the
 // historical_p50 method unavailable (etaMethod falls through), but the
 // cadence-based stall detection still runs.
 //
-// spec: §25.2 line 357 (the progress object), lines 393-396.
+// spec: §25.2.
 func (i *Inventory) SetProgressBaselines(clock func() time.Time, store BaselineStore) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -320,12 +320,12 @@ func enrichOperations(ctx context.Context, ops []Operation, clock func() time.Ti
 // preserved; only etaSeconds/etaConfidence/etaMethod and
 // stalledForSeconds are (re)derived. A terminal or paused operation is
 // left untouched — a completed operation is not stalled, and a paused
-// one is awaiting an operator by design (§25.2 line 391). For a
+// one is awaiting an operator by design (§25.2). For a
 // platform_upgrade the method chain is pinned to historical_p50 then
 // fixed_phase_durations so the Inventory envelope matches the direct
-// GET /v1/admin/platform/upgrade/status endpoint (§25.8 line 3496).
+// GET /v1/admin/platform/upgrade/status endpoint (§25.8).
 //
-// spec: §25.2 lines 357-401, §25.8 line 3496.
+// spec: §25.2, §25.8.
 func enrichProgress(ctx context.Context, op *Operation, clock func() time.Time, baselines BaselineStore) {
 	if op == nil || op.Progress == nil || op.Status != StatusInProgress {
 		return
@@ -348,7 +348,7 @@ func enrichProgress(ctx context.Context, op *Operation, clock func() time.Time, 
 		FixedPhaseDuration: FixedPhaseDuration(op.Kind, pr.CurrentStep),
 	}
 	if op.Kind == KindPlatformUpgrade {
-		// spec: §25.8 line 3496 fixes the platform_upgrade ETA chain at
+		// spec: §25.8 fixes the platform_upgrade ETA chain at
 		// historical_p50 then fixed_phase_durations. Its percent is a discrete
 		// phase index, not the size/rate signal Compute's linear_extrapolation
 		// and rate_based methods assume, so the step-derived percent and rate

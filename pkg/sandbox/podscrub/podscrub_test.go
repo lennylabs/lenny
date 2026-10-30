@@ -11,7 +11,7 @@ import (
 // base returns an Inputs with a successful scrub, generous limits, and a
 // schedulable host: the canonical non-preConnect "reuse" case, which now
 // holds the pod in `reserved`. Each test mutates the fields relevant to
-// its §6.2 / §6.39 edge.
+// its §6.2 edge.
 func base() Inputs {
 	return Inputs{
 		PreConnect:          false,
@@ -29,7 +29,7 @@ func base() Inputs {
 
 // TestDecidePendingWaits covers the not-ready guard: until the adapter
 // reports a scrub outcome the driver must not advance the pod.
-// spec: §6.2 line 142 (task_complete_acknowledged precedes scrub).
+// spec: §6.2.
 func TestDecidePendingWaits(t *testing.T) {
 	in := base()
 	in.Scrub = ScrubPending
@@ -42,10 +42,10 @@ func TestDecidePendingWaits(t *testing.T) {
 	}
 }
 
-// TestDecideSpecEdges drives every enumerated §6.2 lines 147-156
+// TestDecideSpecEdges drives every enumerated §6.2
 // disposition edge, including the session_count_limit retirement reason
 // keyed to the spec/16 retirement-reason vocabulary.
-// spec: §6.2 lines 147-156 (recycle disposition), §16.1 (retirement reason vocabulary).
+// spec: §6.2, §16.1 (retirement reason vocabulary).
 func TestDecideSpecEdges(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -61,7 +61,7 @@ func TestDecideSpecEdges(t *testing.T) {
 			mutate:     func(i *Inputs) {},
 			wantPhase:  state.Reserved,
 			wantReason: ReasonReuse,
-			specLine:   "§5.2 line 449 (non-preConnect reserve reuse)",
+			specLine:   "§5.2",
 		},
 		{
 			name:        "non_preconnect_scrub_warning_reserved",
@@ -80,7 +80,7 @@ func TestDecideSpecEdges(t *testing.T) {
 			wantPhase:  state.Draining,
 			wantRetire: true,
 			wantReason: ReasonHostUnschedulable,
-			specLine:   "§6.39 (non-preConnect cordon retire)",
+			specLine:   "§6.2 (non-preConnect cordon retire)",
 		},
 		{
 			name: "non_preconnect_warn_failed_unschedulable_retire_warning",
@@ -93,7 +93,7 @@ func TestDecideSpecEdges(t *testing.T) {
 			wantWarning: true,
 			wantRetire:  true,
 			wantReason:  ReasonHostUnschedulable,
-			specLine:    "§6.39 (non-preConnect cordon retire, warn)",
+			specLine:    "§6.2 (non-preConnect cordon retire, warn)",
 		},
 		{
 			name: "line149_scrub_failures_exhausted_draining",
@@ -212,7 +212,7 @@ func TestDecideSpecEdges(t *testing.T) {
 			// Every recycle disposition is one of the coarse §6.2 occupancy
 			// phases the recycle edges target (re-warm, reserve reuse, or
 			// retire). The former task_cleanup source phase no longer exists
-			// (spec §6.2, §6.37); the disposition driver selects the NextPhase
+			// (spec §6.2); the disposition driver selects the NextPhase
 			// directly.
 			switch got.NextPhase {
 			case state.SDKConnecting, state.Reserved, state.Draining, state.Failed:
@@ -262,7 +262,7 @@ func TestDecideExhaustionBeatsRetirement(t *testing.T) {
 // scrub failure that has NOT exhausted maxScrubFailures but HAS reached
 // recycle.maxSessionsPerPod retires on session_count_limit (the pod is
 // leaving for count, so the warning is superseded).
-// spec: §6.2 lines 149-150 (recycle disposition precedence), §16.1 (session_count_limit reason).
+// spec: §6.2, §16.1 (session_count_limit reason).
 func TestDecideSessionCountBeatsReuseWithWarning(t *testing.T) {
 	in := base()
 	in.Scrub = ScrubFailed
@@ -279,13 +279,13 @@ func TestDecideSessionCountBeatsReuseWithWarning(t *testing.T) {
 	}
 }
 
-// TestDecideHostUnschedulableRetiresBothPoolTypes verifies the §6.39
+// TestDecideHostUnschedulableRetiresBothPoolTypes verifies the §6.2
 // host-node schedulability retire applies to both preConnect and
 // non-preConnect pools: a recycling pod on a cordoned node drains rather
 // than reserving (non-preConnect) or re-warming (preConnect), because
 // either reuse disposition would hand the next session a
 // soon-to-be-evicted pod.
-// spec: §6.39 (host-node schedulability retire on both pool types).
+// spec: §6.2 (host-node schedulability retire on both pool types).
 func TestDecideHostUnschedulableRetiresBothPoolTypes(t *testing.T) {
 	nonPre := base()
 	nonPre.PreConnect = false
@@ -422,7 +422,7 @@ func TestDecideVMRestartSessionCountOnePrecedence(t *testing.T) {
 // vm-restart Draining reprovision. The fail-policy branch precedes the
 // vm-restart branch. The non-happy path is a fail-policy failure masked as the
 // vm-restart reprovision, which would drop the fail-closed terminal.
-// spec: spec/05 §5.2 (onScrubFailure fail), spec/06 §6.2 line 156.
+// spec: spec/05 §5.2 (onScrubFailure fail), spec/06 §6.2.
 func TestDecideVMRestartFailPolicyPrecedence(t *testing.T) {
 	in := base()
 	in.VMRestart = true
@@ -441,7 +441,7 @@ func TestDecideVMRestartFailPolicyPrecedence(t *testing.T) {
 // trigger even on a vm-restart pool, so the scrub-exhausted branch precedes the
 // vm-restart branch. The non-happy path is a scrub-failure-limit retire
 // undercounted as ReasonVMRestartReprovision.
-// spec: spec/06 §6.2 line 149 (scrub-failure limit retire), §16.1 (scrub_failure_limit counts).
+// spec: spec/06 §6.2, §16.1 (scrub_failure_limit counts).
 func TestDecideVMRestartScrubExhaustedPrecedence(t *testing.T) {
 	in := base()
 	in.VMRestart = true
@@ -477,8 +477,7 @@ func TestDecideMaxScrubFailuresDefault(t *testing.T) {
 }
 
 // TestDecideNoUptimeCapWhenUnset verifies MaxPodUptimeSeconds == 0 means
-// no cap: a long-running pod still reuses. spec: §6.2 line 151 (the cap
-// is optional).
+// no cap: a long-running pod still reuses. spec: §6.2.
 func TestDecideNoUptimeCapWhenUnset(t *testing.T) {
 	in := base()
 	in.PodUptimeSeconds = 1 << 40
@@ -491,7 +490,7 @@ func TestDecideNoUptimeCapWhenUnset(t *testing.T) {
 // TestDecideScrubbedReuseReserves verifies that a recycling pod that ran
 // its whole-pod scrub successfully and is under its limits reuses the pod
 // by reserving it for the pinned tenant (non-preConnect path).
-// spec: §5.2 (recycle lifecycle, line 449), §6.2 (recycle disposition).
+// spec: §5.2, §6.2 (recycle disposition).
 func TestDecideScrubbedReuseReserves(t *testing.T) {
 	in := base()
 	if got := Decide(in); got.NextPhase != state.Reserved {
@@ -504,13 +503,13 @@ func TestDecideScrubbedReuseReserves(t *testing.T) {
 // retirement-limit triggers count (partitioned across
 // lenny_gateway_pod_retirement_total for session_count_limit and
 // scrub_failure_limit and lenny_controller_pod_retirement_total for
-// uptime_limit), and every operational or failure-driven retire (the §6.39
+// uptime_limit), and every operational or failure-driven retire (the §6.2
 // cordon-drain host_unschedulable, the onScrubFailure: fail termination, and
 // the non-retire reuse label) is excluded so the emitter cannot widen the
 // declared label set.
 // spec: spec/16 §16.1 (retirement reason label set: session_count_limit,
 // uptime_limit, scrub_failure_limit), §16.1.1 (reason is reserved for the
-// lifecycle limit triggers; failures use error_type), §6.39 (cordon-drain is
+// lifecycle limit triggers; failures use error_type), §6.2 (cordon-drain is
 // an operational retire outside the counter vocabulary).
 func TestCountsOnRetirementTotalVocabulary(t *testing.T) {
 	counted := map[RetireReason]bool{
@@ -520,6 +519,7 @@ func TestCountsOnRetirementTotalVocabulary(t *testing.T) {
 		ReasonHostUnschedulable:      false,
 		ReasonScrubReportTimeout:     false,
 		ReasonVMRestartReprovision:   false,
+		ReasonRuntimeNotLive:         false,
 		ReasonCleanupFailPolicy:      false,
 		ReasonReuse:                  false,
 	}
@@ -562,6 +562,7 @@ func TestCountsOnGatewayRetirementTotalExcludesUptime(t *testing.T) {
 		ReasonHostUnschedulable:    false,
 		ReasonScrubReportTimeout:   false,
 		ReasonVMRestartReprovision: false,
+		ReasonRuntimeNotLive:       false,
 		ReasonCleanupFailPolicy:    false,
 		ReasonReuse:                false,
 	}
@@ -577,7 +578,7 @@ func TestCountsOnGatewayRetirementTotalExcludesUptime(t *testing.T) {
 	for _, reason := range []RetireReason{
 		ReasonSessionCountLimit, ReasonMaxUptimeExceeded, ReasonScrubFailuresExhausted,
 		ReasonHostUnschedulable, ReasonScrubReportTimeout, ReasonVMRestartReprovision,
-		ReasonCleanupFailPolicy, ReasonReuse,
+		ReasonRuntimeNotLive, ReasonCleanupFailPolicy, ReasonReuse,
 	} {
 		gateway := reason.CountsOnGatewayRetirementTotal()
 		union := reason.CountsOnRetirementTotal()
@@ -587,5 +588,105 @@ func TestCountsOnGatewayRetirementTotalExcludesUptime(t *testing.T) {
 		if union && !gateway && reason != ReasonMaxUptimeExceeded {
 			t.Errorf("RetireReason(%q): union counts it but the gateway excludes it, and it is not uptime_limit", reason)
 		}
+	}
+}
+
+// TestDecideRuntimeNotLiveRetiresAfterEveryOtherRetirement_spec_5_2 pins the
+// §5.2 Pod retirement policy "Runtime not live" condition in the recycle
+// disposition: a report that the runtime process cannot serve the next session
+// retires the pod with the non-counting runtime_not_live reason, but only after
+// every retirement that would retire the pod anyway, and before the §6.2
+// host-schedulability retire. The base inputs, which leave RuntimeNotLive at
+// its zero value, still reuse, which pins the field's polarity: the zero value
+// keeps every disposition the package decided before the field existed.
+// spec: 5.2 (Pod retirement policy), 6.2 (recycle disposition).
+func TestDecideRuntimeNotLiveRetiresAfterEveryOtherRetirement_spec_5_2(t *testing.T) {
+	notLive := func(m func(*Inputs)) Inputs {
+		in := base()
+		in.RuntimeNotLive = true
+		if m != nil {
+			m(&in)
+		}
+		return in
+	}
+	tests := []struct {
+		name        string
+		in          Inputs
+		wantReady   bool
+		wantPhase   state.State
+		wantWarning bool
+		wantRetire  bool
+		wantReason  RetireReason
+	}{
+		{
+			name: "zero_value_reuses", in: base(), wantReady: true,
+			wantPhase: state.Reserved, wantReason: ReasonReuse,
+		},
+		{
+			name: "clean_scrub_retires", in: notLive(nil), wantReady: true,
+			wantPhase: state.Draining, wantRetire: true, wantReason: ReasonRuntimeNotLive,
+		},
+		{
+			name: "preconnect_clean_scrub_retires", in: notLive(func(in *Inputs) { in.PreConnect = true }),
+			wantReady: true, wantPhase: state.Draining, wantRetire: true, wantReason: ReasonRuntimeNotLive,
+		},
+		{
+			name: "vm_restart_keeps_reprovision", in: notLive(func(in *Inputs) { in.VMRestart = true }),
+			wantReady: true, wantPhase: state.Draining, wantRetire: true, wantReason: ReasonVMRestartReprovision,
+		},
+		{
+			name:      "session_count_keeps_limit_reason",
+			in:        notLive(func(in *Inputs) { in.SessionsServed, in.MaxSessionsPerPod = 4, 4 }),
+			wantReady: true, wantPhase: state.Draining, wantRetire: true, wantReason: ReasonSessionCountLimit,
+		},
+		{
+			name:      "uptime_keeps_limit_reason",
+			in:        notLive(func(in *Inputs) { in.PodUptimeSeconds, in.MaxPodUptimeSeconds = 600, 600 }),
+			wantReady: true, wantPhase: state.Draining, wantRetire: true, wantReason: ReasonMaxUptimeExceeded,
+		},
+		{
+			name: "beats_host_unschedulable", in: notLive(func(in *Inputs) { in.HostSchedulable = false }),
+			wantReady: true, wantPhase: state.Draining, wantRetire: true, wantReason: ReasonRuntimeNotLive,
+		},
+		{
+			name: "fail_policy_keeps_failed_terminal",
+			in: notLive(func(in *Inputs) {
+				in.Scrub, in.OnCleanupFailure, in.ScrubFailureCount = ScrubFailed, OnCleanupFail, 1
+			}),
+			wantReady: true, wantPhase: state.Failed, wantRetire: true, wantReason: ReasonCleanupFailPolicy,
+		},
+		{
+			name: "scrub_exhaustion_keeps_limit_reason",
+			in: notLive(func(in *Inputs) {
+				in.Scrub, in.ScrubFailureCount = ScrubFailed, 3
+			}),
+			wantReady: true, wantPhase: state.Draining, wantRetire: true, wantReason: ReasonScrubFailuresExhausted,
+		},
+		{
+			name: "warn_failed_carries_scrub_warning",
+			in: notLive(func(in *Inputs) {
+				in.Scrub, in.ScrubFailureCount = ScrubFailed, 1
+			}),
+			wantReady: true, wantPhase: state.Draining, wantWarning: true, wantRetire: true,
+			wantReason: ReasonRuntimeNotLive,
+		},
+		{
+			name: "pending_scrub_waits", in: notLive(func(in *Inputs) { in.Scrub = ScrubPending }),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Decide(tc.in)
+			want := Disposition{
+				Ready: tc.wantReady, NextPhase: tc.wantPhase, ScrubWarning: tc.wantWarning,
+				Retire: tc.wantRetire, Reason: tc.wantReason,
+			}
+			if got != want {
+				t.Fatalf("Decide = %+v, want %+v", got, want)
+			}
+		})
+	}
+	if ReasonRuntimeNotLive != "runtime_not_live" {
+		t.Errorf("ReasonRuntimeNotLive = %q, want the §5.2 label runtime_not_live", ReasonRuntimeNotLive)
 	}
 }

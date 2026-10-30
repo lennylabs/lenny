@@ -16,7 +16,7 @@
 // graceful shutdown. A store is registered by name and need only
 // implement Snapshotter.
 //
-// spec: §17.4 line 199 — "Embedded SQLite replaces Postgres for session
+// spec: §17.4 — "Embedded SQLite replaces Postgres for session
 // and metadata storage".
 package sqlitestore
 
@@ -146,7 +146,22 @@ func (d *DB) Flush(ctx context.Context) error {
 	return d.flushLocked(ctx)
 }
 
+// flushLocked writes every changed export of one flush in one SQLite
+// transaction. An export or persist error rolls the whole flush back, and
+// the last-persisted bytes advance only after the commit, so the file
+// always holds one whole flush and the next flush rewrites every store a
+// failed flush did not persist. Two stores whose rows must agree, such as
+// the erasure jobs and the users that carry their restriction flags,
+// therefore never restore from different flushes. d.mu must be held.
+//
+// spec: §17.4 (Local Development Mode: Source Mode), §12.8 (Processing
+// restriction during erasure (GDPR Article 18)).
 func (d *DB) flushLocked(ctx context.Context) error {
+	type change struct {
+		name string
+		data []byte
+	}
+	var changed []change
 	for _, r := range d.regs {
 		data, err := r.store.ExportState()
 		if err != nil {
@@ -155,13 +170,29 @@ func (d *DB) flushLocked(ctx context.Context) error {
 		if prev, ok := d.last[r.name]; ok && bytes.Equal(prev, data) {
 			continue
 		}
-		if _, err := d.db.ExecContext(ctx,
+		changed = append(changed, change{name: r.name, data: data})
+	}
+	if len(changed) == 0 {
+		return nil
+	}
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("sqlitestore: begin flush: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, c := range changed {
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO store_snapshots (name, data, updated_at) VALUES (?, ?, ?)
 			 ON CONFLICT(name) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
-			r.name, data, d.now().UnixNano()); err != nil {
-			return fmt.Errorf("sqlitestore: persist %q: %w", r.name, err)
+			c.name, c.data, d.now().UnixNano()); err != nil {
+			return fmt.Errorf("sqlitestore: persist %q: %w", c.name, err)
 		}
-		d.last[r.name] = append([]byte(nil), data...)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("sqlitestore: commit flush: %w", err)
+	}
+	for _, c := range changed {
+		d.last[c.name] = append([]byte(nil), c.data...)
 	}
 	return nil
 }

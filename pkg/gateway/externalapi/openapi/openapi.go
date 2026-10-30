@@ -9,7 +9,7 @@
 // bytes serialise correctly with the YAML Content-Type for SDK
 // generators that prefer YAML input.
 //
-// §15.1 line 589 names `/openapi.yaml` and `/openapi.json` as the
+// §15.1 names `/openapi.yaml` and `/openapi.json` as the
 // canonical gateway-side endpoints; the `/v1/openapi.json` and
 // `/v1/openapi.yaml` mounts are the admin-API paths §15.1 (OpenAPI
 // generation and discovery) lists so the §25.12 schema-discovery block
@@ -48,7 +48,7 @@ var openapiDoc []byte
 // Mounts:
 //
 //	GET /openapi.yaml — YAML form (JSON is valid YAML 1.2)
-//	GET /openapi.json — JSON form (§15.1 line 589 canonical mount)
+//	GET /openapi.json — JSON form (§15.1 canonical mount)
 //	GET /v1/openapi.json — JSON form (§15.1 admin-API discovery path)
 //	GET /v1/openapi.yaml — YAML form (§15.1 admin-API discovery path)
 //
@@ -62,7 +62,7 @@ func Handler() http.Handler { return HandlerWithVersion("") }
 // gateway release version. Empty or "dev" leaves the embedded value
 // untouched.
 //
-// spec: §15.1 line 589 — `info.version` field in the spec matches
+// spec: §15.1 — `info.version` field in the spec matches
 // the gateway's release version.
 func HandlerWithVersion(buildVersion string) http.Handler {
 	body := versionedDocument(buildVersion)
@@ -76,7 +76,7 @@ func HandlerWithVersion(buildVersion string) http.Handler {
 	yaml := serve("application/yaml")
 	jsonDoc := serve("application/json")
 	mux := http.NewServeMux()
-	// spec: §15.1 line 589 — gateway serves the JSON and YAML forms at
+	// spec: §15.1 — gateway serves the JSON and YAML forms at
 	// the root `/openapi.*` paths. F-15.1.17.
 	mux.HandleFunc("GET /openapi.yaml", yaml)
 	mux.HandleFunc("GET /openapi.json", jsonDoc)
@@ -102,7 +102,7 @@ func Document() []byte {
 // for the §13 MCP Management Server's `openapi-to-mcp` generator and
 // for tests that assert the gateway-release imprint on the document.
 //
-// spec: §15.1 line 589.
+// spec: §15.1.
 func DocumentWithVersion(buildVersion string) []byte {
 	return append([]byte(nil), versionedDocument(buildVersion)...)
 }
@@ -199,8 +199,8 @@ const (
 // match a request identically; the document is the single source of the
 // route-to-scope mapping.
 //
-// spec: §15.1 (scope enforcement before routing, line 914,920),
-// §25.1 (middleware checks scopes before routing, line 94).
+// spec: §15.1,
+// §25.1.
 type RouteScopes struct {
 	mux *http.ServeMux
 }
@@ -220,9 +220,9 @@ func (h scopeForPattern) ServeHTTP(http.ResponseWriter, *http.Request) {}
 // scope, so RequiredScope can recover the scope a matched route requires. A
 // malformed document yields an empty matcher that reports no required scope
 // for every route; the caller fails closed on its own (an unresolved scope on
-// a destructive admin route defers to the role ceiling per §25.1, line 90).
+// a destructive admin route defers to the role ceiling per §25.1).
 //
-// spec: §15.1 (x-lenny-scope per operation, line 920),
+// spec: §15.1,
 // §25.1 (scope enforcement point 1).
 func NewRouteScopes() *RouteScopes {
 	rs := &RouteScopes{mux: http.NewServeMux()}
@@ -261,8 +261,8 @@ func NewRouteScopes() *RouteScopes {
 // document's templates through the same http.ServeMux engine the admin
 // router routes on.
 //
-// spec: §15.1 (scope enforcement before routing, line 914,920),
-// §25.1 (middleware checks scopes before routing, line 94).
+// spec: §15.1,
+// §25.1.
 func (rs *RouteScopes) RequiredScope(method, path string) (string, bool) {
 	if rs == nil || rs.mux == nil {
 		return "", false

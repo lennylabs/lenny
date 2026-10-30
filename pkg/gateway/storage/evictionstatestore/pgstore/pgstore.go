@@ -41,8 +41,8 @@ func New(pool *pgxpool.Pool, now func() time.Time) *Store {
 var _ evictionstatestore.Store = (*Store)(nil)
 
 // selectList is the column projection for read paths. The trailing
-// columns are the §4.4 lines 265–273 fields added in migration 0060
-// plus the §4.4 line 281 soft-delete tombstone added in migration
+// columns are the §4.4 fields added in migration 0060
+// plus the §4.4 soft-delete tombstone added in migration
 // 0064: recovery_generation, coordination_generation,
 // conversation_cursor, evicted_at, workspace_lost, context_truncated,
 // deleted_at.
@@ -53,7 +53,7 @@ const selectList = `tenant_id, session_id, last_message_context,
 
 // Put upserts the eviction-state row. The created_at column is
 // preserved on update; updated_at is advanced under the §12.5
-// monotonic-now rule. The §4.4 lines 268–273 mandated columns are
+// monotonic-now rule. The §4.4 mandated columns are
 // written verbatim from the Record on both insert and update so the
 // §7.2 resume path observes the latest generation, cursor, and
 // truncation state. A Put on a previously soft-deleted row clears the
@@ -89,7 +89,7 @@ func (s *Store) Put(ctx context.Context, r evictionstatestore.Record) error {
 		case err != nil:
 			return err
 		}
-		// Clear the §4.4 line 281 tombstone on re-Put so a resurrected
+		// Clear the §4.4 tombstone on re-Put so a resurrected
 		// session does not appear soft-deleted to the resume path.
 		_, err = tx.Exec(ctx,
 			`UPDATE session_eviction_state SET
@@ -122,7 +122,7 @@ func nullTime(t time.Time) any {
 // Get returns the eviction-state row or ErrNotFound. A cross-tenant
 // miss is indistinguishable from a missing row per §12.3 isolation.
 // Soft-deleted rows are filtered out — the §7.2 resume path observes
-// a `deleted_at IS NULL` invariant per §4.4 line 281.
+// a `deleted_at IS NULL` invariant per §4.4.
 func (s *Store) Get(ctx context.Context, tenantID, sessionID string) (evictionstatestore.Record, error) {
 	var out evictionstatestore.Record
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
@@ -152,7 +152,7 @@ func (s *Store) Get(ctx context.Context, tenantID, sessionID string) (evictionst
 // crash-resumed terminal-cleanup, or the §12.5 GC backstop racing the
 // primary cleanup all observe `rows_affected == 0` on the second
 // writer and skip side effects.
-// spec: §4.4 line 281.
+// spec: §4.4.
 func (s *Store) Delete(ctx context.Context, tenantID, sessionID string) error {
 	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
@@ -168,7 +168,7 @@ func (s *Store) Delete(ctx context.Context, tenantID, sessionID string) error {
 // DeleteByUser soft-deletes every row in tenantID whose session id is
 // in the supplied slice. The orchestrator owns the session-id lookup
 // because session_eviction_state does not carry a user_id column.
-// spec: §4.4 line 281.
+// spec: §4.4.
 func (s *Store) DeleteByUser(ctx context.Context, tenantID, _ string, sessionIDs []string) error {
 	if len(sessionIDs) == 0 {
 		return nil
@@ -185,7 +185,7 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, _ string, sessionIDs
 }
 
 // DeleteByTenant soft-deletes every row scoped to tenantID.
-// Idempotent. spec: §4.4 line 281.
+// Idempotent. spec: §4.4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) error {
 	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
@@ -205,7 +205,7 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) error {
 // row. Cross-tenant: the sweep is a background worker that runs
 // without a tenant context — it uses pgtenant.InAllTenants the same
 // way the §12.5 retention GC and the partial-manifest sweep do.
-// spec: §4.4 line 281 / §12.5 GC concurrency model rule 6.
+// spec: §4.4 / §12.5 GC concurrency model rule 6.
 func (s *Store) SweepDeletedBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	var removed int64
 	if err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {

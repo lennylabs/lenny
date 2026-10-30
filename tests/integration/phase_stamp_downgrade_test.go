@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
-// downgradeErrCode is the §17.2 line 76 render-time fail-closed error the
+// downgradeErrCode is the §17.2 render-time fail-closed error the
 // phase-stamp ConfigMap template raises when a recorded-enabled
 // admission-plane feature flag is rendered as disabled without the
 // acceptFeatureFlagDowngrade override.
@@ -27,8 +27,7 @@ const chartDir = "../../charts/lenny"
 // the phase-stamp guard under test.
 var baseSet = []string{"global.spiffeTrustDomain=lenny-test", "coredns.clusterIP=10.96.0.10"}
 
-// TestPhaseStampDowngradeRenderTimeGuard is the §17.2
-// phase_stamp_downgrade_test.go suite (line 76). It parameterises every
+// TestPhaseStampDowngradeRenderTimeGuard is the §17.2 phase_stamp_downgrade_test.go suite. It parameterises every
 // (from, to) transition for each admission-plane feature flag and asserts
 // the layer-2 render-time fail-closed gate, exercised against a live
 // cluster via `helm install --dry-run=server` so Helm's `lookup` reads a
@@ -47,7 +46,7 @@ var baseSet = []string{"global.spiffeTrustDomain=lenny-test", "coredns.clusterIP
 // unrelated server-side CRD validation (cert-manager Certificates absent
 // on the bare cluster), which is out of scope for the guard under test.
 //
-// spec: §17.2 line 76 (layer-2 fail-closed chart render-time validation).
+// spec: §17.2.
 // F-17.2.15 / F-17.2.7.
 func TestPhaseStampDowngradeRenderTimeGuard(t *testing.T) {
 	kind.SkipUnlessAvailable(t)
@@ -114,8 +113,7 @@ func TestPhaseStampDowngradeRenderTimeGuard(t *testing.T) {
 // preflight Job's PREFLIGHT_PHASE_STAMP_MISMATCH check is the sole
 // enforcement on the GitOps code path.
 //
-// spec: §17.2 line 76 (scope limitation: lookup is empty under helm
-// template). F-17.2.15 / F-17.2.7.
+// spec: §17.2. F-17.2.15 / F-17.2.7.
 func TestPhaseStampDowngradeHelmTemplateIsNoOp(t *testing.T) {
 	helm.SkipUnlessAvailable(t)
 	// helm template never connects to a cluster, so no seeding is needed:

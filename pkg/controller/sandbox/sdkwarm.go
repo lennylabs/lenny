@@ -20,11 +20,11 @@ import (
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
-// defaultSDKConnectTimeout is the §6.1 line 69 sdkConnectTimeoutSeconds
+// defaultSDKConnectTimeout is the §6.1 sdkConnectTimeoutSeconds
 // default applied when a preConnect pool's ScalePolicy leaves it unset.
 const defaultSDKConnectTimeout = 60 * time.Second
 
-// sdkConnectTimeoutTotal is the §6.1 line 69 watchdog counter: it
+// sdkConnectTimeoutTotal is the §6.1 watchdog counter: it
 // increments when the WarmPoolController retires a pod that hung in
 // sdk_connecting past sdkConnectTimeoutSeconds. The §16.5 SDKConnectTimeout
 // alert reads its rate. Labeled by pool per the §16.1 catalog.
@@ -55,7 +55,7 @@ type sdkWarmConfig struct {
 
 // sdkWarmActive reports whether the warm path should route through
 // sdk_connecting: the runtime declares preConnect and the circuit breaker
-// has not disabled SDK-warm for the pool (§6.1 line 50).
+// has not disabled SDK-warm for the pool (§6.1).
 func (c sdkWarmConfig) sdkWarmActive() bool {
 	return c.preConnect && !c.disabled
 }
@@ -66,7 +66,7 @@ func (c sdkWarmConfig) sdkWarmActive() bool {
 // flag, and the sdkConnectTimeoutSeconds watchdog budget (SandboxWarmPool
 // by spec.poolRef). Any lookup miss yields preConnect=false so the pod
 // warms straight to pod-warm idle rather than blocking on a stuck
-// sdk_connecting phase. spec: §6.1 lines 30-69; §5.1 capabilities.preConnect.
+// sdk_connecting phase. spec: §6.1; §5.1 capabilities.preConnect.
 func (r *Reconciler) resolveSDKWarm(ctx context.Context, sb *lennyv1.Sandbox) sdkWarmConfig {
 	cfg := sdkWarmConfig{connectTimeout: defaultSDKConnectTimeout}
 
@@ -105,7 +105,7 @@ func (r *Reconciler) resolveSDKWarm(ctx context.Context, sb *lennyv1.Sandbox) sd
 // prior occupancy episode nor the whole-pod scrub counts against the
 // re-warm budget. The recycle edge also flips the success terminus from
 // idle to reserved (the claim projection owns the reserved write).
-// spec: §6.1 (watchdog clock per edge, reserved terminus), §3.3 (the
+// spec: §6.1 (watchdog clock per edge, reserved terminus).
 // watchdog measures only the re-warm leg).
 func sdkWarmInputs(sb *lennyv1.Sandbox, obs lifecycle.PodObservation, pod *corev1.Pod, cfg sdkWarmConfig, rewarm *time.Time, now time.Time) lifecycle.SDKWarmInputs {
 	elapsed := podRunningFor(pod, now)
@@ -145,7 +145,7 @@ func (r *Reconciler) observeRewarm(ctx context.Context, sb *lennyv1.Sandbox) (*t
 	// The re-warm leg is the recycling binding state with a stamp; a
 	// recycling claim without a stamp is still in the whole-pod scrub leg
 	// (which projects claimed, bounded by the scrub-report timeout, not the
-	// sdk_connecting watchdog). spec: §6.1, §3.3.
+	// sdk_connecting watchdog). spec: §6.1.
 	if cl.Status.Phase != string(claimstate.Recycling) || cl.Status.RewarmStartedAt == nil {
 		return nil, nil
 	}
@@ -157,7 +157,7 @@ func (r *Reconciler) observeRewarm(ctx context.Context, sb *lennyv1.Sandbox) (*t
 // elapsed since the gateway stamped rewarmStartedAt when the recycle
 // disposition began the SDK re-warm. A stamp in the future (clock skew)
 // yields zero so the watchdog stays dormant rather than firing spuriously.
-// spec: §6.1 (re-warm-start anchor), §3.3.
+// spec: §6.1 (re-warm-start anchor).
 func rewarmElapsed(rewarmStartedAt, now time.Time) time.Duration {
 	d := now.Sub(rewarmStartedAt)
 	if d < 0 {
@@ -177,7 +177,7 @@ func sdkWarmClaimName(podName string) string {
 }
 
 // podRunningFor returns how long the pod has been running, used as the
-// §6.1 line 69 sdk_connecting watchdog clock (SDK pre-connect begins when
+// §6.1 sdk_connecting watchdog clock (SDK pre-connect begins when
 // the pod starts running). A pod with no StartTime yet returns zero, which
 // disables the watchdog until the kubelet records the start.
 func podRunningFor(pod *corev1.Pod, now time.Time) time.Duration {

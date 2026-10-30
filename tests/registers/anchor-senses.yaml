@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+#
+# Anchor sense register.
+#
+# One entry per bare section citation of a retired anchor whose material
+# the reduction carves out, so the anchor-move map's single successor
+# would send it to the wrong heading. Keyed by file and by the 1-based
+# position of the citation among the retired-section citations that file
+# carries in source order, counting the prose and comment citations
+# alone. The change that runs the anchor pass over the whole write
+# domain empties it.
+kind: anchor-senses
+version: 1
+entries: []

@@ -1,0 +1,737 @@
+// SPDX-License-Identifier: MIT
+
+//go:build load_local
+
+// Tier-7a load_local concurrency coverage for the §10.1 coordinator-lost
+// hold termination.
+//
+// The hold arms on the sessions the adapter has started on the pod and its
+// timeout terminates every one of them. The set is read when the timeout
+// fires rather than recorded when the hold armed, because the hold-state
+// interceptor gates admission rather than binding: a start admitted before
+// the arming claims and runs afterwards, and a recorded set would leave
+// that session's agent process running with no coordinator.
+//
+// The timeout deregisters every started entry in one critical section
+// before it terminates any of them, which is what makes the loop and a
+// concurrent gateway Shutdown mutually exclusive. That handler decides on
+// the outcome of its own locked cancel-deregister step, so its step and
+// the pass's are two acquisitions of one lock: one of them is first, and
+// there is no schedule in which a request tests the entry before the pass
+// and runs its teardown after it.
+//
+// spec: §10.1 (coordinator-loss hold), §10.1.4 (the hold timeout), §5.2
+// (per-session teardown), §4.7 (the started entries the hold acts on).
+package tier7a_load_local_test
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
+
+	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+)
+
+// holdEvent is the decoded §4.7 control envelope the adapter pushes onto
+// the gateway control stream.
+type holdEvent struct {
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId"`
+	Reason    string `json:"reason"`
+	Usage     *struct {
+		InputTokens  int64 `json:"inputTokens"`
+		OutputTokens int64 `json:"outputTokens"`
+	} `json:"usage"`
+}
+
+// holdEventStream is a gateway control stream the case drives directly. It
+// collects every envelope the adapter emits and ends when the case closes
+// it, which is the coordinator loss the adapter arms its hold on.
+type holdEventStream struct {
+	grpc.ServerStream
+	ctx    context.Context
+	closed chan struct{}
+	once   sync.Once
+	done   chan error
+
+	mu   sync.Mutex
+	evs  []holdEvent
+	seen int
+}
+
+func newHoldEventStream() *holdEventStream {
+	return &holdEventStream{ctx: context.Background(), closed: make(chan struct{})}
+}
+
+func (f *holdEventStream) Context() context.Context     { return f.ctx }
+func (f *holdEventStream) SetHeader(metadata.MD) error  { return nil }
+func (f *holdEventStream) SendHeader(metadata.MD) error { return nil }
+func (f *holdEventStream) SetTrailer(metadata.MD)       {}
+func (f *holdEventStream) SendMsg(any) error            { return nil }
+func (f *holdEventStream) RecvMsg(any) error            { return io.EOF }
+
+func (f *holdEventStream) Send(r *adapterv1.AdapterEventsResponse) error {
+	var ev holdEvent
+	if err := json.Unmarshal(r.GetEnvelopeJson(), &ev); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	f.evs = append(f.evs, ev)
+	f.seen++
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *holdEventStream) Recv() (*adapterv1.AdapterEventsRequest, error) {
+	<-f.closed
+	return nil, io.EOF
+}
+
+// drop ends the stream, which is the §10.1 coordinator-loss signal, and
+// waits for the adapter's handler to return. The handler clears the pod's
+// event sink and arms the hold on its way out, and at most one stream is
+// open per pod, so a case that attaches a fresh stream waits here first.
+func (f *holdEventStream) drop() {
+	f.once.Do(func() {
+		close(f.closed)
+		if f.done != nil {
+			<-f.done
+		}
+	})
+}
+
+// events returns everything received so far.
+func (f *holdEventStream) events() []holdEvent {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]holdEvent(nil), f.evs...)
+}
+
+// settle waits until no further envelope has arrived for quiet, so a case
+// reads the whole of the termination's emissions.
+func (f *holdEventStream) settle(t *testing.T, quiet time.Duration) []holdEvent {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		f.mu.Lock()
+		mark := f.seen
+		f.mu.Unlock()
+		time.Sleep(quiet)
+		f.mu.Lock()
+		same := f.seen == mark
+		f.mu.Unlock()
+		if same {
+			return f.events()
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the control stream never went quiet")
+		}
+	}
+}
+
+// attach opens the control stream on s and blocks until the adapter has
+// taken it as the pod's event sink.
+func (f *holdEventStream) attach(t *testing.T, s *adapter.Server) {
+	t.Helper()
+	f.done = make(chan error, 1)
+	go func() { f.done <- s.AdapterEvents(f) }()
+	t.Cleanup(f.drop)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		s.EmitRateLimited("hold-probe")
+		f.mu.Lock()
+		attached := f.seen > 0
+		f.mu.Unlock()
+		if attached {
+			f.mu.Lock()
+			f.evs, f.seen = nil, 0
+			f.mu.Unlock()
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the adapter never attached the control stream")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// holdSharedRuntime models the pod's one shared runtime process the way
+// the sidecar transport behaves: Close removes the named session from the
+// sessions resident in the process and ends nothing, because the process
+// lives as long as the pod. CloseListener is the pod-scope teardown the
+// hold timeout runs, and it is counted. Gates let a case park a Start or a
+// Close.
+type holdSharedRuntime struct {
+	mu        sync.Mutex
+	active    map[string]struct{}
+	closed    []string
+	teardowns int
+
+	startGate map[string]chan struct{}
+	closeGate map[string]chan struct{}
+	onClosed  func(sessionID string)
+}
+
+func newHoldSharedRuntime() *holdSharedRuntime {
+	return &holdSharedRuntime{
+		active:    map[string]struct{}{},
+		startGate: map[string]chan struct{}{},
+		closeGate: map[string]chan struct{}{},
+	}
+}
+
+func (r *holdSharedRuntime) gateStart(sessionID string) chan struct{} {
+	g := make(chan struct{})
+	r.mu.Lock()
+	r.startGate[sessionID] = g
+	r.mu.Unlock()
+	return g
+}
+
+func (r *holdSharedRuntime) gateClose(sessionID string) chan struct{} {
+	g := make(chan struct{})
+	r.mu.Lock()
+	r.closeGate[sessionID] = g
+	r.mu.Unlock()
+	return g
+}
+
+func (r *holdSharedRuntime) Start(_ context.Context, sessionID string) error {
+	r.mu.Lock()
+	g := r.startGate[sessionID]
+	r.mu.Unlock()
+	if g != nil {
+		<-g
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.active[sessionID] = struct{}{}
+	return nil
+}
+
+func (r *holdSharedRuntime) WriteEnvelope(string, []byte) error { return nil }
+
+func (r *holdSharedRuntime) Output(context.Context, string) (<-chan []byte, error) {
+	ch := make(chan []byte)
+	close(ch)
+	return ch, nil
+}
+
+func (r *holdSharedRuntime) Interrupt(context.Context, string, bool) error { return nil }
+
+func (r *holdSharedRuntime) Close(_ context.Context, sessionID string) error {
+	r.mu.Lock()
+	g := r.closeGate[sessionID]
+	r.mu.Unlock()
+	if g != nil {
+		<-g
+	}
+	r.mu.Lock()
+	r.closed = append(r.closed, sessionID)
+	delete(r.active, sessionID)
+	r.mu.Unlock()
+	if r.onClosed != nil {
+		r.onClosed(sessionID)
+	}
+	return nil
+}
+
+func (r *holdSharedRuntime) closes() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.closed...)
+}
+
+// CloseListener counts the pod-scope teardown.
+func (r *holdSharedRuntime) CloseListener() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.teardowns++
+	return nil
+}
+
+func (r *holdSharedRuntime) podTeardowns() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.teardowns
+}
+
+func (r *holdSharedRuntime) resident() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, 0, len(r.active))
+	for id := range r.active {
+		out = append(out, id)
+	}
+	return out
+}
+
+// holdScrubReporter counts the §5.2 cleanup-outcome reports per session.
+type holdScrubReporter struct {
+	mu    sync.Mutex
+	count map[string]int
+}
+
+func newHoldScrubReporter() *holdScrubReporter {
+	return &holdScrubReporter{count: map[string]int{}}
+}
+
+func (r *holdScrubReporter) ReportSessionScrub(_ context.Context, _, sessionID string, _ gatewaycontrol.SessionScrubOutcome) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.count[sessionID]++
+	return nil
+}
+
+func (r *holdScrubReporter) counts() map[string]int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := map[string]int{}
+	for k, v := range r.count {
+		out[k] = v
+	}
+	return out
+}
+
+// holdFakeTimer is one armed §10.1 hold timer. Firing it runs the
+// timeout inline on the caller's goroutine, which makes the fire instant a
+// program point the case can rendezvous on rather than a wall-clock
+// estimate.
+type holdFakeTimer struct {
+	mu      sync.Mutex
+	fn      func()
+	stopped bool
+}
+
+func (h *holdFakeTimer) Stop() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.stopped {
+		return false
+	}
+	h.stopped = true
+	return true
+}
+
+// fire runs the timeout unless a fence stopped the timer first.
+func (h *holdFakeTimer) fire() {
+	h.mu.Lock()
+	stopped := h.stopped
+	h.mu.Unlock()
+	if stopped {
+		return
+	}
+	h.fn()
+}
+
+// holdTimerClock is the injected hold-timer seam. It records every timer
+// the adapter arms so a case fires the timeout explicitly.
+type holdTimerClock struct {
+	mu    sync.Mutex
+	armed []*holdFakeTimer
+}
+
+func (c *holdTimerClock) After(_ time.Duration, fn func()) adapter.TimerHandle {
+	h := &holdFakeTimer{fn: fn}
+	c.mu.Lock()
+	c.armed = append(c.armed, h)
+	c.mu.Unlock()
+	return h
+}
+
+// last returns the most recently armed timer, failing the case when the
+// hold never armed.
+func (c *holdTimerClock) last(t *testing.T) *holdFakeTimer {
+	t.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.armed) == 0 {
+		t.Fatal("the hold never armed a timeout timer")
+	}
+	return c.armed[len(c.armed)-1]
+}
+
+// holdRacePod builds an adapter whose per-slot trees sit under a temp
+// directory, with the §10.1 hold timer driven through the injected seam
+// rather than by a wall clock.
+func holdRacePod(t *testing.T, rt adapter.RuntimeProcess) (*adapter.Server, *holdTimerClock) {
+	t.Helper()
+	base := t.TempDir()
+	clk := &holdTimerClock{}
+	s := adapter.New("test")
+	s.WorkspaceBase = filepath.Join(base, "workspace")
+	s.SessionsRoot = filepath.Join(base, "sessions")
+	s.ArtifactsRoot = filepath.Join(base, "artifacts")
+	s.CredentialsDir = filepath.Join(base, "run", "lenny")
+	s.PostMortemDir = t.TempDir()
+	s.Runtime = rt
+	s.HoldAfterFunc = clk.After
+	return s, clk
+}
+
+// holdRaceClient serves the adapter over bufconn and returns a client, so
+// an inbound request runs the §10.1.4 hold-state interceptor and is
+// refused with UNAVAILABLE + coordinator_hold until the timeout clears the
+// hold. A direct method call on the Server value bypasses the allowlist.
+func holdRaceClient(t *testing.T, s *adapter.Server) adapterv1.AdapterClient {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	gs := adapter.NewGRPCServer(s)
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("dial bufconn: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return adapterv1.NewAdapterClient(conn)
+}
+
+// heldRefusal reports whether err is the hold's coordinator_hold refusal.
+func heldRefusal(err error) bool {
+	st, ok := status.FromError(err)
+	return ok && st.Code() == codes.Unavailable && strings.Contains(st.Message(), "coordinator_hold")
+}
+
+func startHoldSession(t *testing.T, s *adapter.Server, sessionID string) {
+	t.Helper()
+	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+		Runtime:   "echo",
+	}); err != nil {
+		t.Fatalf("StartSession(%s): %v", sessionID, err)
+	}
+}
+
+// awaitClosed blocks until the runtime has seen a close for every session.
+func awaitClosed(t *testing.T, rt *holdSharedRuntime, sessions ...string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		seen := map[string]bool{}
+		for _, id := range rt.closes() {
+			seen[id] = true
+		}
+		all := true
+		for _, id := range sessions {
+			if !seen[id] {
+				all = false
+			}
+		}
+		if all {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the termination never closed every session; closes = %v", rt.closes())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// spec: 10.1 (coordinator-loss hold), 10.1.4 (the hold timeout), 5.2
+// (per-session teardown), 4.7 (the started entries the hold terminates)
+//
+// diagnosis: a failure means the hold termination and a concurrent gateway
+// Shutdown are no longer mutually exclusive, or the terminated set is
+// recorded when the hold arms rather than read when it fires. The first
+// leaves a terminated session double-flushed onto §8.3 budget_return and
+// reported as scrubbed by a request that tore nothing down. The second
+// leaves the agent process of a session started inside the hold running
+// with live provider credentials and no coordinator.
+func TestCoordinatorHoldTerminationRacesConcurrentShutdown_spec_10_1(t *testing.T) {
+	t.Run("the terminated set is read when the timeout fires", func(t *testing.T) {
+		rt := newHoldSharedRuntime()
+		s, clk := holdRacePod(t, rt)
+		meter := adapter.NewSessionUsageMeter(time.Now)
+		meter.Add("sess-a", 5, 1)
+		meter.Add("sess-b", 7, 2)
+		s.Usage = meter
+		startHoldSession(t, s, "sess-a")
+
+		arming := newHoldEventStream()
+		arming.attach(t, s)
+		// The coordinator is lost with one started session on the pod.
+		arming.drop()
+
+		// A start admitted before the arming claims and runs afterwards. A
+		// set recorded at arming time omits it, and its agent process then
+		// survives the pod's own self-termination.
+		startHoldSession(t, s, "sess-b")
+
+		// A new coordinator re-attaches the stream without fencing, which
+		// the hold's allowlist admits, so the loop's emissions are visible.
+		observer := newHoldEventStream()
+		observer.attach(t, s)
+
+		// The timeout fires at a program point, after the start the hold
+		// admitted has landed.
+		clk.last(t).fire()
+
+		awaitClosed(t, rt, "sess-a", "sess-b")
+		evs := observer.settle(t, 100*time.Millisecond)
+
+		if got := rt.podTeardowns(); got != 1 {
+			t.Errorf("the pod-scope teardown ran %d time(s), want 1", got)
+		}
+		terminating := map[string]int{}
+		for _, ev := range evs {
+			if ev.Type == "AdapterTerminating" {
+				terminating[ev.SessionID]++
+			}
+		}
+		for _, id := range []string{"sess-a", "sess-b"} {
+			if terminating[id] != 1 {
+				t.Errorf("AdapterTerminating envelopes naming %s = %d, want 1; events = %+v",
+					id, terminating[id], evs)
+			}
+		}
+		if len(terminating) != 2 {
+			t.Errorf("AdapterTerminating envelopes by session = %v, want one per terminated session", terminating)
+		}
+	})
+
+	t.Run("a concurrent Shutdown and the deregistration pass exclude each other", func(t *testing.T) {
+		// The §5.2 scrub report is withheld without a cached pod identity,
+		// so the case would not see a scrub at all without this.
+		t.Setenv("POD_NAME", "pod-hold-race")
+		for attempt := 0; attempt < raceAttempts; attempt++ {
+			rt := newHoldSharedRuntime()
+			s, clk := holdRacePod(t, rt)
+			meter := adapter.NewSessionUsageMeter(time.Now)
+			meter.Add("sess-a", 5, 1)
+			meter.Add("sess-b", 7, 2)
+			s.Usage = meter
+			scrub := newHoldScrubReporter()
+			s.SessionScrubReporter = scrub
+			startHoldSession(t, s, "sess-a")
+			startHoldSession(t, s, "sess-b")
+			client := holdRaceClient(t, s)
+
+			arming := newHoldEventStream()
+			arming.attach(t, s)
+			arming.drop()
+			// The allowlist admits a new coordinator re-attaching the
+			// stream without fencing, which is how the loop's emissions
+			// become observable.
+			observer := newHoldEventStream()
+			observer.attach(t, s)
+
+			// The hold is armed, so the allowlist refuses a terminal
+			// request. The probe pins the interceptor into the path the
+			// racing requests take below: a request that reached the
+			// handler directly would skip the refusal the retry loop is
+			// written against.
+			if _, err := client.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+				UnconditionalTeardown: true,
+				SessionId:             &adapterv1.SessionId{Value: "sess-probe"},
+			}); !heldRefusal(err) {
+				t.Fatalf("attempt %d: Shutdown while the hold is armed = %v, want the "+
+					"UNAVAILABLE coordinator_hold refusal", attempt, err)
+			}
+
+			// The fire instant and the terminal requests leave one
+			// rendezvous together, and each request is driven on a tight
+			// retry from it: every attempt before the timeout clears the
+			// hold is refused under the allowlist, and the first admitted
+			// one races the deregistration pass's own s.mu acquisition. One
+			// stimulus therefore reaches both interleavings of the two
+			// locked steps.
+			timer := clk.last(t)
+			rs := newRaceStart(3)
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				rs.arrive()
+				timer.fire()
+			}()
+			for _, id := range []string{"sess-a", "sess-b"} {
+				wg.Add(1)
+				go func(id string) {
+					defer wg.Done()
+					rs.arrive()
+					deadline := time.Now().Add(30 * time.Second)
+					for {
+						resp, err := client.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+							UnconditionalTeardown: true,
+							SessionId:             &adapterv1.SessionId{Value: id},
+							Reason:                "session_complete",
+						})
+						if heldRefusal(err) {
+							// Expected before the timeout clears the hold.
+							if time.Now().After(deadline) {
+								t.Errorf("attempt %d: Shutdown(%s) was never admitted after the hold cleared",
+									attempt, id)
+								return
+							}
+							continue
+						}
+						if err != nil {
+							t.Errorf("attempt %d: terminal Shutdown(%s) = %v, want the idempotent no-op",
+								attempt, id, err)
+							return
+						}
+						if !resp.GetExitedCleanly() {
+							t.Errorf("attempt %d: terminal Shutdown(%s) reported an unclean exit", attempt, id)
+						}
+						return
+					}
+				}(id)
+			}
+			rs.release(t)
+			wg.Wait()
+
+			awaitClosed(t, rt, "sess-a", "sess-b")
+			evs := observer.settle(t, 50*time.Millisecond)
+
+			usage := map[string]int{}
+			for _, ev := range evs {
+				if ev.Type == "FINAL_USAGE_REPORT" {
+					usage[ev.SessionID]++
+				}
+			}
+			for _, id := range []string{"sess-a", "sess-b"} {
+				if usage[id] != 1 {
+					t.Fatalf("attempt %d: FINAL_USAGE_REPORTs for %s = %d, want exactly one across the "+
+						"termination loop and the terminal request; §8.3 budget_return consumes each one",
+						attempt, id, usage[id])
+				}
+				if got := scrub.counts()[id]; got > 1 {
+					t.Fatalf("attempt %d: ReportSessionScrub for %s = %d, want at most one; "+
+						"the termination loop performs no scrub", attempt, id, got)
+				}
+			}
+			// The teardown does not read the collected set, so it runs once
+			// whichever side of the race removed a member.
+			if got := rt.podTeardowns(); got != 1 {
+				t.Fatalf("attempt %d: the pod-scope teardown ran %d time(s), want 1", attempt, got)
+			}
+		}
+	})
+}
+
+// spec: 10.1 (coordinator-loss hold), 10.1.4 (the hold timeout), 5.2
+// (per-session teardown), 4.7.1 (role and gateway RPC contract, rule 8:
+// the start-confirmation rule)
+//
+// The started flag is written by the merged claim rather than by the
+// start, so a member whose claim returned and whose Runtime.Start has not
+// run is in the terminated set. Closing it ends nothing, because the
+// process never held it. The start that lands afterwards confirms against
+// the registry before it records the runtime as holding the session, finds
+// the entry the termination deregistered gone, takes the session back off
+// the shared runtime process, and refuses with codes.Aborted. No agent
+// process is left serving a session with no coordinator and no registry
+// entry naming it.
+//
+// diagnosis: a panic or a late StartSession that returns nil means the
+// start no longer confirms its claim and the late start is resident with
+// no registry entry; a non-empty resident set means the refusal arm stopped
+// closing the session on the shared runtime process.
+func TestCoordinatorHoldTerminationRacesALateRuntimeStart_spec_10_1(t *testing.T) {
+	rt := newHoldSharedRuntime()
+	s, clk := holdRacePod(t, rt)
+
+	// sess-a claims its slot and parks inside Runtime.Start, so the
+	// registry holds it as started while the process never receives it.
+	lateStart := rt.gateStart("sess-a")
+	started := make(chan error, 1)
+	go func() {
+		_, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+			SessionId: &adapterv1.SessionId{Value: "sess-a"},
+			Runtime:   "echo",
+		})
+		started <- err
+	}()
+	awaitStartedEntry(t, s, "sess-a")
+	startHoldSession(t, s, "sess-b")
+
+	// The parked start is released from inside the termination's close of
+	// sess-a, so its Runtime.Start returns while the termination still
+	// holds sess-a's slot guard. The start's open sequence runs under that
+	// serialization (§28.5.3, CH-MSGSOCK, Session frame writes), so it
+	// waits for the termination's section to end rather than completing
+	// inside it, and then finds the entry gone. The hook fires on the
+	// termination's close of sess-a only: the refused start closes sess-a a
+	// second time, and that close must not release the gates again.
+	cotenantClose := rt.gateClose("sess-b")
+	var hookFired atomic.Bool
+	rt.onClosed = func(sessionID string) {
+		if sessionID != "sess-a" || !hookFired.CompareAndSwap(false, true) {
+			return
+		}
+		close(lateStart)
+		close(cotenantClose)
+	}
+
+	arming := newHoldEventStream()
+	arming.attach(t, s)
+	arming.drop()
+	clk.last(t).fire()
+
+	awaitClosed(t, rt, "sess-a", "sess-b")
+	var lateErr error
+	select {
+	case lateErr = <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the late StartSession never returned after the termination released the slot serialization")
+	}
+
+	if code := status.Code(lateErr); code != codes.Aborted {
+		t.Errorf("the late StartSession = %v (code %v), want codes.Aborted: the start must "+
+			"refuse once the termination has deregistered its entry", lateErr, code)
+	}
+	if got := rt.resident(); len(got) != 0 {
+		t.Errorf("the shared runtime process holds %v after the termination, want none: "+
+			"the refused start takes the session back off the process", got)
+	}
+	for _, id := range []string{"sess-a", "sess-b"} {
+		if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: id},
+		}); err != nil {
+			t.Errorf("Shutdown(%s) after the termination = %v, want the idempotent no-op", id, err)
+		}
+	}
+}
+
+// awaitStartedEntry blocks until the session's claim has landed in the
+// slot registry. The claim's own critical section records the session that
+// took the once-per-pod intra-pod MCP start, which the adapter exposes, so
+// the case reads the claim rather than the start that follows it.
+func awaitStartedEntry(t *testing.T, s *adapter.Server, sessionID string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if arming, _ := s.PodMCPArming(); arming == sessionID {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the claim for %s never landed", sessionID)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}

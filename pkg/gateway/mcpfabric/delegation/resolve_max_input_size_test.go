@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §8.3 lines 149-157 / §4.8 line 974 — Service.ResolveMaxInputSize
+// spec: §8.3 / §4.8 — Service.ResolveMaxInputSize
 // returns the parent runtime's effective contentPolicy.maxInputSize so
 // the §4.8 DelegationPolicyEvaluator measures TaskSpec.input against the
 // per-policy ceiling rather than the cluster default alone. A parent

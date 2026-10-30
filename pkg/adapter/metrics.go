@@ -9,7 +9,7 @@ import (
 )
 
 // §4.7 Adapter-Agent Security Boundary counters
-// (spec/04_system-components.md lines 870-888). Both are registered with
+// (§4.7.11). Both are registered with
 // the default Prometheus registry at package init so they appear on the
 // adapter's metrics endpoint once a scrape target is wired.
 var (
@@ -23,7 +23,7 @@ var (
 		Help: "Pod starts in nonce-only mode with --require-so-peercred=false " +
 			"(§4.7). Deployers MUST alert on a non-zero value.",
 	})
-	// §4.7 line 820: per-provider count of outbound LLM requests the
+	// §4.7: per-provider count of outbound LLM requests the
 	// runtime reported via llm_request_started without a matching
 	// llm_request_completed. The Full-level rotation gate clears when it
 	// reaches zero.
@@ -32,7 +32,7 @@ var (
 		Help: "Outbound LLM requests in flight per provider (§4.7 direct-mode " +
 			"in-flight gate), tracked from llm_request_started / completed.",
 	}, []string{"provider"})
-	// §4.7 lines 820-829: Full-level credential-rotation in-flight gate
+	// §4.7: Full-level credential-rotation in-flight gate
 	// observability. The wait histogram records how long the gate blocked
 	// for in-flight LLM requests to drain; the ceiling counter records
 	// fault/revocation rotations that hit the 300s cap; the timeout
@@ -63,14 +63,14 @@ var (
 			"release (§4.7), labelled by pool and provider.",
 		Buckets: []float64{0.01, 0.1, 1, 5, 15, 30, 60},
 	}, []string{"pool", "provider"})
-	// §4.7 lines 652-662: adapter→gateway control events surfaced over the
-	// gRPC LifecycleChannel stream (RATE_LIMITED, AUTH_EXPIRED,
+	// §4.7: adapter→gateway control events surfaced over the
+	// gRPC AdapterEvents stream (RATE_LIMITED, AUTH_EXPIRED,
 	// PROVIDER_UNAVAILABLE, LEASE_REJECTED, AdapterTerminating,
 	// FINAL_USAGE_REPORT). Sent counts the events delivered onto the stream.
 	controlEventsSent = mustCounterVec(prometheus.CounterOpts{
 		Name: "lenny_adapter_control_events_total",
 		Help: "Adapter→gateway control events queued onto the §4.7 " +
-			"LifecycleChannel stream, labelled by event type.",
+			"AdapterEvents stream, labelled by event type.",
 	}, []string{"event"})
 	// controlEventsDropped counts events emitted while no gateway stream is
 	// attached or the per-stream buffer is full. A non-zero value means a
@@ -80,7 +80,39 @@ var (
 		Help: "Adapter→gateway control events that could not be delivered " +
 			"(§4.7), labelled by event type and drop reason.",
 	}, []string{"event", "reason"})
-	// §10.1 line 52: 1 while the adapter is in the coordinator-loss hold
+	// §28.5.3: set_tracing_context frames dropped because the frame
+	// named an identifier that is not the live binding of the Attach stream
+	// that delivered it. A non-zero value means a runtime stamped a session
+	// identifier that names another stream, or emitted the frame after its
+	// binding was released. A frame carrying no identifier at all is
+	// counted by unaddressedFrameRejected instead.
+	setTracingContextDropped = mustCounter(prometheus.CounterOpts{
+		Name: "lenny_adapter_set_tracing_context_dropped_total",
+		Help: "set_tracing_context frames dropped because they did not " +
+			"address the Attach stream that delivered them (§28.5.3).",
+	})
+	// §4.7.1 rule 13 and §16.1: a Shutdown carrying a bind attempt token
+	// met a registry entry that carries none, so the reclaim answered
+	// superseded and removed nothing. It counts the reclaims that met an
+	// entry no attempt owns, such as an entry a start created. The series
+	// carries no pod label, because the adapter's scrape target attaches it.
+	slotShutdownUntokenedEntry = mustCounter(prometheus.CounterOpts{
+		Name: "lenny_slot_shutdown_untokened_entry_total",
+		Help: "Shutdown requests carrying a bind attempt token that met a " +
+			"slot registry entry carrying none (§4.7.1, §16.1).",
+	})
+	// §28.5.3: session-scoped frames rejected because they carry no
+	// per-session identifier on a pod holding more than one slot, where
+	// nothing in the frame says which session they address. The rejection
+	// is taken per Attach stream, so one such frame on a pod holding two
+	// live streams increments this twice. Labelled by frame type.
+	unaddressedFrameRejected = mustCounterVec(prometheus.CounterOpts{
+		Name: "lenny_adapter_unaddressed_frame_rejected_total",
+		Help: "Session-scoped frames carrying no per-session identifier " +
+			"rejected on a pod holding more than one slot (§28.5.3), " +
+			"labelled by frame type.",
+	}, []string{"frame_type"})
+	// §10.1.4: 1 while the adapter is in the coordinator-loss hold
 	// state awaiting a new coordinator's CoordinatorFence, 0 otherwise.
 	coordinatorHold = mustGauge(prometheus.GaugeOpts{
 		Name: "lenny_adapter_coordinator_hold",
@@ -173,7 +205,7 @@ func IncSoPeercredSelftestFailed() { soPeercredSelftestFailed.WithLabelValues().
 func IncSoPeercredDisabled() { soPeercredDisabled.WithLabelValues().Inc() }
 
 // incControlEventSent records a §4.7 control event queued onto the
-// LifecycleChannel stream.
+// AdapterEvents stream.
 func incControlEventSent(event string) { controlEventsSent.WithLabelValues(event).Inc() }
 
 // incControlEventDropped records a §4.7 control event that could not be
@@ -182,9 +214,26 @@ func incControlEventDropped(event, reason string) {
 	controlEventsDropped.WithLabelValues(event, reason).Inc()
 }
 
-// setCoordinatorHold publishes the §10.1 line 52 coordinator-hold gauge:
-// 1 while the adapter is in hold state, 0 once a fence resolves it or the
-// hold times out into self-termination.
+// incSetTracingContextDropped records a §28.5.3 set_tracing_context
+// frame the adapter dropped because it addressed another Attach stream.
+func incSetTracingContextDropped() { setTracingContextDropped.WithLabelValues().Inc() }
+
+// incSlotShutdownUntokenedEntry records a Shutdown whose bind attempt token
+// met a slot registry entry carrying none, which §4.7.1 rule 13 answers
+// superseded. spec: §4.7.1 (role and gateway RPC contract); §16.1.
+func incSlotShutdownUntokenedEntry() { slotShutdownUntokenedEntry.WithLabelValues().Inc() }
+
+// incUnaddressedFrameRejected records a §28.5.3 session-scoped frame the
+// adapter rejected because it carried no per-session identifier on a pod
+// holding more than one slot. It is counted once per rejecting Attach
+// stream, which is where the decision is taken.
+func incUnaddressedFrameRejected(frameType string) {
+	unaddressedFrameRejected.WithLabelValues(frameType).Inc()
+}
+
+// setCoordinatorHold publishes the §10.1 coordinator-hold gauge, which
+// reads 1 while the adapter is in hold state and 0 once a fence resolves
+// it or the hold times out into self-termination.
 func setCoordinatorHold(active bool) {
 	v := 0.0
 	if active {

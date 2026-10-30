@@ -62,7 +62,7 @@ func TestDiagnoseSessionEndpoint(t *testing.T) {
 // TestDiagnoseSessionDegradedReturns207 — a diagnosis served with a
 // degradation envelope (a fallback source or an unenrichable field)
 // returns 207 Multi-Status, mirroring the DIAGNOSTICS_PARTIAL mapping.
-// spec: §25.6 lines 2908-2920. F-25.6.1.
+// spec: §25.6. F-25.6.1.
 func TestDiagnoseSessionDegradedReturns207_spec_25_6_2908(t *testing.T) {
 	src := fakeDiagSource{session: diagnostics.SessionRecord{
 		SessionID: "sess-1", State: "failed", Found: true,
@@ -135,7 +135,7 @@ func TestDiagnosticsUnavailableWithoutService(t *testing.T) {
 	}
 }
 
-// TestDiagnosticsRequestDurationObserved covers §25.6 line 2926 — every
+// TestDiagnosticsRequestDurationObserved covers §25.6 — every
 // diagnostic-endpoint call records a sample on the
 // lenny_diagnostics_request_duration_seconds{endpoint} histogram.
 func TestDiagnosticsRequestDurationObserved_spec_25_6_2926(t *testing.T) {

@@ -10,35 +10,14 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// checkpointRoots returns the §4.4 checkpoint bundle: the session
-// workspace under workspace.WorkspacePrefix, plus the §6.4 line 380
-// /sessions session-file tmpfs under workspace.SessionsPrefix when the
-// adapter is configured with a SessionsRoot. The sessions root is
-// skipped (no entries) when unset or absent on disk, so a runtime that
-// keeps no session file checkpoints workspace-only exactly as before.
-//
-// spec: §7.3 line 408 step (e) (replay workspace checkpoint) + line 409
-// step (f) (restore session file to expected path) — both replayed from
-// this one bundle on Resume.
-func (s *Server) checkpointRoots() []workspace.NamedRoot {
-	roots := []workspace.NamedRoot{
-		{Prefix: workspace.WorkspacePrefix, Root: s.WorkspaceRoot},
-	}
-	if s.SessionsRoot != "" {
-		roots = append(roots, workspace.NamedRoot{
-			Prefix: workspace.SessionsPrefix, Root: s.SessionsRoot,
-		})
-	}
-	return roots
-}
-
 // probeWorkspaceBytes measures the on-disk workspace byte total for the
-// §4.4 line 254 pre-checkpoint size probe, summing every checkpoint root
+// §4.4 pre-checkpoint size probe, summing every checkpoint root
 // the resume path replays so the gateway reserves quota against the whole
 // bundle rather than the workspace tree alone. It takes the precomputed
 // roots the handler resolved for the slot so the probe measures the same
@@ -55,23 +34,55 @@ func (s *Server) probeWorkspaceBytes(roots []workspace.NamedRoot) (int64, error)
 	return total, nil
 }
 
+// checkChunkEncoding refuses a CheckpointStart whose declared chunk_encoding
+// is not the encoding ArchiveTree produces. The gateway records the declared
+// value on the manifest row and in every chunk key, and the resume path and
+// the operator's manual recovery select the decoder from it, so chunks
+// written in another encoding than the one declared would be undecodable by
+// every reader that follows the manifest. The refusal uses InvalidArgument,
+// the code this handler already returns for a malformed opening frame. It
+// runs before the checkpoint roots are resolved, before the op lock is
+// taken, and before the probe, so no grant is minted and the runtime is
+// never quiesced. FailedPrecondition is not used because the gateway reads
+// it as the workspace-size-probe rejection.
+//
+// An empty value is accepted as tar.gz. It is the proto3 zero value, and the
+// gateway's manifest store and readers resolve an empty chunk_encoding to
+// tar.gz as well, so an undeclared encoding and the produced one agree.
+//
+// spec: §10.1 (Chunked-object storage model: "A fixed chunk_encoding is
+// chosen once at intent-row INSERT time"; the resume path "selects the
+// decoder strictly from the manifest's chunk_encoding column"); §4.4 (MinIO
+// object key logging for manual recovery: "The decompression step MUST be
+// selected from the logged chunk_encoding field").
+func checkChunkEncoding(declared string) error {
+	if declared == "" || declared == workspace.ArchiveTreeEncoding {
+		return nil
+	}
+	return status.Errorf(codes.InvalidArgument,
+		"Checkpoint chunk_encoding %q is not produced by this adapter; it writes %q",
+		declared, workspace.ArchiveTreeEncoding)
+}
+
 // Checkpoint serves the §4.4 / §10.1 gateway-driven Checkpoint stream. The
 // gateway is the gRPC client: it opens the stream with a CheckpointStart
 // carrying the gateway-minted checkpoint_id, the adapter reports the
 // on-disk workspace size (CheckpointProbe) so the gateway reserves storage
 // quota, and then the adapter archives the checkpoint bundle into a
-// continuous tar (or tar.gz) byte stream, slices it into fixed-size
+// continuous tar.gz byte stream, slices it into fixed-size
 // chunks, and for each chunk declares it (ChunkReady), receives a
 // single-chunk presigned PUT capability (CheckpointGrant), PUTs the chunk
 // against object storage replaying every signed header verbatim, and
 // confirms it (ChunkCommitted). The stream closes with a CheckpointSummary
 // on success, a CheckpointFailed carrying the object store's HTTP status
 // and error code when a chunk PUT is rejected, or a FailedPrecondition
-// gRPC status when the §4.4 line 255 workspace-size probe rejects the
-// attempt before any grant is minted.
+// gRPC status when the §4.4 workspace-size probe rejects the
+// attempt before any grant is minted. A CheckpointStart that declares a
+// chunk_encoding other than tar.gz is refused with InvalidArgument before
+// any of that runs (checkChunkEncoding).
 //
 // spec: §4.4 (checkpoint quiescence, hard workspace size limit, storage
-// failure retry budget); §10.1 line 130 (the gateway mints checkpoint_id).
+// failure retry budget); §10.1.
 func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	ctx := stream.Context()
 	first, err := stream.Recv()
@@ -83,33 +94,64 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 		return status.Error(codes.InvalidArgument,
 			"Checkpoint stream must open with a CheckpointStart")
 	}
-	if s.WorkspaceRoot == "" {
+	if s.WorkspaceBase == "" {
 		return status.Error(codes.FailedPrecondition,
-			"adapter is not configured with a workspace root")
+			"adapter is not configured with a workspace base")
 	}
 	if s.CheckpointTransport == nil {
 		return status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a checkpoint transport")
 	}
 
-	// spec: §5.2, §6.4 — resolve the checkpoint bundle for the target slot
-	// once. An absent slot_id yields the pod-global bundle unchanged; a
-	// named slot yields its slot subtree, and an unassigned slot is rejected
-	// with FailedPrecondition before the op lock is taken or any grant is
+	// spec: §4.1 — Checkpoint is session-scoped, so the opening frame's
+	// session identifier is the address the whole stream is served under.
+	// An empty or unsafe address is a malformed request rather than a
+	// session the pod does not hold: it is refused with InvalidArgument
+	// before any root is resolved and before the op lock is taken, so a
+	// path-traversal segment never reaches the slot layout and an
+	// unaddressed stream never queues behind a real session's checkpoint.
+	sessionID := start.GetSessionId().GetValue()
+	if sessionID == "" {
+		return status.Error(codes.InvalidArgument, "Checkpoint requires a session id")
+	}
+	if err := slotlayout.ValidateSlotID(sessionID); err != nil {
+		return status.Errorf(codes.InvalidArgument, "Checkpoint session id: %v", err)
+	}
+	if err := checkChunkEncoding(start.GetChunkEncoding()); err != nil {
+		return err
+	}
+
+	// spec: §5.2, §6.4 — resolve the checkpoint bundle for the session the
+	// opening frame names, which is the stream's sole per-session address.
+	// A session the registry holds no bound entry for is rejected with
+	// FailedPrecondition before the op lock is taken or any grant is
 	// minted.
-	roots, err := s.checkpointRootsForSlot(start.GetSlotId().GetValue())
+	roots, slot, err := s.checkpointRootsForSession(sessionID)
 	if err != nil {
 		return err
 	}
 
 	// spec: §4.7 — the Checkpoint RPC shares the pod-level op lock with
 	// Interrupt so at most one runs at a time. The lock admits one pending
-	// checkpoint per distinct slotId and promotes them in slot-ID order
-	// (spec: §5.2), so a concurrent-session drain checkpoints every slot.
+	// checkpoint per distinct session identifier and promotes the lowest
+	// identifier next (spec: §5.2), so a concurrent-session drain
+	// checkpoints every session. Session identifiers are opaque, so that
+	// order is a lexicographic tie-break chosen so the promotion pick is a
+	// pure function of the pending set rather than of the iteration order
+	// of the pending map. It carries no ordinal, arrival-order, or
+	// fairness meaning and it establishes no liveness property.
 	// A barrier-window checkpoint runs through the same lock; the barrier's
 	// quiescence has already drained dispatch, so the lock is uncontended
 	// there by construction.
-	release, err := s.ops.Begin(ctx, opCheckpoint, start.GetSlotId().GetValue())
+	//
+	// The checkpoint_request and checkpoint_complete frames this stream
+	// writes wait for the session's session_started, and the wait runs
+	// here, before the op lock, because a wait under s.ops would block
+	// every co-tenant's checkpoint and interrupt.
+	if err := s.awaitCheckpointGate(ctx, slot, start); err != nil {
+		return err
+	}
+	release, err := s.ops.Begin(ctx, opCheckpoint, sessionID)
 	if err != nil {
 		// A busy lock is a gateway-side abort of this attempt; the gateway
 		// finalises the manifest row partial.
@@ -117,17 +159,22 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	}
 	defer release()
 
-	// Link a quiesce-and-hold barrier, if one is waiting, to this stream's
-	// checkpoint_id and signal it on stream termination so the barrier's
-	// CheckpointBarrierAck echoes the gateway-minted id (§10.1 line 167).
-	linked := s.barrier.link(start.GetCheckpointId())
+	// Link this session's quiesce-and-hold barrier, if one is waiting, to
+	// this stream's checkpoint_id and signal it on stream termination so
+	// the barrier's CheckpointBarrierAck echoes the gateway-minted id
+	// (§10.1.8). The gate is the one on the entry the guard above
+	// resolved: the op lock queues this stream behind a co-tenant
+	// session's whole upload, and either deregistration path can delete
+	// the map key inside that interval, so a second lookup here would
+	// leave the waiting barrier unlinked and its ack empty.
+	linked := slot.barrier.link(start.GetCheckpointId())
 	if linked {
-		defer s.barrier.complete()
+		defer slot.barrier.complete()
 	}
 
 	trigger := checkpoint.TriggerFromProto(start.GetTrigger())
 
-	// spec: §4.4 line 254-255 — probe the on-disk workspace size and enforce
+	// spec: §4.4 — probe the on-disk workspace size and enforce
 	// the hard limit before the quiescence handshake. An over-limit workspace
 	// aborts with FailedPrecondition before any grant is minted and before
 	// the runtime is quiesced, so a checkpoint that cannot be taken never
@@ -148,19 +195,39 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 		return serr
 	}
 
-	// spec: §4.4 line 241 — Full-level runtimes quiesce cooperatively over
-	// the lifecycle channel: checkpoint_request → checkpoint_ready before the
+	// spec: §4.4 — Full-level runtimes quiesce cooperatively over
+	// CH-RUNTIMEOPS: checkpoint_request → checkpoint_ready before the
 	// first chunk is archived, checkpoint_complete after the stream ends. The
 	// runtime stays quiesced for the whole chunked archive, and the completion
 	// frame carries status ok only when Summary is reached; a terminal Failed
 	// frame or a gateway Abort completes with status failed and the reason.
+	// Both frames name the session the stream checkpoints, so a runtime
+	// holding several sessions quiesces only this one.
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+	//
+	// The entry's acknowledgement gate is read again after the op lock is
+	// held, without waiting: the stream can queue behind a co-tenant's whole
+	// upload, and the session can end in that interval. The deferred
+	// checkpoint_complete reads the same entry's gate, also without waiting,
+	// because it runs before the deferred release of the op lock: a wait
+	// there would hold s.ops, and stall every co-tenant's checkpoint and
+	// interrupt, for as long as the unbounded stream context lives. A read
+	// or not-awaiting gate still admits the frame on the abort path, and a
+	// session that ended or restarted during the upload receives none.
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
 	completeStatus, completeReason := "ok", ""
 	if s.Lifecycle != nil {
-		if rerr := s.Lifecycle.RequestCheckpoint(ctx, start.GetCheckpointId(), int32(start.GetDeadlineMs())); rerr != nil {
+		if gerr := s.sessionStartedNow(slot); gerr != nil {
+			return status.Errorf(codes.Internal, "checkpoint quiesce handshake: %v", gerr)
+		}
+		if rerr := s.Lifecycle.RequestCheckpoint(ctx, sessionID, start.GetCheckpointId(), int32(start.GetDeadlineMs())); rerr != nil {
 			return status.Errorf(codes.Internal, "checkpoint quiesce handshake: %v", rerr)
 		}
 		defer func() {
-			_ = s.Lifecycle.CompleteCheckpoint(start.GetCheckpointId(), completeStatus, completeReason)
+			if s.sessionStartedNow(slot) != nil {
+				return
+			}
+			_ = s.Lifecycle.CompleteCheckpoint(sessionID, start.GetCheckpointId(), completeStatus, completeReason)
 		}()
 	}
 
@@ -171,6 +238,27 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	}
 	if failReason != "" {
 		completeStatus, completeReason = "failed", failReason
+	}
+	return nil
+}
+
+// awaitCheckpointGate waits, before the op lock, for the session_started
+// that orders this stream's CH-RUNTIMEOPS frames. The wait is bounded by
+// the stream's deadline_ms, because the handler has no deadline context of
+// its own, or by SessionStartAckTimeout when deadline_ms is zero. A gate
+// that does not admit the frame ends the stream as a quiesce handshake the
+// runtime did not answer does. A runtime with no CH-RUNTIMEOPS has no frame
+// to gate.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages); §28.5.3 (CH-MSGSOCK, Outbound:
+// session_started).
+func (s *Server) awaitCheckpointGate(ctx context.Context, slot *slotState, start *adapterv1.CheckpointStart) error {
+	if s.Lifecycle == nil {
+		return nil
+	}
+	wctx, cancel := s.gateBound(ctx, time.Duration(start.GetDeadlineMs())*time.Millisecond)
+	defer cancel()
+	if err := s.awaitSessionStarted(wctx, slot); err != nil {
+		return status.Errorf(codes.Internal, "checkpoint quiesce handshake: %v", err)
 	}
 	return nil
 }
@@ -290,7 +378,7 @@ func (s *Server) uploadChunk(ctx context.Context, stream adapterv1.Adapter_Check
 			return s.failChunk(stream, index, "object store rejected chunk", httpStatus, code)
 		}
 		if !time.Now().Before(deadline) {
-			// spec: §4.4 lines 261-264 — retry budget exhausted; report the
+			// spec: §4.4 — retry budget exhausted; report the
 			// retry-exhausted failure so the gateway stamps
 			// lenny_checkpoint_storage_failure_total{reason="retry_exhausted"}.
 			return s.failChunk(stream, index, "retry_exhausted", lastStatus, lastCode)

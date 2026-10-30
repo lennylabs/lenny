@@ -8,8 +8,7 @@ import (
 	"testing"
 )
 
-// TestGatewayAuthCheck covers the §25.4 gateway-auth self-health check
-// (lines 1956-1971): healthy on a successful probe, unhealthy on a
+// TestGatewayAuthCheck covers the §25.4 gateway-auth self-health check: healthy on a successful probe, unhealthy on a
 // service-account TokenError, degraded on a reachability error, and
 // healthy (not-applicable) when no probe is wired.
 func TestGatewayAuthCheck_spec_25_4(t *testing.T) {

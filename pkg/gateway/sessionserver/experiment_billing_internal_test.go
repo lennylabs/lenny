@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §11.2 lines 87-88 — the session.created and session.completed
+// spec: §11.2 — the session.created and session.completed
 // billing events auto-populate experiment_id/variant_id from the
 // session's experimentContext so per-experiment / per-variant cost
 // attribution works without joining the session row. F-11.2.13.
@@ -29,7 +29,7 @@ func enrolledSession(state session.State) sessionstore.Session {
 
 func TestRecordSessionCreatedStampsExperimentVariant_spec_11_2_87(t *testing.T) {
 	billing := billingstore.NewMemory()
-	srv := New(memstore.New(), Options{Billing: billing})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Billing: billing})
 
 	srv.recordSessionCreated(context.Background(), enrolledSession(session.StateCreated))
 
@@ -50,7 +50,7 @@ func TestRecordSessionCreatedStampsExperimentVariant_spec_11_2_87(t *testing.T) 
 
 func TestRecordSessionCompletedStampsExperimentVariant_spec_11_2_87(t *testing.T) {
 	billing := billingstore.NewMemory()
-	srv := New(memstore.New(), Options{Billing: billing})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Billing: billing})
 
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, enrolledSession(session.StateCompleted))
 
@@ -76,7 +76,7 @@ func TestRecordSessionCompletedStampsExperimentVariant_spec_11_2_87(t *testing.T
 // stamp), mirroring the nullable §11.2.1 contract. F-11.2.13.
 func TestRecordSessionCreatedNoExperimentWhenUnenrolled_spec_11_2_87(t *testing.T) {
 	billing := billingstore.NewMemory()
-	srv := New(memstore.New(), Options{Billing: billing})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Billing: billing})
 
 	srv.recordSessionCreated(context.Background(), sessionstore.Session{
 		ID: "sess_y", TenantID: "acme", UserID: "alice@acme.com",

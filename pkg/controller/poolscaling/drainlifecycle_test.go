@@ -38,7 +38,7 @@ func warmPoolExists(t *testing.T, c client.Client) bool {
 	return true
 }
 
-// spec: §10.7 line 1102 — a paused experiment's variant pool pins
+// spec: §10.7 — a paused experiment's variant pool pins
 // minWarm to 0 while leaving maxWarm at its ceiling so warm pods drain
 // naturally and the CRD is retained.
 func TestSyncForceZeroMinWarmPinsPausedVariantToZero(t *testing.T) {
@@ -63,7 +63,7 @@ func TestSyncForceZeroMinWarmPinsPausedVariantToZero(t *testing.T) {
 	_ = getTemplate(t, c)
 }
 
-// spec: §10.7 line 1104 — a concluded variant pool with warm pods still
+// spec: §10.7 — a concluded variant pool with warm pods still
 // ready is driven to 0/0 (full drain) but not yet deleted.
 func TestSyncDrainAndDeleteDrainsWhileReady(t *testing.T) {
 	s := newScheme(t)
@@ -89,7 +89,7 @@ func TestSyncDrainAndDeleteDrainsWhileReady(t *testing.T) {
 	_ = getTemplate(t, c)
 }
 
-// spec: §10.7 line 1104 — once status.readyCount reaches 0 the
+// spec: §10.7 — once status.readyCount reaches 0 the
 // SandboxWarmPool CRD is deleted; the SandboxTemplate is retained.
 func TestSyncDrainAndDeleteDeletesWhenDrained(t *testing.T) {
 	s := newScheme(t)
@@ -107,7 +107,7 @@ func TestSyncDrainAndDeleteDeletesWhenDrained(t *testing.T) {
 	if warmPoolExists(t, c) {
 		t.Fatal("warm pool not deleted after readyCount reached 0")
 	}
-	// SandboxTemplate retained per §10.7 line 1104.
+	// SandboxTemplate retained per §10.7.
 	_ = getTemplate(t, c)
 }
 

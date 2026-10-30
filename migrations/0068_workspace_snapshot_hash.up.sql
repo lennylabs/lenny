@@ -15,7 +15,7 @@
 -- backfills the hash for the legacy snapshot population is out of
 -- scope here.
 --
--- spec: §4.5 line 311.
+-- spec: §4.5.
 
 ALTER TABLE sessions
     ADD COLUMN IF NOT EXISTS workspace_snapshot_hash TEXT;

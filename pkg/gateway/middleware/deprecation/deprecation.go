@@ -36,7 +36,7 @@ const HeaderName = "X-Lenny-Deprecated-Version"
 // path. The function recognizes `/vN`-style version segments at the
 // path root (`/v1/...` → `v1`, `/v2/foo` → `v2`) and returns an empty
 // string when the path does not begin with a version segment (e.g.
-// `/healthz`, `/openapi.json`, `/.well-known/jwks.json`).
+// `/healthz`, `/openapi.json`, `/openapi.yaml`).
 //
 // The check is intentionally narrow: the spec ties the deprecation
 // surface to URL path prefixes (§15.5 item 1), and infra paths
@@ -77,7 +77,7 @@ func PathVersionPrefix(path string) string {
 // because the deprecation policy is keyed on URL path version
 // prefixes.
 //
-// spec: §15.5 item 1; docs/api/index.md line 124. F-15.5.11.
+// spec: §15.5 item 1; docs/api/index.md. F-15.5.11.
 func Wrap(next http.Handler, deprecated ...string) http.Handler {
 	set := map[string]struct{}{}
 	for _, v := range deprecated {

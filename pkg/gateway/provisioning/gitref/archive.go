@@ -17,8 +17,8 @@ import (
 // directory and returns the directory tree as a gzip-compressed tar.
 // It is the gateway-side delivery half of a §14 gitClone source: the
 // gateway clones on its own network path (the pod never sees VCS
-// credentials), and the returned archive is streamed to the pod's
-// staging area via PrepareWorkspace, where the adapter extracts it.
+// credentials), and the returned archive is streamed to the session's
+// staging tree via PrepareWorkspace, where the adapter extracts it.
 // The archive includes the `.git` directory so the in-pod git client
 // can operate on the checked-out tree.
 func CloneArchive(ctx context.Context, url, commitSHA string, opts CloneOptions) ([]byte, error) {

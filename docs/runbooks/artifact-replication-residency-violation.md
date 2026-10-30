@@ -79,4 +79,4 @@ The resolved IPs must be inside the `replicationDestinationCidr` allowlist; an o
 
 Page security and compliance for any sustained residency mismatch. Page platform engineering when the probe continues to fail after destination repair.
 
-Cross-reference: [§12.5](../../spec/12_storage-architecture.md#125-artifact-store), [§17.5](../../spec/17_deployment-topology.md#175-cloud-deployment-shapes), [data-residency-violation.md](./data-residency-violation.md).
+Cross-reference: [§12.5](../../spec/12_storage-architecture.md#125-artifact-store), [§17.5](../../spec/17_deployment-topology.md#175-cloud-portability), [data-residency-violation.md](./data-residency-violation.md).

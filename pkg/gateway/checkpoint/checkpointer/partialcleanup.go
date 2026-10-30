@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 )
 
-// PartialCleanupOutcome enumerates the §4.4 line 236 cleanup
+// PartialCleanupOutcome enumerates the §4.4 cleanup
 // outcomes; the value is the label of the
 // `lenny_partial_manifest_cleanup_total` counter.
 type PartialCleanupOutcome string
@@ -34,13 +34,13 @@ const (
 )
 
 // PartialCleanupMetrics is the gateway-metrics surface the cleanup
-// path emits the §4.4 line 236 counter on. The gateway's
+// path emits the §4.4 counter on. The gateway's
 // gatewaymetrics.Metrics satisfies it.
 type PartialCleanupMetrics interface {
 	IncPartialManifestCleanup(outcome string)
 }
 
-// CleanupPartialManifest performs the §4.4 line 236 cleanup of a single
+// CleanupPartialManifest performs the §4.4 cleanup of a single
 // partial-manifest row a resume reassembled (or the §12.5 backstop dropped):
 // (1) discover the row's chunk objects by walking its
 // `chunk_object_key_prefix` and, for each, soft-delete the chunk's
@@ -65,7 +65,7 @@ type PartialCleanupMetrics interface {
 // nil catalog or object store (dev-mode / test path with no durable backend)
 // skips the object release and only soft-deletes the row.
 //
-// spec: §4.4 line 236 — "Regardless of reassembly outcome, the gateway MUST
+// spec: §4.4 — "Regardless of reassembly outcome, the gateway MUST
 // delete every chunk object listed under the manifest's chunk_object_key_prefix
 // via per-key DeleteObject calls, then soft-delete the Postgres row"; §12.5 GC
 // rule 4 (the Redis decrement gated on the Postgres soft-delete, exactly once).
@@ -129,7 +129,8 @@ type ChunkCatalogReleaser interface {
 // its chunk_object_key_prefix (ListObjectsV2 semantics) and hard-deletes each
 // one by key after its artifact_store row is soft-deleted. A missing key is a
 // no-op on delete (delete-on-absent, S3-compatible semantics), so a re-run
-// over an already-reclaimed checkpoint never errors. miniostore.Store
+// over an already-reclaimed checkpoint never errors. Every
+// blobstore.CheckpointStore (the MinIO, S3, GCS, and Azure Blob stores)
 // satisfies it via ListByPrefix and HardDeleteObject.
 type ChunkObjectStore interface {
 	ListByPrefix(ctx context.Context, u blobstore.URI) ([]blobstore.BlobInfo, error)
@@ -148,7 +149,7 @@ type CheckpointChunkRelease struct {
 	// Objects discovers the checkpoint's chunk objects under its
 	// chunk_object_key_prefix and hard-deletes each one per key. Required.
 	Objects ChunkObjectStore
-	// TombstoneRetention is the §12.5 line 341 gc.tombstoneRetentionSeconds
+	// TombstoneRetention is the §12.5 gc.tombstoneRetentionSeconds
 	// window stamped as each soft-deleted chunk row's hard-prune deadline.
 	TombstoneRetention time.Duration
 	// OnOrphanedObject, when set, is called once for the chunk object whose
@@ -160,7 +161,7 @@ type CheckpointChunkRelease struct {
 	// The callback lets the caller surface that leak on the
 	// lenny_checkpoint_orphaned_objects_total counter rather than leaving it
 	// silent. Nil skips the emission.
-	// spec: §4.4 line 248 (orphaned-object counter); §12.5 GC rule 6.
+	// spec: §4.4; §12.5 GC rule 6.
 	OnOrphanedObject func()
 }
 
@@ -202,7 +203,7 @@ type CheckpointChunkRelease struct {
 // spec: §12.5 GC rule 4 (Redis decrement gated on the Postgres soft-delete,
 // exactly once), GC rule 5 (keep only the latest 2 checkpoints per active
 // session), GC rule 6 (the backstop sweep selects partial = true rows only);
-// §4.4 line 236 (soft-delete the row, then per-key DeleteObject); §4.4 line 248
+// §4.4; §4.4
 // (orphaned-object counter).
 func ReleaseCheckpointChunks(ctx context.Context, cfg CheckpointChunkRelease, record partialmanifeststore.Record) error {
 	if cfg.Manifests == nil || cfg.Catalog == nil || cfg.Objects == nil {
@@ -262,7 +263,7 @@ func chunkPrefixURI(record partialmanifeststore.Record) blobstore.URI {
 // active for the next cycle to retry rather than orphaning the object.
 //
 // spec: §12.5 GC rule 4 (Redis decrement gated on the Postgres soft-delete,
-// exactly once); §4.4 line 236 (per-key DeleteObject).
+// exactly once); §4.4.
 func releaseChunkObjectsUnderPrefix(
 	ctx context.Context,
 	catalog ChunkCatalogReleaser,
@@ -322,7 +323,7 @@ type BackstopReclaim struct {
 	// ReleaseReservation UPDATE still runs so the row's reservation flag is
 	// cleared idempotently.
 	Quota ReservationCounter
-	// TombstoneRetention is the §12.5 line 341 gc.tombstoneRetentionSeconds
+	// TombstoneRetention is the §12.5 gc.tombstoneRetentionSeconds
 	// window stamped as each soft-deleted chunk row's hard-prune deadline.
 	TombstoneRetention time.Duration
 	// Metrics, when set, receives the cleanup-outcome counter increment:
@@ -353,8 +354,7 @@ type BackstopReclaim struct {
 // decrement), and the manifest row already soft-deleted.
 //
 // spec: §12.5 partial-manifest backstop and GC rules 4, 6; §11.2 reservation
-// release is exactly-once and guarded; §4.4 line 236 (per-key DeleteObject then
-// soft-delete the row).
+// release is exactly-once and guarded; §4.4.
 func ReclaimAbandonedManifest(ctx context.Context, cfg BackstopReclaim, record partialmanifeststore.Record) error {
 	if cfg.Manifests == nil || cfg.Catalog == nil || cfg.Objects == nil {
 		return errors.New("checkpointer: backstop reclaim requires the manifest store, catalog, and object store")
@@ -401,7 +401,7 @@ func ReclaimAbandonedManifest(ctx context.Context, cfg BackstopReclaim, record p
 // prefix no deleted_at IS NULL reclaimer selects. The resume cleanup and the
 // §12.5 backstop both run it as their final step.
 //
-// spec: §4.4 line 236 (soft-delete the row after the objects are gone).
+// spec: §4.4.
 func finaliseReclaimedManifest(ctx context.Context, manifests partialmanifeststore.Store, objects ChunkObjectStore, prefix blobstore.URI, record partialmanifeststore.Record) error {
 	remaining, err := objects.ListByPrefix(ctx, prefix)
 	if err != nil {
@@ -451,7 +451,7 @@ func emitOutcome(metrics PartialCleanupMetrics, outcome PartialCleanupOutcome) {
 	metrics.IncPartialManifestCleanup(string(outcome))
 }
 
-// PartialCleaner is a §4.4 line 236 cleanup adapter the gateway wires
+// PartialCleaner is a §4.4 cleanup adapter the gateway wires
 // into the sessionserver's PartialManifestCleaner option. It reads
 // the latest active partial manifest for (tenant, session) via the
 // Store and invokes CleanupPartialManifest. A session with no active
@@ -473,7 +473,7 @@ type PartialCleaner struct {
 	// chunk_object_key_prefix and hard-deletes each one per key. Nil (with
 	// Catalog) skips the object release.
 	Objects ChunkObjectStore
-	// TombstoneRetention is the §12.5 line 341 gc.tombstoneRetentionSeconds
+	// TombstoneRetention is the §12.5 gc.tombstoneRetentionSeconds
 	// window stamped onto each soft-deleted chunk row's hard-prune deadline.
 	TombstoneRetention time.Duration
 	// Metrics, when set, receives the cleanup-outcome counter
@@ -485,7 +485,16 @@ type PartialCleaner struct {
 // surface. It looks up the latest active partial manifest for the
 // supplied (tenant, session) and runs the cleanup pipeline. A session
 // with no active manifest is a no-op (returns nil).
-func (c *PartialCleaner) CleanupAfterResume(ctx context.Context, tenantID, sessionID string) error {
+//
+// resumedGen is the coordination generation the committed resume row
+// carries. A row at or above it was written by the live incarnation (a
+// periodic checkpoint that started after the resume, or a terminal seal's
+// intent row) and is left in place. A row below it is the residue of an
+// abandoned attempt and is cleaned whatever its manifest_reason, an
+// in_progress row included, because a crashed attempt's intent row also
+// carries in_progress.
+// spec: §10.1.7 (Cleanup.)
+func (c *PartialCleaner) CleanupAfterResume(ctx context.Context, tenantID, sessionID string, resumedGen int64) error {
 	if c == nil || c.Store == nil {
 		return nil
 	}
@@ -496,6 +505,9 @@ func (c *PartialCleaner) CleanupAfterResume(ctx context.Context, tenantID, sessi
 			return nil
 		}
 		return fmt.Errorf("checkpointer: read latest active partial manifest: %w", err)
+	}
+	if record.CoordinationGeneration >= resumedGen {
+		return nil
 	}
 	return CleanupPartialManifest(ctx, c.Store, c.Catalog, c.Objects, c.TombstoneRetention, record, c.Metrics, false)
 }

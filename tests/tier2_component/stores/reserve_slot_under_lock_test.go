@@ -22,8 +22,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 )
 
-// spec: §12.4 line 208 (Postgres fallback under a per-pod advisory lock);
-// §5.2 line 541.
+// spec: §12.4;
+// §5.2.
 // diagnosis: ReserveSlotUnderLock counted terminal sessions, the wrong pod,
 // or did not serialize under the per-pod advisory lock, so the Redis-outage
 // gate admitted or rejected a slot incorrectly.

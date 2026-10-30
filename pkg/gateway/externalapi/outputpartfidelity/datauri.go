@@ -5,7 +5,7 @@ package outputpartfidelity
 import "strings"
 
 // isImageMIME returns true when mime starts with "image/", matching the
-// §15.4.1 image_url-vs-text branch used by the OpenAI Completions and
+// §15.4 image_url-vs-text branch used by the OpenAI Completions and
 // Open Responses adapters.
 func isImageMIME(mime string) bool {
 	return strings.HasPrefix(mime, "image/")

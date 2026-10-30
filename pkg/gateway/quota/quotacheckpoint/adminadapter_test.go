@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/quota"
 )
 
-// spec: §24.6 line 99 — AdminReconciler maps a per-tenant reconcile of an
+// spec: §24.6 — AdminReconciler maps a per-tenant reconcile of an
 // unknown tenant to admin.ErrQuotaTenantNotFound (the handler's 404), and
 // maps a successful reconcile into the admin wire result with the MAX-rule
 // inputs.

@@ -122,7 +122,7 @@ func TestMemoryDelete(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 200 / §9.3 — RotateAccessToken replaces only the
+// spec: §4.3 / §9.3 — RotateAccessToken replaces only the
 // access token and stamps UpdatedAt; the previously stored refresh
 // token survives when RotationRecord.RefreshToken is empty.
 func TestMemoryRotateAccessTokenKeepsPriorRefreshToken(t *testing.T) {
@@ -162,7 +162,7 @@ func TestMemoryRotateAccessTokenKeepsPriorRefreshToken(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 200 / §9.3 — RotateAccessToken accepts a rotated
+// spec: §4.3 / §9.3 — RotateAccessToken accepts a rotated
 // refresh token and replaces the stored value.
 func TestMemoryRotateAccessTokenReplacesRotatedRefreshToken(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
@@ -185,7 +185,7 @@ func TestMemoryRotateAccessTokenReplacesRotatedRefreshToken(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 200 — RotateAccessToken on a missing triple returns
+// spec: §4.3 — RotateAccessToken on a missing triple returns
 // ErrNotFound; the caller must Put first.
 func TestMemoryRotateAccessTokenMissing(t *testing.T) {
 	store := connectorcredstore.NewMemory(nil)
@@ -198,7 +198,7 @@ func TestMemoryRotateAccessTokenMissing(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 200 — RotateAccessToken rejects incomplete inputs.
+// spec: §4.3 — RotateAccessToken rejects incomplete inputs.
 func TestMemoryRotateAccessTokenRejectsIncompleteRecord(t *testing.T) {
 	store := connectorcredstore.NewMemory(nil)
 	for i, r := range []connectorcredstore.RotationRecord{
@@ -245,7 +245,7 @@ func TestMemoryListByConnector(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 202 — environment is part of the credential scoping
+// spec: §4.3 — environment is part of the credential scoping
 // four-tuple. The same (tenant, connector, user) can hold one
 // credential per environment; lookup by another environment misses.
 func TestMemoryEnvironmentScopedCredentials(t *testing.T) {

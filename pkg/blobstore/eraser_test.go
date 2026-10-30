@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 )
 
-// spec: §12.1 line 5 — every blob backend (and the wrappers wired in
+// spec: §12.1 — every blob backend (and the wrappers wired in
 // front of them) satisfies the mandatory-erasure Eraser interface, so
 // a backend that omits either primitive cannot compile in.
 func TestBlobBackendsSatisfyEraser_spec_12_1(t *testing.T) {
@@ -22,7 +22,7 @@ func TestBlobBackendsSatisfyEraser_spec_12_1(t *testing.T) {
 	)
 }
 
-// spec: §12.1 line 5 / §12.8 step 7 — artifact erasure is
+// spec: §12.1 / §12.8 step 7 — artifact erasure is
 // session-scoped, so the whole-user DeleteByUser is a no-op that leaves
 // the user's session blobs in place; the orchestrator erases them per
 // session via DeleteBySession.

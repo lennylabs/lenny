@@ -30,7 +30,7 @@ import (
 //
 // An empty Dir yields a nil source (both findings report not_detected).
 //
-// spec: §25.6 lines 2953, 2955. F-DR-1.
+// spec: §25.6. F-DR-1.
 type dirHelmRenderSource struct {
 	// dir is the operator-mounted render directory.
 	dir string

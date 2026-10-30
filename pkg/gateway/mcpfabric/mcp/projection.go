@@ -14,7 +14,7 @@ import (
 // SessionEvent.Kind to exactly one MCP wire frame on the session's SSE
 // stream. The live session-event bus carries string-typed events
 // (status_change, response, elicitation_request, tool_use_requested,
-// ...); this file is the classifier that lifts those onto the §15.0
+// ...); this file is the classifier that lifts those onto the §15
 // closed SessionEventKind enum and the projector that renders each kind
 // as its method-specific JSON-RPC frame. Event types that fall outside
 // the closed enum (message_delivered, session_expiring_soon,
@@ -22,14 +22,13 @@ import (
 // generic notifications/lenny/sessionEvent frame so a client still
 // observes them without the transport interrupting the stream.
 //
-// spec: §15.2 lines 1356-1374 (per-kind wire projection); §8.8 lines
-// 857-883 (Lenny-state → MCP-Tasks mapping). F-15.2.13, F-15.2.14.
+// spec: §15.2; §8.8. F-15.2.13, F-15.2.14.
 
-// sessionEventKind mirrors the §15.0 closed SessionEventKind enum. It is
+// sessionEventKind mirrors the §15 closed SessionEventKind enum. It is
 // duplicated here as an unexported string type so the transport package
 // classifies a live bus event without importing adapterregistry (which
 // would couple the wire transport to the adapter-registration layer).
-// spec: §15 line 318.
+// spec: §15.
 type sessionEventKind string
 
 const (
@@ -55,11 +54,11 @@ var terminalLennyStates = map[string]bool{
 }
 
 // classifyEventKind lifts a live session-event-bus type string onto the
-// §15.0 closed SessionEventKind enum, consulting the payload where the
+// §15 closed SessionEventKind enum, consulting the payload where the
 // kind depends on the event's state (a terminal status_change maps to
 // SessionEventTerminated). It returns kindUnclassified for bus event
 // types outside the closed enum so the caller falls back to the generic
-// notifications/lenny/sessionEvent frame. spec: §15.2 lines 1356-1368.
+// notifications/lenny/sessionEvent frame. spec: §15.2.
 func classifyEventKind(eventType string, data []byte) sessionEventKind {
 	switch eventType {
 	case "status_change":
@@ -114,7 +113,7 @@ func hasPrefix(s, prefix string) bool {
 // Last-Event-ID replay the frame verbatim. An event outside the closed
 // SessionEventKind enum falls back to the generic
 // notifications/lenny/sessionEvent frame. A marshal failure returns nil
-// and the caller drops the frame. spec: §15.2 lines 1356-1374.
+// and the caller drops the frame. spec: §15.2.
 func projectMCPSessionEvent(ev sessionevents.Event) []byte {
 	data := []byte(ev.Data)
 	switch classifyEventKind(ev.Type, data) {
@@ -139,7 +138,7 @@ func projectMCPSessionEvent(ev sessionevents.Event) []byte {
 // surface per the §8.8 protocol-mapping tables. It returns the MCP status
 // string plus the metadata annotations the spec attaches to a state
 // (subState for input_required-bearing transitions, suspended/resuming
-// for the non-terminal recovery states). spec: §8.8 lines 857-883.
+// for the non-terminal recovery states). spec: §8.8.
 func lennyStateToMCPTask(state string) (status string, metadata map[string]any) {
 	metadata = map[string]any{}
 	switch state {
@@ -185,7 +184,7 @@ func lennyStateToMCPTask(state string) (status string, metadata map[string]any) 
 // terminal projection sets final:true and surfaces the
 // TerminationReason.Detail under result.metadata.terminationDetail. The
 // state is translated through the §8.8 Lenny-state → MCP-Tasks mapping.
-// spec: §15.2 lines 1360, 1368; §8.8 lines 857-883.
+// spec: §15.2; §8.8.
 func projectStatusUpdate(ev sessionevents.Event, terminal bool) []byte {
 	state := stateFromPayload([]byte(ev.Data))
 	status, metadata := lennyStateToMCPTask(state)
@@ -199,7 +198,7 @@ func projectStatusUpdate(ev sessionevents.Event, terminal bool) []byte {
 			metadata["terminationDetail"] = detail
 		}
 	} else {
-		// §15.2.1 line 1360: from/to/subState live in params.metadata. The
+		// §15.2.1: from/to/subState live in params.metadata. The
 		// live status_change payload carries only the destination state, so
 		// `to` is always populated and `from` is omitted when unknown.
 		metadata["to"] = status
@@ -236,7 +235,7 @@ func terminationDetail(data []byte) string {
 // frame carrying the translated MessagePart(s) under params.content.
 // Per §8.8 agent output is produced while the task is in the working
 // state; the presence of params.content distinguishes a content append
-// from a pure state transition. spec: §15.2 line 1361; §8.8.
+// from a pure state transition. spec: §15.2; §8.8.
 func projectOutput(ev sessionevents.Event) []byte {
 	params := map[string]any{
 		"taskId":  ev.SessionID,
@@ -250,7 +249,7 @@ func projectOutput(ev sessionevents.Event) []byte {
 // publishes (`{type, text, ref}`) into the MCP content-block array the
 // streaming task response carries. A `text` part becomes an MCP text
 // content block; a `ref` part becomes a resource_link block carrying the
-// reference so the client can dereference it. spec: §15.2 line 1361
+// reference so the client can dereference it. spec: §15.2
 // (Translation Fidelity Matrix MCP column / ref dereference obligation).
 func outputContentBlocks(data []byte) []map[string]any {
 	var p struct {
@@ -273,7 +272,7 @@ func outputContentBlocks(data []byte) []map[string]any {
 // elicitation chain. The request carries the elicitation_id as the
 // JSON-RPC id so the reply correlates, the {message, requestedSchema}
 // pair, and the §9.2 provenance metadata the client UI displays.
-// spec: §15.2 line 1362; §9.2 lines 56-82.
+// spec: §15.2; §9.2.
 func projectElicitationCreate(ev sessionevents.Event) []byte {
 	var p struct {
 		ElicitationID   string          `json:"elicitationId"`
@@ -311,13 +310,15 @@ func projectElicitationCreate(ev sessionevents.Event) []byte {
 // requested, approved, denied, completed) is a notifications/lenny/
 // toolCall observability frame. The live tool_use_requested event is
 // emitted by the approval gate, so it is always approval-required.
-// spec: §15.2 lines 1363-1366, 1372.
+// The decoded payload carries no slot address: every session is bound to
+// a slot on every pod and a session-mode slot's identifier is its
+// session's identifier, so ev.SessionID already names the slot the call
+// belongs to. spec: §15.2; §5.2 (identity invariant); §7.2.
 func projectToolUse(ev sessionevents.Event) []byte {
 	var p struct {
 		ToolCallID string          `json:"tool_call_id"`
 		Tool       string          `json:"tool"`
 		Args       json.RawMessage `json:"args,omitempty"`
-		SlotID     string          `json:"slotId,omitempty"`
 		Phase      string          `json:"phase,omitempty"`
 		Result     json.RawMessage `json:"result,omitempty"`
 	}
@@ -367,7 +368,7 @@ func projectToolUse(ev sessionevents.Event) []byte {
 // errors are surfaced via the SessionEventTerminated task frame. The live
 // error payloads vary by source (error / child_failed / submit_error), so
 // the projection passes the payload through under params unchanged.
-// spec: §15.2 line 1367.
+// spec: §15.2.
 func projectError(ev sessionevents.Event) []byte {
 	params := map[string]any{"sessionId": ev.SessionID}
 	var m map[string]any
@@ -446,13 +447,13 @@ func marshalServerRequest(id, method string, params any) []byte {
 	return b
 }
 
-// marshalGenericSessionEvent renders an event outside the §15.0 closed
+// marshalGenericSessionEvent renders an event outside the §15 closed
 // SessionEventKind enum as the generic notifications/lenny/sessionEvent
-// frame under the §15.2 line 1370 notifications/lenny/* extension
+// frame under the §15.2 notifications/lenny/* extension
 // namespace, which conforming clients ignore if unrecognized. This is the
 // projection fallback for bus event types that are not part of the
 // per-kind table (message_delivered, session_expiring_soon,
-// workspace_plan_warning, children_reattached, ...). spec: §15.2 line 1370.
+// workspace_plan_warning, children_reattached, ...). spec: §15.2.
 func marshalGenericSessionEvent(ev sessionevents.Event) []byte {
 	data := json.RawMessage(ev.Data)
 	if len(data) == 0 {

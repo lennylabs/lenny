@@ -3,7 +3,7 @@
 // Package podlifecycle defines the §4.6.1 forward-compatibility
 // indirection between Lenny's components and the agent-sandbox CRDs.
 //
-// spec: spec/04_system-components.md lines 333-363 — "All Lenny
+// spec: §4.6.1 — "All Lenny
 // components interact with pod lifecycle through two interfaces, never
 // directly with agent-sandbox CRD types. Both embed a shared read-only
 // PoolReader."
@@ -26,7 +26,7 @@ import (
 )
 
 // PoolReader is the read-only pool view both PodLifecycleManager and
-// PoolManager embed. spec: spec/04_system-components.md lines 335-338.
+// PoolManager embed. spec: §4.6.1.
 type PoolReader interface {
 	// ListPools reports the per-pool health and capacity for every
 	// registered pool.
@@ -37,7 +37,7 @@ type PoolReader interface {
 }
 
 // PodLifecycleManager is the gateway-facing pod-lifecycle surface.
-// spec: spec/04_system-components.md lines 340-345.
+// spec: §4.6.1.
 type PodLifecycleManager interface {
 	PoolReader
 	// ClaimPod acquires an idle pod from poolName for sessionID by creating
@@ -46,11 +46,10 @@ type PodLifecycleManager interface {
 	// The claim is keyed off the pod, not the session: the session-to-pod
 	// binding lives on the Postgres session row's pod_assignment column, and
 	// sessionID is carried on the handle for attribution alone.
-	// opts.RequiresDemotion = true signals that an SDK-warm pod's adapter
-	// must be demoted before the runtime is used (the §6.1 workspace plan
-	// includes sdkWarmBlockingPaths). opts.Priority is the §5.2 scheduling
-	// priority class hint; opts.ClusterID is reserved for the multi-cluster
-	// v2 path.
+	// opts.Priority is the §5.2 scheduling priority class hint;
+	// opts.ClusterID is reserved for the multi-cluster v2 path. The §6.1
+	// SDK-warm demotion is decided at the bind rather than at the claim, so
+	// ClaimOpts carries no demotion option.
 	ClaimPod(ctx context.Context, poolName, sessionID string, opts ClaimOpts) (PodHandle, error)
 	// ReleasePod releases a pod after its session ends. Concurrent
 	// failures (e.g., a pod already released) are not surfaced as
@@ -66,7 +65,7 @@ type PodLifecycleManager interface {
 }
 
 // PoolManager is the controller-facing pool-management surface.
-// spec: spec/04_system-components.md lines 347-357.
+// spec: §4.6.1.
 type PoolManager interface {
 	PoolReader
 	// ReconcilePool ensures the pool's runtime CRDs (SandboxTemplate +
@@ -104,17 +103,14 @@ type PoolManager interface {
 	SetPoolCondition(ctx context.Context, poolName string, condition PoolCondition, reason string) error
 }
 
-// ClaimOpts carries the per-claim parameters from §4.6.1 line 342.
+// ClaimOpts carries the per-claim parameters from §4.6.1.
 type ClaimOpts struct {
 	// TenantID is the tenant the claimed pod is pinned to. ClaimPod stamps
 	// it onto the per-pod SandboxClaim spec (`spec.tenantId`) alongside
-	// sandboxRef, matching the §3.2 / §6.5 claim-spec contract: the claim's
+	// sandboxRef, matching the §4.6.1 claim-spec contract: the claim's
 	// spec carries sandboxRef and tenantId. Empty leaves the claim
 	// unpinned, the §5.2 default for a pool without lifetime tenant pinning.
 	TenantID string
-	// RequiresDemotion signals that an SDK-warm pod must be demoted
-	// before use (§6.1 sdkWarmBlockingPaths).
-	RequiresDemotion bool
 	// Priority is the §5.2 scheduling priority class hint. An empty
 	// string defers to the pool's default.
 	Priority string
@@ -151,7 +147,7 @@ type PodHandle struct {
 }
 
 // PodStatus is the read-only pod-status response returned by
-// GetPodStatus. spec: spec/04_system-components.md line 345.
+// GetPodStatus. spec: §4.6.1.
 type PodStatus struct {
 	// Phase is the §6.2 phase from Sandbox.status.phase.
 	Phase PodState
@@ -170,7 +166,7 @@ type PodStatus struct {
 }
 
 // PoolStatus is the read-only pool view returned by ListPools and
-// GetPoolStatus. spec: spec/04_system-components.md line 337.
+// GetPoolStatus. spec: §4.6.1.
 type PoolStatus struct {
 	// Name is the pool name.
 	Name string
@@ -196,7 +192,7 @@ type PoolStatus struct {
 }
 
 // DrainResult is the response from DrainPod. spec:
-// spec/04_system-components.md line 344 — "DrainResult includes retry
+// §4.6.1 — "DrainResult includes retry
 // state for seal-and-export hold semantics."
 type DrainResult struct {
 	// SealRetried reports whether the §7.1 seal-and-export retry loop
@@ -211,7 +207,7 @@ type DrainResult struct {
 }
 
 // PoolConfig is the desired-state input to ReconcilePool. spec:
-// spec/04_system-components.md line 349.
+// §4.6.1.
 type PoolConfig struct {
 	Name             string
 	Namespace        string
@@ -224,7 +220,7 @@ type PoolConfig struct {
 }
 
 // PoolDefinition is the CRUD input to ApplyPoolDefinition. spec:
-// spec/04_system-components.md line 350.
+// §4.6.1.
 type PoolDefinition struct {
 	// Spec carries the pool's desired configuration when Deleted is
 	// false. When Deleted is true Spec is ignored.
@@ -235,7 +231,7 @@ type PoolDefinition struct {
 }
 
 // OrphanResult is one row of the GarbageCollect sweep. spec:
-// spec/04_system-components.md line 353.
+// §4.6.1.
 type OrphanResult struct {
 	// Kind names the orphan resource: "Sandbox" or "SandboxClaim".
 	Kind string
@@ -296,10 +292,9 @@ const (
 // Sandbox.status.phase. The named constants here are the only values the
 // WarmPoolController projects onto the CRD; the fine session-lifecycle
 // states live in the Postgres session model and are not mirrored here
-// (spec: §6.2, §6.37). This block stays in lockstep with
+// (spec: §6.2). This block stays in lockstep with
 // pkg/sandbox/state.All().
-// spec: spec/06_warm-pod-model.md §6.2; spec/04_system-components.md
-// lines 340-358 (the read/write surface that consumes them).
+// spec: spec/06_warm-pod-model.md §6.2; §4.6.1.
 type PodState string
 
 const (
@@ -318,7 +313,7 @@ const (
 
 // FinalizerAction is the action ManageFinalizer takes on the
 // lenny.dev/session-cleanup finalizer. spec:
-// spec/04_system-components.md line 354.
+// §4.6.1.
 type FinalizerAction string
 
 const (
@@ -327,7 +322,7 @@ const (
 )
 
 // PDBConfig is the desired PodDisruptionBudget for a pool. spec:
-// spec/04_system-components.md line 355.
+// §4.6.1.
 type PDBConfig struct {
 	// MinAvailable, when non-nil, fixes the PDB's minAvailable.
 	MinAvailable *int32

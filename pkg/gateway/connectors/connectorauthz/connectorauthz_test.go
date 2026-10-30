@@ -55,7 +55,7 @@ func ctx() context.Context { return context.Background() }
 
 // TestAuthorizeConnectorRuntimePolicyDenies_spec_9_3_164 confirms a
 // connector outside the session's runtime-level effective policy is
-// denied — the §9.3 line 164 boundary.
+// denied — the §9.3 boundary.
 func TestAuthorizeConnectorRuntimePolicyDenies_spec_9_3_164(t *testing.T) {
 	res := &fakeResolver{effective: map[string]delegationpolicystore.DelegationPolicy{
 		"sess-1": allowConnectors("github"),

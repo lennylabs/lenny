@@ -18,7 +18,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 
-# The SDK uses only the Python standard library at runtime. The §15.4.1
+# The SDK uses only the Python standard library at runtime. The §28.5.3
 # binary protocol runs on sys.stdin/sys.stdout, the §15.4.3 intra-pod
 # MCP and Full-level lifecycle channels use the socket module, and the
 # JSON codec is the json module, so no third-party package is required

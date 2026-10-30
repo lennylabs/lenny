@@ -9,7 +9,6 @@ import (
 	"sort"
 	"time"
 
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/uuid"
@@ -31,8 +30,7 @@ type CRDPodRegistry struct {
 	Client    client.Client
 	Namespace string
 
-	// watchBufferSize bounds each WatchPods event channel. The §12.6
-	// line 480 contract permits coalescing or dropping events under
+	// watchBufferSize bounds each WatchPods event channel. The §12.6 contract permits coalescing or dropping events under
 	// backpressure; a full channel is the "fallen behind" condition
 	// that triggers the line 482 resync signal. Zero falls back to
 	// defaultWatchBufferSize.
@@ -41,7 +39,7 @@ type CRDPodRegistry struct {
 	// watchTickerInterval.
 	pollInterval time.Duration
 
-	// metrics records the §12.6 line 478 per-operation duration and error
+	// metrics records the §12.6 per-operation duration and error
 	// metrics. nil disables emission (tests and the in-memory dev path).
 	metrics *Metrics
 }
@@ -75,12 +73,12 @@ func New(c client.Client, namespace string) (*CRDPodRegistry, error) {
 	}, nil
 }
 
-// SetMetrics attaches the §12.6 line 478 observability metrics. The
+// SetMetrics attaches the §12.6 observability metrics. The
 // gateway wires this after the Prometheus registerer is built; a nil
 // Metrics (the default) disables emission.
 func (r *CRDPodRegistry) SetMetrics(m *Metrics) { r.metrics = m }
 
-// recordOp emits the §12.6 line 478 operation-duration sample and, on a
+// recordOp emits the §12.6 operation-duration sample and, on a
 // non-nil err, the operation-error count, both labeled by operation and
 // pool. A registry with no metrics attached is a no-op.
 func (r *CRDPodRegistry) recordOp(operation string, pool PoolID, start time.Time, err error) {
@@ -167,7 +165,7 @@ func (r *CRDPodRegistry) UpdatePodState(ctx context.Context, podID PodID, transi
 // without persisting either on the Sandbox.
 //
 // spec: §4.6.1 (per-pod occupancy claim), §4.6.3 (gateway is not a
-// Sandbox.status writer), §3.3 (occupancy projection).
+// Sandbox.status writer).
 func (r *CRDPodRegistry) ClaimPod(ctx context.Context, opts ClaimOpts) (rec *PodRecord, err error) {
 	start := time.Now()
 	defer func() { r.recordOp(opClaim, opts.PoolID, start, err) }()
@@ -248,9 +246,8 @@ func (r *CRDPodRegistry) claimViaSandboxClaim(ctx context.Context, sb *lennyv1.S
 }
 
 // ReleasePod releases a pod by deleting its deterministic per-pod
-// SandboxClaim (`claim-<podName>`); the WarmPoolController returns the pod to
-// idle as a level-triggered projection of the claim's absence (§4.6.1
-// occupancy projection). The gateway does not write Sandbox.status to roll the
+// SandboxClaim (`claim-<podName>`); the WarmPoolController projects the pod's
+// occupancy phase (§4.6.1 occupancy projection). The gateway does not write Sandbox.status to roll the
 // pod back: the `sandboxes/status` grant is removed under the §4.6.3 ownership
 // decomposition, so a Sandbox.status write here would be RBAC-denied. The
 // release reason is no longer recorded on Sandbox.status; a terminal
@@ -325,7 +322,7 @@ func (r *CRDPodRegistry) CreatePod(ctx context.Context, poolID PoolID, spec PodS
 	sb.Name = name
 	sb.Labels = map[string]string{PoolLabel: string(poolID)}
 	sb.Spec.PoolRef = string(poolID)
-	// spec: §12.6 line 422 — CreatePod stamps the per-pod PodSpec fields
+	// spec: §12.6 — CreatePod stamps the per-pod PodSpec fields
 	// onto the Sandbox so they round-trip through toPodRecord rather than
 	// silently falling back to pool-template defaults. RuntimeRef is a
 	// required CRD field; stamping it from the PodSpec is what lets the
@@ -335,9 +332,6 @@ func (r *CRDPodRegistry) CreatePod(ctx context.Context, poolID PoolID, spec PodS
 	sb.Spec.IsolationProfile = spec.IsolationProfile
 	sb.Spec.ExecutionMode = spec.ExecutionMode
 	sb.Spec.ResourceClass = spec.ResourceClass
-	if len(spec.WorkspacePlan) > 0 {
-		sb.Spec.WorkspacePlan = &apiextensionsv1.JSON{Raw: append([]byte(nil), spec.WorkspacePlan...)}
-	}
 	if err = r.Client.Create(ctx, sb); err != nil {
 		err = fmt.Errorf("podregistry: create sandbox: %w", err)
 		return nil, err
@@ -396,7 +390,7 @@ func (r *CRDPodRegistry) WatchPods(ctx context.Context, poolID PoolID) (_ <-chan
 // transitions (created, updated, deleted). The goroutine exits when
 // ctx is cancelled.
 //
-// spec: §12.6 line 482 — the channel MUST NOT emit an initial state
+// spec: §12.6 — the channel MUST NOT emit an initial state
 // snapshot on creation (consumers read initial state via
 // ListPodsByPool), and when the channel falls behind the loop emits a
 // synthetic resync frame carrying no PodRecord instead of blocking.
@@ -428,7 +422,7 @@ func (r *CRDPodRegistry) watchLoop(ctx context.Context, poolID PoolID, out chan<
 			return
 		case <-ticker.C():
 		}
-		// cycleStart bounds the §12.6 line 484 watch lag for this poll:
+		// cycleStart bounds the §12.6 watch lag for this poll:
 		// the CRD records carry no updated_at, so the lag reported is the
 		// time from the poll observing the change to its delivery, which
 		// captures list latency and channel backpressure.
@@ -493,7 +487,7 @@ func syncKnown(known map[PodID]PodRecord, records []PodRecord) {
 }
 
 // trySend delivers event without blocking. It returns false when the
-// channel buffer is full — the §12.6 line 480 backpressure condition
+// channel buffer is full — the §12.6 backpressure condition
 // under which the loop coalesces and signals a resync rather than
 // blocking the polling goroutine on a slow consumer.
 func trySend(out chan<- PodEvent, event PodEvent) bool {
@@ -527,8 +521,7 @@ func (r *CRDPodRegistry) listSandboxes(ctx context.Context, poolID PoolID, filte
 	return out, nil
 }
 
-// toPodRecord projects a Sandbox onto a PodRecord. spec: §12.6
-// line 421 — every key field, including SessionID (set on claim,
+// toPodRecord projects a Sandbox onto a PodRecord. spec: §12.6 — every key field, including SessionID (set on claim,
 // from status) and ExecutionMode (denormalized onto the Sandbox spec
 // from the pool's SandboxTemplate), is carried so a consumer can rely
 // on the record for claim attribution and task-vs-session mode.

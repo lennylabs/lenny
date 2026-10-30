@@ -27,10 +27,14 @@ Lenny runtimes communicate with the adapter via a **stdin/stdout JSON Lines prot
 
 | Type | Purpose |
 |------|---------|
-| `message` | A user or agent message with input content |
-| `heartbeat` | Liveness check; reply with `heartbeat_ack` |
-| `shutdown` | Graceful shutdown signal; exit within `deadline_ms` |
+| `session_start` | Opens a session and carries that session's own context, such as its credential file path. It precedes every other frame addressed to the session. A runtime that keeps no per-session context and opens no CH-RUNTIMEOPS (the Full-level operations channel, listed under [Integration level quick reference](#integration-level-quick-reference)) may ignore it. The echo and calculator runtimes in this tutorial ignore it through their `default` case. |
+| `message` | A user or agent message with input content, addressed to a session by its `sessionId` |
 | `tool_result` | Result of a tool call you previously requested |
+| `heartbeat` | Liveness check for the session its `sessionId` names; reply with `heartbeat_ack` |
+| `session_end` | Ends a session. The runtime releases the session's context and keeps running to serve the pod's other sessions. A runtime that keeps no per-session context may ignore it, as the runtimes in this tutorial do. |
+| `shutdown` | Process-scoped graceful shutdown signal, written when the pod drains rather than at a session boundary; exit within `deadline_ms` |
+
+The [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) defines the fields of each frame and the rules for `session_start` and `session_end`.
 
 ### Messages You Send (stdout)
 
@@ -38,18 +42,21 @@ Lenny runtimes communicate with the adapter via a **stdin/stdout JSON Lines prot
 |------|---------|
 | `response` | Your output (text, structured data, etc.) |
 | `tool_call` | Request the adapter to execute a tool (e.g., `read_file`) |
-| `heartbeat_ack` | Reply to a heartbeat |
+| `heartbeat_ack` | Reply to a heartbeat; carries the heartbeat's `sessionId` and `busy: true` while the runtime does work for that session |
 | `status` | Optional progress update |
+| `session_started` | Acknowledges a `session_start`. A runtime that keeps per-session context, or that has opened the CH-RUNTIMEOPS, writes it; the runtimes in this tutorial do neither and writes no `session_started`. |
 
 ### Protocol Trace
 
-Here is a minimal session exchange:
+Here is a minimal session exchange. The session opens with its `session_start` frame and ends with its `session_end` frame, and the process-scoped `shutdown` follows only when the pod drains:
 
 ```
-STDIN  -> {"type":"message","id":"msg_001","input":[{"type":"text","inline":"Hello"}]}
-STDOUT <- {"type":"response","output":[{"type":"text","inline":"Echo: Hello"}]}
-STDIN  -> {"type":"heartbeat","ts":1717430410}
+STDIN  -> {"type":"session_start","sessionId":"sess_abc","startId":"st_1"}
+STDIN  -> {"type":"message","id":"msg_001","sessionId":"sess_abc","input":[{"type":"text","inline":"Hello"}]}
+STDOUT <- {"type":"response","sessionId":"sess_abc","output":[{"type":"text","inline":"Echo: Hello"}]}
+STDIN  -> {"type":"heartbeat","ts":1717430410,"sessionId":"sess_abc"}
 STDOUT <- {"type":"heartbeat_ack"}
+STDIN  -> {"type":"session_end","sessionId":"sess_abc"}
 STDIN  -> {"type":"shutdown","reason":"drain","deadline_ms":10000}
          (process exits with code 0)
 ```
@@ -73,12 +80,15 @@ import (
 
 // Message represents any inbound JSON line from the adapter.
 type Message struct {
-	Type       string      `json:"type"`
-	ID         string      `json:"id,omitempty"`
-	Input      []InputPart `json:"input,omitempty"`
-	Reason     string      `json:"reason,omitempty"`
-	DeadlineMs int         `json:"deadline_ms,omitempty"`
-	Ts         int64       `json:"ts,omitempty"`
+	Type  string      `json:"type"`
+	ID    string      `json:"id,omitempty"`
+	Input []InputPart `json:"input,omitempty"`
+	// SessionID names the session this frame is addressed to. The adapter
+	// populates it on every pod; echo it on the frames you emit in response.
+	SessionID  string `json:"sessionId,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	DeadlineMs int    `json:"deadline_ms,omitempty"`
+	Ts         int64  `json:"ts,omitempty"`
 }
 
 // InputPart is a single content part within a message.
@@ -89,8 +99,9 @@ type InputPart struct {
 
 // Response is the outbound message format.
 type Response struct {
-	Type   string       `json:"type"`
-	Output []MessagePart `json:"output,omitempty"`
+	Type      string        `json:"type"`
+	SessionID string        `json:"sessionId,omitempty"`
+	Output    []MessagePart `json:"output,omitempty"`
 }
 
 // MessagePart is a single content part within a response.
@@ -127,6 +138,8 @@ func main() {
 
 			resp := Response{
 				Type: "response",
+				// Echo the inbound sessionId on the frames emitted in response.
+				SessionID: msg.SessionID,
 				Output: []MessagePart{
 					{Type: "text", Inline: fmt.Sprintf("[%d] Echo: %s", seq, text)},
 				},
@@ -134,7 +147,7 @@ func main() {
 			writeJSON(resp)
 
 		case "heartbeat":
-			// Must respond to heartbeats within 10 seconds or get SIGTERM
+			// Respond within 10 seconds.
 			writeJSON(map[string]string{"type": "heartbeat_ack"})
 
 		case "shutdown":
@@ -194,12 +207,15 @@ import (
 // InboundMessage represents any JSON line received on stdin.
 // We use a single type with optional fields and dispatch on "type".
 type InboundMessage struct {
-	Type       string      `json:"type"`
-	ID         string      `json:"id,omitempty"`
-	Input      []InputPart `json:"input,omitempty"`
-	Ts         int64       `json:"ts,omitempty"`
-	Reason     string      `json:"reason,omitempty"`
-	DeadlineMs int         `json:"deadline_ms,omitempty"`
+	Type  string      `json:"type"`
+	ID    string      `json:"id,omitempty"`
+	Input []InputPart `json:"input,omitempty"`
+	// SessionID names the session this frame is addressed to. The adapter
+	// populates it on every pod; echo it on the frames you emit in response.
+	SessionID  string `json:"sessionId,omitempty"`
+	Ts         int64  `json:"ts,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	DeadlineMs int    `json:"deadline_ms,omitempty"`
 
 	// tool_result fields
 	Content []InputPart `json:"content,omitempty"`
@@ -219,13 +235,15 @@ type MessagePart struct {
 // --- Outbound Message Types ---
 
 type ResponseMsg struct {
-	Type   string       `json:"type"`
-	Output []MessagePart `json:"output"`
+	Type      string        `json:"type"`
+	SessionID string        `json:"sessionId,omitempty"`
+	Output    []MessagePart `json:"output"`
 }
 
 type ToolCallMsg struct {
 	Type      string                 `json:"type"`
 	ID        string                 `json:"id"`
+	SessionID string                 `json:"sessionId,omitempty"`
 	Name      string                 `json:"name"`
 	Arguments map[string]interface{} `json:"arguments"`
 }
@@ -287,6 +305,7 @@ func main() {
 
 	// Track pending tool calls so we can process results
 	pendingToolCalls := make(map[string]string) // tool_call_id -> original expression
+	pendingBySession := make(map[string]int)    // sessionId -> pending tool calls
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -320,11 +339,13 @@ func main() {
 				callID := fmt.Sprintf("tc_%03d", toolCallCounter)
 
 				pendingToolCalls[callID] = content
+				pendingBySession[msg.SessionID]++
 
 				call := ToolCallMsg{
-					Type: "tool_call",
-					ID:   callID,
-					Name: "write_file",
+					Type:      "tool_call",
+					ID:        callID,
+					SessionID: msg.SessionID,
+					Name:      "write_file",
 					Arguments: map[string]interface{}{
 						"path":    "result.txt",
 						"content": content,
@@ -340,7 +361,8 @@ func main() {
 			if err != nil {
 				// Not a math expression; provide a help message
 				resp := ResponseMsg{
-					Type: "response",
+					Type:      "response",
+					SessionID: msg.SessionID,
 					Output: []MessagePart{
 						{
 							Type:   "text",
@@ -352,7 +374,8 @@ func main() {
 			} else {
 				// Return the calculation result
 				resp := ResponseMsg{
-					Type: "response",
+					Type:      "response",
+					SessionID: msg.SessionID,
 					Output: []MessagePart{
 						{
 							Type:   "text",
@@ -372,6 +395,9 @@ func main() {
 				continue
 			}
 			delete(pendingToolCalls, msg.ID)
+			if pendingBySession[msg.SessionID]--; pendingBySession[msg.SessionID] <= 0 {
+				delete(pendingBySession, msg.SessionID)
+			}
 
 			seq++
 			if msg.IsError {
@@ -380,7 +406,8 @@ func main() {
 					errorText = msg.Content[0].Inline
 				}
 				resp := ResponseMsg{
-					Type: "response",
+					Type:      "response",
+					SessionID: msg.SessionID,
 					Output: []MessagePart{
 						{
 							Type:   "text",
@@ -391,7 +418,8 @@ func main() {
 				writeJSON(resp)
 			} else {
 				resp := ResponseMsg{
-					Type: "response",
+					Type:      "response",
+					SessionID: msg.SessionID,
 					Output: []MessagePart{
 						{
 							Type:   "text",
@@ -403,7 +431,14 @@ func main() {
 			}
 
 		case "heartbeat":
-			writeJSON(map[string]string{"type": "heartbeat_ack"})
+			// While a tool call this runtime made for the session the
+			// heartbeat names is pending, the runtime is doing work for that
+			// session, so the ack reports it busy.
+			if pendingBySession[msg.SessionID] > 0 {
+				writeJSON(map[string]interface{}{"type": "heartbeat_ack", "sessionId": msg.SessionID, "busy": true})
+			} else {
+				writeJSON(map[string]string{"type": "heartbeat_ack"})
+			}
 
 		case "shutdown":
 			// Clean up any resources if needed, then exit
@@ -445,7 +480,7 @@ func writeJSON(v interface{}) {
 
 2. **Tool calls are asynchronous within the stdin channel:** When you emit a `tool_call`, the result does not arrive on the next line. Other messages (heartbeats, additional user messages) may arrive first. Track pending tool calls by ID.
 
-3. **Heartbeats:** If you do not respond to a heartbeat within 10 seconds, the adapter sends SIGTERM. Always handle them in your main loop.
+3. **Heartbeats:** The adapter sends a `heartbeat` once per interval for each session, naming the session in `sessionId`. If no acknowledgment arrives within 10 seconds, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy. Always handle them in your main loop. While the calculator waits for the `tool_result` of a `write_file` call it made for a session, it acknowledges a heartbeat that names that session with `busy: true`. A runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for the session the heartbeat names, as in `{"type":"heartbeat_ack","sessionId":"sess_abc","busy":true}`. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../reference/glossary#slot); each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. See [Idle suspension](../runtime-author-guide/lifecycle.md#idle-suspension).
 
 4. **Unknown messages are ignored:** The protocol is forward-compatible. New message types may be added in future versions. Your runtime must not crash on unrecognized types.
 
@@ -466,19 +501,19 @@ go build -o calc-runtime ./cmd/calc-runtime/
 You can test the protocol manually by piping JSON lines:
 
 ```bash
-echo '{"type":"message","id":"msg_001","input":[{"type":"text","inline":"3 + 7"}]}' | ./calc-runtime
+echo '{"type":"message","id":"msg_001","sessionId":"sess_abc","input":[{"type":"text","inline":"3 + 7"}]}' | ./calc-runtime
 ```
 
 Expected output:
 
 ```
-{"type":"response","output":[{"type":"text","inline":"[1] 3 + 7 = 10"}]}
+{"type":"response","sessionId":"sess_abc","output":[{"type":"text","inline":"[1] 3 + 7 = 10"}]}
 ```
 
 Test heartbeat handling:
 
 ```bash
-echo '{"type":"heartbeat","ts":1717430410}' | ./calc-runtime
+echo '{"type":"heartbeat","ts":1717430410,"sessionId":"sess_abc"}' | ./calc-runtime
 ```
 
 Expected output:
@@ -534,9 +569,9 @@ USER agent
 
 COPY --from=builder /calc-runtime /usr/local/bin/calc-runtime
 
-# The adapter spawns this binary; it is NOT the container entrypoint.
-# The adapter is the entrypoint; it starts the runtime via the sidecar model.
-# For embedded model testing, you can use this entrypoint directly:
+# The entrypoint is the runtime binary. In the sidecar model the runtime
+# supervisor ignores it and launches the Runtime's command, and the adapter
+# runs in its own container. For local testing, run the entrypoint directly:
 ENTRYPOINT ["/usr/local/bin/calc-runtime"]
 ```
 
@@ -623,7 +658,7 @@ The calculator runtime so far is at the Basic level: it uses only stdin/stdout. 
 
 ### Reading the Adapter Manifest
 
-Standard-level runtimes read `/run/lenny/adapter-manifest.json` on startup to discover MCP server socket paths:
+Standard-level runtimes read `/run/lenny/adapter-manifest.json` on startup to discover MCP server socket paths. The manifest carries only pod-scoped fields. A session's own context, such as its identifier and credential file path, arrives in that session's `session_start` frame on stdin (see the [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin)); the calculator keeps no per-session context, so its `default` case ignores `session_start` and `session_end` and it reads the session identifier from each `message`:
 
 ```go
 // file: internal/manifest/manifest.go
@@ -635,14 +670,12 @@ import (
 )
 
 type AdapterManifest struct {
-	Version          int               `json:"version"`
-	PlatformMcpServer MCPServerConfig  `json:"platformMcpServer"`
-	LifecycleChannel  MCPServerConfig  `json:"lifecycleChannel"`
+	Version           int               `json:"version"`
+	PlatformMcpServer MCPServerConfig   `json:"platformMcpServer"`
+	RuntimeOps        MCPServerConfig   `json:"runtimeOps"`
 	ConnectorServers  []ConnectorServer `json:"connectorServers"`
 	AdapterLocalTools []ToolDef         `json:"adapterLocalTools"`
-	SessionID        string            `json:"sessionId"`
-	TaskID           string            `json:"taskId"`
-	McpNonce         string            `json:"mcpNonce"`
+	McpNonce          string            `json:"mcpNonce"`
 }
 
 type MCPServerConfig struct {
@@ -688,7 +721,7 @@ Standard-level runtimes connect to Lenny's local tool server as an MCP client. T
 
 manifest, err := manifest.Load("/run/lenny/adapter-manifest.json")
 if err != nil {
-    log.Fatal(err)
+	log.Fatal(err)
 }
 
 // Connect to Lenny's local tool server using the mcp-go library
@@ -744,7 +777,7 @@ In this tutorial you:
 |------|--------------------|--------------|
 | **Basic** | stdin/stdout JSON Lines | Message/response, adapter-local tools (read_file, write_file, etc.) |
 | **Standard** | + MCP client connection to adapter's local servers | Platform tools (delegation, discovery, elicitation), connector access |
-| **Full** | + Lifecycle channel | Clean interrupts, checkpoint/restore, in-place credential rotation |
+| **Full** | + CH-RUNTIMEOPS | Clean interrupts, checkpoint/restore, in-place credential rotation |
 
 ---
 

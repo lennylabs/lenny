@@ -40,7 +40,7 @@ func ready(ips ...string) []Endpoint {
 	return out
 }
 
-// spec: §5.2 line 500 — first request for a tenant pins an unpinned pod
+// spec: §5.2 — first request for a tenant pins an unpinned pod
 // and records the tenantId → pod IP mapping.
 func TestRouteFirstRequestPinsUnpinnedPod(t *testing.T) {
 	r := New("claude-stateless", newFakeMetrics())
@@ -61,7 +61,7 @@ func TestRouteFirstRequestPinsUnpinnedPod(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 500 — subsequent requests for the same tenant route to
+// spec: §5.2 — subsequent requests for the same tenant route to
 // the already-pinned pod without pinning a new one.
 func TestRouteSubsequentRequestReusesPin(t *testing.T) {
 	r := New("p", nil)
@@ -83,7 +83,7 @@ func TestRouteSubsequentRequestReusesPin(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 500 — when every pinned pod for a tenant is at slot
+// spec: §5.2 — when every pinned pod for a tenant is at slot
 // capacity (readiness false), the router pins a new unpinned pod.
 func TestRoutePinsNewPodWhenPinnedPodSaturated(t *testing.T) {
 	r := New("p", nil)
@@ -109,7 +109,7 @@ func TestRoutePinsNewPodWhenPinnedPodSaturated(t *testing.T) {
 	_ = first
 }
 
-// spec: §5.2 line 500 — no ready pod for the tenant and no unpinned ready
+// spec: §5.2 — no ready pod for the tenant and no unpinned ready
 // pod yields ErrNoAvailablePod.
 func TestRouteExhaustedReturnsError(t *testing.T) {
 	r := New("p", nil)
@@ -124,7 +124,7 @@ func TestRouteExhaustedReturnsError(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 502 — a request can never route to a pod pinned to a
+// spec: §5.2 — a request can never route to a pod pinned to a
 // different tenant; with only foreign-pinned pods left the route is
 // exhausted rather than crossing tenants.
 func TestRouteNeverCrossesTenant(t *testing.T) {
@@ -142,7 +142,7 @@ func TestRouteNeverCrossesTenant(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 502 — CheckTenant rejects a mismatched tenant on an
+// spec: §5.2 — CheckTenant rejects a mismatched tenant on an
 // already-pinned pod and admits the owning tenant or an unpinned pod.
 func TestCheckTenantEnforcesIsolation(t *testing.T) {
 	r := New("p", nil)
@@ -160,7 +160,7 @@ func TestCheckTenantEnforcesIsolation(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 500 — a pod removed from the EndpointSlice snapshot is
+// spec: §5.2 — a pod removed from the EndpointSlice snapshot is
 // evicted and unpinned, freeing the tenant's set.
 func TestUpdateEndpointsEvictsDeletedPod(t *testing.T) {
 	r := New("p", nil)
@@ -178,7 +178,7 @@ func TestUpdateEndpointsEvictsDeletedPod(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 573 — Route increments the request counter (including
+// spec: §5.2 — Route increments the request counter (including
 // for unservable arrivals) and Route/Release maintain the concurrent
 // active gauge.
 func TestMetricsEmission(t *testing.T) {

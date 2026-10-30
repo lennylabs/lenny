@@ -18,7 +18,7 @@ import (
 
 // seedParentWithLease seeds a running parent carrying a granted §8.2
 // lease_slice so the delegation budget gate has a ceiling to validate
-// against. spec: §8.2 lines 38-48. F-8.2.2.
+// against. spec: §8.2. F-8.2.2.
 func seedParentWithLease(t *testing.T, store sessionstore.Store, id string, granted *sessionstore.DelegationLease) {
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -45,7 +45,7 @@ func delegateWithSlice(svc *delegation.Service, slice lease.LeaseSlice) (delegat
 	})
 }
 
-// spec: §8.2 lines 38-48 — a child lease_slice that stays within the
+// spec: §8.2 — a child lease_slice that stays within the
 // parent's granted budget is admitted, and the resolved slice is stamped
 // on the child row so the child's own descendants validate against it.
 func TestDelegate_LeaseSlice_WithinParentBudget_Admitted_Spec82(t *testing.T) {
@@ -80,7 +80,7 @@ func TestDelegate_LeaseSlice_WithinParentBudget_Admitted_Spec82(t *testing.T) {
 	}
 }
 
-// spec: §8.2 lines 38-48, 127 — a child lease_slice that exceeds the
+// spec: §8.2 — a child lease_slice that exceeds the
 // parent's granted budget on any axis is rejected with
 // *lease.BudgetExceededError (mapped to BUDGET_EXHAUSTED) before the
 // child row is created.
@@ -117,7 +117,7 @@ func TestDelegate_LeaseSlice_ExceedsParentBudget_BudgetExceeded_Spec82(t *testin
 	}
 }
 
-// spec: §8.2 lines 38-48 — a parent with no granted slice (root /
+// spec: §8.2 — a parent with no granted slice (root /
 // standalone, or a child whose lease declared no slice) imposes no
 // budget binding, so ValidateChildSlice admits any child slice.
 func TestDelegate_LeaseSlice_ParentNoBudget_AdmitsChild_Spec82(t *testing.T) {
@@ -134,7 +134,7 @@ func TestDelegate_LeaseSlice_ParentNoBudget_AdmitsChild_Spec82(t *testing.T) {
 	}
 }
 
-// spec: §8.2 lines 38-48 — a delegation that declares no lease_slice
+// spec: §8.2 — a delegation that declares no lease_slice
 // leaves the child's DelegationLease nil (no budget binding), so the
 // store omits the column rather than persisting an all-zero slice.
 func TestDelegate_LeaseSlice_NoChildSlice_NilLease_Spec82(t *testing.T) {

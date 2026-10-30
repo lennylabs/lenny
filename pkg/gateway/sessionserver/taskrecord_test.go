@@ -47,7 +47,7 @@ func getSession(t *testing.T, h http.Handler, id string) *httptest.ResponseRecor
 	return rr
 }
 
-// spec: §8.8 lines 806-823 — GET /v1/sessions/{id} materializes the §8.8
+// spec: §8.8 — GET /v1/sessions/{id} materializes the §8.8
 // TaskRecord envelope projected from the row + transcript: caller/agent
 // messages with per-entry text MessageParts, the terminal state on the
 // final agent turn, and treeUsage absent (null) until descendants
@@ -56,8 +56,9 @@ func TestGetSessionProjectsTaskRecord_spec_8_8_806(t *testing.T) {
 	store := memstore.New()
 	transcripts := transcriptstore.NewMemory()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcripts,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcripts,
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
@@ -89,7 +90,7 @@ func TestGetSessionProjectsTaskRecord_spec_8_8_806(t *testing.T) {
 	if rec.SchemaVersion != 1 || rec.TaskID != "sess_tr1" || rec.SessionID != "sess_tr1" {
 		t.Errorf("envelope identity = %+v, want schemaVersion=1 taskId=sessionId=sess_tr1", rec)
 	}
-	// spec: §8.8 line 866 — completed maps to the MCP `completed` state.
+	// spec: §8.8 — completed maps to the MCP `completed` state.
 	if rec.State != "completed" {
 		t.Errorf("record state = %q, want completed", rec.State)
 	}
@@ -99,7 +100,7 @@ func TestGetSessionProjectsTaskRecord_spec_8_8_806(t *testing.T) {
 	if len(rec.Messages) != 2 {
 		t.Fatalf("messages len = %d, want 2", len(rec.Messages))
 	}
-	// spec: §8.8 lines 810-817 — user → caller, assistant → agent, each
+	// spec: §8.8 — user → caller, assistant → agent, each
 	// transcript line becomes a text MessagePart.
 	if rec.Messages[0].Role != "caller" || rec.Messages[0].Parts[0].Inline != "do the thing" {
 		t.Errorf("caller message = %+v", rec.Messages[0])
@@ -117,7 +118,7 @@ func TestGetSessionProjectsTaskRecord_spec_8_8_806(t *testing.T) {
 // taskRecord rather than emitting an empty envelope. F-8.8.1.
 func TestGetSessionOmitsTaskRecordWithoutTranscripts_spec_8_8_806(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{Executor: executor.NewEchoExecutor()})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: executor.NewEchoExecutor()})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_no_tr", TenantID: "acme", State: session.StateRunning,

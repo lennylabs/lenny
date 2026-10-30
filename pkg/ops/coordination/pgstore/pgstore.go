@@ -10,10 +10,10 @@
 // tiered Service falls back to the Redis (Tier 2) store.
 //
 // All three tables are platform-scoped (the §25 control plane is not
-// multi-tenanted at this boundary; §25.4 line 1492), so the store runs no
+// multi-tenanted at this boundary; §25.4), so the store runs no
 // tenant-scoped transaction and the tables carry no RLS policy.
 //
-// spec: §25.4 lines 2160-2267.
+// spec: §25.4.
 package pgstore
 
 import (
@@ -30,7 +30,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 )
 
-// advisoryReconcileKey is the constant §25.4 line 2226
+// advisoryReconcileKey is the constant §25.4
 // pg_advisory_xact_lock key (the spec's 0xLOCK_EPOCH_RECONCILE) the
 // reconciliation transaction holds so a new Tier 1 acquire blocks until
 // reconciliation commits rather than reading a stale epoch mid-pass. It is
@@ -59,7 +59,7 @@ func (s *Store) Tier() string { return coordination.StorePostgres }
 // coordination.ErrStoreUnavailable so the sampler skips the sample
 // rather than reporting a spurious skew during a Postgres outage.
 //
-// spec: §25.4 line 2280 (Postgres-Redis skew monitoring); the Tier 1
+// spec: §25.4; the Tier 1
 // clock is Postgres now() at time zone 'UTC'.
 func (s *Store) ServerTime(ctx context.Context) (time.Time, error) {
 	var t time.Time
@@ -86,8 +86,7 @@ func (s *Store) ServerTime(ctx context.Context) (time.Time, error) {
 // and the connection-exception class (08) as store-unavailable rather than
 // surfacing them.
 //
-// spec: §25.4 lines 2170-2178 (Storage Tiers; attempts storage tiers in
-// order, falling back on failure; Tier 2 Redis when Postgres unreachable).
+// spec: §25.4.
 func classifyErr(err error) error {
 	if err == nil {
 		return nil
@@ -115,7 +114,7 @@ func classifyErr(err error) error {
 // (scope) constraint as the compare-and-set primitive. Expired rows for
 // the scope are reaped in the same statement (the §25.4 lazy cleanup) so a
 // stale row does not block a fresh acquire. epoch is ignored here: Tier 1
-// acquisitions use epoch 0 (§25.4 line 2193, "reserved for the Postgres
+// acquisitions use epoch 0 (§25.4, "reserved for the Postgres
 // tier"). On a live conflict it returns coordination.ErrCodeConflict
 // carrying the holder; on a connection failure, ErrStoreUnavailable.
 func (s *Store) Acquire(ctx context.Context, req coordination.LockRequest, _ uint64) (*coordination.Lock, error) {
@@ -189,7 +188,7 @@ func (s *Store) ActiveLocks(ctx context.Context) ([]coordination.Lock, error) {
 // id is unknown or the lock has expired. When the id is that of a lock that
 // lost a split-brain resolution to a still-active pre-outage holder, it
 // returns the 409 split-brain conflict instead so the losing holder learns
-// the outcome (§25.4 line 2267).
+// the outcome (§25.4).
 func (s *Store) Get(ctx context.Context, lockID string) (*coordination.Lock, error) {
 	lock, err := scanLock(s.pool.QueryRow(ctx,
 		`SELECT `+columns+` FROM ops_remediation_locks WHERE id = $1 AND expires_at > now()`, lockID))
@@ -248,7 +247,7 @@ func (s *Store) notFoundOrNotOwned(ctx context.Context, lockID, caller string) e
 		// The lock is not a live Postgres row. If its id lost a split-brain
 		// resolution to a still-active pre-outage holder, surface the 409
 		// split-brain conflict so the losing holder's heartbeat/release
-		// learns the outcome rather than a bare not-found (§25.4 line 2267).
+		// learns the outcome rather than a bare not-found (§25.4).
 		if sb := s.splitBrainLoserConflict(ctx, lockID); sb != nil {
 			return sb
 		}
@@ -271,7 +270,7 @@ func (s *Store) notFoundOrNotOwned(ctx context.Context, lockID, caller string) e
 // resolution to ops_lock_conflicts with the losing (post-outage) lock in
 // post_outage_lock; a losing holder that heartbeats, releases, or fetches
 // its removed lock is told winner:"pre_outage" and the retained holder
-// rather than a bare not-found (§25.4 line 2267, line 2271: "always
+// rather than a bare not-found (§25.4: "always
 // notified via the heartbeat path").
 func (s *Store) splitBrainLoserConflict(ctx context.Context, lockID string) *coordination.Error {
 	var winnerHolder string
@@ -394,7 +393,7 @@ func (s *Store) SetEpoch(ctx context.Context, v uint64) error {
 // records the conflict in ops_lock_conflicts. now is the resolution-time
 // clock for the expired-by-clock test.
 //
-// spec: §25.4 lines 2226-2267.
+// spec: §25.4.
 func (s *Store) Reconcile(ctx context.Context, redisEpoch uint64, redisLocks []coordination.Lock, now time.Time) (coordination.ReconcileOutcome, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -454,7 +453,7 @@ func (s *Store) Reconcile(ctx context.Context, redisEpoch uint64, redisLocks []c
 // lock, mutating ops_remediation_locks and recording the conflict in
 // ops_lock_conflicts. It runs inside the reconciliation transaction.
 //
-// spec: §25.4 lines 2255-2267.
+// spec: §25.4.
 func (s *Store) resolveSplitBrain(ctx context.Context, tx pgx.Tx, pre, post coordination.Lock, epoch uint64, now time.Time) (coordination.SplitBrainConflict, error) {
 	preExpired := !now.Before(pre.ExpiresAt)
 	postExpired := !now.Before(post.ExpiresAt)
@@ -485,7 +484,7 @@ func (s *Store) resolveSplitBrain(ctx context.Context, tx pgx.Tx, pre, post coor
 	default:
 		// Both active: pre-outage (Postgres) wins; the losing Redis lock is
 		// removed and its holder is notified with the split-brain 409 on its
-		// next heartbeat/list/release (§25.4 line 2267). The conflict row
+		// next heartbeat/list/release (§25.4). The conflict row
 		// (below) keyed on the losing lock id drives that notification.
 		conflict.Winner = "pre_outage"
 		conflict.WinnerHolder = pre.AcquiredBy

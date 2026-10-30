@@ -12,64 +12,59 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// fakeLeaseDenials records ClearSubtreeDenial calls and returns scripted
-// results so the §15.1 handler's found/error branches can be exercised.
+// fakeLeaseDenials records ClearSubtreeDenial calls and returns a
+// scripted error so the §15.1 handler's error branch can be exercised.
 type fakeLeaseDenials struct {
-	calls [][2]string
-	found bool
+	calls [][3]string
 	err   error
 }
 
-func (f *fakeLeaseDenials) ClearSubtreeDenial(_ context.Context, root, sub string) (bool, error) {
-	f.calls = append(f.calls, [2]string{root, sub})
-	return f.found, f.err
+func (f *fakeLeaseDenials) ClearSubtreeDenial(_ context.Context, tenantID, root, sub string) error {
+	f.calls = append(f.calls, [3]string{tenantID, root, sub})
+	return f.err
 }
 
-// fakeTenantResolver resolves a root session id to its owning tenant,
-// satisfying leasecontrol.TenantResolver so the ADM-4 cross-tenant
-// confinement can be exercised. An empty owner reports the session as
-// unknown so the not-found branch can be asserted too.
-type fakeTenantResolver struct {
-	owners map[string]string
+// failingSessions wraps a session store whose reads fail, exercising the
+// handler's root-read 500 branch.
+type failingSessions struct {
+	sessionstore.Store
+	err error
 }
 
-func (f fakeTenantResolver) TenantOf(_ context.Context, sessionID string) (string, error) {
-	owner, ok := f.owners[sessionID]
-	if !ok {
-		return "", leasecontrol.ErrSessionNotFound
-	}
-	return owner, nil
+func (f failingSessions) Get(context.Context, string, string) (sessionstore.Session, error) {
+	return sessionstore.Session{}, f.err
 }
 
-// errTenantResolver always fails, exercising the handler's resolver-error
-// 500 fail-closed branch.
-type errTenantResolver struct{ err error }
-
-func (e errTenantResolver) TenantOf(context.Context, string) (string, error) {
-	return "", e.err
+func (f failingSessions) GetByID(context.Context, string) (sessionstore.Session, error) {
+	return sessionstore.Session{}, f.err
 }
 
+// newLeaseDenialAdmin wires the clear route over a session store holding
+// root-1 owned by acme.
 func newLeaseDenialAdmin(t *testing.T, clearer admin.LeaseDenialClearer) (*admin.Router, *recordingAudit) {
 	t.Helper()
+	sessions := memstore.New()
+	seedSession(t, sessions, sessionstore.Session{ID: "root-1", TenantID: "acme", UserID: "alice@acme.com"})
 	audit := &recordingAudit{}
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		Audit: audit,
-	}).WithLeaseDenials(clearer).
-		WithTenantResolver(fakeTenantResolver{owners: map[string]string{"root-1": "acme"}})
+	}).WithLeaseDenials(clearer).WithSessions(sessions)
 	return router, audit
 }
 
 const denialPath = "/v1/admin/trees/root-1/subtrees/sub-9/extension-denial"
 
-// spec: §8.6 line 735; §15.1 line 868 — platform-admin clears a subtree
-// denial; the handler returns 204, forwards both path ids to the
-// clearer, and records the §10.6 admin audit row.
+// spec: §8.6; §15.1; §24.11 — platform-admin clears a subtree denial;
+// the handler returns 204, forwards both path ids to the clearer under the
+// root row's tenant rather than the principal's, and records the §10.6
+// admin audit row.
 func TestClearExtensionDenial_PlatformAdmin_Spec15_1(t *testing.T) {
-	clearer := &fakeLeaseDenials{found: true}
+	clearer := &fakeLeaseDenials{}
 	router, audit := newLeaseDenialAdmin(t, clearer)
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodDelete, denialPath, nil))
 	rr := httptest.NewRecorder()
@@ -78,8 +73,8 @@ func TestClearExtensionDenial_PlatformAdmin_Spec15_1(t *testing.T) {
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204; body=%s", rr.Code, rr.Body.String())
 	}
-	if len(clearer.calls) != 1 || clearer.calls[0] != [2]string{"root-1", "sub-9"} {
-		t.Fatalf("clearer calls = %v, want one (root-1, sub-9)", clearer.calls)
+	if len(clearer.calls) != 1 || clearer.calls[0] != [3]string{"acme", "root-1", "sub-9"} {
+		t.Fatalf("clearer calls = %v, want one (acme, root-1, sub-9)", clearer.calls)
 	}
 	ev := audit.snapshot()
 	if len(ev) != 1 || ev[0].Type != "admin.delegation.extension_denial_cleared" {
@@ -90,9 +85,9 @@ func TestClearExtensionDenial_PlatformAdmin_Spec15_1(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 868 — the endpoint admits tenant-admin too.
+// spec: §15.1 — the endpoint admits tenant-admin too.
 func TestClearExtensionDenial_TenantAdminAllowed_Spec15_1(t *testing.T) {
-	clearer := &fakeLeaseDenials{found: true}
+	clearer := &fakeLeaseDenials{}
 	router, _ := newLeaseDenialAdmin(t, clearer)
 	req := withTenantAdminPrincipal(httptest.NewRequest(http.MethodDelete, denialPath, nil))
 	rr := httptest.NewRecorder()
@@ -102,10 +97,10 @@ func TestClearExtensionDenial_TenantAdminAllowed_Spec15_1(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 868 — a plain user (no admin role) is rejected with
+// spec: §15.1 — a plain user (no admin role) is rejected with
 // 403 before the clearer is touched.
 func TestClearExtensionDenial_NonAdminForbidden_Spec15_1(t *testing.T) {
-	clearer := &fakeLeaseDenials{found: true}
+	clearer := &fakeLeaseDenials{}
 	router, _ := newLeaseDenialAdmin(t, clearer)
 	req := withUserPrincipal(httptest.NewRequest(http.MethodDelete, denialPath, nil))
 	rr := httptest.NewRecorder()
@@ -118,12 +113,12 @@ func TestClearExtensionDenial_NonAdminForbidden_Spec15_1(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 868 — an unknown tree returns 404 (found=false), and
-// no audit row is emitted for a no-op clear.
+// spec: §15.1 — an unknown root returns 404 before the clear, and no
+// audit row is emitted.
 func TestClearExtensionDenial_UnknownTree404_Spec15_1(t *testing.T) {
-	clearer := &fakeLeaseDenials{found: false}
+	clearer := &fakeLeaseDenials{}
 	router, audit := newLeaseDenialAdmin(t, clearer)
-	req := withAdminPrincipal(httptest.NewRequest(http.MethodDelete, denialPath, nil))
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodDelete, "/v1/admin/trees/root-404/subtrees/sub-9/extension-denial", nil))
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
@@ -132,9 +127,12 @@ func TestClearExtensionDenial_UnknownTree404_Spec15_1(t *testing.T) {
 	if len(audit.snapshot()) != 0 {
 		t.Fatalf("no audit row expected for a not-found clear; got %+v", audit.snapshot())
 	}
+	if len(clearer.calls) != 0 {
+		t.Fatalf("clear must not run for an unknown root; calls=%v", clearer.calls)
+	}
 }
 
-// spec: §15.1 line 868 — a storage failure surfaces as 500.
+// spec: §15.1 — a clear failure surfaces as 500.
 func TestClearExtensionDenial_StorageError500_Spec15_1(t *testing.T) {
 	clearer := &fakeLeaseDenials{err: errors.New("postgres down")}
 	router, _ := newLeaseDenialAdmin(t, clearer)
@@ -146,13 +144,12 @@ func TestClearExtensionDenial_StorageError500_Spec15_1(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 868 — when no LeaseDenialClearer is wired the route is
-// not registered, so the mux answers 404 (the gateway runs no
-// GatewayControl lease-extension control plane).
+// spec: §15.1 — when no LeaseDenialClearer is wired the route is not
+// registered, so the mux answers 404.
 func TestClearExtensionDenial_Unwired404(t *testing.T) {
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-	})
+	}).WithSessions(memstore.New())
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodDelete, denialPath, nil))
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
@@ -161,23 +158,41 @@ func TestClearExtensionDenial_Unwired404(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 261; §15.1 line 869 (ADM-4) — a tenant-admin of one
-// tenant cannot clear a tree owned by another tenant. The resolver maps
-// root-1 to acme, so the globex tenant-admin is rejected 403 FORBIDDEN
-// and the durable clearer is never called. Fails pre-fix, where the
-// clear runs before any caller-tenant check and the victim row is wiped.
+// spec: §15.1 — the handler resolves the root row before the clear, so
+// a router with a clearer but no session store leaves the route
+// unregistered and the clear never runs.
+func TestClearExtensionDenial_UnwiredSessionsUnregistered_Spec15_1(t *testing.T) {
+	clearer := &fakeLeaseDenials{}
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithLeaseDenials(clearer)
+	req := withAdminPrincipal(httptest.NewRequest(http.MethodDelete, denialPath, nil))
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("route without a session store status = %d, want 404", rr.Code)
+	}
+	if len(clearer.calls) != 0 {
+		t.Fatalf("clear must not run without a session store; calls=%v", clearer.calls)
+	}
+}
+
+// spec: §10.2; §15.1 (ADM-4) — a tenant-admin of one tenant cannot clear
+// a tree owned by another tenant. root-1 is owned by acme, and the globex
+// tenant-admin reads it under globex, so the read misses, the handler
+// answers 404, and the clearer is never called.
 //
 // diagnosis: the extension-denial clear leaks across tenants: a
 // tenant-admin cleared another tenant's denial row given an opaque
 // session UUID. The §10.2 own-tenant confinement is missing or unwired.
 func TestClearExtensionDenial_ForeignTenantForbidden_ADM4(t *testing.T) {
-	clearer := &fakeLeaseDenials{found: true}
+	clearer := &fakeLeaseDenials{}
 	router, audit := newLeaseDenialAdmin(t, clearer)
 	req := withForeignTenantAdminPrincipal(httptest.NewRequest(http.MethodDelete, denialPath, nil))
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("foreign tenant-admin status = %d, want 403; body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("foreign tenant-admin status = %d, want 404; body=%s", rr.Code, rr.Body.String())
 	}
 	if len(clearer.calls) != 0 {
 		t.Fatalf("clear must not run on a cross-tenant rejection; calls=%v", clearer.calls)
@@ -187,7 +202,7 @@ func TestClearExtensionDenial_ForeignTenantForbidden_ADM4(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 261; §15.1 line 869 (ADM-4) — the owning tenant-admin
+// spec: §10.2; §15.1 (ADM-4) — the owning tenant-admin
 // (acme owns root-1) still clears its own tree: 204, the clearer runs,
 // and the audit row is emitted. This pins that the confinement does not
 // over-reject the legitimate own-tenant caller.
@@ -195,7 +210,7 @@ func TestClearExtensionDenial_ForeignTenantForbidden_ADM4(t *testing.T) {
 // diagnosis: the §10.2 own-tenant confinement on the extension-denial
 // clear rejected the legitimate owning tenant-admin.
 func TestClearExtensionDenial_OwningTenantAllowed_ADM4(t *testing.T) {
-	clearer := &fakeLeaseDenials{found: true}
+	clearer := &fakeLeaseDenials{}
 	router, audit := newLeaseDenialAdmin(t, clearer)
 	req := withTenantAdminPrincipal(httptest.NewRequest(http.MethodDelete, denialPath, nil))
 	rr := httptest.NewRecorder()
@@ -203,49 +218,22 @@ func TestClearExtensionDenial_OwningTenantAllowed_ADM4(t *testing.T) {
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("owning tenant-admin status = %d, want 204; body=%s", rr.Code, rr.Body.String())
 	}
-	if len(clearer.calls) != 1 {
-		t.Fatalf("owning tenant-admin clear calls = %v, want one", clearer.calls)
+	if len(clearer.calls) != 1 || clearer.calls[0][0] != "acme" {
+		t.Fatalf("owning tenant-admin clear calls = %v, want one under acme", clearer.calls)
 	}
 	if len(audit.snapshot()) != 1 {
 		t.Fatalf("owning tenant-admin clear must emit one audit row; got %+v", audit.snapshot())
 	}
 }
 
-// spec: §10.2 line 261 (ADM-4) — fail closed when the tenant resolver is
-// unwired: a non-platform-admin caller is rejected 403 FORBIDDEN so a
-// misconfigured gateway cannot reopen the cross-tenant clear, while the
-// clearer is never reached.
-//
-// diagnosis: the extension-denial clear ran for a non-platform-admin
-// caller despite an unwired tenant resolver, so the cross-tenant
-// confinement failed open under misconfiguration.
-func TestClearExtensionDenial_NilResolverFailsClosed_ADM4(t *testing.T) {
-	clearer := &fakeLeaseDenials{found: true}
-	audit := &recordingAudit{}
-	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
-		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		Audit: audit,
-	}).WithLeaseDenials(clearer) // no WithTenantResolver
-	req := withTenantAdminPrincipal(httptest.NewRequest(http.MethodDelete, denialPath, nil))
-	rr := httptest.NewRecorder()
-	router.Handler().ServeHTTP(rr, req)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("nil-resolver tenant-admin status = %d, want 403; body=%s", rr.Code, rr.Body.String())
-	}
-	if len(clearer.calls) != 0 {
-		t.Fatalf("clear must not run when the resolver is unwired; calls=%v", clearer.calls)
-	}
-}
-
-// spec: §10.2 line 261 (ADM-4) — a platform-admin still clears across
-// tenants even when the tree is owned by another tenant; the resolver
-// confinement applies only to non-platform-admin callers. root-1 is
-// owned by acme, but the platform-admin (tenant=platform) succeeds.
+// spec: §10.2 (ADM-4) — a platform-admin still clears across
+// tenants: root-1 is owned by acme, the platform-admin (tenant=platform)
+// reads it by id, and the clear runs under acme.
 //
 // diagnosis: the §10.2 confinement over-rejected a platform-admin
 // cross-tenant clear, which §10.2 permits.
 func TestClearExtensionDenial_PlatformAdminCrossTenant_ADM4(t *testing.T) {
-	clearer := &fakeLeaseDenials{found: true}
+	clearer := &fakeLeaseDenials{}
 	router, _ := newLeaseDenialAdmin(t, clearer)
 	req := withAdminPrincipal(httptest.NewRequest(http.MethodDelete, denialPath, nil))
 	rr := httptest.NewRecorder()
@@ -253,53 +241,50 @@ func TestClearExtensionDenial_PlatformAdminCrossTenant_ADM4(t *testing.T) {
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("platform-admin cross-tenant status = %d, want 204; body=%s", rr.Code, rr.Body.String())
 	}
-	if len(clearer.calls) != 1 {
-		t.Fatalf("platform-admin clear calls = %v, want one", clearer.calls)
+	if len(clearer.calls) != 1 || clearer.calls[0][0] != "acme" {
+		t.Fatalf("platform-admin clear calls = %v, want one under the row's tenant acme", clearer.calls)
 	}
 }
 
-// spec: §10.2 line 261; §15.1 line 868 (ADM-4) — a non-platform-admin
-// caller naming a tree the resolver does not know gets 404
-// RESOURCE_NOT_FOUND before the clear, so an unknown tree is reported
-// rather than confirming or denying ownership. The clearer is never
-// reached.
-func TestClearExtensionDenial_ResolverUnknownTree404_ADM4(t *testing.T) {
-	clearer := &fakeLeaseDenials{found: true}
-	audit := &recordingAudit{}
-	// The resolver knows no trees, so root-1 resolves to ErrSessionNotFound.
-	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
-		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		Audit: audit,
-	}).WithLeaseDenials(clearer).
-		WithTenantResolver(fakeTenantResolver{owners: map[string]string{}})
-	req := withTenantAdminPrincipal(httptest.NewRequest(http.MethodDelete, denialPath, nil))
+// spec: §10.2; §15.1 — a tenant-admin naming a root that does not exist
+// gets 404 RESOURCE_NOT_FOUND before the clear.
+func TestClearExtensionDenial_TenantAdminUnknownTree404_Spec15_1(t *testing.T) {
+	clearer := &fakeLeaseDenials{}
+	router, _ := newLeaseDenialAdmin(t, clearer)
+	req := withTenantAdminPrincipal(httptest.NewRequest(http.MethodDelete, "/v1/admin/trees/root-404/subtrees/sub-9/extension-denial", nil))
 	rr := httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
-		t.Fatalf("unknown-tree resolver status = %d, want 404; body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("unknown root status = %d, want 404; body=%s", rr.Code, rr.Body.String())
 	}
 	if len(clearer.calls) != 0 {
-		t.Fatalf("clear must not run when the tree is unknown to the resolver; calls=%v", clearer.calls)
+		t.Fatalf("clear must not run for an unknown root; calls=%v", clearer.calls)
 	}
 }
 
-// spec: §10.2 line 261 (ADM-4) — a resolver storage error on the
-// confinement lookup surfaces as 500 and the clear does not run, so a
-// transient resolver outage fails closed rather than skipping the
-// cross-tenant check.
-func TestClearExtensionDenial_ResolverError500_ADM4(t *testing.T) {
-	clearer := &fakeLeaseDenials{found: true}
-	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
-		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-	}).WithLeaseDenials(clearer).
-		WithTenantResolver(errTenantResolver{err: errors.New("session store down")})
-	req := withTenantAdminPrincipal(httptest.NewRequest(http.MethodDelete, denialPath, nil))
-	rr := httptest.NewRecorder()
-	router.Handler().ServeHTTP(rr, req)
-	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("resolver error status = %d, want 500; body=%s", rr.Code, rr.Body.String())
-	}
-	if len(clearer.calls) != 0 {
-		t.Fatalf("clear must not run when the resolver errors; calls=%v", clearer.calls)
+// spec: §15.1 — a session-store read error on the root lookup answers 500
+// and the clear does not run, for both the tenant-admin and the
+// platform-admin read.
+func TestClearExtensionDenial_RootReadError500_Spec15_1(t *testing.T) {
+	for name, principal := range map[string]func(*http.Request) *http.Request{
+		"tenant-admin":   withTenantAdminPrincipal,
+		"platform-admin": withAdminPrincipal,
+	} {
+		t.Run(name, func(t *testing.T) {
+			clearer := &fakeLeaseDenials{}
+			router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+				Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+			}).WithLeaseDenials(clearer).
+				WithSessions(failingSessions{Store: memstore.New(), err: errors.New("session store down")})
+			req := principal(httptest.NewRequest(http.MethodDelete, denialPath, nil))
+			rr := httptest.NewRecorder()
+			router.Handler().ServeHTTP(rr, req)
+			if rr.Code != http.StatusInternalServerError {
+				t.Fatalf("root read error status = %d, want 500; body=%s", rr.Code, rr.Body.String())
+			}
+			if len(clearer.calls) != 0 {
+				t.Fatalf("clear must not run when the root read errors; calls=%v", clearer.calls)
+			}
+		})
 	}
 }

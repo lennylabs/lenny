@@ -5,6 +5,7 @@
 package adapter
 
 import (
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -38,7 +39,9 @@ func TestCheckPeerUID(t *testing.T) {
 	if err := checkPeerUID(server, self); err != nil {
 		t.Errorf("checkPeerUID for the current uid %d = %v, want nil", self, err)
 	}
-	if err := checkPeerUID(server, self+1); err == nil {
-		t.Error("checkPeerUID accepted a peer whose uid does not match")
+	err = checkPeerUID(server, self+1)
+	var mismatch *PeerUIDMismatchError
+	if !errors.As(err, &mismatch) || mismatch.Peer != self || mismatch.Expected != self+1 {
+		t.Errorf("checkPeerUID for uid %d = %v, want a *PeerUIDMismatchError naming peer %d", self+1, err, self)
 	}
 }

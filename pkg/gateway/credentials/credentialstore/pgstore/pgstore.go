@@ -136,7 +136,7 @@ func (s *Store) openSecret(ctx context.Context, tenantID string, blob []byte, ke
 // last: scanCredential reads it into a local so the strictly-advancing
 // value is available without a Credential field for it. secret holds
 // the envelope ciphertext blob and secret_key_version the §4.9.1 KEK
-// version. environment is the §4.3 line 202 scoping column.
+// version. environment is the §4.3 scoping column.
 const selectList = `tenant_id, ref, user_id, provider, environment, secret, secret_key_version,
 	status, created_at, rotated_at, revoked_at, last_used_at, updated_at`
 
@@ -145,7 +145,7 @@ const selectList = `tenant_id, ref, user_id, provider, environment, secret, secr
 // credential_ref. Re-registering the same four-tuple replaces the
 // secret, refreshes RotatedAt, and clears the revoked state per §15.1,
 // mirroring credentialstore.Memory.
-// spec: §4.3 line 202.
+// spec: §4.3.
 func (s *Store) Register(ctx context.Context, tenantID, userID string, provider credential.Provider, environment, secret string) (credentialstore.Credential, error) {
 	if !provider.IsValid() {
 		return credentialstore.Credential{}, errors.New("credentialstore: unknown provider " + string(provider))
@@ -219,10 +219,10 @@ func (s *Store) Register(ctx context.Context, tenantID, userID string, provider 
 	return out, nil
 }
 
-// Lookup resolves the credential for the §4.3 line 202
+// Lookup resolves the credential for the §4.3
 // (tenant, user, provider, environment) four-tuple, decrypting the
 // secret before return. A miss is ErrNotFound.
-// spec: §4.9 lines 1347-1351.
+// spec: §4.9.
 func (s *Store) Lookup(ctx context.Context, tenantID, userID string, provider credential.Provider, environment string) (credentialstore.Credential, error) {
 	var out credentialstore.Credential
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
@@ -458,7 +458,7 @@ func (s *Store) Revoke(ctx context.Context, tenantID, ref string) (credentialsto
 // path calls it so the §15.1 GET /v1/credentials response reports
 // last_used_at.
 //
-// spec: §4.9 line 1349, 1365.
+// spec: §4.9.
 func (s *Store) MarkUsed(ctx context.Context, tenantID, ref string, at time.Time) error {
 	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
@@ -496,7 +496,7 @@ func (s *Store) Delete(ctx context.Context, tenantID, ref string) error {
 // §4.9 user-credential registry is user-keyed, so DeleteByUser is the
 // load-bearing path for GDPR erasure of this store.
 //
-// spec: §12.1 line 5.
+// spec: §12.1.
 func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, errors.New("credentialstore: DeleteByUser requires non-empty tenant_id and user_id")
@@ -521,7 +521,7 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 // DeleteByTenant implements the §12.1 mandatory-erasure primitive.
 // Hard-deletes every credential row belonging to tenantID.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("credentialstore: DeleteByTenant requires a concrete tenant_id")

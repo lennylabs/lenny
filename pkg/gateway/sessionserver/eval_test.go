@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -35,7 +36,7 @@ func evalServer(t *testing.T, maxPerSession int, seed ...sessionstore.Session) (
 		}
 	}
 	evals := evalstore.NewMemory(maxPerSession, nil)
-	srv := sessionserver.New(store, sessionserver.Options{Evals: evals})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Evals: evals})
 	return srv.Handler(), evals
 }
 
@@ -48,12 +49,31 @@ func evalServerWithExperiments(t *testing.T, exps experimentstore.Store, seed ..
 		}
 	}
 	evals := evalstore.NewMemory(0, nil)
-	srv := sessionserver.New(store, sessionserver.Options{Evals: evals, Experiments: exps})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Evals: evals, Experiments: exps})
 	return srv.Handler(), evals
 }
 
 func evalSession(id string, state session.State) sessionstore.Session {
 	return sessionstore.Session{ID: id, TenantID: "default", UserID: "alice", State: state}
+}
+
+// delegationChain returns running sessions from a depth-zero root down to
+// leafID at depth, each naming the one before it as its parent, in insert
+// order so the §12.8 creation fence admits every delegated child.
+func delegationChain(leafID string, depth uint32) []sessionstore.Session {
+	rootID := leafID + "_d0"
+	chain := []sessionstore.Session{evalSession(rootID, session.StateRunning)}
+	for d := uint32(1); d <= depth; d++ {
+		s := evalSession(fmt.Sprintf("%s_d%d", leafID, d), session.StateRunning)
+		if d == depth {
+			s.ID = leafID
+		}
+		s.ParentSessionID = chain[d-1].ID
+		s.RootSessionID = rootID
+		s.DelegationDepth = d
+		chain = append(chain, s)
+	}
+	return chain
 }
 
 // concludedExperiment seeds a valid §10.7 experiment in the given status.
@@ -121,6 +141,7 @@ func evalServerRLClock(t *testing.T, clock func() time.Time, perSession, perTena
 		}
 	}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		Evals:                   evalstore.NewMemory(0, nil),
 		EvalRateLimitCounter:    ratelimit.NewMemory(),
 		EvalPerSessionPerMinute: perSession,
@@ -130,8 +151,7 @@ func evalServerRLClock(t *testing.T, clock func() time.Time, perSession, perTena
 	return srv.Handler()
 }
 
-// TestEvalRequiresSessionEvalWritePermission_spec_10_7_936 pins §10.7
-// line 936: the eval endpoint is gated on session:eval:write. A role
+// TestEvalRequiresSessionEvalWritePermission_spec_10_7_936 pins §10.7: the eval endpoint is gated on session:eval:write. A role
 // without it (tenant-viewer) is rejected with 403; a session-owning
 // role (user) is admitted. F-10.7.4.
 func TestEvalRequiresSessionEvalWritePermission_spec_10_7_936(t *testing.T) {
@@ -165,7 +185,7 @@ func TestEvalRateLimitPerSession_spec_10_7_938(t *testing.T) {
 		t.Fatalf("second eval: status %d, want 429", rr.Code)
 	}
 	if rr.Header().Get("Retry-After") == "" {
-		t.Error("429 response must carry a Retry-After header per §10.7 line 938")
+		t.Error("429 response must carry a Retry-After header per §10.7")
 	}
 	if !strings.Contains(rr.Body.String(), "RATE_LIMITED") {
 		t.Errorf("rejection should carry RATE_LIMITED: %s", rr.Body.String())
@@ -236,7 +256,7 @@ func TestEvalRateLimitFixedWindowBoundary_spec_10_7(t *testing.T) {
 	}
 }
 
-// TestEvalIdempotencyReplay_spec_10_7_940 pins §10.7 line 940: a repeat
+// TestEvalIdempotencyReplay_spec_10_7_940 pins §10.7: a repeat
 // submission carrying the same idempotency key for a session returns
 // 200 OK with the original record rather than inserting a duplicate; a
 // different key inserts a fresh record. F-10.7.4.
@@ -284,8 +304,7 @@ func TestEvalIdempotencyReplay_spec_10_7_940(t *testing.T) {
 	}
 }
 
-// TestEvalRejectsOversizeIdempotencyKey_spec_10_7_939 pins §10.7 line
-// 939: an idempotency key over 128 bytes is rejected with 400 before any
+// TestEvalRejectsOversizeIdempotencyKey_spec_10_7_939 pins §10.7: an idempotency key over 128 bytes is rejected with 400 before any
 // store work. F-10.7.4.
 func TestEvalRejectsOversizeIdempotencyKey_spec_10_7_939(t *testing.T) {
 	h, evals := evalServer(t, 0, evalSession("sess_1", session.StateRunning))
@@ -310,7 +329,7 @@ type capturedEvalScore struct {
 	score                       float64
 }
 
-// spec: §16.1 line 164 / §10.7 line 1128 — a submitted eval with a scalar
+// spec: §16.1 / §10.7 — a submitted eval with a scalar
 // score records one lenny_eval_score observation labelled by scorer and the
 // session's variant. A submission carrying only the per-dimension scores map
 // has no scalar observation and must not call the hook. F-10.7.13.
@@ -329,7 +348,8 @@ func TestEvalEmitsEvalScoreMetric_spec_16_1_164(t *testing.T) {
 	}
 	var got []capturedEvalScore
 	srv := sessionserver.New(store, sessionserver.Options{
-		Evals: evalstore.NewMemory(0, nil),
+		DevTenantHeader: true,
+		Evals:           evalstore.NewMemory(0, nil),
 		ObserveEvalScore: func(tenantID, scorer, variantID string, score float64) {
 			got = append(got, capturedEvalScore{tenantID, scorer, variantID, score})
 		},
@@ -444,14 +464,14 @@ func TestEvalQuotaExceeded(t *testing.T) {
 func TestEvalUnavailableWithoutStore(t *testing.T) {
 	store := memstore.New()
 	_ = store.Create(context.Background(), evalSession("sess_1", session.StateRunning))
-	srv := sessionserver.New(store, sessionserver.Options{}) // no Evals wired
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}) // no Evals wired
 	rr := postEval(t, srv.Handler(), "sess_1", sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)})
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("eval with no store: status %d, want 503", rr.Code)
 	}
 }
 
-// spec: §10.7 lines 892-928 — the POST /v1/sessions/{id}/eval response
+// spec: §10.7 — the POST /v1/sessions/{id}/eval response
 // carries experimentId, variantId, delegationDepth, inherited, and
 // submittedAfterConclusion when the session has an experiment context,
 // so callers can round-trip the stored record without a follow-up GET.
@@ -495,17 +515,15 @@ func TestEvalResponseCarriesExperimentAttribution_spec_10_7(t *testing.T) {
 	}
 }
 
-// TestEvalPopulatesDelegationDepth_spec_10_7_905 pins §10.7 lines
-// 868/905: the eval endpoint copies the session's stamped
+// TestEvalPopulatesDelegationDepth_spec_10_7_905 pins §10.7: the eval endpoint copies the session's stamped
 // delegation_depth onto the EvalResult so the Results API
 // `?delegation_depth=` filter and `?breakdown_by=delegation_depth`
-// operate on truthful data. F-10.7.5.
+// operate on truthful data. F-10.7.5. The session sits at the bottom of a
+// running delegation chain, because the §12.8 creation fence refuses a
+// delegated child whose parent row is absent.
 func TestEvalPopulatesDelegationDepth_spec_10_7_905(t *testing.T) {
-	deep := sessionstore.Session{
-		ID: "sess_deep", TenantID: "default", UserID: "alice",
-		State: session.StateRunning, DelegationDepth: 3,
-	}
-	h, evals := evalServer(t, 0, deep)
+	chain := delegationChain("sess_deep", 3)
+	h, evals := evalServer(t, 0, chain...)
 	rr := postEval(t, h, "sess_deep", sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("eval: status %d, body %s", rr.Code, rr.Body.String())
@@ -538,8 +556,7 @@ func TestEvalRootSessionDelegationDepthZero_spec_10_7_905(t *testing.T) {
 	}
 }
 
-// TestEvalSubmittedAfterConclusion_spec_10_7_907 pins §10.7 lines
-// 907/937: an eval submitted against a session whose attributed
+// TestEvalSubmittedAfterConclusion_spec_10_7_907 pins §10.7: an eval submitted against a session whose attributed
 // experiment has concluded is stored with the original attribution and
 // flagged submitted_after_conclusion=true. F-10.7.5.
 func TestEvalSubmittedAfterConclusion_spec_10_7_907(t *testing.T) {
@@ -615,5 +632,19 @@ func TestEvalSubmittedAfterConclusionUnresolvedIsFalse_spec_10_7_907(t *testing.
 	rows, _ := evals.ListBySession(context.Background(), "default", "sess_nostore")
 	if len(rows) != 1 || rows[0].SubmittedAfterConclusion {
 		t.Errorf("no-store enrolled eval should leave flag false: %+v", rows)
+	}
+}
+
+// TestEvalAdmitsInputRequiredSession_spec_10_7 pins that eval submission
+// admits a session waiting in input_required, a §7.2 sub-state of running,
+// as it admits a running session. Before the gate read the sub-state, the
+// submission was refused SESSION_NOT_EVAL_ELIGIBLE.
+//
+// spec: §10.7 (Experiment Primitives), §7.2 (Session state machine)
+func TestEvalAdmitsInputRequiredSession_spec_10_7(t *testing.T) {
+	h, _ := evalServer(t, 0, evalSession("waiting", session.StateInputRequired))
+	rr := postEval(t, h, "waiting", sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("eval against an input_required session: status %d %s, want 201", rr.Code, rr.Body.String())
 	}
 }

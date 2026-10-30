@@ -4,9 +4,7 @@ package podregistry_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -220,8 +218,7 @@ func TestReleasePodPropagatesDeleteError(t *testing.T) {
 
 // spec: §4.6.1 (occupancy projection on claim DELETE), §4.6.3 (gateway is not
 // a Sandbox.status writer). ReleasePod deletes the deterministic per-pod
-// SandboxClaim and leaves Sandbox.status untouched: the WarmPoolController
-// projects the pod back to idle from the claim's absence. The release reason
+// SandboxClaim and leaves Sandbox.status untouched. The release reason
 // no longer maps to a Sandbox phase.
 func TestReleasePodDeletesPerPodClaim_spec_4_6_3(t *testing.T) {
 	cli := newFakeClient(t, seedSandbox("alpha", "echo-pool", "claimed"))
@@ -357,9 +354,7 @@ func TestDeletePodRemovesSandbox(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 482 (WatchPods MUST NOT emit an initial state
-// snapshot; a pre-existing pod produces no event until it changes, at
-// which point a delta — here Updated — is emitted).
+// spec: §12.6.
 func TestWatchPodsDoesNotEmitInitialSnapshot_spec_12_6_482(t *testing.T) {
 	r := newRegistry(t, "lenny-agents", seedSandbox("alpha", "echo-pool", "idle"))
 	r.SetWatchTuningForTest(10*time.Millisecond, 32)
@@ -397,8 +392,7 @@ func TestWatchPodsDoesNotEmitInitialSnapshot_spec_12_6_482(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 482 (when the channel falls behind, WatchPods emits
-// a synthetic resync frame carrying no PodRecord rather than blocking).
+// spec: §12.6.
 func TestWatchPodsEmitsResyncUnderBackpressure_spec_12_6_482(t *testing.T) {
 	r := newRegistry(t, "lenny-agents",
 		seedSandbox("alpha", "echo-pool", "idle"),
@@ -447,8 +441,7 @@ func TestWatchPodsEmitsResyncUnderBackpressure_spec_12_6_482(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 421 (toPodRecord projects ExecutionMode from the
-// denormalized Sandbox spec and SessionID from the status).
+// spec: §12.6.
 func TestToPodRecordProjectsExecutionModeAndSessionID_spec_12_6_421(t *testing.T) {
 	sb := seedSandbox("alpha", "echo-pool", "claimed")
 	sb.Spec.ExecutionMode = "task"
@@ -466,8 +459,7 @@ func TestToPodRecordProjectsExecutionModeAndSessionID_spec_12_6_421(t *testing.T
 	}
 }
 
-// spec: §12.6 line 422 (CreatePod stamps the per-pod PodSpec fields onto
-// the Sandbox so they round-trip through toPodRecord).
+// spec: §12.6.
 func TestCreatePodStampsExecutionModeAndIsolation_spec_12_6_422(t *testing.T) {
 	r := newRegistry(t, "lenny-agents")
 	spec := podregistry.PodSpec{PoolID: "echo-pool", IsolationProfile: "microvm", ExecutionMode: "concurrent"}
@@ -487,14 +479,15 @@ func TestCreatePodStampsExecutionModeAndIsolation_spec_12_6_422(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 422 — PodSpec carries RuntimeDefinitionRef,
-// WorkspacePlan, and resource limits (ResourceClass), and CreatePod
-// stamps them onto the Sandbox spec so a gateway-created pod expresses
-// the runtime, workspace, and resource class it was created for rather
-// than silently inheriting the pool template's defaults. RuntimeRef is
-// a required CRD field, so a CreatePod that does not stamp it produces
-// an invalid Sandbox.
-func TestCreatePodStampsRuntimeWorkspaceAndResourceClass_spec_12_6_422(t *testing.T) {
+// spec: §12.6 Interface Design (the `PodSpec` row: `RuntimeDefinitionRef`,
+// `IsolationProfile`, `ExecutionMode`, resource limits) — CreatePod
+// stamps the PodSpec fields onto the Sandbox spec so a gateway-created
+// pod expresses the runtime and resource class it was created for rather
+// than silently inheriting the pool template's defaults. RuntimeRef is a
+// required CRD field, so a CreatePod that does not stamp it produces an
+// invalid Sandbox. The PodSpec carries no workspace plan: a session binds
+// its plan at creation or finalize (§14.1 Plan binding).
+func TestCreatePodStampsRuntimeAndResourceClass_spec_12_6_422(t *testing.T) {
 	scheme := newScheme(t)
 	cli := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -504,14 +497,12 @@ func TestCreatePodStampsRuntimeWorkspaceAndResourceClass_spec_12_6_422(t *testin
 	if err != nil {
 		t.Fatalf("podregistry.New: %v", err)
 	}
-	plan := []byte(`{"schemaVersion":1,"sources":[{"type":"gitClone","gitClone":{"url":"https://github.com/acme/repo"}}]}`)
 	spec := podregistry.PodSpec{
 		PoolID:               "claude-pool",
 		RuntimeDefinitionRef: "claude-code",
 		IsolationProfile:     "sandboxed",
 		ExecutionMode:        "session",
 		ResourceClass:        "large",
-		WorkspacePlan:        plan,
 	}
 	rec, err := r.CreatePod(context.Background(), "claude-pool", spec)
 	if err != nil {
@@ -527,50 +518,7 @@ func TestCreatePodStampsRuntimeWorkspaceAndResourceClass_spec_12_6_422(t *testin
 	if sb.Spec.ResourceClass != "large" {
 		t.Errorf("ResourceClass = %q, want large", sb.Spec.ResourceClass)
 	}
-	if sb.Spec.WorkspacePlan == nil {
-		t.Fatal("WorkspacePlan was not stamped onto the Sandbox spec")
-	}
-	// The API server round-trips the preserved JSON and may reorder
-	// object keys, so compare the decoded structure rather than the
-	// byte string.
-	var gotPlan, wantPlan map[string]any
-	if err := json.Unmarshal(sb.Spec.WorkspacePlan.Raw, &gotPlan); err != nil {
-		t.Fatalf("decode stamped WorkspacePlan: %v", err)
-	}
-	if err := json.Unmarshal(plan, &wantPlan); err != nil {
-		t.Fatalf("decode want WorkspacePlan: %v", err)
-	}
-	if !reflect.DeepEqual(gotPlan, wantPlan) {
-		t.Errorf("WorkspacePlan = %v, want %v", gotPlan, wantPlan)
-	}
-}
-
-// spec: §12.6 line 422 — an empty WorkspacePlan (a warm pod, whose
-// workspace is materialized at session claim) leaves the Sandbox spec
-// field nil rather than writing an empty JSON blob the API server would
-// reject.
-func TestCreatePodLeavesWorkspacePlanNilWhenEmpty_spec_12_6_422(t *testing.T) {
-	scheme := newScheme(t)
-	cli := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithStatusSubresource(&lennyv1.Sandbox{}).
-		Build()
-	r, err := podregistry.New(cli, "lenny-agents")
-	if err != nil {
-		t.Fatalf("podregistry.New: %v", err)
-	}
-	rec, err := r.CreatePod(context.Background(), "echo-pool", podregistry.PodSpec{
-		PoolID:               "echo-pool",
-		RuntimeDefinitionRef: "echo",
-	})
-	if err != nil {
-		t.Fatalf("CreatePod: %v", err)
-	}
-	var sb lennyv1.Sandbox
-	if err := cli.Get(context.Background(), client.ObjectKey{Namespace: "lenny-agents", Name: string(rec.PodID)}, &sb); err != nil {
-		t.Fatalf("get created sandbox: %v", err)
-	}
-	if sb.Spec.WorkspacePlan != nil {
-		t.Errorf("WorkspacePlan = %v, want nil for a warm pod", sb.Spec.WorkspacePlan)
+	if sb.Spec.IsolationProfile != "sandboxed" || sb.Spec.ExecutionMode != "session" {
+		t.Errorf("IsolationProfile/ExecutionMode = %q/%q, want sandboxed/session", sb.Spec.IsolationProfile, sb.Spec.ExecutionMode)
 	}
 }

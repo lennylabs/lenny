@@ -152,18 +152,16 @@ type Config struct {
 	// (backup.completed, backup.failed) to the §11.7 platform hash chain
 	// as the run transitions the ops_backups row. A nil sink drops the
 	// events (dev / no-durable-store mode); the status update still
-	// lands. spec: §25.11 line 4343.
+	// lands. spec: §25.11.
 	Audit backup.AuditSink
 	// OpsEmitter publishes the §25.3 / §16.6 backup_completed and
 	// backup_failed operational events to the platform ops:events:stream
-	// at the run's terminal transition, the §25.3 line 692-694 "backup
-	// job finished / failed" producers in the operational-event
+	// at the run's terminal transition, the §25.3 producers in the operational-event
 	// catalogue. The backup runs in its own Job pod, so the lenny-backup
 	// binary wires a §25.5 Redis StreamEmitter here (mirroring the
 	// lenny-controller pool_state_changed emitter) when --redis-url is
 	// set; an unconfigured Redis leaves this nil and the run emits no
-	// operational event (the durable audit row still lands). spec: §25.3
-	// lines 670-694; §16.6 backup_completed / backup_failed.
+	// operational event (the durable audit row still lands). spec: §25.3; §16.6 backup_completed / backup_failed.
 	OpsEmitter events.EventEmitter
 	// RetentionStore supplies the existing backups and the retention
 	// policy for the §25.11 post-backup retention enforcement. A nil
@@ -288,7 +286,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	if err := cfg.Reporter.BackupCompleted(ctx, result); err != nil {
 		return Result{}, fmt.Errorf("record completion: %w", err)
 	}
-	// spec: §25.11 line 4343, §16.7 backup.completed — the durable audit
+	// spec: §25.11, §16.7 backup.completed — the durable audit
 	// row for the terminal completion transition, written from the Job
 	// pod alongside the ops_backups status:completed update.
 	emitBackupAudit(cfg.Audit, backup.AuditEvent{
@@ -305,7 +303,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 			"components":  len(result.Components),
 		},
 	})
-	// spec: §25.3 line 692 / §16.6 backup_completed — the operational
+	// spec: §25.3 / §16.6 backup_completed — the operational
 	// event an ops agent subscribes to, emitted at the same terminal
 	// transition as the audit row.
 	emitBackupCompleted(ctx, cfg.OpsEmitter, result)

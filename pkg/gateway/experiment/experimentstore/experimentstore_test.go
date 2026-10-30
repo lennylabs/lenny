@@ -71,7 +71,7 @@ func TestGetUnknownReturnsNotFound(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 1092 — the platform-global PoolScalingController
+// spec: §10.7 — the platform-global PoolScalingController
 // reads every experiment across tenants through ListAll, ordered by
 // (tenantID, id), unlike the tenant-scoped List.
 func TestListAllIsCrossTenantAndOrdered(t *testing.T) {
@@ -199,7 +199,7 @@ func ids(es []experimentstore.Experiment) []string {
 	return out
 }
 
-// spec: §12.1 line 5 — DeleteByUser on an experiment-definitions
+// spec: §12.1 — DeleteByUser on an experiment-definitions
 // store is a no-op (experiments are tenant-scoped) and returns 0.
 func TestDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
 	m := experimentstore.NewMemory()
@@ -213,7 +213,7 @@ func TestDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant removes every
+// spec: §12.1 / §12.8 Phase 4 — DeleteByTenant removes every
 // experiment belonging to the tenant.
 func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 	m := experimentstore.NewMemory()

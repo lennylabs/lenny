@@ -1,0 +1,14 @@
+package carrier
+
+// Client dials the pod.
+//
+// The lifecycle-channel handshake is documented here, and the control
+// channel handshake follows it in the same doc comment.
+type Client struct{}
+
+// run opens the stream.
+func (c *Client) run() {
+	// The runtime opens the lifecycle channel here, inside a function
+	// body the position rule leaves outside the pass.
+	_ = c
+}

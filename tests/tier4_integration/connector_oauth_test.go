@@ -40,6 +40,7 @@ import (
 //	provider token exchange diverged from §9.3 when driven
 //	through one process.
 func TestOAuthConnector(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	// A fake OAuth provider token endpoint. The §9.3 callback handler
@@ -85,7 +86,7 @@ func TestOAuthConnector(t *testing.T) {
 	// redirect_uri the provider would redirect the browser back to.
 	// The callback value only needs to be a well-formed absolute URL;
 	// the test invokes the callback endpoint directly.
-	gw := gateway.StartWith(t, "--dev-mode",
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode",
 		"--connector-oauth-callback-url", "http://callback.acme.test/v1/admin/connectors/oauth/callback",
 		"--connector-oauth-ca", caPath)
 	base := gw.BaseURL()

@@ -23,24 +23,17 @@ package sessionserver
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
-	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
+	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
@@ -51,15 +44,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treerecovery"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
@@ -67,7 +55,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/envblock"
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
@@ -85,41 +72,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
-	"github.com/lennylabs/lenny/pkg/sessionrecord"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
-
-// getPrincipal exposes the auth middleware's Principal lookup so the
-// session handlers stay decoupled from the middleware package's
-// internal context key naming.
-func getPrincipal(r *http.Request) (authmw.Principal, bool) {
-	return authmw.FromContext(r.Context())
-}
-
-// authValidateTenantID re-exports auth.ValidateTenantID under a name
-// that does not collide with the local `auth` middleware alias.
-func authValidateTenantID(s string) error { return auth.ValidateTenantID(s) }
-
-// MaxJSONBodyBytes is the platform cap on JSON request bodies for
-// every endpoint that decodes JSON (create, derive, extend-retention,
-// admin mutations). Spec §13.4 fixes the per-archive ceilings; this
-// constant covers the smaller per-request control plane and
-// matches the typical CRD admission body size. 1 MiB is well above
-// realistic envelopes (a populous workspacePlan is ~32 KiB) while
-// preventing memory-exhaustion DoS on the gateway.
-const MaxJSONBodyBytes int64 = 1024 * 1024
-
-// jsonReader returns r.Body wrapped in http.MaxBytesReader so JSON
-// decoders see io.EOF / *http.MaxBytesError on oversize inputs
-// before any allocation. Handlers using json.Decoder must wrap their
-// body with this helper.
-func jsonReader(w http.ResponseWriter, r *http.Request) interface {
-	Read(p []byte) (int, error)
-	Close() error
-} {
-	return http.MaxBytesReader(w, r.Body, MaxJSONBodyBytes)
-}
 
 // Server is the §15.1 session HTTP handler.
 type Server struct {
@@ -130,7 +85,7 @@ type Server struct {
 	// §15.2.1 rule-1 in-process service layer (ServiceCall) dispatches
 	// through, so the MCP tool surface reuses the exact REST routes and
 	// handlers rather than a parallel table that could drift. spec:
-	// §15.2.1 rule 1 line 1380. F-15.2.3.
+	// §15.2.1 rule 1. F-15.2.3.
 	serviceHandlerOnce sync.Once
 	serviceHandler     http.Handler
 	deriveAuditSink    DeriveAuditSink
@@ -143,10 +98,10 @@ type Server struct {
 	// materialization reads it (ListBySession) to populate the §8.8
 	// TaskResult.output.artifactRefs for a completed child. Nil when the
 	// catalog is not wired (in-memory / dev posture); the artifactRefs
-	// array then materializes empty. spec: §8.8 lines 888-896. F-8.8.2.
+	// array then materializes empty. spec: §8.8. F-8.8.2.
 	artifacts artifactcatalog.Store
 	events    *sessionevents.Bus
-	// activityStamper records §6.2 lines 273-300 qualifying agent
+	// activityStamper records §6.2 qualifying agent
 	// activity (agent_output / tool_use events) onto the session's
 	// last_agent_activity_at so the §11.3 idle watchdog does not reap an
 	// actively-streaming session. Nil is a no-op. F-11.3.7.
@@ -158,22 +113,26 @@ type Server struct {
 	// the inbox-to-DLQ migration on resume_pending and the inbox+DLQ
 	// drain on terminal transition. Nil when messaging durability is not
 	// wired (no Redis); every call site no-ops on a nil coordinator.
-	// spec: §7.2 lines 305-311 (migration), 343 (terminal drain).
+	// spec: §7.2.
 	messaging      *sessioninbox.Coordinator
 	interactions   interactionstore.Store
 	usage          usagestore.Store
 	users          userstore.Store
+	callerCheck    callercheck.Deps
 	billing        billingstore.Store
 	tenants        tenantstore.Store
 	storageQuota   storagequota.Counter
 	defaultIsoProf isolation.Profile
 	devMode        bool
+	// devTenantHeader mirrors Options.DevTenantHeader: whether a request
+	// with no principal may name its tenant by header. spec: §10.2.
+	devTenantHeader bool
 	// multiTenant mirrors the §10.2 auth.multiTenant Helm value. When
 	// true, the §10.2 RBAC gate fails closed for an authenticated
 	// principal that carries no roles (the matrix is unconditional in
 	// multi-tenant deployments). When false (single-tenant or no-OIDC
 	// dev), the gate retains the historical fall-through.
-	// spec: §10.2 lines 256–264, F-10.2.4.
+	// spec: §10.2, F-10.2.4.
 	multiTenant bool
 	// tenancyMode is the §4.9 platform tenancy.mode ("multi" or "single"),
 	// wired from the --tenancy-mode flag (the same signal the layer-2
@@ -211,6 +170,11 @@ type Server struct {
 	// renews the leases this replica acquires at bind. Empty disables the
 	// at-bind acquire. spec: §10.1.
 	replicaID string
+	// holderForward is the CH-HOLDERFORWARD client a replica that does not
+	// coordinate a session forwards the session's request with. Nil makes
+	// every forward not delivered. spec: §10.1.1 Replica address, §29.3
+	// Forwarding.
+	holderForward *http.Client
 	// coordLeaseTTL is the TTL the at-bind Acquire stamps on the lease. The
 	// coordination Sweeper renews it on its own cadence, so the TTL must
 	// exceed the sweep interval for a held lease not to lapse between
@@ -218,7 +182,7 @@ type Server struct {
 	coordLeaseTTL  time.Duration
 	agentNamespace string
 	// poolNameResolver resolves the §5.2 warm pool a (runtimeRef,
-	// isolation profile) pair maps to, for the §15.1 line 797 pool-drain
+	// isolation profile) pair maps to, for the §15.1 pool-drain
 	// admission gate. The pinnedPool argument carries the §14.1
 	// CreateSessionRequest.pool selector so a client-pinned pool is the one
 	// the gate resolves. It defaults to resolvePoolName (CRD-backed); tests
@@ -228,14 +192,14 @@ type Server struct {
 	// §27.3 origin=playground session. Wired post-construction via
 	// SetPlaygroundCaps (the playground bootstrap runs after the session
 	// server is built). Nil leaves a playground session bounded only by
-	// the runtime/platform caps. spec: §27.6 lines 200-201. F-27.6.1 /
+	// the runtime/platform caps. spec: §27.6. F-27.6.1 /
 	// F-27.6.2.
 	playgroundCaps PlaygroundCapResolver
 	// incPlaygroundSessionCreated records the §27.8
 	// lenny_playground_sessions_created_total metric once the origin claim
 	// is read on the create path. Nil disables the metric. F-27.6.11.
 	incPlaygroundSessionCreated func(runtime string)
-	// admissionRL is the §11.1 line 7 per-minute counter used for the
+	// admissionRL is the §11.1 per-minute counter used for the
 	// per-runtime and per-pool admission scopes enforced at session
 	// creation (the global/per-user/per-tenant scopes run in the §11.1
 	// HTTP middleware). Nil disables the per-runtime/per-pool scopes.
@@ -245,52 +209,60 @@ type Server struct {
 	perPoolPerMin    int
 	rlMetrics        AdmissionRateLimitMetrics
 	// maxConcSessGlobal / maxConcSessPerUser / maxConcSessPerRuntime are
-	// the §11.1 line 8 concurrent-session admission caps (live
-	// non-terminal session counts) for the global, per-user, and
-	// per-runtime scopes. The per-tenant scope is enforced separately by
-	// requireSessionQuota against the tenant record. A non-positive value
-	// leaves the corresponding scope unlimited. F-11.1.3.
+	// the §11.1 concurrent-session admission caps (counts of non-terminal
+	// sessions other than suspended ones) for the global, per-user, and
+	// per-runtime scopes. Session creation and every resume of a
+	// suspended session (admitResume) are checked against them. The
+	// per-tenant scope is enforced separately against the tenant record.
+	// A non-positive value leaves the corresponding scope unlimited.
+	// F-11.1.3.
 	maxConcSessGlobal     int
 	maxConcSessPerUser    int
 	maxConcSessPerRuntime int
 	// evalRL is the §10.7 eval-submission rate-limit counter (per-session
 	// and per-tenant). It shares the §11.1 Counter type with admissionRL;
 	// production wires the same Redis-backed instance. Nil disables eval
-	// rate limiting. spec: §10.7 line 938.
+	// rate limiting. spec: §10.7.
 	evalRL ratelimit.Counter
 	// evalPerSessionPerMin / evalPerTenantPerMin are the §10.7
 	// `evalRateLimit.perSessionPerMinute` / `perTenantPerMinute` limits.
-	// Non-positive disables the corresponding scope. spec: §10.7 line 938.
+	// Non-positive disables the corresponding scope. spec: §10.7.
 	evalPerSessionPerMin int
 	evalPerTenantPerMin  int
 	sealer               Sealer
 	// sealMaxDuration bounds the §7.1 seal-and-export retry window
 	// (maxWorkspaceSealDurationSeconds). A non-positive value falls
 	// through to DefaultWorkspaceSealMaxDuration (300s).
-	// spec: §7.1 line 112.
+	// spec: §7.1.
 	sealMaxDuration time.Duration
+	// streamFailureReportTimeout bounds a CH-ATTACH stream-failure report
+	// beyond the seal window: the report's detached context lasts this long
+	// plus sealMaxDuration. A non-positive value falls through to
+	// DefaultStreamFailureReportTimeout. spec: §28.5.1 (CH-ATTACH
+	// Degradation.).
+	streamFailureReportTimeout time.Duration
 	// sealSleep waits d before the next seal retry, returning false when
 	// ctx is cancelled first. Nil selects a context-aware time.Sleep; the
 	// seam lets tests drive the backoff loop without real delays.
 	sealSleep func(ctx context.Context, d time.Duration) bool
-	// observeSealDuration, when set, records the §7.1 line 112
+	// observeSealDuration, when set, records the §7.1
 	// lenny_workspace_seal_duration_seconds{pool,outcome} histogram. Nil
 	// disables the emission.
 	observeSealDuration func(pool, outcome string, seconds float64)
-	// recordSessionTerminal, when set, records the §16.1 lines 161-163 /
+	// recordSessionTerminal, when set, records the §16.1 /
 	// §10.7 rollback-trigger session metric family at terminal transition.
-	// Nil disables the emission. spec: §10.7 lines 1120-1132.
+	// Nil disables the emission. spec: §10.7.
 	recordSessionTerminal func(tenantID, sessionType, variantID string, isError bool, seconds float64)
-	// observeEvalScore, when set, records the §16.1 line 164 lenny_eval_score
+	// observeEvalScore, when set, records the §16.1 lenny_eval_score
 	// observation per submitted eval. Nil disables the emission.
-	// spec: §10.7 line 1128.
+	// spec: §10.7.
 	observeEvalScore func(tenantID, scorer, variantID string, score float64)
 	// targetingBreaker is the §10.7 SCL-023 per-tenant OpenFeature
 	// targeting circuit breaker. Never nil after New; it is consulted on
 	// the external-targeting hot path so sustained provider failures skip
-	// the OpenFeature call entirely. spec: §10.7 lines 835-844.
+	// the OpenFeature call entirely. spec: §10.7.
 	targetingBreaker *targetingBreaker
-	// partialManifestCleaner, when set, executes the §4.4 line 236
+	// partialManifestCleaner, when set, executes the §4.4
 	// partial-manifest cleanup after the resume path completes.
 	// Nil leaves the resume path unchanged (cleanup is deferred to
 	// the §12.5 backstop sweep).
@@ -298,20 +270,20 @@ type Server struct {
 	// evictionStateLookup, when set, classifies a resume as
 	// conversation-only (workspace lost during eviction) so the
 	// session.resumed event surfaces the correct ResumeMode per
-	// §4.4 line 263.
+	// §4.4.
 	evictionStateLookup EvictionStateLookup
 	// partialManifestLookup, when set, classifies a resume as
 	// partial-workspace (reassembled from chunk objects) so the
 	// session.resumed event surfaces the correct ResumeMode per
 	// §10.1 partial-manifest path.
 	partialManifestLookup PartialManifestLookup
-	// resumeChunkResolver, when set, resolves the §10.1 line 155 reassembly
+	// resumeChunkResolver, when set, resolves the §10.1.7 reassembly
 	// chunk set the resume path hands the adapter on ResumeRequest.Chunks.
 	// Nil leaves the resume carrying no chunks (dev mode, or a checkpoint
 	// that predates the chunked-object model), so the adapter restores
 	// nothing beyond what a snapshotless rebuild recovers.
 	resumeChunkResolver ResumeChunkResolver
-	// checkpointRecoveryMetrics, when set, receives the §16.1 line 195
+	// checkpointRecoveryMetrics, when set, receives the §16.1
 	// lenny_checkpoint_partial_total{recovered=true} emission once per
 	// above-threshold partial reassembly on resume. *gatewaymetrics.Metrics
 	// satisfies it. Nil leaves the resume recovering without observability.
@@ -327,14 +299,12 @@ type Server struct {
 	treeArchive              treearchive.Store
 	taskUsage                *resultrollup.Builder
 	treeBudgetReturner       TreeBudgetReturner
-	// leaseRegistrar, when set, registers a newly created root session
-	// with the §8.6 lease-extension budget source so a later in-process
-	// budget-exhaustion extension (the gateway LLM Proxy's ExtendForBudget
-	// trigger) resolves the tree instead of failing ErrSessionNotFound.
-	// leaseExtDefaults carries the deployment-level configuration the root
-	// tree's budget ceiling is resolved from. F-15.3.5.
-	leaseRegistrar     LeaseTreeRegistrar
-	leaseExtDefaults   LeaseExtensionDefaults
+	// usageQuiescenceTimeout is the §8.3 usage quiescence wait before a
+	// delegated child's budget return, resolved by UsageQuiescenceTimeoutFor.
+	usageQuiescenceTimeout time.Duration
+	// quiescenceTimer is the timer seam of that wait; New defaults it to
+	// time.After.
+	quiescenceTimer    func(time.Duration) <-chan time.Time
 	quotaCheckpointer  QuotaFinalCheckpointer
 	hwmObserver        DelegationHighWatermarkObserver
 	hwmReader          DelegationHighWatermarkReader
@@ -351,7 +321,7 @@ type Server struct {
 	// experiments evaluate. F-10.7.3.
 	externalProviders ExternalProviderResolver
 	runtimes          runtimestore.Store
-	// capOverrides applies the §5.1 line 49 per-tenant capability override
+	// capOverrides applies the §5.1 per-tenant capability override
 	// on top of a resolved runtime at every capability consumer. Optional;
 	// nil falls back to the platform-default capabilities. F-5.1.20.
 	capOverrides       runtimecapoverride.Store
@@ -370,7 +340,7 @@ type Server struct {
 	// uploadMetrics, when set, receives the §16.1 upload-handler
 	// byte-count and queue-depth observations. Nil drops them. F-13.4.12.
 	uploadMetrics UploadHandlerMetrics
-	// resumeWindow is the §4.2 line 159 default resume-eligibility
+	// resumeWindow is the §4.2 default resume-eligibility
 	// duration stamped onto each session at create time. A non-zero
 	// value falls through to DefaultResumeWindow.
 	resumeWindow time.Duration
@@ -382,12 +352,12 @@ type Server struct {
 	// detached recoverDelegationTree goroutine finishes. Tests use it to
 	// await the async recovery deterministically; nil in production.
 	treeRecoveryHook func(rootID string)
-	// sessionLogHook, when set, receives the §4.4 line 226 session-log
+	// sessionLogHook, when set, receives the §4.4 session-log
 	// close-hook on every session transition to a terminal state.
 	// Best-effort: a failure logs and discards rather than abort the
 	// transition.
 	sessionLogHook SessionLogHook
-	// warmupEstimateSeconds is the §5.2 line 625 estimate used for the
+	// warmupEstimateSeconds is the §5.2 estimate used for the
 	// PoolWarmingUp 503's estimatedReadyIn and Retry-After. A zero value
 	// falls through to DefaultWarmupEstimateSeconds.
 	warmupEstimateSeconds int
@@ -395,7 +365,7 @@ type Server struct {
 	// to resolve a credential source and pool per provider. Never nil
 	// after New (defaults to credrouter.Default).
 	credRouter credrouter.Router
-	// preclaimMismatch, when set, increments the §4.9 line 1220
+	// preclaimMismatch, when set, increments the §4.9
 	// pre-claim mismatch metric.
 	preclaimMismatch func(pool, provider string)
 	// slotHealth tracks §5.2 concurrent-workspace slot failures and leaks
@@ -407,27 +377,126 @@ type Server struct {
 	// slotStates tracks each concurrent-workspace slot's §6.2 per-slot
 	// sub-state so the gateway can report the per-pod leaked-slot count when
 	// a slot's cleanup does not reclaim it. Never nil after New (defaults to
-	// a fresh Registry). spec: §6.2 lines 170-176, line 179.
+	// a fresh Registry). spec: §6.2.
 	slotStates *slotstate.Registry
 	// slotReplacement, when set, increments
 	// lenny_slot_pod_replacement_total{pool} when the slot retry policy
 	// drains an unhealthy concurrent-mode pod for replacement. Nil disables
 	// the emission. spec: §5.2 "whole-pod replacement trigger".
 	slotReplacement func(pool string)
-	// slotLeakGauge, when set, publishes the §6.2 line 179
+	// slotLeakGauge, when set, publishes the §6.2
 	// lenny_adapter_leaked_slots{pod_id,pool} gauge to leaked: the count of
-	// the pod's slots whose cleanup timed out and remain counted in
-	// active_slots until the pod terminates. Nil disables the emission.
+	// the pod's leaked slots, which remain counted in active_slots until the
+	// pod terminates. Nil disables the emission.
 	slotLeakGauge func(pod, pool string, leaked int)
-	// observeStartupDuration, when set, records the §6.3 line 348
+	// slotAccountLocks orders, per session, the failure funnel's identity
+	// check and release of the reported binding against a resume attempt's
+	// releaseEarlierBinding, claim, and commit, and the funnel's slot
+	// accounting before that release, so the funnel never tears down a
+	// replacement binding and a drain the accounting requests is stamped
+	// before the release can reach the occupancy-zero recycle edge. The
+	// failure funnel holds it on both pool kinds from before its edge
+	// through its release; releaseEarlierBinding, the terminal binding
+	// release, and the post-terminal hook's release step take it before
+	// they release. Never take it while holding
+	// deliveryLocks. The zero value is ready to use. spec: §5.2 "whole-pod
+	// replacement trigger"; §7.3 (Credential leases on the replacement pod).
+	slotAccountLocks sessionLocks
+	// deliveryLocks makes, per session on this replica, each delivery of
+	// held messages one critical section against the message paths, a
+	// commit to running, and the takeover delivery. It is a second instance
+	// of the lock type slotAccountLocks uses, and never nests with it. The
+	// lock is not reentrant. The zero value is ready to use. spec: §7.2
+	// (Message delivery routing — seven paths, path 6).
+	deliveryLocks sessionLocks
+	// resumeAttempts records the resume attempt in flight on this replica
+	// per session, with its cancel function, so DriveResume starts at most
+	// one attempt per session and CancelResumeAttempt can stop it. The
+	// attempt goroutine removes its own entry on every return. The zero
+	// value is ready to use. spec: §7.3 (Resume driver).
+	resumeAttempts attemptRecord
+	// terminalClaims counts each session's open terminal-writer claims and
+	// marks a terminal binding release in flight, so a binding release
+	// defers to a writer's post-terminal hook on this replica and at most
+	// one release runs per session. The zero value is ready to use.
+	// spec: §7.2 (Interactive Session Model), §10.1.5 (Stale Replica
+	// Behavior).
+	terminalClaims terminalClaimRecord
+	// suspensions is the suspension record: at most one suspension release
+	// or idle suspension per session in flight on this replica. The
+	// goroutine that runs it removes its own entry on every return.
+	// spec: §6.2 (Pod State Machine).
+	suspensions inflightSet
+	// suspensionRetries is the retry record: a session whose checkpoint
+	// before a suspension release failed is not released or idle-suspended
+	// again for 60 s. spec: §6.2 (Pod State Machine).
+	suspensionRetries retryRecord
+	// backlogResumes is the backlog-resume record: at most one
+	// ResumeSuspended started by the backlog check per session in flight on
+	// this replica. spec: §7.2 (Message delivery routing — seven paths,
+	// path 6).
+	backlogResumes inflightSet
+	// suspensionCheckpointer takes the checkpoint a suspension release
+	// takes before it releases the pod. Nil releases nothing: a suspension
+	// release without a checkpoint would lose the workspace. spec: §6.2
+	// (Pod State Machine).
+	suspensionCheckpointer SuspensionCheckpointer
+	// budgetRearmer re-arms the TTL of a suspended session's delegation
+	// budget keys on each committed transition into or out of suspended.
+	// Nil re-arms nothing. spec: §8.3 (Delegation Policy and Lease).
+	budgetRearmer BudgetKeyRearmer
+	// sealerFor returns the runtime adapter's session seal for a binding.
+	// Nil uses the binding's adapter client; a unit test replaces it with a
+	// fake. spec: §4.7.1 (Role and Gateway RPC Contract).
+	sealerFor func(*podsession.BindResult) sessionSealer
+	// incPodReleasedDuringSuspension and incSuspensionCheckpointFailed
+	// increment the §16.1 suspension-release counters, labeled by pool and
+	// tenant. Nil disables the emission. spec: §16.1 (Metrics).
+	incPodReleasedDuringSuspension func(pool, tenantID string)
+	incSuspensionCheckpointFailed  func(pool, tenantID string)
+	// lifetimeCtx is the server-lifetime context: background work the
+	// server starts (a resume attempt, its commit and tail, a takeover
+	// delivery, a terminal binding release) runs on it, and Close cancels
+	// it. Nil on a Server built without New, which then uses
+	// context.Background().
+	lifetimeCtx    context.Context
+	lifetimeCancel context.CancelFunc
+	// primaryReadTimeout bounds every sessionstore.ReadPrimary call the
+	// server makes. A non-positive value uses
+	// sessionstore.DefaultPrimaryReadTimeout. spec: §12.3 (Postgres HA
+	// Requirements).
+	primaryReadTimeout time.Duration
+	// maxResumePending and maxResuming are the platform caps of the
+	// resume_pending window (maxResumeWindowSeconds) and of the resuming
+	// watchdog, which bound a resume attempt before and after its entry
+	// write. Zero selects the watchdog defaults. spec: §7.3 (Resume
+	// driver); §6.2 (Pod State Machine).
+	maxResumePending time.Duration
+	maxResuming      time.Duration
+	// maxFinalizing is the launch bound (Options.MaxFinalizing).
+	maxFinalizing time.Duration
+	// ageCap resolves a row's effective active-age cap with the same
+	// resolver the watchdog's maxSessionAge sweep uses, so the resume
+	// driver refuses an over-cap row against the value the sweep applies.
+	// Nil applies the platform default. spec: §6.2 (maxSessionAge timer
+	// behavior across states).
+	ageCap func(ctx context.Context, row sessionstore.Session) time.Duration
+	// treePollInterval is how often tree recovery reads a node's row while
+	// it waits for the node's restore. Zero selects one second.
+	treePollInterval time.Duration
+	// afterFunc arms a resume attempt's bound: it calls f after d and
+	// returns the function that disarms it. Nil uses time.AfterFunc; a test
+	// substitutes it to observe the bound.
+	afterFunc func(d time.Duration, f func()) (stop func() bool)
+	// observeStartupDuration, when set, records the §6.3
 	// end-to-end pod-warm startup latency on a successful start. Nil
 	// disables the emission.
 	observeStartupDuration func(pool, runtimeClass, isolationProfile string, seconds float64)
-	// observeStartupPhase, when set, records the §6.3 line 372 latency
+	// observeStartupPhase, when set, records the §6.3 latency
 	// of one hot-path startup phase. Nil disables the emission.
 	observeStartupPhase func(phase, runtimeClass string, seconds float64)
-	// observeTimeToFirstToken, when set, records the §6.3 line 356 /
-	// §16.1 line 15 end-to-end TTFT histogram on the first
+	// observeTimeToFirstToken, when set, records the §6.3 /
+	// §16.1 end-to-end TTFT histogram on the first
 	// agent-streamed response event of each session. Nil disables
 	// the emission.
 	observeTimeToFirstToken func(pool, runtimeClass, isolationProfile string, seconds float64)
@@ -436,14 +505,14 @@ type Server struct {
 	// qualifying response event and cleared on the terminal lifecycle
 	// transition so the map size scales with concurrently-streaming
 	// sessions, not lifetime sessions. Keyed by session id, value is
-	// a sentinel struct{} placeholder. spec: §6.3 line 356.
+	// a sentinel struct{} placeholder. spec: §6.3.
 	firstTokenObserved sync.Map
 	// userCredChecker reports whether a usable user-scoped credential
 	// exists for (tenant, user, provider) and is deliverable. The §4.9
 	// router resolves user sources only when this reports true. Wired by
 	// SetUserCredChecker from the usercreds.Materializer; nil leaves the
 	// router unable to resolve a user source (it falls through to pool).
-	// spec: §4.9 lines 1347-1351, 1368-1372.
+	// spec: §4.9.
 	userCredChecker func(ctx context.Context, tenantID, userID, provider string) bool
 
 	// lifecycleAudit, when set, receives the §7.1 / §16.6 session
@@ -458,7 +527,7 @@ type Server struct {
 	// interaction-resolution audit events emitted by the §15.1
 	// tool-use approve/deny and elicitation respond/dismiss endpoints.
 	// Nil disables the emission; the resolution itself proceeds either
-	// way. spec: §7.2 table lines 124-127; §11.7; §16.7. F-7.2.8.
+	// way. spec: §7.2 table; §11.7; §16.7. F-7.2.8.
 	interactionAudit InteractionAuditSink
 
 	// toolApprovalWaits, when set, is the §7.2 tool-use approval waiter
@@ -466,31 +535,29 @@ type Server struct {
 	// read (the pod runtime awaiting a tool-call verdict) unblocks. Nil
 	// leaves the resolution endpoints recording the interaction phase
 	// only — the dev / non-pod posture where nothing blocks on the
-	// verdict. spec: §7.2 lines 124-125. F-7.2.18.
+	// verdict. spec: §7.2. F-7.2.18.
 	toolApprovalWaits *toolapproval.Registry
 
 	// treeCycleObserver, when set, receives a §8.9 cycle observation
 	// whenever the /v1/sessions/{id}/tree walker hits a repeated node
 	// in the ParentSessionID lineage. Nil disables the emission and
 	// the walker still truncates the cycle so the response remains
-	// well-formed. spec: §8.9 line 1003; F-8.9.10.
+	// well-formed. spec: §8.9; F-8.9.10.
 	treeCycleObserver TreeCycleObserver
 
 	// callbackValidator enforces the §14 callbackUrl SSRF mitigations at
 	// admission (HTTPS-only, IP-literal / private-range rejection, DNS
 	// pinning, optional deployer domain allowlist). Never nil after New
-	// (defaults to a validator with no domain allowlist). spec: §14 lines
-	// 108-112. F-14.1.11.
+	// (defaults to a validator with no domain allowlist). spec: §14. F-14.1.11.
 	callbackValidator *sessioncallback.Validator
 	// callbackSeal KMS-envelope-encrypts a client callbackSecret under the
 	// session tenant's KEK at admission. Nil disables callbackSecret
 	// acceptance (a callbackUrl without a secret still delivers, unsigned).
-	// spec: §14 line 139. F-14.1.11.
+	// spec: §14. F-14.1.11.
 	callbackSeal func(ctx context.Context, tenantID string, plaintext []byte) ([]byte, error)
 	// callbackDispatcher delivers validated §14 callbacks from an isolated
 	// worker pool with the §14 retry budget. Nil leaves callbacks validated
-	// and persisted but undelivered (the dev/test posture). spec: §14 lines
-	// 111, 150. F-14.1.11.
+	// and persisted but undelivered (the dev/test posture). spec: §14. F-14.1.11.
 	callbackDispatcher *sessioncallback.Dispatcher
 
 	// inputWaits, when set, makes the REST POST /v1/sessions/{id}/messages
@@ -501,11 +568,11 @@ type Server struct {
 	// delivery), matching the pre-F-7.2.14 behaviour. The same
 	// registry is shared with the MCP `lenny/send_message` /
 	// `lenny/request_input` pair so the two transports route to the
-	// same blocked tool call. spec: §7.2 line 317.
+	// same blocked tool call. spec: §7.2.
 	inputWaits *inputwait.Registry
 
 	// deriveLock, when set, serializes concurrent /v1/sessions/{id}/derive
-	// calls on the same source session per §7.1 line 92. The session-
+	// calls on the same source session per §7.1. The session-
 	// server holds the lock around the workspace-snapshot read; it is
 	// released as soon as the snapshot reference resolves, mirroring the
 	// spec's "release the lock before the copy is safe" guarantee.
@@ -514,7 +581,7 @@ type Server struct {
 	// derivelock.Memory (per-source sync.Mutex). When nil, the in-memory
 	// store mutex serializes within the running process and no cross-
 	// replica protection is in force — the legacy minimal-gateway
-	// posture. spec: §7.1 line 92.
+	// posture. spec: §7.1.
 	deriveLock derivelock.Lock
 
 	// persistDeriveFailureRows is the §7.1 derive rule 2 opt-in
@@ -524,7 +591,7 @@ type Server struct {
 	// `failureClass = derive_failure` for audit, reachable per the §15.1
 	// derive-failure reachability table. When false the gateway writes
 	// nothing on failure (the default roll-back-without-persist posture).
-	// spec: §7.1 derive rule 2; §15.1 lines 647-663. F-15.1.14.
+	// spec: §7.1 derive rule 2; §15.1. F-15.1.14.
 	persistDeriveFailureRows bool
 
 	// incDeriveFailureAudit, when set, increments the §16.1
@@ -535,11 +602,11 @@ type Server struct {
 	// emission. spec: §7.1 derive rule 2; §16.1. F-15.1.14.
 	incDeriveFailureAudit func(outcome string)
 
-	// defaultRetention is the §7.1 line 77 default artifact-retention
+	// defaultRetention is the §7.1 default artifact-retention
 	// window stamped on every session at create time and rolled forward
 	// at the terminal transition. A non-positive value falls through to
 	// DefaultArtifactRetention.
-	// spec: §7.1 line 77 — "configurable TTL (default: 7 days ...)".
+	// spec: §7.1 — "configurable TTL (default: 7 days ...)".
 	defaultRetention time.Duration
 
 	// retryPolicyCaps holds the §7.3 deployer caps applied to every
@@ -548,19 +615,21 @@ type Server struct {
 	// gateway wires these to the watchdog config so a session's clamped
 	// caps cannot exceed the platform-wide bounds the watchdog itself
 	// enforces. F-7.3.1 / F-7.3.24.
-	// spec: §7.3 lines 377-393.
+	// spec: §7.3.
 	retryPolicyCaps session.RetryPolicyCaps
 
 	// envBlocklist is the §14 deployer-configured env-var blocklist
 	// applied to a CreateSessionRequest's `env` field. Never nil after
-	// New (defaults to the platform default blocklist alone). spec: §14
-	// line 105. F-14.1.12.
+	// New (defaults to the platform default blocklist alone). spec: §14. F-14.1.12.
 	envBlocklist *envblock.Matcher
 
-	// incSessionResumeAttempt, when set, increments the §16.1
-	// lenny_session_resume_attempts_total{pool, outcome} counter for the
-	// resume call. Nil disables the emission. spec: §16.1 catalog.
-	// F-7.3.10.
+	// incSessionResumeAttempt, when set, increments the
+	// lenny_session_resume_attempts_total{pool, outcome} counter: the resume
+	// driver counts each resume attempt whose entry write it saw take effect
+	// once, through recordResumeAttempt, the only caller, with outcome
+	// "success" for a commit that landed and "failure" for a failure after
+	// the entry write or a commit that did not land. Nil disables the
+	// emission. spec: §16.1 (Metrics), §7.3 (Resume driver).
 	incSessionResumeAttempt func(pool, outcome string)
 
 	// incSessionRetry, when set, increments the §16.1
@@ -574,10 +643,15 @@ type Server struct {
 	// emission. spec: §16.1 catalog; §16.1.1 reason vocabulary. F-11.3.7.
 	incSessionExpiry func(pool, reason string)
 
-	// incWarmpoolWarmupFailure, when set, increments the §16.1 line 124
+	// incDelegationBudgetKeysExpired, when set, increments the §16.1
+	// lenny_delegation_budget_keys_expired_total{pool, tenant_id} counter
+	// once per §8.3 BUDGET_KEYS_EXPIRED reservation detection. Nil drops the
+	// increment. spec: §16.1, §8.3.
+	incDelegationBudgetKeysExpired func(pool, tenantID string)
+
+	// incWarmpoolWarmupFailure, when set, increments the §16.1
 	// lenny_warmpool_warmup_failure_total{error_type} counter for one
-	// warm-pool startup failure. Nil disables the emission. spec: §16.1
-	// line 124, §7.3 line 387 — F-7.5.9.
+	// warm-pool startup failure. Nil disables the emission. spec: §16.1, §7.3 — F-7.5.9.
 	incWarmpoolWarmupFailure func(errorType string)
 
 	// incInjectionGateFailClosed, when set, increments the
@@ -591,34 +665,33 @@ type Server struct {
 	// §15.1 (SERVICE_UNAVAILABLE) — F-5.1.20.
 	incInjectionGateFailClosed func(cause string)
 
-	// uploadTokenTTL is the §7.1 line 58 upload-token expiry stamped on
+	// uploadTokenTTL is the §7.1 upload-token expiry stamped on
 	// every minted token. The gateway sets this equal to
 	// `maxCreatedStateTimeoutSeconds` so the token deadline matches the
 	// `created` state deadline. A zero value falls through to
-	// uploadtoken.DefaultTTL (300s). spec: §7.1 line 58. F-7.4.7.
+	// uploadtoken.DefaultTTL (300s). spec: §7.1. F-7.4.7.
 	uploadTokenTTL time.Duration
 
-	// uploadAborts is the §7.4 line 463 upload-abort registry. The
+	// uploadAborts is the §7.4 upload-abort registry. The
 	// upload handler registers a per-session abort signal for the
 	// duration of its body-read + blob.Put; the finalize handler closes
 	// the signal after the row transitions out of the upload-admitting
 	// state so any in-flight stream surfaces UPLOAD_CHANNEL_CLOSED.
-	// Always non-nil after New. spec: §7.4 line 463. F-7.4.16.
+	// Always non-nil after New. spec: §7.4. F-7.4.16.
 	uploadAborts *uploadAbortRegistry
 
-	// uploadLimits enforces the §11.1 line 10-11 per-session and global
+	// uploadLimits enforces the §11.1 per-session and global
 	// concurrent-upload caps and the per-session cumulative upload-size
 	// cap. Nil when no §11.1 upload cap is configured (the pass-through
-	// posture); every call site tolerates a nil limiter. spec: §11.1
-	// lines 10-11. F-11.1.5, F-11.1.6.
+	// posture); every call site tolerates a nil limiter. spec: §11.1. F-11.1.5, F-11.1.6.
 	uploadLimits *uploadLimiter
 
-	// midSessionUploadEnabled is the §7.4 line 433 deployer policy that,
+	// midSessionUploadEnabled is the §7.4 deployer policy that,
 	// together with the bound runtime's capabilities.midSessionUpload flag,
 	// admits uploads into an already-running session via
 	// POST /v1/sessions/{id}/upload-to-session. False (the default) keeps
 	// mid-session uploads off platform-wide regardless of the runtime flag.
-	// spec: §7.4 line 433 — F-7.4.6.
+	// spec: §7.4 — F-7.4.6.
 	midSessionUploadEnabled bool
 }
 
@@ -633,7 +706,7 @@ const DefaultMaxOrphanTasksPerTenant = 100
 // keyed by session_id and 10000 per minute across a tenant's sessions.
 // Both are operator-tunable via the gateway flags
 // `--eval-rate-limit-per-session-per-min` / `-per-tenant-per-min`.
-// spec: §10.7 line 938. F-10.7.4.
+// spec: §10.7. F-10.7.4.
 const (
 	DefaultEvalPerSessionPerMin = 100
 	DefaultEvalPerTenantPerMin  = 10000
@@ -653,7 +726,7 @@ func resolveEvalLimit(v, def int) int {
 	return v
 }
 
-// DefaultResumeWindow is the §4.2 line 159 default resume-eligibility
+// DefaultResumeWindow is the §4.2 default resume-eligibility
 // window. A session created without an explicit override is eligible
 // for resume up to this duration after creation; once the deadline
 // passes, the watchdog forces the session to a terminal state.
@@ -662,7 +735,7 @@ func resolveEvalLimit(v, def int) int {
 // Operators tuning the watchdog's lifetime cap should also override
 // the resume window so the two budgets stay aligned; the option
 // hook below lets the gateway plumb the watchdog-configured value.
-// spec: §4.2 line 159 — "Resume eligibility and window".
+// spec: §4.2 — "Resume eligibility and window".
 const DefaultResumeWindow = 2 * time.Hour
 
 // DefaultCoordinationLeaseTTL is the TTL the at-bind coordination-lease
@@ -671,277 +744,6 @@ const DefaultResumeWindow = 2 * time.Hour
 // intervals) so a lease acquired at bind does not lapse before the first
 // renewal. spec: §10.1 (per-session coordination lease).
 const DefaultCoordinationLeaseTTL = 60 * time.Second
-
-// Sealer takes the §7.1 final workspace snapshot of a session that has
-// reached a terminal state. The gateway invokes it as the
-// seal-and-export step of session completion.
-type Sealer interface {
-	// Seal snapshots the session's final workspace. An implementation
-	// is expected to no-op for a session that never ran on a pod.
-	Seal(ctx context.Context, tenantID, sessionID string) error
-}
-
-// PartialManifestCleaner executes the §4.4 line 236 partial-manifest
-// cleanup after the resume path completes, regardless of whether the
-// reassembly succeeded or failed. An implementation walks the latest
-// active partial manifest for (tenant, session), deletes the chunks
-// under its `chunk_object_key_prefix`, and soft-deletes the row.
-// Best-effort: a failure leaves the row active for the §12.5
-// backstop sweep to clean up on the next cycle.
-type PartialManifestCleaner interface {
-	// CleanupAfterResume runs the cleanup for the session's latest
-	// active partial manifest. A no-op (returns nil) when no active
-	// manifest exists.
-	CleanupAfterResume(ctx context.Context, tenantID, sessionID string) error
-}
-
-// EvictionStateLookup reports whether the (tenant, session) carries
-// the §4.4 minimal-state record written during the eviction-fallback
-// path. The §7.2 resume path uses it to derive the
-// `resumeMode: "conversation_only"` value carried on the
-// `session.resumed` event when the workspace was lost during
-// eviction.
-//
-// spec: §4.4 line 263 — "the client receives a session.resumed event
-// with resumeMode: \"conversation_only\" and workspaceLost: true".
-type EvictionStateLookup interface {
-	// HasEvictionState returns true when the session has a
-	// minimal-state record (workspace was lost during eviction).
-	// Returns false when no record exists; an error reading the store
-	// returns the error so the resume path can degrade gracefully
-	// (the gateway falls back to ResumeFull rather than block on a
-	// transient lookup failure).
-	HasEvictionState(ctx context.Context, tenantID, sessionID string) (bool, error)
-}
-
-// PartialManifestLookup reports whether the (tenant, session) carries
-// an active §4.4 / §10.1 partial-checkpoint manifest. The §7.2 resume
-// path uses it to derive the `resumeMode: "partial_workspace"` value
-// carried on the `session.resumed` event when the resume reassembled
-// the workspace from partial chunks rather than from a full
-// checkpoint.
-//
-// spec: §10.1 partial-manifest path — `session.resumed` carries
-// `resumeMode: "partial_workspace"` when the manifest selected by
-// MAX(coordination_generation) yielded a reassembled workspace.
-type PartialManifestLookup interface {
-	// HasActivePartialManifest returns true when an active partial
-	// manifest exists for (tenant, session). Returns false when none
-	// exists; a store error returns the error so the resume path can
-	// degrade gracefully (falls back to ResumeFull).
-	HasActivePartialManifest(ctx context.Context, tenantID, sessionID string) (bool, error)
-}
-
-// ResumeChunkResolver resolves the §10.1 line 155 reassembly chunk set for
-// a checkpoint the resume path restores. It lists the committed chunk
-// objects under the manifest row's chunk_object_key_prefix, verifies
-// contiguity of the prefix [0, chunk_count), and mints one presigned
-// single-key GET capability per index. The gateway is the sole authority
-// that resolves, lists, validates, and signs the keys; the pod fetches the
-// capabilities and concatenates the bodies. resumechunks.Resolver
-// implements it.
-//
-// spec: §10.1 line 155.
-type ResumeChunkResolver interface {
-	// Resolve returns one presigned GET capability per chunk of the named
-	// checkpoint in ascending index order together with the §16.1 line 195
-	// recovered signal, or resumechunks.ErrReassemblyContiguity when the
-	// committed objects do not form a contiguous [0, chunk_count) prefix.
-	Resolve(ctx context.Context, tenantID, sessionID, checkpointID string) (resumechunks.ResolveResult, error)
-}
-
-// CheckpointRecoveryMetrics is the narrow slice of §16.1 checkpoint
-// telemetry the resume path emits when it reassembles an above-threshold
-// partial checkpoint. *gatewaymetrics.Metrics satisfies it, so the resume's
-// recovered = true emission lands on the same lenny_checkpoint_partial_total
-// series the upload driver's recovered = false abort arms write, without a
-// sessionserver → concrete-metrics import. trigger is a checkpoint.Trigger,
-// so the resume path can only stamp a value inside the closed §4.4 enum.
-//
-// spec: §16.1 line 195.
-type CheckpointRecoveryMetrics interface {
-	IncCheckpointPartial(pool string, recovered bool, manifestReason string, trigger checkpoint.Trigger)
-}
-
-// CheckpointManifestReader reads §10.1 checkpoint_manifest rows for the
-// resume and workspace-download paths: Get resolves one checkpoint by id
-// (for its chunk_count / chunk_encoding), LatestActiveAny resolves the
-// active row at MAX(coordination_generation) regardless of partial (the
-// §10.1 line 154 resume-reassembly selector), and LatestFull resolves the
-// last successful full checkpoint the resume path falls back to when
-// reassembly of the selected manifest fails its contiguity or recovery-
-// threshold check. The Postgres and in-memory checkpoint_manifest stores
-// implement it.
-type CheckpointManifestReader interface {
-	Get(ctx context.Context, tenantID, checkpointID string) (partialmanifeststore.Record, error)
-	LatestActiveAny(ctx context.Context, tenantID, sessionID string) (partialmanifeststore.Record, error)
-	LatestFull(ctx context.Context, tenantID, sessionID string) (partialmanifeststore.Record, error)
-}
-
-// CheckpointManifestWriter writes a §10.1 checkpoint_manifest row for the
-// derived session after the §7.1 derive path copies the parent's chunks
-// into the derived prefix, so the derived session owns a resumable /
-// downloadable checkpoint independent of the parent's GC. The store models
-// a manifest as an intent row (Put, always partial) advanced by
-// ConfirmChunk and stamped terminal by Finalise, so recording a complete
-// derived checkpoint is Put → ConfirmChunk → Finalise(partial=false). The
-// Postgres and in-memory checkpoint_manifest stores implement it.
-type CheckpointManifestWriter interface {
-	Put(ctx context.Context, r partialmanifeststore.Record) error
-	ConfirmChunk(ctx context.Context, tenantID, checkpointID string, n int, workspaceBytesUploaded int64) error
-	Finalise(ctx context.Context, tenantID, checkpointID string, partial bool, manifestReason string) error
-}
-
-// TreeBudgetReturner releases the §12.4 delegation tree budget a
-// settled child consumed. The §8.2 line 130 completed-subtree offload
-// decrements the tree's maxTreeMemoryBytes counter when a node is
-// archived and the per-parent parallel_children counter when the child
-// stops running, so a long-running tree's freed concurrency slot and
-// in-memory footprint are returned to the budget. *treebudget.Reserver
-// implements it. A nil returner on the Server disables the decrement.
-type TreeBudgetReturner interface {
-	Return(ctx context.Context, r treebudget.Reservation) error
-}
-
-// LeaseTreeRegistrar registers a root session's §8.6 lease-extension
-// budget tree so a later in-process budget-exhaustion extension (the
-// gateway LLM Proxy's ExtendForBudget trigger) from the root session or
-// its delegated descendants resolves the tree instead of failing
-// ErrSessionNotFound. *leasecontrol.MemoryBudgetSource satisfies it.
-// F-15.3.5.
-// spec: §8.6 line 660 (configuration layering)
-type LeaseTreeRegistrar interface {
-	RegisterTree(rootSessionID string, cfg leasecontrol.TreeConfig)
-}
-
-// LeaseExtensionDefaults is the §8.6 deployment-level lease-extension
-// configuration (Helm `leaseExtension.defaults` / `leaseExtension.max`)
-// the gateway registers each root tree with. The token dimension's
-// effective ceiling is resolved from DeploymentBudget and
-// DeploymentMaxBudget through leaseextension.ResolveEffectiveMax; the
-// remaining §8.6 line 643 dimensions have no deployment-level config
-// surface and are registered without extension headroom. F-15.3.5.
-// spec: §8.6 lines 660-678
-type LeaseExtensionDefaults struct {
-	// DeploymentBudget is the §8.6 deployment-default maxExtendableBudget
-	// (Helm leaseExtension.defaults.maxExtendableBudget). Zero registers a
-	// tree with no token-extension headroom.
-	DeploymentBudget int64
-	// DeploymentMaxBudget is the §8.6 absolute ceiling no override may
-	// exceed (Helm leaseExtension.max.maxExtendableBudget).
-	DeploymentMaxBudget int64
-	// ApprovalMode is the §8.6 deployment-default extensionApproval mode.
-	// Unspecified resolves to leasecontrol.DefaultApprovalMode.
-	ApprovalMode leasecontrol.ApprovalMode
-	// SuccessCoolOff is the §8.6 line 675 coolOffSeconds post-approval
-	// window. Zero applies leasecontrol.DefaultSuccessCoolOff.
-	SuccessCoolOff time.Duration
-	// RejectionCoolOff is the §8.6 line 734 rejectionCoolOffSeconds. Zero
-	// applies leasecontrol.DefaultRejectionCoolOff.
-	RejectionCoolOff time.Duration
-	// AutoMaxPerMinute is the §8.6 line 712 autoModeRateLimit
-	// maxAutoExtensionsPerMinute. Zero means no limit.
-	AutoMaxPerMinute int
-}
-
-// registerLeaseTree registers a newly created root session with the
-// §8.6 lease-extension budget source. It is a no-op when no registrar
-// is wired or the row is a delegated child (children are registered by
-// the delegation Service, keyed to their root's tree). The token
-// dimension's current value is seeded from a granted DelegationLease
-// when the row carries one; the deployment-level ceiling comes from the
-// configured defaults. F-15.3.5.
-// spec: §8.6 lines 643-678
-func (s *Server) registerLeaseTree(row sessionstore.Session) {
-	if s.leaseRegistrar == nil || row.ParentSessionID != "" {
-		return
-	}
-	cfg := leasecontrol.TreeConfig{
-		TenantID:         row.TenantID,
-		DeploymentBase:   s.leaseExtDefaults.DeploymentBudget,
-		DeploymentMax:    s.leaseExtDefaults.DeploymentMaxBudget,
-		ApprovalMode:     s.leaseExtDefaults.ApprovalMode,
-		SuccessCoolOff:   s.leaseExtDefaults.SuccessCoolOff,
-		RejectionCoolOff: s.leaseExtDefaults.RejectionCoolOff,
-		AutoMaxPerMinute: s.leaseExtDefaults.AutoMaxPerMinute,
-	}
-	if l := row.DelegationLease; l != nil {
-		cfg.CurrentTokenBudget = l.MaxTokenBudget
-		cfg.CurrentChildren = int64(l.MaxChildrenTotal)
-		cfg.CurrentParallelChildren = int64(l.MaxParallelChildren)
-		cfg.CurrentTreeSize = int64(l.MaxTreeSize)
-		cfg.CurrentMaxAgeSeconds = int64(l.PerChildMaxAge)
-	}
-	s.leaseRegistrar.RegisterTree(row.ID, cfg)
-}
-
-// DelegationHighWatermarkReader reads and clears the §8.3 line 379
-// per-tree parallel-children high-watermark when a delegation tree
-// completes. *treebudget.Reserver implements it. Nil on the Server
-// disables the §16.1 high-watermark observation (the in-process
-// minimal path with no Redis-backed budget). F-8.9.6.
-type DelegationHighWatermarkReader interface {
-	ObserveHighWatermark(ctx context.Context, rootSessionID string) (value int64, found bool, err error)
-}
-
-// DelegationHighWatermarkObserver records the §8.3 line 379 per-tree
-// parallel-children high-watermark onto the
-// `lenny_delegation_parallel_children_high_watermark` histogram.
-// *gatewaymetrics.Metrics implements it. Nil drops the observation.
-// F-8.9.6.
-type DelegationHighWatermarkObserver interface {
-	ObserveDelegationParallelChildrenHighWatermark(pool, tenantID string, value int64)
-}
-
-// SessionLogHook is the §4.4 line 226 close-hook the gateway invokes
-// on every transition to a terminal state. Implementations capture
-// the buffered runtime stderr bytes and persist them best-effort.
-// The default production wiring lives in pkg/gateway/sessionlogstore
-// (CloseHook.OnSessionTerminal).
-//
-// spec: §4.4 line 226 — "Session logs and runtime stderr".
-type SessionLogHook interface {
-	// OnSessionTerminal records the session log for (tenant, session).
-	// Implementations are best-effort: a failure must not be
-	// propagated as a fatal error to the caller.
-	OnSessionTerminal(ctx context.Context, tenantID, sessionID string, body []byte, truncated bool) error
-}
-
-// ActivityStamper records §6.2 lines 273-300 qualifying agent activity for
-// a session so the §11.3 idle watchdog does not reap it as idle. The
-// gateway wires *sessionidle.Stamper here. Implementations coalesce the
-// durable write (≤1/s per session) and are non-blocking. F-11.3.7.
-type ActivityStamper interface {
-	Stamp(tenantID, sessionID string)
-}
-
-// QuotaFinalCheckpointer writes the §11.2 line 44 "final reconciliation"
-// token-usage checkpoint for a (tenant, user) when a session reaches a
-// terminal state: the final cumulative window total is persisted to
-// Postgres as the authoritative value so a subsequent Redis-recovery
-// reconstruction has an accurate baseline. The default production wiring
-// is quotacheckpoint.Service.CheckpointSubject. Best-effort: a failure
-// must not abort the terminal-state transition.
-//
-// spec: §11.2 line 44 ("on session completion as final reconciliation";
-// "the final cumulative token usage is always written to Postgres as an
-// authoritative value").
-type QuotaFinalCheckpointer interface {
-	CheckpointSubject(ctx context.Context, tenantID, userID string) error
-}
-
-// CoordinationFencer issues the §10.1 / §4.2 CoordinatorFence to a
-// resumed session's pod, announcing the session's current
-// coordination_generation so the pod rejects any straggler RPC from a
-// prior coordinator. relinquished is true when the coordinator gave up
-// leadership after exhausting its §11.3 fence retries (the lease was
-// released); the resume must then be aborted so another replica takes
-// over. *coordfence.Fencer satisfies it.
-//
-// spec: §10.1 lines 33-37, §11.3 line 209.
-type CoordinationFencer interface {
-	Fence(ctx context.Context, adapter *adapterclient.Client, tenantID, sessionID string) (relinquished bool, err error)
-}
 
 // Options configures the Server at construction.
 type Options struct {
@@ -963,13 +765,13 @@ type Options struct {
 	DeriveAuditSink DeriveAuditSink
 
 	// DeriveLock, when set, serializes concurrent /v1/sessions/{id}/derive
-	// calls on the same source session per §7.1 line 92. Production
+	// calls on the same source session per §7.1. Production
 	// wires derivelock.NewRedis against the shared Redis client; tests
 	// and the single-replica minimal gateway can wire derivelock.NewMemory
 	// or leave this nil (the in-memory store mutex serializes within the
 	// running process and is correct for a single replica). On
 	// contention the handler returns 429 DERIVE_LOCK_CONTENTION.
-	// spec: §7.1 line 92.
+	// spec: §7.1.
 	DeriveLock derivelock.Lock
 
 	// PersistDeriveFailureRows is the §7.1 derive rule 2 opt-in. When
@@ -979,7 +781,7 @@ type Options struct {
 	// derive-failure reachability table). Default false keeps the
 	// roll-back-without-persist posture. Wired from
 	// `gateway.persistDeriveFailureRows`. spec: §7.1 derive rule 2;
-	// §15.1 lines 647-663. F-15.1.14.
+	// §15.1. F-15.1.14.
 	PersistDeriveFailureRows bool
 
 	// IncDeriveFailureAudit, when set, increments the §16.1
@@ -999,14 +801,14 @@ type Options struct {
 	// audit events emitted by the §15.1 resolution endpoints.
 	// Production wires this to the audit appender; nil disables the
 	// emission and the resolution still proceeds.
-	// spec: §7.2 table lines 124-127. F-7.2.8.
+	// spec: §7.2 table. F-7.2.8.
 	InteractionAuditSink InteractionAuditSink
 
 	// ToolApprovalWaits, when set, is the §7.2 tool-use approval waiter
 	// registry shared with the ToolApprovalGate the pod executor calls.
 	// The approve/deny endpoints deliver the verdict onto it so the
 	// blocked runtime tool call unblocks. Nil leaves the endpoints
-	// recording the interaction phase only. spec: §7.2 lines 124-125.
+	// recording the interaction phase only. spec: §7.2.
 	// F-7.2.18.
 	ToolApprovalWaits *toolapproval.Registry
 
@@ -1016,21 +818,21 @@ type Options struct {
 	// `delegation.tree_cycle_detected` audit event plus the §16.1
 	// `lenny_delegation_tree_cycle_detected_total` counter; nil
 	// disables the emission and the walker still truncates the cycle.
-	// spec: §8.9 line 1003; F-8.9.10.
+	// spec: §8.9; F-8.9.10.
 	TreeCycleObserver TreeCycleObserver
 
 	// CallbackValidator validates client callbackUrls against the §14 SSRF
 	// mitigations. Nil installs a default validator with no deployer
-	// domain allowlist. spec: §14 lines 108-112. F-14.1.11.
+	// domain allowlist. spec: §14. F-14.1.11.
 	CallbackValidator *sessioncallback.Validator
 	// CallbackSeal KMS-envelope-encrypts a client callbackSecret under the
 	// session tenant's KEK at admission. Nil disables callbackSecret
 	// acceptance (a callbackUrl with no secret still delivers, unsigned).
-	// spec: §14 line 139. F-14.1.11.
+	// spec: §14. F-14.1.11.
 	CallbackSeal func(ctx context.Context, tenantID string, plaintext []byte) ([]byte, error)
 	// CallbackDispatcher delivers validated §14 callbacks. Nil leaves
 	// callbacks validated and persisted but undelivered (the dev/test
-	// posture); the cmd wires a real dispatcher. spec: §14 lines 111, 150.
+	// posture); the cmd wires a real dispatcher. spec: §14.
 	// F-14.1.11.
 	CallbackDispatcher *sessioncallback.Dispatcher
 
@@ -1040,10 +842,10 @@ type Options struct {
 	// registry instead of routing through the executor. Production
 	// wires the same `*inputwait.Registry` instance into both the
 	// sessionserver and the MCP tools deps; tests can leave it nil for
-	// pre-F-7.2.14 behaviour. spec: §7.2 line 317. F-7.2.14.
+	// pre-F-7.2.14 behaviour. spec: §7.2. F-7.2.14.
 	InputWaits *inputwait.Registry
 
-	// DefaultRetention overrides the §7.1 line 77 default artifact-
+	// DefaultRetention overrides the §7.1 default artifact-
 	// retention window. A non-positive value selects
 	// DefaultArtifactRetention (7 days). Deployers tune it via the
 	// gateway --session-artifact-retention-seconds flag.
@@ -1064,12 +866,12 @@ type Options struct {
 	UploadTokenVerifier *uploadtoken.Verifier
 
 	// UploadTokenTTL overrides the upload-token expiry stamped on every
-	// minted token. Per §7.1 line 58 the token TTL equals
+	// minted token. Per §7.1 the token TTL equals
 	// `maxCreatedStateTimeoutSeconds`; the gateway threads the same
-	// configured timeout through this field, the watchdog's
-	// MaxCreatedSeconds, and the createdsweeper's Timeout so the three
-	// budgets never drift. A non-positive value falls through to
-	// uploadtoken.DefaultTTL (300s). spec: §7.1 line 58. F-7.4.7.
+	// configured timeout through this field and the watchdog's
+	// MaxCreatedSeconds so the two budgets never drift. A non-positive
+	// value falls through to
+	// uploadtoken.DefaultTTL (300s). spec: §7.1. F-7.4.7.
 	UploadTokenTTL time.Duration
 
 	// Blobs is the §4.5 blob store backing
@@ -1096,7 +898,7 @@ type Options struct {
 	// archive materialization lists a settled child's catalogued
 	// `lenny-blob://` artifacts to populate the §8.8
 	// TaskResult.output.artifactRefs. Nil leaves artifactRefs empty.
-	// spec: §8.8 lines 888-896. F-8.8.2.
+	// spec: §8.8. F-8.8.2.
 	Artifacts artifactcatalog.Store
 
 	// Events is the §15.1 session event bus backing the SSE stream.
@@ -1105,7 +907,7 @@ type Options struct {
 	// event publication.
 	Events *sessionevents.Bus
 
-	// ActivityStamper records §6.2 lines 273-300 qualifying agent
+	// ActivityStamper records §6.2 qualifying agent
 	// activity onto the session's last_agent_activity_at so the §11.3
 	// idle watchdog (sweepIdle) sees an actively-working session as
 	// non-idle. The gateway wires *sessionidle.Stamper here; nil is a
@@ -1124,8 +926,7 @@ type Options struct {
 	// the gateway migrates a session's in-memory inbox to the DLQ on
 	// resume_pending and drains the inbox+DLQ (emitting
 	// message_expired) on terminal transition. Nil disables messaging
-	// durability (the dev / no-Redis posture). spec: §7.2 lines
-	// 305-311, 343.
+	// durability (the dev / no-Redis posture). spec: §7.2.
 	Messaging *sessioninbox.Coordinator
 
 	// Interactions is the §6/§9.2 pending tool-call + elicitation
@@ -1166,7 +967,7 @@ type Options struct {
 	// StickyCache is the §10.7 `sticky: user` variant-assignment cache. When
 	// set, the ExperimentRouter reads a `mode: external` assignment from the
 	// cache before calling the OpenFeature provider and writes fresh results
-	// back (§10.7 line 831). Nil re-evaluates every experiment fresh, which is
+	// back (§10.7). Nil re-evaluates every experiment fresh, which is
 	// also the §12.4 Redis-outage fail-open path.
 	StickyCache StickyCache
 
@@ -1187,13 +988,26 @@ type Options struct {
 	// a session whose pool resolution did not name one. When unset the
 	// server falls back to the dev-mode-aware default: `sandboxed`
 	// (gVisor) normally, or `standard` (runc) when DevMode is true per
-	// §5.3 line 677.
+	// §5.3.
 	DefaultIsolationProfile isolation.Profile
 
 	// DevMode is the platform global.devMode (LENNY_DEV_MODE=true). It
-	// selects the §5.3 line 677 dev-mode fallback (`standard`) when no
+	// selects the §5.3 dev-mode fallback (`standard`) when no
 	// DefaultIsolationProfile is configured.
 	DevMode bool
+
+	// DevTenantHeader, when true, lets a request that carries no
+	// authenticated principal name its tenant through the
+	// X-Lenny-Tenant-ID dev header (format-checked against the §10.2
+	// tenant_id pattern), and resolves a request with neither to the
+	// built-in `default` tenant. The gateway sets it only under
+	// --dev-mode. When false, the default, the tenant comes only from the
+	// authenticated principal or from the tenant an in-process service
+	// caller passes, and a request with neither is refused with 401
+	// UNAUTHORIZED before it reaches a handler (F-10.2.21).
+	// spec: §10.2 (Authentication); §17.4 (dev mode); §18 Phase 4 (the
+	// minimal gateway reads the tenant from X-Lenny-Tenant-ID).
+	DevTenantHeader bool
 
 	// MultiTenant mirrors the gateway's `--multi-tenant` flag /
 	// `auth.multiTenant` Helm value. When true, the §10.2 RBAC gate on
@@ -1203,7 +1017,7 @@ type Options struct {
 	// When false, the historical no-role fall-through is preserved so
 	// the single-tenant minimal gateway (no OIDC, dev-header path) and
 	// pre-RBAC service tokens still reach the handler.
-	// spec: §10.2 lines 256–264. F-10.2.4.
+	// spec: §10.2. F-10.2.4.
 	MultiTenant bool
 
 	// TenancyMode is the §4.9 platform tenancy.mode ("multi" or "single"),
@@ -1220,6 +1034,14 @@ type Options struct {
 	// When nil the check is skipped (unit tests that do not provision
 	// a user registry); the gateway always wires it.
 	Users userstore.Store
+
+	// CallerCheck carries the issued-token reader and the rejection
+	// auditor of the §10.2 "Signing topology" session-creation caller
+	// check, which applies §13.3 step (1a) to the creating bearer. The
+	// gateway wires both when it has a Postgres pool; a zero value passes
+	// every caller, because without the pool no issued_tokens row exists
+	// to refuse. spec: §10.2 (Signing topology), §13.3.
+	CallerCheck callercheck.Deps
 
 	// Billing is the §11.2.1 billing event ledger. When set, the
 	// gateway appends a session.created event on every create. Nil
@@ -1251,8 +1073,8 @@ type Options struct {
 	// CoordinatorFence to a resumed session's pod after the resume
 	// re-bind, announcing the session's current coordination_generation
 	// so the pod rejects any straggler RPC from a prior coordinator. Nil
-	// disables fencing (dev / in-memory mode). spec: §10.1 lines 33-37,
-	// §11.3 line 209.
+	// disables fencing (dev / in-memory mode). spec: §10.1,
+	// §11.3.
 	CoordinationFencer CoordinationFencer
 
 	// CoordinationLeaseStore is the §12.2 LeaseStore the at-bind acquire
@@ -1268,6 +1090,16 @@ type Options struct {
 	// at-bind acquire. spec: §10.1.
 	ReplicaID string
 
+	// HolderForwardClient is the shared CH-HOLDERFORWARD client
+	// NewHolderForwardClient builds over the gateway replica certificate.
+	// A replica that does not coordinate a session forwards the session's
+	// request to the coordinating replica through it. Nil, the dev-mode
+	// posture without certificate material, makes every forward not
+	// delivered. spec: §10.1.1 (Stateless Replicas and Per-Session
+	// Coordination) Replica address, §10.3 (mTLS PKI) NET-072, §29.3
+	// (Interactive message send) Forwarding.
+	HolderForwardClient *http.Client
+
 	// CoordinationLeaseTTL is the TTL stamped on the at-bind lease acquire.
 	// A non-positive value falls through to DefaultCoordinationLeaseTTL. It
 	// must exceed the coordination Sweeper interval so a held lease does not
@@ -1278,36 +1110,36 @@ type Options struct {
 	// in. Required when PodBinder is set.
 	AgentNamespace string
 
-	// AdmissionRateLimitCounter is the §11.1 line 7 per-minute counter
+	// AdmissionRateLimitCounter is the §11.1 per-minute counter
 	// used for the per-runtime and per-pool admission scopes enforced at
 	// session creation. Nil disables both scopes (the global, per-user,
 	// and per-tenant scopes run in the §11.1 HTTP middleware regardless).
 	// Production wires the shared Redis-backed counter so the limit holds
-	// across replicas. spec: §11.1 line 7. F-11.1.2.
+	// across replicas. spec: §11.1. F-11.1.2.
 	AdmissionRateLimitCounter ratelimit.Counter
 
 	// PerRuntimePerMinute caps session-creation requests against a single
 	// runtime per minute. Zero or less leaves the per-runtime scope
-	// unlimited. spec: §11.1 line 7. F-11.1.2.
+	// unlimited. spec: §11.1. F-11.1.2.
 	PerRuntimePerMinute int
 
 	// PerPoolPerMinute caps session-creation requests against a single
 	// resolved warm pool per minute. The scope is skipped when no pool
 	// resolves (the Postgres-only posture). Zero or less leaves the
-	// per-pool scope unlimited. spec: §11.1 line 7. F-11.1.2.
+	// per-pool scope unlimited. spec: §11.1. F-11.1.2.
 	PerPoolPerMinute int
 
 	// RateLimitMetrics, when set, receives the §11.1 rejection counter
 	// and counter-failure bump for the per-runtime / per-pool gate.
 	// *gatewaymetrics.Metrics satisfies it. Nil leaves the gate
-	// enforcing without observability. spec: §11.1 line 7. F-11.1.2.
+	// enforcing without observability. spec: §11.1. F-11.1.2.
 	RateLimitMetrics AdmissionRateLimitMetrics
 
 	// MaxConcurrentSessionsGlobal caps the gateway-wide count of live
 	// (non-terminal) sessions across every tenant. Zero or less leaves
 	// the global concurrent-session scope unlimited. Operator-tunable via
 	// the gateway Helm value `gateway.maxConcurrentSessionsGlobal`.
-	// spec: §11.1 line 8 (Concurrency limits — global). F-11.1.3.
+	// spec: §11.1. F-11.1.3.
 	MaxConcurrentSessionsGlobal int
 
 	// MaxConcurrentSessionsPerUser caps the count of live (non-terminal)
@@ -1315,7 +1147,7 @@ type Options struct {
 	// cannot monopolize the tenant's concurrent-session capacity. Zero or
 	// less leaves the per-user scope unlimited. Operator-tunable via
 	// `gateway.maxConcurrentSessionsPerUser`.
-	// spec: §11.1 line 8 (Concurrency limits — per-user). F-11.1.3.
+	// spec: §11.1. F-11.1.3.
 	MaxConcurrentSessionsPerUser int
 
 	// MaxConcurrentSessionsPerRuntime caps the count of live
@@ -1323,7 +1155,7 @@ type Options struct {
 	// so one runtime cannot be flooded with concurrent sessions. Zero or
 	// less leaves the per-runtime scope unlimited. Operator-tunable via
 	// `gateway.maxConcurrentSessionsPerRuntime`.
-	// spec: §11.1 line 8 (Concurrency limits — per-runtime). F-11.1.3.
+	// spec: §11.1. F-11.1.3.
 	MaxConcurrentSessionsPerRuntime int
 
 	// EvalRateLimitCounter is the §10.7 per-minute counter for the
@@ -1331,19 +1163,19 @@ type Options struct {
 	// POST /v1/sessions/{id}/eval). Nil disables eval rate limiting.
 	// Production wires the same Redis-backed counter as
 	// AdmissionRateLimitCounter so the limit holds across replicas.
-	// spec: §10.7 line 938. F-10.7.4.
+	// spec: §10.7. F-10.7.4.
 	EvalRateLimitCounter ratelimit.Counter
 
 	// EvalPerSessionPerMinute caps eval submissions against a single
 	// session per minute (§10.7 `evalRateLimit.perSessionPerMinute`).
 	// Zero selects DefaultEvalPerSessionPerMin (100); a negative value
-	// disables the per-session scope. spec: §10.7 line 938. F-10.7.4.
+	// disables the per-session scope. spec: §10.7. F-10.7.4.
 	EvalPerSessionPerMinute int
 
 	// EvalPerTenantPerMinute caps eval submissions across all of a
 	// tenant's sessions per minute (§10.7 `evalRateLimit.perTenantPerMinute`).
 	// Zero selects DefaultEvalPerTenantPerMin (10000); a negative value
-	// disables the per-tenant scope. spec: §10.7 line 938. F-10.7.4.
+	// disables the per-tenant scope. spec: §10.7. F-10.7.4.
 	EvalPerTenantPerMinute int
 
 	// Sealer, when set, takes the §7.1 final workspace snapshot when a
@@ -1355,32 +1187,91 @@ type Options struct {
 	// succeed within this window transitions the session to failed with
 	// reason workspace_seal_timeout. A non-positive value selects
 	// DefaultWorkspaceSealMaxDuration (300s, the spec default).
-	// spec: §7.1 line 112.
+	// spec: §7.1.
 	WorkspaceSealMaxDuration time.Duration
 
-	// ObserveWorkspaceSealDuration, when set, records the §7.1 line 112
+	// StreamFailureReportTimeout bounds the work a CH-ATTACH stream-failure
+	// report does beyond the workspace seal: the report runs on a context
+	// detached from any request whose deadline is this value plus
+	// WorkspaceSealMaxDuration, so a seal that never returns still leaves
+	// this much time for the binding release, the parent notification, and
+	// the cascade. Operator-tunable; a non-positive value selects
+	// DefaultStreamFailureReportTimeout. spec: §28.5.1 (CH-ATTACH
+	// Degradation.).
+	StreamFailureReportTimeout time.Duration
+
+	// PrimaryReadTimeout bounds each sessionstore.ReadPrimary call a
+	// one-shot decision makes on the session server. Operator-tunable
+	// through --session-primary-read-timeout; a non-positive value selects
+	// sessionstore.DefaultPrimaryReadTimeout. spec: §12.3 (Postgres HA
+	// Requirements).
+	PrimaryReadTimeout time.Duration
+
+	// SuspensionCheckpointer takes the checkpoint a suspension release takes
+	// before it releases a suspended session's pod. The gateway wires the
+	// checkpoint service. Nil leaves every suspended pod held.
+	// spec: §6.2 (Pod State Machine).
+	SuspensionCheckpointer SuspensionCheckpointer
+
+	// BudgetKeyRearmer re-arms the TTL of a session tree's delegation budget
+	// keys on each committed transition into or out of suspended. Nil
+	// re-arms nothing. spec: §8.3 (Delegation Policy and Lease).
+	BudgetKeyRearmer BudgetKeyRearmer
+
+	// IncSessionPodReleasedDuringSuspension and
+	// IncSessionSuspensionCheckpointFailed, when set, increment the §16.1
+	// lenny_session_pod_released_during_suspension_total and
+	// lenny_session_suspension_checkpoint_failed_total counters, labeled by
+	// pool and tenant. spec: §16.1 (Metrics), §6.2 (Pod State Machine).
+	IncSessionPodReleasedDuringSuspension func(pool, tenantID string)
+	IncSessionSuspensionCheckpointFailed  func(pool, tenantID string)
+
+	// MaxResumePending and MaxResuming are the platform caps the watchdog
+	// applies to resume_pending (the maxResumeWindowSeconds window) and to
+	// resuming. The resume driver bounds an attempt by the window left
+	// before its entry write and by MaxResuming after it. Zero selects the
+	// watchdog defaults. spec: §7.3 (Resume driver).
+	MaxResumePending time.Duration
+	MaxResuming      time.Duration
+
+	// MaxFinalizing bounds a slot launch: the two-step /start launch and a
+	// delegated child's materialization each run on a context carrying this
+	// deadline, taken before the session row is read from the primary. On a
+	// concurrent-workspace pool the launch performs the materialization and
+	// setup that finalizing performs on an exclusive pool, so the gateway
+	// wires --max-finalizing-state-timeout-seconds. Zero selects the
+	// watchdog default. spec: §5.2 (Slot assignment atomicity).
+	MaxFinalizing time.Duration
+
+	// AgeCap resolves a row's effective maxSessionAge cap. The gateway
+	// wires the resolver the watchdog's maxSessionAge sweep uses, so the
+	// resume driver and the sweep apply one value. Nil applies the platform
+	// default cap. spec: §6.2 (maxSessionAge timer behavior across states).
+	AgeCap func(ctx context.Context, row sessionstore.Session) time.Duration
+
+	// ObserveWorkspaceSealDuration, when set, records the §7.1
 	// lenny_workspace_seal_duration_seconds{pool,outcome} histogram.
 	// outcome is "success" or "timeout". Nil disables the emission.
 	ObserveWorkspaceSealDuration func(pool, outcome string, seconds float64)
 
-	// RecordSessionTerminal, when set, records the §16.1 lines 161-163 /
+	// RecordSessionTerminal, when set, records the §16.1 /
 	// §10.7 rollback-trigger metric family at every terminal session
 	// transition (lenny_session_total, lenny_session_error_total, and
 	// lenny_session_duration_seconds). sessionType is the §5.2
 	// ExecutionMode; variantID is the §10.7 enrollment. Nil disables the
-	// emission. spec: §10.7 lines 1120-1132, §16.1 lines 161-163.
+	// emission. spec: §10.7, §16.1.
 	RecordSessionTerminal func(tenantID, sessionType, variantID string, isError bool, seconds float64)
 
-	// ObserveEvalScore, when set, records one §16.1 line 164
+	// ObserveEvalScore, when set, records one §16.1
 	// lenny_eval_score observation per submitted eval run. Nil disables
-	// the emission. spec: §10.7 line 1128, §16.1 line 164.
+	// the emission. spec: §10.7, §16.1.
 	ObserveEvalScore func(tenantID, scorer, variantID string, score float64)
 
 	// SetExperimentTargetingCircuitOpen, when set, reports the §10.7
 	// SCL-023 targeting circuit-breaker open/closed transitions through
 	// the lenny_experiment_targeting_circuit_open gauge. Nil disables the
 	// gauge emission; the breaker still gates the OpenFeature call.
-	// spec: §10.7 line 838, §16.1 line 64.
+	// spec: §10.7, §16.1.
 	SetExperimentTargetingCircuitOpen func(tenantID, provider string, open bool)
 
 	// SealSleep overrides the seal-retry backoff wait. Production leaves
@@ -1388,7 +1279,7 @@ type Options struct {
 	// bounded-backoff loop runs without real delays.
 	SealSleep func(ctx context.Context, d time.Duration) bool
 
-	// PartialManifestCleaner, when set, executes the §4.4 line 236
+	// PartialManifestCleaner, when set, executes the §4.4
 	// partial-manifest cleanup after the resume path completes. Nil
 	// leaves the resume path unchanged; the §12.5 backstop sweep
 	// remains the only cleanup path.
@@ -1396,7 +1287,7 @@ type Options struct {
 
 	// EvictionStateLookup, when set, lets the resume path classify a
 	// resume as conversation-only (workspace lost during eviction)
-	// per §4.4 line 263, so the session.resumed event carries
+	// per §4.4, so the session.resumed event carries
 	// resumeMode: "conversation_only" and workspaceLost: true. Nil
 	// leaves the resume defaulting to the snapshot-source-derived
 	// ResumeMode (ResumeFull when a workspace snapshot is present).
@@ -1408,16 +1299,16 @@ type Options struct {
 	// defaulting to ResumeFull when a workspace snapshot is present.
 	PartialManifestLookup PartialManifestLookup
 
-	// ResumeChunkResolver, when set, resolves the §10.1 line 155 reassembly
+	// ResumeChunkResolver, when set, resolves the §10.1.7 reassembly
 	// chunk set the resume path hands the adapter. Nil leaves the resume
 	// carrying no chunks.
 	ResumeChunkResolver ResumeChunkResolver
 
-	// CheckpointRecoveryMetrics, when set, receives the §16.1 line 195
+	// CheckpointRecoveryMetrics, when set, receives the §16.1
 	// lenny_checkpoint_partial_total{recovered=true} emission once per
 	// above-threshold partial reassembly on resume. *gatewaymetrics.Metrics
 	// satisfies it. Nil leaves the resume recovering without observability.
-	// spec: §16.1 line 195.
+	// spec: §16.1.
 	CheckpointRecoveryMetrics CheckpointRecoveryMetrics
 
 	// CheckpointManifestReader, when set, reads §10.1 checkpoint_manifest
@@ -1441,35 +1332,36 @@ type Options struct {
 	// TaskUsage, when set, assembles the §8.8 TaskResult.usage and
 	// TaskResult.treeUsage rollups stamped on every materialized result.
 	// Nil leaves both absent (the pre-metering behaviour).
-	// spec: §8.8 lines 897-917.
+	// spec: §8.8.
 	TaskUsage *resultrollup.Builder
 
 	// TreeBudgetReturner, when set, releases the §12.4 delegation tree
-	// budget a settled child consumed: the §8.2 line 130 maxTreeMemoryBytes
+	// budget a settled child consumed: the §8.2 maxTreeMemoryBytes
 	// offload decrement and the per-parent parallel_children decrement
 	// fire once per child as it reaches a terminal state. Nil disables
 	// the decrement (developer mode without Redis-backed counters).
 	TreeBudgetReturner TreeBudgetReturner
 
-	// LeaseRegistrar, when set, registers each newly created root session
-	// with the §8.6 lease-extension budget source (RegisterTree) so an
-	// in-process budget-exhaustion extension (the gateway LLM Proxy's
-	// ExtendForBudget trigger) from the root or its delegated descendants
-	// resolves the tree instead of failing ErrSessionNotFound. Nil leaves
-	// the tree unregistered (the in-process gateway with no GatewayControl
-	// listener). LeaseExtensionDefaults supplies the §8.6 deployment-level
-	// ceiling the root tree is registered with. F-15.3.5.
-	LeaseRegistrar         LeaseTreeRegistrar
-	LeaseExtensionDefaults LeaseExtensionDefaults
+	// UsageQuiescenceTimeout is the §11.3
+	// delegation.usageQuiescenceTimeoutSeconds: how long after a delegated
+	// child's terminal transition the post-terminal hook waits before it
+	// returns the child's tree budget. A non-positive value selects the
+	// §11.3 default of 5 s (DefaultUsageQuiescenceTimeout).
+	// spec: §8.3 (Usage quiescence before budget return), §11.3
+	UsageQuiescenceTimeout time.Duration
 
-	// QuotaCheckpointer, when set, persists the §11.2 line 44 final
+	// UsageQuiescenceTimer is the timer seam of that wait: it returns a
+	// channel that delivers once the duration has elapsed. Nil uses
+	// time.After. A test drives the wait without real delay through it.
+	UsageQuiescenceTimer func(time.Duration) <-chan time.Time
+
+	// QuotaCheckpointer, when set, persists the §11.2 final
 	// token-usage checkpoint for the session's (tenant, user) when the
 	// session reaches a terminal state. Nil disables the final write
 	// (developer mode without the Postgres checkpoint store).
 	QuotaCheckpointer QuotaFinalCheckpointer
 
-	// HighWatermarkReader and HighWatermarkObserver wire the §8.3 line
-	// 379 per-tree parallel-children high-watermark observation: when a
+	// HighWatermarkReader and HighWatermarkObserver wire the §8.3 per-tree parallel-children high-watermark observation: when a
 	// delegation tree's root session settles, the gateway reads the
 	// recorded maximum simultaneous in-flight children and observes it
 	// onto the §16.1 histogram. Both nil disables the observation.
@@ -1481,24 +1373,24 @@ type Options struct {
 	// §8.10. A non-positive value selects DefaultMaxOrphanTasksPerTenant.
 	MaxOrphanTasksPerTenant int
 
-	// ResumeWindow is the §4.2 line 159 resume-eligibility duration
+	// ResumeWindow is the §4.2 resume-eligibility duration
 	// stamped onto each session at create. A non-positive value
 	// selects DefaultResumeWindow (2 hours, mirroring the watchdog's
 	// MaxSessionAgeSeconds default). Operators tuning the watchdog
 	// budget should pass the matching value here so the two budgets
 	// stay aligned.
-	// spec: §4.2 line 159 — "Resume eligibility and window".
+	// spec: §4.2 — "Resume eligibility and window".
 	ResumeWindow time.Duration
 
 	// TreeRecoveryLevelTimeout and TreeRecoveryTreeTimeout are the §8.10
 	// maxLevelRecoverySeconds / maxTreeRecoverySeconds budgets the
 	// bottom-up delegation-tree recovery applies when a tree is resumed.
 	// A non-positive value selects the §8.10 recovery-package default
-	// (120s / 600s). spec: §8.10 lines 1022-1023.
+	// (120s / 600s). spec: §8.10.
 	TreeRecoveryLevelTimeout time.Duration
 	TreeRecoveryTreeTimeout  time.Duration
 
-	// TreeRecoveryMetrics records the §16.1 line 144-145 tree-recovery
+	// TreeRecoveryMetrics records the §16.1 tree-recovery
 	// telemetry. *gatewaymetrics.Metrics satisfies it. Nil drops the
 	// observations.
 	TreeRecoveryMetrics treerecovery.Metrics
@@ -1507,7 +1399,7 @@ type Options struct {
 	// §9.1 GET /v1/runtimes discovery endpoint returns an empty list.
 	Runtimes runtimestore.Store
 
-	// CapabilityOverrides is the §5.1 line 49 per-tenant runtime
+	// CapabilityOverrides is the §5.1 per-tenant runtime
 	// capability override store. Optional — when set, the gateway overlays
 	// a tenant's override onto the resolved runtime at every §5.1
 	// capability consumer (injection gate, SDK-warm decision, mid-session
@@ -1593,48 +1485,48 @@ type Options struct {
 	// and the minimal gateway). spec: §16.1 — F-13.4.12.
 	UploadMetrics UploadHandlerMetrics
 
-	// MidSessionUploadEnabled is the §7.4 line 433 deployer policy that
+	// MidSessionUploadEnabled is the §7.4 deployer policy that
 	// admits mid-session uploads (POST /v1/sessions/{id}/upload-to-session)
 	// when the bound runtime also declares capabilities.midSessionUpload.
 	// False (the default) keeps the surface closed platform-wide. spec:
-	// §7.4 line 433 — F-7.4.6.
+	// §7.4 — F-7.4.6.
 	MidSessionUploadEnabled bool
 
-	// MaxConcurrentUploadsPerSession is the §11.1 line 10 per-session
+	// MaxConcurrentUploadsPerSession is the §11.1 per-session
 	// concurrent-upload admission cap: the gateway rejects a new upload
 	// with 429 RATE_LIMITED once a session already holds this many
 	// in-flight uploads on the replica. Zero leaves the per-session
-	// concurrency scope unlimited. spec: §11.1 line 10. F-11.1.5.
+	// concurrency scope unlimited. spec: §11.1. F-11.1.5.
 	MaxConcurrentUploadsPerSession int
 
-	// MaxConcurrentUploadsGlobal is the §11.1 line 10 global
+	// MaxConcurrentUploadsGlobal is the §11.1 global
 	// concurrent-upload admission cap: the gateway rejects a new upload
 	// with 429 RATE_LIMITED once the replica already holds this many
 	// in-flight uploads across all sessions. Zero leaves the global
-	// concurrency scope unlimited. spec: §11.1 line 10. F-11.1.5.
+	// concurrency scope unlimited. spec: §11.1. F-11.1.5.
 	MaxConcurrentUploadsGlobal int
 
-	// MaxUploadBytesPerSession is the §11.1 line 11 per-session
+	// MaxUploadBytesPerSession is the §11.1 per-session
 	// cumulative upload-size cap: the gateway rejects an upload with 429
 	// QUOTA_EXCEEDED once the sum of all uploads in a session would
 	// exceed this value. The per-file (per-blob) cap is the separate
 	// UploadMaxBodyBytes ceiling. Zero leaves the per-session size scope
-	// unlimited. spec: §11.1 line 11. F-11.1.6.
+	// unlimited. spec: §11.1. F-11.1.6.
 	MaxUploadBytesPerSession int64
 
-	// SessionLogHook, when set, receives the §4.4 line 226 close-hook
+	// SessionLogHook, when set, receives the §4.4 close-hook
 	// on every session transition to a terminal state. The production
 	// wiring lives in pkg/gateway/sessionlogstore (CloseHook). Nil
 	// disables the session-log persistence path; the transition still
 	// fires.
-	// spec: §4.4 line 226.
+	// spec: §4.4.
 	SessionLogHook SessionLogHook
 
-	// WarmupEstimateSeconds overrides the §5.2 line 625 PoolWarmingUp
+	// WarmupEstimateSeconds overrides the §5.2 PoolWarmingUp
 	// warm-up estimate (estimatedReadyIn and the Retry-After floor's
 	// input). Zero selects DefaultWarmupEstimateSeconds (120s), the
 	// spec's no-historical-data fallback.
-	// spec: §5.2 line 625.
+	// spec: §5.2.
 	WarmupEstimateSeconds int
 
 	// CredentialRouter is the §4.9 pluggable CredentialRouter used at
@@ -1642,14 +1534,14 @@ type Options struct {
 	// provider in the intersection of the runtime's supportedProviders
 	// and the tenant's credentialPolicy. Nil selects the built-in
 	// strategy-and-fallback-order router (credrouter.Default).
-	// spec: §4.9 lines 1558-1591.
+	// spec: §4.9.
 	CredentialRouter credrouter.Router
 
 	// PreclaimMismatch, when set, increments
 	// lenny_credential_preclaim_mismatch_total{pool,provider} on the
-	// §4.9 line 1220 race: the pre-claim availability check passed but
+	// §4.9 race: the pre-claim availability check passed but
 	// the lease assignment failed. Nil disables the emission.
-	// spec: §4.9 line 1220.
+	// spec: §4.9.
 	PreclaimMismatch func(pool, provider string)
 
 	// SlotHealth is the §5.2 per-pod fail/leak rolling-window tracker the
@@ -1671,11 +1563,11 @@ type Options struct {
 	// Nil disables the emission. spec: §5.2 "whole-pod replacement trigger".
 	SlotReplacement func(pool string)
 
-	// SlotLeakGauge, when set, publishes the §6.2 line 179
+	// SlotLeakGauge, when set, publishes the §6.2
 	// lenny_adapter_leaked_slots{pod_id,pool} gauge to leaked: the count of
-	// a pod's concurrent-workspace slots whose cleanup timed out and remain
-	// counted in active_slots until the pod terminates. Nil disables the
-	// emission. spec: §6.2 line 179.
+	// a pod's leaked concurrent-workspace slots, which remain counted in
+	// active_slots until the pod terminates. Nil disables the
+	// emission. spec: §6.2.
 	SlotLeakGauge func(pod, pool string, leaked int)
 
 	// QueuePollInterval is the cadence at which a §4.6.1 onPoolExhausted:queue
@@ -1699,24 +1591,24 @@ type Options struct {
 	// §16.1.
 	IncPodClaimTimeout func(pool string)
 
-	// ObserveStartupDuration, when set, records the §6.3 line 348
+	// ObserveStartupDuration, when set, records the §6.3
 	// end-to-end pod-warm session startup latency (pod claim through
 	// agent session ready, excluding upload and workspace
 	// materialization) for each successful start. Nil disables it.
-	// spec: §16.1 line 14, §6.3 line 348.
+	// spec: §16.1, §6.3.
 	ObserveStartupDuration func(pool, runtimeClass, isolationProfile string, seconds float64)
 
-	// ObserveStartupPhase, when set, records the §6.3 line 372 latency
+	// ObserveStartupPhase, when set, records the §6.3 latency
 	// of one hot-path startup phase (pod_claim,
 	// workspace_materialization, setup_commands, credential_assignment,
-	// agent_session_start). Nil disables it. spec: §6.3 line 372.
+	// agent_session_start). Nil disables it. spec: §6.3.
 	ObserveStartupPhase func(phase, runtimeClass string, seconds float64)
 
-	// ObserveTimeToFirstToken, when set, records the §6.3 line 356 /
-	// §16.1 line 15 TTFT histogram on the first agent-streamed
+	// ObserveTimeToFirstToken, when set, records the §6.3 /
+	// §16.1 TTFT histogram on the first agent-streamed
 	// response event of each session: session start request to first
 	// streaming event emitted to the client. Nil disables the
-	// emission. spec: §16.1 line 15, §6.3 line 356.
+	// emission. spec: §16.1, §6.3.
 	ObserveTimeToFirstToken func(pool, runtimeClass, isolationProfile string, seconds float64)
 
 	// RetryPolicyCaps holds the §7.3 deployer caps applied to a
@@ -1726,22 +1618,22 @@ type Options struct {
 	// A zero field skips that clamp so deployer "unlimited" semantics
 	// survive. Production wires these to the watchdog config so the
 	// per-session cap can never exceed the platform-wide bound. F-7.3.1.
-	// spec: §7.3 lines 377-393.
+	// spec: §7.3.
 	RetryPolicyCaps session.RetryPolicyCaps
 
 	// EnvVarBlocklist extends the §14 platform default env-var blocklist
 	// with deployer-supplied entries (exact names or `*` globs). The
 	// platform default is always merged in first so an operator can
 	// extend but not reduce it. A nil slice leaves the platform default
-	// in force. spec: §14 line 105. F-14.1.12.
+	// in force. spec: §14. F-14.1.12.
 	EnvVarBlocklist []string
 
-	// IncSessionResumeAttempt, when set, increments the §16.1
-	// lenny_session_resume_attempts_total{pool, outcome} counter on
-	// every POST /v1/sessions/{id}/resume call (after the precondition
-	// check passes). outcome is "success" when the row transitions to
-	// running, "failure" when the pod-claim step fails. Nil disables
-	// the emission. spec: §16.1 catalog. F-7.3.10.
+	// IncSessionResumeAttempt, when set, increments the
+	// lenny_session_resume_attempts_total{pool, outcome} counter once for
+	// each resume attempt whose entry write the resume driver saw take
+	// effect: "success" for a commit that landed, "failure" for a failure
+	// after the entry write or a commit that did not land. Nil disables the
+	// emission. spec: §16.1 (Metrics), §7.3 (Resume driver).
 	IncSessionResumeAttempt func(pool, outcome string)
 
 	// IncSessionRetry, when set, increments the §16.1
@@ -1757,17 +1649,25 @@ type Options struct {
 	// lenny_session_expiry_total{pool, reason} counter when the watchdog
 	// terminates a session on a platform expiry clock. reason is the
 	// §16.1.1 vocabulary value the watchdog resolved from the expiry edge
-	// ("max_idle_time" for the §6.2 idle clock, "max_session_age" for the
-	// §11.3 age cap and the §7.3 awaiting_client_action deadline). Nil
-	// disables the emission. spec: §16.1 catalog; §16.1.1. F-11.3.7.
+	// ("max_idle_time" for the §6.2 idle expiry of a session that cannot be
+	// idle-suspended and for the §6.2 suspended-session lifetime,
+	// "max_session_age" for the §11.3 age cap and the §7.3
+	// awaiting_client_action deadline). Nil disables the emission.
+	// spec: §16.1 catalog; §16.1.1. F-11.3.7.
 	IncSessionExpiry func(pool, reason string)
 
-	// IncWarmpoolWarmupFailure, when set, increments the §16.1 line 124
+	// IncDelegationBudgetKeysExpired, when set, increments the §16.1
+	// lenny_delegation_budget_keys_expired_total{pool, tenant_id} counter on
+	// every HandleBudgetKeysExpired call, with the tree root's pool. Nil
+	// drops the increment. spec: §16.1, §8.3.
+	IncDelegationBudgetKeysExpired func(pool, tenantID string)
+
+	// IncWarmpoolWarmupFailure, when set, increments the §16.1
 	// lenny_warmpool_warmup_failure_total{error_type} counter for a
-	// warm-pool startup failure. error_type is the §7.3 line 387
+	// warm-pool startup failure. error_type is the §7.3
 	// non-retryable failure category the gateway classified
 	// (`setup_command_failed`, etc.). Nil disables the emission.
-	// spec: §16.1 line 124, §7.3 line 387 — F-7.5.9.
+	// spec: §16.1, §7.3 — F-7.5.9.
 	IncWarmpoolWarmupFailure func(errorType string)
 
 	// IncInjectionGateFailClosed, when set, increments the
@@ -1811,11 +1711,13 @@ func New(store sessionstore.Store, opts Options) *Server {
 		interactions:               opts.Interactions,
 		usage:                      opts.Usage,
 		users:                      opts.Users,
+		callerCheck:                opts.CallerCheck,
 		billing:                    opts.Billing,
 		tenants:                    opts.Tenants,
 		storageQuota:               opts.StorageQuota,
 		defaultIsoProf:             opts.DefaultIsolationProfile,
 		devMode:                    opts.DevMode,
+		devTenantHeader:            opts.DevTenantHeader,
 		multiTenant:                opts.MultiTenant,
 		tenancyMode:                opts.TenancyMode,
 		podBinder:                  opts.PodBinder,
@@ -1823,6 +1725,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		fencer:                     opts.CoordinationFencer,
 		leaseStore:                 opts.CoordinationLeaseStore,
 		replicaID:                  opts.ReplicaID,
+		holderForward:              opts.HolderForwardClient,
 		coordLeaseTTL:              opts.CoordinationLeaseTTL,
 		agentNamespace:             opts.AgentNamespace,
 		admissionRL:                opts.AdmissionRateLimitCounter,
@@ -1837,6 +1740,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		evalPerTenantPerMin:        resolveEvalLimit(opts.EvalPerTenantPerMinute, DefaultEvalPerTenantPerMin),
 		sealer:                     opts.Sealer,
 		sealMaxDuration:            opts.WorkspaceSealMaxDuration,
+		streamFailureReportTimeout: opts.StreamFailureReportTimeout,
 		sealSleep:                  opts.SealSleep,
 		observeSealDuration:        opts.ObserveWorkspaceSealDuration,
 		recordSessionTerminal:      opts.RecordSessionTerminal,
@@ -1851,8 +1755,8 @@ func New(store sessionstore.Store, opts Options) *Server {
 		treeArchive:                opts.TreeArchive,
 		taskUsage:                  opts.TaskUsage,
 		treeBudgetReturner:         opts.TreeBudgetReturner,
-		leaseRegistrar:             opts.LeaseRegistrar,
-		leaseExtDefaults:           opts.LeaseExtensionDefaults,
+		usageQuiescenceTimeout:     UsageQuiescenceTimeoutFor(opts.UsageQuiescenceTimeout),
+		quiescenceTimer:            opts.UsageQuiescenceTimer,
 		quotaCheckpointer:          opts.QuotaCheckpointer,
 		hwmReader:                  opts.HighWatermarkReader,
 		hwmObserver:                opts.HighWatermarkObserver,
@@ -1899,6 +1803,10 @@ func New(store sessionstore.Store, opts Options) *Server {
 		incSessionResumeAttempt:    opts.IncSessionResumeAttempt,
 		incSessionRetry:            opts.IncSessionRetry,
 		incSessionExpiry:           opts.IncSessionExpiry,
+
+		// spec: §16.1, §8.3 — the BUDGET_KEYS_EXPIRED cleanup's detection counter.
+		incDelegationBudgetKeysExpired: opts.IncDelegationBudgetKeysExpired,
+
 		incWarmpoolWarmupFailure:   opts.IncWarmpoolWarmupFailure,
 		incInjectionGateFailClosed: opts.IncInjectionGateFailClosed,
 		uploadTokenTTL:             opts.UploadTokenTTL,
@@ -1917,20 +1825,33 @@ func New(store sessionstore.Store, opts Options) *Server {
 		s.slotHealth = slothealth.New()
 	}
 	if s.callbackValidator == nil {
-		// spec: §14 lines 108-112 — the SSRF validator needs no external
+		// spec: §14 — the SSRF validator needs no external
 		// config; default it so callbackUrl validation always runs even
 		// when a deployer configured no domain allowlist.
 		s.callbackValidator = sessioncallback.NewValidator(nil, nil)
 	}
 	if s.defaultRetention <= 0 {
-		// spec: §7.1 line 77 — default the artifact-retention window to
+		// spec: §7.1 — default the artifact-retention window to
 		// 7 days when the deployer leaves it unset.
 		s.defaultRetention = DefaultArtifactRetention
 	}
 	if s.sealMaxDuration <= 0 {
-		// spec: §7.1 line 112 — maxWorkspaceSealDurationSeconds default 300s.
+		// spec: §7.1 — maxWorkspaceSealDurationSeconds default 300s.
 		s.sealMaxDuration = DefaultWorkspaceSealMaxDuration
 	}
+	if s.streamFailureReportTimeout <= 0 {
+		s.streamFailureReportTimeout = DefaultStreamFailureReportTimeout
+	}
+	s.primaryReadTimeout = opts.PrimaryReadTimeout
+	s.suspensionCheckpointer = opts.SuspensionCheckpointer
+	s.budgetRearmer = opts.BudgetKeyRearmer
+	s.incPodReleasedDuringSuspension = opts.IncSessionPodReleasedDuringSuspension
+	s.incSuspensionCheckpointFailed = opts.IncSessionSuspensionCheckpointFailed
+	s.maxResumePending = opts.MaxResumePending
+	s.maxResuming = opts.MaxResuming
+	s.maxFinalizing = opts.MaxFinalizing
+	s.ageCap = opts.AgeCap
+	s.lifetimeCtx, s.lifetimeCancel = context.WithCancel(context.Background())
 	if s.sealSleep == nil {
 		s.sealSleep = sleepWithContext
 	}
@@ -1938,12 +1859,15 @@ func New(store sessionstore.Store, opts Options) *Server {
 		s.warmupEstimateSeconds = DefaultWarmupEstimateSeconds
 	}
 	if s.credRouter == nil {
-		// spec: §4.9 lines 1583-1589 — the built-in strategy-and-
+		// spec: §4.9 — the built-in strategy-and-
 		// fallback-order CredentialRouter is the default.
 		s.credRouter = credrouter.NewDefault()
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
+	}
+	if s.quiescenceTimer == nil {
+		s.quiescenceTimer = time.After
 	}
 	if s.coordLeaseTTL <= 0 {
 		// spec: §10.1 — the at-bind lease TTL must exceed the coordination
@@ -1971,13 +1895,12 @@ func New(store sessionstore.Store, opts Options) *Server {
 	if s.resumeWindow <= 0 {
 		s.resumeWindow = DefaultResumeWindow
 	}
-	// spec: §8.10 lines 1014-1027 — the bottom-up delegation-tree
+	// spec: §8.10 — the bottom-up delegation-tree
 	// recovery driver. The required seams (lister, reattacher, terminal
 	// marker) are always available here, so the orchestrator is built
-	// unconditionally; its work is gated to genuinely orphaned nodes by
-	// nodeNeedsRecovery, which is a no-op when the pod registry is
-	// unwired (dev / unit-test) so resume keeps its per-session
-	// behavior.
+	// unconditionally. nodeNeedsRecovery selects a node by its row state,
+	// resume_pending, because the pod registry holds only this replica's
+	// bindings and a node bound on a peer is not orphaned.
 	s.treeRecovery = treerecovery.New(treerecovery.Config{
 		Lister:       store,
 		Reattacher:   sessionNodeReattacher{s: s},
@@ -2000,1513 +1923,77 @@ func New(store sessionstore.Store, opts Options) *Server {
 		s.uploadIssuer = uploadtoken.NewIssuer(ring, s.clock)
 	}
 	if !isolation.IsValid(s.defaultIsoProf) {
-		// spec: §5.3 line 677 — honor the dev-mode fallback to `standard`
+		// spec: §5.3 — honor the dev-mode fallback to `standard`
 		// (runc) when no explicit default isolation profile is configured.
 		s.defaultIsoProf = isolation.DefaultForMode(s.devMode)
 	}
-	// spec: §10.7 lines 835-844 (SCL-023) — the per-tenant targeting
+	// spec: §10.7 (SCL-023) — the per-tenant targeting
 	// circuit breaker shares the server clock so tests drive the open /
 	// half-open transitions deterministically.
 	s.targetingBreaker = newTargetingBreaker(s.clock, opts.SetExperimentTargetingCircuitOpen)
 	return s
 }
 
-// Handler returns the http.Handler that routes the §15.1 session
-// endpoints.
+// Close cancels the server-lifetime context, so every resume attempt,
+// commit tail, takeover delivery, and terminal binding release the server
+// started stops at its next context check. The gateway calls it on
+// shutdown. It is idempotent. spec: §7.3 (Resume driver).
+func (s *Server) Close() {
+	if s.lifetimeCancel != nil {
+		s.lifetimeCancel()
+	}
+}
+
+// terminalWorkPollInterval is how often WaitTerminalWork reads the terminal
+// claim record.
+const terminalWorkPollInterval = 100 * time.Millisecond
+
+// WaitTerminalWork blocks until s.terminalClaims is empty, or ctx ends. It
+// reads the record every terminalWorkPollInterval, returns nil once the
+// record holds no entry, and returns ctx.Err() when ctx ends first. The
+// record counts each open terminal-writer claim, which spans the
+// post-terminal hook, and each terminal binding release in progress, so an
+// empty record means no terminal pipeline runs on this replica. A claim that
+// a background loop opens during the wait extends it, up to ctx's bound.
 //
-// Each session endpoint is wrapped in the §10.2 authorization gate for
-// its permission-matrix row: the state-mutating endpoints require
-// manage_own_sessions ("Create / cancel own sessions") and the read
-// endpoints require read_own_sessions ("Read own session history").
-// requireSessionPermission honors tenant custom roles and admits a
-// caller whose token carries no roles (the minimal gateway's no-OIDC
-// dev posture). See rbac_gate.go.
-func (s *Server) Handler() http.Handler {
-	mux := http.NewServeMux()
-	manage := func(next http.HandlerFunc) http.HandlerFunc {
-		return s.requireSessionPermission(auth.PermManageOwnSessions, next)
-	}
-	// §10.7 line 936 — eval submission is gated on the dedicated
-	// session:eval:write capability so an external scorer pipeline holds
-	// it without the broader manage_own_sessions authority. F-10.7.4.
-	evalWrite := func(next http.HandlerFunc) http.HandlerFunc {
-		return s.requireSessionPermission(auth.PermSessionEvalWrite, next)
-	}
-	read := func(next http.HandlerFunc) http.HandlerFunc {
-		return s.requireSessionPermission(auth.PermReadOwnSessions, next)
-	}
-	mux.HandleFunc("POST /v1/sessions", manage(s.handleCreate))
-	mux.HandleFunc("GET /v1/runtimes", s.handleListRuntimes)
-	// §15.1 line 703 — session-facing pool discovery. Mounted bare like
-	// GET /v1/runtimes: the handler scopes the list to pools backing a
-	// runtime the caller can already discover (§10.6 transparent filter).
-	mux.HandleFunc("GET /v1/pools", s.handleListPools)
-	mux.HandleFunc("GET /v1/runtimes/{name}/meta/{key}", s.handleRuntimeMeta)
-	mux.HandleFunc("GET /internal/runtimes/{name}/meta/{key}", s.handleInternalRuntimeMeta)
-	mux.HandleFunc("GET /v1/models", s.handleListModels)
-	mux.HandleFunc("POST /v1/environments/{name}/sessions", manage(s.handleEnvironmentSessions))
-	mux.HandleFunc("POST /v1/sessions/start", manage(s.handleCreateAndStart))
-	mux.HandleFunc("GET /v1/sessions", read(s.handleList))
-	mux.HandleFunc("GET /v1/sessions/{id}", read(s.handleGet))
-	mux.HandleFunc("DELETE /v1/sessions/{id}", manage(s.handleDelete))
-	mux.HandleFunc("POST /v1/sessions/{id}/finalize", manage(s.handleFinalize))
-	mux.HandleFunc("POST /v1/sessions/{id}/start", manage(s.handleStart))
-	// spec: §7.2 lines 168-169 — the interrupt path signals the runtime
-	// through the pod's adapter and waits for `interrupt_acknowledged`
-	// within deadlineMs, rather than collapsing the transition to a
-	// row-only flip.
-	mux.HandleFunc("POST /v1/sessions/{id}/interrupt", manage(s.handleInterrupt))
-	mux.HandleFunc("POST /v1/sessions/{id}/terminate",
-		manage(s.handleTransition(session.EndpointTerminate, transitionTerminate)))
-	mux.HandleFunc("POST /v1/sessions/{id}/resume", manage(s.handleResume))
-	mux.HandleFunc("POST /v1/sessions/{id}/derive", manage(s.handleDerive))
-	mux.HandleFunc("POST /v1/sessions/{id}/replay", manage(s.handleReplay))
-	mux.HandleFunc("POST /v1/sessions/{id}/extend-retention", manage(s.handleExtendRetention))
-	mux.HandleFunc("POST /v1/sessions/{id}/eval", evalWrite(s.handleEval))
-	mux.HandleFunc("POST /v1/sessions/{id}/memory", manage(s.handleMemoryWrite))
-	mux.HandleFunc("GET /v1/sessions/{id}/memory", read(s.handleMemoryQuery))
-	mux.HandleFunc("DELETE /v1/sessions/{id}/memory/{memoryId}", manage(s.handleMemoryDelete))
-	mux.HandleFunc("POST /v1/sessions/{id}/upload", manage(s.handleUpload))
-	mux.HandleFunc("POST /v1/sessions/{id}/upload-archive", manage(s.handleUploadArchive))
-	mux.HandleFunc("POST /v1/sessions/{id}/upload-to-session", manage(s.handleUploadToSession))
-	mux.HandleFunc("POST /v1/sessions/{id}/messages", manage(s.handleMessages))
-	// spec: §15.1 line 692 — the §15.4.1 MessageDAG list over the durable
-	// session_messages store, the read side of the message endpoint. Shares
-	// the transcript backing; projects each row to a message node with its
-	// stable id, derived `from`, and delivery state. F-15.1.3.
-	mux.HandleFunc("GET /v1/sessions/{id}/messages", read(s.handleMessagesList))
-	mux.HandleFunc("GET /v1/sessions/{id}/transcript", read(s.handleTranscript))
-	mux.HandleFunc("GET /v1/sessions/{id}/tree", read(s.handleTree))
-	mux.HandleFunc("GET /v1/usage", s.handleUsage)
-	mux.HandleFunc("GET /v1/metering/events", s.handleMeteringEvents)
-	mux.HandleFunc("GET /v1/sessions/{id}/events", read(s.handleEvents))
-	// spec: §15.1 line 673 / §24.17 line 220 — the `lenny session logs`
-	// target; session logs over the durable event store, content-
-	// negotiated SSE / JSON envelope with the `--since` filter.
-	mux.HandleFunc("GET /v1/sessions/{id}/logs", read(s.handleLogs))
-	// spec: §15.1 line 598 — per-session artifact listing (the §15.2
-	// list_artifacts tool's REST equivalent) and reconciled per-session
-	// token usage (the §15.2 get_token_usage tool's REST equivalent). The
-	// usage route self-gates on view_usage like GET /v1/usage. F-15.2.3.
-	mux.HandleFunc("GET /v1/sessions/{id}/artifacts", read(s.handleListArtifacts))
-	mux.HandleFunc("GET /v1/sessions/{id}/usage", s.handleSessionUsage)
-	// spec: §15.1 lines 671, 674 — workspace snapshot download (tar.gz)
-	// and the §7.5 captured setup-command output, the REST reads the SDK
-	// references for artifact recovery and setup debugging. F-15.1.3.
-	mux.HandleFunc("GET /v1/sessions/{id}/workspace", read(s.handleWorkspace))
-	mux.HandleFunc("GET /v1/sessions/{id}/setup-output", read(s.handleSetupOutput))
-	mux.HandleFunc("GET /v1/sessions/{id}/webhook-events", read(s.handleWebhookEvents))
-	// spec: §15.1 path-parameter casing — camelCase route templates.
-	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{toolCallId}/approve", manage(s.handleToolUseApprove))
-	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{toolCallId}/deny", manage(s.handleToolUseDeny))
-	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/respond", manage(s.handleElicitationRespond))
-	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss", manage(s.handleElicitationDismiss))
-	mux.HandleFunc("GET /v1/blobs/{ref...}", s.handleBlob)
-	return mux
-}
-
-// CreateSessionRequest is the §15.1 POST /v1/sessions body. Each
-// optional field is validated when present; only `runtimeRef` is
-// required by the minimal gateway. Future phases add `timeouts`,
-// `credentialPolicy`, `delegationPolicy`, etc.
-type CreateSessionRequest struct {
-	RuntimeRef    string          `json:"runtimeRef"`
-	UserID        string          `json:"userId,omitempty"`
-	WorkspacePlan json.RawMessage `json:"workspacePlan,omitempty"`
-
-	// Environment is the optional §10.6 environment the session is
-	// created in. Recorded on the session row; an empty value leaves
-	// the session unscoped to any environment.
-	Environment string `json:"environment,omitempty"`
-
-	// IsolationProfile is an optional override that pins the session
-	// to a specific §5.3 profile. Production resolves this from the
-	// `targetPool`'s pool definition; the minimal gateway accepts it
-	// from the body so SEC-001 monotonicity tests have a knob to drive.
-	IsolationProfile isolation.Profile `json:"isolationProfile,omitempty"`
-
-	// Metadata is the §7.1 line 6 client-supplied
-	// CreateSession(..., metadata) payload — a flat string→string map
-	// of caller annotations preserved verbatim for the session
-	// lifetime. Non-string values rejected at decode with
-	// 400 VALIDATION_ERROR so the on-row shape stays bounded. The §15.1
-	// GET envelope echoes this back so a client that lost the create
-	// response can retrieve its own annotations. F-7.3.20.
-	// spec: §7.1 line 6 — "CreateSession(runtime, pool, retryPolicy,
-	// metadata)".
-	Metadata map[string]string `json:"metadata,omitempty"`
-
-	// Labels is the §14 line 311 client-supplied session label set — a
-	// flat string→string map of caller tags the `GET /v1/sessions` list
-	// endpoint filters on (§15.1 line 598). Keys must be non-empty. The
-	// §15.1 GET envelope echoes them back. F-15.1.15.
-	// spec: §14 line 311; §15.1 line 598.
-	Labels map[string]string `json:"labels,omitempty"`
-
-	// RetryPolicy is the §7.3 client-supplied retry policy. The gateway
-	// clamps each field against the deployer caps (RetryPolicyCaps) at
-	// admission so a client cannot grow its budget past the platform
-	// bounds; an unset/zero value falls through to the corresponding
-	// cap as the effective value. Negative values reject as
-	// 400 VALIDATION_ERROR. The §15.1 GET envelope echoes the clamped
-	// policy back. F-7.3.1.
-	// spec: §7.3 lines 377-393.
-	RetryPolicy *session.RetryPolicy `json:"retryPolicy,omitempty"`
-
-	// Env is the §14 client-supplied environment-variable map injected
-	// into the agent session. Every key is validated against the deployer
-	// blocklist at admission; a blocked key rejects with
-	// 400 ENV_VAR_BLOCKLISTED. The §15.1 GET envelope echoes it back.
-	// spec: §14 lines 47-50, 105. F-14.1.12.
-	Env map[string]string `json:"env,omitempty"`
-
-	// Pool is the §14 / §14.1 line 311 client-requested target pool. The
-	// minimal gateway records it for echo and admission pool-scope; the
-	// resolved pool the gateway schedules against is reported separately.
-	// spec: §14 example; §14.1 line 311. F-14.1.14.
-	Pool string `json:"pool,omitempty"`
-
-	// Timeouts is the §14 per-session timeout override block. The gateway
-	// rejects a maxSessionAge that exceeds the runtime's
-	// limits.maxSessionAge. spec: §14 line 154. F-14.1.14.
-	Timeouts *sessionstore.SessionTimeouts `json:"timeouts,omitempty"`
-
-	// CredentialPolicy is the §14 per-session credentialPolicy override.
-	// A per-session override can only restrict, never expand, the tenant
-	// policy. spec: §14 credentialPolicy; §4.9 lines 1310, 1336. F-14.1.14.
-	CredentialPolicy *sessionstore.CredentialPolicyOverride `json:"credentialPolicy,omitempty"`
-
-	// DelegationLease is the §14 client-requested delegation lease bounds
-	// {maxDepth, maxChildrenTotal, delegationPolicyRef}. spec: §14 lines
-	// 75-79. F-14.1.14.
-	DelegationLease *sessionstore.DelegationLeaseRequest `json:"delegationLease,omitempty"`
-
-	// RuntimeOptions is the §14 per-runtime discriminated-union options
-	// blob (≤64 KB). Validated against the target runtime's
-	// runtimeOptionsSchema when registered; when no schema is registered
-	// a RuntimeOptionsUnschematized warning is emitted. spec: §14 line
-	// 155. F-14.1.14 / F-14.1.15.
-	RuntimeOptions json.RawMessage `json:"runtimeOptions,omitempty"`
-
-	// CallbackURL is the §14 optional session-terminal webhook. The
-	// gateway validates it against the §14 SSRF mitigations at admission
-	// (HTTPS-only, IP-literal/private-range rejection, DNS pinning, and
-	// the optional deployer domain allowlist) and rejects a failing URL
-	// with 400 INVALID_CALLBACK_URL. spec: §14 lines 73, 108-112. F-14.1.11.
-	CallbackURL string `json:"callbackUrl,omitempty"`
-
-	// CallbackSecret is the §14 HMAC signing secret for callback
-	// deliveries. It is write-only: the gateway KMS-envelope-encrypts it
-	// at admission and never returns the plaintext on any API. spec: §14
-	// line 139. F-14.1.11.
-	CallbackSecret string `json:"callbackSecret,omitempty"`
-}
-
-// SessionResponse is the §15.1 GET /v1/sessions/{id} envelope.
-type SessionResponse struct {
-	ID          string `json:"id"`
-	TenantID    string `json:"tenantId"`
-	UserID      string `json:"userId,omitempty"`
-	RuntimeRef  string `json:"runtimeRef,omitempty"`
-	Environment string `json:"environment,omitempty"`
-	State       string `json:"state"`
-	CreatedAt   string `json:"createdAt"`
-	UpdatedAt   string `json:"updatedAt"`
-
-	FailureClass string `json:"failureClass,omitempty"`
-
-	// WorkspacePlan is the §14 WorkspacePlan stored at session
-	// creation, echoed per §15.1. Absent when the session was created
-	// without a plan.
-	WorkspacePlan json.RawMessage `json:"workspacePlan,omitempty"`
-
-	// Cwd is the §4.2 session working directory. Empty until the
-	// runtime adapter materialises the workspace.
-	// spec: §4.2 line 156.
-	Cwd string `json:"cwd,omitempty"`
-
-	// PodAssignment is the §4.2 pod-to-session binding the session is
-	// currently bound to. Empty when the session has no live pod.
-	// spec: §4.2 line 160.
-	PodAssignment string `json:"podAssignment,omitempty"`
-
-	// RecoveryGeneration is the §4.2 pod-recovery counter, visible to
-	// clients per §4.2 line 156. Starts at zero and increments by one
-	// on each pod recovery.
-	// spec: §4.2 line 156 — "incremented on each pod recovery (visible
-	// to clients via the session API ...)".
-	RecoveryGeneration int64 `json:"recoveryGeneration"`
-
-	// SchemaVersion is the §4.2 session-row schema version. v1
-	// sessions report schema_version=1.
-	// spec: §4.2 line 156.
-	SchemaVersion int32 `json:"schemaVersion"`
-
-	// RetryCount is the §4.2 line 158 retry counter the Session
-	// Manager tracks across this logical session's lifetime.
-	// spec: §4.2 line 158 — "Retry counters and policy enforcement".
-	RetryCount int64 `json:"retryCount"`
-
-	// PolicyEnforcementState is the §4.2 line 158 schemaless
-	// policy-enforcement payload. Omitted from the JSON envelope
-	// when empty.
-	// spec: §4.2 line 158.
-	PolicyEnforcementState json.RawMessage `json:"policyEnforcementState,omitempty"`
-
-	// ResumeEligibleUntil is the §4.2 line 159 resume-window
-	// deadline as RFC 3339 nanos. Empty when the session has no
-	// resume budget.
-	// spec: §4.2 line 159 — "Resume eligibility and window".
-	ResumeEligibleUntil string `json:"resumeEligibleUntil,omitempty"`
-
-	// SessionIsolationLevel echoes the §7.1 sessionIsolationLevel object
-	// so a client that lost the create response can inspect the session's
-	// isolation posture through GET /v1/sessions/{id} and the list. The
-	// field is populated from the persisted §5.3 isolation profile and is
-	// stable for the lifetime of the session (the profile never changes
-	// after creation).
-	// spec: §7.1 line 75 — "GET /v1/sessions/{id} also returns
-	// sessionIsolationLevel in the session metadata ... does not change
-	// for the lifetime of the session".
-	SessionIsolationLevel SessionIsolationLevel `json:"sessionIsolationLevel"`
-
-	// Metadata echoes the §7.1 line 6 client-supplied metadata payload
-	// the session was created with. Omitted from the envelope when the
-	// client submitted no metadata. F-7.3.20.
-	// spec: §7.1 line 6.
-	Metadata map[string]string `json:"metadata,omitempty"`
-
-	// Labels echoes the §14 line 311 client-supplied session labels the
-	// session was created with. Omitted when the client submitted none.
-	// These are the values the `GET /v1/sessions?label=k=v` filter matches
-	// against. spec: §14 line 311; §15.1 line 598. F-15.1.15.
-	Labels map[string]string `json:"labels,omitempty"`
-
-	// RetryPolicy echoes the §7.3 effective retry policy resolved at
-	// session creation (the client-supplied object after clamp). Omitted
-	// when the session was created with no override. F-7.3.1.
-	// spec: §7.3 lines 377-393.
-	RetryPolicy *session.RetryPolicy `json:"retryPolicy,omitempty"`
-
-	// Env echoes the §14 client-supplied env map (which passed the
-	// deployer blocklist at admission). Omitted when the client supplied
-	// none. spec: §14 lines 47-50. F-14.1.12.
-	Env map[string]string `json:"env,omitempty"`
-
-	// Pool echoes the §14 / §14.1 client-requested target pool. Omitted
-	// when the request named no pool. spec: §14.1 line 311. F-14.1.14.
-	Pool string `json:"pool,omitempty"`
-
-	// Origin echoes the §27.3 origin label recorded on the session row.
-	// It is "playground" for a /playground/*-originated session and
-	// omitted otherwise, so a §25.9 audit-log query and the §27.8
-	// dashboards can slice on origin. spec: §27.6 line 203. F-27.6.8.
-	Origin string `json:"origin,omitempty"`
-
-	// Timeouts echoes the §14 per-session timeout overrides. Omitted when
-	// the client supplied none. spec: §14 line 154. F-14.1.14.
-	Timeouts *sessionstore.SessionTimeouts `json:"timeouts,omitempty"`
-
-	// CredentialPolicy echoes the §14 per-session credentialPolicy
-	// override. Omitted when the client supplied none. spec: §14
-	// credentialPolicy. F-14.1.14.
-	CredentialPolicy *sessionstore.CredentialPolicyOverride `json:"credentialPolicy,omitempty"`
-
-	// DelegationLease echoes the §14 client-requested delegation lease
-	// bounds. Omitted when the client supplied none. spec: §14 lines
-	// 75-79. F-14.1.14.
-	DelegationLease *sessionstore.DelegationLeaseRequest `json:"delegationLease,omitempty"`
-
-	// RuntimeOptions echoes the §14 per-runtime options blob the session
-	// was created with. Omitted when the client supplied none. spec: §14
-	// line 155. F-14.1.14.
-	RuntimeOptions json.RawMessage `json:"runtimeOptions,omitempty"`
-
-	// SetupOutput is the §7.5 line 475 captured per-command output the
-	// adapter returned at setup time, plus any §7.5 line 488 synthetic
-	// rejection-reason entries the gateway recorded when it rejected a
-	// command at admission. Omitted when no setup commands ran and the
-	// gateway never rejected one. F-7.5.4 / F-7.5.11.
-	// spec: §7.5 lines 475, 488.
-	SetupOutput []SetupOutputEntry `json:"setupOutput,omitempty"`
-
-	// TaskRecord is the §8.8 TaskRecord envelope projected from the
-	// session row plus its transcript: the durable, protocol-bridging
-	// task-level record (schemaVersion, taskId, sessionId, state, the
-	// caller/agent messages array, usage, treeUsage). Populated only on
-	// the single-session read (GET /v1/sessions/{id}); the list endpoint
-	// omits it to avoid a transcript fetch per row. Absent when the
-	// gateway has no transcript store wired. F-8.8.1.
-	// spec: §8.8 lines 806-823.
-	TaskRecord *sessionrecord.Record `json:"taskRecord,omitempty"`
-}
-
-// SetupOutputEntry is one §7.5 setup-command record on the §15.1 session
-// envelope. spec: §7.5 lines 475, 488 — F-7.5.4 / F-7.5.11.
-type SetupOutputEntry struct {
-	Cmd             string `json:"cmd"`
-	ExitCode        int32  `json:"exitCode"`
-	Stdout          string `json:"stdout,omitempty"`
-	Stderr          string `json:"stderr,omitempty"`
-	DurationMs      int64  `json:"durationMs,omitempty"`
-	Truncated       bool   `json:"truncated,omitempty"`
-	Rejected        bool   `json:"rejected,omitempty"`
-	RejectionReason string `json:"rejectionReason,omitempty"`
-}
-
-// CreateSessionResponse is the §15.1 POST /v1/sessions response
-// envelope. Carries the regular session fields plus the §7.1
-// uploadToken and the §7.1 sessionIsolationLevel.
-type CreateSessionResponse struct {
-	SessionResponse
-
-	// UploadToken is the §7.1 single-use HMAC uploadToken the client
-	// supplies on every `POST /v1/sessions/{id}/upload` and
-	// `POST /v1/sessions/{id}/upload-archive` until the session is
-	// finalized. Treat as a secret per §7.1.
-	UploadToken string `json:"uploadToken"`
-
-	// WorkspacePlanWarnings echoes any §14 consumer-advisory
-	// warnings (unknown source type, path collisions) the parser
-	// raised. Empty when the plan is omitted or pristine.
-	WorkspacePlanWarnings []workspaceplan.Warning `json:"workspacePlanWarnings,omitempty"`
-}
-
-// SessionIsolationLevel mirrors the §7.1 sessionIsolationLevel object.
-type SessionIsolationLevel struct {
-	ExecutionMode        string `json:"executionMode"`
-	IsolationProfile     string `json:"isolationProfile"`
-	PodReuse             bool   `json:"podReuse"`
-	ScrubPolicy          string `json:"scrubPolicy,omitempty"`
-	ResidualStateWarning bool   `json:"residualStateWarning"`
-	// ConversationContinuity is the §7.1 line 74 contract field:
-	// "platform" for session mode (the platform binds the session to a pod
-	// and preserves conversation context across messages for the session's
-	// lifetime) or "none" for service mode (the gateway routes each message
-	// to any ready replica and keeps no conversation context between
-	// messages, so clients of multi_turn runtimes re-inject context into
-	// each message's input). spec: §5.2 (service-mode session contract),
-	// §7.1 line 74.
-	ConversationContinuity string `json:"conversationContinuity"`
-}
-
-// conversationContinuityFor maps a §5.2 execution mode to its §7.1 line 74
-// conversationContinuity contract value: "none" for service mode (no
-// cross-message continuity, each message routes to any ready replica) and
-// "platform" for session mode (the session is pinned to a pod that
-// preserves context for its lifetime). An empty mode resolves to the
-// session-mode default, mirroring the executionMode fallbacks elsewhere so
-// the field never understates continuity. spec: §5.2, §7.1 line 74.
-func conversationContinuityFor(mode string) string {
-	if mode == string(runtimestore.ExecutionModeService) {
-		return continuityNone
-	}
-	return continuityPlatform
-}
-
-// persistedContinuity returns the §7.1 line 74 conversationContinuity for a
-// read off the persisted row. The stored value (the S25a
-// conversation_continuity column) is authoritative when non-empty, so a
-// GET / List after a coordinator handoff returns the exact value the create
-// response carried. An empty column (a pre-migration row, or a row created
-// before the gateway resolved a pool) falls back to the mode-derived value
-// so the field never understates continuity. spec: §7.1 line 74.
-func persistedContinuity(stored, mode string) string {
-	if stored != "" {
-		return stored
-	}
-	return conversationContinuityFor(mode)
-}
-
-const (
-	// continuityPlatform is the §7.1 line 74 conversationContinuity value
-	// for session mode.
-	continuityPlatform = "platform"
-	// continuityNone is the §7.1 line 74 conversationContinuity value for
-	// service mode.
-	continuityNone = "none"
-)
-
-// errorEnvelope is the §15.1 error response shape.
-type errorEnvelope struct {
-	Error errorBody `json:"error"`
-}
-
-type errorBody struct {
-	Code      string         `json:"code"`
-	Category  string         `json:"category"`
-	Message   string         `json:"message"`
-	Retryable bool           `json:"retryable"`
-	Details   map[string]any `json:"details,omitempty"`
-}
-
-// handleCreate implements POST /v1/sessions. Returns 201 with the
-// CreateSessionResponse envelope on success.
-func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
-	req, ok := s.decodeCreateRequest(w, r)
-	if !ok {
-		return
-	}
-	s.createSession(w, r, req)
-}
-
-// handleEnvironmentSessions implements POST /v1/environments/{name}/sessions
-// — the §10.6 explicit-environment session-creation path. It runs the
-// regular create flow with the session environment taken from the URL
-// path, overriding any environment supplied in the request body.
-func (s *Server) handleEnvironmentSessions(w http.ResponseWriter, r *http.Request) {
-	req, ok := s.decodeCreateRequest(w, r)
-	if !ok {
-		return
-	}
-	req.Environment = r.PathValue("name")
-	s.createSession(w, r, req)
-}
-
-// decodeCreateRequest reads a CreateSessionRequest from the request
-// body, writing the §15.1 INVALID_REQUEST envelope and returning
-// ok=false on a malformed body.
-func (s *Server) decodeCreateRequest(w http.ResponseWriter, r *http.Request) (CreateSessionRequest, bool) {
-	var req CreateSessionRequest
-	body := jsonReader(w, r)
-	defer body.Close()
-	if err := json.NewDecoder(body).Decode(&req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
-		return CreateSessionRequest{}, false
-	}
-	return req, true
-}
-
-// DualStoreGate reports whether this replica currently observes the
-// §10.1 dual-store degraded mode (Postgres and Redis both unreachable).
-// dualstore.Monitor satisfies it.
-type DualStoreGate interface {
-	Unavailable() bool
-}
-
-// poolPolicyReader adapts the §5.2 poolstore onto the
-// podsession.PoolPolicyReader the CRD resolver folds the gateway-enforced
-// sessionPolicy mirror through. It returns nil when no pool store is
-// wired, so ResolvePool keeps its CRD-derived dispatch defaults.
-func (s *Server) poolPolicyReader() podsession.PoolPolicyReader {
-	if s.pools == nil {
-		return nil
-	}
-	return poolPolicyMirror{pools: s.pools}
-}
-
-// NewPoolPolicyReader adapts a §5.2 poolstore onto the
-// podsession.PoolPolicyReader the CRD resolver and the checkpoint driver
-// read the gateway-enforced sessionPolicy mirror through. It returns nil
-// when no pool store is wired so callers keep their CRD-derived defaults.
-// The gateway wiring shares one reader between ResolvePool and the
-// Checkpointer's per-pool checkpointGrantWindow lookup.
+// The gateway calls it on shutdown before Close, because the hook's release
+// and the terminal binding release take the slot-accounting lock on the
+// server-lifetime context and skip the release once Close cancels it.
 //
-// spec: §5.2 (sessionPolicy block, gateway-enforced subset); §10.1
-// (per-pool checkpointGrantWindow override).
-func NewPoolPolicyReader(pools poolstore.Store) podsession.PoolPolicyReader {
-	if pools == nil {
-		return nil
-	}
-	return poolPolicyMirror{pools: pools}
-}
-
-// poolPolicyMirror reads a pool's gateway-enforced §5.2 sessionPolicy
-// fields (maxConcurrentSessions, the service-mode maxConcurrent,
-// recycle.allowCrossTenantReuse, and recycle.maxPodUptimeSeconds) from
-// the poolstore so ResolvePool can fold them into the PoolMatch. The CRD
-// pair does not carry these; the poolstore is the source of truth.
-//
-// spec: §5.2 (sessionPolicy block, gateway-enforced subset).
-type poolPolicyMirror struct {
-	pools poolstore.Store
-}
-
-// PoolPolicy implements podsession.PoolPolicyReader. found is false for a
-// missing or soft-deleted pool, leaving the CRD-derived dispatch fields
-// unchanged.
-func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsession.PoolPolicyMirror, bool, error) {
-	p, err := m.pools.Get(ctx, name)
-	if err != nil {
-		if errors.Is(err, poolstore.ErrNotFound) {
-			return podsession.PoolPolicyMirror{}, false, nil
-		}
-		return podsession.PoolPolicyMirror{}, false, fmt.Errorf("sessionserver: get pool %s: %w", name, err)
-	}
-	mirror := podsession.PoolPolicyMirror{MaxConcurrent: int32(p.MaxConcurrent)}
-	// spec: §10.1 line 131 / §5.2 — surface the per-pool
-	// checkpointGrantWindow override so the checkpoint driver's per-pool
-	// lookup reads the gateway-enforced value; nil leaves the driver on the
-	// deployment-wide default.
-	if p.CheckpointGrantWindow != nil {
-		w := int32(*p.CheckpointGrantWindow)
-		mirror.CheckpointGrantWindow = &w
-	}
-	if sp := p.SessionPolicy; sp != nil {
-		mirror.MaxConcurrentSessions = int32(sp.MaxConcurrentSessions)
-		// §5.2 / §4.6.1 pool-exhaustion disposition: fold the queue-vs-reject
-		// choice and its wait bound from the session policy so the start
-		// path's claim queue reads the gateway-enforced values.
-		mirror.OnPoolExhausted = string(sp.OnPoolExhausted)
-		mirror.MaxQueueWaitSeconds = sp.MaxQueueWaitSeconds
-		// §5.2 whole-pod scrub trigger: the deployer cleanup commands and their
-		// aggregate cap live on the poolstore sessionPolicy, not the CRD pair,
-		// so surface them on the mirror for foldPoolPolicy to copy onto
-		// PoolMatch. The recycle-path Shutdown delivers them to the adapter.
-		mirror.CleanupCommands = sp.CleanupCommands
-		mirror.CleanupTimeoutSeconds = sp.CleanupTimeoutSeconds
-		if r := sp.Recycle; r != nil {
-			// spec: §5.2 (Recycle lifecycle) — recycle.enabled itself is
-			// gateway-enforced and poolstore-sourced for every scrub
-			// profile; the CRD pair carries it only implicitly for the
-			// microvm variants (a non-empty scrubProfile). Without this,
-			// a standard-profile recycling pool's pod is always retired
-			// at release (BindResult.Recycle never true), so §5.2
-			// sequential pod reuse never triggers for the common case.
-			mirror.Recycle = r.Enabled
-			mirror.AllowCrossTenantReuse = r.AllowCrossTenantReuse
-			mirror.MaxPodUptimeSeconds = int64(r.MaxPodUptimeSeconds)
+// spec: §10.1.7 (Terminal pipelines at process exit.)
+func (s *Server) WaitTerminalWork(ctx context.Context) error {
+	ticker := time.NewTicker(terminalWorkPollInterval)
+	defer ticker.Stop()
+	for s.terminalClaims.size() != 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
 		}
 	}
-	return mirror, true, nil
+	return nil
 }
 
-// effectiveRequestedProfile is the §5.3 profile to resolve a session's
-// pool against. spec: §7.1 line 18 / line 75 — a client-pinned pool
-// overrides the default pool selection and the resolved level is
-// populated from the assigned pool's configuration, so when the client
-// pins a pool and omits isolationProfile the pool's own profile governs.
-// In that case the effective requested profile is empty, which lets
-// ResolvePool's `isolationProfile != ""` short-circuit defer to the named
-// pool rather than reject a pool whose profile differs from the deployment
-// default. When the client states a profile explicitly (clientRequested is
-// non-empty) that profile governs and an inconsistent pin is rejected;
-// when no pool is pinned the defaulted profile is used so the level still
-// resolves. clientRequested is the raw request field (empty when omitted);
-// defaulted is the validated profile with the deployment default applied.
-func effectiveRequestedProfile(clientRequested, defaulted isolation.Profile, pinnedPool string) isolation.Profile {
-	if pinnedPool != "" && clientRequested == "" {
-		return ""
+// OpenTerminalWork reports the number of sessions with an open terminal
+// claim or a terminal binding release in progress, which the shutdown
+// sequence logs when the wait reaches its bound.
+// spec: §10.1.7 (Terminal pipelines at process exit.)
+func (s *Server) OpenTerminalWork() int { return s.terminalClaims.size() }
+
+// lifetime returns the server-lifetime context, or context.Background() on
+// a Server built without New.
+func (s *Server) lifetime() context.Context {
+	if s.lifetimeCtx == nil {
+		return context.Background()
 	}
-	return defaulted
+	return s.lifetimeCtx
 }
 
-// persistedRowProfile is the §5.3 profile to persist on the session row.
-// spec: §7.1 line 75 — the row.IsolationProfile is the source of truth the
-// same-call and later claim re-resolve the pool against, so it must reflect
-// the assigned pool's profile. The resolved level carries the pool's
-// profile when a pool was resolved (including a pinned pool whose profile
-// differs from the deployment default); when no pool resolved cleanly the
-// level falls back to the requested profile, which can be empty if the
-// client deferred to a pinned pool, so fall back to the validated defaulted
-// profile rather than persist an empty profile. F-CS2 (0018).
-func persistedRowProfile(level SessionIsolationLevel, defaulted isolation.Profile) isolation.Profile {
-	if level.IsolationProfile == "" {
-		return defaulted
-	}
-	return isolation.Profile(level.IsolationProfile)
-}
-
-// resolveIsolationLevel computes the §7.1 sessionIsolationLevel for a
-// session against its assigned pool. spec: §7.1 line 75 — the field is
-// populated from the assigned pool's configuration at session creation
-// time. When a pool resolver is wired, it resolves the pool from the
-// runtime and §5.3 profile and derives the fields from the pool's §5.2
-// execution mode and scrub policy. When no resolver is wired (the
-// Postgres-only posture) or the pool does not resolve cleanly, it falls
-// back to the session-mode level; a session-mode pod is the §5.2
-// default and carries no pod reuse, so the fallback never understates
-// the isolation posture a client would observe.
-func (s *Server) resolveIsolationLevel(ctx context.Context, runtimeRef string, requested isolation.Profile, pinnedPool string) SessionIsolationLevel {
-	if s.podBinder == nil || s.podBinder.Client == nil {
-		return defaultIsolationLevel(requested)
-	}
-	// spec: §7.1 / §14.1 — when the client pinned a pool, derive the level
-	// from that named pool so the persisted sessionIsolationLevel reflects
-	// the pool the session will bind to. F-CS2 (0018).
-	match, err := podsession.ResolvePool(ctx, s.podBinder.Client, s.poolPolicyReader(), s.agentNamespace, runtimeRef, string(requested), pinnedPool)
-	if err != nil {
-		return defaultIsolationLevel(requested)
-	}
-	return isolationLevelForPool(match, requested)
-}
-
-// defaultIsolationLevel returns the §7.1 sessionIsolationLevel for a
-// session-mode pod: no pod reuse, no scrub, no residual-state warning.
-// It is the fallback when the gateway runs without a pool resolver or
-// the resolved pool reports the default `executionMode: session`.
-func defaultIsolationLevel(p isolation.Profile) SessionIsolationLevel {
-	return SessionIsolationLevel{
-		ExecutionMode:        string(runtimestore.ExecutionModeSession),
-		IsolationProfile:     string(p),
-		PodReuse:             false,
-		ScrubPolicy:          "",
-		ResidualStateWarning: false,
-		// spec: §7.1 line 74 — a session-mode pod binds the session to one
-		// pod for its lifetime and preserves conversation context across
-		// messages.
-		ConversationContinuity: continuityPlatform,
-	}
-}
-
-// persistedIsolationLevel returns the §7.1 line 75 sessionIsolationLevel
-// derived from the persisted row. ExecutionMode + ScrubPolicy are
-// resolved against the assigned pool at create time and frozen for the
-// session lifetime; reading them off the row makes GET / List return
-// the same envelope a client received from POST /v1/sessions even after
-// a coordinator handoff. Rows whose ExecutionMode is empty (gateway
-// never resolved a pool, or pre-migration-0084 rows) fall back to the
-// session-mode default, mirroring resolveIsolationLevel's fallback
-// posture so the field never understates the isolation level.
-func persistedIsolationLevel(row sessionstore.Session) SessionIsolationLevel {
-	mode := row.ExecutionMode
-	if mode == "" {
-		return defaultIsolationLevel(row.IsolationProfile)
-	}
-	level := SessionIsolationLevel{
-		ExecutionMode:    mode,
-		IsolationProfile: string(row.IsolationProfile),
-		// spec: §7.1 line 74 — derive conversationContinuity from the frozen
-		// execution mode so a GET / List after a coordinator handoff returns
-		// "none" for a service-mode row and "platform" otherwise, matching
-		// the create response. The stored ConversationContinuity column
-		// (migration from S25a) is authoritative when present; an empty
-		// column falls back to the mode-derived value so a pre-migration or
-		// never-resolved row still reports the correct continuity.
-		ConversationContinuity: persistedContinuity(row.ConversationContinuity, mode),
-	}
-	// spec: §5.2 / §7.1 — a service-mode pod serves successive requests with
-	// no scrub, and a session-mode pod that recorded a non-empty scrubPolicy
-	// at create time (recycle.enabled or maxConcurrentSessions > 1) reuses a
-	// pod across more than one session. Both report podReuse and the
-	// residual-state warning; the one-session-per-pod default does neither.
-	if mode == string(runtimestore.ExecutionModeService) || row.ScrubPolicy != "" {
-		level.PodReuse = true
-		level.ResidualStateWarning = true
-		level.ScrubPolicy = row.ScrubPolicy
-	}
-	return level
-}
-
-// isolationLevelForPool maps a resolved §5.2 pool to the §7.1
-// sessionIsolationLevel fields. spec: §5.2 / §7.1 lines 69-73 — a
-// service-mode pool and a session-mode pool that reuses a pod
-// (recycle.enabled or maxConcurrentSessions > 1) report podReuse and the
-// residual-state warning; the one-session-per-pod default does neither.
-func isolationLevelForPool(match podsession.PoolMatch, requested isolation.Profile) SessionIsolationLevel {
-	profile := match.IsolationProfile
-	if profile == "" {
-		profile = string(requested)
-	}
-	mode := match.ExecutionMode
-	if mode == "" {
-		mode = string(runtimestore.ExecutionModeSession)
-	}
-	level := SessionIsolationLevel{
-		ExecutionMode:    mode,
-		IsolationProfile: profile,
-		// spec: §7.1 line 74 — a service-mode pool provides no cross-message
-		// continuity (each message routes to any ready replica); every other
-		// mode binds the session to one pod that preserves context.
-		ConversationContinuity: conversationContinuityFor(mode),
-	}
-	scrub := scrubPolicyForPool(match)
-	if mode == string(runtimestore.ExecutionModeService) || scrub != "" {
-		level.PodReuse = true
-		level.ResidualStateWarning = true
-		level.ScrubPolicy = scrub
-	}
-	return level
-}
-
-// scrubPolicyForPool returns the §7.1 line 72 scrubPolicy string for a
-// reuse pool. spec: §5.2 — a service-mode pod serves successive requests
-// with no scrub (`none`); a session-mode pod that recycles a pod across
-// sessions scrubs best-effort, with the cross-tenant microvm variants
-// selecting the VM-level scrub, and concurrent slots scrub per slot. A
-// one-session-per-pod session pool returns the empty string (the field is
-// omitted on the wire). The PoolMatch recycle/concurrency signals are
-// derived from the §5.2 sessionPolicy mirror by ResolvePool.
-func scrubPolicyForPool(match podsession.PoolMatch) string {
-	if match.ExecutionMode == string(runtimestore.ExecutionModeService) {
-		return "none"
-	}
-	if match.MaxConcurrentSessions > 1 {
-		// Concurrent sessions scrub per slot on completion or failure.
-		return "best-effort-per-slot"
-	}
-	if match.Recycle {
-		// Cross-tenant microvm sequential reuse selects a VM-level scrub
-		// variant; same-tenant and non-microvm reuse uses the standard
-		// best-effort scrub. A cross-tenant-reuse pool is validated to carry
-		// scrubProfile vm-restart or in-place (the standard in-guest scrub is
-		// rejected for cross-tenant reuse, §5.2), so in-place maps to the
-		// in-place scrub and any other value (vm-restart) maps to vm-restart.
-		if match.IsolationProfile == string(isolation.ProfileMicrovm) && match.AllowCrossTenantReuse {
-			if match.MicrovmScrubMode == string(runtimestore.MicrovmScrubInPlace) {
-				return "best-effort-in-place"
-			}
-			return "vm-restart"
-		}
-		return "best-effort"
-	}
-	return ""
-}
-
-// writeWorkspacePlanError translates a workspaceplan.ValidationError
-// into the §15.1 `400 WORKSPACE_PLAN_INVALID` envelope. The one
-// exception is an unsupported schemaVersion: per §14.1 line 326 the
-// gateway is a live consumer that MUST reject a plan whose schemaVersion
-// it does not understand with `422 WORKSPACE_PLAN_SCHEMA_UNSUPPORTED`,
-// carrying `details.knownVersion` / `details.encounteredVersion` so a
-// client can tell "bad plan" apart from "gateway too old." F-14.1.1.
-func (s *Server) writeWorkspacePlanError(w http.ResponseWriter, err error) {
-	var ve *workspaceplan.ValidationError
-	if !errors.As(err, &ve) {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	if ve.Reason == workspaceplan.ReasonUnsupportedSchemaVersion {
-		details := map[string]any{"reason": ve.Reason}
-		if ve.Field != "" {
-			details["field"] = ve.Field
-		}
-		// spec: §14.1 line 326 — `details.knownVersion` /
-		// `details.encounteredVersion` are mandatory on this envelope.
-		if ve.KnownVersion != nil {
-			details["knownVersion"] = *ve.KnownVersion
-		}
-		if ve.EncounteredVersion != nil {
-			details["encounteredVersion"] = *ve.EncounteredVersion
-		}
-		s.writeError(w, http.StatusUnprocessableEntity, "WORKSPACE_PLAN_SCHEMA_UNSUPPORTED", ve.Error(), details)
-		return
-	}
-	details := map[string]any{}
-	if ve.Field != "" {
-		details["field"] = ve.Field
-	}
-	if ve.Reason != "" {
-		details["reason"] = ve.Reason
-	}
-	if len(ve.SubErrs) > 0 {
-		subs := make([]map[string]any, 0, len(ve.SubErrs))
-		for _, se := range ve.SubErrs {
-			subs = append(subs, map[string]any{
-				"sourceIndex": se.SourceIndex,
-				"field":       se.Field,
-				"reason":      se.Reason,
-				"message":     se.Message,
-			})
-		}
-		// spec: §15.1 line 979. F-14.1.19. The multi-violation report
-		// rides under details.fields (plural) per the WORKSPACE_PLAN_INVALID
-		// error-catalog row; details.field (singular) carries the offending
-		// plan path of the first violation.
-		details["fields"] = subs
-	}
-	s.writeError(w, http.StatusBadRequest, "WORKSPACE_PLAN_INVALID", ve.Error(), details)
-}
-
-// isJSONNull reports whether the supplied raw JSON is the literal
-// `null` token (RFC 8259 §3) ignoring leading / trailing whitespace.
-// Used to distinguish `{"workspacePlan": null}` from an omitted
-// field.
-func isJSONNull(raw json.RawMessage) bool {
-	return string(raw) == "null"
-}
-
-// handleGet implements GET /v1/sessions/{id}.
-func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
-	tenantID := s.resolveTenant(r)
-	id := r.PathValue("id")
-	row, err := s.store.Get(r.Context(), tenantID, id)
-	if err != nil {
-		if errors.Is(err, sessionstore.ErrNotFound) {
-			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
-			return
-		}
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	// spec: §8.8 lines 806-823 — the single-session read materializes the
-	// §8.8 TaskRecord envelope (projected from the row + transcript) so a
-	// consumer expecting §8.8 semantics can read it off GET
-	// /v1/sessions/{id}. F-8.8.1.
-	resp := toResponse(row)
-	resp.TaskRecord = s.buildTaskRecord(r.Context(), row)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(resp)
-}
-
-// handleList implements GET /v1/sessions. Supports the §15.1 ?state=
-// and ?runtime= filters in their basic form.
-func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	// spec: §15.1 line 598 — a platform-admin may scope the listing to a
-	// specific tenant via `?tenant=<id>`. A non-admin's `?tenant=` is
-	// ignored: their listing stays bound to their own tenant (and the
-	// Postgres RLS context enforces that regardless). F-15.1.15.
-	tenantID := s.resolveTenant(r)
-	if want := q.Get("tenant"); want != "" {
-		if p, ok := getPrincipal(r); ok && p.HasRole(auth.RolePlatformAdmin) {
-			if err := authValidateTenantID(want); err == nil {
-				tenantID = want
-			}
-		}
-	}
-	filter := sessionstore.ListFilter{
-		State:        session.State(q.Get("state")),
-		RuntimeRef:   q.Get("runtime"),
-		FailureClass: session.FailureClass(q.Get("failureClass")),
-		Labels:       parseLabelFilter(q["label"]),
-	}
-	// spec: §15.1 lines 652, 661 — derive_failure audit rows are included
-	// by default; `?includeDeriveFailures=false` excludes them. Any other
-	// value (absent, "true") preserves the default audit visibility.
-	// F-15.1.14.
-	if q.Get("includeDeriveFailures") == "false" {
-		filter.ExcludeDeriveFailures = true
-	}
-	// spec: §15.1 lines 1228-1253 — the canonical cursor-paginated list
-	// envelope. `?cursor`/`?limit`/`?sort` are parsed and validated here;
-	// the default sort is created_at:desc (line 1236) and the supported
-	// fields are created_at and updated_at. F-15.1.6.
-	params, ferr := pagination.ParseRequest(r,
-		sessionListSortFields, sessionListDefaultSort, s.clock())
-	if ferr != nil {
-		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", ferr.Message, ferr.Details())
-		return
-	}
-	rows, err := s.store.List(r.Context(), tenantID, filter)
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	out := make([]SessionResponse, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, toResponse(row))
-	}
-	keyOf := func(sr SessionResponse) (string, string) {
-		if params.Sort.Field == "updated_at" {
-			return sr.UpdatedAt, sr.ID
-		}
-		return sr.CreatedAt, sr.ID
-	}
-	pagination.SortSlice(out, params.Sort.Direction, keyOf)
-	env := pagination.Page(out, params, s.clock(), keyOf)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(env)
-}
-
-// sessionListSortFields / sessionListDefaultSort pin the §15.1 line 1236
-// sort contract for GET /v1/sessions: created_at (default) and
-// updated_at, descending by default.
-var (
-	sessionListSortFields  = []string{"created_at", "updated_at"}
-	sessionListDefaultSort = pagination.Sort{Field: "created_at", Direction: pagination.DirectionDesc}
-)
-
-// parseLabelFilter turns the repeatable `?label=key=value` query values
-// into the AND-containment map the store List honours. A value with no
-// `=` is treated as a key match against an empty value; an empty key is
-// skipped. spec: §15.1 line 598 — "filterable by ... labels". F-15.1.15.
-func parseLabelFilter(raw []string) map[string]string {
-	if len(raw) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(raw))
-	for _, item := range raw {
-		key, value, _ := strings.Cut(item, "=")
-		if key == "" {
-			continue
-		}
-		out[key] = value
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-// handleDelete implements DELETE /v1/sessions/{id} per §15.1: every
-// non-terminal state transitions to cancelled.
-func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
-	tenantID := s.resolveTenant(r)
-	id := r.PathValue("id")
-	row, err := s.store.Get(r.Context(), tenantID, id)
-	if err != nil {
-		if errors.Is(err, sessionstore.ErrNotFound) {
-			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
-			return
-		}
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	if err := session.Validate(session.PreconditionRequest{
-		Endpoint:     session.EndpointDelete,
-		CurrentState: row.State,
-	}); err != nil {
-		s.writePreconditionError(w, err)
-		return
-	}
-	fromState := row.State
-	updated, err := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
-		row.State = session.StateCancelled
-		return nil
-	})
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	// spec: §7.2 line 214 (a) — DELETE during the internal `resuming`
-	// transient is the canonical resuming → cancelled snapshot-close
-	// edge (§7.2 line 197). Bump coordination_generation in the same
-	// logical write so any stale coordinator's subsequent RPC fails
-	// the §4.2 CoordinatorFence check. F-7.1.14.
-	if fromState == session.StateResuming {
-		s.bumpCoordinationGenerationOnSnapshotClose(r.Context(), tenantID, id)
-	}
-	s.recordSessionCompleted(r.Context(), fromState, updated)
-	s.writeSession(w, http.StatusOK, updated)
-}
-
-// handleTransition is the shared handler shape for every
-// state-mutating endpoint that does not carry a body (finalize,
-// start, interrupt, terminate, resume). The supplied transition
-// function captures the next state.
-func (s *Server) handleTransition(endpoint session.Endpoint, transition func(*sessionstore.Session)) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		tenantID := s.resolveTenant(r)
-		id := r.PathValue("id")
-		row, err := s.store.Get(r.Context(), tenantID, id)
-		if err != nil {
-			if errors.Is(err, sessionstore.ErrNotFound) {
-				s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
-				return
-			}
-			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-			return
-		}
-		if err := session.Validate(session.PreconditionRequest{
-			Endpoint:     endpoint,
-			CurrentState: row.State,
-		}); err != nil {
-			s.writePreconditionError(w, err)
-			return
-		}
-		fromState := row.State
-		updated, err := s.store.Update(r.Context(), tenantID, id, func(row *sessionstore.Session) error {
-			transition(row)
-			return nil
-		})
-		if err != nil {
-			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-			return
-		}
-		if session.IsTerminal(updated.State) {
-			// spec: §7.2 line 214 (a) — when the terminal write
-			// collapses an in-flight resume (resuming → cancelled /
-			// completed / failed), bump coordination_generation in the
-			// same logical write so any stale coordinator's subsequent
-			// RPC fails the CoordinatorFence check. The pre-attach
-			// counterparts (resume_pending → cancelled / completed,
-			// §7.2 lines 219-225) intentionally do NOT bump because no
-			// pod is attached and no CoordinatorFence round-trip is
-			// pending. F-7.1.14.
-			if fromState == session.StateResuming {
-				s.bumpCoordinationGenerationOnSnapshotClose(r.Context(), tenantID, id)
-			}
-			s.recordSessionCompleted(r.Context(), fromState, updated)
-		} else {
-			// spec: §7.2 line 137 — surface a non-terminal transition
-			// (e.g. interrupt → suspended) on the SSE stream. Terminal
-			// transitions emit status_change from recordSessionCompleted
-			// so every terminal caller is covered uniformly.
-			s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
-		}
-		s.writeSession(w, http.StatusOK, updated)
-	}
-}
-
-// transitionFinalizing: per §15.1, /finalize enters the preparation
-// barrier by transitioning created → finalizing. The workspace
-// materialization, setup commands, and credential-lease assignment then
-// run while the row is `finalizing`; handleFinalize transitions
-// finalizing → ready only once the session is fully prepared.
-func transitionFinalizing(row *sessionstore.Session) { row.State = session.StateFinalizing }
-
-// transitionReady: per §15.1, the finalize barrier transitions
-// finalizing → ready once workspace materialization, setup commands, and
-// credential assignment have completed; the session then awaits /start.
-func transitionReady(row *sessionstore.Session) { row.State = session.StateReady }
-
-// handleFinalize implements POST /v1/sessions/{id}/finalize as the §4.3
-// preparation barrier. After binding the optional §14 WorkspacePlan and
-// transitioning created → finalizing, it reconnects to the pod claimed at
-// /create and runs the §7.1 step 11-13 prepare phase against it:
-// PrepareWorkspace streams the buffered lenny-blob:// upload content into
-// /workspace/staging, FinalizeWorkspace materializes /workspace/current
-// with the §7.4 post-promotion symlink re-validation, RunSetup runs the
-// plan's setup commands, and AssignCredentials delivers the §4.9
-// credential lease. Only when the session is fully prepared does it
-// transition finalizing → ready and return.
-//
-// A failure in any prepare step reclaims the claimed pod via the §6.2
-// pre-attached disposition (the binder's lease-aware failPhase, which
-// revokes the lease when AssignCredentials had already run) and surfaces
-// the corresponding workspace-validation, setup-command, or credential
-// error; a materialization or check-to-assignment credential failure
-// surfaces as CREDENTIAL_POOL_EXHAUSTED. The row transitions
-// finalizing → failed so a client cannot retry finalize against a pod
-// that no longer exists.
-//
-// Gap 2: a failure in the finalizing → ready transition, or in the
-// single-use upload-token consume, AFTER AssignCredentials has succeeded
-// reclaims the pod and revokes the lease too, so a post-assignment
-// finalize failure does not leak the lease.
-//
-// The single-use uploadToken invalidation, upload-channel/limits close,
-// SSE status-change, plan-warning publish, and the §16.6 finalize audit
-// row run once the row reaches ready, as before. The minimal gateway (no
-// pod binder) finalizes by the plain created → finalizing → ready
-// transition with no pod work.
-//
-// spec: §7.1 steps 11-13; §7.4 lines 434, 450, 459, 461; §15.1 (finalize
-// precondition); §4.9 (finalize lease assignment); §4.3 (proposal).
-func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
-	tenantID := s.resolveTenant(r)
-	id := r.PathValue("id")
-	row, err := s.store.Get(r.Context(), tenantID, id)
-	if err != nil {
-		if errors.Is(err, sessionstore.ErrNotFound) {
-			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
-			return
-		}
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	if err := session.Validate(session.PreconditionRequest{
-		Endpoint:     session.EndpointFinalize,
-		CurrentState: row.State,
-	}); err != nil {
-		s.writePreconditionError(w, err)
-		return
-	}
-	// spec: §7.1 step 11 (FinalizeWorkspace); §26.2 lines 95-114 — the
-	// §14 WorkspacePlan referencing this session's staged uploadArchive
-	// blob is bound here in the decomposed create → upload → finalize
-	// flow, because the create-time plan is immutable and cannot name an
-	// uploadRef minted only after the session exists. A no-body finalize
-	// keeps the existing plan (or empty workspace). F-24.17.4 / F-26.2.4.
-	planJSON, planWarnings, hasPlan, planOK := s.resolveFinalizePlan(w, r, tenantID, row)
-	if !planOK {
-		return
-	}
-	// spec: §15.1 — enter the §4.3 preparation barrier: created → finalizing,
-	// binding the finalize plan in the same logical write. The prepare phase
-	// runs while the row is `finalizing`.
-	updated, err := s.store.Update(r.Context(), tenantID, id, func(r *sessionstore.Session) error {
-		transitionFinalizing(r)
-		if hasPlan {
-			r.WorkspacePlan = planJSON
-		}
-		return nil
-	})
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	// spec: §4.3 / §7.1 steps 11-13 — run the prepare phase against the pod
-	// claimed at /create: stream the buffered uploads into /workspace/staging,
-	// materialize /workspace/current, run setup commands, and assign the §4.9
-	// credential lease. prepareAtFinalize returns (nil, nil) for the
-	// dispositions that materialize nothing at finalize (no binder, service
-	// mode, a concurrent-workspace slot, or a row with no live binding).
-	plan, perr := storedWorkspacePlanForFinalize(updated, hasPlan, planJSON)
-	if perr != nil {
-		// spec: §4.3 (proposal: any finalize-barrier failure reclaims the
-		// create-time pod via the §6.2 pre-attached disposition) — the parse
-		// failed before the prepare phase engaged the binder, so its internal
-		// failPhase reclaim cannot run. Reclaim the claimed pod here (no lease
-		// is assigned yet, so the revoke is a no-op) before failing the row, so
-		// a finalize-barrier failure does not leak the pod claimed at /create.
-		s.reclaimFinalizedPod(r.Context(), updated.PodAssignment, id)
-		s.failSession(r.Context(), tenantID, id)
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"stored workspace plan could not be parsed: "+perr.Error(), nil)
-		return
-	}
-	prep, err := s.prepareAtFinalize(r.Context(), updated, plan)
-	if err != nil {
-		// spec: §4.3 / §6.2 — the finalize barrier failed; the claimed pod has
-		// already been reclaimed via the §6.2 pre-attached disposition. A
-		// through-Prepare failure (workspace validation, setup command, or
-		// lease assignment) is reclaimed by the binder's lease-aware failPhase,
-		// which revokes the lease when AssignCredentials had already run; a
-		// pre-Prepare failure (pool resolution, or the check-to-assignment
-		// credential mismatch) is reclaimed by prepareAtFinalize itself before it
-		// returns. Either way no pod leaks. Transition the row to the terminal
-		// `failed` state (finalizing → failed) so a retry of finalize cannot run
-		// against a pod that no longer exists, then surface the
-		// workspace-validation, setup-command, or credential error. A
-		// materialization or check-to-assignment credential failure surfaces as
-		// CREDENTIAL_POOL_EXHAUSTED via writePodClaimError.
-		s.failSession(r.Context(), tenantID, id)
-		s.writePodClaimError(w, err, "SESSION_CREATION_FAILED",
-			"workspace finalization failed")
-		return
-	}
-	// spec: §4.3 — only after the prepare phase succeeds does the barrier
-	// transition finalizing → ready and return. Persist the §7.5 setup-command
-	// trail and the §7.3 negotiated workspace root the prepare phase produced.
-	if prep != nil {
-		s.applyFinalizePrepareResult(r.Context(), tenantID, id, updated.TenantID, updated.ID, prep)
-	}
-	// spec: §4.3 (Gap 2) — capture the pod↔session binding from the
-	// finalizing-write result, which is populated, before the finalizing → ready
-	// write below. A failed Update returns the zero Session, so reading
-	// PodAssignment off the failed write's result would lose the binding and the
-	// Gap-2 reclaim would no-op on an empty sandbox name, leaking the pod and the
-	// finalize-assigned lease.
-	podAssignment := updated.PodAssignment
-	uploadTokenDigest := updated.UploadTokenDigest
-	uploadTokenExpiry := updated.UploadTokenExpiry
-	// spec: §15.1 — finalizing → ready. Gap 2: when AssignCredentials has
-	// already run (prep != nil), a failure of this transition would leave the
-	// lease assigned but the session not ready, so reclaim the pod and revoke
-	// the lease before surfacing the error.
-	updated, err = s.store.Update(r.Context(), tenantID, id, func(r *sessionstore.Session) error {
-		transitionReady(r)
-		return nil
-	})
-	if err != nil {
-		// Gap 2: the prepare phase succeeded (the lease is assigned) but the
-		// finalizing → ready write failed. Reclaim the pod and revoke the lease,
-		// then mark the row failed so it reaches a terminal state rather than
-		// stranding in `finalizing` (which no /finalize retry can leave, because
-		// the finalize precondition requires `created`).
-		if prep != nil {
-			s.reclaimFinalizedPod(r.Context(), podAssignment, id)
-		}
-		s.failSession(r.Context(), tenantID, id)
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	// §7.1 single-use uploadToken invalidation: once the upload
-	// window closes, the digest cannot mint another upload. Gap 2: a consume
-	// failure after AssignCredentials succeeded would leave the lease assigned
-	// on a session whose finalize the client must treat as failed, so reclaim
-	// the pod and revoke the lease rather than leaking them.
-	if s.uploadVerifier != nil && uploadTokenDigest != "" {
-		if cerr := s.uploadVerifier.ConsumeDigest(uploadTokenDigest, uploadTokenExpiry); cerr != nil {
-			if prep != nil {
-				s.reclaimFinalizedPod(r.Context(), podAssignment, id)
-			}
-			s.failSession(r.Context(), tenantID, id)
-			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-				"upload token could not be invalidated: "+cerr.Error(), nil)
-			return
-		}
-	}
-	// §7.4 line 463: close the upload channel — abort any in-flight
-	// /upload stream for this session so it surfaces
-	// UPLOAD_CHANNEL_CLOSED and its staged blob is rolled back. A
-	// late /upload register that races finalize gets an
-	// already-closed abort signal on the next Read. F-7.4.16.
-	s.uploadAborts.closeSession(updated.ID)
-	// §11.1 line 11: the upload window has closed, so drop the
-	// per-session cumulative upload-byte total. In-flight concurrency
-	// slots self-release; only the byte total is freed here. F-11.1.6.
-	s.uploadLimits.closeSession(updated.ID)
-	// spec: §7.2 line 137 — surface the finalizing → ready transition that
-	// closed the §4.3 preparation barrier.
-	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
-	// spec: §14 lines 100/334/338 — surface any consumer-advisory parse
-	// warnings the finalize-bound plan raised on the same per-session SSE
-	// bus the create path uses. F-24.17.4 / F-26.2.4.
-	if hasPlan {
-		s.publishParsePlanWarnings(updated.TenantID, updated.ID, planWarnings)
-	}
-	// F-7.4.17: §16.6 session.finalize_workspace audit row. The row
-	// records the finalize transition and the consumption of the
-	// single-use uploadToken so SIEM post-incident review can join the
-	// upload-token consumption event to the session lifecycle. Detail
-	// carries the persisted digest so SOC analysts can correlate the
-	// audit row with the rejected /upload calls that follow it.
-	// spec: §16.6 line 339; §7.1 line 60 (single-use); §11.7. F-7.4.17.
-	if s.lifecycleAudit != nil {
-		s.lifecycleAudit.EmitSessionLifecycle(r.Context(), SessionLifecycleEvent{
-			EventType:  auditSessionWorkspaceFinalized,
-			TenantID:   updated.TenantID,
-			SessionID:  updated.ID,
-			UserID:     updated.UserID,
-			RuntimeRef: updated.RuntimeRef,
-			State:      string(updated.State),
-			Detail:     updated.UploadTokenDigest,
-			At:         s.clock(),
-		})
-	}
-	s.writeSession(w, http.StatusOK, updated)
-}
-
-// transitionStart: per §15.1, /start transitions ready → starting →
-// running. Short-circuits to running.
-func transitionStart(row *sessionstore.Session) { row.State = session.StateRunning }
-
-// transitionInterrupt: per §15.1, /interrupt transitions running →
-// suspended.
-func transitionInterrupt(row *sessionstore.Session) { row.State = session.StateSuspended }
-
-// transitionTerminate: per §15.1, /terminate transitions any
-// non-terminal → completed.
-func transitionTerminate(row *sessionstore.Session) { row.State = session.StateCompleted }
-
-// transitionResume: per §15.1, /resume transitions
-// awaiting_client_action → resume_pending → running. The minimal
-// gateway short-circuits to running.
-func transitionResume(row *sessionstore.Session) { row.State = session.StateRunning }
-
-// resolveTenant returns the tenant id for this request, preferring
-// the §10.2 authenticated Principal over any client-supplied header.
-// The order is:
-//
-//  1. Principal.TenantID from auth middleware (canonical).
-//  2. X-Lenny-Tenant-ID dev header — only honoured when its value
-//     passes the §10.2 format check; rejected values fall through
-//     so the request lands on the default tenant instead of
-//     reaching the store with an attacker-controlled identifier.
-//  3. "default" per §10.2 single-tenant mode.
-//
-// The returned tenant id is always either a §10.2-valid identifier
-// or `default`. Handlers can therefore use it directly in store
-// queries and §4.5 blob URIs without re-validating.
-func (s *Server) resolveTenant(r *http.Request) string {
-	if p, ok := getPrincipal(r); ok && p.TenantID != "" {
-		return p.TenantID
-	}
-	if v := r.Header.Get("X-Lenny-Tenant-ID"); v != "" {
-		if err := authValidateTenantID(v); err == nil {
-			return v
-		}
-	}
-	return "default"
-}
-
-// writeSession serialises a Session row as the §15.1 envelope and
-// writes it with the supplied status code.
-func (s *Server) writeSession(w http.ResponseWriter, code int, row sessionstore.Session) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(toResponse(row))
-}
-
-// writeError writes a §15.1 error envelope. The category and
-// retryable fields are populated from the shared §15.2.1
-// errorclassify table so REST and MCP report the same values for the
-// same code. An unmapped code resolves through the status-aware
-// ClassifyStatus, so an unmapped non-5xx code classifies as
-// (PERMANENT, false) here exactly as it does on the admin surface
-// (ClassifyStatus in tenants.go), rather than the (TRANSIENT, true)
-// fallback the code-only Classify returns. spec: §15.2.1
-// (classification consistency).
-func (s *Server) writeError(w http.ResponseWriter, status int, code, message string, details map[string]any) {
-	cat, retryable := errorclassify.ClassifyStatus(code, status)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(errorEnvelope{Error: errorBody{
-		Code:      code,
-		Category:  string(cat),
-		Message:   message,
-		Retryable: retryable,
-		Details:   details,
-	}})
-}
-
-// writePreconditionError maps a session.PreconditionError to the
-// §15.1 INVALID_STATE_TRANSITION envelope.
-func (s *Server) writePreconditionError(w http.ResponseWriter, err error) {
-	var pe *session.PreconditionError
-	if !errors.As(err, &pe) {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	allowed := make([]string, 0, len(pe.AllowedStates))
-	for _, st := range pe.AllowedStates {
-		allowed = append(allowed, string(st))
-	}
-	s.writeError(w, pe.Code(), pe.ErrorCode(), pe.Error(), map[string]any{
-		"currentState":  string(pe.CurrentState),
-		"allowedStates": allowed,
-	})
-}
-
-// toResponse converts a Session row into the §15.1 wire envelope.
-// spec: §4.2 line 156 (cwd, pod_assignment, recovery_generation,
-// schema_version).
-func toResponse(row sessionstore.Session) SessionResponse {
-	schemaVersion := row.SchemaVersion
-	if schemaVersion == 0 {
-		schemaVersion = 1
-	}
-	out := SessionResponse{
-		ID:                 row.ID,
-		TenantID:           row.TenantID,
-		UserID:             row.UserID,
-		RuntimeRef:         row.RuntimeRef,
-		Environment:        row.Environment,
-		State:              string(row.State),
-		CreatedAt:          row.CreatedAt.UTC().Format(time.RFC3339Nano),
-		UpdatedAt:          row.UpdatedAt.UTC().Format(time.RFC3339Nano),
-		Cwd:                row.Cwd,
-		PodAssignment:      row.PodAssignment,
-		RecoveryGeneration: row.RecoveryGeneration,
-		SchemaVersion:      schemaVersion,
-		RetryCount:         row.RetryCount,
-		// spec: §7.1 line 75 — surface the isolation level on every read.
-		// The execution-mode + scrub-policy halves are persisted on the
-		// row at create time (migration 0084) so a client that lost the
-		// create response, or a GET issued against a coordinator-handed-
-		// off replica, returns the same rich envelope. Rows persisted
-		// before migration 0084 (or by a code path that never resolved a
-		// pool) carry empty ExecutionMode — they fall back to the
-		// session-mode default so the field never understates the
-		// isolation posture.
-		SessionIsolationLevel: persistedIsolationLevel(row),
-	}
-	if row.FailureClass != "" {
-		out.FailureClass = string(row.FailureClass)
-	}
-	if len(row.WorkspacePlan) > 0 {
-		out.WorkspacePlan = row.WorkspacePlan
-	}
-	// spec: §4.2 line 158 — only surface the policy enforcement
-	// state when the gateway has written something other than the
-	// migration default `{}`. The omitempty json tag suppresses the
-	// payload when nil; an explicit `{}` is preserved as-is.
-	if len(row.PolicyEnforcementState) > 0 {
-		out.PolicyEnforcementState = row.PolicyEnforcementState
-	}
-	// spec: §4.2 line 159 — emit the resume window only when set.
-	if !row.ResumeEligibleUntil.IsZero() {
-		out.ResumeEligibleUntil = row.ResumeEligibleUntil.UTC().Format(time.RFC3339Nano)
-	}
-	// spec: §7.1 line 6 — echo the client metadata so a client that
-	// lost the create response can recover its own annotations.
-	// F-7.3.20.
-	if len(row.Metadata) > 0 {
-		out.Metadata = cloneMetadata(row.Metadata)
-	}
-	// spec: §14 line 311 / §15.1 line 598 — echo the client labels so a
-	// caller can confirm the filterable selector set on the row. F-15.1.15.
-	if len(row.Labels) > 0 {
-		out.Labels = cloneMetadata(row.Labels)
-	}
-	// spec: §7.3 lines 377-393 — echo the effective retry policy so a
-	// client can confirm what was clamped. F-7.3.1.
-	if row.RetryPolicy != nil {
-		out.RetryPolicy = cloneRetryPolicy(row.RetryPolicy)
-	}
-	// spec: §14 — echo the request envelope so a client that lost the
-	// create response can recover its own env / pool / timeouts /
-	// credentialPolicy / delegationLease / runtimeOptions. The env map
-	// is the gateway-accepted set (every key passed the blocklist).
-	// F-14.1.12 / F-14.1.14.
-	if len(row.Env) > 0 {
-		out.Env = cloneMetadata(row.Env)
-	}
-	out.Pool = row.Pool
-	// spec: §27.6 line 203 — surface the origin=playground label on every
-	// read so §25.9 audit queries and §27.8 dashboards can slice on it.
-	// F-27.6.8.
-	out.Origin = row.Origin
-	if row.Timeouts != nil {
-		t := *row.Timeouts
-		out.Timeouts = &t
-	}
-	if row.CredentialPolicyOverride != nil {
-		c := *row.CredentialPolicyOverride
-		out.CredentialPolicy = &c
-	}
-	if row.DelegationLeaseRequest != nil {
-		out.DelegationLease = cloneDelegationLeaseRequest(row.DelegationLeaseRequest)
-	}
-	if len(row.RuntimeOptions) > 0 {
-		out.RuntimeOptions = append(json.RawMessage(nil), row.RuntimeOptions...)
-	}
-	// spec: §7.5 lines 475, 488 — echo the captured / rejected setup
-	// outputs. F-7.5.4 / F-7.5.11.
-	if len(row.SetupOutput) > 0 {
-		out.SetupOutput = make([]SetupOutputEntry, 0, len(row.SetupOutput))
-		for _, e := range row.SetupOutput {
-			out.SetupOutput = append(out.SetupOutput, SetupOutputEntry{
-				Cmd:             e.Cmd,
-				ExitCode:        e.ExitCode,
-				Stdout:          e.Stdout,
-				Stderr:          e.Stderr,
-				DurationMs:      e.DurationMs,
-				Truncated:       e.Truncated,
-				Rejected:        e.Rejected,
-				RejectionReason: e.RejectionReason,
-			})
-		}
-	}
-	return out
-}
-
-// cloneMetadata returns a defensive copy of the §7.1 line 6 metadata
-// payload so mutations in the request or row never leak across the
-// gateway/store boundary. A nil input maps to nil so the wire envelope
-// honours `omitempty`. F-7.3.20.
-func cloneMetadata(in map[string]string) map[string]string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
-	return out
-}
-
-// cloneRetryPolicy returns a defensive copy of the §7.3 RetryPolicy so
-// the wire envelope cannot mutate the persisted row or the in-flight
-// request through a shared pointer. A nil input maps to nil so the
-// envelope honours `omitempty`. F-7.3.1.
-func cloneRetryPolicy(in *session.RetryPolicy) *session.RetryPolicy {
-	if in == nil {
-		return nil
-	}
-	out := *in
-	if len(in.RetryableFailures) > 0 {
-		out.RetryableFailures = append([]string(nil), in.RetryableFailures...)
-	}
-	if len(in.NonRetryableFailures) > 0 {
-		out.NonRetryableFailures = append([]string(nil), in.NonRetryableFailures...)
-	}
-	return &out
-}
-
-// cloneDelegationLeaseRequest returns a defensive copy of the §14
-// delegation-lease request so the wire envelope cannot mutate the
-// persisted row through a shared pointer. A nil input maps to nil so the
-// envelope honours `omitempty`. F-14.1.14.
-func cloneDelegationLeaseRequest(in *sessionstore.DelegationLeaseRequest) *sessionstore.DelegationLeaseRequest {
-	if in == nil {
-		return nil
-	}
-	out := *in
-	if in.MaxDepth != nil {
-		v := *in.MaxDepth
-		out.MaxDepth = &v
-	}
-	if in.MaxChildrenTotal != nil {
-		v := *in.MaxChildrenTotal
-		out.MaxChildrenTotal = &v
-	}
-	return &out
+// readPrimary reads the session row from the primary for a one-shot
+// decision, bounded by the server's primary-read timeout. spec: §12.3
+// (Postgres HA Requirements).
+func (s *Server) readPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	return sessionstore.ReadPrimary(ctx, s.store, s.primaryReadTimeout, tenantID, id)
 }
 
 // randomSessionID returns a fresh §12.6 UUIDv8 session identifier.
@@ -3519,21 +2006,47 @@ func randomSessionID() string {
 // tests that need to verify timestamp behaviour.
 func (s *Server) Now() time.Time { return s.clock() }
 
-// Context-typed alias to satisfy go vet's pattern.
-type ctxKey struct{}
-
-func contextWithTenant(ctx context.Context, tenant string) context.Context {
-	return context.WithValue(ctx, ctxKey{}, tenant)
-}
-
-func tenantFromContext(ctx context.Context) string {
-	if v, ok := ctx.Value(ctxKey{}).(string); ok {
-		return v
+// TerminalPipelineBudgetFor is the one computation of the §7.1 terminal
+// pipeline budget: the seal window plus the release allowance
+// (--stream-failure-report-timeout). A non-positive allowance falls back to
+// DefaultStreamFailureReportTimeout. The server's budget, the §5.2 startup
+// gate, and the session-store window cap call it, so they take one value.
+// spec: §7.1 (Terminal pipeline context)
+func TerminalPipelineBudgetFor(sealWindow, releaseAllowance time.Duration) time.Duration {
+	if releaseAllowance <= 0 {
+		releaseAllowance = DefaultStreamFailureReportTimeout
 	}
-	return ""
+	return sealWindow + releaseAllowance
 }
 
-var (
-	_ = contextWithTenant
-	_ = tenantFromContext
-)
+// terminalPipelineBudget is the §7.1 terminal pipeline budget: the seal
+// window plus the release allowance (--stream-failure-report-timeout).
+// spec: §7.1 (Terminal pipeline context)
+func (s *Server) terminalPipelineBudget() time.Duration {
+	return TerminalPipelineBudgetFor(s.sealMaxDuration, s.streamFailureReportTimeout)
+}
+
+// TerminalPipelineBudget exports terminalPipelineBudget for the shutdown
+// wait. spec: §7.1 (Terminal pipeline context)
+func (s *Server) TerminalPipelineBudget() time.Duration { return s.terminalPipelineBudget() }
+
+// terminalContext detaches ctx from its caller's cancellation and bounds it
+// by what remains of the terminal pipeline budget counted from terminatedAt,
+// the instant the §5.2 stale slot release ages the session from. A zero
+// terminatedAt, which that release never ages, gets the whole budget, and so
+// does a terminatedAt after the server clock. A terminatedAt more than the
+// budget in the past yields an already-expired context, so the seal records
+// a timeout and the release still runs.
+//
+// context.WithoutCancel keeps the caller's values (the trace span and the
+// tenant), so the seal span still stitches under the writer's trace. The
+// elapsed time is measured on s.clock rather than as an absolute deadline,
+// so a test's fake server clock does not hand the pipeline an expired
+// context. spec: §7.1 (Terminal pipeline context)
+func (s *Server) terminalContext(ctx context.Context, terminatedAt time.Time) (context.Context, context.CancelFunc) {
+	remaining := s.terminalPipelineBudget()
+	if !terminatedAt.IsZero() {
+		remaining = min(remaining, remaining-s.clock().Sub(terminatedAt))
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), remaining)
+}

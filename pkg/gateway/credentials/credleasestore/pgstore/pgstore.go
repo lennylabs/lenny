@@ -51,7 +51,7 @@ import (
 // owning tenant, so the leases share one platform KEK rather than the
 // per-tenant aliases the credential-secret registry uses.
 //
-// spec: §12.9 line 1048 (T4 — Restricted envelope encryption).
+// spec: §12.9.
 const leasesKEKAlias = "platform:credential-leases"
 
 // Store is the Postgres-backed credential-lease store. Construct with
@@ -188,6 +188,94 @@ func (s *Store) GetByID(leaseID string) (credential.Lease, bool) {
 	return s.scanLease(row)
 }
 
+// Lookup resolves a lease by its lease ID. It reports a missing record
+// (ok false, nil error) only on pgx.ErrNoRows; a query failure, an
+// undecryptable blob, and an undecodable body are returned as errors, so the
+// §4.9 renewal retries a failed read rather than treating the lease as
+// released. spec: §4.9 (Proactive Lease Renewal).
+func (s *Store) Lookup(leaseID string) (credential.Lease, bool, error) {
+	ctx := context.Background()
+	var (
+		blob       []byte
+		keyVersion int
+	)
+	err := s.pool.QueryRow(ctx,
+		`SELECT lease, lease_key_version FROM credential_leases WHERE lease_id = $1`, leaseID).
+		Scan(&blob, &keyVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return credential.Lease{}, false, nil
+	}
+	if err != nil {
+		return credential.Lease{}, false, fmt.Errorf("credleasestore/pgstore: look up lease %s: %w", leaseID, err)
+	}
+	doc, err := s.openLease(ctx, blob, keyVersion)
+	if err != nil {
+		return credential.Lease{}, false, err
+	}
+	var lease credential.Lease
+	if err := json.Unmarshal(doc, &lease); err != nil {
+		return credential.Lease{}, false, fmt.Errorf("credleasestore/pgstore: decode lease %s: %w", leaseID, err)
+	}
+	return lease, true, nil
+}
+
+// Advance rewrites an existing lease row with lease's ExpiresAt and
+// RenewBefore, re-sealing the body and moving the plain expires_at
+// projection, and inserts no row. It reports false when no row exists, so an
+// extension of a released lease writes nothing. The body is read and
+// rewritten in one transaction under a row lock, so a concurrent Put or
+// Remove is not lost. spec: §4.9 (Proactive Lease Renewal).
+func (s *Store) Advance(lease credential.Lease) (bool, error) {
+	ctx := context.Background()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("credleasestore/pgstore: begin advance of lease %s: %w", lease.LeaseID, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var (
+		blob       []byte
+		keyVersion int
+	)
+	err = tx.QueryRow(ctx,
+		`SELECT lease, lease_key_version FROM credential_leases WHERE lease_id = $1 FOR UPDATE`, lease.LeaseID).
+		Scan(&blob, &keyVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("credleasestore/pgstore: read lease %s for advance: %w", lease.LeaseID, err)
+	}
+	doc, err := s.openLease(ctx, blob, keyVersion)
+	if err != nil {
+		return false, err
+	}
+	var cur credential.Lease
+	if err := json.Unmarshal(doc, &cur); err != nil {
+		return false, fmt.Errorf("credleasestore/pgstore: decode lease %s for advance: %w", lease.LeaseID, err)
+	}
+	cur.ExpiresAt = lease.ExpiresAt
+	cur.RenewBefore = lease.RenewBefore
+	next, err := json.Marshal(cur)
+	if err != nil {
+		return false, fmt.Errorf("credleasestore/pgstore: encode lease %s for advance: %w", lease.LeaseID, err)
+	}
+	sealed, version, err := s.sealLease(ctx, next)
+	if err != nil {
+		return false, err
+	}
+	tag, err := tx.Exec(ctx,
+		`UPDATE credential_leases SET lease = $2, lease_key_version = $3, expires_at = $4, updated_at = $5
+		 WHERE lease_id = $1`,
+		lease.LeaseID, sealed, version, cur.ExpiresAt.UTC(), time.Now().UTC())
+	if err != nil {
+		return false, fmt.Errorf("credleasestore/pgstore: advance lease %s: %w", lease.LeaseID, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("credleasestore/pgstore: commit advance of lease %s: %w", lease.LeaseID, err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // Remove drops the lease with the given ID. It is a no-op when the
 // store holds no such lease. The lease_token_hash index row is dropped
 // with the table row.
@@ -235,7 +323,7 @@ func (s *Store) LeasesBySession(sessionIDs []string) []credential.Lease {
 // credential.Lease.CredentialKey. A row whose body does not decrypt is
 // skipped.
 //
-// spec: §4.9 lines 1640-1652 — look up all active leases backed by the
+// spec: §4.9 — look up all active leases backed by the
 // revoked credential.
 func (s *Store) LeasesByCredential(key credential.CredentialKey) []credential.Lease {
 	var (
@@ -267,7 +355,7 @@ func (s *Store) LeasesByCredential(key credential.CredentialKey) []credential.Le
 // unknown expiry) is never deleted here; BackfillExpiresAt fills or
 // removes those rows instead.
 //
-// spec: §4.9 line 1671 — deny-list entries expire when the credential's
+// spec: §4.9 — deny-list entries expire when the credential's
 // natural lease TTL lapses.
 func (s *Store) DeleteExpired(ctx context.Context, cutoff time.Time) (int, error) {
 	tag, err := s.pool.Exec(ctx,
@@ -290,7 +378,7 @@ func (s *Store) DeleteExpired(ctx context.Context, cutoff time.Time) (int, error
 // reached. It backs the §4.9 fail-closed deny-list-entry removal (the
 // sweep) and the startup rebuild filter.
 //
-// spec: §4.9 lines 1694-1695 — the startup rebuild seeds a deny-list
+// spec: §4.9 — the startup rebuild seeds a deny-list
 // entry only for a revoked credential that still has an active lease.
 func (s *Store) LeasesByCredentialCount(ctx context.Context, key credential.CredentialKey, activeAsOf time.Time) (int, error) {
 	var (
@@ -331,7 +419,7 @@ func (s *Store) LeasesByCredentialCount(ctx context.Context, key credential.Cred
 // their next renewal Put, so this pass is a one-time convergence step
 // run once at startup.
 //
-// spec: §4.9 line 1671 — deny-list entries expire when the credential's
+// spec: §4.9 — deny-list entries expire when the credential's
 // natural lease TTL lapses.
 func (s *Store) BackfillExpiresAt(ctx context.Context) (filled, deleted int, err error) {
 	rows, err := s.pool.Query(ctx,

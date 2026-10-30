@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+#
+# The occurrence means a heading a documentation page carries, which the
+# page numbers itself, and no specification file declares a section of
+# that number.
+kind: anchor-senses
+version: 1
+entries:
+  - file: pkg/carrier/framing.go
+    occurrence: 1
+    destination: docs/reference/tiers.md#129-tier-model

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+#
+# A driving register whose document does not parse.
+kind: line-citations
+files: [pkg/carrier/carrier.go

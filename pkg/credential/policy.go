@@ -11,7 +11,7 @@ import (
 // decides which of the Three Credential Modes the gateway uses when it
 // resolves a provider's credential at session creation.
 //
-// spec: §4.9 lines 1310, 1336 — "pool | user | prefer-user-then-pool |
+// spec: §4.9 — "pool | user | prefer-user-then-pool |
 // prefer-pool-then-user".
 type PreferredSource string
 
@@ -61,8 +61,7 @@ func (p PreferredSource) Normalize() PreferredSource {
 }
 
 // SourceOrder returns the ordered list of credential sources the
-// CredentialRouter tries for this preferredSource. spec: §4.9 lines
-// 1328-1336 (Three Credential Modes) and 1362 (resolution order).
+// CredentialRouter tries for this preferredSource. spec: §4.9.
 func (p PreferredSource) SourceOrder() []LeaseSource {
 	switch p.Normalize() {
 	case PreferredSourceUser:
@@ -77,7 +76,7 @@ func (p PreferredSource) SourceOrder() []LeaseSource {
 }
 
 // UsesUserCredentials reports whether this preferredSource ever
-// resolves to a user-scoped credential. spec: §4.9 line 1362.
+// resolves to a user-scoped credential. spec: §4.9.
 func (p PreferredSource) UsesUserCredentials() bool {
 	switch p.Normalize() {
 	case PreferredSourceUser, PreferUserThenPool, PreferPoolThenUser:
@@ -90,31 +89,31 @@ func (p PreferredSource) UsesUserCredentials() bool {
 // UserMissIsTerminal reports whether a missing user credential ends
 // resolution with USER_CREDENTIAL_NOT_FOUND rather than falling through
 // to a pool. Only PreferredSourceUser (user-only) is terminal; the
-// prefer-* modes fall through. spec: §4.9 lines 1364, 1370.
+// prefer-* modes fall through. spec: §4.9.
 func (p PreferredSource) UserMissIsTerminal() bool {
 	return p.Normalize() == PreferredSourceUser
 }
 
 // DefaultMaxRotationsPerSession is the §4.9 credentialPolicy
 // fallback.maxRotationsPerSession default applied when the field is
-// unset. spec: §4.9 line 1322 ("maxRotationsPerSession: 3").
+// unset. spec: §4.9.
 const DefaultMaxRotationsPerSession = 3
 
 // DefaultCooldownOnRateLimitSeconds is the §4.9 credentialPolicy
 // fallback.cooldownOnRateLimit default applied when the field is unset.
-// spec: §4.9 line 1321 ("cooldownOnRateLimit: 60s").
+// spec: §4.9.
 const DefaultCooldownOnRateLimitSeconds = 60
 
 // ProviderFallback is the §4.9 providerPools.{provider}.fallback block:
 // the ordered list of pools the gateway walks for one provider, primary
-// first. spec: §4.9 lines 1314-1319.
+// first. spec: §4.9.
 type ProviderFallback struct {
 	Order []string `json:"order,omitempty"`
 }
 
 // ProviderPool is the §4.9 credentialPolicy.providerPools entry for one
 // provider: the default pool and the ordered fallback chain of pools
-// the gateway walks for that provider. spec: §4.9 lines 1311-1319.
+// the gateway walks for that provider. spec: §4.9.
 type ProviderPool struct {
 	// DefaultPool is the provider's primary credential pool.
 	DefaultPool string `json:"defaultPool,omitempty"`
@@ -147,7 +146,7 @@ func (pp ProviderPool) clone() ProviderPool {
 
 // PolicyFallback is the §4.9 credentialPolicy.fallback block: the
 // cooldown applied to a faulted pool and the session-wide rotation
-// budget shared across all providers. spec: §4.9 lines 1320-1322.
+// budget shared across all providers. spec: §4.9.
 type PolicyFallback struct {
 	// CooldownOnRateLimitSeconds is the §4.9 cooldownOnRateLimit: how
 	// long a pool stays on cooldown after a fault. Zero selects
@@ -180,8 +179,7 @@ func (f PolicyFallback) EffectiveMaxRotations() int {
 // CredentialPolicy is the §4.9 tenant-level credentialPolicy attached
 // to the tenant configuration. It declares what credentials are
 // available and how they are sourced; the gateway intersects it with a
-// Runtime's supportedProviders at session creation. spec: §4.9 lines
-// 1303-1336.
+// Runtime's supportedProviders at session creation. spec: §4.9.
 type CredentialPolicy struct {
 	// PreferredSource decides the credential mode. An empty value is the
 	// pool default.
@@ -193,8 +191,7 @@ type CredentialPolicy struct {
 	// Fallback is the session-wide cooldown and rotation-budget block.
 	Fallback PolicyFallback `json:"fallback,omitempty"`
 	// UserCredentialsEnabled gates whether user-scoped credentials
-	// (registered via POST /v1/credentials) are used. spec: §4.9 lines
-	// 1368-1371.
+	// (registered via POST /v1/credentials) are used. spec: §4.9.
 	UserCredentialsEnabled bool `json:"userCredentialsEnabled,omitempty"`
 }
 

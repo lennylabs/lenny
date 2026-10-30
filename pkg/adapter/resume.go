@@ -5,6 +5,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sort"
 
@@ -20,21 +21,26 @@ import (
 // workspace from a checkpoint on a replacement pod. It claims the pod
 // for the session, rebuilds the workspace from the checkpoint archive,
 // and starts the runtime — the replacement-pod counterpart of
-// StartSession. On any failure after the session is claimed the pod is
-// returned to idle so a retry can land on a fresh pod.
+// StartSession. On any failure after the session is claimed the adapter
+// releases the slot so a retry can land on a fresh pod.
 func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*adapterv1.ResumeResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "Resume requires a session id")
 	}
+	// spec: §4.7.1 rule 1 — Resume is never mid-session, so it carries a
+	// bind attempt token.
+	if err := validateBindFields(req.GetBindAttempt(), false); err != nil {
+		return nil, err
+	}
 	if req.GetCheckpointId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "Resume requires a checkpoint id")
 	}
-	if s.WorkspaceRoot == "" || s.Runtime == nil {
+	if s.WorkspaceBase == "" || s.Runtime == nil {
 		return nil, status.Error(codes.FailedPrecondition,
-			"adapter is not configured with a workspace root and runtime")
+			"adapter is not configured with a workspace base and runtime")
 	}
-	// spec: §10.1 line 155 — the gateway resolves the checkpoint's chunk
+	// spec: §10.1.7 — the gateway resolves the checkpoint's chunk
 	// set and hands the adapter one presigned single-key GET capability per
 	// chunk on ResumeRequest.chunks; the adapter fetches them directly from
 	// object storage. A restore that carries chunks needs the transport; a
@@ -44,28 +50,55 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 			"adapter is not configured with a checkpoint transport")
 	}
 
-	if err := s.claimSession(sessionID); err != nil {
+	// spec: §5.2 (slot-identifier reclaim hold) — the restore writes the
+	// slot's tree outside s.mu, so the slot's per-slot guard is held from
+	// ahead of the claim to the end of the call, and every rollback below
+	// releases under it rather than acquiring it a second time. A held
+	// identifier is refused here without waiting, and an acquisition that
+	// outlives ctx refuses the Resume before it claims anything.
+	releaseGuard, err := s.acquireSlotGuardForResolve(ctx, sessionID)
+	if err != nil {
 		return nil, err
 	}
+	defer releaseGuard()
 
-	// spec: §7.3 line 408 step (d) — "Recreate same absolute `cwd` path."
+	// spec: §5.2 — the resume claims this session's slot on the
+	// replacement pod, the same claim the start path takes, and decides the
+	// once-per-pod intra-pod MCP start with it.
+	claim, err := s.claimSessionSlot(sessionID, slotResolve{
+		bindAttempt: req.GetBindAttempt(),
+		allowCreate: true,
+	}, s.isSDKWarm(), false)
+	if err != nil {
+		return nil, err
+	}
+	startMCP := claim.startMCP
+
+	// spec: §7.3 step (d) — "Recreate same absolute `cwd` path."
 	// The gateway carries the original session's cwd on
-	// `expected_workspace_root`; the adapter MUST refuse a Resume whose
+	// `expected_workspace_root` and derives it from the workspace base the
+	// adapter reported and the session identifier, so the assertion
+	// compares it against this session's own slot root rather than a
+	// pod-global directory. The adapter MUST refuse a Resume whose
 	// replacement pod was provisioned with a different mount path so a
 	// runtime template change between sessions cannot silently restore
-	// into the wrong absolute path. The invariant is otherwise upheld by
-	// construction (the SandboxTemplate's WorkspaceRoot is identical on
-	// the replacement pod), but the assertion is the §7.3 contractual
-	// guard called out by F-7.3.15. An empty `expected_workspace_root`
-	// disables the assertion so a pre-F-7.3.15 client can still resume.
-	if expected := req.GetExpectedWorkspaceRoot(); expected != "" && expected != s.WorkspaceRoot {
-		s.releaseSession()
+	// into the wrong absolute path. An empty `expected_workspace_root`
+	// disables the assertion.
+	// spec: §6.4 — the slot root is the only workspace layout, so the
+	// comparison is per session on every pod.
+	sessionRoot, err := s.workspaceRootForSession(sessionID)
+	if err != nil {
+		s.releaseSessionSlotUnderGuard(sessionID, true)
+		return nil, err
+	}
+	if expected := req.GetExpectedWorkspaceRoot(); expected != "" && expected != sessionRoot {
+		s.releaseSessionSlotUnderGuard(sessionID, true)
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"resume rejected: workspace root mismatch (expected %q, adapter has %q)",
-			expected, s.WorkspaceRoot)
+			expected, sessionRoot)
 	}
 
-	// spec: §7.3 line 397 — the gateway passes `last_checkpoint_workspace_bytes`
+	// spec: §7.3 — the gateway passes `last_checkpoint_workspace_bytes`
 	// (expected_workspace_bytes) and the §4.4 hard workspace size limit so the
 	// adapter refuses a restore that would exceed the pod's emptyDir budget
 	// before quiescing the runtime. The kubelet emptyDir guard remains the
@@ -75,7 +108,7 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		req.GetExpectedWorkspaceBytes(), req.GetWorkspaceSizeLimitBytes(),
 	); err != nil {
 		var sizeErr *checkpoint.WorkspaceSizeExceededError
-		s.releaseSession()
+		s.releaseSessionSlotUnderGuard(sessionID, true)
 		if errors.As(err, &sizeErr) {
 			return nil, status.Errorf(codes.FailedPrecondition,
 				"resume rejected: %s", sizeErr.Error())
@@ -83,49 +116,69 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		return nil, status.Errorf(codes.Internal, "workspace size precheck: %v", err)
 	}
 
-	// spec: §7.3 line 408 step (e) "Replay latest workspace checkpoint" +
-	// line 409 step (f) "Restore session file to expected path" + §10.1
-	// line 155 reassembly. The gateway resolved the checkpoint's chunk set
+	// spec: §7.3 step (e) "Replay latest workspace checkpoint" and
+	// step (f) "Restore session file to expected path", with §10.1 reassembly. The gateway resolved the checkpoint's chunk set
 	// and passed one presigned GET capability per index; the adapter
 	// fetches them in ascending index order, concatenates the chunk bodies
 	// into a single tar (or tar.gz) byte stream, and ExtractTree replays
-	// the workspace under workspace.WorkspacePrefix and the §6.4 line 380
+	// the workspace under workspace.WorkspacePrefix and the §6.4
 	// /sessions session file under workspace.SessionsPrefix. A resume that
 	// carries no chunks (conversation-only) restores nothing.
-	restored, extractErr := s.restoreChunks(ctx, req.GetChunks())
+	restored, extractErr := s.restoreChunks(ctx, sessionID, req.GetChunks())
 	if extractErr != nil {
-		s.releaseSession()
+		s.releaseSessionSlotUnderGuard(sessionID, true)
 		return nil, status.Errorf(codes.Internal, "restore workspace from checkpoint %s: %v",
 			req.GetCheckpointId(), extractErr)
 	}
-	// §9.3 line 142: re-resolve the session's permitted connectors so the
+	// §9.3: re-resolve the session's permitted connectors so the
 	// restored runtime gets the same per-connector MCP servers it had
 	// before the resume. Best-effort.
 	connectors := s.sessionConnectors(ctx, sessionID)
-	// §15.4: re-deliver the manifest so the restored runtime reads the
-	// same §4.7 / §8.3 fields as before the resume.
-	nonce, err := s.writeSessionManifest(manifestInputs{
-		sessionID:          sessionID,
+	// §15.4: re-deliver the pod-scoped manifest, and keep the session's
+	// §8.3 context for the session_start frame the open sequence writes.
+	in := manifestInputs{
 		experimentContext:  req.GetExperimentContext(),
 		tracingContext:     req.GetTracingContext(),
 		agentInterface:     req.GetAgentInterface(),
 		minPlatformVersion: req.GetMinPlatformVersion(),
 		connectors:         connectors,
-	})
+	}
+	nonce, err := s.writeSessionManifest(in)
 	if err != nil {
-		s.releaseSession()
+		s.releaseSessionSlotUnderGuard(sessionID, true)
 		return nil, status.Errorf(codes.Internal, "write adapter manifest: %v", err)
 	}
-	// §4.7: start the platform MCP server for the restored session.
-	if err := s.startPlatformMCP(nonce); err != nil {
-		s.releaseSession()
-		return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
+	// §4.7: start the platform MCP server for the restored session. The
+	// sockets are pod-wide, so only the claim that took the once-per-pod
+	// start arms them.
+	if startMCP {
+		if err := s.startClaimedPlatformMCP(claim, nonce); err != nil {
+			s.releaseSessionSlotUnderGuard(sessionID, true)
+			return nil, status.Errorf(codes.Internal, "start platform MCP server: %v", err)
+		}
+		// §9.3: re-open the per-connector MCP servers. F-9.1.2.
+		s.startConnectorMCPServers(sessionID, nonce, connectors)
 	}
-	// §9.3 lines 142-164: re-open the per-connector MCP servers. F-9.1.2.
-	s.startConnectorMCPServers(sessionID, nonce, connectors)
 	if err := s.Runtime.Start(ctx, sessionID); err != nil {
-		s.releaseSession()
+		s.releaseSessionSlotUnderGuard(sessionID, true)
 		return nil, status.Errorf(codes.Internal, "start runtime: %v", err)
+	}
+	// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — the resume writes
+	// the restored session's session_start inside the open sequence, which
+	// makes the rule-8 confirmations and takes the record. Resume holds the
+	// slot guard from ahead of its claim, so the sequence runs under it
+	// rather than acquiring the capacity-one guard a second time. Resume
+	// opens no span, so its failures carry no span categorization.
+	confirmed, err := s.openRuntimeSession(ctx, sessionID, claim, in, true)
+	if err != nil {
+		// The session_start write failed; the frame is treated as
+		// undelivered.
+		_ = s.Runtime.Close(ctx, sessionID)
+		s.releaseSessionSlotUnderGuard(sessionID, true)
+		return nil, status.Errorf(codes.Internal, "open runtime session: %v", err)
+	}
+	if !confirmed {
+		return nil, s.rollbackUnconfirmedStart(ctx, sessionID)
 	}
 	// spec: §4.4 / §7.2 ResumeMode — the adapter restored the workspace
 	// from the named full checkpoint. The §10.1 partial-manifest reassembly
@@ -143,18 +196,47 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 
 // restoreChunks fetches each presigned GET capability in ascending index
 // order, concatenates the chunk bodies into one byte stream, and extracts
-// the checkpoint bundle into the checkpoint roots. It returns the
-// uncompressed bytes restored. An empty chunk set restores nothing (a
+// the checkpoint bundle into the named session's checkpoint roots. It
+// returns the uncompressed bytes restored. An empty chunk set restores nothing (a
 // conversation-only or coordinator-handoff resume), which is not an error.
 //
-// spec: §10.1 line 155 — the concatenation of all chunks in index order is
+// spec: §10.1.7 — the concatenation of all chunks in index order is
 // consumed as a single tar (or tar.gz) stream fed end-to-end into one
 // decompress→untar pipeline; chunk boundaries are never parsed in
 // isolation.
-func (s *Server) restoreChunks(ctx context.Context, chunks []*adapterv1.ChunkGrant) (int64, error) {
+func (s *Server) restoreChunks(ctx context.Context, sessionID string, chunks []*adapterv1.ChunkGrant) (int64, error) {
 	if len(chunks) == 0 {
 		return 0, nil
 	}
+	// spec: §6.4 — the restore replays into the resuming session's own
+	// slot tree, `/workspace/slots/{sessionId}/current` and
+	// `/sessions/{sessionId}`, resolved from the identifier the
+	// ResumeRequest names. Extracting into a pod-global root would
+	// discard the restore on every pod under the uniform layout.
+	// The resolved entry is discarded: the restore reads the roots alone
+	// and links no barrier gate.
+	roots, _, err := s.checkpointRootsForSession(sessionID)
+	if err != nil {
+		return 0, err
+	}
+	stream := s.chunkStream(ctx, chunks)
+	restored, extractErr := workspace.ExtractTree(roots, stream)
+	_ = stream.Close()
+	return restored, extractErr
+}
+
+// chunkStream fetches each presigned GET capability through
+// CheckpointTransport.GetChunk in ascending index order and returns one
+// reader over the concatenated chunk bodies. A fetch or body-read error
+// ends the stream with that error. The caller closes the reader as soon
+// as it stops consuming, which unblocks and ends the producer goroutine
+// when extraction stops before the last chunk.
+//
+// spec: §10.1.7 — the concatenation of all chunks in index order is
+// one byte stream; chunk boundaries are never parsed in isolation.
+// spec: §7.1 (Derive restore semantics) — the first-bind restore reads
+// the same stream.
+func (s *Server) chunkStream(ctx context.Context, chunks []*adapterv1.ChunkGrant) io.ReadCloser {
 	ordered := make([]*adapterv1.ChunkGrant, len(chunks))
 	copy(ordered, chunks)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].GetIndex() < ordered[j].GetIndex() })
@@ -164,7 +246,9 @@ func (s *Server) restoreChunks(ctx context.Context, chunks []*adapterv1.ChunkGra
 		for _, ch := range ordered {
 			rc, err := s.CheckpointTransport.GetChunk(ctx, ch.GetUrl(), ch.GetHeaders())
 			if err != nil {
-				_ = pw.CloseWithError(err)
+				// The chunk is named by its index: the URL is a bearer
+				// capability (§13.2.3) and stays out of the error.
+				_ = pw.CloseWithError(fmt.Errorf("fetch chunk %d: %w", ch.GetIndex(), err))
 				return
 			}
 			_, cerr := io.Copy(pw, rc)
@@ -176,8 +260,5 @@ func (s *Server) restoreChunks(ctx context.Context, chunks []*adapterv1.ChunkGra
 		}
 		_ = pw.Close()
 	}()
-
-	restored, extractErr := workspace.ExtractTree(s.checkpointRoots(), pr)
-	_ = pr.Close()
-	return restored, extractErr
+	return pr
 }

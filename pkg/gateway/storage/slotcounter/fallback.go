@@ -16,14 +16,13 @@ import (
 
 // This file carries the §12.4 Redis-outage Postgres fallback for the per-pod
 // slot counter, separate from the §5.2 fast-path counter and rehydration in
-// slotcounter.go. §6.57 requires every Redis-backed role to have a durable
+// slotcounter.go. §12.4 requires every Redis-backed role to have a durable
 // fallback; for the intra-pod capacity gate that fallback is the Postgres
 // SessionStore, gated under a per-pod advisory lock and bounded by a
 // fail-closed window so a Redis-only outage degrades slot admission to
 // Postgres latency rather than rejecting all session dispatch.
-// spec: §3.2 (Redis slot counter intra-pod gate with Postgres fallback),
-// §6.57 (durable fallback for every Redis-backed role), §12.4 (Redis HA and
-// failure modes, bounded fail-closed window).
+// spec: §12.4 (durable fallback for every Redis-backed role), §12.4 (Redis HA
+// and failure modes, bounded fail-closed window).
 
 // ErrFailClosed reports that the §12.4 Redis-outage fallback could not
 // admit a slot and the gate is failing closed: the Redis-outage window
@@ -51,7 +50,7 @@ const DefaultPostgresFallbackMaxWindow = 60 * time.Second
 // The production implementation is the Postgres-backed SessionStore. A nil
 // fallback disables the gate: a Redis outage then fails closed immediately
 // rather than degrading to Postgres latency.
-// spec: §6.57 (durable fallback for every Redis-backed role); §12.4; §5.2.
+// spec: §12.4 (durable fallback for every Redis-backed role); §12.4; §5.2.
 type FallbackSource interface {
 	ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (count int32, admitted bool, err error)
 }
@@ -94,17 +93,22 @@ func WithClockForTest(now func() time.Time) Option {
 // outage). A Redis-only outage therefore degrades slot admission to Postgres
 // latency rather than rejecting all session dispatch.
 //
+// The call stamps the outage clock when it is zero, and an admission records
+// (pod, session) in the outage ledger, so the recovery rebuild adds the
+// admitted session's member when Redis returns (recovery.go).
+//
 // spec: §12.4 ("Postgres fallback under a per-pod advisory lock, then fail
 // closed"); §5.2 (intra-pod capacity gate during a Redis outage).
-func (c *Counter) fallbackReserve(ctx context.Context, podID string, maxConcurrent int32, rehydrated bool) (int32, bool, error) {
+func (c *Counter) fallbackReserve(ctx context.Context, podID, sessionID string, maxConcurrent int32, rehydrated bool) (int32, bool, error) {
+	// Stamp (or read) the start of the current outage window and fail closed
+	// once it exceeds the bound. The window is measured from the first call
+	// that observed Redis unreachable.
+	exceeded := c.outageExceeded()
 	if c.fallback == nil {
 		// No Postgres fallback configured: a Redis outage fails closed.
 		return 0, rehydrated, ErrFailClosed
 	}
-	// Stamp (or read) the start of the current outage window and fail closed
-	// once it exceeds the bound. The window is measured from the first
-	// reservation that observed Redis unreachable.
-	if c.outageExceeded() {
+	if exceeded {
 		return 0, rehydrated, fmt.Errorf("slotcounter: reserve %s: outage window exceeded: %w", podID, ErrFailClosed)
 	}
 	count, admitted, err := c.fallback.ReserveSlotUnderLock(ctx, podID, maxConcurrent)
@@ -116,6 +120,7 @@ func (c *Counter) fallbackReserve(ctx context.Context, podID string, maxConcurre
 	if !admitted {
 		return 0, rehydrated, ErrSlotsExhausted
 	}
+	c.record(entryAdmission, podID, sessionID)
 	return count, rehydrated, nil
 }
 
@@ -133,13 +138,11 @@ func (c *Counter) outageExceeded() bool {
 	return now.Sub(c.outageSince) > c.fallbackMaxWindow
 }
 
-// clearOutage resets the §12.4 outage window after Redis answers, so a
-// later outage measures a fresh window. spec: §12.4 (on Redis recovery the
-// counter resumes fast-path enforcement).
-func (c *Counter) clearOutage() {
+// stampOutage stamps the outage clock when it is zero. spec: §12.4.
+func (c *Counter) stampOutage() {
 	c.outageMu.Lock()
-	if !c.outageSince.IsZero() {
-		c.outageSince = time.Time{}
+	if c.outageSince.IsZero() {
+		c.outageSince = c.now()
 	}
 	c.outageMu.Unlock()
 }

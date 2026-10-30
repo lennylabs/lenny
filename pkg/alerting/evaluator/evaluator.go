@@ -72,7 +72,7 @@ type Options struct {
 	// histogram labelled by rule to emit the §16.1 / §25.13
 	// `lenny_alerting_rule_eval_duration_seconds` series the
 	// agent-operability surface advertises.
-	// spec: §25.13 line 4835; F-25.13.3.
+	// spec: §25.13; F-25.13.3.
 	OnRuleEvalDuration func(rule string, d time.Duration)
 }
 
@@ -142,7 +142,7 @@ func (e *Evaluator) Tick(ctx context.Context, now time.Time) int {
 		evalStart := time.Now()
 		active, err := e.exprEval.Active(ctx, rs.rule.Expr)
 		if e.onRuleEvalDuration != nil {
-			// spec: §25.13 line 4835 — emit the wall-clock per
+			// spec: §25.13 — emit the wall-clock per
 			// in-process rule evaluation so operators can detect
 			// expensive expressions under the fallback path.
 			e.onRuleEvalDuration(rs.rule.Name, time.Since(evalStart))
@@ -215,7 +215,7 @@ func (e *Evaluator) Firing() []string {
 // component's verdict from firing alerts: a critical-severity alert maps
 // to `unhealthy`, a warning-severity alert to `degraded`. Firing() returns
 // only names and cannot drive that severity-aware derivation.
-// spec: §25.3 lines 443-451.
+// spec: §25.3.
 func (e *Evaluator) FiringAlerts() []Alert {
 	e.mu.Lock()
 	defer e.mu.Unlock()

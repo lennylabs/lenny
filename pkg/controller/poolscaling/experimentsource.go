@@ -24,7 +24,7 @@ type ExperimentReader interface {
 }
 
 // BasePoolResolver maps an experiment's base runtime to the name of the
-// base pool the control group falls through to (§10.7 line 703). The
+// base pool the control group falls through to (§10.7). The
 // §4.6.2 base-pool adjustment reduces that pool's minWarm by the active
 // variants' aggregate weight. A resolver that cannot identify a unique
 // base pool returns ("", false): the variant pool is still sized by the
@@ -50,7 +50,7 @@ type BasePoolResolver interface {
 // Base-pool restoration on pause/conclude is automatic: a paused or
 // concluded variant's weight is not summed into its base pool, so the
 // base pool's (1 - Σ variant_weights) factor recovers without any extra
-// bookkeeping. spec: §10.7 lines 1092, 1102-1104; §4.6.2 lines 534-547.
+// bookkeeping. spec: §10.7; §4.6.2.
 type ExperimentVariantSource struct {
 	// Inner supplies the base set of pool definitions (every §5.2 pool
 	// as a standard pool).
@@ -167,7 +167,7 @@ func (s *ExperimentVariantSource) ListPoolConfigs(ctx context.Context) ([]PoolCo
 		claimed[av.VariantPool] = true
 	}
 
-	// spec: §10.7 line 1102 — a paused variant pool pins minWarm to 0
+	// spec: §10.7 — a paused variant pool pins minWarm to 0
 	// while leaving maxWarm at its current ceiling so warm pods drain.
 	for _, e := range exps {
 		if e.Status != experiment.StatusPaused {
@@ -183,7 +183,7 @@ func (s *ExperimentVariantSource) ListPoolConfigs(ctx context.Context) ([]PoolCo
 		}
 	}
 
-	// spec: §10.7 line 1104 — a concluded variant pool drains to 0/0 and
+	// spec: §10.7 — a concluded variant pool drains to 0/0 and
 	// its SandboxWarmPool is deleted once readyCount reaches 0.
 	for _, e := range exps {
 		if e.Status != experiment.StatusConcluded {
@@ -207,7 +207,7 @@ func (s *ExperimentVariantSource) ListPoolConfigs(ctx context.Context) ([]PoolCo
 // runtime. It resolves only when exactly one pool warms the base runtime
 // (the unambiguous common case); zero or multiple candidates yield no
 // resolution, so the base-pool adjustment is conservatively skipped
-// rather than reducing the wrong pool's minWarm. spec: §10.7 line 703 —
+// rather than reducing the wrong pool's minWarm. spec: §10.7 —
 // the control group falls through to the base runtime's default pool.
 type PoolStoreBasePoolResolver struct {
 	// Store is the §5.2 pool registry.

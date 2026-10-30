@@ -121,6 +121,7 @@ func TestPoolStoreSourceFoldsScrubProfileIntoCRD(t *testing.T) {
 		ExecutionMode:    runtimestore.ExecutionModeSession,
 		WarmCount:        2,
 		SessionPolicy: &runtimestore.SessionPolicy{
+			AcknowledgeProcessLevelIsolation: true,
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                         true,
 				AcknowledgeBestEffortScrub:      true,
@@ -128,6 +129,7 @@ func TestPoolStoreSourceFoldsScrubProfileIntoCRD(t *testing.T) {
 				AllowCrossTenantReuse:           true,
 				ScrubProfile:                    runtimestore.MicrovmScrubInPlace,
 				AcknowledgeMicrovmResidualState: true,
+				RuntimeProcess:                  runtimestore.RuntimeProcessKeep,
 			},
 		},
 	})
@@ -187,13 +189,13 @@ func TestPoolStoreSourceMapsVMRestartScrubMode(t *testing.T) {
 	}
 }
 
-// TestPoolStoreSourceCarriesSessionSizingKnobs verifies the §5.2 / §6.33
+// TestPoolStoreSourceCarriesSessionSizingKnobs verifies the §5.2
 // session-mode scaling knobs (recycle.enabled, recycle.maxSessionsPerPod,
 // maxConcurrentSessions) reach PoolConfig directly from the store row even
 // though the CRD does not model them. The mode_factor derivation reads them
 // off PoolConfig rather than the CRD spec (§4.6.3 ownership).
 //
-// spec: §5.2 / §6.33 (execution mode scaling implications).
+// spec: §5.2 (execution mode scaling implications).
 func TestPoolStoreSourceCarriesSessionSizingKnobs(t *testing.T) {
 	store := newMemoryStore(t, poolstore.Pool{
 		Name:             "recycle-sizing-pool",
@@ -208,6 +210,7 @@ func TestPoolStoreSourceCarriesSessionSizingKnobs(t *testing.T) {
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          12,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 	})
@@ -236,7 +239,7 @@ func TestPoolStoreSourceCarriesSessionSizingKnobs(t *testing.T) {
 // one-session-per-pod sizing defaults (RecycleEnabled false, both bounds 0),
 // so the mode_factor derivation keeps mode_factor = 1.0.
 //
-// spec: §6.33 (default configuration mode_factor = 1.0).
+// default configuration mode_factor = 1.0.
 func TestPoolStoreSourceLeavesSizingKnobsZeroOnNonRecyclingPool(t *testing.T) {
 	store := newMemoryStore(t, poolstore.Pool{
 		Name:          "plain-sizing-pool",

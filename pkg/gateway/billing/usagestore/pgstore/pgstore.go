@@ -28,18 +28,17 @@ import (
 // Store is the Postgres-backed usage accumulator. Construct with New.
 type Store struct {
 	pool *pgxpool.Pool
-	// read is the §12.3 line 146 read-replica pool for usage reports.
+	// read is the §12.3 read-replica pool for usage reports.
 	// It is set to pool unless WithReadPool wires a separate reader; the
-	// Record write always uses pool. spec: §12.3 line 146.
+	// Record write always uses pool. spec: §12.3.
 	read *pgxpool.Pool
 }
 
 // Option configures a Store at construction time.
 type Option func(*Store)
 
-// WithReadPool routes the read-heavy usage-report aggregation (§12.3
-// line 146) to a separate read-replica pool. A nil pool keeps reads on
-// the primary. spec: §12.3 line 146.
+// WithReadPool routes the read-heavy usage-report aggregation (§12.3) to a separate read-replica pool. A nil pool keeps reads on
+// the primary. spec: §12.3.
 func WithReadPool(read *pgxpool.Pool) Option {
 	return func(s *Store) {
 		if read != nil {
@@ -81,7 +80,7 @@ func (s *Store) Record(ctx context.Context, r usagestore.Record) error {
 // labelsValue maps a §14 label map to the nullable labels JSONB column
 // value: nil (SQL NULL) when the map is empty so a NULL-labels row never
 // matches a non-empty containment filter, the JSON encoding otherwise.
-// spec: §14 line 106. F-14.1.13.
+// spec: §14. F-14.1.13.
 func labelsValue(m map[string]string) (any, error) {
 	if len(m) == 0 {
 		return nil, nil
@@ -119,7 +118,7 @@ func (s *Store) Aggregate(ctx context.Context, tenantFilter string, labelFilter 
 // matching userstore/pgstore and sessionstore/pgstore.
 func (s *Store) aggregateTenant(ctx context.Context, tenantID string, labelFilter map[string]string) (usagestore.Report, error) {
 	var report usagestore.Report
-	// spec: §12.3 line 146 — usage-report aggregation routes to the read replica.
+	// spec: §12.3 — usage-report aggregation routes to the read replica.
 	err := pgtenant.InTx(ctx, s.read, tenantID, func(tx pgx.Tx) error {
 		r, err := aggregateTx(ctx, tx, tenantID, labelFilter)
 		if err != nil {
@@ -187,7 +186,7 @@ func (s *Store) aggregateAll(ctx context.Context, labelFilter map[string]string)
 // tenantIDs returns every tenant id, ascending. The tenants table is
 // platform-global and unguarded, so the read needs no tenant context.
 func (s *Store) tenantIDs(ctx context.Context) ([]string, error) {
-	// spec: §12.3 line 146 — usage-report tenant enumeration routes to the read replica.
+	// spec: §12.3 — usage-report tenant enumeration routes to the read replica.
 	rows, err := s.read.Query(ctx, `SELECT id FROM tenants ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -214,7 +213,7 @@ func (s *Store) tenantIDs(ctx context.Context) ([]string, error) {
 func aggregateTx(ctx context.Context, tx pgx.Tx, tenantID string, labelFilter map[string]string) (usagestore.Report, error) {
 	var report usagestore.Report
 
-	// spec: §14 line 106 — a non-empty label filter narrows both rollups
+	// spec: §14 — a non-empty label filter narrows both rollups
 	// to the events whose denormalized labels contain every requested
 	// pair. The predicate is pushed into SQL via the labels GIN index; a
 	// NULL-labels row never matches a non-empty filter, which is the

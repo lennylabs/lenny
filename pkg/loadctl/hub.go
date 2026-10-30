@@ -21,6 +21,25 @@ type Hub struct {
 	channels map[string]*runChannel
 }
 
+// runChannel is the fan-out state for one run id.
+//
+// mu protects every field below it, and it also owns the subscriber
+// channels themselves: a send on a channel in subscribers, and the
+// close of that channel, both happen with mu held. That is what makes
+// the closed guard meaningful. Publishing a run's event and marking
+// the run terminal arrive on separate HTTP handlers (progress and ack)
+// with no ordering between them, so a Publish that checked closed and
+// then sent with mu released could have its subscriber closed out from
+// under the in-flight send by a concurrent Close, which is a data race
+// on the channel and a "send on closed channel" panic once the timing
+// is unlucky.
+//
+// Holding mu across the sends is bounded work: every send is
+// non-blocking (select with a default arm), so a slow subscriber
+// cannot stall the hub while the lock is held. Keeping the backlog
+// append and the fan-out under one critical section also fixes the
+// order two concurrent publishers are observed in: subscribers see
+// events in the order they entered the backlog.
 type runChannel struct {
 	mu          sync.Mutex
 	subscribers []chan Event
@@ -45,18 +64,16 @@ func NewHub() *Hub {
 func (h *Hub) Publish(runID string, e Event) {
 	ch := h.openChannel(runID)
 	ch.mu.Lock()
+	defer ch.mu.Unlock()
 	if ch.closed {
-		ch.mu.Unlock()
+		// The run is terminal. Publishing into it is a no-op.
 		return
 	}
 	if len(ch.backlog) >= 64 {
 		ch.backlog = ch.backlog[1:]
 	}
 	ch.backlog = append(ch.backlog, e)
-	subs := make([]chan Event, len(ch.subscribers))
-	copy(subs, ch.subscribers)
-	ch.mu.Unlock()
-	for _, s := range subs {
+	for _, s := range ch.subscribers {
 		select {
 		case s <- e:
 		default:
@@ -84,6 +101,10 @@ func (h *Hub) CloseAll() {
 
 // Close marks the run channel terminal. Subscribers receive a
 // final close frame and the channel is removed from the hub.
+//
+// The subscriber channels are closed with the run channel's mu held,
+// so a Publish racing this call either completes its fan-out before
+// the close or observes closed and returns without sending.
 func (h *Hub) Close(runID string) {
 	h.mu.Lock()
 	ch, ok := h.channels[runID]

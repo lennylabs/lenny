@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §10.6 line 601 — defaultDelegationPolicy names the
+// spec: §10.6 — defaultDelegationPolicy names the
 // DelegationPolicy applied to sessions created in an environment. The
 // gateway resolves the policy name through Service.ResolveActivePolicy,
 // which returns an active policy or signals "no restriction" for an

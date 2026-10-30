@@ -17,7 +17,7 @@ import (
 // and Verify (the gate the operator checks before disabling the old key
 // in the KMS).
 //
-// spec: §4.9.1 lines 1714-1730.
+// spec: §4.9.1 (KMS key rotation procedure)
 type CredentialRekeyer interface {
 	Run(ctx context.Context, tenantID string) (rekey.Summary, error)
 	Verify(ctx context.Context, tenantID string) (int, error)
@@ -41,7 +41,7 @@ func (r *Router) WithCredentialRekey(j CredentialRekeyer) *Router {
 // tenant's KEK and before disabling the old version; `verified: true`
 // means no row remains below the current version.
 //
-// spec: §4.9.1 lines 1718-1724.
+// spec: §4.9.1.
 func (r *Router) handleCredentialRekey(w http.ResponseWriter, req *http.Request) {
 	tenantID := req.PathValue("id")
 	if tenantID == "" {
@@ -72,7 +72,7 @@ func (r *Router) handleCredentialRekey(w http.ResponseWriter, req *http.Request)
 // handleCredentialRekeyStatus runs the §4.9.1 verification query for the
 // path tenant without re-keying, returning the count of rows still below
 // the current KEK version and whether the old version is safe to
-// disable. spec: §4.9.1 lines 1723-1724.
+// disable. spec: §4.9.1.
 func (r *Router) handleCredentialRekeyStatus(w http.ResponseWriter, req *http.Request) {
 	tenantID := req.PathValue("id")
 	if tenantID == "" {

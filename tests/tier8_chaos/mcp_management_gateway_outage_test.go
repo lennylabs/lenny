@@ -134,8 +134,11 @@ func TestMCPManagementGatewayOwnedToolDuringGatewayOutage(t *testing.T) {
 	if !waitDeploymentScaledDown(t, c, gatewayDeployment, storeRecoveryBound) {
 		t.Fatalf("%s did not scale down to zero replicas after the scale command", gatewayDeployment)
 	}
-	if !pollUntil(storeRecoveryBound, 2*time.Second, func() bool { return endpointCount(t, c, gatewayDeployment) == 0 }) {
-		t.Fatalf("Service %s still has endpoints after the Deployment scaled to zero; "+
+	// A draining gateway pod keeps receiving Service traffic until its
+	// readiness probe observes the preStop drain flip, so the wait covers
+	// the serving EndpointSlice endpoints as well as the ready addresses.
+	if !waitServiceUnreachable(t, c, gatewayDeployment, storeRecoveryBound) {
+		t.Fatalf("Service %s still routes to a gateway pod after the Deployment scaled to zero; "+
 			"the gateway is not genuinely unreachable", gatewayDeployment)
 	}
 

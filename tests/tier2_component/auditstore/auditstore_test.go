@@ -183,7 +183,7 @@ func TestAuditStoreContract(t *testing.T) {
 	})
 }
 
-// spec: §16.4 lines 378-382 — the retention pruner deletes rows past
+// spec: §16.4 — the retention pruner deletes rows past
 // audit.retentionDays, holds gdpr.* erasure receipts (separate window),
 // and honors the SIEM delivery guard (no row past the forwarder's
 // high-water mark is dropped unless forced). F-11.7.17.
@@ -265,8 +265,7 @@ func TestPruneRetentionWindowsAndSIEMGuard(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 840 (Phase-4 gdpr.* skip), §12.8 line 831 (receipt
-// exemption), §12.8 line 842 (receipts outlive tenant deletion) — the
+// spec: §12.8, §12.8, §12.8 — the
 // Phase-4 DeleteByTenant deletes every non-gdpr.% audit row and retains
 // the gdpr.* erasure-receipt remnant that must outlive the tenant, and
 // the returned count is the rows deleted (excluding the retained
@@ -317,7 +316,7 @@ func TestDeleteByTenantRetainsGDPRReceipts_spec_12_8_line840(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 687 — RetentionWindowStats summarizes the
+// spec: §16.7 — RetentionWindowStats summarizes the
 // non-gdpr.* rows older than the cutoff and reads the SIEM high-water
 // mark for the audit.partition_drop_forced payload. F-11.7.17.
 // diagnosis: a failure means RetentionWindowStats miscounts the
@@ -362,7 +361,7 @@ func TestRetentionWindowStats(t *testing.T) {
 	}
 }
 
-// spec: §16.4 line 378 — SIEMHeldCount reports the non-gdpr.* rows past
+// spec: §16.4 — SIEMHeldCount reports the non-gdpr.* rows past
 // the retention cutoff that the SIEM delivery guard is withholding from
 // the drop (sequence_number above the forwarder's high-water mark). A
 // non-zero result is the AuditPartitionDropBlocked condition. F-16.4.6.

@@ -18,38 +18,32 @@
 // enforced by the deployed gateway's §25.1 admin-API scope gate.
 //
 // This test mints a real, RFC 9068-shaped Bearer JWT with a narrowed
-// `scope` claim and presents it to the live gateway over HTTP. Minting
-// it through the canonical RFC 8693 exchange endpoint (POST
-// /v1/oauth/token) is not reachable on this install: the gateway and
-// lenny-token-service each construct their KMS-backed signer with
-// jwt.NewKMSSigner, which "generates a fresh HMAC-SHA256 signing key"
-// per process (pkg/auth/jwt/kmssigner.go) and this e2e install's
-// kms.provider is "local" (tests/testinfra/kind/e2e-values.yaml does
-// not override it), so the two processes hold unrelated, ephemeral
-// signing keys and a subject_token minted by one is never verifiable by
-// the other.
+// `scope` claim and presents it to the live gateway over HTTP. The test
+// process holds no Lenny signing key: every Lenny-issued token is
+// signed through the KMS under the §10.2 platform:jwt-signing alias,
+// which on this install's "local" provider is derived from a master key
+// that only the in-cluster processes read. Minting through the RFC 8693
+// exchange endpoint (POST /v1/oauth/token) would itself need a caller
+// token carrying the scope under test, so it does not remove the need
+// for a signing key the test controls.
 //
-// Instead this test signs the token with the §17.4 dev-bearer-trust
-// HMAC key the e2e install already provisions for a different purpose
-// (giving lenny-ops a RequireAuth AuthConfig, see install.sh "creating
-// the lenny-ops bearer-trust key Secret"): e2e-values.yaml sets
+// The test signs the token with the §17.4 dev-bearer-trust HMAC key the
+// e2e install already provisions for a different purpose (giving
+// lenny-ops a RequireAuth AuthConfig, see install.sh "creating the
+// lenny-ops bearer-trust key Secret"): e2e-values.yaml sets
 // security.oidc.bearerTrustKeySecret, which the chart mounts onto the
-// gateway too (charts/lenny/templates/gateway-deployment.yaml lines
-// 328-335, 461-471) and passes as --bearer-trust-hmac-key-file. The
-// gateway's cmd/lenny-gateway/stores.go buildTokenSigningStores wraps
-// this trusted key in a jwt.MultiVerifier alongside the KMS-backed Token
-// Service verifier (gated on --dev-mode, which this e2e install sets),
-// so a token signed with this key — carrying aud: ["dev.local"], the
-// only audience the wrapping ClaimChecker accepts (embeddedOIDCAudience
-// in cmd/lenny-gateway/main.go) — verifies exactly as a genuine
-// Token-Service-issued Bearer would, including the RFC 9068 `scope`
-// claim parse at pkg/gateway/middleware/auth/auth.go line 466.
+// gateway and passes as --bearer-trust-hmac-key-file. The gateway's
+// cmd/lenny-gateway/token_signing.go wraps this trusted key in a
+// jwt.MultiVerifier behind the §10.2 key set (gated on --dev-mode,
+// which this e2e install sets), so a token signed with this key and
+// carrying aud: ["dev.local"], the only audience the wrapping
+// ClaimChecker accepts (embeddedOIDCAudience), passes the same auth
+// middleware as a Lenny-issued bearer, including the RFC 9068 `scope`
+// claim parse in pkg/gateway/middleware/auth.
 //
-// This is the "shared gateway/token-service signing key" dependency
-// documented in TEST-GAPS.md for this finding: the e2e install already
-// provisions and mounts one for a different purpose, and this test
-// reuses it as a live JWT-signing key rather than standing up new
-// cluster infrastructure.
+// The e2e install already provisions and mounts this key for a
+// different purpose, and this test reuses it as a live JWT-signing key
+// rather than standing up new cluster infrastructure.
 package tier5_e2e_kind_test
 
 import (
@@ -125,10 +119,10 @@ func loadE2EBearerTrustSigner(t *testing.T, c *kind.Cluster) *jwt.HMACSigner {
 // from every user row this e2e install's bootstrap seeds
 // (tests/testinfra/kind/e2e-values.yaml bootstrap.users lists only
 // alice@acme.com), so the gateway's PlatformRoles override
-// (userstorePlatformRoles.ResolveRoles) finds no stored assignment for
+// (userstore.PlatformRoles.ResolveRoles) finds no stored assignment for
 // (tenant, subject) and leaves the JWT's own `roles` claim — not a
-// stored row — authoritative (cmd/lenny-gateway/main.go
-// userstorePlatformRoles.ResolveRoles returns found=false on a missing
+// stored row — authoritative (pkg/gateway/environment/userstore
+// userstore.PlatformRoles.ResolveRoles returns found=false on a missing
 // row).
 func mintScopedBearer(t *testing.T, signer *jwt.HMACSigner, scope string) string {
 	t.Helper()
@@ -223,7 +217,7 @@ func TestScopeNarrowedBearerGatesAdminAPI(t *testing.T) {
 	})
 
 	t.Run("absent scope claim defers to the role ceiling", func(t *testing.T) {
-		// spec: §25.1 line 90 — "Absent `scope` claim: no scope
+		// spec: §25.1 — "Absent `scope` claim: no scope
 		// restriction — the token's role ceiling applies unmodified."
 		// The same tools:tenant:read endpoint the first subtest denied
 		// must admit a platform-admin token that carries no scope claim

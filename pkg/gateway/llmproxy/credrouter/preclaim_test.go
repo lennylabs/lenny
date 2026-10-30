@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 )
 
-// spec: §4.9 lines 1216-1218 — the pre-claim check passes when at least
+// spec: §4.9 — the pre-claim check passes when at least
 // one provider in the intersection has an assignable credential.
 func TestPreClaimAvailableOneProvider(t *testing.T) {
 	res, err := PreClaim(context.Background(), NewDefault(), PreClaimInput{
@@ -34,7 +34,7 @@ func TestPreClaimAvailableOneProvider(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1326 — an empty intersection rejects with
+// spec: §4.9 — an empty intersection rejects with
 // CREDENTIAL_POOL_EXHAUSTED.
 func TestPreClaimEmptyIntersection(t *testing.T) {
 	res, err := PreClaim(context.Background(), NewDefault(), PreClaimInput{
@@ -48,7 +48,7 @@ func TestPreClaimEmptyIntersection(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1218 — every provider exhausted rejects with
+// spec: §4.9 — every provider exhausted rejects with
 // CREDENTIAL_POOL_EXHAUSTED.
 func TestPreClaimAllExhausted(t *testing.T) {
 	_, err := PreClaim(context.Background(), NewDefault(), PreClaimInput{
@@ -63,7 +63,7 @@ func TestPreClaimAllExhausted(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1364, 1370 — when a user-only policy resolves no
+// spec: §4.9 — when a user-only policy resolves no
 // credential for any provider, the failure is USER_CREDENTIAL_NOT_FOUND
 // rather than pool exhaustion.
 func TestPreClaimUserOnlyMiss(t *testing.T) {
@@ -78,7 +78,7 @@ func TestPreClaimUserOnlyMiss(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1326 — a user-source resolution counts as available
+// spec: §4.9 — a user-source resolution counts as available
 // even when no pool is assignable.
 func TestPreClaimUserResolved(t *testing.T) {
 	res, err := PreClaim(context.Background(), NewDefault(), PreClaimInput{

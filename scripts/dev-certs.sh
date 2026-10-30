@@ -11,7 +11,7 @@
 # The material is regenerated only when ca.crt is absent, so an existing
 # trust setup survives repeated runs. Delete the directory to rotate.
 # This material is for local development only and MUST NOT be reused in
-# production (§17.4 line 247).
+# production (§17.4).
 set -eu
 
 DIR="${1:-./lenny-data/certs}"

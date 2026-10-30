@@ -63,7 +63,7 @@ func (f *fakeStreamReader) XRangeN(_ context.Context, _, start, _ string, _ int6
 	return cmd
 }
 
-// spec: §25.5 lines 2592-2611 — the first Poll snaps the cursor to the
+// spec: §25.5 — the first Poll snaps the cursor to the
 // stream tail so a cold start does not replay the backlog to webhook
 // subscriptions.
 func TestRedisEventSourcePrimesToTail_spec_25_5(t *testing.T) {
@@ -81,7 +81,7 @@ func TestRedisEventSourcePrimesToTail_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.3 lines 665-667 — events appended after priming are
+// spec: §25.3 — events appended after priming are
 // delivered exactly once, carrying the CloudEvents id and type.
 func TestRedisEventSourceDeliversNewEvents_spec_25_3(t *testing.T) {
 	f := &fakeStreamReader{}

@@ -99,7 +99,7 @@ func getCrossTenant(t *testing.T, router *admin.Router, query string) *httptest.
 	return rr
 }
 
-// TestListAuditEventsCrossTenantMergesShards covers §25.9 line 3668: a
+// TestListAuditEventsCrossTenantMergesShards covers §25.9: a
 // platform-admin query with no tenantId reads every tenant's chain via
 // the scatter-gather reader, returns the merged rows, and verifies each
 // per-tenant chain.
@@ -134,7 +134,7 @@ func TestListAuditEventsCrossTenantMergesShards_spec_25_9_3668(t *testing.T) {
 	}
 }
 
-// TestListAuditEventsCrossTenantCachesResults covers §25.9 line 3709: a
+// TestListAuditEventsCrossTenantCachesResults covers §25.9: a
 // repeated identical cross-tenant query is served from the cache without
 // re-reading the shards.
 func TestListAuditEventsCrossTenantCachesResults_spec_25_9_3709(t *testing.T) {
@@ -157,15 +157,13 @@ func TestListAuditEventsCrossTenantCachesResults_spec_25_9_3709(t *testing.T) {
 	}
 }
 
-// TestCrossTenantQueryAuditReceiptRecordsCacheAndShards covers §25.9 line
-// 3754: the audit.query_executed receipt "includes ... cache hit/miss,
+// TestCrossTenantQueryAuditReceiptRecordsCacheAndShards covers §25.9: the audit.query_executed receipt "includes ... cache hit/miss,
 // shards touched". A first cross-tenant query runs the scatter fan-out and
 // records cacheHit=false; the repeated identical query served from the
 // 5-minute result cache records cacheHit=true. Both record the shard
 // fan-out width (1 for the v1 single-shard AllAuditShards).
 //
-// spec: §25.9 line 3754 (audit.query_executed includes cache hit/miss and
-// shards touched)
+// spec: §25.9
 // diagnosis: the audit-of-audit receipt misreports cross-tenant query cost.
 // If cacheHit is hardcoded, an operator auditing query cost cannot
 // distinguish a cached (cheap) query from a fresh scatter fan-out
@@ -207,8 +205,7 @@ func TestCrossTenantQueryAuditReceiptRecordsCacheAndShards_spec_25_9_3754(t *tes
 	}
 }
 
-// TestListAuditEventsCrossTenantFreshBypassesCache covers §25.9 line
-// 3709: ?fresh=true re-reads the shards even when a cached entry exists.
+// TestListAuditEventsCrossTenantFreshBypassesCache covers §25.9: ?fresh=true re-reads the shards even when a cached entry exists.
 func TestListAuditEventsCrossTenantFreshBypassesCache_spec_25_9_3709(t *testing.T) {
 	reader := &fakeScatterReader{rows: twoTenantRows()}
 	router := crossTenantRouter(t, reader, true)
@@ -224,7 +221,7 @@ func TestListAuditEventsCrossTenantFreshBypassesCache_spec_25_9_3709(t *testing.
 	}
 }
 
-// TestListAuditEventsCrossTenantCacheOptOut covers §25.9 line 3709
+// TestListAuditEventsCrossTenantCacheOptOut covers §25.9
 // ops.audit.scatterGatherCacheEnabled=false: every cross-tenant query
 // reads the shards fresh.
 func TestListAuditEventsCrossTenantCacheOptOut_spec_25_9_3709(t *testing.T) {

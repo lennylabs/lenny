@@ -122,7 +122,7 @@ func TestRBACConfigTenantNotFound(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 665 — the RBAC config carries identityProvider,
+// spec: §10.6 — the RBAC config carries identityProvider,
 // tokenPolicy, the capabilities taxonomy, and the mcpAnnotationMapping
 // overrides. A PUT must persist all four and a GET must round-trip them;
 // they are no longer silently dropped. F-10.6.6.
@@ -209,7 +209,7 @@ func TestRBACConfigPutRejectsUnsupportedIdentityProvider_spec_10_6_661(t *testin
 	}
 }
 
-// spec: §10.6 line 661 — introspectionEnabled needs an endpoint to call;
+// spec: §10.6 — introspectionEnabled needs an endpoint to call;
 // an enabled config with no endpoint is rejected so the real-time group
 // check never fails closed silently at request time. F-10.6.8.
 func TestRBACConfigPutRejectsIntrospectionEnabledNoEndpoint_spec_10_6_661(t *testing.T) {
@@ -226,7 +226,7 @@ func TestRBACConfigPutRejectsIntrospectionEnabledNoEndpoint_spec_10_6_661(t *tes
 	}
 }
 
-// spec: §10.6 line 661 — the introspection endpoint must be an https URL;
+// spec: §10.6 — the introspection endpoint must be an https URL;
 // the gateway posts the bearer to it. F-10.6.8.
 func TestRBACConfigPutRejectsNonHTTPSIntrospectionEndpoint_spec_10_6_661(t *testing.T) {
 	router, _ := newRBACConfigAdmin(t)

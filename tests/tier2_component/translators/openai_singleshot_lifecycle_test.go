@@ -76,13 +76,42 @@ import (
 const ssNS = "lenny-agents"
 
 // ssRespondingRuntime is an adapter.RuntimeProcess that replies to every
-// written envelope with a §15.4.1 response frame, so the single-shot
+// written envelope with a §28.5.3 response frame, so the single-shot
 // dispatch (exec.Send) returns a 200 rather than blocking on empty output.
+//
+// The reply echoes the session the inbound envelope was addressed to, which
+// is the obligation §28.5.3 places on every runtime: the adapter relays a
+// session-scoped frame to the session it names, and a frame that names none
+// is rejected on a pod holding more than one slot. A stub that echoed
+// nothing would have its reply withheld on the concurrent-slot case below
+// and the dispatch would block.
 type ssRespondingRuntime struct{ out chan []byte }
 
 func (r *ssRespondingRuntime) Start(context.Context, string) error { return nil }
-func (r *ssRespondingRuntime) WriteEnvelope(string, []byte) error {
-	r.out <- []byte(`{"type":"response","text":"ack"}`)
+func (r *ssRespondingRuntime) WriteEnvelope(sessionID string, envelope []byte) error {
+	var inbound struct {
+		Type      string `json:"type"`
+		SessionID string `json:"sessionId"`
+	}
+	_ = json.Unmarshal(envelope, &inbound)
+	// A runtime that keeps no per-session context ignores the adapter's
+	// session_start and session_end (§28.5.3, CH-MSGSOCK, Inbound:
+	// session_start rule 2), so neither is answered with a response.
+	if inbound.Type == "session_start" || inbound.Type == "session_end" {
+		return nil
+	}
+	if inbound.SessionID == "" {
+		inbound.SessionID = sessionID
+	}
+	reply, err := json.Marshal(map[string]any{
+		"type":      "response",
+		"sessionId": inbound.SessionID,
+		"text":      "ack",
+	})
+	if err != nil {
+		return err
+	}
+	r.out <- reply
 	return nil
 }
 
@@ -184,22 +213,22 @@ func ssIdleSandbox(name, pool, podIP string) *lennyv1.Sandbox {
 }
 
 // ssAdapterDialer serves an adapter backed by rt over bufconn and returns a
-// DialAdapter func the binder uses to reach the pod's adapter.
-func ssAdapterDialer(t *testing.T, rt adapter.RuntimeProcess) func(string) (*adapterclient.Client, error) {
+// DialAdapter func the binder uses to reach the pod's adapter. opts are
+// extra gRPC server options, such as an interceptor that observes a stream.
+func ssAdapterDialer(t *testing.T, rt adapter.RuntimeProcess, opts ...grpc.ServerOption) func(string) (*adapterclient.Client, error) {
 	t.Helper()
 	srv := adapter.New("singleshot-test")
-	// Set the full §6.4 root layout, not just the whole-pod WorkspaceRoot, so
-	// the per-slot materialization path (WorkspaceBase/slots/{slotId}) the
-	// concurrent-workspace bind drives has a real tree to write into.
+	// Set the full §6.4 root layout so the per-slot materialization path
+	// (WorkspaceBase/slots/{sessionId}) every bind drives has a real tree
+	// to write into.
 	base := t.TempDir()
-	srv.WorkspaceRoot = filepath.Join(base, "workspace", "current")
 	srv.WorkspaceBase = filepath.Join(base, "workspace")
 	srv.SessionsRoot = filepath.Join(base, "sessions")
 	srv.ArtifactsRoot = filepath.Join(base, "artifacts")
 	srv.CredentialsDir = filepath.Join(base, "run", "lenny")
 	srv.Runtime = rt
 	lis := bufconn.Listen(1 << 20)
-	gs := adapter.NewGRPCServer(srv)
+	gs := adapter.NewGRPCServer(srv, opts...)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 	return func(string) (*adapterclient.Client, error) {
@@ -232,11 +261,13 @@ func ssRecyclingPool(name, runtimeRef string) poolstore.Pool {
 		RuntimeRef:    runtimeRef,
 		ExecutionMode: runtimestore.ExecutionModeSession,
 		SessionPolicy: &runtimestore.SessionPolicy{
-			MaxConcurrentSessions: 1,
+			AcknowledgeProcessLevelIsolation: true,
+			MaxConcurrentSessions:            1,
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          25,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 	}
@@ -377,6 +408,7 @@ var _ executor.SessionReleaser = (*ssSpyExecutor)(nil)
 // binder and the spy executor over the real PodExecutor, sharing store.
 func ssChatHandler(store sessionstore.Store, srv *sessionserver.Server, spy *ssSpyExecutor) *translator.OpenAIChatHandler {
 	return translator.NewOpenAIChatHandler(store, spy, translator.OpenAIChatOptions{
+		DevTenantHeader:  true,
 		SingleShotBinder: ssSingleShotBinder{srv: srv},
 		DefaultRuntime:   "echo",
 	})
@@ -458,6 +490,7 @@ func TestSingleShotBindsDispatchesAndRecyclesOnCompletion_spec_15(t *testing.T) 
 	}
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-ss-ok" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -478,7 +511,7 @@ func TestSingleShotBindsDispatchesAndRecyclesOnCompletion_spec_15(t *testing.T) 
 		t.Error("dispatch ran without a registered pod binding")
 	}
 	if spy.sawSlotID != "" {
-		t.Errorf("exclusive session-mode bind carried slotId %q, want empty", spy.sawSlotID)
+		t.Errorf("exclusive session-mode bind carried slot identifier %q, want empty", spy.sawSlotID)
 	}
 	// The deferred release removed the binding within the one HTTP call.
 	if _, ok := registry.Get("sess-ss-ok"); ok {
@@ -515,10 +548,10 @@ func TestSingleShotBindsDispatchesAndRecyclesOnCompletion_spec_15(t *testing.T) 
 // session-mode release), §4.6.3 (gateway writes no Sandbox.status).
 // diagnosis: on a concurrent-workspace pool (maxConcurrentSessions > 1) the
 // single-shot adapter must claim a per-slot reservation, dispatch with the
-// resolved slotId stamped on the registry binding, and release that one slot
+// resolved slot identifier stamped on the registry binding, and release that one slot
 // through Binder.ReleaseSlot so a concurrently-held sibling slot on the same
 // pod survives. A failure means the slot path regressed: the bind carried no
-// slotId during exec.Send (the executor fails closed with SLOT_ID_REQUIRED or
+// slot identifier during exec.Send (the executor fails closed with SLOT_ID_REQUIRED or
 // misroutes into another slot), the binding was not removed after the call, or
 // the release drained the whole pod through session-mode Release (which
 // deletes the per-pod claim and tears down the sibling) instead of decrementing
@@ -555,6 +588,7 @@ func TestSingleShotConcurrentSlotBindDispatchReleaseKeepsSibling_spec_5_2(t *tes
 	}
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-ss-slot" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -571,13 +605,13 @@ func TestSingleShotConcurrentSlotBindDispatchReleaseKeepsSibling_spec_5_2(t *tes
 	if !spy.sawBinding {
 		t.Error("dispatch ran without a registered pod binding")
 	}
-	// A concurrent-workspace bind stamps the resolved slotId onto the registry
-	// binding; the executor reads it to route the per-slot message. The slotId
-	// equals the session id (§5.2), so a non-empty value matching the request's
+	// A concurrent-workspace bind stamps the resolved slot identifier onto
+	// the registry binding. The identifier equals the session id (§5.2), so
+	// a non-empty value matching the request's
 	// session id proves the slot path ran during exec.Send rather than the
 	// exclusive session-mode path (which carries an empty SlotID).
 	if spy.sawSlotID != "sess-ss-slot" {
-		t.Errorf("concurrent-slot bind carried slotId %q during dispatch, want sess-ss-slot", spy.sawSlotID)
+		t.Errorf("concurrent-slot bind carried slot identifier %q during dispatch, want sess-ss-slot", spy.sawSlotID)
 	}
 	// The deferred release removed the request's binding within the one call.
 	if _, ok := registry.Get("sess-ss-slot"); ok {
@@ -616,6 +650,7 @@ func TestSingleShotReleasesAndRetiresOnDispatchError_spec_15(t *testing.T) {
 	}
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-ss-senderr" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -673,6 +708,7 @@ func TestSingleShotReleaseDrainsOnDetachedContextAfterTimeout_spec_15(t *testing
 	}
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-ss-timeout" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -729,6 +765,7 @@ func TestSingleShotPoolExhaustionReturnsRetryableEnvelope_spec_7_1(t *testing.T)
 	registry := podsession.NewRegistry()
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-ss-exhaust" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -804,6 +841,7 @@ func TestSingleShotCredentialExhaustionHasNoRetryAfter_spec_4_9(t *testing.T) {
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-ss-credexhaust" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -914,7 +952,7 @@ func TestSingleShotAdmissionGateDenialsFailClosed_spec_15_2_1(t *testing.T) {
 		{
 			name: "concurrency-limit", wantCode: "QUOTA_EXCEEDED", wantStat: http.StatusTooManyRequests,
 			opts: func(sessionstore.Store) sessionserver.Options {
-				return sessionserver.Options{MaxConcurrentSessionsPerRuntime: 1}
+				return sessionserver.Options{DevTenantHeader: true, MaxConcurrentSessionsPerRuntime: 1}
 			},
 			seed: func(store sessionstore.Store) {
 				if err := store.Create(context.Background(), ssRunningRow("run-echo-0", "acme", "alice", "echo")); err != nil {
@@ -935,6 +973,7 @@ func TestSingleShotAdmissionGateDenialsFailClosed_spec_15_2_1(t *testing.T) {
 					t.Fatalf("seed admission-rate counter: %v", err)
 				}
 				return sessionserver.Options{
+					DevTenantHeader:           true,
 					Clock:                     func() time.Time { return fixed },
 					AdmissionRateLimitCounter: c,
 					PerRuntimePerMinute:       1,
@@ -951,6 +990,7 @@ func TestSingleShotAdmissionGateDenialsFailClosed_spec_15_2_1(t *testing.T) {
 					t.Fatalf("seed tenant: %v", err)
 				}
 				return sessionserver.Options{
+					DevTenantHeader:            true,
 					Tenants:                    ts,
 					Environments:               environmentstore.NewMemory(),
 					DefaultNoEnvironmentPolicy: tenantstore.NoEnvPolicyDenyAll,
@@ -967,7 +1007,7 @@ func TestSingleShotAdmissionGateDenialsFailClosed_spec_15_2_1(t *testing.T) {
 				}); err != nil {
 					t.Fatalf("seed user: %v", err)
 				}
-				return sessionserver.Options{Users: us}
+				return sessionserver.Options{DevTenantHeader: true, Users: us}
 			},
 			mutate: principal,
 		},
@@ -978,7 +1018,7 @@ func TestSingleShotAdmissionGateDenialsFailClosed_spec_15_2_1(t *testing.T) {
 				if err := ts.Create(context.Background(), tenantstore.Tenant{ID: "acme", MaxConcurrentSessions: 1}); err != nil {
 					t.Fatalf("seed tenant: %v", err)
 				}
-				return sessionserver.Options{Tenants: ts}
+				return sessionserver.Options{DevTenantHeader: true, Tenants: ts}
 			},
 			seed: func(store sessionstore.Store) {
 				if err := store.Create(context.Background(), ssRunningRow("quota-echo-0", "acme", "alice", "echo")); err != nil {
@@ -989,7 +1029,7 @@ func TestSingleShotAdmissionGateDenialsFailClosed_spec_15_2_1(t *testing.T) {
 		{
 			name: "policy-chain", wantCode: "QUOTA_EXCEEDED", wantStat: http.StatusTooManyRequests,
 			opts: func(sessionstore.Store) sessionserver.Options {
-				return sessionserver.Options{Interceptors: ssRejectChain(t)}
+				return sessionserver.Options{DevTenantHeader: true, Interceptors: ssRejectChain(t)}
 			},
 			mutate: principal,
 		},

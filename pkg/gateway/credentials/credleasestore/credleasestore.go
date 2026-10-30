@@ -41,7 +41,7 @@ type LeaseStore interface {
 	// expired-lease sweep that keeps the lease working set and the deny
 	// list bounded within a replica's lifetime.
 	//
-	// spec: §4.9 line 1671 — deny-list entries expire when the
+	// spec: §4.9 — deny-list entries expire when the
 	// credential's natural lease TTL lapses.
 	DeleteExpired(ctx context.Context, cutoff time.Time) (int, error)
 	// LeasesByCredentialCount reports how many leases the store holds
@@ -53,9 +53,24 @@ type LeaseStore interface {
 	// §4.9 fail-closed deny-list-entry removal and the startup rebuild
 	// filter.
 	//
-	// spec: §4.9 lines 1694-1695 — the startup rebuild seeds a deny-list
+	// spec: §4.9 — the startup rebuild seeds a deny-list
 	// entry only for a revoked credential that still has an active lease.
 	LeasesByCredentialCount(ctx context.Context, key credential.CredentialKey, activeAsOf time.Time) (int, error)
+	// Lookup resolves a lease by its lease ID and distinguishes a missing
+	// record from a failed read: ok is false with a nil error only when
+	// the store holds no record of the lease, and any other failure is
+	// returned as an error. The §4.9 renewal reads it so a released lease
+	// is never re-minted and a transient read failure is retried.
+	//
+	// spec: §4.9 (Proactive Lease Renewal).
+	Lookup(leaseID string) (lease credential.Lease, ok bool, err error)
+	// Advance moves an existing lease record's ExpiresAt and RenewBefore
+	// to the values lease carries and inserts no record. It reports false
+	// with a nil error when the store holds no record of the lease, so an
+	// extension of a released lease writes nothing.
+	//
+	// spec: §4.9 (Proactive Lease Renewal).
+	Advance(lease credential.Lease) (bool, error)
 }
 
 // Store indexes issued credential leases by lease ID and, for
@@ -121,6 +136,30 @@ func (s *Store) GetByID(leaseID string) (lease credential.Lease, ok bool) {
 	return lease, ok
 }
 
+// Lookup resolves a lease by its lease ID. The in-memory store always
+// answers, so the error is nil and ok is false only for a lease it holds no
+// record of. spec: §4.9 (Proactive Lease Renewal).
+func (s *Store) Lookup(leaseID string) (credential.Lease, bool, error) {
+	lease, ok := s.GetByID(leaseID)
+	return lease, ok, nil
+}
+
+// Advance moves an existing record's ExpiresAt and RenewBefore to lease's
+// values and reports whether a record existed. It inserts nothing for an
+// unknown lease. spec: §4.9 (Proactive Lease Renewal).
+func (s *Store) Advance(lease credential.Lease) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur, ok := s.byID[lease.LeaseID]
+	if !ok {
+		return false, nil
+	}
+	cur.ExpiresAt = lease.ExpiresAt
+	cur.RenewBefore = lease.RenewBefore
+	s.byID[lease.LeaseID] = cur
+	return true, nil
+}
+
 // Remove drops the lease with the given ID and its token index. It is
 // a no-op when this replica holds no such lease.
 func (s *Store) Remove(leaseID string) {
@@ -146,8 +185,9 @@ func (s *Store) Len() int {
 // LeasesBySession returns every lease this replica holds whose
 // SessionID is one of sessionIDs. It backs the §11.4 full_revoke
 // credential-lease revocation step: the caller resolves a revoked
-// user's sessions, collects their leases here, removes them, and adds
-// each lease's credential to the §4.9 deny list. The returned slice is
+// user's sessions, collects their leases here, and returns each lease
+// to its pool, which revokes it; the step writes no §4.9 deny-list
+// entry. The returned slice is
 // a copy, so the caller may iterate it while removing the leases. An
 // empty sessionIDs set yields no leases.
 func (s *Store) LeasesBySession(sessionIDs []string) []credential.Lease {
@@ -178,7 +218,7 @@ func (s *Store) LeasesBySession(sessionIDs []string) []credential.Lease {
 // removing the leases. The match is source-aware: a pool key never
 // aliases a user key (§4.9).
 //
-// spec: §4.9 lines 1640-1652 — look up all active leases backed by the
+// spec: §4.9 — look up all active leases backed by the
 // credential and terminate them.
 func (s *Store) LeasesByCredential(key credential.CredentialKey) []credential.Lease {
 	s.mu.RLock()
@@ -198,7 +238,7 @@ func (s *Store) LeasesByCredential(key credential.CredentialKey) []credential.Le
 // answers, so the error is nil. It backs the §4.9 bounded expired-lease
 // sweep.
 //
-// spec: §4.9 line 1671 — deny-list entries expire when the credential's
+// spec: §4.9 — deny-list entries expire when the credential's
 // natural lease TTL lapses.
 func (s *Store) DeleteExpired(_ context.Context, cutoff time.Time) (int, error) {
 	s.mu.Lock()
@@ -223,7 +263,7 @@ func (s *Store) DeleteExpired(_ context.Context, cutoff time.Time) (int, error) 
 // always answers, so the error is nil. It backs the §4.9 fail-closed
 // deny-list-entry removal (the sweep) and the startup rebuild filter.
 //
-// spec: §4.9 lines 1694-1695 — the startup rebuild seeds a deny-list
+// spec: §4.9 — the startup rebuild seeds a deny-list
 // entry only for a revoked credential that still has an active lease.
 func (s *Store) LeasesByCredentialCount(_ context.Context, key credential.CredentialKey, activeAsOf time.Time) (int, error) {
 	s.mu.RLock()

@@ -23,7 +23,8 @@ Integration level: Basic
   - Reads JSON Lines from stdin
   - Handles "message" by reading workspace files and summarizing them
   - Uses adapter-local tools (read_file, list_dir) via tool_call/tool_result
-  - Handles "heartbeat" by responding with "heartbeat_ack"
+  - Handles "heartbeat" by responding with "heartbeat_ack", reporting busy
+    for the session whose message is in progress
   - Handles "shutdown" by exiting cleanly
   - Ignores unknown message types for forward compatibility
 
@@ -49,6 +50,10 @@ tool_call_counter = 0
 #   2 = reading files
 #   3 = producing summary
 phase = 0
+
+# Sessions whose message is in progress, from handle_message until
+# write_response answers it.
+busy_sessions = set()
 
 # Pending tool call ID (for correlating results).
 pending_tool_call_id = None
@@ -77,15 +82,34 @@ def write_json(obj):
     sys.stdout.flush()
 
 
-def write_response(text):
+def with_session_id(frame, session_id):
+    """Stamp the session identifier on a session-scoped frame.
+
+    The caller passes the identifier read from the inbound envelope the frame
+    answers, so a frame emitted on a tool_result continuation is addressed to
+    the session that tool_result belongs to rather than to whichever message
+    the runtime handled last.
+
+    The key is omitted when the inbound envelope carried none, so the frame is
+    never emitted with a null address: the published JSON Lines schema accepts
+    a string here, and a frame that omits the key resolves to the binding of
+    the stream that delivered it on a pod holding at most one slot.
+    """
+    if session_id is not None:
+        frame["sessionId"] = session_id
+    return frame
+
+
+def write_response(session_id, text):
     """Send a response message signaling task completion."""
     global phase
-    write_json({
+    write_json(with_session_id({
         "type": "response",
         "output": [
             {"type": "text", "inline": text}
         ]
-    })
+    }, session_id))
+    busy_sessions.discard(session_id)
     phase = 0
 
 
@@ -105,30 +129,30 @@ def truncate(s, n=500):
 
 # ---- Tool call helpers ----
 
-def list_dir(path):
+def list_dir(session_id, path):
     """Send a list_dir tool call."""
     global pending_tool_call_id
     tc_id = next_tool_call_id()
     pending_tool_call_id = tc_id
-    write_json({
+    write_json(with_session_id({
         "type": "tool_call",
         "id": tc_id,
         "name": "list_dir",
         "arguments": {"path": path}
-    })
+    }, session_id))
 
 
-def read_file(path):
+def read_file(session_id, path):
     """Send a read_file tool call."""
     global pending_tool_call_id
     tc_id = next_tool_call_id()
     pending_tool_call_id = tc_id
-    write_json({
+    write_json(with_session_id({
         "type": "tool_call",
         "id": tc_id,
         "name": "read_file",
         "arguments": {"path": path}
-    })
+    }, session_id))
 
 
 # ---- Message handlers ----
@@ -142,6 +166,7 @@ def handle_message(msg):
     file_contents = []
     current_file_index = 0
     phase = 1
+    busy_sessions.add(msg.get("sessionId"))
 
     # Extract the user's request text.
     request_text = ""
@@ -150,13 +175,19 @@ def handle_message(msg):
 
     print(f"file-summarizer: received request: {request_text}", file=sys.stderr)
 
-    # Step 1: List files in the workspace.
-    list_dir("/workspace/current")
+    # Step 1: List files in the workspace. The tool_call this message triggers
+    # is addressed to the session the message itself was addressed to.
+    session_id = msg.get("sessionId")
+    list_dir(session_id, f"/workspace/slots/{session_id}/current")
 
 
 def handle_tool_result(msg):
     """Process the result of a tool call."""
     global phase, file_list, file_contents, current_file_index
+
+    # Every frame emitted on this continuation is addressed to the session the
+    # tool_result being answered was addressed to.
+    session_id = msg.get("sessionId")
 
     # Verify this result matches our pending tool call.
     if msg.get("id") != pending_tool_call_id:
@@ -172,7 +203,7 @@ def handle_tool_result(msg):
         if msg.get("content") and len(msg["content"]) > 0:
             error_text = msg["content"][0].get("inline", error_text)
         print(f"file-summarizer: tool error: {error_text}", file=sys.stderr)
-        write_response(f"Error reading workspace: {error_text}")
+        write_response(session_id, f"Error reading workspace: {error_text}")
         return
 
     if phase == 1:
@@ -185,13 +216,13 @@ def handle_tool_result(msg):
                     file_list.append(line)
 
         if not file_list:
-            write_response("No files found in the workspace.")
+            write_response(session_id, "No files found in the workspace.")
             return
 
         # Step 2: Start reading files one by one.
         phase = 2
         current_file_index = 0
-        read_next_file()
+        read_next_file(session_id)
 
     elif phase == 2:
         # Phase 2: We received a file's contents.
@@ -203,29 +234,29 @@ def handle_tool_result(msg):
         current_file_index += 1
         if current_file_index < len(file_list) and current_file_index < 10:
             # Read the next file (cap at 10 files).
-            read_next_file()
+            read_next_file(session_id)
         else:
             # All files read. Produce the summary.
             phase = 3
-            produce_summary()
+            produce_summary(session_id)
 
 
-def read_next_file():
+def read_next_file(session_id):
     """Send a read_file tool call for the next file in the list."""
     if current_file_index >= len(file_list):
         return
-    file_path = f"/workspace/current/{file_list[current_file_index]}"
-    read_file(file_path)
+    file_path = f"/workspace/slots/{session_id}/current/{file_list[current_file_index]}"
+    read_file(session_id, file_path)
 
 
-def produce_summary():
+def produce_summary(session_id):
     """Generate the final summary response."""
     lines = [f"Workspace Summary ({len(file_contents)} files)\n"]
     for fc in file_contents:
         lines.append(fc)
         lines.append("")
     lines.append(f"Total files examined: {len(file_contents)}")
-    write_response("\n".join(lines))
+    write_response(session_id, "\n".join(lines))
 
 
 # ---- Main loop ----
@@ -252,8 +283,13 @@ def main():
             handle_tool_result(msg)
 
         elif msg_type == "heartbeat":
-            # Respond immediately. Failure to ack within 10 seconds causes SIGTERM.
-            write_json({"type": "heartbeat_ack"})
+            # Respond immediately, within 10 seconds. While a message for the
+            # session the heartbeat names is in progress, report busy.
+            hb_session = msg.get("sessionId")
+            if hb_session is not None and hb_session in busy_sessions:
+                write_json({"type": "heartbeat_ack", "sessionId": hb_session, "busy": True})
+            else:
+                write_json({"type": "heartbeat_ack"})
 
         elif msg_type == "shutdown":
             reason = msg.get("reason", "unknown")
@@ -270,6 +306,10 @@ if __name__ == "__main__":
 ```
 
 ---
+
+## Heartbeats and busy reporting
+
+The adapter sends a `heartbeat` once per interval for each session, naming the session in `sessionId`. The example acknowledges each heartbeat at once, and while a message is in progress it acknowledges a heartbeat that names that message's session with `busy: true`. If no acknowledgment arrives within 10 seconds, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy. A runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for the session the heartbeat names, as in `{"type":"heartbeat_ack","sessionId":"sess_abc","busy":true}`. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../../reference/glossary#slot); each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. See [Idle suspension](../lifecycle.md#idle-suspension).
 
 ## Critical: Stdout Flushing
 
@@ -357,6 +397,8 @@ mcp>=1.0.0
 ```
 
 ### 2. Read the Adapter Manifest
+
+The manifest carries only pod-scoped fields. A session's own context, such as its credential file path, arrives in that session's `session_start` frame on stdin (see the [Adapter Contract](../../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin)). This example keeps no per-session context, so it takes the session identifier from each `message`'s `sessionId` and ignores `session_start` and `session_end` under the unknown-type rule.
 
 ```python
 import json

@@ -15,7 +15,7 @@ import (
 
 // CodeFallbackExhausted is the §4.9 terminal error returned to the agent
 // pod when the credentialPolicy fallback chain is exhausted (category
-// POLICY). spec: spec/04_system-components.md line 1394.
+// POLICY). spec: §4.9.
 const CodeFallbackExhausted = "CREDENTIAL_FALLBACK_EXHAUSTED"
 
 // FallbackRotator mints a replacement §4.9 credential lease from the
@@ -33,7 +33,7 @@ type FallbackRotator interface {
 }
 
 // FallbackExhaustedEvent carries the §4.9.2 credential.fallback_exhausted
-// audit fields. spec: spec/04_system-components.md lines 1393-1396.
+// audit fields. spec: §4.9.
 type FallbackExhaustedEvent struct {
 	TenantID          string
 	SessionID         string
@@ -71,7 +71,7 @@ type FallbackMetrics interface {
 // that are not upstream credential faults (request-shape errors,
 // timeouts, mid-stream interruptions): those do not drive fallback.
 //
-// spec: spec/04_system-components.md lines 1383-1384 — fallback fires on
+// spec: §4.9 — fallback fires on
 // RATE_LIMITED, AUTH_EXPIRED, and PROVIDER_UNAVAILABLE.
 func faultTrigger(t ErrorType) (credential.RotationTrigger, bool) {
 	switch t {
@@ -95,16 +95,16 @@ func faultTrigger(t ErrorType) (credential.RotationTrigger, bool) {
 // declares the chain exhausted (writing the terminal
 // CREDENTIAL_FALLBACK_EXHAUSTED error and returning true).
 //
-// spec: spec/04_system-components.md lines 1383-1411.
+// spec: §4.9.
 func (h *Handler) driveFallback(w http.ResponseWriter, lease credential.Lease, trigger credential.RotationTrigger, errorType string) (exhausted bool) {
 	if h.Fallback == nil {
 		return false
 	}
-	// spec: §16.3 line 353 — the credential.fallback_chain span (Gateway
+	// spec: §16.3 — the credential.fallback_chain span (Gateway
 	// credential service). The §4.9 fallback orchestration carries no
 	// request context, so the span roots at Background and projects the
 	// faulted lease's tenant/session/provider/pool as attributes. No
-	// credential material is attached (§16.4 line 376).
+	// credential material is attached (§16.4).
 	_, span := tracing.NewTracer(nil).Start(context.Background(), tracing.SpanCredentialFallbackChain)
 	span.SetAttributes(
 		attribute.String("tenant_id", lease.TenantID),

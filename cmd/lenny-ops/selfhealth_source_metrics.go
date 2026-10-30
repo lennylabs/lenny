@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 )
 
-// The §25.4 lines 2491-2497 self-health source gauges. Each reports the
+// The §25.4 self-health source gauges. Each reports the
 // raw numeric input one of the §25.4 self-health checks derives its
 // status from, so an operator can read the underlying value (not only
 // the 0/1/2 status the lenny_ops_self_health_status{check} gauge
@@ -59,7 +59,7 @@ var opsWebhookBacklog = func() *prometheus.GaugeVec {
 // wired); the Redis consumer-lag gauge reads the lag function the
 // redis_consumer_lag self-health check uses (0 when nil — no consumer-lag
 // source is wired yet); the webhook-backlog gauge reads the delivery
-// worker's pending count. spec: §25.4 lines 2491-2497.
+// worker's pending count. spec: §25.4.
 func sampleSelfHealthSourceGauges(pool *pgxpool.Pool, redisLag func() int, webhookBacklog func() int) {
 	if opsPostgresPoolActive != nil && pool != nil {
 		opsPostgresPoolActive.WithLabelValues().Set(float64(pool.Stat().AcquiredConns()))

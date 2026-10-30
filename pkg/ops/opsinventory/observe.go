@@ -16,7 +16,7 @@ type Lister interface {
 	List(ctx context.Context, filter operations.Filter, limit int) operations.Page
 }
 
-// ProgressUpdate is one §25.2 line 401 operation_progressed signal the
+// ProgressUpdate is one §25.2 operation_progressed signal the
 // Observer raises when an in-flight operation advances a step or crosses
 // a named percent threshold.
 type ProgressUpdate struct {
@@ -37,13 +37,13 @@ type ProgressUpdate struct {
 // Observer implements the §25.2 operations-observe loop: on each tick it
 // scans the Operations Inventory, maintains the
 // lenny_ops_operations_stalled gauge (the OperationStalled alert
-// backing, §25.2 line 399), and raises operation_progressed updates on
-// step transitions and percent-threshold crossings (§25.2 line 401).
+// backing, §25.2), and raises operation_progressed updates on
+// step transitions and percent-threshold crossings (§25.2).
 //
 // It runs leader-only so a multi-replica deployment emits one stream of
 // progress events and one authoritative gauge value, not one per replica.
 //
-// spec: §25.2 lines 399-401.
+// spec: §25.2.
 type Observer struct {
 	inv        Lister
 	setStalled func(float64)

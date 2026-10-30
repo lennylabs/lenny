@@ -162,7 +162,7 @@ func (c *Client) ListSessions(ctx context.Context, opt ListOptions, opts ...Requ
 	if encoded := q.Encode(); encoded != "" {
 		path += "?" + encoded
 	}
-	// spec: §15.1 lines 1228-1253 — the gateway returns the canonical
+	// spec: §15.1 — the gateway returns the canonical
 	// `{items, cursor, hasMore, total?}` cursor-paginated envelope.
 	var raw struct {
 		Items   []Session `json:"items"`
@@ -221,9 +221,16 @@ func (c *Client) Finalize(ctx context.Context, id string, opts ...RequestOption)
 }
 
 // Start calls POST /v1/sessions/{id}/start, transitioning a ready
-// session to running.
+// session through starting to running. It sends the request once and
+// retries neither an error response nor a transport failure, whatever the
+// Client's retry policy: a /start that fails after the gateway wrote
+// starting leaves the session failed, so a repeated /start is refused, and
+// neither a 5xx nor a transport failure tells the client whether that write
+// happened. Recover from a failed Start by creating a new session.
+//
+// spec: §15.1 (/start), §15.6 (Client SDKs), §7.2 (starting → failed)
 func (c *Client) Start(ctx context.Context, id string, opts ...RequestOption) (*Session, error) {
-	return c.transition(ctx, http.MethodPost, id, "start", opts...)
+	return c.transitionAttempts(ctx, http.MethodPost, id, "start", 1, opts...)
 }
 
 // Interrupt calls POST /v1/sessions/{id}/interrupt, transitioning a
@@ -238,8 +245,11 @@ func (c *Client) Terminate(ctx context.Context, id string, opts ...RequestOption
 	return c.transition(ctx, http.MethodPost, id, "terminate", opts...)
 }
 
-// Resume calls POST /v1/sessions/{id}/resume, transitioning a
-// session awaiting client action back to running.
+// Resume calls POST /v1/sessions/{id}/resume on a session in
+// awaiting_client_action or suspended. The call returns the session in its
+// new state, resume_pending when the session waits for a restore, or running
+// when a suspended session resumed on the pod it holds; the restore's outcome
+// arrives on the session's event stream.
 func (c *Client) Resume(ctx context.Context, id string, opts ...RequestOption) (*Session, error) {
 	return c.transition(ctx, http.MethodPost, id, "resume", opts...)
 }
@@ -248,12 +258,18 @@ func (c *Client) Resume(ctx context.Context, id string, opts ...RequestOption) (
 // trailing path segment (finalize, start, ...); an empty action
 // targets the bare /v1/sessions/{id} path for DELETE.
 func (c *Client) transition(ctx context.Context, method, id, action string, opts ...RequestOption) (*Session, error) {
+	return c.transitionAttempts(ctx, method, id, action, c.retry.MaxAttempts, opts...)
+}
+
+// transitionAttempts is transition with the request loop's attempt limit
+// given explicitly.
+func (c *Client) transitionAttempts(ctx context.Context, method, id, action string, maxAttempts int, opts ...RequestOption) (*Session, error) {
 	path := "/v1/sessions/" + url.PathEscape(id)
 	if action != "" {
 		path += "/" + action
 	}
 	var out Session
-	if err := c.do(ctx, method, path, nil, &out, opts...); err != nil {
+	if err := c.doAttempts(ctx, method, path, nil, &out, maxAttempts, opts...); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -261,11 +277,13 @@ func (c *Client) transition(ctx context.Context, method, id, action string, opts
 
 // SendMessages calls POST /v1/sessions/{id}/messages with the supplied
 // batch and returns the §15.4 delivery receipt plus the executor's
-// synchronous output. Each payload may carry `inReplyTo`, `delivery`,
-// and `slotId`; see MessagePayload.
+// synchronous output. Each payload may carry `inReplyTo` and
+// `delivery`; see MessagePayload. A client addresses a session rather
+// than a slot: the path's session identifier names the slot the
+// gateway delivers to.
 //
-// spec: §15.1 messages endpoint; §15.4 lines 1725-1737 delivery_receipt;
-// §7.2 line 345.
+// spec: §15.1 messages endpoint; §15.4 delivery_receipt;
+// §7.2.
 func (c *Client) SendMessages(ctx context.Context, id string, req SendMessagesRequest, opts ...RequestOption) (*SendMessagesResponse, error) {
 	if len(req.Messages) == 0 {
 		return nil, errors.New("lenny: SendMessages requires at least one message")
@@ -300,7 +318,7 @@ func (c *Client) GetTranscript(ctx context.Context, id string, opt TranscriptOpt
 }
 
 // SessionLogs calls GET /v1/sessions/{id}/logs and returns one page of
-// the §15.1 line 673 session-log envelope. It is the REST transport the
+// the §15.1 session-log envelope. It is the REST transport the
 // §24.17 `lenny session logs` command uses. The SDK requests the JSON
 // list view (the do helper sets Accept: application/json) rather than the
 // SSE tail. Pass LogsOptions.Since to apply the §24.17 `--since` filter.
@@ -329,7 +347,7 @@ func (c *Client) SessionLogs(ctx context.Context, id string, opt LogsOptions, op
 // ApproveToolUse calls POST /v1/sessions/{id}/tool-use/{toolCallID}/approve
 // to resolve a pending tool-use interaction the agent is blocked on.
 //
-// spec: §7.2 table line 124; §15.1.
+// spec: §7.2 table; §15.1.
 func (c *Client) ApproveToolUse(ctx context.Context, id, toolCallID string, opts ...RequestOption) (*InteractionResolution, error) {
 	path := "/v1/sessions/" + url.PathEscape(id) + "/tool-use/" + url.PathEscape(toolCallID) + "/approve"
 	var out InteractionResolution
@@ -342,7 +360,7 @@ func (c *Client) ApproveToolUse(ctx context.Context, id, toolCallID string, opts
 // DenyToolUse calls POST /v1/sessions/{id}/tool-use/{toolCallID}/deny
 // with an optional human-readable reason recorded in the audit row.
 //
-// spec: §7.2 table line 125; §15.1.
+// spec: §7.2 table; §15.1.
 func (c *Client) DenyToolUse(ctx context.Context, id, toolCallID, reason string, opts ...RequestOption) (*InteractionResolution, error) {
 	path := "/v1/sessions/" + url.PathEscape(id) + "/tool-use/" + url.PathEscape(toolCallID) + "/deny"
 	body := struct {
@@ -360,7 +378,7 @@ func (c *Client) DenyToolUse(ctx context.Context, id, toolCallID, reason string,
 // supplied response value. The runtime receives the value and unblocks
 // the pending `lenny/request_elicitation` call.
 //
-// spec: §7.2 table line 126; §9.2; §15.1.
+// spec: §7.2 table; §9.2; §15.1.
 func (c *Client) RespondElicitation(ctx context.Context, id, elicitationID string, response any, opts ...RequestOption) (*InteractionResolution, error) {
 	path := "/v1/sessions/" + url.PathEscape(id) + "/elicitations/" + url.PathEscape(elicitationID) + "/respond"
 	body := struct {
@@ -377,7 +395,7 @@ func (c *Client) RespondElicitation(ctx context.Context, id, elicitationID strin
 // POST /v1/sessions/{id}/elicitations/{elicitationID}/dismiss to
 // cancel a pending elicitation request.
 //
-// spec: §7.2 table line 127; §9.2; §15.1.
+// spec: §7.2 table; §9.2; §15.1.
 func (c *Client) DismissElicitation(ctx context.Context, id, elicitationID string, opts ...RequestOption) (*InteractionResolution, error) {
 	path := "/v1/sessions/" + url.PathEscape(id) + "/elicitations/" + url.PathEscape(elicitationID) + "/dismiss"
 	var out InteractionResolution
@@ -392,6 +410,12 @@ func (c *Client) DismissElicitation(ctx context.Context, id, elicitationID strin
 // the Client's retry policy, and decodes a 2xx response into out.
 // A non-2xx response is decoded into an *APIError.
 func (c *Client) do(ctx context.Context, method, path string, body, out any, opts ...RequestOption) error {
+	return c.doAttempts(ctx, method, path, body, out, c.retry.MaxAttempts, opts...)
+}
+
+// doAttempts is the request loop of do, making at most maxAttempts
+// attempts; a maxAttempts of 1 sends the request once.
+func (c *Client) doAttempts(ctx context.Context, method, path string, body, out any, maxAttempts int, opts ...RequestOption) error {
 	var ro requestOptions
 	for _, opt := range opts {
 		opt(&ro)
@@ -408,7 +432,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, opt
 
 	policy := c.retry
 	var lastErr error
-	for attempt := 1; attempt <= policy.MaxAttempts; attempt++ {
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt > 1 {
 			delay := policy.delayForAttempt(attempt-1, c.rng)
 			if err := sleepCtx(ctx, delay); err != nil {
@@ -436,7 +460,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, opt
 
 		apiErr := decodeAPIError(status, respBody)
 		lastErr = apiErr
-		if apiErr.Retryable && attempt < policy.MaxAttempts {
+		if apiErr.Retryable && attempt < maxAttempts {
 			continue
 		}
 		return apiErr

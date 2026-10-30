@@ -259,7 +259,7 @@ func TestExperimentStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §10.7 line 1092 / §4.2 line 165 — the platform-global
+	// spec: §10.7 / §4.2 — the platform-global
 	// PoolScalingController reads every experiment across tenants through
 	// ListAll, which uses the §4.2 platform-admin cross-tenant path
 	// (InAllTenants) rather than a single SET LOCAL app.current_tenant.

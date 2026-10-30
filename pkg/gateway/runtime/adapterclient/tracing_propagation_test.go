@@ -6,6 +6,7 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
@@ -20,7 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 )
 
-// TestGRPCTraceContextPropagatesGatewayToPod exercises the full §16.3 line 327
+// TestGRPCTraceContextPropagatesGatewayToPod exercises the full §16.3
 // hop ("Gateway → Pod (gRPC metadata)"): a client span opened on the gateway
 // side must reach the pod adapter as the parent of the server-side RPC span.
 // Both the adapterclient.Dial client stats handler and the
@@ -63,11 +64,18 @@ func TestGRPCTraceContextPropagatesGatewayToPod_spec_16_3_327(t *testing.T) {
 	clientSpan.End()
 
 	wantTrace := clientSpan.SpanContext().TraceID()
+	// The server handler ends its span after it writes the response, so the
+	// client can return before the span is recorded; poll briefly for it.
 	var serverSpan sdktrace.ReadOnlySpan
-	for _, s := range recorder.Ended() {
-		if s.SpanKind() == trace.SpanKindServer {
-			serverSpan = s
-			break
+	for deadline := time.Now().Add(2 * time.Second); serverSpan == nil && time.Now().Before(deadline); {
+		for _, s := range recorder.Ended() {
+			if s.SpanKind() == trace.SpanKindServer {
+				serverSpan = s
+				break
+			}
+		}
+		if serverSpan == nil {
+			time.Sleep(5 * time.Millisecond)
 		}
 	}
 	if serverSpan == nil {

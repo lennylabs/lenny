@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// TestReadChunkSpillsLargeChunkToFile pins the §4.4 line 255 memory bound:
+// TestReadChunkSpillsLargeChunkToFile pins the §4.4 memory bound:
 // a chunk larger than the memory threshold is buffered in a StagingDir
 // spill file rather than on the heap, and the spilled chunk is re-readable
 // (the retry budget re-reads the body) and cleaned up on close.

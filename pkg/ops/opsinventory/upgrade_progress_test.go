@@ -34,7 +34,7 @@ func activeUpgradeInventory(t *testing.T, st upgradeservice.State, now time.Time
 	return inv, svc
 }
 
-// spec §25.8 line 3496: "GET /v1/admin/platform/upgrade/status and the
+// spec §25.8: "GET /v1/admin/platform/upgrade/status and the
 // Operations Inventory (Section 25.4) return the canonical progress
 // envelope ... etaSeconds uses etaMethod: fixed_phase_durations (per-phase
 // hard-coded durations) combined with historical_p50 when
@@ -111,10 +111,10 @@ func TestUpgradeInventoryActiveUsesFixedPhaseDurations(t *testing.T) {
 	assertActive("Get", op.Progress)
 }
 
-// spec §25.8 line 3496: the same envelope is "combined with historical_p50
+// spec §25.8: the same envelope is "combined with historical_p50
 // when ops_operation_baselines has samples." Once the deployment has
 // recorded enough completed upgrades, the Inventory's active-upgrade ETA
-// switches to the historical_p50 method (§25.2 line 394 threshold), not
+// switches to the historical_p50 method (§25.2 threshold), not
 // linear_extrapolation.
 //
 // diagnosis: a failure means the Inventory does not consult the operation
@@ -157,7 +157,7 @@ func TestUpgradeInventoryActiveUsesHistoricalP50WithBaselines(t *testing.T) {
 // spec §25.4 (Operations Inventory response example, upgrade-550e...):
 // a paused upgrade awaiting an operator proceed reports etaMethod "none",
 // etaSeconds null, and stalledForSeconds null — a paused operation is
-// awaiting an operator by design (§25.2 line 391), so it carries no ETA.
+// awaiting an operator by design (§25.2), so it carries no ETA.
 // This pins the guard that the fixed_phase_durations enrichment does not
 // leak onto the paused case, matching the direct upgrade-status endpoint.
 //

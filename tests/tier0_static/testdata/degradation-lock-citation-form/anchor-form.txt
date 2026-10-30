@@ -1,0 +1,2 @@
+// spec: §25.4 — "the response includes degradation.warnings noting that
+// retry-safety is not guaranteed".

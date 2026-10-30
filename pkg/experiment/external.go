@@ -43,8 +43,7 @@ func (p TargetingProvider) IsValid() bool {
 const DefaultTargetingTimeoutMs = 200
 
 // DefaultTargeting{FailureThreshold,BreakerWindowSeconds,BreakerOpenSeconds}
-// are the §10.7 SCL-023 targeting circuit-breaker defaults (spec lines
-// 841-843): 5 consecutive failures within a 10-second window open the
+// are the §10.7 SCL-023 targeting circuit-breaker defaults: 5 consecutive failures within a 10-second window open the
 // breaker, which stays open for 30 seconds before a half-open probe.
 const (
 	DefaultTargetingFailureThreshold   = 5
@@ -52,8 +51,7 @@ const (
 	DefaultTargetingBreakerOpenSeconds = 30
 )
 
-// CircuitBreakerConfig is the §10.7 SCL-023 targeting circuit breaker
-// (spec lines 835-844): the per-tenant breaker on the OpenFeature
+// CircuitBreakerConfig is the §10.7 SCL-023 targeting circuit breaker: the per-tenant breaker on the OpenFeature
 // evaluation hot path. Each field is optional; a zero or negative value
 // falls through to the default. The JSON tags match the
 // experimentTargeting.circuitBreaker wire field names.

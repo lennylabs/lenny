@@ -61,13 +61,13 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 
 | Metric | Type | Description |
 |---|---|---|
-| `lenny_warmpool_idle_pods` | Gauge | Pods in `idle` state ready to be claimed |
+| `lenny_warmpool_idle_pods` | Gauge | Pods in `idle` state ready to be claimed; idle pods pinned to a tenant are excluded |
 | `lenny_warmpool_pod_startup_duration_seconds` | Histogram | Pod creation to `idle` state |
 | `lenny_warmpool_replenishment_rate` | Gauge | Pods/min entering `idle` state |
-| `lenny_warmpool_warmup_failure_total` | Counter | Pods failing to reach `idle` (by `error_type`: `image_pull_error`, `setup_command_failed`, `resource_quota_exceeded`, `node_pressure`) |
+| `lenny_warmpool_warmup_failure_total` | Counter | Warm-up and setup failures by `error_type`: `image_pull_error`, `resource_quota_exceeded`, and `node_pressure` count a pod that fails to reach `idle` during warm-up, and `setup_command_failed` counts a session whose setup commands fail |
 | `lenny_warmpool_cold_start_total` | Counter | Sessions served from cold pods |
 | `lenny_warmpool_claims_total` | Counter | Warm pod claims |
-| `lenny_warmpool_sdk_demotions_total` | Counter | SDK-warm pods demoted before assignment |
+| `lenny_warmpool_sdk_demotions_total` | Counter | SDK-warm pods demoted to pod-warm |
 | `lenny_warmpool_idle_pod_minutes` | Counter | Cumulative idle pod-minutes (cost tracking) |
 
 ### Token Service Metrics
@@ -138,12 +138,12 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `DataResidencyViolationAttempt` | Storage write or delegation rejected for region mismatch | Investigate misconfiguration or code-path bypass |
 | `PgBouncerAllReplicasDown` | All PgBouncer pods have zero ready replicas | Postgres unreachable; session creation failing |
 | `BillingStreamEntryAgeHigh` | Oldest unacknowledged billing stream entry > 80% of TTL | Billing events at risk of TTL expiry; check Postgres |
-| `TokenStoreUnavailable` | `/v1/oauth/token` returning 503 with `error_type="token_store_unavailable"` for > 30s | Postgres primary unreachable for token issuance (fail-closed); session creation, delegation minting, and credential leasing all fail until Postgres primary recovers |
+| `TokenStoreUnavailable` | `/v1/oauth/token` returning 503 with `error_type="token_store_unavailable"` for > 30s | Postgres primary unreachable for token issuance (fail-closed); session creation and credential leasing both fail until Postgres primary recovers |
 | `LLMUpstreamEgressAnomaly` | Outbound connection from gateway pod to non-allowlisted upstream detected | Investigate pod identity boundary, NetworkPolicy `allow-gateway-egress-llm-upstream` coverage |
 | `AuditGrantDrift` | Unexpected UPDATE/DELETE grants detected on audit tables | Audit integrity at risk; see [OCSF audit guide](audit-ocsf.md) |
 | `ArtifactReplicationResidencyViolation` | ArtifactStore replication residency preflight observed a jurisdiction-tag mismatch or cross-border transfer attempt | Replication for the affected region is suspended; fix jurisdiction mismatch and invoke `POST /v1/admin/artifact-replication/{region}/resume` |
 | `LegalHoldEscrowResidencyViolation` | Phase 3.5 of a tenant force-delete aborted because the resolved escrow region has no `storage.regions.<region>.legalHoldEscrow` entry, or the region's escrow KMS key / bucket endpoint is unreachable (CMP-054) | Configure the missing region-scoped escrow target (Helm values) and re-invoke `POST /v1/admin/tenants/{id}/force-delete` |
-| `PlatformAuditResidencyViolation` | A platform-tenant audit event referencing a non-platform `target_tenant_id` (impersonation, legal-hold escrow ledger, compliance decommission) failed to commit because the target tenant's regional platform-Postgres is misconfigured or unreachable (CMP-058) | Configure the missing `storage.regions.<region>.postgresEndpoint` entry (or restore platform-Postgres reachability); the originating operation will succeed once audit can commit |
+| `PlatformAuditResidencyViolation` | A platform-tenant audit event referencing a non-platform `target_tenant_id` (impersonation, legal-hold escrow ledger, compliance decommission) failed to commit because the target tenant's regional platform-Postgres is misconfigured or unreachable (CMP-058) | Configure the missing `storage.regions.<region>.postgresEndpoint` entry (or restore platform-Postgres reachability) |
 | `AuditRedactionReceiptMissing` | Row classified `chainIntegrity=redacted_gdpr` has no matching signed `RedactionReceipt` | Investigate orphaned GDPR redaction vs. genuine tamper; escalate as compliance incident if no receipt |
 | `T4KmsKeyUnusable` | Leader-elected T4 KMS probe has not succeeded within `2 * storage.t4KmsProbeInterval` (default interval 300s, min 60s); T4 envelope-encryption writes fail closed | Restore KMS reachability for the configured T4 key; T4 writes remain rejected until `lenny_t4_kms_probe_last_success_timestamp` is fresh again |
 
@@ -182,7 +182,7 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `LegalHoldOverrideUsed` | `gdpr.legal_hold_overridden` audit event emitted | `platform-admin` bypassed DeleteByUser legal-hold preflight with `acknowledgeHoldOverride: true`; compliance review required |
 | `LegalHoldOverrideUsedTenant` | `gdpr.legal_hold_overridden_tenant` audit event emitted | `platform-admin` bypassed tenant-delete Phase 3.5 legal-hold gate; Phase 3.5 re-encrypted held evidence to escrow; compliance review required |
 | `CompliancePostureDecommissioned` | `compliance.profile_decommissioned` audit event emitted | `platform-admin` lowered a regulated `complianceProfile` via `POST /v1/admin/tenants/{id}/compliance-profile/decommission`; generic `PUT` downgrades are blocked by the one-way ratchet; review `justification` and `remediation_attestations` |
-| `OutstandingInflightAtRotationCeiling` | `lenny_credential_rotation_inflight_ceiling_hit_total` incremented | 300s in-flight gate ceiling hit during a non-proactive rotation; runtime may have failed to emit `llm_request_completed` |
+| `OutstandingInflightAtRotationCeiling` | `lenny_credential_rotation_inflight_ceiling_hit_total` incremented | 300s in-flight gate ceiling hit during a non-proactive rotation. The gate polls the pod-wide per-provider in-flight counter, so either the rotating session's runtime failed to emit `llm_request_completed` or a co-tenant session on the same pod held an outstanding request for the same provider |
 | `PreStopCapFallbackRateHigh` | Per-replica combined share of 90s conservative-fallback selections exceeds 5% over 15 min | Indicates preStop Stage 2 regularly falling through to the conservative cap; correlate with Postgres outage or cold handoff cache |
 | `DrainReadinessWebhookUnavailable` | `lenny-drain-readiness` webhook unreachable | Node drains will not check MinIO health before pod eviction |
 | `EphemeralContainerCredGuardUnavailable` | `lenny-ephemeral-container-cred-guard` webhook unreachable > 5 min | `pods/ephemeralcontainers` updates denied in agent namespaces; `kubectl debug` attach attempts will be rejected until the webhook recovers — credential-boundary invariant remains protected by fail-closed policy |
@@ -218,7 +218,7 @@ All SLO targets are **provisional first-principles estimates** that must be vali
 | Session creation success rate | 99.5% | Successful starts / total attempts (30d) |
 | Session creation latency | P99 < 500ms | Auth through session_id response (excludes upload) |
 | Time to first token | P95 < 10s | Session start to first streaming event |
-| Session availability | 99.9% | Uptime not in retry/recovery state |
+| Session availability | 99.9% | Uptime not in retry/recovery state, over the sessions the concurrent-session limits count. A `suspended` session counts as neither available nor in recovery and is not counted |
 | Gateway availability | 99.95% | Healthy replicas serving requests |
 | Startup latency (runc) | P95 < 2s | Pod claim to session ready |
 | Startup latency (gVisor) | P95 < 5s | Pod claim to session ready |

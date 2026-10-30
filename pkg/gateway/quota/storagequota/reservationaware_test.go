@@ -64,7 +64,7 @@ func TestReservationAwareLiveBytesSurfacesComponentError(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 222 — during a Redis outage the storage-quota pre-check
+// spec: §12.4 — during a Redis outage the storage-quota pre-check
 // reads the reservation-aware Postgres-derived total (live artifact bytes plus
 // outstanding checkpoint reservations), so a tenant holding checkpoint
 // reservations does not recover that reserved headroom invisibly while Redis

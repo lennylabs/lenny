@@ -12,12 +12,12 @@ import (
 // implements the Verifier interface, so it drops in anywhere the
 // gateway uses a single-key verifier.
 //
-// The §10.2 production gateway runs with a single verifier (the Token
-// Service signer). MultiVerifier exists for the §17.4 Embedded Mode
+// The §10.2 production gateway verifies Lenny-issued tokens with the
+// KeySet alone. MultiVerifier exists for the §17.4 Embedded Mode
 // gateway, which must accept two distinct token populations: the
-// in-process Token Service tokens and the tokens minted by the
+// Lenny-issued tokens the KeySet verifies and the tokens minted by the
 // embedded OIDC provider for `lenny token print`. The two are signed
-// with different keys, so a single-key verifier cannot cover both.
+// with different keys, so a single verifier cannot cover both.
 //
 // Verify tries each member in registration order and returns the
 // claims from the first member that accepts the token. When no member
@@ -70,15 +70,16 @@ func (v *MultiVerifier) Verify(token string) (Claims, error) {
 func (v *MultiVerifier) Len() int { return len(v.members) }
 
 // IsUnknownKey reports whether err is a *VerifyError whose Reason
-// indicates the token was signed by a key the verifier does not hold
-// (missing_kid, unknown_kid, or key_retired). A MultiVerifier built
-// over RotatingVerifier members returns one of these when a token
-// matches no member's key set.
+// indicates the token names no key the verifier holds (missing_kid or
+// unknown_kid). A KeySet returns one of these, without any provider
+// call, for a token whose kid is absent or outside the set.
+//
+// spec: §10.2 (Authentication) "Verifier key set and rotation".
 func IsUnknownKey(err error) bool {
 	var ve *VerifyError
 	if errors.As(err, &ve) {
 		switch ve.Reason {
-		case "missing_kid", "unknown_kid", "key_retired":
+		case "missing_kid", "unknown_kid":
 			return true
 		}
 	}

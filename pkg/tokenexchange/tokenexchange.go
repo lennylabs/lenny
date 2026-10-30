@@ -99,7 +99,7 @@ type Request struct {
 	// Subject is the token being exchanged.
 	Subject Token
 
-	// Actor is the parent-session token in a delegation child-minting
+	// Actor is the delegating caller's token in a delegation child-minting
 	// exchange; nil for rotation and scope-narrowing exchanges.
 	Actor *Token
 
@@ -144,6 +144,37 @@ type Issued struct {
 	// scope per §13.3 enforcement rule (e).
 	AuthorizedTools []string
 	Exp             time.Time
+	// Act is the §13.3 RFC 8693 `act` claim of the issued token: the
+	// actor token's sub, tenant_id, session_id, and delegation_depth.
+	// Validate sets it when the request carries an actor_token, and only
+	// then; it is nil for rotation, scope narrowing, and lease issuance.
+	Act *Actor
+}
+
+// Actor is the identity of the delegating caller an a2a_delegation child
+// token names in its `act` claim. It mirrors the four fields the §13.3
+// "Lenny JWT claim structure" `act` row lists, copied from the actor
+// token rather than from the subject, so the child names the caller that
+// delegated even when the subject is a different principal.
+type Actor struct {
+	Subject         string
+	TenantID        string
+	SessionID       string
+	DelegationDepth int
+}
+
+// actorOf returns the §13.3 `act` identity of the actor token, or nil when
+// the exchange carries no actor_token.
+func actorOf(t *Token) *Actor {
+	if t == nil {
+		return nil
+	}
+	return &Actor{
+		Subject:         t.Subject,
+		TenantID:        t.TenantID,
+		SessionID:       t.SessionID,
+		DelegationDepth: t.DelegationDepth,
+	}
 }
 
 // SkewAllowance is the §13.3 ±1s server-side skew on expiry checks.
@@ -275,6 +306,9 @@ func Validate(r Request) (Issued, error) {
 		AuthorizedTools: authorizedTools,
 		Typ:             issuedTyp,
 		Exp:             exp,
+		// spec: §13.3 "Lenny JWT claim structure" — `act` is "Set when
+		// `actor_token` is present".
+		Act: actorOf(r.Actor),
 	}, nil
 }
 

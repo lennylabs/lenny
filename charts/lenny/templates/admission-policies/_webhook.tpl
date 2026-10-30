@@ -14,7 +14,7 @@ Pass an optional egressLabel (the short, kebab-case webhook name) to
 additionally stamp the NET-068 additive pod label
 lenny.dev/webhook-name: <egressLabel> on this Deployment's pods only, so
 a NetworkPolicy egress sub-rule can narrow to this single webhook
-(§13.2 NET-068, §17.2 line 56). The label is additive to the canonical
+(§13.2 NET-068, §17.2). The label is additive to the canonical
 lenny.dev/component: admission-webhook selector and is omitted when
 egressLabel is empty — chart authors MUST NOT add it to webhooks that do
 not have a documented egress-narrowing sub-rule.
@@ -77,7 +77,7 @@ spec:
             - --registry-require-digest={{ $.Values.platform.registry.requireDigest }}
             - --gvisor-runtime-class={{ $.Values.runtimeClasses.profiles.sandboxed.name }}
             - --kata-runtime-class={{ $.Values.runtimeClasses.profiles.microvm.name }}
-            {{- /* spec: §13.1 line 7 — the operator-tunable non-root pod
+            {{- /* spec: §13.1 — the operator-tunable non-root pod
                    UIDs the pod-security and ephemeral-container-cred-guard
                    webhooks enforce. Wired from the SAME security.podUIDs
                    values as the controller's --adapter-uid/--agent-uid/

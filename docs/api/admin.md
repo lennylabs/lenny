@@ -414,6 +414,8 @@ platform-admin
 
 Create a tenant. Also provisions the tenant's two per-tenant Postgres sequences, one for the billing ledger and one for the audit ledger. Each sequence name is a fixed per-ledger prefix (`billing_seq_` or `audit_seq_`) followed by a 40-character hexadecimal digest of the tenant ID, so every name stays within the Postgres identifier length limit and no two tenants collide.
 
+The tenant ID `platform` is reserved for the platform tenant, under which the platform audit chain is written. A request that names it is rejected with `422 RESERVED_IDENTIFIER`.
+
 **Request body:**
 
 ```json
@@ -457,6 +459,31 @@ platform-admin
 {: .label .label-red }
 
 Delete a tenant. Blocked if any non-terminal sessions, pools, or credential pools exist.
+
+In a single-tenant deployment, a request to delete the built-in `default` tenant is rejected with `409 INVALID_STATE_TRANSITION`, and the tenant stays `active`.
+
+### POST /v1/admin/tenants/{id}/suspend
+{: .d-inline-block }
+platform-admin
+{: .label .label-red }
+
+Suspend a tenant. Body: `{"reason": "<string>"}`. The gateway sets the tenant's suspension marker and then force-terminates every active session in the tenant. While the tenant is suspended, session creation and message injection are rejected with `403 TENANT_SUSPENDED`. Every suspend request, a repeat included, is recorded in the audit trail with the operator identity and the reason.
+
+A suspend request for a tenant that is already suspended leaves the original suspension record unchanged and runs the session drain again. Repeat the request to retry a drain that did not complete.
+
+The response body reports the suspension and the drain result:
+
+| Field | Type | Description |
+|:------|:-----|:------------|
+| `tenantId` | string | The suspended tenant. |
+| `suspended` | boolean | `true` once the suspension marker is set. |
+| `reason` | string | The reason recorded with the suspension. |
+| `suspendedAt` | string | When the suspension was recorded. |
+| `suspendedBy` | string | The operator who recorded the suspension. |
+| `drainedSessions` | integer | The number of sessions this request's drain terminated. |
+| `failedSessions` | array of strings | The IDs of sessions the drain did not bring to a terminal state. A non-empty array means the drain is incomplete and the request can be repeated. The array is empty when the drain completed. |
+
+When the gateway cannot list the tenant's sessions, the request returns `500 INTERNAL_ERROR` and the tenant stays suspended.
 
 ### Tenant RBAC configuration
 
@@ -619,9 +646,9 @@ Live connectivity test. Rate-limited to 10 requests per connector per minute.
 
 ## Experiments
 
-Experiments configure variant pools for runtime version rollouts. Lenny provides infrastructure primitives (pods organised into variant pools, deterministic sticky routing, variant context in the adapter manifest) and a basic built-in assigner for simple splits. For anything beyond simple rollouts, integrate an external experimentation platform (LaunchDarkly, Statsig, Unleash) via OpenFeature — assignment decisions then live in the external platform.
+Experiments configure variant pools for runtime version rollouts. Lenny provides infrastructure primitives (pods organised into variant pools, deterministic sticky routing, variant context in each session's [`session_start` frame](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin)) and a basic built-in assigner for simple splits. For anything beyond simple rollouts, integrate an external experimentation platform (LaunchDarkly, Statsig, Unleash) via OpenFeature — assignment decisions then live in the external platform.
 
-Regardless of who decides the assignment, the gateway delivers `experimentContext` (`experimentId`, `variantId`, `inherited`) in the adapter manifest so runtimes can tag traces with variant metadata for filtering and grouping in their chosen eval platform. When scores are also stored via the `/eval` endpoint, the gateway auto-populates variant attribution on those stored records.
+Regardless of who decides the assignment, the gateway delivers `experimentContext` (`experimentId`, `variantId`, `inherited`) in the session's [`session_start` frame](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin) so runtimes can tag traces with variant metadata for filtering and grouping in their chosen eval platform. When scores are also stored via the `/eval` endpoint, the gateway auto-populates variant attribution on those stored records.
 
 ### CRUD endpoints
 
@@ -805,10 +832,11 @@ Canonical OAuth token endpoint (RFC 6749 + RFC 8693 token exchange). Used across
 | `platform-admin` | Rotate admin tokens; mint cluster-scoped operator tokens | admin-level `subject_token` |
 | `tenant-admin` | Rotate tenant-scoped tokens; mint scoped operator tokens for the tenant | tenant-admin `subject_token` |
 | End users | Rotate their own session token | user `subject_token` |
-| Gateway (internal) | Mint delegation child tokens with `actor_token` set to the parent session token | parent session token |
 | `lenny-ops` (internal) | Mint short-lived scoped tokens for agent-operability calls | operator `subject_token` + requested scope |
 
-For rotation, use `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` with `subject_token=<current_token>` and `requested_token_type` matching the subject. For delegation child-token minting, additionally supply `actor_token=<parent_session_token>` and a narrowed `scope` string. Scope narrowing is enforced server-side: the response token's scope is always a subset of the parent's.
+For rotation, use `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` with `subject_token=<current_token>` and `requested_token_type` matching the subject. For `a2a_delegation` child-token minting, additionally supply `actor_token=<delegating_caller_token>`, set to the delegating caller's token, and a narrowed `scope` string. Scope narrowing is enforced server-side: the response token's scope is always a subset of the parent's.
+
+The caller token (the `Authorization` bearer, which authenticates the client) must not be a web playground bearer, which carries the `origin: "playground"` claim. The Token Service refuses a playground bearer as the caller token with `401 invalid_client`; the playground obtains new bearers through `POST /v1/playground/token` instead. A playground bearer may still appear as the `subject_token`.
 
 See [Authentication](../client-guide/authentication.md#token-rotation-and-exchange-v1oauthtoken). This endpoint serves self and service-principal rotation. The bootstrap admin credential rotates through the dedicated route below rather than this endpoint.
 
@@ -819,12 +847,88 @@ platform-admin
 
 Rotate the bootstrap admin credential. Only the managed admin user (`lenny-admin`) is rotatable through this route; any other user returns `404`. The gateway mints a new token in process, records it, patches the `lenny-admin-token` Kubernetes Secret with the new value, and revokes the prior token immediately with no grace period. The token value is not returned in the response; the credential lives only in the Secret. The CLI command `lenny-ctl admin users rotate-token --user lenny-admin` calls this route, and the CLI does not mint the token or patch the Secret.
 
+### POST /v1/admin/impersonation
+{: .d-inline-block }
+platform-admin
+{: .label .label-red }
+
+Start a platform-admin impersonation session. The gateway mints a `user_bearer` for the target user in the target tenant and returns it to the calling administrator. The token id of that bearer is the impersonation session id. The gateway records the bearer in the issued-token index of the target tenant, and that record is the only session state the gateway keeps, so any gateway replica can list or end the session. The call writes the `admin.impersonation_started` audit event before it signs the bearer.
+
+**Request body:**
+
+```json
+{
+  "targetTenantId": "acme",
+  "targetUserId": "alice@acme.com",
+  "reason": "Reproduce a support ticket",
+  "ticketId": "SUP-1234",
+  "durationSeconds": 900
+}
+```
+
+Every field is required. `durationSeconds` is from 60 to 3600, and the bearer expires `durationSeconds` after the started event.
+
+**Response:** `200 OK` with `impersonationSessionId`, `bearerToken`, `tokenType` (`Bearer`), `targetTenantId`, `targetUserId`, and `expiresAt`.
+
+The bearer cannot be used to call `POST /v1/admin/impersonation`, cannot obtain a playground token, and cannot be presented to `/v1/oauth/token` as a subject or actor token. Each of these refusals applies whether or not the session has ended.
+
+**Error codes:**
+
+- `400 VALIDATION_ERROR`: a field is missing, or `durationSeconds` is outside 60 to 3600.
+- `403 FORBIDDEN`: the caller lacks `platform-admin`; the caller's own bearer is an impersonation bearer or has been revoked; or the target user or the calling administrator is hard-disabled or fully revoked. A refusal because of the caller's bearer writes no audit event. A refusal because a user is hard-disabled or fully revoked writes no rejection audit event, and the started event written before it has no ended event. None of these refusals returns a bearer.
+- `404 RESOURCE_NOT_FOUND`: the target tenant or the target user does not exist.
+- `422 PLATFORM_AUDIT_REGION_UNRESOLVABLE`: the started event cannot be written in the target tenant's region, and no bearer is issued.
+- `503 KMS_SIGNING_UNAVAILABLE`: the signing key is unavailable, and no bearer is issued.
+- `500 INTERNAL_ERROR`: the bearer cannot be recorded or another internal failure occurred, and no bearer is returned.
+
+### GET /v1/admin/impersonation
+{: .d-inline-block }
+platform-admin
+{: .label .label-red }
+
+List the active impersonation sessions in every tenant. A session is active until it is ended or revoked, or until its `expiresAt` passes. Any gateway replica serves the call. Each call writes a `cross_tenant_read` audit event before it returns rows.
+
+**Query parameters:** Standard pagination (`cursor`, `limit`, `sort`), as described in [Pagination](index.md#pagination).
+
+**Response:** `200 OK` with the cursor-paginated envelope. Each item carries `impersonationSessionId`, `adminSub`, `targetTenantId`, `targetUserId`, `issuedAt`, and `expiresAt`. The request reason and ticket id are recorded on the `admin.impersonation_started` audit event and are absent from the list items.
+
+**Error codes:**
+
+- `400 VALIDATION_ERROR`: the `sort` field is invalid or the cursor has expired.
+- `403 FORBIDDEN`: the caller lacks `platform-admin`.
+- `500 INTERNAL_ERROR`: an internal failure occurred, including a failure to write the `cross_tenant_read` audit event, in which case no list is returned.
+
+### DELETE /v1/admin/impersonation/{id}
+{: .d-inline-block }
+platform-admin
+{: .label .label-red }
+
+End an impersonation session by revoking its bearer. Any gateway replica serves the call. The gateway revokes the bearer in the issued-token index, pushes the revocation to every gateway replica, and then writes the `admin.impersonation_ended` audit event. When several calls end the same session at once on any replicas, exactly one of them revokes the bearer and the others return `409`. Every gateway replica refuses the bearer once it is revoked, and `lenny-ops` refuses it after its next successful revocation-set read from Postgres, which it attempts every 30 seconds. Each call writes a `cross_tenant_read` audit event after the revocation.
+
+**Response:** `200 OK` with `impersonationSessionId` and `endedAt`.
+
+When the ended audit write fails after the revocation commits, the call returns the audit error, the bearer stays revoked, and the session has no ended event. A retry returns `409` because the bearer is already revoked.
+
+A session that is not ended through this call ends when its `expiresAt` passes, when the target user is fully revoked, when a platform administrator fully revokes the administrator who started it, or when the bearer is revoked by its token id. None of these writes an `admin.impersonation_ended` event.
+
+**Error codes:**
+
+- `403 FORBIDDEN`: the caller lacks `platform-admin`.
+- `404 RESOURCE_NOT_FOUND`: no impersonation session has the id.
+- `409 INVALID_STATE_TRANSITION`: the bearer is already revoked or has expired. `details.currentState` is `revoked` or `expired`, and `details.allowedStates` is `["active"]`.
+- `422 PLATFORM_AUDIT_REGION_UNRESOLVABLE`: the ended event cannot be written in the target tenant's region, and the bearer stays revoked.
+- `500 INTERNAL_ERROR`: an internal failure occurred. When the failure is in the ended audit write, the bearer stays revoked.
+
 ### POST /v1/admin/users/{userId}/invalidate
 {: .d-inline-block }
 platform-admin tenant-admin
 {: .label .label-red .label-blue }
 
 Terminate all active sessions for a user and revoke their tokens immediately. Used during incident response. `tenant-admin` is scoped to their own tenant.
+
+In `full_revoke` mode, when a platform administrator invalidates a user, the call also revokes, in every tenant, the impersonation bearers that user started, and counts them in the revoked-token total. When the caller is a `tenant-admin`, the call revokes only the user's own tokens and reports in the response's token revocation error that the revocation of impersonation bearers the user started was skipped.
+
+In `full_revoke` mode, when the user's sessions cannot be listed, the call still revokes the user's tokens and dismisses the user's pending elicitations, and then answers `500 INTERNAL_ERROR` with the per-effect counts in the error details.
 
 ### POST /v1/admin/users/{userId}/erase
 {: .d-inline-block }
@@ -833,6 +937,8 @@ platform-admin tenant-admin
 
 Initiate a GDPR user-level erasure job. Returns a job ID.
 
+A user has at most one erasure job in progress. The legal-hold preflight runs on every request, a repeat request included, and a request blocked by an active legal hold returns `409 ERASURE_BLOCKED_BY_LEGAL_HOLD`. When the user already has an erasure job in progress and no active legal hold applies to the user, the request returns that job's ID and starts no second job. When the user already has an erasure job in progress and the request passes the preflight only through `acknowledgeHoldOverride`, the request returns `409 INVALID_STATE_TRANSITION`.
+
 ---
 
 ## Erasure jobs
@@ -840,8 +946,8 @@ Initiate a GDPR user-level erasure job. Returns a job ID.
 | Endpoint | Method | Role | Description |
 |:---------|:-------|:-----|:------------|
 | `GET /v1/admin/erasure-jobs/{jobId}` | GET | platform-admin, tenant-admin | Query erasure job status: phase, completion %, time elapsed, errors |
-| `POST /v1/admin/erasure-jobs/{jobId}/retry` | POST | platform-admin | Retry a failed erasure job |
-| `POST /v1/admin/erasure-jobs/{jobId}/clear-processing-restriction` | POST | platform-admin | Clear the `processing_restricted` flag. Body: `{"justification": "..."}` |
+| `POST /v1/admin/erasure-jobs/{jobId}/retry` | POST | platform-admin | Retry a failed erasure job. The job restarts from its first phase and sets the user's processing restriction again. Returns `409 ERASURE_JOB_NOT_FAILED` when the job is not in the `failed` state, `409 INVALID_STATE_TRANSITION` when the user already has another erasure job in progress, and `409 ERASURE_BLOCKED_BY_LEGAL_HOLD` when an active legal hold on the user's sessions or artifacts blocks the erasure. |
+| `POST /v1/admin/erasure-jobs/{jobId}/clear-processing-restriction` | POST | platform-admin | Clear the `processing_restricted` flag after a failed erasure job. Body: `{"justification": "..."}`. The endpoint accepts only a failed job and returns `409 ERASURE_JOB_NOT_FAILED` for any other job. It returns `409 INVALID_STATE_TRANSITION` while the user's restriction belongs to another erasure job. The clear reopens the user to new sessions and does not retry the job. |
 
 ---
 

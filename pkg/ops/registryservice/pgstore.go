@@ -19,7 +19,6 @@ const pgSingleton = "singleton"
 // PgStore is the Postgres-backed §25.8 registry-override store over the
 // platform_registry_config singleton (migration 0135). A runtime PUT
 // survives a lenny-ops restart or a leader handoff, satisfying the §25.8
-// line 3362 "stored in Postgres, takes effect on next image resolution"
 // contract.
 type PgStore struct {
 	pool *pgxpool.Pool

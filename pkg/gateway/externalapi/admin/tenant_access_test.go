@@ -276,8 +276,7 @@ func TestGetPoolTenantScoped(t *testing.T) {
 // non-empty resource name, which let an operator stash a dangling
 // grant for a non-existent runtime. The corrected handler rejects the
 // request with 404 RESOURCE_NOT_FOUND naming the missing runtime in
-// details.runtime. spec: §15.1 line 779 (`runtime_tenant_access`
-// FK reference). F-24.3.6.
+// details.runtime. spec: §15.1. F-24.3.6.
 func TestGrantTenantAccess404OnMissingRuntime_spec_15_1_779(t *testing.T) {
 	router, runtimes, _, access := newScopedResourceAdmin(t)
 	if err := runtimes.Create(context.Background(), runtimestore.Runtime{Name: "exists"}); err != nil {
@@ -316,8 +315,7 @@ func TestGrantTenantAccess404OnMissingRuntime_spec_15_1_779(t *testing.T) {
 }
 
 // TestGrantTenantAccess404OnMissingPool mirrors the runtime guard for
-// the pool kind. spec: §15.1 line 802 (`pool_tenant_access` FK
-// reference). F-24.3.6.
+// the pool kind. spec: §15.1. F-24.3.6.
 func TestGrantTenantAccess404OnMissingPool_spec_15_1_802(t *testing.T) {
 	router, _, _, _ := newScopedResourceAdmin(t)
 	rr := doAdminReq(t, router.Handler(), http.MethodPost,

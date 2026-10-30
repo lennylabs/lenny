@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 
-// Package workspacepack builds the tar.gz archive the §26.2 line 114 CLI
+// Package workspacepack builds the tar.gz archive the §26.2 CLI
 // uploads when a `lenny session new --workspace <dir>` invocation stages a
 // local repository into the session's workspace. It walks the directory
 // honoring a `.lennyignore` file (falling back to `.gitignore`) and emits
 // a gzip-compressed tar the gateway extracts under an `uploadArchive`
 // workspace-plan source.
 //
-// spec: §26.2 lines 95-114; §14 uploadArchive; §7.4 upload safety.
+// spec: §26.2; §14 uploadArchive; §7.4 upload safety.
 package workspacepack
 
 import (
@@ -23,7 +23,7 @@ import (
 // directory boundaries. Nested ignore files below the root are not read;
 // the matcher uses the single ignore file at the workspace root.
 //
-// spec: §26.2 line 114.
+// spec: §26.2.
 type ignoreMatcher struct {
 	rules []ignoreRule
 }

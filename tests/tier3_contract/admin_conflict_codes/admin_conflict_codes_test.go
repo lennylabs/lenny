@@ -15,8 +15,7 @@
 // and confirms `errorclassify.ClassifyStatus` yields the same
 // (PERMANENT, not-retryable) verdict the catalog assigns both codes.
 //
-// spec: §15.1 (RESOURCE_ALREADY_EXISTS line 983, INVALID_STATE_TRANSITION
-// line 981), §25.2 (errorclassify category, 409 is PERMANENT not retryable).
+// spec: §15.1, §25.2 (errorclassify category, 409 is PERMANENT not retryable).
 package admin_conflict_codes_test
 
 import (
@@ -37,6 +36,10 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	sessionmem "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgrade"
 	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore"
 )
@@ -259,4 +262,138 @@ type fakeUpgradePool struct{ specs map[string][]byte }
 func (f fakeUpgradePool) PoolSpec(_ context.Context, pool string) ([]byte, bool, error) {
 	spec, ok := f.specs[pool]
 	return spec, ok, nil
+}
+
+// erasureConflictFixture is the admin router over a Memory erasure job
+// store, a user store, and a session store for the legal-hold preflight.
+type erasureConflictFixture struct {
+	h        http.Handler
+	jobs     *erasurejob.Memory
+	users    *userstore.Memory
+	sessions sessionstore.Store
+}
+
+func newErasureConflictFixture(t *testing.T) *erasureConflictFixture {
+	t.Helper()
+	f := &erasureConflictFixture{users: userstore.NewMemory(), sessions: sessionmem.New()}
+	for _, u := range []string{"alice@acme.com", "bob@acme.com"} {
+		if err := f.users.Create(context.Background(), userstore.User{TenantID: "acme", Subject: u}); err != nil {
+			t.Fatalf("seed user: %v", err)
+		}
+	}
+	f.jobs = erasurejob.NewMemory(erasurejob.WithRestrictionWriter(f.users))
+	runner := erasurejob.NewRunner(f.jobs, erasure.New(erasure.Config{}), nil)
+	f.h = admin.NewRouter(tenantstore.NewMemory(), admin.Options{Clock: fixedClock}).
+		WithUsers(f.users).WithErasure(runner, f.jobs).WithSessions(f.sessions).Handler()
+	return f
+}
+
+// erase admits an erase of subject and returns its job id.
+func (f *erasureConflictFixture) erase(t *testing.T, subject string) string {
+	t.Helper()
+	rr, _ := serve(t, f.h, http.MethodPost, "/v1/admin/users/"+subject+"/erase", admin.EraseUserRequest{TenantID: "acme"})
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("erase %s: %d %s", subject, rr.Code, rr.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &body)
+	return body["jobId"].(string)
+}
+
+func (f *erasureConflictFixture) fail(t *testing.T, id string) {
+	t.Helper()
+	if _, err := f.jobs.Update(context.Background(), id, func(j *erasurejob.Job) error {
+		j.Phase = erasurejob.PhaseFailed
+		j.PhaseLog = append(j.PhaseLog, erasurejob.PhaseTransition{Phase: erasurejob.PhaseFailed, At: fixedClock()})
+		return nil
+	}); err != nil {
+		t.Fatalf("fail job: %v", err)
+	}
+}
+
+func (f *erasureConflictFixture) hold(t *testing.T, subject string) {
+	t.Helper()
+	if err := f.sessions.Create(context.Background(), sessionstore.Session{
+		ID: "sess_held", TenantID: "acme", UserID: subject, LegalHold: true,
+	}); err != nil {
+		t.Fatalf("seed held session: %v", err)
+	}
+}
+
+// TestErasureConflictCodesAreCataloged pins every 409 of the erasure
+// entry points to the code the §15.1 catalog enumerates for it, and the
+// errorclassify verdict of that code's catalog row: the in-progress-job
+// refusals of the override erase and the retry answer
+// INVALID_STATE_TRANSITION, a retry or clear of a job that is not failed
+// answers ERASURE_JOB_NOT_FAILED (PERMANENT), a clear while the flag names
+// another job answers INVALID_STATE_TRANSITION, and a held erase or retry
+// answers ERASURE_BLOCKED_BY_LEGAL_HOLD (POLICY).
+//
+// diagnosis: a failure means an erasure entry point answers a 409 with an
+// uncataloged code, or a code errorclassify does not know (an unknown code
+// classifies as transient and retryable), so a client retries a refusal
+// that cannot succeed.
+// spec: 15.1 (Error code catalog), 12.8 (User-level erasure invocation), 25.2
+func TestErasureConflictCodesAreCataloged(t *testing.T) {
+	permanent := []any{errorclassify.CategoryPermanent, false}
+	policy := []any{errorclassify.CategoryPolicy, false}
+	cases := []struct {
+		name    string
+		request func(t *testing.T, f *erasureConflictFixture) (*httptest.ResponseRecorder, string)
+		code    string
+		verdict []any
+	}{
+		{"override erase with a job in progress", func(t *testing.T, f *erasureConflictFixture) (*httptest.ResponseRecorder, string) {
+			f.erase(t, "alice@acme.com")
+			f.hold(t, "alice@acme.com")
+			return serve(t, f.h, http.MethodPost, "/v1/admin/users/alice@acme.com/erase", admin.EraseUserRequest{
+				TenantID: "acme", AcknowledgeHoldOverride: true, Justification: "court order",
+			})
+		}, "INVALID_STATE_TRANSITION", permanent},
+		{"held erase", func(t *testing.T, f *erasureConflictFixture) (*httptest.ResponseRecorder, string) {
+			f.hold(t, "alice@acme.com")
+			return serve(t, f.h, http.MethodPost, "/v1/admin/users/alice@acme.com/erase", admin.EraseUserRequest{TenantID: "acme"})
+		}, "ERASURE_BLOCKED_BY_LEGAL_HOLD", policy},
+		{"retry of a job that is not failed", func(t *testing.T, f *erasureConflictFixture) (*httptest.ResponseRecorder, string) {
+			id := f.erase(t, "alice@acme.com")
+			return serve(t, f.h, http.MethodPost, "/v1/admin/erasure-jobs/"+id+"/retry", nil)
+		}, "ERASURE_JOB_NOT_FAILED", permanent},
+		{"retry with another job in progress", func(t *testing.T, f *erasureConflictFixture) (*httptest.ResponseRecorder, string) {
+			id := f.erase(t, "alice@acme.com")
+			f.fail(t, id)
+			f.erase(t, "alice@acme.com")
+			return serve(t, f.h, http.MethodPost, "/v1/admin/erasure-jobs/"+id+"/retry", nil)
+		}, "INVALID_STATE_TRANSITION", permanent},
+		{"held retry", func(t *testing.T, f *erasureConflictFixture) (*httptest.ResponseRecorder, string) {
+			id := f.erase(t, "alice@acme.com")
+			f.fail(t, id)
+			f.hold(t, "alice@acme.com")
+			return serve(t, f.h, http.MethodPost, "/v1/admin/erasure-jobs/"+id+"/retry", nil)
+		}, "ERASURE_BLOCKED_BY_LEGAL_HOLD", policy},
+		{"clear of a job that is not failed", func(t *testing.T, f *erasureConflictFixture) (*httptest.ResponseRecorder, string) {
+			id := f.erase(t, "alice@acme.com")
+			return serve(t, f.h, http.MethodPost, "/v1/admin/erasure-jobs/"+id+"/clear-processing-restriction",
+				map[string]string{"justification": "operator"})
+		}, "ERASURE_JOB_NOT_FAILED", permanent},
+		{"clear while the flag names another job", func(t *testing.T, f *erasureConflictFixture) (*httptest.ResponseRecorder, string) {
+			id := f.erase(t, "alice@acme.com")
+			f.fail(t, id)
+			f.erase(t, "alice@acme.com")
+			return serve(t, f.h, http.MethodPost, "/v1/admin/erasure-jobs/"+id+"/clear-processing-restriction",
+				map[string]string{"justification": "operator"})
+		}, "INVALID_STATE_TRANSITION", permanent},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newErasureConflictFixture(t)
+			rr, code := tc.request(t, f)
+			if rr.Code != http.StatusConflict || code != tc.code {
+				t.Fatalf("got %d %q, want 409 %s; body=%s", rr.Code, code, tc.code, rr.Body.String())
+			}
+			cat, retryable := errorclassify.ClassifyStatus(code, rr.Code)
+			if cat != tc.verdict[0] || retryable != tc.verdict[1] {
+				t.Errorf("errorclassify(%s) = (%s, %v), want %v", code, cat, retryable, tc.verdict)
+			}
+		})
+	}
 }

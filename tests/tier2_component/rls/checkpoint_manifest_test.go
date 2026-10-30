@@ -4,9 +4,8 @@
 
 // Component tests for the §10.1 checkpoint_manifest table (migration
 // 0178): the §12.3 tenant-isolation apparatus (tenant-guard trigger,
-// FORCE ROW LEVEL SECURITY, cross-tenant read denial), the §10.1 lines
-// 143-151 partial_manifest_active_uniq at-most-one-active-partial
-// invariant scoped to (session_id, slot_id), and the §10.1 line 141
+// FORCE ROW LEVEL SECURITY, cross-tenant read denial), the §10.1 partial_manifest_active_uniq at-most-one-active-partial
+// invariant scoped to session_id, and the §10.1.7
 // intent-row defaults (manifest_reason = 'in_progress',
 // baseline_full_checkpoint_bytes NULL) the §7.2 resume path relies on.
 package rls_test
@@ -22,13 +21,13 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
-// insertManifest writes one checkpoint_manifest intent row for tenant /
-// session / slot under that tenant's app.current_tenant context as the
+// insertManifest writes one checkpoint_manifest intent row for a tenant's
+// session under that tenant's app.current_tenant context as the
 // lenny_app role, mirroring the §10.1 intent-row-first INSERT. baseline
 // and manifest_reason are left to their column defaults so callers can
 // assert those defaults. Returns any INSERT error (e.g. the partial
 // unique violation) without failing the test.
-func insertManifest(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant, session, slot, checkpointID string) error {
+func insertManifest(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant, session, checkpointID string) error {
 	t.Helper()
 	tx, err := pg.Pool.Begin(ctx)
 	if err != nil {
@@ -44,13 +43,13 @@ func insertManifest(t *testing.T, ctx context.Context, pg *containers.Postgres, 
 	}
 	_, err = tx.Exec(ctx,
 		`INSERT INTO checkpoint_manifest (
-			tenant_id, checkpoint_id, session_id, slot_id,
+			tenant_id, checkpoint_id, session_id,
 			chunk_object_key_prefix, chunk_size_bytes,
 			checkpoint_started_at, checkpoint_timeout_at)
-		 VALUES ($1, $2::uuid, $3, $4,
+		 VALUES ($1, $2::uuid, $3,
 			'/'||$1||'/checkpoints/'||$3||'/'||$2::text||'/', 16777216,
 			now(), now() + interval '30 seconds')`,
-		tenant, checkpointID, session, slot)
+		tenant, checkpointID, session)
 	if err != nil {
 		return err
 	}
@@ -103,10 +102,10 @@ func TestCheckpointManifestPreventsCrossTenantRead(t *testing.T) {
 
 	seedTenant(t, ctx, pg, "tenant-a")
 	seedTenant(t, ctx, pg, "tenant-b")
-	if err := insertManifest(t, ctx, pg, "tenant-a", "sess-a", "default", "11111111-1111-1111-1111-111111111111"); err != nil {
+	if err := insertManifest(t, ctx, pg, "tenant-a", "sess-a", "11111111-1111-1111-1111-111111111111"); err != nil {
 		t.Fatalf("seed tenant-a manifest: %v", err)
 	}
-	if err := insertManifest(t, ctx, pg, "tenant-b", "sess-b", "default", "22222222-2222-2222-2222-222222222222"); err != nil {
+	if err := insertManifest(t, ctx, pg, "tenant-b", "sess-b", "22222222-2222-2222-2222-222222222222"); err != nil {
 		t.Fatalf("seed tenant-b manifest: %v", err)
 	}
 
@@ -152,11 +151,11 @@ func TestCheckpointManifestPreventsCrossTenantRead(t *testing.T) {
 // spec: 10.1
 // diagnosis: the partial_manifest_active_uniq index did not enforce
 //
-//	at-most-one active partial manifest per (session_id, slot_id).
-//	The migration 0150 index scoped on (tenant_id, session_id) admitted
-//	a second active partial row for a distinct slot's key; the §10.1
-//	line 147 index scopes on (session_id, slot_id) over active partial
-//	rows so a second active partial row for the same slot is rejected.
+//	at-most-one active partial manifest per session. Every session is
+//	bound to a slot on every pod and a session-mode slot's identifier is
+//	its session's identifier, so the index scopes on session_id alone over
+//	active partial rows and a second active partial row for one session is
+//	rejected.
 func TestCheckpointManifestActivePartialIsUnique(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
@@ -165,26 +164,25 @@ func TestCheckpointManifestActivePartialIsUnique(t *testing.T) {
 	ctx := context.Background()
 	seedTenant(t, ctx, pg, "acme")
 
-	if err := insertManifest(t, ctx, pg, "acme", "sess-1", "default", "33333333-3333-3333-3333-333333333333"); err != nil {
+	if err := insertManifest(t, ctx, pg, "acme", "sess-1", "33333333-3333-3333-3333-333333333333"); err != nil {
 		t.Fatalf("first active partial manifest must insert: %v", err)
 	}
 
-	// A second active partial row for the same (session_id, slot_id) — a
-	// fresh checkpoint_id, so the primary key does not collide — must be
-	// rejected by the partial unique index.
-	err := insertManifest(t, ctx, pg, "acme", "sess-1", "default", "44444444-4444-4444-4444-444444444444")
+	// A second active partial row for the same session — a fresh
+	// checkpoint_id, so the primary key does not collide — must be rejected
+	// by the partial unique index.
+	err := insertManifest(t, ctx, pg, "acme", "sess-1", "44444444-4444-4444-4444-444444444444")
 	if err == nil {
-		t.Fatal("second active partial manifest for the same (session_id, slot_id) must be rejected")
+		t.Fatal("second active partial manifest for the same session must be rejected")
 	}
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23505" || pgErr.ConstraintName != "partial_manifest_active_uniq" {
 		t.Errorf("want unique violation on partial_manifest_active_uniq, got: %v", err)
 	}
 
-	// A different slot for the same session is a distinct active key and
-	// must be admitted.
-	if err := insertManifest(t, ctx, pg, "acme", "sess-1", "slot-2", "55555555-5555-5555-5555-555555555555"); err != nil {
-		t.Errorf("a distinct slot's active partial manifest must insert: %v", err)
+	// A different session is a distinct active key and must be admitted.
+	if err := insertManifest(t, ctx, pg, "acme", "sess-2", "55555555-5555-5555-5555-555555555555"); err != nil {
+		t.Errorf("a distinct session's active partial manifest must insert: %v", err)
 	}
 }
 
@@ -192,10 +190,9 @@ func TestCheckpointManifestActivePartialIsUnique(t *testing.T) {
 // diagnosis: the intent row wrote a non-'in_progress' manifest_reason or
 //
 //	a non-NULL baseline_full_checkpoint_bytes for a session with no
-//	prior full checkpoint. §10.1 line 141 requires the intent row to
+//	prior full checkpoint. §10.1.7 requires the intent row to
 //	carry manifest_reason = 'in_progress' until a terminal arm
-//	overwrites it, and baseline_full_checkpoint_bytes NULL so the §10.1
-//	line 155 IS NULL branch and the §7.2 optional-fraction rule keep the
+//	overwrites it, and baseline_full_checkpoint_bytes NULL so the §10.1 IS NULL branch and the §7.2 optional-fraction rule keep the
 //	resume path from dividing by zero.
 func TestCheckpointManifestIntentRowDefaults(t *testing.T) {
 	t.Parallel()
@@ -205,7 +202,7 @@ func TestCheckpointManifestIntentRowDefaults(t *testing.T) {
 	ctx := context.Background()
 	seedTenant(t, ctx, pg, "acme")
 
-	if err := insertManifest(t, ctx, pg, "acme", "sess-1", "default", "66666666-6666-6666-6666-666666666666"); err != nil {
+	if err := insertManifest(t, ctx, pg, "acme", "sess-1", "66666666-6666-6666-6666-666666666666"); err != nil {
 		t.Fatalf("insert intent row: %v", err)
 	}
 
@@ -235,5 +232,69 @@ func TestCheckpointManifestIntentRowDefaults(t *testing.T) {
 	}
 	if !partial {
 		t.Errorf("intent-row partial = %v, want true", partial)
+	}
+}
+
+// spec: 10.1, 12.3
+// diagnosis: migration 0180 widens checkpoint_manifest's
+//
+//	lenny_tenant_isolation policy to the '__all__' cross-tenant sentinel
+//	form so its one preflight read can scan every tenant, and must restore
+//	the strict form migration 0178 created before it finishes. A failure
+//	means the widening outlived the migration, so checkpoint_manifest now
+//	admits a cross-tenant read that no other part of §12.3 grants it.
+func TestCheckpointManifestRejectsAllTenantsSentinelAfterSlotDrop(t *testing.T) {
+	t.Parallel()
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: migrationsDir(t),
+	})
+	ctx := context.Background()
+
+	seedTenant(t, ctx, pg, "acme")
+	seedTenant(t, ctx, pg, "globex")
+	if err := insertManifest(t, ctx, pg, "acme", "sess-acme", "33333333-3333-3333-3333-333333333333"); err != nil {
+		t.Fatalf("seed acme manifest: %v", err)
+	}
+	if err := insertManifest(t, ctx, pg, "globex", "sess-globex", "44444444-4444-4444-4444-444444444444"); err != nil {
+		t.Fatalf("seed globex manifest: %v", err)
+	}
+
+	tx, err := pg.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SET LOCAL ROLE lenny_app"); err != nil {
+		t.Fatalf("set role lenny_app: %v", err)
+	}
+	// The strongest cross-tenant context the platform admits anywhere: the
+	// '__all__' sentinel together with its lenny.allow_all_sentinel opt-in.
+	// checkpoint_manifest's strict policy matches neither, so the read must
+	// return nothing.
+	if _, err := tx.Exec(ctx, "SET LOCAL lenny.allow_all_sentinel = 'true'"); err != nil {
+		t.Fatalf("set allow_all_sentinel: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		"SELECT set_config('app.current_tenant', '__all__', true)"); err != nil {
+		t.Fatalf("set __all__ context: %v", err)
+	}
+	var visible int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM checkpoint_manifest`).Scan(&visible); err != nil {
+		t.Fatalf("count under __all__: %v", err)
+	}
+	if visible != 0 {
+		t.Errorf("__all__ sees %d checkpoint_manifest rows, want 0 (§12.3 strict isolation)", visible)
+	}
+
+	var using string
+	if err := tx.QueryRow(
+		ctx,
+		`SELECT qual FROM pg_policies
+		 WHERE tablename = 'checkpoint_manifest' AND policyname = 'lenny_tenant_isolation'`,
+	).Scan(&using); err != nil {
+		t.Fatalf("read lenny_tenant_isolation USING clause: %v", err)
+	}
+	if strings.Contains(using, "__all__") {
+		t.Errorf("checkpoint_manifest isolation policy retains the cross-tenant sentinel: %s", using)
 	}
 }

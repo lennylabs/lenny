@@ -49,7 +49,7 @@ type BufferOption func(*EventBuffer)
 
 // WithBufferMetrics wires the §25.3 buffer metrics
 // (lenny_events_buffer_length / _queries_total / _gaps_total). spec:
-// §25.3 lines 766-772.
+// §25.3.
 func WithBufferMetrics(m *events.Metrics) BufferOption {
 	return func(b *EventBuffer) { b.metrics = m }
 }
@@ -83,7 +83,7 @@ func (b *EventBuffer) Append(e events.OperationalEvent) uint64 {
 		length = b.cap
 	}
 	b.mu.Unlock()
-	// spec: §25.3 line 770 — the buffer gauge tracks the retained count,
+	// spec: §25.3 — the buffer gauge tracks the retained count,
 	// which caps at the ring capacity once the buffer has wrapped.
 	b.metrics.SetBufferLength(int(length))
 	return id
@@ -106,7 +106,7 @@ func (b *EventBuffer) oldestID() uint64 {
 // limit (a non-positive limit defaults to 100). When since predates
 // the oldest retained event the page reports a gap.
 func (b *EventBuffer) Query(since uint64, filter events.EventFilter, limit int) events.BufferedEventPage {
-	// spec: §25.3 line 771 — every buffer-endpoint query is counted; a
+	// spec: §25.3 — every buffer-endpoint query is counted; a
 	// query whose cursor was evicted additionally increments the gap
 	// counter (line 772).
 	b.metrics.IncQuery()
@@ -163,8 +163,7 @@ func (b *EventBuffer) Query(since uint64, filter events.EventFilter, limit int) 
 // id (the canonical eventKey) equals key, and whether it was found. It
 // backs the §25.5 cross-source cursor translation: a cursor produced by
 // any source carries an eventKey, and the buffer resolves it to a local
-// position by scanning. spec: §25.5 lines 2666-2675 ("translates by
-// scanning for the first event with a matching eventKey").
+// position by scanning. spec: §25.5.
 func (b *EventBuffer) Lookup(key string) (uint64, bool) {
 	if key == "" {
 		return 0, false

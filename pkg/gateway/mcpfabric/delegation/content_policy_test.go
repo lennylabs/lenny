@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
-// spec: §8.3 lines 157-188 — the gateway enforces contentPolicy
+// spec: §8.3 — the gateway enforces contentPolicy
 // inheritance and four-axis monotonicity on every delegate_task: the
 // child's resolved policy (from the target runtime's DelegationPolicy) may
 // only tighten the parent's effective policy, and the resolved effective
@@ -156,7 +156,7 @@ func TestDelegateRejectsContentPolicyWeakening_spec_8_3_157(t *testing.T) {
 }
 
 // A child substituting a different non-null interceptor is rejected
-// unconditionally (§8.3 line 188).
+// unconditionally (§8.3).
 func TestDelegateRejectsInterceptorSubstitution_spec_8_3_188(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()

@@ -4,13 +4,13 @@
 // election that lets exactly one gateway replica run the §12.5 GC
 // orchestrator and the other gateway-singleton background sweeps
 // (artifact GC, tombstone hard-prune, audit-retention pruner, EventBus
-// retranscribe worker, legal-hold reconciler, and the §12.5 line 307 T4
+// retranscribe worker, legal-hold reconciler, and the §12.5 T4
 // KMS probe).
 //
-// spec: §12.5 line 317 — "The job is owned by the gateway — it runs as a
+// spec: §12.5 — "The job is owned by the gateway — it runs as a
 // leader-elected goroutine inside the gateway process (not a separate
 // CronJob). Only one gateway instance runs GC at a time via the existing
-// leader-election lease." spec: §12.5 line 332 — "gateway-scoped
+// leader-election lease." spec: §12.5 — "gateway-scoped
 // singleton jobs use an equivalent `lenny-gateway-leader` Lease scoped to
 // the gateway Deployment ... During the bounded failover window (near-zero
 // on clean shutdown; up to 25s on crash ...)".
@@ -34,15 +34,15 @@ import (
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 )
 
-// §12.5 line 332 leader-election lease parameters. The worst-case
+// §12.5 leader-election lease parameters. The worst-case
 // crash-failover window is LeaseDuration + RenewDeadline = 25s, matching
 // the §4.6.1 controller failover bound the spec ties the GC failover bound
 // to.
 const (
-	// LeaseName is the §12.5 line 332 leader-election Lease name. It is
+	// LeaseName is the §12.5 leader-election Lease name. It is
 	// scoped to the gateway Deployment's namespace.
 	LeaseName = "lenny-gateway-leader"
-	// LeaseDuration is the §12.5 line 332 lease validity window.
+	// LeaseDuration is the §12.5 lease validity window.
 	LeaseDuration = 15 * time.Second
 	// RenewDeadline is how long the leader keeps trying to renew before
 	// giving up. LeaseDuration + RenewDeadline is the 25s crash-failover
@@ -67,7 +67,7 @@ type Elector interface {
 	IsLeader() bool
 }
 
-// LeaseTimings carries optional overrides for the §12.5 line 332 lease
+// LeaseTimings carries optional overrides for the §12.5 lease
 // durations. A zero field keeps the built-in default. The window must
 // satisfy client-go's LeaseDuration > RenewDeadline > RetryPeriod
 // invariant; withDefaults only substitutes built-ins for omitted fields.
@@ -129,8 +129,7 @@ func NewLeaseElector(
 		RetryPeriod:   t.RetryPeriod,
 		// Release the lease on a clean shutdown so the surviving replica
 		// becomes the GC writer without waiting out the full lease
-		// duration (the "near-zero on clean shutdown" half of §12.5 line
-		// 332).
+		// duration (the "near-zero on clean shutdown" half of §12.5).
 		ReleaseOnCancel: true,
 		Name:            LeaseName,
 	}

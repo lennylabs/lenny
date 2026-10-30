@@ -78,7 +78,7 @@ func TestDiff_Changes_spec_25_8(t *testing.T) {
 	}
 }
 
-// TestDiff_GatewayUnavailable_spec_25_8 covers the §25.8 line 3610
+// TestDiff_GatewayUnavailable_spec_25_8 covers the §25.8
 // "gateway is down: config diff/apply fail" degradation.
 func TestDiff_GatewayUnavailable_spec_25_8(t *testing.T) {
 	gw := &fakeGateway{getErr: errors.New("connection refused")}
@@ -175,7 +175,7 @@ func TestApply_GatewayApplyError_spec_25_8(t *testing.T) {
 	}
 }
 
-// TestApply_LowerMinimumWarning_spec_25_8 covers the §25.8 line 3573
+// TestApply_LowerMinimumWarning_spec_25_8 covers the §25.8
 // impact warning for reducing a warm-pool minimum below current demand.
 func TestApply_LowerMinimumWarning_spec_25_8(t *testing.T) {
 	gw := &fakeGateway{running: map[string]any{"warmPool.minSize": float64(10)}}

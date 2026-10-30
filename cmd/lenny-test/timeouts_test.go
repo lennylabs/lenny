@@ -3,11 +3,14 @@
 package main
 
 import (
+	"os"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
 
-// spec: TESTING.md §2 (per-tier go-test budgets); operator-tunable
+// Per-tier go-test budgets are an operator-tunable
 // default rule (code-best-practices: a non-spec default is overridable
 // and degrades to the documented default when the override is invalid).
 //
@@ -46,18 +49,122 @@ func TestTierTimeoutResolvesOverrideAndDefaults(t *testing.T) {
 	})
 }
 
-// spec: TESTING.md §2 (integration tier budget).
+// The unit tier budget is operator-tunable (code-best-practices).
+//
+// The unit tier runs `go test ./...` with the race detector, and some
+// packages under it start envtest control planes. Its default budget must
+// exceed the slowest package's observed runtime, or a passing package is
+// reported as a tier failure for a timeout alone.
+func TestUnitTimeoutExceedsObservedRuntime(t *testing.T) {
+	// Observed: 198.9s for pkg/gateway/sessionserver under the race
+	// detector, inside a scoped run of 25 unit-tier package patterns on
+	// 2026-10-27 at load average 14 to 22 (TEST-GAPS T-17.4.27); a run of
+	// that package alone later the same day took 164.4s at load average 16
+	// to 25. pkg/gateway/session/recycle, which set the previous figure of
+	// 251.5s, took 14.7s once it shared one envtest control plane per test
+	// binary (TEST-GAPS T-17.4.28), and pkg/embedded/stack took 13.5s
+	// (TEST-GAPS T-17.4.23), in a run of the four patterns the unit tier
+	// scoped to those changes, whose slowest package was cmd/lenny-gateway
+	// at 109.1s (load average 24 to 16). pkg/controller/sandbox
+	// (464.3s to 19.8s, TEST-GAPS T-17.4.26) and pkg/gateway/podlifecycle/
+	// podsession (1776.6s to 46.0s, TEST-GAPS T-17.4.22) made the same change
+	// before them.
+	const observedSlowest = 199 * time.Second
+	if tierUnitTimeout <= observedSlowest {
+		t.Errorf("tierUnitTimeout %s does not exceed observed unit runtime %s; a passing package will be aborted as a timeout",
+			tierUnitTimeout, observedSlowest)
+	}
+}
+
+// The integration tier budget is operator-tunable (code-best-practices).
 //
 // The integration tier suite boots the gateway per test against the
-// compose stack and runs roughly four to five minutes end-to-end. Its
-// default budget must exceed that observed runtime with margin so a
-// passing suite is not reported as a tier failure for a timeout alone.
+// compose stack and runs end-to-end. Its default budget must exceed that
+// observed runtime with margin so a passing suite is not reported as a
+// tier failure for a timeout alone.
 func TestIntegrationTimeoutExceedsObservedRuntime(t *testing.T) {
-	// Observed: 231.6s raw on a developer host, 279.8s at the base ref.
-	// The default must clear the slower of the two with headroom.
-	const observedSlowest = 280 * time.Second
+	// Observed: 365s for the slowest of four consecutive passing runs of
+	// tests/tier4_integration on the 8-core developer host on 2026-10-28
+	// (351s to 365s, load average 5 to 9), after the package linked each
+	// subprocess command once, shared one Postgres container, and ran the
+	// tests that own their fixtures in parallel (TEST-GAPS T-17.4.33). The
+	// run before that change took 1773s on the same host, 1679s after
+	// T-17.4.32, and 2568s before T-17.4.32. The earlier 768s and 280s
+	// figures predate most of the package's current tests.
+	const observedSlowest = 365 * time.Second
 	if tierIntegrationTimeout <= observedSlowest {
 		t.Errorf("tierIntegrationTimeout %s does not exceed observed integration runtime %s; a passing suite will be aborted as a timeout",
 			tierIntegrationTimeout, observedSlowest)
+	}
+}
+
+// The security tier budget is operator-tunable (code-best-practices).
+//
+// TESTING.md §12.9 (Tier 9, Security) runs the tier-9 package as one
+// `go test` binary. Under the 600-second long-tier budget it shared with
+// the load and chaos tiers, a loaded cluster pushed it past the budget and
+// `go test` aborted the binary with no per-test failure (TEST-GAPS
+// T-17.4.19). The tier's argv must carry its own budget, that budget must
+// exceed the slowest recorded passing run, and the override must move it.
+func TestSecurityTierRunsUnderItsOwnBudget(t *testing.T) {
+	timeoutArg := func(args []string) string {
+		for _, a := range args {
+			if strings.HasPrefix(a, "-timeout=") {
+				return strings.TrimPrefix(a, "-timeout=")
+			}
+		}
+		return ""
+	}
+
+	t.Run("argv carries the security budget", func(t *testing.T) {
+		args := securityTierArgs()
+		if got, want := timeoutArg(args), tierSecurityTimeout.String(); got != want {
+			t.Errorf("security tier -timeout = %q, want tierSecurityTimeout %q (argv %v)", got, want, args)
+		}
+		if !slices.Contains(args, "-tags=security") || !slices.Contains(args, "./tests/tier9_security/...") {
+			t.Errorf("security tier argv = %v, want -tags=security over ./tests/tier9_security/...", args)
+		}
+	})
+
+	t.Run("default exceeds the slowest recorded passing run", func(t *testing.T) {
+		// Observed: 1634.1s for a passing whole-package run on a loaded
+		// development host.
+		const observedSlowest = 1635 * time.Second
+		if defaultSecurityTimeout <= observedSlowest {
+			t.Errorf("defaultSecurityTimeout %s does not exceed observed security runtime %s",
+				defaultSecurityTimeout, observedSlowest)
+		}
+		if defaultSecurityTimeout <= tierLongTimeout && os.Getenv("LENNY_TEST_LONG_TIMEOUT") == "" {
+			t.Errorf("defaultSecurityTimeout %s does not exceed the long-tier budget %s it replaced",
+				defaultSecurityTimeout, tierLongTimeout)
+		}
+	})
+
+	t.Run("unset override resolves to the default", func(t *testing.T) {
+		t.Setenv(securityTimeoutEnv, "")
+		if got := securityTierTimeout(); got != defaultSecurityTimeout {
+			t.Errorf("unset %s: got %s, want %s", securityTimeoutEnv, got, defaultSecurityTimeout)
+		}
+	})
+
+	t.Run("override moves the argv budget", func(t *testing.T) {
+		t.Setenv(securityTimeoutEnv, "45m")
+		saved := tierSecurityTimeout
+		t.Cleanup(func() { tierSecurityTimeout = saved })
+		tierSecurityTimeout = securityTierTimeout()
+		if got, want := timeoutArg(securityTierArgs()), (45 * time.Minute).String(); got != want {
+			t.Errorf("%s=45m: security tier -timeout = %q, want %q", securityTimeoutEnv, got, want)
+		}
+	})
+
+	t.Run("unparseable override degrades to the default", func(t *testing.T) {
+		t.Setenv(securityTimeoutEnv, "forever")
+		if got := securityTierTimeout(); got != defaultSecurityTimeout {
+			t.Errorf("unparseable %s: got %s, want %s", securityTimeoutEnv, got, defaultSecurityTimeout)
+		}
+	})
+
+	if securityTimeoutEnv != "LENNY_TEST_SECURITY_TIMEOUT" {
+		t.Errorf("security override env = %q, want LENNY_TEST_SECURITY_TIMEOUT", securityTimeoutEnv)
 	}
 }

@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// spec: §7.5 lines 481-490 — F-7.5.1.
+// spec: §7.5 — F-7.5.1.
 
 // TestSetupCommandPolicyPermitsCommandAllowlist exercises the §7.5 prefix
 // match in allowlist mode: a command matches when its raw text equals the

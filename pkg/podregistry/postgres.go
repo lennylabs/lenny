@@ -14,7 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/uuid"
 )
 
-// PostgresPodRegistry is the §12.6 line 436 Tier-4 PodRegistry
+// PostgresPodRegistry is the §12.6 Tier-4 PodRegistry
 // implementation: it reads and writes the agent_pod_state Postgres table
 // directly instead of Sandbox CRD status, eliminating the etcd write
 // pressure the CRD-backed registry incurs at scale. It sits over the
@@ -43,7 +43,7 @@ type PostgresPodRegistry struct {
 	pool    *pgxpool.Pool
 	metrics *Metrics
 
-	// pollInterval is the WatchPods polling cadence. The §12.6 line 484
+	// pollInterval is the WatchPods polling cadence. The §12.6
 	// LISTEN/NOTIFY trigger (migration 0108) is the lower-latency path a
 	// future build consumes; the v1 watch falls back to polling, per the
 	// spec's PgBouncer-transaction-mode caveat. Zero falls back to
@@ -74,7 +74,7 @@ func NewPostgres(pool *pgxpool.Pool) (*PostgresPodRegistry, error) {
 	}, nil
 }
 
-// SetMetrics attaches the §12.6 line 478 / line 484 observability
+// SetMetrics attaches the §12.6 observability
 // metrics. A nil Metrics (the default) disables emission.
 func (r *PostgresPodRegistry) SetMetrics(m *Metrics) { r.metrics = m }
 
@@ -154,7 +154,7 @@ func (r *PostgresPodRegistry) GetPod(ctx context.Context, podID PodID) (rec *Pod
 	return &out, nil
 }
 
-// UpdatePodState writes a §6.2 state transition under the §12.6 line 476
+// UpdatePodState writes a §6.2 state transition under the §12.6
 // optimistic CAS: UPDATE ... SET state, resource_version = resource_version
 // + 1 WHERE pod_id AND resource_version = expected. A transition whose
 // From does not match the current state returns ErrInvalidTransition; a
@@ -261,7 +261,7 @@ func (r *PostgresPodRegistry) ClaimPod(ctx context.Context, opts ClaimOpts) (rec
 }
 
 // ReleasePod transitions a pod out of an active phase per the release
-// reason and clears its session and tenant binding (§12.6 line 442), so
+// reason and clears its session and tenant binding (§12.6), so
 // the released pod no longer reports as bound to the orphan-session
 // reconciler. ErrNotFound when no row exists.
 func (r *PostgresPodRegistry) ReleasePod(ctx context.Context, podID PodID, reason ReleaseReason) (err error) {
@@ -303,7 +303,7 @@ func (r *PostgresPodRegistry) ListPodsByPool(ctx context.Context, poolID PoolID,
 }
 
 // listRows is the shared list query. It returns each record alongside
-// its updated_at so the watch loop can compute the §12.6 line 484 lag.
+// its updated_at so the watch loop can compute the §12.6 lag.
 func (r *PostgresPodRegistry) listRows(ctx context.Context, poolID PoolID, state string) ([]PodRecord, []time.Time, error) {
 	q := `SELECT ` + selectColumns + `, updated_at FROM agent_pod_state WHERE pool_id = $1`
 	args := []any{string(poolID)}
@@ -437,13 +437,13 @@ func (r *PostgresPodRegistry) DeletePod(ctx context.Context, podID PodID) (err e
 }
 
 // WatchPods returns an eventually-consistent change stream for the pool.
-// The v1 implementation polls agent_pod_state; the §12.6 line 484
+// The v1 implementation polls agent_pod_state; the §12.6
 // LISTEN/NOTIFY trigger (migration 0108) is the lower-latency substrate a
 // future build consumes. The channel closes when ctx is cancelled.
 //
-// spec: §12.6 line 482 — no initial-state snapshot (consumers seed via
+// spec: §12.6 — no initial-state snapshot (consumers seed via
 // ListPodsByPool); a backed-up channel yields a resync frame instead of
-// blocking. spec: §12.6 line 484 — every delivered event records the
+// blocking. spec: §12.6 — every delivered event records the
 // updated_at → delivery lag on lenny_pod_registry_watch_lag_seconds
 // labeled implementation="postgres".
 func (r *PostgresPodRegistry) WatchPods(ctx context.Context, poolID PoolID) (_ <-chan PodEvent, err error) {

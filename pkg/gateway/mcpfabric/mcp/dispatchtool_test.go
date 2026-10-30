@@ -69,7 +69,7 @@ func TestDispatchToolHandlerErrorIsIsErrorResult_spec_15_2_1(t *testing.T) {
 }
 
 // A PreToolResult interceptor rejection surfaces through the same isError
-// path with the INTERCEPTOR_REJECTED code. spec: §4.8 line 1053.
+// path with the INTERCEPTOR_REJECTED code. spec: §4.8.
 func TestDispatchToolInterceptorRejection_spec_4_8(t *testing.T) {
 	s := NewServer()
 	s.RegisterTool(Tool{Name: "lenny/output"}, func(context.Context, json.RawMessage) (ToolResult, error) {

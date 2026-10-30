@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Contract test for the §11.7 / §12.3.5 OCSF audit-event translation.
+// Contract test for the §11.7 / TESTING.md §12.3.5 OCSF audit-event translation.
 // Every audit event Lenny emits has an OCSF v1.1.0 translation; this
 // suite generates one of each catalog event type and asserts the
 // translated record satisfies the OCSF structural contract the §11.7

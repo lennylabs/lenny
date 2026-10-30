@@ -21,7 +21,7 @@ import (
 // client-go not-found error with this sentinel.
 var ErrPodLogNotFound = errors.New("pod not found")
 
-// PodLogOptions are the §25.4 line 2532 pod-log query parameters
+// PodLogOptions are the §25.4 pod-log query parameters
 // (?container=, ?since=, ?tail=, ?previous=) resolved to the Kubernetes
 // pod-log API shape.
 type PodLogOptions struct {
@@ -44,12 +44,12 @@ type PodLogOptions struct {
 // endpoint reporting the Kubernetes API unavailable. It returns
 // ErrPodLogNotFound when the pod or container is unknown.
 //
-// spec: §25.4 lines 2528-2534.
+// spec: §25.4.
 type PodLogReader interface {
 	ReadPodLogs(ctx context.Context, namespace, name string, opts PodLogOptions) (io.ReadCloser, error)
 }
 
-// registerLogRoutes wires the §25.4 line 2532 log-proxy endpoint onto the
+// registerLogRoutes wires the §25.4 log-proxy endpoint onto the
 // Server's mux.
 func (s *Server) registerLogRoutes() {
 	s.mux.HandleFunc("GET /v1/admin/logs/pods/{namespace}/{name}", s.handleGetPodLogs)
@@ -62,7 +62,7 @@ func (s *Server) registerLogRoutes() {
 // ?container=, ?since=, ?tail=, and ?previous= map onto the K8s
 // PodLogOptions.
 //
-// spec: §25.4 lines 2528-2534.
+// spec: §25.4.
 func (s *Server) handleGetPodLogs(w http.ResponseWriter, r *http.Request) {
 	if s.podLogs == nil {
 		conventions.WriteError(w, http.StatusServiceUnavailable, "LOG_PROXY_UNAVAILABLE",
@@ -102,7 +102,7 @@ func (s *Server) handleGetPodLogs(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, stream)
 }
 
-// parsePodLogParams resolves the §25.4 line 2532 query parameters onto a
+// parsePodLogParams resolves the §25.4 query parameters onto a
 // PodLogOptions. ?since= accepts either a Go duration ("5m", "1h30m") or
 // a plain integer count of seconds; ?tail= is a non-negative line count;
 // ?previous= is a boolean. A malformed value is a validation error so the

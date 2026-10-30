@@ -2,8 +2,9 @@
 
 // Package tokenservice is the testinfra helper that boots
 // cmd/lenny-token-service as a subprocess for tier-4 integration
-// tests. Builds the binary into a temp dir on first call, then
-// launches it bound to a random free gRPC port. Provides GRPCAddr()
+// tests. Start builds the binary into a temp dir, then launches it
+// bound to a random free gRPC port; Build returns the built binary for
+// a test that runs it with its own flags. Provides GRPCAddr()
 // so tests can pass it to the gateway harness as the
 // --token-service-grpc-addr flag value.
 package tokenservice
@@ -15,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,15 +24,23 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+	"github.com/lennylabs/lenny/tests/testinfra/binbuild"
+	"github.com/lennylabs/lenny/tests/testinfra/ports"
+	"github.com/lennylabs/lenny/tests/testinfra/stackkey"
 )
 
 // Process represents a running lenny-token-service subprocess.
 type Process struct {
-	cmd      *exec.Cmd
-	grpcAddr string
-	httpAddr string
-	stderr   *os.File
+	// exited is closed once cmd.Wait returns; waitErr holds its result.
+	exited  chan struct{}
+	waitErr error
+	// stopOnce makes stop signal the process at most once.
+	stopOnce   sync.Once
+	cmd        *exec.Cmd
+	grpcAddr   string
+	httpAddr   string
+	stderr     *os.File
+	stderrPath string
 }
 
 // SkipUnlessAvailable t.Skips when the Go toolchain is missing.
@@ -42,84 +52,157 @@ func SkipUnlessAvailable(t testing.TB) {
 }
 
 // Start builds + spawns cmd/lenny-token-service on a random free
-// gRPC and HTTP port. Returns when the gRPC listener is responsive.
+// gRPC and HTTP port. Returns when both listeners are responsive.
 // Skips the test when go is not on PATH (CI environments without Go).
 func Start(t testing.TB) *Process {
 	t.Helper()
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Skipf("go not on PATH: %v", err)
-	}
+	return StartOpts(t, Options{})
+}
 
-	tmp, err := os.MkdirTemp("", "lenny-token-service-it-*")
-	if err != nil {
-		t.Fatalf("mkdtemp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
+// StartWith is Start with additional cmd/lenny-token-service flags
+// appended after the listen addresses, such as --postgres-dsn.
+func StartWith(t testing.TB, extraArgs ...string) *Process {
+	t.Helper()
+	return StartOpts(t, Options{Args: extraArgs})
+}
 
-	binary := filepath.Join(tmp, "lenny-token-service")
-	root := schematest.RepoRoot(t)
-	build := exec.Command("go", "build", "-o", binary, "./cmd/lenny-token-service")
-	build.Dir = root
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build lenny-token-service: %v\n%s", err, out)
-	}
+// Options configures StartOpts.
+type Options struct {
+	// Args are cmd/lenny-token-service flags appended after the listen
+	// addresses. A later value of a flag wins over an earlier one.
+	Args []string
+	// Env entries are appended after the harness defaults, so an entry
+	// here overrides a default of the same name.
+	Env []string
+	// Binary is a cmd/lenny-token-service binary Build returned. Empty
+	// builds one. A test that restarts the Token Service passes one
+	// binary to every start so it builds once.
+	Binary string
+	// Reserve chooses each loopback address the process is given. Empty
+	// uses ports.Reserve. A test of the start retry passes one that
+	// returns an address another process holds first.
+	Reserve func(testing.TB) string
+}
 
-	grpcPort, err := freePort()
-	if err != nil {
-		t.Fatalf("freePort (grpc): %v", err)
+// StartOpts builds and spawns cmd/lenny-token-service with opts and
+// returns once its gRPC and HTTP listeners accept connections.
+//
+// spec: §10.2 (Authentication) "Verifier key set and rotation", §4.3 —
+// every Token Service a test starts runs on the local KMS provider over
+// the master key of the test's stack (tests/testinfra/stackkey), so it
+// shares one key set with the gateways and lenny-ops the test starts.
+func StartOpts(t testing.TB, opts Options) *Process {
+	t.Helper()
+	binary := opts.Binary
+	if binary == "" {
+		binary = Build(t)
 	}
-	httpPort, err := freePort()
-	if err != nil {
-		t.Fatalf("freePort (http): %v", err)
-	}
-	grpcAddr := fmt.Sprintf("127.0.0.1:%d", grpcPort)
-	httpAddr := fmt.Sprintf("127.0.0.1:%d", httpPort)
+	// cmd/lenny-token-service cannot bind port 0 and report the port it
+	// got, so the harness chooses the addresses, and starts again on fresh
+	// ones when another process takes one first (TEST-GAPS T-17.4.38).
+	return ports.StartRetrying(t, "lenny-token-service", func() (*Process, error) {
+		return startOnce(t, binary, opts)
+	})
+}
 
-	stderrPath := filepath.Join(tmp, "stderr.log")
-	stderrFile, err := os.Create(stderrPath)
+// startOnce starts one Token Service process on freshly chosen addresses and
+// waits for both listeners. It returns an error wrapping ports.ErrAddrInUse
+// when the process lost an address to another process, so StartOpts retries.
+func startOnce(t testing.TB, binary string, opts Options) (*Process, error) {
+	t.Helper()
+	tmp := filepath.Dir(binary)
+	reserve := opts.Reserve
+	if reserve == nil {
+		reserve = ports.Reserve
+	}
+	grpcAddr := reserve(t)
+	httpAddr := reserve(t)
+
+	// Each process gets its own log, because processes started from one
+	// binary share its directory.
+	stderrFile, err := os.CreateTemp(tmp, "stderr-*.log")
 	if err != nil {
 		t.Fatalf("create stderr log: %v", err)
 	}
+	stderrPath := stderrFile.Name()
 
-	cmd := exec.Command(
-		binary,
-		"--addr", httpAddr,
-		"--grpc-addr", grpcAddr,
-	)
+	args := append([]string{"--addr", httpAddr, "--grpc-addr", grpcAddr}, opts.Args...)
+	cmd := exec.Command(binary, args...)
 	cmd.Stdout = stderrFile
 	cmd.Stderr = stderrFile
+	cmd.Env = append(append(os.Environ(), stackkey.Env(t)), opts.Env...)
 	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start token-service: %v", err)
 	}
-	p := &Process{cmd: cmd, grpcAddr: grpcAddr, httpAddr: httpAddr, stderr: stderrFile}
+	p := &Process{cmd: cmd, grpcAddr: grpcAddr, httpAddr: httpAddr, stderr: stderrFile, stderrPath: stderrPath, exited: make(chan struct{})}
+	go func() {
+		p.waitErr = cmd.Wait()
+		close(p.exited)
+	}()
 
 	t.Cleanup(func() {
 		defer func() { _ = stderrFile.Close() }()
-
-		done := make(chan error, 1)
-		go func() { done <- cmd.Wait() }()
-
-		_ = cmd.Process.Signal(os.Interrupt)
-
-		select {
-		case <-done:
-			return
-		case <-time.After(3 * time.Second):
-		}
-		_ = cmd.Process.Kill()
-		select {
-		case <-done:
-		case <-time.After(cmd.WaitDelay + time.Second):
-			t.Logf("token-service subprocess did not exit after SIGKILL; goroutine leaked")
-		}
+		p.stop(t)
 	})
 
 	if err := p.waitReady(5 * time.Second); err != nil {
-		b, _ := os.ReadFile(stderrPath)
-		t.Fatalf("token-service not ready: %v\nlogs:\n%s", err, b)
+		p.stop(t)
+		return nil, fmt.Errorf("token-service not ready: %w\nlogs:\n%s", err, p.Logs())
 	}
-	return p
+	return p, nil
+}
+
+// Stop ends the Token Service with SIGINT and waits for it to exit,
+// force-killing it when the signal does not take within 3 seconds. A
+// test uses it to restart the signer. Only the first call signals; the
+// cleanup StartOpts registers tolerates a prior Stop.
+func (p *Process) Stop(t testing.TB) {
+	t.Helper()
+	p.stop(t)
+}
+
+// stop implements Stop.
+func (p *Process) stop(t testing.TB) {
+	p.stopOnce.Do(func() {
+		_ = p.cmd.Process.Signal(os.Interrupt)
+		select {
+		case <-p.exited:
+			return
+		case <-time.After(3 * time.Second):
+		}
+		_ = p.cmd.Process.Kill()
+		select {
+		case <-p.exited:
+		case <-time.After(p.cmd.WaitDelay + time.Second):
+			t.Logf("token-service subprocess did not exit after SIGKILL; goroutine leaked")
+		}
+	})
+}
+
+// Logs returns the Token Service's combined output written so far, or
+// an empty string when the log cannot be read.
+func (p *Process) Logs() string {
+	b, err := os.ReadFile(p.stderrPath)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// Build returns the path of a cmd/lenny-token-service binary in a fresh
+// temporary directory, which t's cleanup removes. A
+// test that runs the binary to exit with its own flags and environment,
+// such as a startup-refusal case, uses it directly; Start uses it before
+// it launches the process. It skips the test when go is not on PATH.
+func Build(t testing.TB) string {
+	t.Helper()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skipf("go not on PATH: %v", err)
+	}
+	// binbuild links the command once per test process and hands this
+	// test a copy in a directory of its own (TEST-GAPS T-17.4.33).
+	return binbuild.Build(t, "./cmd/lenny-token-service", "lenny-token-service")
 }
 
 // GRPCAddr returns the host:port the gRPC TokenService listens on.
@@ -128,18 +211,55 @@ func (p *Process) GRPCAddr() string { return p.grpcAddr }
 // HTTPAddr returns the host:port the HTTP token-exchange listens on.
 func (p *Process) HTTPAddr() string { return p.httpAddr }
 
-// waitReady polls the gRPC port until a TCP dial succeeds.
+// BaseURL returns the http://host:port of the HTTP token-exchange
+// listener, which serves POST /v1/oauth/token.
+func (p *Process) BaseURL() string { return "http://" + p.httpAddr }
+
+// waitReady polls the gRPC and HTTP ports until a TCP dial to each
+// succeeds and this process holds both listeners. A dial alone does not
+// count, because another process that took a port would accept it while
+// this one exits on its bind refusal. A process that exits ends the wait
+// with ports.ErrAddrInUse when its log records a bind refusal.
 func (p *Process) waitReady(d time.Duration) error {
 	deadline := time.Now().Add(d)
+	addrs := []string{p.grpcAddr, p.httpAddr}
+	for _, addr := range addrs {
+		if err := p.waitDial(addr, deadline); err != nil {
+			return fmt.Errorf("token-service %s did not accept connections within %s: %w", addr, d, err)
+		}
+	}
+	for !ports.Ready(p.cmd.Process.Pid, addrs...) {
+		if err := p.exitErr(); err != nil {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("token-service listeners %v answered within %s, but not from this process", addrs, d)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return nil
+}
+
+// waitDial polls addr until a TCP dial succeeds or deadline passes. It
+// returns the exit error at once when the process has exited.
+func (p *Process) waitDial(addr string, deadline time.Time) error {
+	var lastErr error
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", p.grpcAddr, 500*time.Millisecond)
+		if err := p.exitErr(); err != nil {
+			return err
+		}
+		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
 		if err == nil {
 			_ = conn.Close()
 			return nil
 		}
+		lastErr = err
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("token-service gRPC %s did not accept connections within %s", p.grpcAddr, d)
+	if lastErr == nil {
+		lastErr = fmt.Errorf("deadline passed")
+	}
+	return lastErr
 }
 
 // DialGRPC returns a TokenServiceClient connected to this process's
@@ -156,14 +276,19 @@ func (p *Process) DialGRPC(t testing.TB) tokensv1.TokenServiceClient {
 	return tokensv1.NewTokenServiceClient(conn)
 }
 
-// freePort returns an open TCP port the OS assigned on 127.0.0.1.
-func freePort() (int, error) {
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
+// exitErr returns nil while the process runs. Once it has exited, it returns
+// an error wrapping ports.ErrAddrInUse when the log records a bind refusal,
+// and the exit status otherwise.
+func (p *Process) exitErr() error {
+	select {
+	case <-p.exited:
+	default:
+		return nil
 	}
-	defer lis.Close()
-	return lis.Addr().(*net.TCPAddr).Port, nil
+	if ports.LogsAddrInUse([]byte(p.Logs())) {
+		return fmt.Errorf("token-service exited (%v): %w", p.waitErr, ports.ErrAddrInUse)
+	}
+	return fmt.Errorf("token-service exited before it served: %v", p.waitErr)
 }
 
 // Ping issues a no-op AssignCredentials with a deliberately bogus pool

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,7 +24,7 @@ import (
 // spec: §4.7 / §7.1 — the adapter Resume RPC restores a session
 // workspace from the gateway-minted presigned GET capabilities on
 // ResumeRequest.chunks, fetched in index order and concatenated into one
-// tar (or tar.gz) byte stream (§10.1 line 155).
+// tar (or tar.gz) byte stream (§10.1.7).
 
 // fakeCheckpointTransport serves fixed chunk bodies keyed by presigned
 // URL, standing in for the object store the production restore path
@@ -58,7 +59,7 @@ func archiveOf(t *testing.T, files map[string]string) []byte {
 
 // bundleOf builds a §4.4 checkpoint bundle carrying the given workspace
 // files and, when sessionFiles is non-nil, a /sessions tree under the
-// session prefix. spec: §7.3 line 408-409 (steps e and f).
+// session prefix. spec: §7.3.
 func bundleOf(t *testing.T, workspaceFiles, sessionFiles map[string]string) []byte {
 	t.Helper()
 	wsDir := writeTree(t, workspaceFiles)
@@ -101,6 +102,7 @@ func serveArchive(s *adapter.Server, archive []byte) []*adapterv1.ChunkGrant {
 
 func resumeReq(sessionID, checkpointID string) *adapterv1.ResumeRequest {
 	return &adapterv1.ResumeRequest{
+		BindAttempt:  "attempt-a",
 		SessionId:    &adapterv1.SessionId{Value: sessionID},
 		Runtime:      "echo",
 		CheckpointId: checkpointID,
@@ -130,7 +132,7 @@ func TestResumeRestoresTheWorkspaceAndStartsTheRuntime(t *testing.T) {
 	if len(rt.started) != 1 || rt.started[0] != "sess-1" {
 		t.Errorf("runtime started for %v, want [sess-1]", rt.started)
 	}
-	got, err := os.ReadFile(filepath.Join(root, "restored.txt"))
+	got, err := os.ReadFile(filepath.Join(slotWorkspaceRoot(root, "sess-1"), "restored.txt"))
 	if err != nil {
 		t.Fatalf("the checkpoint workspace was not restored: %v", err)
 	}
@@ -139,12 +141,12 @@ func TestResumeRestoresTheWorkspaceAndStartsTheRuntime(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — a multi-chunk checkpoint is restored by fetching
+// spec: §10.1.7 — a multi-chunk checkpoint is restored by fetching
 // each presigned GET capability in ascending index order and feeding the
 // concatenation into one decompress→untar pipeline. This pins that the
 // adapter reassembles across chunk boundaries rather than treating each
 // chunk as an independent archive.
-func TestResumeConcatenatesChunksInIndexOrder_spec_10_1_155(t *testing.T) {
+func TestResumeConcatenatesChunksInIndexOrder_spec_10_1_7(t *testing.T) {
 	s, _, root := sessionServer(t)
 	archive := archiveOf(t, map[string]string{"multi.txt": "reassembled from two chunks"})
 	// Split the single archive at an arbitrary byte offset into two chunks,
@@ -163,7 +165,7 @@ func TestResumeConcatenatesChunksInIndexOrder_spec_10_1_155(t *testing.T) {
 	if _, err := s.Resume(context.Background(), resumeReqChunks("sess-1", "ckpt-1", chunks)); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
-	got, err := os.ReadFile(filepath.Join(root, "multi.txt"))
+	got, err := os.ReadFile(filepath.Join(slotWorkspaceRoot(root, "sess-1"), "multi.txt"))
 	if err != nil {
 		t.Fatalf("the concatenated checkpoint workspace was not restored: %v", err)
 	}
@@ -172,7 +174,7 @@ func TestResumeConcatenatesChunksInIndexOrder_spec_10_1_155(t *testing.T) {
 	}
 }
 
-// spec: §7.3 line 409 step (f) — a resume restores the runtime's
+// spec: §7.3 step (f) — a resume restores the runtime's
 // session file (native SDK session state, conversation logs) from the
 // /sessions tmpfs, not just the workspace. F-7.3.14.
 func TestResumeRestoresSessionFileToExpectedPath_spec_7_3_14(t *testing.T) {
@@ -189,12 +191,13 @@ func TestResumeRestoresSessionFileToExpectedPath_spec_7_3_14(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
-	// The workspace tree restored to WorkspaceRoot.
-	if got, err := os.ReadFile(filepath.Join(root, "work/file.txt")); err != nil || string(got) != "ws" {
+	// The workspace tree restored to the session's own slot cwd.
+	if got, err := os.ReadFile(filepath.Join(slotWorkspaceRoot(root, "sess-1"), "work/file.txt")); err != nil || string(got) != "ws" {
 		t.Fatalf("workspace file = %q (err %v), want %q", got, err, "ws")
 	}
-	// The session file restored to SessionsRoot — the §7.3 step (f) path.
-	got, err := os.ReadFile(filepath.Join(sessionsRoot, ".session.json"))
+	// The session file restored to the session's own /sessions/{sessionId}
+	// tree — the §7.3 step (f) path. spec: §6.4.
+	got, err := os.ReadFile(filepath.Join(sessionsRoot, "sess-1", ".session.json"))
 	if err != nil {
 		t.Fatalf("the session file was not restored to /sessions: %v", err)
 	}
@@ -222,15 +225,11 @@ func TestResumeWorkspaceOnlyBundleLeavesSessionsEmpty_spec_7_3_14(t *testing.T) 
 	if _, err := s.Resume(context.Background(), resumeReqChunks("sess-1", "ckpt-1", chunks)); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
-	if got, err := os.ReadFile(filepath.Join(root, "only.txt")); err != nil || string(got) != "ws" {
+	if got, err := os.ReadFile(filepath.Join(slotWorkspaceRoot(root, "sess-1"), "only.txt")); err != nil || string(got) != "ws" {
 		t.Fatalf("workspace file = %q (err %v), want %q", got, err, "ws")
 	}
-	entries, err := os.ReadDir(sessionsRoot)
-	if err != nil {
-		t.Fatalf("read /sessions: %v", err)
-	}
-	if len(entries) != 0 {
-		t.Errorf("/sessions has %d entries, want 0 (workspace-only bundle)", len(entries))
+	if n := countFiles(t, sessionsRoot); n != 0 {
+		t.Errorf("/sessions holds %d files, want 0 (workspace-only bundle)", n)
 	}
 }
 
@@ -249,8 +248,8 @@ func TestResumeWithNoChunksRestoresNothing(t *testing.T) {
 	if len(rt.started) != 1 || rt.started[0] != "sess-1" {
 		t.Errorf("runtime started for %v, want [sess-1]", rt.started)
 	}
-	if entries, _ := os.ReadDir(root); len(entries) != 0 {
-		t.Errorf("workspace has %d entries, want 0 for a chunk-less resume", len(entries))
+	if n := countFiles(t, root); n != 0 {
+		t.Errorf("the workspace holds %d files, want 0 for a chunk-less resume", n)
 	}
 }
 
@@ -280,16 +279,24 @@ func TestResumeRequiresTransportWhenChunksPresent(t *testing.T) {
 	}
 }
 
-func TestResumeRejectsANonIdlePod(t *testing.T) {
+// spec: 4.7 (Resume takes the same claim as StartSession), 5.2
+//
+// A resume for a second session arrives on its own slot and is admitted on
+// a pod-warm pod; what the claim refuses is a resume for a session that
+// has already started.
+func TestResumeAdmitsASecondSessionAndRefusesARepeat_spec_4_7(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	chunks := serveArchive(s, archiveOf(t, map[string]string{"f": "x"}))
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	// The pod already holds sess-1; resuming another session is rejected.
-	_, err := s.Resume(context.Background(), resumeReqChunks("sess-2", "ckpt-1", chunks))
-	if status.Code(err) != codes.Unavailable {
-		t.Errorf("code = %v, want Unavailable for a non-idle pod", status.Code(err))
+	if _, err := s.Resume(context.Background(), resumeReqChunks("sess-2", "ckpt-1", chunks)); err != nil {
+		t.Errorf("resume for a second session = %v, want admitted on its own slot", err)
+	}
+	_, err := s.Resume(context.Background(), resumeReqChunks("sess-1", "ckpt-1", chunks))
+	// spec: §4.7.1 rule 6 (the started-session rule).
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("code = %v, want FailedPrecondition for a session that has already started", status.Code(err))
 	}
 }
 
@@ -303,69 +310,111 @@ func TestResumeReleasesThePodWhenChunkFetchFails(t *testing.T) {
 	if _, err := s.Resume(context.Background(), req); status.Code(err) != codes.Internal {
 		t.Fatalf("code = %v, want Internal when the chunk fetch fails", status.Code(err))
 	}
-	// The pod was returned to idle, so a retry can claim it.
+	// The adapter released the slot, so a retry can claim it.
 	chunks := serveArchive(s, archiveOf(t, map[string]string{"f": "x"}))
 	if _, err := s.Resume(context.Background(), resumeReqChunks("sess-1", "ckpt-2", chunks)); err != nil {
 		t.Errorf("retry after a released pod failed: %v", err)
 	}
 }
 
-// spec: §7.3 line 408 step (d) — "Recreate same absolute `cwd` path."
-// The gateway carries the original session's WorkspaceRoot on
+// slotWorkspaceRoot is the session's own §6.4 cwd under a workspace base,
+// which is the value the gateway derives and replays on
+// ResumeRequest.expected_workspace_root.
+func slotWorkspaceRoot(base, sessionID string) string {
+	return filepath.Join(base, "slots", sessionID, "current")
+}
+
+// spec: §7.3 step (d) — "Recreate same absolute `cwd` path."
+// The gateway carries the original session's workspace root on
 // ResumeRequest.expected_workspace_root; the adapter MUST refuse a
-// Resume whose mount path disagrees with the adapter's configured
-// WorkspaceRoot. F-7.3.15.
+// Resume whose mount path disagrees with the session's own slot root.
 func TestResumeRejectsWorkspaceRootMismatch_spec_7_3_15(t *testing.T) {
 	s, _, root := sessionServer(t)
 	chunks := serveArchive(s, archiveOf(t, map[string]string{"f": "x"}))
 	req := resumeReqChunks("sess-1", "ckpt-1", chunks)
-	req.ExpectedWorkspaceRoot = root + "-different"
+	req.ExpectedWorkspaceRoot = slotWorkspaceRoot(root, "sess-1") + "-different"
 	_, err := s.Resume(context.Background(), req)
 	if status.Code(err) != codes.FailedPrecondition {
-		t.Errorf("F-7.3.15: code = %v, want FailedPrecondition for workspace_root mismatch", status.Code(err))
+		t.Errorf("code = %v, want FailedPrecondition for workspace_root mismatch", status.Code(err))
 	}
 }
 
-// spec: §7.3 line 408 — a matching workspace_root passes the assertion
-// and the resume proceeds. F-7.3.15.
-func TestResumeAcceptsMatchingWorkspaceRoot_spec_7_3_15(t *testing.T) {
+// spec: §7.3 — the workspace root the gateway derives for the session,
+// which is its §6.4 slot cwd under the workspace base the adapter
+// reported, passes the assertion and the resume proceeds.
+func TestResumeAcceptsTheSessionsSlotWorkspaceRoot_spec_7_3(t *testing.T) {
+	s, _, root := sessionServer(t)
+	chunks := serveArchive(s, archiveOf(t, map[string]string{"f": "x"}))
+	req := resumeReqChunks("sess-1", "ckpt-1", chunks)
+	req.ExpectedWorkspaceRoot = slotWorkspaceRoot(root, "sess-1")
+	if _, err := s.Resume(context.Background(), req); err != nil {
+		t.Fatalf("the session's own slot workspace root was rejected: %v", err)
+	}
+}
+
+// spec: §7.3 step (d); §6.4 — the slot tree is the only workspace layout,
+// so an expectation naming the workspace base rather than the session's
+// slot cwd is a mismatch and the resume is refused. The assertion
+// compares per session; a pod-global directory never satisfies it.
+func TestResumeRejectsTheWorkspaceBaseAsTheExpectedRoot_spec_7_3(t *testing.T) {
 	s, _, root := sessionServer(t)
 	chunks := serveArchive(s, archiveOf(t, map[string]string{"f": "x"}))
 	req := resumeReqChunks("sess-1", "ckpt-1", chunks)
 	req.ExpectedWorkspaceRoot = root
-	if _, err := s.Resume(context.Background(), req); err != nil {
-		t.Fatalf("F-7.3.15: matching workspace_root rejected: %v", err)
+	_, err := s.Resume(context.Background(), req)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("code = %v, want FailedPrecondition for the workspace base as the expected root", status.Code(err))
 	}
 }
 
-// spec: an empty ExpectedWorkspaceRoot disables the assertion so a
-// pre-F-7.3.15 client can resume without the hint. F-7.3.15.
+// spec: §7.3 — an empty ExpectedWorkspaceRoot disables the assertion, so
+// a client that carries no expectation still resumes.
 func TestResumeAcceptsEmptyExpectedWorkspaceRoot_spec_7_3_15(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	chunks := serveArchive(s, archiveOf(t, map[string]string{"f": "x"}))
 	req := resumeReqChunks("sess-1", "ckpt-1", chunks)
 	req.ExpectedWorkspaceRoot = ""
 	if _, err := s.Resume(context.Background(), req); err != nil {
-		t.Fatalf("F-7.3.15: empty workspace_root must be permissive, got: %v", err)
+		t.Fatalf("empty workspace_root must be permissive, got: %v", err)
 	}
 }
 
-// spec: §7.3 line 408 — a mismatch must release the session claim so a
+// spec: §7.3 — a mismatch must release the session claim so a
 // retry can land on a fresh pod without the original session being
 // stuck claimed.
 func TestResumeWorkspaceRootMismatchReleasesClaim_spec_7_3_15(t *testing.T) {
 	s, _, root := sessionServer(t)
 	chunks := serveArchive(s, archiveOf(t, map[string]string{"f": "x"}))
 	req := resumeReqChunks("sess-1", "ckpt-1", chunks)
-	req.ExpectedWorkspaceRoot = root + "-different"
+	req.ExpectedWorkspaceRoot = slotWorkspaceRoot(root, "sess-1") + "-different"
 	if _, err := s.Resume(context.Background(), req); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("Resume: %v", err)
 	}
-	// A subsequent Resume on a different session id must succeed — the
+	// A subsequent Resume on a different session id must succeed: the
 	// pod was released by the first failed Resume.
 	req2 := resumeReqChunks("sess-2", "ckpt-1", chunks)
-	req2.ExpectedWorkspaceRoot = root
+	req2.ExpectedWorkspaceRoot = slotWorkspaceRoot(root, "sess-2")
 	if _, err := s.Resume(context.Background(), req2); err != nil {
-		t.Errorf("F-7.3.15: pod was not released on mismatch: %v", err)
+		t.Errorf("pod was not released on mismatch: %v", err)
 	}
+}
+
+// countFiles counts the regular files under dir, recursively. The
+// per-slot tree the bind creates is directories alone, so a file count
+// distinguishes a restore from the empty trees a bind leaves behind.
+func countFiles(t *testing.T, dir string) int {
+	t.Helper()
+	n := 0
+	if err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			n++
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk %s: %v", dir, err)
+	}
+	return n
 }

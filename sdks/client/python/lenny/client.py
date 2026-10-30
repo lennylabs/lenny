@@ -280,9 +280,17 @@ class Client:
     ) -> Session:
         """Call ``POST /v1/sessions/{id}/start``.
 
-        It transitions a ready session to running.
+        It transitions a ready session through starting to running. It
+        sends the request once and retries neither an error response nor a
+        transport failure, whatever the client's retry policy: a ``/start``
+        that fails after the gateway wrote ``starting`` leaves the session
+        failed, so a repeated ``/start`` is refused, and neither a 5xx nor a
+        transport failure tells the client whether that write happened.
+        Recover from a failed ``start`` by creating a new session.
         """
-        return self._transition("POST", session_id, "start", options)
+        return self._transition(
+            "POST", session_id, "start", options, max_attempts=1
+        )
 
     def interrupt(
         self, session_id: str, options: Optional[RequestOptions] = None
@@ -307,7 +315,10 @@ class Client:
     ) -> Session:
         """Call ``POST /v1/sessions/{id}/resume``.
 
-        It transitions a session awaiting client action back to running.
+        It resumes a session in ``awaiting_client_action`` or ``suspended``.
+        A session awaiting client action, or a suspended session whose pod
+        was released, is returned in ``resume_pending``. A suspended session
+        whose pod is still held is returned in ``running``.
         """
         return self._transition("POST", session_id, "resume", options)
 
@@ -322,11 +333,13 @@ class Client:
         """Call ``POST /v1/sessions/{id}/messages``.
 
         Returns the section 15.4 delivery receipt plus the executor's
-        synchronous output. Each payload may carry ``inReplyTo``,
-        ``delivery``, and ``slotId``; see :class:`MessagePayload`.
+        synchronous output. Each payload may carry ``inReplyTo`` and
+        ``delivery``; see :class:`MessagePayload`. A client addresses a
+        session rather than a slot: the path's session identifier names
+        the slot the gateway delivers to.
 
-        spec: section 15.1; section 15.4 lines 1725-1737;
-        section 7.2 line 345.
+        spec: section 15.1; section 15.4 (Runtime Adapter Specification, "delivery_receipt acknowledgement schema");
+        section 7.2 (Interactive Session Model, "Delivery receipts").
         """
         if not messages:
             raise ValueError("lenny: send_messages requires at least one message")
@@ -451,17 +464,19 @@ class Client:
         session_id: str,
         action: str,
         options: Optional[RequestOptions],
+        max_attempts: Optional[int] = None,
     ) -> Session:
         """Issue a no-body state-mutating call.
 
         ``action`` is the trailing path segment (``finalize``,
         ``start``, ...); an empty action targets the bare
-        ``/v1/sessions/{id}`` path for DELETE.
+        ``/v1/sessions/{id}`` path for DELETE. ``max_attempts`` overrides
+        the retry policy's attempt limit when set.
         """
         path = "/v1/sessions/" + urllib.parse.quote(session_id, safe="")
         if action:
             path += "/" + action
-        raw = self._do(method, path, None, options)
+        raw = self._do(method, path, None, options, max_attempts=max_attempts)
         return Session.from_wire(raw or {})
 
     def _do(
@@ -470,21 +485,24 @@ class Client:
         path: str,
         body: Optional[dict[str, Any]],
         options: Optional[RequestOptions],
+        max_attempts: Optional[int] = None,
     ) -> Optional[dict[str, Any]]:
         """Execute one REST call with retry.
 
         It serializes ``body`` to JSON when non-empty, sends the
         request, retries retryable failures per the client's retry
         policy, and decodes a 2xx response body. A non-2xx response is
-        raised as an :class:`APIError`.
+        raised as an :class:`APIError`. ``max_attempts`` overrides the
+        policy's attempt limit when set; 1 sends the request once.
         """
         body_bytes: Optional[bytes] = None
         if body is not None:
             body_bytes = json.dumps(body).encode("utf-8")
 
         policy = self._retry
+        attempts = policy.max_attempts if max_attempts is None else max_attempts
         last_error: Optional[BaseException] = None
-        for attempt in range(1, policy.max_attempts + 1):
+        for attempt in range(1, attempts + 1):
             if attempt > 1:
                 delay = policy.delay_for_attempt(attempt - 1, self._rng)
                 if delay > 0:
@@ -513,7 +531,7 @@ class Client:
 
             api_error = APIError.from_response(status, resp_body)
             last_error = api_error
-            if api_error.retryable and attempt < policy.max_attempts:
+            if api_error.retryable and attempt < attempts:
                 continue
             raise api_error
 

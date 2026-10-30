@@ -15,7 +15,7 @@ import (
 
 // PGReader is the §25.6 Postgres reader. It reads session and pod state
 // from the sessions and agent_pod_state tables and credential-pool load
-// from credential_leases. spec: §25.6 lines 2885-2906. F-25.6.1.
+// from credential_leases. spec: §25.6. F-25.6.1.
 type PGReader struct {
 	pool *pgxpool.Pool
 }

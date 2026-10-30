@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// TestCreateRuntimeSDKWarmBlockingPaths covers the §5.1 lines 16-24
+// TestCreateRuntimeSDKWarmBlockingPaths covers the §5.1
 // preConnect / sdkWarmBlockingPaths admission surface: the fields are
 // persisted and round-tripped, and the path list defaults when preConnect
 // is true and the runtime declares none.
@@ -78,8 +78,7 @@ func TestUpdateRuntimeSetsSDKWarmBlockingPaths(t *testing.T) {
 	}
 }
 
-// TestCreateDerivedRuntimeRejectsSetupTimeoutPairing covers the §5.1 line
-// 195 note "neither can be zero if the other is set" at derived
+// TestCreateDerivedRuntimeRejectsSetupTimeoutPairing covers the §5.1 note "neither can be zero if the other is set" at derived
 // registration: a derived setupPolicy.timeoutSeconds of zero (no cap)
 // against a base that sets a finite value (and the reverse) is rejected,
 // while two finite values and two no-cap values are accepted.
@@ -138,7 +137,7 @@ func TestCreateDerivedRuntimeRejectsSetupTimeoutPairing(t *testing.T) {
 	}
 }
 
-// TestUpdateBaseRuntimeImpactValidation covers §5.1 line 174: a base
+// TestUpdateBaseRuntimeImpactValidation covers §5.1: a base
 // runtime mutation that would invalidate an existing derived runtime is
 // rejected with the affected runtime names; a benign mutation and a
 // widening mutation are accepted.
@@ -201,7 +200,7 @@ func TestUpdateBaseRuntimeImpactValidation(t *testing.T) {
 	}
 }
 
-// TestBootstrapAutoGeneratesAgentCard covers §5.1 lines 283-291 on the
+// TestBootstrapAutoGeneratesAgentCard covers §5.1 on the
 // bootstrap install path: a runtime registered (and re-upserted) with an
 // agentInterface gets a write-time auto-generated A2A agent card.
 func TestBootstrapAutoGeneratesAgentCard(t *testing.T) {
@@ -241,7 +240,7 @@ func TestBootstrapAutoGeneratesAgentCard(t *testing.T) {
 	}
 
 	// Update branch: re-upsert with a new description regenerates the card.
-	// §17.6 line 450 — a differing agentInterface is a conflict, so the
+	// §17.6 — a differing agentInterface is a conflict, so the
 	// overwrite requires --force-update (?forceUpdate=true).
 	post("Reviews pull requests", "?forceUpdate=true")
 	stored, _ = runtimes.Get(context.Background(), "carded")

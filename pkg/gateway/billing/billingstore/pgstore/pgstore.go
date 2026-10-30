@@ -41,7 +41,7 @@ import (
 // raw *pgxpool.Pool, so a future shard split rotates only the router
 // implementation and no billing-write call site changes.
 //
-// spec: §12.3 R-03 line 144 — all billing event inserts MUST be routed
+// spec: §12.3 R-03 — all billing event inserts MUST be routed
 // through the StoreRouter interface rather than accessing a Postgres
 // pool directly.
 type Router interface {
@@ -150,7 +150,7 @@ func (s *Store) Since(ctx context.Context, tenantID string, since uint64, limit 
 // labelFilter, in ascending sequence order, capped at limit. The label
 // predicate is pushed into the query (via the labels GIN index), so the
 // §15.1 cursor/hasMore pagination stays correct: the limit applies to the
-// matching rows. spec: §14 line 106; §15.1 lines 1228-1253. F-14.1.13.
+// matching rows. spec: §14; §15.1. F-14.1.13.
 func (s *Store) SinceFiltered(ctx context.Context, tenantID string, since uint64, limit int, labelFilter map[string]string) ([]billingstore.Event, error) {
 	pool, err := s.shard(ctx, tenantID)
 	if err != nil {
@@ -236,7 +236,7 @@ func (s *Store) SessionTotals(ctx context.Context, tenantID, sessionID string) (
 // SumEnvironmentUsage run ReconcileLedger and supersede the corrected
 // originals before summing, matching the Memory store's semantics.
 //
-// spec: §15.1 line 840 (environment billing rollup); §10.6 line 663;
+// spec: §15.1; §10.6;
 // §11.2.1 (correction semantics). F-15.1.3.
 func (s *Store) EnvironmentTotals(ctx context.Context, tenantID, environmentID string) (billingstore.SessionUsage, error) {
 	if environmentID == "" {
@@ -347,7 +347,7 @@ func conditionalValue(e billingstore.Event) (any, error) {
 // labelsValue maps an event's §14 labels map to the nullable labels JSONB
 // column value: nil (SQL NULL) when the event carries no labels so a
 // NULL-labels row never matches a non-empty containment filter, the JSON
-// encoding otherwise. spec: §14 line 106. F-14.1.13.
+// encoding otherwise. spec: §14. F-14.1.13.
 func labelsValue(m map[string]string) (any, error) {
 	if len(m) == 0 {
 		return nil, nil
@@ -515,7 +515,7 @@ func (s *Store) CountUser(ctx context.Context, tenantID, userID string) (int, er
 // returns (0, nil). The method is mandatory at the interface level so
 // the §12.1 compile-time contract holds.
 //
-// spec: §12.1 line 5, §12.8.
+// spec: §12.1, §12.8.
 func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, errors.New("billingstore/pgstore: DeleteByUser requires non-empty tenant_id and user_id")
@@ -534,7 +534,7 @@ func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, e
 // GRANT DELETE ON billing_events (migration 0093). The erasure-role
 // connection wiring is the F-12.2.16 follow-up.
 //
-// spec: §12.1 line 5, §12.8 Phase 4; §11.7 immutability.
+// spec: §12.1, §12.8 Phase 4; §11.7 immutability.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("billingstore/pgstore: DeleteByTenant requires a concrete tenant_id")
@@ -569,7 +569,7 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 // GRANT DELETE ON billing_events (migration 0093). The erasure-role
 // connection wiring is the F-12.2.16 follow-up.
 //
-// spec: §11.2.1 line 151; §11.7 immutability. F-11.2.15.
+// spec: §11.2.1; §11.7 immutability. F-11.2.15.
 func (s *Store) DeleteOlderThan(ctx context.Context, tenantID string, cutoff time.Time) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("billingstore/pgstore: DeleteOlderThan requires a concrete tenant_id")

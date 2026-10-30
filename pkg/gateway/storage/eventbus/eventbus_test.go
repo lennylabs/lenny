@@ -24,7 +24,7 @@ func mustEvent(t *testing.T, tenant, short string) Event {
 }
 
 // spec: 12.3.7
-// diagnosis: §12.3.7 says Publish requires a mandatory tenantID and
+// diagnosis: Publish requires a mandatory tenantID and
 // validates the topic and the envelope. A missing tenantID, an unknown
 // topic, or a malformed envelope must be rejected before any send.
 func TestPublishRejectsInvalidInput(t *testing.T) {
@@ -43,7 +43,7 @@ func TestPublishRejectsInvalidInput(t *testing.T) {
 }
 
 // spec: 12.3.7
-// diagnosis: §12.3.7 says EventBus emits lenny_event_bus_publish_total
+// diagnosis: EventBus emits lenny_event_bus_publish_total
 // per topic. A successful Publish over the no-op substrate must still
 // record the publish-attempt metric.
 func TestPublishRecordsMetrics(t *testing.T) {
@@ -58,7 +58,7 @@ func TestPublishRecordsMetrics(t *testing.T) {
 }
 
 // spec: 12.3.7
-// diagnosis: §12.3.7 publish-state enum is
+// diagnosis: the publish-state enum is
 // pending → retry_pending → published | failed. IsValid must accept
 // exactly those four and reject anything else; AllPublishStates is the
 // closed enumeration.
@@ -146,7 +146,7 @@ func (p *flakyPublisher) Publish(_ context.Context, _ TenantID, _ EventTopic, _ 
 }
 
 // spec: 12.3.7
-// diagnosis: §12.3.7 retranscribe worker: on a successful re-publish
+// diagnosis: retranscribe worker: on a successful re-publish
 // the row transitions to published; the retry_count is retained for
 // forensics. Sweep must drive that transition.
 func TestRetranscribeSweepRepublishesFailedRow(t *testing.T) {
@@ -174,7 +174,7 @@ func TestRetranscribeSweepRepublishesFailedRow(t *testing.T) {
 }
 
 // spec: 12.3.7
-// diagnosis: §12.3.7 retranscribe worker: a failed re-publish writes
+// diagnosis: retranscribe worker: a failed re-publish writes
 // retry_pending with retry_count+1; when retry_count would reach
 // maxRetryAttempts the row transitions to terminal failed and stops
 // being swept. Sweep driven to exhaustion must walk that path.
@@ -232,7 +232,7 @@ func TestRetranscribeSweepReachesTerminalFailure(t *testing.T) {
 }
 
 // spec: 12.3.7
-// diagnosis: §12.3.7 retranscribe worker: after a transient backend
+// diagnosis: retranscribe worker: after a transient backend
 // outage a subsequent sweep re-publishes the row successfully — the
 // correctness layer that guarantees every failed row is eventually
 // re-published.

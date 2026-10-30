@@ -39,7 +39,7 @@ import (
 // ocsfVersion. There is no runtime-selectable dual-version emission.
 const Version = "1.1.0"
 
-// TranslatorVersion is the §4.4 line 232 / §11.7 / §25.9 OCSF
+// TranslatorVersion is the §4.4 / §11.7 / §25.9 OCSF
 // translator-implementation version surfaced on every audit-egress
 // response envelope as `translatorVersion`. The pair
 // (TranslatorVersion, Version) lets a consumer correlate a given
@@ -122,16 +122,16 @@ const (
 // payload-dependent and is resolved in severityFor rather than here.
 // spec: §16.7. F-16.7.9.
 var severityCatalog = map[string]int{
-	"compliance.profile_decommissioned":              severityCritical,      // §16.7 line 681
-	"gdpr.erasure_blocked_by_hold":                   severityCritical,      // §16.7 line 693
-	"gdpr.legal_hold_overridden":                     severityCritical,      // §16.7 line 693
-	"gdpr.legal_hold_overridden_tenant":              severityCritical,      // §16.7 line 694
-	"delegation.self_recursion_allowed":              severityLow,           // §16.7 line 670 (Notice)
-	"delegation.cycle_warning":                       severityMedium,        // §16.7 line 671 (Warning)
-	"gateway.cycle_detection_mode_changed":           severityLow,           // §16.7 line 672 (Notice)
-	"deployment.feature_flag_downgrade_acknowledged": severityLow,           // §16.7 line 682 (Notice)
-	"legal_hold.escrow_region_resolved":              severityInformational, // §16.7 line 694 (INFO)
-	"node.drain.forced":                              severityCritical,      // §12 line 291 (critical)
+	"compliance.profile_decommissioned":              severityCritical,      // §16.7
+	"gdpr.erasure_blocked_by_hold":                   severityCritical,      // §16.7
+	"gdpr.legal_hold_overridden":                     severityCritical,      // §16.7
+	"gdpr.legal_hold_overridden_tenant":              severityCritical,      // §16.7
+	"delegation.self_recursion_allowed":              severityLow,           // §16.7
+	"delegation.cycle_warning":                       severityMedium,        // §16.7
+	"gateway.cycle_detection_mode_changed":           severityLow,           // §16.7
+	"deployment.feature_flag_downgrade_acknowledged": severityLow,           // §16.7
+	"legal_hold.escrow_region_resolved":              severityInformational, // §16.7
+	"node.drain.forced":                              severityCritical,      // §12
 	// §24.12 erasure-job operator recovery actions. Each is an
 	// operator-reviewable policy action (a retry, or a manual Article 18
 	// restriction clear), Notice severity. F-24.12.4.
@@ -147,7 +147,7 @@ var severityCatalog = map[string]int{
 // (Warning) under `detect-only` (the divergent payload was forwarded
 // as received), keyed off the `enforcement_mode` payload field. An
 // absent or unrecognised mode defaults to the Critical reading.
-// spec: §16.7 lines 670-694. F-16.7.9.
+// spec: §16.7. F-16.7.9.
 func severityFor(eventType string, payload map[string]any) int {
 	if eventType == "elicitation.content_tamper_detected" {
 		if mode, ok := stringField(payload, "enforcement_mode"); ok && mode == "detect-only" {

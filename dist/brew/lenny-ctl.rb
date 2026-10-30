@@ -58,7 +58,7 @@ class LennyCtl < Formula
   test do
     # `lenny-ctl version` prints the local CLI build and runs offline, so
     # the formula test needs no running gateway. It must report the
-    # release tag (§17.6 line 360 invariant, mirrored for the standalone
+    # release tag (§17.6 invariant, mirrored for the standalone
     # binary).
     assert_match version.to_s, shell_output("#{bin}/lenny-ctl version")
   end

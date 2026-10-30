@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package pgstore is the Postgres-backed §5.1 line 49 per-tenant runtime
+// Package pgstore is the Postgres-backed §5.1 per-tenant runtime
 // capability override store. It persists rows to the
 // runtime_capability_overrides table from migration 0154 and applies the
 // §12.3 tenant-context RLS guard via pgtenant.InTx.

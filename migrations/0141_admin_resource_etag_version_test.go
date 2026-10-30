@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §15.1 lines 1207-1224 — ETag-based optimistic concurrency. Migration
+// spec: §15.1 — ETag-based optimistic concurrency. Migration
 // 0141 extends the integer `version` column (the strong entity tag) to the
 // tenants resource, which also backs the §10.6 rbac-config and §9.2
 // elicitation-content-integrity sub-resources; the down migration drops it.

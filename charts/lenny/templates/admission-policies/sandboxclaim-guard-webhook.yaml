@@ -30,7 +30,11 @@ webhooks:
           values: ["true"]
     rules:
       - apiGroups: ["lenny.dev"]
-        apiVersions: ["v1"]
+        # The SandboxClaim CRD serves v1alpha1 and no other version, so
+        # a rule naming v1 matches no request and the webhook is never
+        # called. matchPolicy: Equivalent cannot bridge the gap either:
+        # it converts between served versions, and there is only one.
+        apiVersions: ["v1alpha1"]
         resources: ["sandboxclaims"]
         operations: ["CREATE"]
         scope: Namespaced

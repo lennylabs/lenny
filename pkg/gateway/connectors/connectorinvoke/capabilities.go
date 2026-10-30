@@ -18,7 +18,7 @@ import (
 // and the pgstore satisfy it. A nil resolver on the Invoker leaves the
 // §10.6 connector-capability gate open (no environment policy wired).
 //
-// spec: §10.6 lines 595-599, line 607.
+// spec: §10.6.
 type EnvironmentResolver interface {
 	Get(ctx context.Context, tenantID, name string) (environmentstore.Environment, error)
 }
@@ -26,7 +26,7 @@ type EnvironmentResolver interface {
 // WithEnvironments wires the §10.6 environment registry so CallTool
 // enforces the connectorSelector capability filter of the calling
 // session's environment before dialing. A nil resolver leaves the gate
-// open. spec: §10.6 line 607.
+// open. spec: §10.6.
 func (iv *Invoker) WithEnvironments(envs EnvironmentResolver) *Invoker {
 	iv.environments = envs
 	return iv
@@ -56,7 +56,7 @@ func (e *CapabilityDeniedError) Error() string {
 // to the §5.1 conservative admin default so a restrictive filter fails
 // closed on an un-inferred tool.
 //
-// spec: §10.6 lines 595-599, line 607; §5.1 strict inference default.
+// spec: §10.6; §5.1 strict inference default.
 func (iv *Invoker) enforceConnectorCapabilities(ctx context.Context, tenantID, environment string, conn connectorstore.Connector, toolName string) error {
 	if iv.environments == nil || environment == "" {
 		return nil

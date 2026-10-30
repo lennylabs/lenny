@@ -24,8 +24,9 @@ func newOpenAIHandler(t *testing.T) (*translator.OpenAIChatHandler, sessionstore
 	t.Helper()
 	store := memstore.New()
 	h := translator.NewOpenAIChatHandler(store, executor.NewEchoExecutor(), translator.OpenAIChatOptions{
-		Clock:  func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc: func() string { return "sess_oa_1" },
+		DevTenantHeader: true,
+		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:          func() string { return "sess_oa_1" },
 	})
 	return h, store
 }
@@ -132,8 +133,9 @@ func TestOpenAIChatStreamEmitsSSEChunks(t *testing.T) {
 func TestOpenAIChatDefaultsRuntimeWhenModelEmpty(t *testing.T) {
 	store := memstore.New()
 	h := translator.NewOpenAIChatHandler(store, executor.NewEchoExecutor(), translator.OpenAIChatOptions{
-		IDFunc:         func() string { return "sess_def" },
-		DefaultRuntime: "echo",
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_def" },
+		DefaultRuntime:  "echo",
 	})
 	rr := openaiPost(t, h.Handler(), translator.OpenAIChatCompletionsRequest{
 		Messages: []translator.OpenAIChatMessage{{Role: "user", Content: "x"}},
@@ -180,7 +182,7 @@ func TestOpenAIChatRoundTripsMultipleMessages(t *testing.T) {
 
 func TestOpenAIChatDisabledWhenExecutorMissing(t *testing.T) {
 	store := memstore.New()
-	h := translator.NewOpenAIChatHandler(store, nil, translator.OpenAIChatOptions{})
+	h := translator.NewOpenAIChatHandler(store, nil, translator.OpenAIChatOptions{DevTenantHeader: true})
 	rr := openaiPost(t, h.Handler(), translator.OpenAIChatCompletionsRequest{
 		Model:    "echo",
 		Messages: []translator.OpenAIChatMessage{{Role: "user", Content: "x"}},
@@ -276,6 +278,7 @@ func TestOpenAIChatSingleShotBinderErrorEnvelope(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()
 			h := translator.NewOpenAIChatHandler(store, executor.NewEchoExecutor(), translator.OpenAIChatOptions{
+				DevTenantHeader:  true,
 				SingleShotBinder: stubSingleShotBinder{err: tc.err},
 			})
 			rr := openaiPost(t, h.Handler(), translator.OpenAIChatCompletionsRequest{
@@ -311,8 +314,9 @@ func TestOpenAIChatSingleShotBinderErrorEnvelope(t *testing.T) {
 func TestOpenAIChatNoopBinderEchoFallback(t *testing.T) {
 	store := &recordingStore{Store: memstore.New()}
 	h := translator.NewOpenAIChatHandler(store, executor.NewEchoExecutor(), translator.OpenAIChatOptions{
-		Clock:  func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc: func() string { return "sess_noop_1" },
+		DevTenantHeader: true,
+		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:          func() string { return "sess_noop_1" },
 	})
 	rr := openaiPost(t, h.Handler(), translator.OpenAIChatCompletionsRequest{
 		Model:    "echo",
@@ -340,7 +344,7 @@ func TestOpenAIChatNoopBinderEchoFallback(t *testing.T) {
 	}
 }
 
-// TestOpenAIChatAdapterCapabilities pins §9.1 line 35 + §15.1 line 575:
+// TestOpenAIChatAdapterCapabilities pins §9.1 + §15.1:
 // the OpenAI Chat Completions adapter publishes its own capability
 // block. The OpenAI envelope is stateless and exposes none of the
 // Lenny session-continuity, delegation, elicitation, or interrupt

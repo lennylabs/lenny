@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -63,10 +64,39 @@ func seedCascadeSession(t *testing.T, store sessionstore.Store, id, parent strin
 	}
 }
 
+// seedDelegatedSession inserts a running session that lenny/delegate_task
+// created under parent: a delegation depth of 1 marks it delegated, which the
+// §8.10 orphan count keys on.
+func seedDelegatedSession(t *testing.T, store sessionstore.Store, id, parent string) {
+	t.Helper()
+	now := time.Now()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: id, TenantID: "acme", State: session.StateRunning, RuntimeRef: "echo",
+		ParentSessionID: parent, DelegationDepth: 1,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed delegated session %s: %v", id, err)
+	}
+}
+
+// endSeededSession moves a seeded row to completed with a raw store write
+// once its delegated children exist: the store's creation fence refuses a
+// delegated child under a terminal parent, so a test seeds the children a
+// parent's end leaves behind before ending it.
+func endSeededSession(t *testing.T, store sessionstore.Store, id string) {
+	t.Helper()
+	if _, err := store.Update(context.Background(), "acme", id, func(r *sessionstore.Session) error {
+		r.State, r.TerminatedAt = session.StateCompleted, time.Now()
+		return nil
+	}); err != nil {
+		t.Fatalf("end seeded session %s: %v", id, err)
+	}
+}
+
 func TestTerminateArchivesChildToTreeArchive(t *testing.T) {
 	store := memstore.New()
 	archive := treearchive.NewMemory()
-	srv := sessionserver.New(store, sessionserver.Options{TreeArchive: archive})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
 	seedTreeSession(t, store, "sess_parent", "")
 	seedTreeSession(t, store, "sess_child", "sess_parent")
 
@@ -87,7 +117,7 @@ func TestTerminateArchivesChildToTreeArchive(t *testing.T) {
 func TestCancelArchivesChildToTreeArchive(t *testing.T) {
 	store := memstore.New()
 	archive := treearchive.NewMemory()
-	srv := sessionserver.New(store, sessionserver.Options{TreeArchive: archive})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
 	seedTreeSession(t, store, "sess_parent", "")
 	seedTreeSession(t, store, "sess_child", "sess_parent")
 
@@ -108,7 +138,7 @@ func TestCancelArchivesChildToTreeArchive(t *testing.T) {
 func TestTerminateDoesNotArchiveRootSession(t *testing.T) {
 	store := memstore.New()
 	archive := treearchive.NewMemory()
-	srv := sessionserver.New(store, sessionserver.Options{TreeArchive: archive})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
 	seedTreeSession(t, store, "sess_root", "")
 
 	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_root/terminate")
@@ -132,7 +162,7 @@ func TestTerminateDoesNotArchiveRootSession(t *testing.T) {
 
 func TestTerminateCascadeCancelsChildren(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	// The parent carries the default cascade policy (cancel_all).
 	seedTreeSession(t, store, "sess_parent", "")
 	seedTreeSession(t, store, "sess_c1", "sess_parent")
@@ -155,7 +185,7 @@ func TestTerminateCascadeCancelsChildren(t *testing.T) {
 
 func TestTerminateDetachLeavesChildrenRunning(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
 	seedTreeSession(t, store, "sess_child", "sess_parent")
 
@@ -174,7 +204,7 @@ func TestTerminateDetachLeavesChildrenRunning(t *testing.T) {
 
 func TestCascadeRespectsPerNodePolicy(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	// root → mid_detach (detach) → leaf_a; root → mid_cancel (default) → leaf_b.
 	seedTreeSession(t, store, "sess_root", "")
 	seedCascadeSession(t, store, "sess_mid_detach", "sess_root", session.CascadeDetach)
@@ -205,19 +235,20 @@ func TestCascadeRespectsPerNodePolicy(t *testing.T) {
 
 func TestDetachFallsBackToCancelAllOverOrphanCap(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{MaxOrphanTasksPerTenant: 1})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, MaxOrphanTasksPerTenant: 1})
 	now := time.Now()
 	// A pre-existing orphan: a running child of an already-terminal root.
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "old_root", TenantID: "acme", State: session.StateCompleted,
+		ID: "old_root", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed old root: %v", err)
 	}
-	seedTreeSession(t, store, "old_child", "old_root")
+	seedDelegatedSession(t, store, "old_child", "old_root")
+	endSeededSession(t, store, "old_root")
 	// A detach parent with a running child.
 	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
-	seedTreeSession(t, store, "sess_child", "sess_parent")
+	seedDelegatedSession(t, store, "sess_child", "sess_parent")
 
 	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
 	if rr.Code != http.StatusOK {
@@ -234,13 +265,53 @@ func TestDetachFallsBackToCancelAllOverOrphanCap(t *testing.T) {
 	}
 }
 
+// spec: §8.10 (Orphan cleanup)
+//
+// The orphan cap counts the orphan-cleanup selection, which includes the live
+// children of a terminal mid-tree session under a live root. Two such
+// children plus the detach parent's own child exceed a cap of 1, so the
+// detach falls back to cancel_all. A count keyed on the tree root saw no
+// orphan under the live root and let the detach stand.
+func TestOrphanCapCountsChildrenOfTerminalMidTreeSession_spec_8_10(t *testing.T) {
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, MaxOrphanTasksPerTenant: 2})
+	seedTreeSession(t, store, "live_root", "")
+	seedDelegatedSession(t, store, "mid", "live_root")
+	for _, id := range []string{"mid_kid_a", "mid_kid_b"} {
+		if err := store.Create(context.Background(), sessionstore.Session{
+			ID: id, TenantID: "acme", State: session.StateRunning, RuntimeRef: "echo",
+			ParentSessionID: "mid", DelegationDepth: 2,
+		}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	endSeededSession(t, store, "mid")
+	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
+	seedDelegatedSession(t, store, "sess_child", "sess_parent")
+
+	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	row, err := store.Get(context.Background(), "acme", "sess_child")
+	if err != nil {
+		t.Fatalf("get child: %v", err)
+	}
+	if row.State != session.StateCancelled {
+		t.Errorf("child state = %q, want cancelled: three orphans exceed the cap of 2", row.State)
+	}
+}
+
 // orphanCapAuditSink captures session-lifecycle audit rows so the
-// §8.10 line 1103 fallback case can assert on the emitted event.
+// §8.10 fallback case can assert on the emitted event.
 type orphanCapAuditSink struct {
+	mu     sync.Mutex
 	events []sessionserver.SessionLifecycleEvent
 }
 
 func (s *orphanCapAuditSink) EmitSessionLifecycle(_ context.Context, ev sessionserver.SessionLifecycleEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.events = append(s.events, ev)
 }
 
@@ -254,20 +325,22 @@ func TestDetachFallbackEmitsCascadeAppliedAudit_spec_8_10_1103(t *testing.T) {
 	store := memstore.New()
 	sink := &orphanCapAuditSink{}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		MaxOrphanTasksPerTenant: 1,
 		LifecycleAuditSink:      sink,
 	})
 	now := time.Now()
 	// Pre-existing orphan to push the tenant over the cap.
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "old_root", TenantID: "acme", State: session.StateCompleted,
+		ID: "old_root", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed old root: %v", err)
 	}
-	seedTreeSession(t, store, "old_child", "old_root")
+	seedDelegatedSession(t, store, "old_child", "old_root")
+	endSeededSession(t, store, "old_root")
 	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
-	seedTreeSession(t, store, "sess_child", "sess_parent")
+	seedDelegatedSession(t, store, "sess_child", "sess_parent")
 
 	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/terminate")
 	if rr.Code != http.StatusOK {
@@ -312,6 +385,7 @@ func TestDetachUnderCapDoesNotEmitFallbackAudit_spec_8_10_1103(t *testing.T) {
 	store := memstore.New()
 	sink := &orphanCapAuditSink{}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		MaxOrphanTasksPerTenant: 100,
 		LifecycleAuditSink:      sink,
 	})
@@ -331,7 +405,7 @@ func TestDetachUnderCapDoesNotEmitFallbackAudit_spec_8_10_1103(t *testing.T) {
 
 func TestDetachProceedsUnderOrphanCap(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{MaxOrphanTasksPerTenant: 10})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, MaxOrphanTasksPerTenant: 10})
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
 		ID: "old_root", TenantID: "acme", State: session.StateCompleted,
@@ -360,7 +434,7 @@ func TestDetachProceedsUnderOrphanCap(t *testing.T) {
 func TestCascadeArchivesCancelledChildren(t *testing.T) {
 	store := memstore.New()
 	archive := treearchive.NewMemory()
-	srv := sessionserver.New(store, sessionserver.Options{TreeArchive: archive})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
 	seedTreeSession(t, store, "sess_parent", "")
 	seedTreeSession(t, store, "sess_child", "sess_parent")
 
@@ -368,7 +442,19 @@ func TestCascadeArchivesCancelledChildren(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("terminate: status %d, body %s", rr.Code, rr.Body.String())
 	}
-	got, err := archive.GetByNode(context.Background(), "acme", "sess_child")
+	// The cascade runs each cancelled child's post-terminal hook, which
+	// archives it, on a goroutine.
+	var (
+		got treearchive.ArchivedNode
+		err error
+	)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if got, err = archive.GetByNode(context.Background(), "acme", "sess_child"); err == nil || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 	if err != nil {
 		t.Fatalf("cascade-cancelled child was not archived: %v", err)
 	}
@@ -383,11 +469,11 @@ func TestCascadeArchivesCancelledChildren(t *testing.T) {
 func TestResumeEmitsChildrenReattached(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	seedAwaitingParent(t, store, "sess_parent")
 	seedTreeSession(t, store, "sess_child", "sess_parent") // running
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	rr := resumeAndDrive(t, srv, "sess_parent")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -403,7 +489,7 @@ func TestResumeEmitsChildrenReattached(t *testing.T) {
 func TestResumeSkipsChildrenReattachedWhenAllChildrenTerminal(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	seedAwaitingParent(t, store, "sess_parent")
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
@@ -413,7 +499,7 @@ func TestResumeSkipsChildrenReattachedWhenAllChildrenTerminal(t *testing.T) {
 		t.Fatalf("seed child: %v", err)
 	}
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	rr := resumeAndDrive(t, srv, "sess_parent")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -425,10 +511,10 @@ func TestResumeSkipsChildrenReattachedWhenAllChildrenTerminal(t *testing.T) {
 func TestResumeSkipsChildrenReattachedWhenNoChildren(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	seedAwaitingParent(t, store, "sess_solo")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_solo/resume")
+	rr := resumeAndDrive(t, srv, "sess_solo")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -455,14 +541,15 @@ func reattachedChildren(t *testing.T, ev *sessionevents.Event) []map[string]any 
 // when a child registered an outstanding `lenny/request_input`, the
 // parent's children_reattached event surfaces the request id so the
 // parent knows what to answer via lenny/send_message / inReplyTo.
-// spec: §7.2 line 153; F-7.2.16.
+// spec: §7.2; F-7.2.16.
 func TestResumeChildrenReattachedCarriesPendingRequestIDFromInputWait(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
 	reg := inputwait.NewRegistry()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Events:     bus,
-		InputWaits: reg,
+		DevTenantHeader: true,
+		Events:          bus,
+		InputWaits:      reg,
 	})
 	seedAwaitingParent(t, store, "sess_parent")
 	seedTreeSession(t, store, "sess_child", "sess_parent")
@@ -470,7 +557,7 @@ func TestResumeChildrenReattachedCarriesPendingRequestIDFromInputWait(t *testing
 		t.Fatalf("Register: %v", err)
 	}
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	rr := resumeAndDrive(t, srv, "sess_parent")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -491,14 +578,15 @@ func TestResumeChildrenReattachedCarriesPendingRequestIDFromInputWait(t *testing
 // when the child has a pending tool-use or elicitation interaction
 // (and no request_input registration), the parent surfaces the
 // interaction id as the pending_request_id.
-// spec: §7.2 line 153; F-7.2.16.
+// spec: §7.2; F-7.2.16.
 func TestResumeChildrenReattachedCarriesPendingRequestIDFromInteractionStore(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
 	ints := interactionstore.NewMemory()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Events:       bus,
-		Interactions: ints,
+		DevTenantHeader: true,
+		Events:          bus,
+		Interactions:    ints,
 	})
 	seedAwaitingParent(t, store, "sess_parent")
 	seedTreeSession(t, store, "sess_child", "sess_parent")
@@ -511,7 +599,7 @@ func TestResumeChildrenReattachedCarriesPendingRequestIDFromInteractionStore(t *
 		t.Fatalf("Put: %v", err)
 	}
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	rr := resumeAndDrive(t, srv, "sess_parent")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -528,14 +616,15 @@ func TestResumeChildrenReattachedCarriesPendingRequestIDFromInteractionStore(t *
 // TestResumeChildrenReattachedPendingRequestIDOldestFirst — when a
 // child has several pending interactions, the oldest one wins so the
 // resumed parent unblocks the longest-waiting request first.
-// spec: §7.2 line 153; F-7.2.16.
+// spec: §7.2; F-7.2.16.
 func TestResumeChildrenReattachedPendingRequestIDOldestFirst(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
 	ints := interactionstore.NewMemory()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Events:       bus,
-		Interactions: ints,
+		DevTenantHeader: true,
+		Events:          bus,
+		Interactions:    ints,
 	})
 	seedAwaitingParent(t, store, "sess_parent")
 	seedTreeSession(t, store, "sess_child", "sess_parent")
@@ -557,7 +646,7 @@ func TestResumeChildrenReattachedPendingRequestIDOldestFirst(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	rr := resumeAndDrive(t, srv, "sess_parent")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d", rr.Code)
 	}
@@ -571,15 +660,15 @@ func TestResumeChildrenReattachedPendingRequestIDOldestFirst(t *testing.T) {
 // TestResumeChildrenReattachedPendingRequestIDAbsentWhenIdle — a
 // non-terminal child with no outstanding request omits the field
 // (the JSON encoder drops the empty string).
-// spec: §7.2 line 153 ("`null` if none"); F-7.2.16.
+// spec: §7.2; F-7.2.16.
 func TestResumeChildrenReattachedPendingRequestIDAbsentWhenIdle(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	seedAwaitingParent(t, store, "sess_parent")
 	seedTreeSession(t, store, "sess_child", "sess_parent")
 
-	rr := sessionRequest(t, srv.Handler(), http.MethodPost, "/v1/sessions/sess_parent/resume")
+	rr := resumeAndDrive(t, srv, "sess_parent")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d", rr.Code)
 	}
@@ -595,7 +684,7 @@ func TestResumeChildrenReattachedPendingRequestIDAbsentWhenIdle(t *testing.T) {
 func TestTreeArchiveResolvesTheTreeRoot(t *testing.T) {
 	store := memstore.New()
 	archive := treearchive.NewMemory()
-	srv := sessionserver.New(store, sessionserver.Options{TreeArchive: archive})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
 	// A three-level tree: root → mid → leaf.
 	seedTreeSession(t, store, "sess_root", "")
 	seedTreeSession(t, store, "sess_mid", "sess_root")

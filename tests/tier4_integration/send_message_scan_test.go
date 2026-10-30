@@ -143,13 +143,14 @@ func newScanTestbed(t *testing.T, handler stubinterceptor.Handler, maxInputSize 
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:           sessions,
-		Executor:        executor.NewEchoExecutor(),
-		Runtimes:        runtimes,
-		Interceptors:    chain,
-		ContentPolicies: svc,
-		Clock:           clock,
-		TenantID:        scanTenant,
+		DevTenantFallback: true,
+		Store:             sessions,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		Interceptors:      chain,
+		ContentPolicies:   svc,
+		Clock:             clock,
+		TenantID:          scanTenant,
 	})
 
 	pctx := authmw.WithPrincipal(ctx, authmw.Principal{

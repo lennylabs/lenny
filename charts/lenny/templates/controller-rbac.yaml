@@ -118,7 +118,7 @@ rules:
   - apiGroups: ["node.k8s.io"]
     resources: ["runtimeclasses"]
     verbs: ["get", "list"]
-  # CustomResourceDefinitions: read-only, for the §10 line 437 startup
+  # CustomResourceDefinitions: read-only, for the §10 startup
   # CRD schema-version self-check (F-15.5.12). Before the manager starts
   # reconciling, the controller fetches each installed lenny.dev CRD by
   # name and asserts its `lenny.dev/schema-version` annotation matches the

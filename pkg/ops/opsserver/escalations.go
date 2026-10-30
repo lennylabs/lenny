@@ -63,7 +63,7 @@ func (s *Server) handleCreateEscalation(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	body.Source = callerIdentity(r)
-	// §25.17 lines 5185-5186: tie the escalation to the X-Lenny-Operation-ID
+	// §25.17: tie the escalation to the X-Lenny-Operation-ID
 	// correlation header when the body omits operationId, so the failure-path
 	// escalation joins the rest of the remediation effort's audit trail.
 	if body.OperationID == "" {
@@ -96,7 +96,7 @@ func (s *Server) handleCreateEscalation(w http.ResponseWriter, r *http.Request) 
 // to the top level so the wire shape matches the durable-tier response
 // plus a warning field.
 //
-// spec: §25.4 lines 2388-2394.
+// spec: §25.4.
 type escalationCreateResponse struct {
 	escalation.Escalation
 	Warning string `json:"warning,omitempty"`

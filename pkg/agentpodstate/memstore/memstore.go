@@ -15,6 +15,7 @@ package memstore
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -171,35 +172,54 @@ func (s *Store) GetByPodID(_ context.Context, podID string) (agentpodstate.PodSt
 	return r.pod, true, nil
 }
 
-// ClaimIdle selects the longest-idle row for poolID, marks it claimed for
-// the session and tenant, and returns it. With no idle row it returns
-// (agentpodstate.PodState{}, false, nil). Ordering by updated_at (oldest
-// first) mirrors the Postgres FOR UPDATE SKIP LOCKED selection so the
-// in-memory and Postgres backends claim the same pod from equal inventory.
-func (s *Store) ClaimIdle(_ context.Context, poolID, sessionID, tenantID string) (agentpodstate.PodState, bool, error) {
+// ClaimIdle selects the longest-idle row for poolID that skip does not name
+// and admit accepts, marks it claimed for the session and tenant, and returns
+// it. With no such row it returns (agentpodstate.PodState{}, false, nil).
+// Ordering by updated_at (oldest first) mirrors the Postgres FOR UPDATE SKIP
+// LOCKED selection so the in-memory and Postgres backends claim the same pod
+// from equal inventory. A refused row keeps its prior columns; an admit
+// error ends the call with every row unchanged. admit runs under s.mu, which
+// stands in for the Postgres row lock. spec: §4.6.1 (Postgres-backed fallback
+// claim), §5.2 (Tenant pinning).
+func (s *Store) ClaimIdle(ctx context.Context, poolID, sessionID, tenantID string, skip []string, admit agentpodstate.AdmitFunc) (agentpodstate.PodState, bool, error) {
 	if poolID == "" {
 		return agentpodstate.PodState{}, false, agentpodstate.ErrEmptyPoolID
+	}
+	skipped := make(map[string]struct{}, len(skip))
+	for _, id := range skip {
+		skipped[id] = struct{}{}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	idle := make([]*row, 0)
 	for _, r := range s.rows {
+		if _, skip := skipped[r.pod.PodID]; skip {
+			continue
+		}
 		if r.pod.PoolID == poolID && r.pod.State == "idle" {
 			idle = append(idle, r)
 		}
 	}
-	if len(idle) == 0 {
-		return agentpodstate.PodState{}, false, nil
-	}
 	sort.Slice(idle, func(i, j int) bool { return idle[i].updatedAt.Before(idle[j].updatedAt) })
 
-	r := idle[0]
-	r.pod.State = "claimed"
-	r.pod.SessionID = sessionID
-	r.pod.TenantID = tenantID
-	r.updatedAt = s.now()
-	return r.pod, true, nil
+	for _, r := range idle {
+		if admit != nil {
+			ok, err := admit(ctx, r.pod.PodID)
+			if err != nil {
+				return agentpodstate.PodState{}, false, fmt.Errorf("agentpodstate: claim admit pod %s: %w", r.pod.PodID, err)
+			}
+			if !ok {
+				continue
+			}
+		}
+		r.pod.State = "claimed"
+		r.pod.SessionID = sessionID
+		r.pod.TenantID = tenantID
+		r.updatedAt = s.now()
+		return r.pod, true, nil
+	}
+	return agentpodstate.PodState{}, false, nil
 }
 
 // IncrementSessionsServed adds one to the pod's sessions_served counter

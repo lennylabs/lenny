@@ -2,10 +2,10 @@
 
 // Package correlation hosts the gateway's HTTP correlation middleware.
 //
-// §16.4 line 372 requires every log line to carry the agent-operability
+// §16.4 requires every log line to carry the agent-operability
 // correlation fields when present on the originating request: operation_id
 // (from the X-Lenny-Operation-ID header) and agent_name (from
-// X-Lenny-Agent-Name), alongside the §16.4 line 371 session_id, tenant_id,
+// X-Lenny-Agent-Name), alongside the §16.4 session_id, tenant_id,
 // trace_id, and span_id. The shared logging handler
 // (pkg/observability/logging) projects those values onto every record from a
 // correlation.Fields value stored on the record's context — but nothing in
@@ -16,10 +16,10 @@
 // request context, and re-attaches the merged value so every downstream
 // handler and log line inherits them. It then emits one structured
 // request-completion log line per request, which carries the projected
-// correlation fields — the concrete log surface §16.4 line 372 promises can
+// correlation fields — the concrete log surface §16.4 promises can
 // be joined across binaries via operation_id.
 //
-// spec: §16.4 lines 371-372; §25.4 (X-Lenny-Operation-ID / X-Lenny-Agent-Name).
+// spec: §16.4; §25.4 (X-Lenny-Operation-ID / X-Lenny-Agent-Name).
 // F-16.4.2, F-16.4.3.
 package correlation
 
@@ -68,14 +68,14 @@ type Options struct {
 // before any inner handler logs, and so the completion line observes the
 // final response status.
 //
-// spec: §16.4 lines 371-372. F-16.4.2, F-16.4.3.
+// spec: §16.4. F-16.4.2, F-16.4.3.
 func Wrap(next http.Handler, opts Options) http.Handler {
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// spec: §16.4 lines 371-372 / §25.4 — read X-Lenny-Operation-ID,
+		// spec: §16.4 / §25.4 — read X-Lenny-Operation-ID,
 		// X-Lenny-Agent-Name, traceparent, X-Lenny-Session-ID, and
 		// X-Lenny-Tenant-ID, then merge them onto whatever scope the context
 		// already carried. Merge lets an inner-set value survive an absent
@@ -84,7 +84,7 @@ func Wrap(next http.Handler, opts Options) http.Handler {
 		merged := corr.From(r.Context()).Merge(incoming)
 		ctx := corr.With(r.Context(), merged)
 
-		// spec: §16.3 lines 320, 326 ("Client → Gateway (HTTP headers)") —
+		// spec: §16.3 ("Client → Gateway (HTTP headers)") —
 		// extract the inbound W3C traceparent through the process-wide OTel
 		// propagator so a span opened by a downstream §16.3 handler continues
 		// the client's trace instead of starting a detached root. corr.From
@@ -113,7 +113,7 @@ func Wrap(next http.Handler, opts Options) http.Handler {
 			slog.Int64("duration_ms", time.Since(start).Milliseconds()),
 			slog.Int("bytes", cw.bytes),
 		}
-		// spec: §16.4 line 375 — "Error events include structured error codes
+		// spec: §16.4 — "Error events include structured error codes
 		// (TRANSIENT/PERMANENT/POLICY/UPSTREAM)." When the response is a lenny
 		// error envelope, recover its code from the captured body and classify
 		// it through the same §15.2.1 classifier the envelope used, so the
@@ -146,7 +146,7 @@ type captureRW struct {
 	wroteHeader bool
 
 	// sniffErr is armed when the status is a 4xx/5xx so the first body
-	// bytes are buffered for §16.4 line 375 error-code recovery. errBody
+	// bytes are buffered for §16.4 error-code recovery. errBody
 	// holds that bounded prefix.
 	sniffErr bool
 	errBody  []byte
@@ -156,7 +156,7 @@ func (c *captureRW) WriteHeader(code int) {
 	if !c.wroteHeader {
 		c.status = code
 		c.wroteHeader = true
-		// spec: §16.4 line 375 — arm error-body capture only for error
+		// spec: §16.4 — arm error-body capture only for error
 		// statuses so success and streaming responses are never buffered.
 		c.sniffErr = code >= 400
 	}
@@ -179,7 +179,7 @@ func (c *captureRW) Write(b []byte) (int, error) {
 // It returns "" when no error body was captured or the body is not a
 // recognizable `{"error":{"code":...}}` envelope (a non-JSON 4xx, an empty
 // 5xx, a streamed error). The completion-line logger classifies the code;
-// an empty result simply omits the §16.4 line 375 error fields.
+// an empty result simply omits the §16.4 error fields.
 func (c *captureRW) errorCode() string {
 	if !c.sniffErr || len(c.errBody) == 0 {
 		return ""
@@ -216,7 +216,7 @@ func (c *captureRW) Unwrap() http.ResponseWriter { return c.ResponseWriter }
 // transport at /mcp/v1/ws upgrades through the full middleware chain;
 // nhooyr.io/websocket performs a direct http.Hijacker type assertion, so
 // this wrapper must re-expose Hijack or the upgrade fails. spec: §27.5 /
-// §27.3.1 line 142.
+// §27.3.1.
 func (c *captureRW) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if hj, ok := c.ResponseWriter.(http.Hijacker); ok {
 		return hj.Hijack()

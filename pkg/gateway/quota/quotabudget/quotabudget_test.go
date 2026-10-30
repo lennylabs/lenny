@@ -110,7 +110,7 @@ func newTracker(t *testing.T, limit int64, replicas int, adder *fakeAdder, clk *
 
 const tenant = "acme"
 
-// spec: §12.4 line 268 — on the first request the replica draws a budget
+// spec: §12.4 — on the first request the replica draws a budget
 // slice from Postgres (1/N of the remaining budget) and the admission read
 // returns the persisted base.
 func TestTracker_ColdStartDrawsSlice_spec_12_4_268(t *testing.T) {
@@ -130,7 +130,7 @@ func TestTracker_ColdStartDrawsSlice_spec_12_4_268(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 268 — the replica decrements the slice locally per
+// spec: §12.4 — the replica decrements the slice locally per
 // request without touching Postgres until a reconcile is due.
 func TestTracker_AddDecrementsLocally_spec_12_4_268(t *testing.T) {
 	clk := &clock{t: time.Date(2026, 6, 8, 14, 0, 0, 0, time.UTC)}
@@ -155,7 +155,7 @@ func TestTracker_AddDecrementsLocally_spec_12_4_268(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 268 — reconcile when the local slice is 80% consumed,
+// spec: §12.4 — reconcile when the local slice is 80% consumed,
 // folding the delta into Postgres and redrawing the slice.
 func TestTracker_ReconcilesAt80Percent_spec_12_4_268(t *testing.T) {
 	clk := &clock{t: time.Date(2026, 6, 8, 14, 0, 0, 0, time.UTC)}
@@ -187,7 +187,7 @@ func TestTracker_ReconcilesAt80Percent_spec_12_4_268(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 268 — reconcile periodically (default every 30s) even
+// spec: §12.4 — reconcile periodically (default every 30s) even
 // when the slice is far from the 80% threshold.
 func TestTracker_ReconcilesOnInterval_spec_12_4_268(t *testing.T) {
 	clk := &clock{t: time.Date(2026, 6, 8, 14, 0, 0, 0, time.UTC)}
@@ -210,7 +210,7 @@ func TestTracker_ReconcilesOnInterval_spec_12_4_268(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 268 — multiple replicas each hold 1/N and concurrent
+// spec: §12.4 — multiple replicas each hold 1/N and concurrent
 // reconciles serialize through the atomic adder without losing usage.
 func TestTracker_MultiReplicaAtomicReconcile_spec_12_4_268(t *testing.T) {
 	clk := &clock{t: time.Date(2026, 6, 8, 14, 0, 0, 0, time.UTC)}
@@ -235,7 +235,7 @@ func TestTracker_MultiReplicaAtomicReconcile_spec_12_4_268(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 268 — bounded overshoot: a Postgres outage with slice
+// spec: §12.4 — bounded overshoot: a Postgres outage with slice
 // headroom keeps serving from the slice; an exhausted slice fails closed.
 func TestTracker_FailClosedWhenSliceExhaustedAndPostgresDown_spec_12_4_268(t *testing.T) {
 	clk := &clock{t: time.Date(2026, 6, 8, 14, 0, 0, 0, time.UTC)}
@@ -301,7 +301,7 @@ func TestTracker_UnknownTenantFailsClosed(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 268 — the budget resets at the window boundary.
+// spec: §12.4 — the budget resets at the window boundary.
 func TestTracker_WindowRolloverResets_spec_12_4_268(t *testing.T) {
 	clk := &clock{t: time.Date(2026, 6, 8, 14, 30, 0, 0, time.UTC)}
 	adder := newFakeAdder()
@@ -348,7 +348,7 @@ func TestTracker_UnlimitedTenantNotEnforced(t *testing.T) {
 	}
 }
 
-// spec: §11.2 (rolling window); §12.4 line 268 — the in-memory budget mode is
+// spec: §11.2 (rolling window); §12.4 — the in-memory budget mode is
 // defined over fixed windows; a rolling-period tenant is not enforced here.
 func TestTracker_RollingPeriodNotEnforced_spec_11_2(t *testing.T) {
 	clk := &clock{t: time.Date(2026, 6, 8, 14, 0, 0, 0, time.UTC)}
@@ -366,7 +366,7 @@ func TestTracker_RollingPeriodNotEnforced_spec_11_2(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 44 — Flush is the final-reconciliation hook persisting a
+// spec: §11.2 — Flush is the final-reconciliation hook persisting a
 // replica's unflushed slice on shutdown.
 func TestTracker_FlushPersistsConsumed_spec_11_2_44(t *testing.T) {
 	clk := &clock{t: time.Date(2026, 6, 8, 14, 0, 0, 0, time.UTC)}

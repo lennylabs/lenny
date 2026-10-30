@@ -38,7 +38,7 @@ func (f fixedLister) ListEndpoints(context.Context) ([]tenantaffinity.Endpoint, 
 
 func tenantHdr(r *http.Request) (string, error) { return r.Header.Get("X-Tenant"), nil }
 
-// spec: §5.2 line 500 — a /v1/stateless/{pool}/... request routes to a
+// spec: §5.2 — a /v1/stateless/{pool}/... request routes to a
 // pinned pod for a concurrent-stateless pool, rebasing the path so the
 // runtime sees its own path.
 func TestManagerRoutesStatelessPool(t *testing.T) {

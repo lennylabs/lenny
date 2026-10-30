@@ -19,7 +19,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,7 +26,6 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // TestLennyCtlOperabilityCommandsE2E boots cmd/lenny-ops against real
@@ -62,11 +60,10 @@ import (
 // httptest-with-stubs component tests that never run the CLI against a live
 // store.
 func TestLennyCtlOperabilityCommandsE2E(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 
 	ops := opsprocess.StartWith(
@@ -237,6 +234,7 @@ func TestLennyCtlOperabilityCommandsE2E(t *testing.T) {
 // gateway-host fallback did not fire (or fired silently) when the
 // gateway advertised no opsServiceURL.
 func TestLennyCtlMCPManagementOpsRoutingE2E(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	opsprocess.SkipUnlessAvailable(t)
 
@@ -244,7 +242,7 @@ func TestLennyCtlMCPManagementOpsRoutingE2E(t *testing.T) {
 	// The ops process is started first so its base URL can be advertised
 	// by the gateway's GET /v1/admin/platform/version response.
 	ops := opsprocess.StartWith(t)
-	gw := gateway.StartWith(t, "--dev-mode", "--ops-service-url="+ops.BaseURL())
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--ops-service-url="+ops.BaseURL())
 
 	runCtlAgainst := func(apiURL string, args ...string) (int, []byte, []byte) {
 		t.Helper()
@@ -283,7 +281,7 @@ func TestLennyCtlMCPManagementOpsRoutingE2E(t *testing.T) {
 
 	// ---- rule 3: no opsServiceURL advertised -> gateway-host fallback,
 	// with a clear warning, rather than a silent failure ----
-	gwNoOps := gateway.StartWith(t, "--dev-mode")
+	gwNoOps := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	code, _, stderr = runCtlAgainst(gwNoOps.BaseURL(), "mcp-management", "tools")
 	if code == 0 {
 		t.Fatalf("lenny-ctl mcp-management tools against a gateway with no opsServiceURL: exit 0, want non-zero (the gateway does not mount /mcp/management, so the rule-3 fallback target cannot serve the call)")

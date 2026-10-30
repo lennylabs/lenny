@@ -90,8 +90,19 @@ type Store interface {
 	// archive rows to be removed first. A non-root session id matches no
 	// archive row, so the call is a no-op in that case.
 	//
-	// spec: §12.8 line 826 (step 11), lines 807-808 (FK precedence).
+	// spec: §12.8.
 	DeleteBySession(ctx context.Context, tenantID, rootSessionID string) (int, error)
+
+	// DeleteByTenant removes every archived node within tenantID and
+	// returns the count removed. It is the session_tree_archive step of
+	// §12.8 tenant deletion Phase 4, which runs before the SessionStore
+	// step: the FK session_tree_archive.root_session_id → sessions.id
+	// carries no ON DELETE action, so a tenant's sessions cannot be
+	// deleted while any of its archive rows remain. An empty tenantID is
+	// rejected rather than read as "every tenant". Idempotent.
+	//
+	// spec: §12.8 (Compliance Interfaces, tenant deletion Phase 4).
+	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
 // Memory is the in-memory Store implementation. The minimal gateway
@@ -159,6 +170,23 @@ func (m *Memory) GetByNode(_ context.Context, tenantID, nodeSessionID string) (A
 		}
 	}
 	return ArchivedNode{}, ErrNotFound
+}
+
+// DeleteByTenant implements Store.
+func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("treearchive: DeleteByTenant requires a non-empty tenant id")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	deleted := 0
+	for k, n := range m.nodes {
+		if n.TenantID == tenantID {
+			delete(m.nodes, k)
+			deleted++
+		}
+	}
+	return deleted, nil
 }
 
 // DeleteBySession implements Store.

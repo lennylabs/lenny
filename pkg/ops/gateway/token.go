@@ -19,7 +19,7 @@ import (
 // lenny_ops_gateway_auth_token_refresh_total{status}; tests pass a
 // recording stub or the Noop.
 //
-// spec: §25.4 line 1971.
+// spec: §25.4.
 type RefreshMetrics interface {
 	// RefreshDone records one refresh attempt. status is "success"
 	// when a fresh token was loaded and "failure" when the loader
@@ -94,7 +94,7 @@ type TokenSourceConfig struct {
 // refreshes before the token expires and on an explicit revocation
 // signal.
 //
-// spec: §25.4 lines 1956-1971.
+// spec: §25.4.
 func NewRefreshingTokenSource(cfg TokenSourceConfig) (*RefreshingTokenSource, error) {
 	if cfg.Loader == nil {
 		return nil, errors.New("refreshing token source: Loader is required")
@@ -121,7 +121,7 @@ func NewRefreshingTokenSource(cfg TokenSourceConfig) (*RefreshingTokenSource, er
 	if err := s.refresh(); err != nil {
 		return nil, err
 	}
-	// §25.4 line 1959: reject a startup token whose remaining lifetime
+	// §25.4: reject a startup token whose remaining lifetime
 	// is already below the configured floor.
 	if s.minTokenTTL > 0 && !s.expiry.IsZero() {
 		if ttl := s.expiry.Sub(now()); ttl < s.minTokenTTL {

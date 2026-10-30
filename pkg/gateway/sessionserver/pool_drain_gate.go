@@ -10,15 +10,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
-// requirePoolNotDraining enforces the §15.1 line 797 pool-drain
+// requirePoolNotDraining enforces the §15.1 pool-drain
 // backpressure on session creation. When the (runtimeRef, isolation
 // profile) pair resolves to a pool that has entered the `draining`
 // phase, the create is rejected with 503 POOL_DRAINING and a
 // `Retry-After` header set to the estimated drain-completion seconds
 // (ceil of the longest active session age in the pool, capped at the
 // pool's maxSessionAgeSeconds). The error envelope carries
-// `details.pool` and `details.estimatedDrainSeconds` per §15.1 line
-// 1034.
+// `details.pool` and `details.estimatedDrainSeconds` per §15.1.
 //
 // The gate is a no-op when no pool resolver is wired or no pool matches
 // the pair (the Postgres-only posture does no pool binding, so there is
@@ -26,7 +25,7 @@ import (
 // true when the create may proceed; when it returns false it has already
 // written the 503 response.
 //
-// spec: §15.1 line 797 (drain backpressure); §15.1 line 1034
+// spec: §15.1; §15.1
 // (POOL_DRAINING envelope).
 func (s *Server) requirePoolNotDraining(w http.ResponseWriter, r *http.Request, runtimeRef string, requested isolation.Profile, pinnedPool string) bool {
 	if s.pools == nil || s.poolNameResolver == nil || runtimeRef == "" {

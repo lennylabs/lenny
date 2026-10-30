@@ -28,6 +28,8 @@ package tier4_integration_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -39,7 +41,9 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -123,17 +127,18 @@ type recycleScrubReporter struct {
 }
 
 type recycleReport struct {
-	podID   string
-	outcome gatewaycontrol.PodScrubOutcome
+	podID       string
+	outcome     gatewaycontrol.PodScrubOutcome
+	runtimeLive bool
 }
 
 func newRecycleScrubReporter() *recycleScrubReporter {
 	return &recycleScrubReporter{reported: make(chan struct{})}
 }
 
-func (r *recycleScrubReporter) ReportPodScrub(_ context.Context, podID string, outcome gatewaycontrol.PodScrubOutcome, _ string) error {
+func (r *recycleScrubReporter) ReportPodScrub(_ context.Context, podID string, outcome gatewaycontrol.PodScrubOutcome, runtimeLive bool, _ string) error {
 	r.mu.Lock()
-	r.reports = append(r.reports, recycleReport{podID: podID, outcome: outcome})
+	r.reports = append(r.reports, recycleReport{podID: podID, outcome: outcome, runtimeLive: runtimeLive})
 	r.mu.Unlock()
 	r.once.Do(func() { close(r.reported) })
 	return nil
@@ -203,18 +208,22 @@ func recycleCluster(t *testing.T) client.Client {
 // recycleAdapterDialer serves the real adapter Server over an in-memory
 // connection so the binder's recycle Shutdown reaches the production
 // Server.Shutdown handler, which runs the whole-pod scrub and reports.
-func recycleAdapterDialer(t *testing.T, srv *adapter.Server) func(string) (*adapterclient.Client, error) {
+// Extra dial options, such as a client interceptor, are appended to every
+// connection the dialer builds.
+func recycleAdapterDialer(t *testing.T, srv *adapter.Server, extra ...grpc.DialOption) func(string) (*adapterclient.Client, error) {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
 	gs := adapter.NewGRPCServer(srv)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 	return func(string) (*adapterclient.Client, error) {
-		return adapterclient.Dial("passthrough:///bufnet",
+		opts := append([]grpc.DialOption{
 			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 				return lis.DialContext(ctx)
 			}),
-			grpc.WithTransportCredentials(insecure.NewCredentials()))
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		}, extra...)
+		return adapterclient.Dial("passthrough:///bufnet", opts...)
 	}
 }
 
@@ -232,7 +241,7 @@ func recycleBinder(c client.Client, dial func(string) (*adapterclient.Client, er
 	}, armer
 }
 
-// newRecycleCoordinator builds the production §3.4 RecycleBoundaryCoordinator
+// newRecycleCoordinator builds the production RecycleBoundaryCoordinator
 // against the cluster, so the dropped-report test exercises the real
 // missing-report timeout. It seeds a corev1.Pod carrying the pool label and a
 // poolstore pool with a 1s cleanupTimeoutSeconds; a 5ms grace bounds the timer
@@ -256,12 +265,14 @@ func newRecycleCoordinator(t *testing.T, c client.Client) *recycle.RecycleBounda
 		RuntimeRef:    "echo",
 		ExecutionMode: runtimestore.ExecutionModeSession,
 		SessionPolicy: &runtimestore.SessionPolicy{
-			MaxConcurrentSessions: 1,
-			CleanupTimeoutSeconds: 1,
+			AcknowledgeProcessLevelIsolation: true,
+			MaxConcurrentSessions:            1,
+			CleanupTimeoutSeconds:            1,
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          25,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 	}); err != nil {
@@ -303,8 +314,14 @@ func (a *recordingArmer) armedSnapshot() []string {
 }
 
 // recycleFakeRuntime is a minimal RuntimeProcess for the adapter Server the
-// binder's StartSession drives at Bind and Close tears down at Shutdown.
+// binder's StartSession drives at Bind and Close tears down at Shutdown. It
+// reports that it serves the pod's next session, as a live runtime process
+// that lives as long as the pod does.
 type recycleFakeRuntime struct{}
+
+// ServesNextSession reports the runtime live for the whole-pod scrub report.
+// spec: 5.2 (Pod retirement policy)
+func (recycleFakeRuntime) ServesNextSession() bool { return true }
 
 func (recycleFakeRuntime) Start(context.Context, string) error           { return nil }
 func (recycleFakeRuntime) WriteEnvelope(string, []byte) error            { return nil }
@@ -325,17 +342,16 @@ func newRecycleAdapter(t *testing.T, ops *recycleScrubOps, reporter *recycleScru
 	t.Helper()
 	srv := adapter.New("adapter-test")
 	base := t.TempDir()
-	srv.WorkspaceRoot = filepath.Join(base, "workspace", "current")
-	// The §6.4 concurrent-slot roots so the concurrent BindSlot path can
-	// materialize a per-slot workspace; the session-mode recycle tests never
-	// take the slot path, so setting them is inert for them.
+	// The §6.4 per-slot roots, which are the only layout: every session's
+	// tree nests under the workspace base.
 	srv.WorkspaceBase = filepath.Join(base, "workspace")
 	srv.SessionsRoot = filepath.Join(base, "sessions")
 	srv.ArtifactsRoot = filepath.Join(base, "artifacts")
 	srv.CredentialsDir = filepath.Join(base, "run", "lenny")
-	// The whole-pod scrub runs its cleanup commands with cwd = WorkspaceRoot, so
-	// the root must exist for the argv-mode cleanup exec to chdir into it.
-	for _, d := range []string{srv.WorkspaceRoot, srv.CredentialsDir} {
+	// The whole-pod scrub runs its cleanup commands with cwd = the workspace
+	// base, so the base must exist for the argv-mode cleanup exec to chdir
+	// into it.
+	for _, d := range []string{srv.WorkspaceBase, srv.CredentialsDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatalf("mkdir adapter dir %s: %v", d, err)
 		}
@@ -394,7 +410,7 @@ func claimPhase(t *testing.T, c client.Client, sandbox string) string {
 
 // diagnosis: a failure means the §5.2 recycle path broke end to end. If the
 // claim is not `recycling` after a clean release, Release did not patch the
-// claim before signaling the scrub (the §3.4 patch-then-scrub ordering). If the
+// claim before signaling the scrub (the patch-then-scrub ordering). If the
 // adapter ran no scrub or emitted no ReportPodScrub, the folded RecycleScrub did
 // not trigger the whole-pod scrub. If the reported outcome does not drive
 // podscrub.Decide to `reserved`, the disposition is not consuming the scrub
@@ -403,6 +419,7 @@ func claimPhase(t *testing.T, c client.Client, sandbox string) string {
 // spec: 5.2 (whole-pod scrub trigger, recycle lifecycle), 4.6.3 (scrub
 // disposition), 3.4 (recycle disposition, patch-then-scrub)
 func TestRecyclePathScrubReportedReuses_spec_5_2(t *testing.T) {
+	t.Parallel()
 	c := recycleCluster(t)
 	ops := &recycleScrubOps{}
 	reporter := newRecycleScrubReporter()
@@ -431,7 +448,7 @@ func TestRecyclePathScrubReportedReuses_spec_5_2(t *testing.T) {
 		t.Fatalf("Release: %v", err)
 	}
 	if got := claimPhase(t, c, res.SandboxName); got != string(claimstate.Recycling) {
-		t.Fatalf("claim phase after clean recycle Release = %q, want recycling (§3.4 patch-then-scrub)", got)
+		t.Fatalf("claim phase after clean recycle Release = %q, want recycling (patch-then-scrub)", got)
 	}
 	if armed := armer.armedSnapshot(); len(armed) != 1 || armed[0] != "sbx-r" {
 		t.Fatalf("missing-report timers armed = %v, want [sbx-r]", armed)
@@ -460,16 +477,21 @@ func TestRecyclePathScrubReportedReuses_spec_5_2(t *testing.T) {
 	if reps[0].outcome != gatewaycontrol.PodScrubSucceeded {
 		t.Errorf("reported outcome = %v, want PodScrubSucceeded", reps[0].outcome)
 	}
+	if !reps[0].runtimeLive {
+		t.Errorf("reported runtime_live = false for a live runtime, want true")
+	}
 
-	// The gateway consumer side maps the reported outcome onto the §6.2
-	// disposition. A succeeded scrub on a schedulable host reuses the pod: a
-	// non-preConnect recycling pod is held in `reserved` for its pinned tenant.
+	// The gateway consumer side maps the reported outcome and liveness onto
+	// the §6.2 disposition. A succeeded scrub on a schedulable host with a live
+	// runtime reuses the pod: a non-preConnect recycling pod is held in
+	// `reserved` for its pinned tenant.
 	disp := podscrub.Decide(podscrub.Inputs{
 		Scrub:             scrubResultFor(reps[0].outcome),
 		OnCleanupFailure:  podscrub.OnCleanupWarn,
 		MaxSessionsPerPod: 25,
 		SessionsServed:    1,
 		HostSchedulable:   true,
+		RuntimeNotLive:    !reps[0].runtimeLive,
 	})
 	if disp.Retire {
 		t.Fatalf("succeeded scrub retired the pod (reason %q), want reuse", disp.Reason)
@@ -483,7 +505,7 @@ func TestRecyclePathScrubReportedReuses_spec_5_2(t *testing.T) {
 }
 
 // TestRecyclePathDroppedReportRetires_spec_3_4 asserts the fail-closed backstop
-// end to end: when the adapter's scrub report never arrives, the real §3.4
+// end to end: when the adapter's scrub report never arrives, the real
 // missing-report timeout coordinator retires the pod rather than leaving it
 // stuck in `recycling`. The adapter runs the scrub but has no PodScrubReporter,
 // so it withholds the report (the dropped-report case); the coordinator's timer
@@ -492,11 +514,12 @@ func TestRecyclePathScrubReportedReuses_spec_5_2(t *testing.T) {
 //
 // diagnosis: a failure means the missing-report timeout stopped retiring a pod
 // whose scrub never reported, so a hung or reporterless adapter would leave the
-// pod stuck in `recycling` — the availability backstop the §3.4 timeout exists
+// pod stuck in `recycling` — the availability backstop the timeout exists
 // to provide.
 // spec: 3.4 (gateway-side missing-report timeout), 5.2 (recycle lifecycle),
 // 6.2 (retire on missing report)
 func TestRecyclePathDroppedReportRetires_spec_3_4(t *testing.T) {
+	t.Parallel()
 	c := recycleCluster(t)
 	ops := &recycleScrubOps{}
 	// A reporterless adapter drops the report: the scrub runs but nothing
@@ -504,7 +527,7 @@ func TestRecyclePathDroppedReportRetires_spec_3_4(t *testing.T) {
 	// off `recycling`.
 	srv, scrubDone := newRecycleAdapter(t, ops, nil)
 
-	// Wire the production §3.4 coordinator against the same cluster. A pod
+	// Wire the production coordinator against the same cluster. A pod
 	// object carrying the pool label plus a poolstore pool with a 1s
 	// cleanupTimeoutSeconds and a tiny grace bound the real missing-report timer
 	// to about a second, so the test exercises the genuine timer rather than a
@@ -564,6 +587,7 @@ func TestRecyclePathDroppedReportRetires_spec_3_4(t *testing.T) {
 // spec: 5.2 step 7 (fresh-guest reprovision), 4.7 (ReportPodScrub binary
 // outcome), 6.2 (retire disposition)
 func TestRecyclePathVMRestartRetiresAndReprovisions_spec_5_2(t *testing.T) {
+	t.Parallel()
 	c := recycleCluster(t)
 	ops := &recycleScrubOps{}
 	reporter := newRecycleScrubReporter()
@@ -658,6 +682,7 @@ func TestRecyclePathVMRestartRetiresAndReprovisions_spec_5_2(t *testing.T) {
 // spec: 5.2 (whole-pod scrub, fail-closed on a wiring gap), 3.4 (missing-report
 // timeout), 6.2 (retire on missing report)
 func TestRecyclePathNilScrubOpsWithholdsReportAndRetires_spec_5_2(t *testing.T) {
+	t.Parallel()
 	c := recycleCluster(t)
 	reporter := newRecycleScrubReporter()
 
@@ -665,7 +690,7 @@ func TestRecyclePathNilScrubOpsWithholdsReportAndRetires_spec_5_2(t *testing.T) 
 	// never wired. A reporter IS wired, so a PodScrubFailed would reach the
 	// gateway if the driver emitted one.
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = recycleFakeRuntime{}
 	srv.ScrubOps = nil // never wired: the wiring gap the fix guards against
 	srv.PodScrubReporter = reporter
@@ -689,7 +714,7 @@ func TestRecyclePathNilScrubOpsWithholdsReportAndRetires_spec_5_2(t *testing.T) 
 		t.Fatalf("nil-ScrubOps recycle emitted %d reports, want 0 (withheld fail-closed); got %+v", len(reps), reps)
 	}
 
-	// No report cancels the missing-report timer, so the §3.4 timeout retires
+	// No report cancels the missing-report timer, so the timeout retires
 	// the pod: the still-`recycling` claim advances to the fail-closed `failed`
 	// terminal rather than being reused without a scrub.
 	deadline := time.Now().Add(6 * time.Second)
@@ -719,6 +744,7 @@ func TestRecyclePathNilScrubOpsWithholdsReportAndRetires_spec_5_2(t *testing.T) 
 // spec: 6.2 (failed/crashed session always retires), 5.2 (recycle disposition),
 // 4.7 (Shutdown recycle disposition)
 func TestRecyclePathFailedDispositionRetires_spec_6_2(t *testing.T) {
+	t.Parallel()
 	c := recycleCluster(t)
 	ops := &recycleScrubOps{}
 	reporter := newRecycleScrubReporter()
@@ -791,6 +817,7 @@ func recycleSlotBinder(t *testing.T, c client.Client, dial func(string) (*adapte
 // occupancy-zero reuse), 4.7 (Shutdown recycle disposition), 3.4 (recycle
 // disposition, patch-then-scrub)
 func TestRecyclePathConcurrentSlotScrubReportedReuses_spec_5_2(t *testing.T) {
+	t.Parallel()
 	c := recycleCluster(t)
 	ops := &recycleScrubOps{}
 	reporter := newRecycleScrubReporter()
@@ -828,7 +855,7 @@ func TestRecyclePathConcurrentSlotScrubReportedReuses_spec_5_2(t *testing.T) {
 		t.Fatalf("ReleaseSlot: %v", err)
 	}
 	if got := claimPhase(t, c, res.SandboxName); got != string(claimstate.Recycling) {
-		t.Fatalf("claim phase after clean concurrent recycle ReleaseSlot = %q, want recycling (§3.4 patch-then-scrub)", got)
+		t.Fatalf("claim phase after clean concurrent recycle ReleaseSlot = %q, want recycling (patch-then-scrub)", got)
 	}
 	if armed := armer.armedSnapshot(); len(armed) != 1 || armed[0] != "sbx-r" {
 		t.Fatalf("missing-report timers armed = %v, want [sbx-r]", armed)
@@ -855,6 +882,129 @@ func TestRecyclePathConcurrentSlotScrubReportedReuses_spec_5_2(t *testing.T) {
 	}
 	if reps[0].outcome != gatewaycontrol.PodScrubSucceeded {
 		t.Errorf("reported outcome = %v, want PodScrubSucceeded", reps[0].outcome)
+	}
+}
+
+// reclaimInterceptor fails the StartSession RPC, so a reserved-slot bind fails
+// after the workspace stages and the binder sends its compensating Shutdown,
+// and, when failReclaim is set, fails that Shutdown too so the reclaim goes
+// unanswered. Every other RPC passes through to the real adapter. It records
+// the reason of every Shutdown it sees so the case can assert the compensation
+// was sent.
+type reclaimInterceptor struct {
+	failReclaim bool
+	mu          sync.Mutex
+	reasons     []string
+}
+
+func (r *reclaimInterceptor) intercept(ctx context.Context, method string, req, reply any,
+	cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption,
+) error {
+	switch method {
+	case adapterv1.Adapter_StartSession_FullMethodName:
+		return status.Error(codes.Unavailable, "start session interrupted")
+	case adapterv1.Adapter_Shutdown_FullMethodName:
+		reason := req.(*adapterv1.ShutdownRequest).GetReason()
+		r.mu.Lock()
+		r.reasons = append(r.reasons, reason)
+		r.mu.Unlock()
+		if r.failReclaim && reason == "slot_bind_failed" {
+			return status.Error(codes.Unavailable, "reclaim unanswered")
+		}
+	}
+	return invoker(ctx, method, req, reply, cc, opts...)
+}
+
+func (r *reclaimInterceptor) shutdownReasons() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.reasons...)
+}
+
+// activeSlots reads the cardinality of the pod's §5.2 slot set; an absent
+// key reads as zero.
+func activeSlots(t *testing.T, rc *redis.Client, pod string) int {
+	t.Helper()
+	n, err := rc.SCard(context.Background(), "lenny:pod:{"+pod+"}:active_slots").Result()
+	if err != nil {
+		t.Fatalf("read active_slots for %s: %v", pod, err)
+	}
+	return int(n)
+}
+
+// TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2 drives a reserved-slot
+// bind whose StartSession fails across the real binder, a real adapter, a real
+// kube-apiserver and a real Redis slot counter. The binder compensates the
+// failure with a Shutdown carrying the slot_bind_failed reason. When that
+// reclaim goes unanswered the slot is leaked: the reservation release carries
+// leaked=true, the Redis slot counter keeps the slot counted, and the per-pod
+// SandboxClaim survives at bound. When the reclaim is answered the release is
+// clean, the counter reaches zero and the claim is deleted. The contrast
+// between the two arms is the assertion.
+//
+// diagnosis: a failure in the unanswered arm means an unacknowledged
+// compensation freed the slot's occupancy, so the gateway can over-assign into
+// a pod that may still hold the failed bind's registry entry and tree. A
+// failure in the answered arm means a clean reclaim no longer releases the
+// reservation, so every failed bind leaks a slot.
+// spec: §7.1 (normal flow); §5.2 (pool configuration and execution modes); §6.2 (pod state machine)
+func TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		failReclaim bool
+		wantSlots   int
+		wantPhase   string
+	}{
+		{"unanswered reclaim leaks the slot", true, 1, string(claimstate.Bound)},
+		{"answered reclaim releases the slot", false, 0, "<deleted>"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := recycleCluster(t)
+			srv, _ := newRecycleAdapter(t, &recycleScrubOps{}, nil)
+			icpt := &reclaimInterceptor{failReclaim: tc.failReclaim}
+			binder, _ := recycleBinder(c, recycleAdapterDialer(t, srv, grpc.WithUnaryInterceptor(icpt.intercept)))
+			mr := miniredis.RunT(t)
+			rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+			t.Cleanup(func() { _ = rc.Close() })
+			binder.SlotCounter = slotcounter.New(rc)
+
+			ctx := context.Background()
+			req := podsession.SlotBindRequest{
+				Pool:                  "recycle-pool",
+				SessionID:             "reclaim-sess",
+				TenantID:              "acme",
+				Runtime:               "echo",
+				MaxConcurrentSessions: 4,
+				Plan:                  &adapterv1.WorkspacePlan{},
+			}
+			claim, err := binder.ClaimSlot(ctx, req)
+			if err != nil {
+				t.Fatalf("ClaimSlot: %v", err)
+			}
+			if got := activeSlots(t, rc, claim.SandboxName); got != 1 {
+				t.Fatalf("active_slots after ClaimSlot = %d, want 1", got)
+			}
+
+			_, err = binder.BindReservedSlot(ctx, req, claim.SandboxName, claim.SlotID)
+			var sbe *podsession.SlotBindError
+			if !errors.As(err, &sbe) {
+				t.Fatalf("BindReservedSlot error = %v, want a *podsession.SlotBindError", err)
+			}
+			if sbe.Leaked != tc.failReclaim {
+				t.Errorf("SlotBindError.Leaked = %v, want %v", sbe.Leaked, tc.failReclaim)
+			}
+			reasons := icpt.shutdownReasons()
+			if len(reasons) != 1 || reasons[0] != "slot_bind_failed" {
+				t.Errorf("Shutdown reasons = %v, want one compensation carrying slot_bind_failed", reasons)
+			}
+			if got := activeSlots(t, rc, claim.SandboxName); got != tc.wantSlots {
+				t.Errorf("active_slots after the failed bind = %d, want %d", got, tc.wantSlots)
+			}
+			if got := claimPhase(t, c, claim.SandboxName); got != tc.wantPhase {
+				t.Errorf("claim phase after the failed bind = %q, want %q", got, tc.wantPhase)
+			}
+		})
 	}
 }
 
@@ -926,7 +1076,7 @@ func (s *perReleaseRecordingSink) count(reason string) int {
 // ScrubReporter requires a non-nil ledger.
 type perReleaseNoopLedger struct{}
 
-func (perReleaseNoopLedger) RecordLeak(context.Context, string) error { return nil }
+func (perReleaseNoopLedger) RecordLeak(context.Context, string, string) error { return nil }
 
 // perReleaseNoopInspector and perReleaseNoopDriver satisfy the ScrubReporter's
 // RecordPodScrub seams, which the per-release RecordSessionScrub path never
@@ -943,7 +1093,7 @@ func (perReleaseNoopInspector) InspectForRecycle(context.Context, string) (lease
 type perReleaseNoopDriver struct{}
 
 func (perReleaseNoopDriver) Recycle(context.Context, string, bool, bool) error { return nil }
-func (perReleaseNoopDriver) Retire(context.Context, string, bool, bool, podscrub.RetireReason, string) error {
+func (perReleaseNoopDriver) Retire(context.Context, string, bool, bool, podscrub.RetireReason, leasecontrol.PodLifetime, string) error {
 	return nil
 }
 
@@ -987,6 +1137,7 @@ func (perReleaseNoopDriver) Retire(context.Context, string, bool, bool, podscrub
 // (leaked slot remains counted so occupancy stays above zero), 4.6.3 (gateway
 // stamps drain-request)
 func TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2(t *testing.T) {
+	t.Parallel()
 	c := recycleCluster(t)
 	ctx := context.Background()
 	const podName = "sbx-perrelease"
@@ -1025,6 +1176,7 @@ func TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2(t *testing.T
 				AcknowledgeBestEffortScrub: true,
 				ScrubProfile:               runtimestore.MicrovmScrubStandard,
 				MaxSessionsPerPod:          3,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 	}); err != nil {
@@ -1073,7 +1225,7 @@ func TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2(t *testing.T
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rc.Close() })
 	counter := slotcounter.New(rc)
-	if _, _, err := counter.Reserve(ctx, podName, 4); err != nil {
+	if _, _, err := counter.Reserve(ctx, podName, "leaked-floor", 4); err != nil {
 		t.Fatalf("reserve leaked slot: %v", err)
 	}
 
@@ -1083,13 +1235,14 @@ func TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2(t *testing.T
 	// release reports the per-slot cleanup outcome through the real handler,
 	// which advances sessions_served and drives the per-release retirement.
 	for i := 1; i <= 3; i++ {
-		if _, _, err := counter.Reserve(ctx, podName, 4); err != nil {
+		live := fmt.Sprintf("live-%d", i)
+		if _, _, err := counter.Reserve(ctx, podName, live, 4); err != nil {
 			t.Fatalf("reserve live slot %d: %v", i, err)
 		}
-		if _, err := counter.Release(ctx, podName); err != nil {
+		if _, _, _, err := counter.Release(ctx, podName, live, false); err != nil {
 			t.Fatalf("release live slot %d: %v", i, err)
 		}
-		if err := reporter.RecordSessionScrub(ctx, podName, "sess", "slot", false); err != nil {
+		if err := reporter.RecordSessionScrub(ctx, podName, "sess", false); err != nil {
 			t.Fatalf("RecordSessionScrub release %d: %v", i, err)
 		}
 
@@ -1118,7 +1271,7 @@ func TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2(t *testing.T
 	// The leaked slot still holds occupancy above zero: total occupancy never
 	// reached zero, so no whole-pod scrub fired. The drain came purely from the
 	// per-release path.
-	if occ, _, err := counter.Reserve(ctx, podName, 4); err != nil {
+	if occ, _, err := counter.Reserve(ctx, podName, "probe", 4); err != nil {
 		t.Fatalf("probe occupancy: %v", err)
 	} else if occ < 2 {
 		t.Fatalf("post-flow occupancy = %d, want >= 2 (the leaked slot never released, so occupancy never hit zero)", occ)
@@ -1128,7 +1281,7 @@ func TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2(t *testing.T
 	// drain-request idempotently but does NOT re-increment the retirement
 	// counter: the exact-equality gate holds it to one per retirement while the
 	// stamp stays retry-safe.
-	if err := reporter.RecordSessionScrub(ctx, podName, "sess", "slot", false); err != nil {
+	if err := reporter.RecordSessionScrub(ctx, podName, "sess", false); err != nil {
 		t.Fatalf("RecordSessionScrub release 4: %v", err)
 	}
 	if !perReleaseDrainRequested(t, c, podName) {

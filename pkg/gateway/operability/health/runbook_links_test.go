@@ -10,10 +10,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
-// TestRunbookForIssue_RequiredByPathB pins the §25.7 Path B
-// (lines 3217–3231) lookup. The eight codes named at §17.7 line 741
+// TestRunbookForIssue_RequiredByPathB pins the §25.7 Path B lookup. The eight codes named at §17.7
 // must each resolve to the runbook the spec quotes verbatim.
-// spec: §25.7 lines 3222-3231; §17.7 line 741.
+// spec: §25.7; §17.7.
 func TestRunbookForIssue_RequiredByPathB_spec_17_7_741(t *testing.T) {
 	required := map[string]string{
 		"WARM_POOL_EXHAUSTED":       "warm-pool-exhaustion",
@@ -37,7 +36,7 @@ func TestRunbookForIssue_RequiredByPathB_spec_17_7_741(t *testing.T) {
 
 // TestRegisterIssueRunbook lets a backend register a new issue → runbook
 // link without re-opening the central table.
-// spec: §17.7 line 741.
+// spec: §17.7.
 func TestRegisterIssueRunbook(t *testing.T) {
 	health.RegisterIssueRunbook("CUSTOM_ISSUE", "custom-issue-runbook")
 	if got := health.RunbookForIssue("CUSTOM_ISSUE"); got != "custom-issue-runbook" {
@@ -49,7 +48,7 @@ func TestRegisterIssueRunbook(t *testing.T) {
 // stamps a ranked Issue but leaves the remediation hint empty, the
 // aggregator resolves the §25.3 suggestedActions array from the catalog,
 // each carrying the §25.7 Path B runbook pointer.
-// spec: §25.3 lines 459-501; §25.7 line 3234.
+// spec: §25.3; §25.7.
 func TestAggregatorBackfillsActionsFromIssue_spec_25_3_459(t *testing.T) {
 	agg := health.NewAggregator()
 	agg.Register(health.CheckerFunc{
@@ -91,7 +90,7 @@ func TestAggregatorBackfillsActionsFromIssue_spec_25_3_459(t *testing.T) {
 // TestAggregatorPreservesExplicitAction ensures that a checker that
 // already populated the remediation hint wins over the catalog back-fill,
 // so out-of-tree probes keep control.
-// spec: §25.3 lines 459-501.
+// spec: §25.3.
 func TestAggregatorPreservesExplicitAction_spec_25_3_459(t *testing.T) {
 	agg := health.NewAggregator()
 	agg.Register(health.CheckerFunc{
@@ -122,7 +121,7 @@ func TestAggregatorPreservesExplicitAction_spec_25_3_459(t *testing.T) {
 // single-component lookup path (Aggregator.Component) so the
 // /v1/admin/health/{component} response also carries the structured
 // remediation hint when only Issue is stamped.
-// spec: §25.3 lines 459-501.
+// spec: §25.3.
 func TestComponentEndpointBackfillsActionsFromIssue_spec_25_3_459(t *testing.T) {
 	agg := health.NewAggregator()
 	agg.Register(health.CheckerFunc{

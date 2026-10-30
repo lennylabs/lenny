@@ -7,7 +7,7 @@
 -- experiments, users, environments); this migration extends the contract
 -- to the connectors and credential_pools resources. Existing rows
 -- default to version 1.
--- See spec/15_external-api-surface.md §15.1 lines 1207-1224.
+-- See spec/15_external-api-surface.md §15.1.
 ALTER TABLE connectors
     ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
 

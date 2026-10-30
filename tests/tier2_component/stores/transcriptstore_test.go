@@ -218,9 +218,12 @@ func TestTranscriptStoreContract(t *testing.T) {
 			got = append(got, perTurn[i]...)
 		}
 		want := []struct{ role, content string }{
-			{"user", "turn one"}, {"assistant", "answer one"},
-			{"user", "turn two"}, {"assistant", "answer two"},
-			{"user", "turn three"}, {"assistant", "answer three"},
+			{"user", "turn one"},
+			{"assistant", "answer one"},
+			{"user", "turn two"},
+			{"assistant", "answer two"},
+			{"user", "turn three"},
+			{"assistant", "answer three"},
 		}
 		if len(got) != len(want) {
 			t.Fatalf("reassembled %d entries, want %d", len(got), len(want))
@@ -244,7 +247,7 @@ func TestTranscriptStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §15.4.1 line 1694 — every MessageEnvelope persisted to
+	// spec: §15.4 — every MessageEnvelope persisted to
 	// session_messages carries the gateway-stamped schema_version; §15.5
 	// item 7 — integer starting at 1. The migration 0131 column must
 	// round-trip through INSERT and SELECT: a zero-value caller field is

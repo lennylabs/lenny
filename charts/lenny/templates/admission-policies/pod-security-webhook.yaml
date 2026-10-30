@@ -6,8 +6,16 @@ flag (shareProcessNamespace, hostPID, hostNetwork, hostIPC), a missing
 or wrong credential fsGroup, a root pod, a privileged or
 privilege-escalating container, a writable root filesystem, an
 undropped capability, or a seccomp profile other than RuntimeDefault.
+It also enforces the §13.1 container identity clause on every init,
+regular, and ephemeral container after mutating admission, so a
+container a deployer's mutating webhook injects is checked too: each
+container sets a nonzero container-level runAsUser and runAsGroup, the
+security.podUIDs.adapter UID belongs only to the regular adapter
+container, and the security.podUIDs.agent UID only to the regular
+runtime container. The binary receives both UIDs through its
+--adapter-uid and --agent-uid flags.
 Scoped to Pod CREATE/UPDATE and the pods/ephemeralcontainers
-subresource (§13.1 line 27 — the per-container baseline applies to
+subresource (§13.1 — the per-container baseline applies to
 ephemeral debug containers too) in agent namespaces; fail-closed so a
 pod the webhook cannot validate is not admitted with an unverified
 §13.1 posture.
@@ -39,16 +47,20 @@ webhooks:
       - apiGroups: [""]
         apiVersions: ["v1"]
         resources: ["pods"]
-        # spec: §13.1 — register CREATE and UPDATE so the
-        # securityContext invariants are re-validated on every spec
-        # write. Most SecurityContext fields are kubelet-immutable
-        # post-creation, but automountServiceAccountToken and other
-        # spec-mutable fields can be toggled. Matches the §13.2 / §4.6.3
-        # webhooks (label-immutability, pool-config-validator,
-        # data-residency-validator) which all register CREATE+UPDATE.
+        # spec: §13.1 — register CREATE and UPDATE. The API server lets
+        # a Pod UPDATE change only a small set of spec fields, such as
+        # container images, activeDeadlineSeconds, and added
+        # tolerations, and the validator checks none of them, so an
+        # UPDATE cannot introduce a violation into a pod that passed
+        # CREATE. Matching UPDATE re-validates the whole pod on every
+        # write, metadata-only writes such as the controller's label
+        # patches included: a pod admitted before the webhook or one of
+        # its current rules existed is denied every later UPDATE until
+        # it is replaced. Writes to the pods/status subresource are not
+        # matched.
         operations: ["CREATE", "UPDATE"]
         scope: Namespaced
-      # spec: §13.1 line 27 — ephemeral debug containers attached
+      # spec: §13.1 — ephemeral debug containers attached
       # post-hoc via the pods/ephemeralcontainers subresource carry the
       # same per-container baseline (no privileged, drop ALL caps,
       # read-only root, RuntimeDefault seccomp). The dedicated

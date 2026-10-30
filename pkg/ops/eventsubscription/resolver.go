@@ -9,7 +9,7 @@ import (
 )
 
 // defaultResolver is the production Resolver: it delegates to
-// net.DefaultResolver. spec: §25.5 line 2741.
+// net.DefaultResolver. spec: §25.5.
 type defaultResolver struct{}
 
 func (defaultResolver) LookupNetIP(ctx context.Context, network, host string) ([]netip.Addr, error) {

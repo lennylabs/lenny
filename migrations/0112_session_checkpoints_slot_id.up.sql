@@ -1,4 +1,4 @@
--- §12.5 line 313 / 326: in concurrent-workspace mode checkpoints are
+-- §12.5: in concurrent-workspace mode checkpoints are
 -- per-slot — "the 'latest 2' limit applies independently to each
 -- slot" and "the GC job and retention policy operate on
 -- (session_id, slot_id) pairs, not on sessions alone." Migration 0067
@@ -13,7 +13,7 @@
 -- concurrent-workspace path writes the bound slot id so each slot
 -- retains its own latest two.
 --
--- spec: §12.5 lines 313, 326.
+-- spec: §12.5.
 
 ALTER TABLE session_checkpoints
     ADD COLUMN slot_id TEXT NOT NULL DEFAULT '';

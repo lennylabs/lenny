@@ -7,9 +7,7 @@
 // registered connector endpoint and carries the gateway-held connector
 // credential on the call.
 //
-// spec: §9.1 line 10 ("Gateway ↔ external MCP tools | MCP | Tool
-// invocation, OAuth flows"); §9.3 lines 142-164 (the gateway acts as
-// MCP client to the external tool). The OAuth flow stores the
+// spec: §9.1; §9.3. The OAuth flow stores the
 // credential; this package is the piece that uses it.
 package connectorinvoke
 
@@ -269,7 +267,7 @@ func (s *Session) newRequest(ctx context.Context, body []byte) (*http.Request, e
 	if s.sessionID != "" {
 		req.Header.Set("Mcp-Session-Id", s.sessionID)
 	}
-	// spec: §16.3 line 330 ("Gateway → External MCP tools (HTTP headers)") —
+	// spec: §16.3 ("Gateway → External MCP tools (HTTP headers)") —
 	// inject the current trace context as a W3C traceparent so the external
 	// connector's spans (if it participates in tracing) stitch into the
 	// gateway's mcp.external_tool_call trace. F-16.3.3.

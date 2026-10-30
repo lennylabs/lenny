@@ -16,11 +16,11 @@
 // out-of-process writes.
 //
 // All four tables are platform-scoped (the §25 control plane is not
-// multi-tenanted at this boundary; §25.4 line 1492 lists them among the
+// multi-tenanted at this boundary; §25.4 lists them among the
 // PlatformPostgres() tables), so the store does not run inside a
 // tenant-scoped transaction and the tables carry no RLS policy.
 //
-// spec: §25.11 lines 3963-4295.
+// spec: §25.11.
 package pgstore
 
 import (
@@ -292,7 +292,7 @@ func (s *Store) ListRestores(ctx context.Context, filter backup.RestoreFilter) (
 // FailStalePending implements backup.PendingReconciler: it marks every
 // ops_backups row still in status:pending whose started_at is older than
 // cutoff as failed with error JOB_CREATE_FAILED, in a single server-side
-// statement (the §25.11 lines 3976-3977 reconcile, run against Postgres
+// statement (the §25.11 reconcile, run against Postgres
 // rather than the in-memory store). It returns the IDs it failed.
 func (s *Store) FailStalePending(ctx context.Context, cutoff time.Time) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `

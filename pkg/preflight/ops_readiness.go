@@ -15,13 +15,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// OpsIngressClusterIssuerCheck is the §17.6 line 520 ops.ingress
+// OpsIngressClusterIssuerCheck is the §17.6 ops.ingress
 // ClusterIssuer advisory. When ops.ingress carries a
 // cert-manager.io/cluster-issuer annotation, the referenced ClusterIssuer
 // must exist or lenny-ops serves without TLS. The check is a non-blocking
 // warning (it always passes); an empty issuer name is a silent pass.
 //
-// spec: §17.6 line 520.
+// spec: §17.6.
 type OpsIngressClusterIssuerCheck struct {
 	// IssuerName is the cert-manager.io/cluster-issuer annotation value
 	// on ops.ingress. Empty skips the check.
@@ -30,7 +30,7 @@ type OpsIngressClusterIssuerCheck struct {
 	Exists bool
 }
 
-// Decide evaluates the §17.6 line 520 ClusterIssuer advisory.
+// Decide evaluates the §17.6 ClusterIssuer advisory.
 func (c OpsIngressClusterIssuerCheck) Decide() Decision {
 	if strings.TrimSpace(c.IssuerName) == "" || c.Exists {
 		return Decision{Passed: true}
@@ -41,13 +41,13 @@ func (c OpsIngressClusterIssuerCheck) Decide() Decision {
 	}
 }
 
-// MonitoringNamespaceCheck is the §17.6 line 521 monitoring-namespace
+// MonitoringNamespaceCheck is the §17.6 monitoring-namespace
 // advisory. The rendered PodMonitor / ServiceMonitor is only discovered
 // when the monitoring namespace exists and runs a Prometheus pod matching
 // monitoring.podLabel. The check is a non-blocking warning; an empty
 // namespace or pod-label skips it.
 //
-// spec: §17.6 line 521.
+// spec: §17.6.
 type MonitoringNamespaceCheck struct {
 	// Namespace is the monitoring.namespace value.
 	Namespace string
@@ -60,7 +60,7 @@ type MonitoringNamespaceCheck struct {
 	HasMatchingPod bool
 }
 
-// Decide evaluates the §17.6 line 521 monitoring-namespace advisory.
+// Decide evaluates the §17.6 monitoring-namespace advisory.
 func (c MonitoringNamespaceCheck) Decide() Decision {
 	if strings.TrimSpace(c.Namespace) == "" || strings.TrimSpace(c.PodLabel) == "" || c.HasMatchingPod {
 		return Decision{Passed: true}
@@ -75,7 +75,7 @@ func (c MonitoringNamespaceCheck) Decide() Decision {
 // table: an apiGroup/resource/verb the lenny-ops ServiceAccount must be
 // allowed to perform. Namespace is empty for cluster-scoped checks.
 //
-// spec: §25.4 (lenny-ops RBAC table); §17.6 line 519.
+// spec: §25.4 (lenny-ops RBAC table); §17.6.
 type OpsSARBACRule struct {
 	Group     string
 	Resource  string
@@ -97,7 +97,7 @@ func (r OpsSARBACRule) String() string {
 // patches, CRD reads, ConfigMap reads, Secret reads for backup
 // credentials, and Job create/watch.
 //
-// spec: §25.4; §17.6 line 519.
+// spec: §25.4; §17.6.
 func CanonicalOpsSARBACRules(namespace string) []OpsSARBACRule {
 	return []OpsSARBACRule{
 		{Group: "coordination.k8s.io", Resource: "leases", Verb: "create", Namespace: namespace},
@@ -116,18 +116,18 @@ func CanonicalOpsSARBACRules(namespace string) []OpsSARBACRule {
 // allowed. It is the seam the real authorization-API clientset and test
 // fakes satisfy. A nil prober skips the lenny-ops-sa RBAC check.
 //
-// spec: §17.6 line 519 (kubectl auth can-i against each canonical rule).
+// spec: §17.6.
 type OpsSARBACProber interface {
 	CanI(ctx context.Context, serviceAccount string, rule OpsSARBACRule) (allowed bool, err error)
 }
 
-// OpsSARBACCheck is the §17.6 line 519 lenny-ops-sa RBAC audit. It runs a
+// OpsSARBACCheck is the §17.6 lenny-ops-sa RBAC audit. It runs a
 // SubjectAccessReview for every canonical rule and fails fail-closed when
 // any is denied. A nil prober skips the check (the v1 preflight Job is
 // not granted SubjectAccessReview-create RBAC); the chart-rendered Role /
 // ClusterRole templates remain the source of truth.
 //
-// spec: §17.6 line 519; §25.4.
+// spec: §17.6; §25.4.
 type OpsSARBACCheck struct {
 	// ServiceAccount is the fully-qualified ops SA username
 	// (system:serviceaccount:<ns>:lenny-ops-sa).
@@ -139,7 +139,7 @@ type OpsSARBACCheck struct {
 	Prober OpsSARBACProber
 }
 
-// Decide evaluates the §17.6 line 519 lenny-ops-sa RBAC audit.
+// Decide evaluates the §17.6 lenny-ops-sa RBAC audit.
 func (c OpsSARBACCheck) Decide(ctx context.Context) Decision {
 	if c.Prober == nil {
 		return Decision{Passed: true, Reason: "SKIPPED: SubjectAccessReview not wired; lenny-ops RBAC is governed by the chart Role/ClusterRole templates"}
@@ -173,7 +173,7 @@ func (c OpsSARBACCheck) Decide(ctx context.Context) Decision {
 // preflight binary does not depend on the cert-manager Go types. A
 // not-found maps to false; any other read error propagates.
 //
-// spec: §17.6 line 520.
+// spec: §17.6.
 func clusterIssuerExists(ctx context.Context, reader client.Reader, name string) (bool, error) {
 	if strings.TrimSpace(name) == "" {
 		return false, nil
@@ -205,7 +205,7 @@ func clusterIssuerExists(ctx context.Context, reader client.Reader, name string)
 // namespace or unparseable label returns false with no error so the
 // check degrades to its advisory.
 //
-// spec: §17.6 line 521.
+// spec: §17.6.
 func monitoringPodPresent(ctx context.Context, reader client.Reader, namespace, podLabel string) (bool, error) {
 	key, value, ok := splitKeyValue(podLabel)
 	if namespace == "" || !ok {

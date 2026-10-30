@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/quota"
 )
 
-// Service drives the §11.2 token-usage checkpoint and the §11.2 line 48 /
+// Service drives the §11.2 token-usage checkpoint and the §11.2 /
 // §24.6 MAX-rule reconcile. Its seams are wired in production over the
 // quotastore Redis counter, the SessionStore, and the tenant registry; a
 // missing required seam makes the corresponding method a no-op so a
@@ -31,7 +31,7 @@ type Service struct {
 	// Tenants gates a per-tenant reconcile with a 404 for an unknown
 	// tenant. Optional; a nil exister skips the existence check.
 	Tenants TenantExister
-	// FailOpen is the §12.4 / §11.2 line 48 MAX-rule source (2): the
+	// FailOpen is the §12.4 / §11.2 MAX-rule source (2): the
 	// in-memory token counter the recording path accumulated while the
 	// shared Redis counter was unreachable. When set, Reconcile folds each
 	// window's accumulated value into the MAX so usage that a Redis write
@@ -40,7 +40,7 @@ type Service struct {
 	// during the outage (no checkpoint row). Optional; a nil accumulator
 	// reduces the rule to MAX(redis_current, postgres_checkpoint).
 	FailOpen *quotafailopen.Accumulator
-	// PodUsage is the §11.2 line 46 crash-recovery MAX-rule source: the
+	// PodUsage is the §11.2 crash-recovery MAX-rule source: the
 	// pod-reported cumulative token total each bound direct-mode session's
 	// adapter re-reports on reconnection to a new gateway replica. When set,
 	// Reconcile folds each window's pod-reported cumulative total into the
@@ -48,7 +48,7 @@ type Service struct {
 	// windows that opened during the outage with no checkpoint row — so a
 	// reconnected replica reconstructs a direct-mode counter as
 	// MAX(redis_current, postgres_checkpoint, in_memory_failopen,
-	// pod_reported_cumulative) per §11.2 line 46 rather than silently
+	// pod_reported_cumulative) per §11.2 rather than silently
 	// under-counting a direct-mode session whose Redis usage was lost.
 	// Optional; a nil reader preserves the exact prior behaviour (the MAX
 	// omits the pod-reported source), guarded like FailOpen==nil.
@@ -68,7 +68,7 @@ type ReconcileScope struct {
 	TenantID   string
 }
 
-// ReconcileResult summarizes a reconcile pass: the §11.2 line 48 MAX-rule
+// ReconcileResult summarizes a reconcile pass: the §11.2 MAX-rule
 // inputs and the authoritative value written back to Redis per scope.
 type ReconcileResult struct {
 	TenantsReconciled int
@@ -86,13 +86,13 @@ type CounterResult struct {
 	Period          string
 	CheckpointValue int64
 	// InMemoryValue is the live Redis value read before the restore (the
-	// §11.2 line 48 redis_current input).
+	// §11.2 redis_current input).
 	InMemoryValue int64
 	// FailOpenValue is the §12.4 source (2) in-memory fail-open accumulator
 	// value folded into the MAX. Zero when no fail-open reader is wired or
 	// the window accumulated nothing during an outage.
 	FailOpenValue int64
-	// PodUsageValue is the §11.2 line 46 pod-reported cumulative token total
+	// PodUsageValue is the §11.2 pod-reported cumulative token total
 	// folded into the MAX. Zero when no pod-usage reader is wired or no bound
 	// direct-mode session contributed a total for the window.
 	PodUsageValue int64
@@ -106,7 +106,7 @@ type CounterResult struct {
 // state. A per-subject read error skips that subject rather than aborting
 // the sweep.
 //
-// spec: §11.2 line 44 (durable checkpoint).
+// spec: §11.2.
 func (s *Service) Checkpoint(ctx context.Context) {
 	if s == nil || s.Store == nil || s.Subjects == nil || s.Periods == nil || s.Reader == nil {
 		return
@@ -134,15 +134,14 @@ func (s *Service) Checkpoint(ctx context.Context) {
 	s.logf("quotacheckpoint: checkpointed %d token-usage window(s)", len(rows))
 }
 
-// CheckpointSubject persists the §11.2 line 44 "final reconciliation"
+// CheckpointSubject persists the §11.2
 // checkpoint for one (tenant, user) at session completion: the final
 // cumulative window total is written to Postgres as the authoritative
 // value so a subsequent recovery has an accurate baseline. Best-effort —
 // a missing seam or a read/write error returns nil so it never fails the
 // terminal-state transition that triggered it.
 //
-// spec: §11.2 line 44 ("on session completion as final reconciliation";
-// "the final cumulative token usage is always written to Postgres").
+// spec: §11.2.
 func (s *Service) CheckpointSubject(ctx context.Context, tenantID, userID string) error {
 	if s == nil || s.Store == nil || s.Periods == nil || s.Reader == nil {
 		return nil
@@ -205,14 +204,14 @@ func (s *Service) subjectRows(ctx context.Context, subj Subject, now time.Time, 
 	return rows
 }
 
-// Reconcile runs the §11.2 line 48 / §24.6 MAX-rule reconstruction: it
+// Reconcile runs the §11.2 / §24.6 MAX-rule reconstruction: it
 // reads the durable checkpoint for the requested scope and, for each
 // counter whose window is still current, restores the Redis value to
 // MAX(redis_current, postgres_checkpoint). A checkpoint whose window has
 // already rolled over is skipped rather than reviving a stale bucket. The
 // per-tenant scope returns ErrTenantNotFound for an unknown tenant.
 //
-// spec: §11.2 line 48; §24.6 line 99.
+// spec: §11.2; §24.6.
 func (s *Service) Reconcile(ctx context.Context, scope ReconcileScope) (ReconcileResult, error) {
 	if s == nil || s.Store == nil || s.Reader == nil || s.Restorer == nil {
 		return ReconcileResult{}, nil
@@ -276,7 +275,7 @@ func (s *Service) Reconcile(ctx context.Context, scope ReconcileScope) (Reconcil
 		})
 		s.inc(OutcomeRestored)
 	}
-	// §12.4 source (2) / §11.2 line 46 no-checkpoint windows: a window that
+	// §12.4 source (2) / §11.2 no-checkpoint windows: a window that
 	// opened entirely during the outage has no checkpoint row above, so the
 	// row pass never restores it. Restore each such window directly from the
 	// in-memory fail-open accumulator and the pod-reported cumulative total
@@ -303,10 +302,10 @@ type noCheckpointWindow struct {
 // reconcileNoCheckpointWindows restores every still-current window that the
 // checkpoint-row pass did not already handle but for which a fail-open
 // accumulator entry (§12.4 source (2)) or a pod-reported cumulative total
-// (§11.2 line 46 source) exists. The two source snapshots are unioned so a
+// (§11.2 source) exists. The two source snapshots are unioned so a
 // window carried by both is restored once from MAX(fail_open,
 // pod_reported_cumulative); a per-tenant reconcile is scoped to its tenant.
-// spec: §12.4 source (2); §11.2 line 46; §11.2 line 48.
+// spec: §12.4 source (2); §11.2; §11.2.
 func (s *Service) reconcileNoCheckpointWindows(ctx context.Context, scope ReconcileScope, now time.Time, restored, tenants map[string]struct{}, res *ReconcileResult) {
 	if s.Restorer == nil {
 		return
@@ -394,12 +393,12 @@ type restoreValues struct {
 	written  int64
 }
 
-// restoreRow reads the live Redis value (the §11.2 line 48 redis_current
+// restoreRow reads the live Redis value (the §11.2 redis_current
 // input) and applies the MAX rule for one row. The §12.4 source (2)
-// in-memory fail-open accumulator and the §11.2 line 46 source pod-reported
+// in-memory fail-open accumulator and the §11.2 source pod-reported
 // cumulative total are folded into the checkpoint seed so the Restorer
 // writes MAX(redis_current, postgres_checkpoint, in_memory_failopen,
-// pod_reported_cumulative). spec: §11.2 line 46; §12.4 source (2).
+// pod_reported_cumulative). spec: §11.2; §12.4 source (2).
 func (s *Service) restoreRow(ctx context.Context, row Row, period quota.ResetPeriod, now time.Time) (restoreValues, error) {
 	switch row.Scope {
 	case ScopeUser:

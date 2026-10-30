@@ -378,8 +378,7 @@ func TestRunbookIndexFilterContract(t *testing.T) {
 // named capability.
 //
 // spec: 25.7 (runbook index — Path A `q` full-text and `requires`
-// filters). The spec table (spec/25_agent-operability.md lines
-// 3148-3149) defines `?requires=admin-api` matching `requires[]` "filter
+// filters). The spec table (§25.7) defines `?requires=admin-api` matching `requires[]` "filter
 // to runbooks the agent can execute" and `?q=image+pull+failure` as
 // "Full-text search across symptoms[], tags[], and runbook title".
 //

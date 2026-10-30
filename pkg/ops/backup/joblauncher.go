@@ -53,14 +53,14 @@ type JobSpec struct {
 	// pg_dump covers. Empty on the single-region (global) dump path. When
 	// set, the launcher scopes the Job to RegionConfig's MinIO endpoint,
 	// KMS key, bucket, and access-credential Secret so one region's Job
-	// cannot authenticate to another region's MinIO. spec: §12.8 line 934.
+	// cannot authenticate to another region's MinIO. spec: §12.8.
 	Region string
 	// RegionConfig carries the per-region MinIO endpoint, KMS key, bucket,
 	// and access-credential Secret for a per-region Job. Zero on the
-	// single-region path. spec: §12.8 line 934.
+	// single-region path. spec: §12.8.
 	RegionConfig RegionBackupConfig
 	// Shards lists the Postgres shard ids a per-region Job dumps. Empty on
-	// the single-region path. spec: §12.8 line 935.
+	// the single-region path. spec: §12.8.
 	Shards []string
 }
 

@@ -12,7 +12,7 @@ import (
 )
 
 // openSLOAPIVersion is the OpenSLO v1 document apiVersion the export
-// emits. spec: §16.10 line 733 ("OpenSLO v1 YAML documents").
+// emits. spec: §16.10.
 const openSLOAPIVersion = "openslo/v1"
 
 // OpenSLOService is the default OpenSLO service name every exported SLO
@@ -181,7 +181,8 @@ type openSLOBurnRateCond struct {
 // monitoring.openslo.notificationTarget.type; the docs and CLI callers pass
 // the concrete OpenSLODefaultNotificationTarget).
 //
-// spec: §16.10 lines 742-746; §16.5 lines 611-640.
+// spec: §16.10 (OpenSLO export documents and the shared notification
+// target); §16.5 (the SLO catalog the export is a view of).
 func RenderOpenSLO(service, tier, notificationTarget string) ([]byte, error) {
 	if service == "" {
 		return nil, fmt.Errorf("rules: OpenSLO service name is required")
@@ -289,7 +290,7 @@ func RenderOpenSLO(service, tier, notificationTarget string) ([]byte, error) {
 // so the fragment is self-contained.
 //
 // spec: §16.10 (one condition per AlertPolicy, required non-empty
-// notificationTargets), §16.5 line 627 (multi-window burn rate).
+// notificationTargets), §16.5.
 func burnRatePolicyDoc(policyName string, labels map[string]string, condName, condDesc, severity string, multiplier int, window time.Duration) openSLODoc {
 	return openSLODoc{
 		APIVersion: openSLOAPIVersion,

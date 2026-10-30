@@ -16,8 +16,9 @@ import (
 // buildMetrics constructs the §16.1 Prometheus metric vectors. The §16.5
 // TokenServiceUnavailable alert reads lenny_token_service_circuit_state from
 // the gateway-side breaker (set in cmd/lenny-gateway/main.go); the metrics
-// emitted here are the §16.1 request_duration, errors, secret_reloads, and the
-// §13.3 rate-limit counters.
+// emitted here are the §16.1 request_duration, errors, secret_reloads, the
+// §16.1 JWT sign requests and KMS signing errors counters, and the §13.3
+// rate-limit counters.
 //
 // spec: §16.1.
 func (w *tokenServiceWiring) buildMetrics() {
@@ -28,7 +29,7 @@ func (w *tokenServiceWiring) buildMetrics() {
 	w.metricsEmitter = metricsEmitter
 }
 
-// buildStores wires the §13.3 line 589 durable write-before-issue state. With
+// buildStores wires the §13.3 durable write-before-issue state. With
 // Postgres, every minted token is recorded in issued_tokens and every
 // accepted/rejected exchange writes a token.exchanged audit row in the same
 // transaction under the §11.7 advisory lock. With no Postgres, the Token
@@ -37,7 +38,7 @@ func (w *tokenServiceWiring) buildMetrics() {
 // rows (lost on restart). The Postgres pool is recorded on the accumulator so
 // runTokenService can defer its close.
 //
-// spec: §13.3 line 589, §12.3 R-03 / F-12.3.4.
+// spec: §13.3, §12.3 R-03 / F-12.3.4.
 func (w *tokenServiceWiring) buildStores() {
 	if *w.f.postgresDSN == "" {
 		// Dev path: keep an in-memory chain so the rate-limit /

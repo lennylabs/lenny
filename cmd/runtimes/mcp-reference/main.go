@@ -4,7 +4,7 @@
 // Phase 12b). A type: mcp runtime's agent IS an MCP server: Lenny
 // manages the pod lifecycle (isolation, credentials, workspace, pool,
 // egress, audit) and the §4.7 adapter drives the agent over MCP rather
-// than the §15.4.1 JSONL stdin/stdout protocol used for a type: agent
+// than the §28.5.3 JSONL stdin/stdout protocol used for a type: agent
 // runtime (spec §5.1, §9.1).
 //
 // mcp-reference is the MCP analogue of cmd/runtimes/echo: a minimal,
@@ -12,7 +12,7 @@
 // is a plain MCP server with no Lenny-specific code — a type: mcp
 // runtime is "oblivious to Lenny" (spec §5.1), so this binary speaks
 // only standard MCP and never reads an adapter manifest, presents a
-// nonce, or opens a lifecycle channel.
+// nonce, or opens a CH-RUNTIMEOPS.
 //
 // Transport: MCP over stdio. The server reads newline-delimited
 // JSON-RPC 2.0 from stdin and writes newline-delimited JSON-RPC to
@@ -211,7 +211,7 @@ func newWriter(w io.Writer) *writer {
 }
 
 // write encodes v as one newline-delimited JSON object and flushes.
-// Flushing after every message is required (spec §15.4.1 stdout
+// Flushing after every message is required (spec §28.5.3 stdout
 // flushing requirement): without it the adapter never reads the
 // response and the call hangs.
 func (w *writer) write(v any) error {

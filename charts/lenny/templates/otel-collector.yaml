@@ -1,7 +1,7 @@
 {{- /*
 The §16.3 OpenTelemetry Collector. The platform emits 100% of traces
 (head sampling) to this collector, which applies tail-based sampling and
-exports to the deployer's backend (§16.3 line 359). Tail sampling buffers
+exports to the deployer's backend (§16.3). Tail sampling buffers
 every span of a trace until the decision window elapses, then keeps or
 drops the whole trace at once — so the spec's "all spans in a delegation
 tree are sampled if the root is sampled" completeness rule holds by
@@ -40,7 +40,7 @@ data:
           http:
             endpoint: 0.0.0.0:4318
     processors:
-      # spec: §16.3 line 359 — tail-based sampling. The probabilistic
+      # spec: §16.3 — tail-based sampling. The probabilistic
       # default is global.traceSamplingRate; errors and slow session
       # creation are always kept.
       tail_sampling:

@@ -16,8 +16,7 @@ Rendering is gated by monitoring.bundleRules and monitoring.format:
     vanilla Prometheus that mount rule_files.
   - monitoring.format: both            — render both.
 
-monitoring.alertOverrides applies per-rule replacements (§25.13 line
-4776): each entry merges over the bundled rule by §16.5 alert name; an
+monitoring.alertOverrides applies per-rule replacements (§25.13): each entry merges over the bundled rule by §16.5 alert name; an
 override carrying `enabled: false` prunes the bundled rule from the
 rendered manifest. The override map is applied to both the
 PrometheusRule and the ConfigMap output so a deployer running both
@@ -50,7 +49,7 @@ formats sees the same customised rule set. F-25.13.1.
       {{- $name := .alert }}
       {{- $override := index $overrides $name }}
       {{- if $override }}
-        {{- /* §25.13 line 4827 — `enabled: false` prunes the rule from
+        {{- /* §25.13 — `enabled: false` prunes the rule from
                the bundled manifest. Any other override field replaces
                the corresponding bundled field via mergeOverwrite so
                operators tweak one field without re-stating the whole
@@ -100,7 +99,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .Values.monitoring.configMap.name }}
-  {{- /* spec: §25.13 line 4712 — configMap.namespace defaults to lenny-system, not the release namespace */}}
+  {{- /* spec: §25.13 — configMap.namespace defaults to lenny-system, not the release namespace */}}
   namespace: {{ .Values.monitoring.configMap.namespace | default "lenny-system" }}
   labels:
     {{- include "lenny.labels" . | nindent 4 }}

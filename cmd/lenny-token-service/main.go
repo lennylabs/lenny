@@ -5,18 +5,19 @@
 //
 //   - HTTP `POST /v1/oauth/token` (RFC 8693 token exchange) for the
 //     external dialect-issuing path. The gateway reverse-proxies
-//     `/v1/oauth/*` here so the Token Service is the actual minter
-//     for every Lenny bearer token.
-//   - gRPC `lenny.tokenservice.v1.TokenService` for the §4.3 / §12.2.4
+//     `/v1/oauth/*` here, so the Token Service mints every token that
+//     §4.3 item 3 assigns to it.
+//   - gRPC `lenny.tokenservice.v1.TokenService` for the §4.3
 //     credential-assignment trust boundary the gateway calls over mTLS
 //     to materialize, rotate, and revoke credential leases.
 //
-// Both surfaces sign with the §4 KMS-envelope-backed signer: the HMAC-
-// SHA256 signing key is sealed under a KMS key-encryption-key rather
-// than being a plaintext per-process secret. The KMS provider is
-// pluggable: --kms-provider selects local | aws | gcp | azure; local
-// is the no-cloud development KEK and is rejected when
-// --environment=prod.
+// The HTTP surface signs through the §10.2 shared remote ES256 signer
+// over the KMS key named by the platform:jwt-signing alias, the same key
+// the gateway signs with, and verifies through the key set loaded once
+// at startup. No private signing key exists in the process on a cloud
+// provider. The KMS provider is pluggable: --kms-provider selects
+// local | aws | gcp | azure; local derives the key from the mounted
+// master key and is rejected when --environment=prod.
 package main
 
 import (
@@ -27,6 +28,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"google.golang.org/grpc"
@@ -46,17 +48,20 @@ import (
 // flags to runTokenService, which constructs and starts every subsystem in
 // dependency order and serves until shutdown (proposal 0020 §4 Part A R11).
 //
-// spec: §16.4 lines 370-372 — structured JSON logs (component=token-service),
+// spec: §16.4 — structured JSON logs (component=token-service),
 // F-16.4.1; §4.1 — the composition root parses its inputs once and threads
 // them to each subsystem builder.
 func main() {
-	// spec: §16.4 lines 370-372 — structured JSON logs from the token
+	// spec: §16.4 — structured JSON logs from the token
 	// service; routes the stdlib log package through the §16.4 handler
 	// (component=token-service). F-16.4.1.
 	logging.Setup(os.Stderr, "token-service")
 
 	f := parseFlags()
 	if err := f.kmsFinalize(); err != nil {
+		log.Fatalf("lenny-token-service: %v", err)
+	}
+	if err := validateCapabilityTokenTTLFlag(*f.capabilityTokenTTL); err != nil {
 		log.Fatalf("lenny-token-service: %v", err)
 	}
 	runTokenService(f)
@@ -98,6 +103,16 @@ func envInt(name string, def int) int {
 	return out
 }
 
+// envBool resolves a bool from the named env var, falling back to def
+// when unset or unparseable.
+func envBool(name string, def bool) bool {
+	v, err := strconv.ParseBool(os.Getenv(name))
+	if err != nil {
+		return def
+	}
+	return v
+}
+
 // envDuration resolves a time.Duration from the named env var,
 // falling back to def when unset or unparseable.
 func envDuration(name string, def time.Duration) time.Duration {
@@ -121,7 +136,7 @@ func envDuration(name string, def time.Duration) time.Duration {
 // by gateway.spiffe.enabled), the URI lands in the log line and
 // future audit emits can read it from the context.
 //
-// spec: §4.3 line 205 — "Each gateway replica has a distinct mTLS
+// spec: §4.3 — "Each gateway replica has a distinct mTLS
 // identity so compromise of one is attributable and revocable
 // independently."
 func spiffeAuditInterceptor() grpc.UnaryServerInterceptor {
@@ -157,14 +172,14 @@ type spiffeIDCtxKey struct{}
 // WithSPIFFEID returns a copy of ctx carrying id. Exposed so future
 // in-handler audit emits can record the caller's SPIFFE identity
 // without re-parsing the certificate.
-// spec: §4.3 line 205.
+// spec: §4.3.
 func WithSPIFFEID(ctx context.Context, id spiffeid.ID) context.Context {
 	return context.WithValue(ctx, spiffeIDCtxKey{}, id)
 }
 
 // SPIFFEIDFromContext returns the SPIFFE ID the interceptor attached
 // to ctx, or the zero value and false when none is set.
-// spec: §4.3 line 205.
+// spec: §4.3.
 func SPIFFEIDFromContext(ctx context.Context) (spiffeid.ID, bool) {
 	id, ok := ctx.Value(spiffeIDCtxKey{}).(spiffeid.ID)
 	return id, ok
@@ -174,7 +189,7 @@ func SPIFFEIDFromContext(ctx context.Context) (spiffeid.ID, bool) {
 // All three of certPath, keyPath, and caPath empty selects plaintext
 // (dev mode); any one set requires all three and returns mTLS server
 // credentials that require and verify the gateway's client cert.
-// spec: §4.3 line 195 "Gateway replicas call the Token Service over mTLS"
+// spec: §4.3
 func tokenServiceCreds(certPath, keyPath, caPath string) (credentials.TransportCredentials, error) {
 	switch {
 	case certPath == "" && keyPath == "" && caPath == "":

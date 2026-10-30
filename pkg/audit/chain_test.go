@@ -103,8 +103,7 @@ func TestHashChainPerTenantIsolation(t *testing.T) {
 // rewrites a row in place; the verifier reports the lawful redacted_gdpr
 // state rather than ChainBroken when a valid receipt is attached.
 //
-// spec: §25.9 line 3678 (redacted_gdpr, accompanied by a signed
-// RedactionReceipt, is an authorized discontinuity distinct from broken).
+// spec: §25.9.
 func TestHashChainRedactionIsLawfulNotBroken(t *testing.T) {
 	t.Parallel()
 	c := NewChain("acme")
@@ -155,7 +154,7 @@ func TestRedactOutOfRange(t *testing.T) {
 
 // TestVerifyRowsHealthyChain — every row in a healthy chain is verified.
 //
-// spec: §25.9 lines 3670-3679 (per-row chainIntegrity).
+// spec: §25.9.
 func TestVerifyRowsHealthyChain(t *testing.T) {
 	t.Parallel()
 	c := NewChain("acme")
@@ -171,7 +170,7 @@ func TestVerifyRowsHealthyChain(t *testing.T) {
 // row marks only that row broken; the downstream row whose prev_hash
 // still links to the (unchanged) stored hash stays verified.
 //
-// spec: §25.9 lines 3670-3672.
+// spec: §25.9.
 func TestVerifyRowsMarksTamperedRowBroken(t *testing.T) {
 	t.Parallel()
 	c := NewChain("acme")
@@ -192,7 +191,7 @@ func TestVerifyRowsMarksTamperedRowBroken(t *testing.T) {
 // TestVerifyRowsDetectsSequenceGap — a sequence-number jump marks the
 // row after the gap gap_suspected, the §25.9 temporal-gap signal.
 //
-// spec: §25.9 lines 3676-3679.
+// spec: §25.9.
 func TestVerifyRowsDetectsSequenceGap(t *testing.T) {
 	t.Parallel()
 	r1 := Row{
@@ -320,7 +319,7 @@ func TestVerifyRowsNonLinkingPrevHashIsBroken(t *testing.T) {
 // TestVerifyRowsLawfulRedaction — a redacted row carrying a valid
 // receipt is classified redacted_gdpr, not broken.
 //
-// spec: §25.9 line 3674.
+// spec: §25.9.
 func TestVerifyRowsLawfulRedaction(t *testing.T) {
 	t.Parallel()
 	c := NewChain("acme")
@@ -344,8 +343,7 @@ func TestVerifyRowsLawfulRedaction(t *testing.T) {
 // different operator meanings, so a GDPR redaction must not be collapsed
 // into the post-outage bucket.
 //
-// spec: §25.9 line 3678 (redacted_gdpr is the authorized-discontinuity
-// bucket, accompanied by a signed RedactionReceipt).
+// spec: §25.9.
 func TestVerifyLawfulRedactionReportsRedactedGDPR(t *testing.T) {
 	t.Parallel()
 	c := NewChain("acme")

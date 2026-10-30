@@ -34,7 +34,7 @@ func repoRoot(t *testing.T) string {
 // TestSchemaIsCommitted is the build-time drift guard: the committed
 // charts/lenny/values.schema.json must byte-match the generator output.
 // CI runs `go run ./cmd/lenny-chart-schema-gen -check` for the same
-// invariant. spec: §17.6 line 655.
+// invariant. spec: §17.6.
 func TestSchemaIsCommitted_spec_17_6_655(t *testing.T) {
 	got, err := Generate()
 	if err != nil {
@@ -52,8 +52,7 @@ func TestSchemaIsCommitted_spec_17_6_655(t *testing.T) {
 
 // TestChartValuesYAMLConformsToSchema asserts the chart's own default
 // values.yaml validates against the generated schema. A regression here
-// means Helm would reject `helm install` with stock defaults. spec: §17.6
-// line 653.
+// means Helm would reject `helm install` with stock defaults. spec: §17.6.
 func TestChartValuesYAMLConformsToSchema_spec_17_6_653(t *testing.T) {
 	schema, err := Generate()
 	if err != nil {
@@ -71,7 +70,7 @@ func TestChartValuesYAMLConformsToSchema_spec_17_6_653(t *testing.T) {
 
 // TestPresetsConformToSchema lints every shipped tier preset against the
 // schema. The presets are chart-values fragments layered with `-f`, so
-// they must validate directly. spec: §17.9.2 line 1374.
+// they must validate directly. spec: §17.9.2.
 func TestPresetsConformToSchema_spec_17_9_2_1374(t *testing.T) {
 	schema, err := Generate()
 	if err != nil {
@@ -98,7 +97,7 @@ func TestPresetsConformToSchema_spec_17_9_2_1374(t *testing.T) {
 // present. Answer files are chart-values fragments layered with `-f`, so
 // each must validate directly; a fragment that drifts out of sync with
 // the chart values (a renamed key, a removed top-level section) fails
-// here rather than at `helm install`. spec: §17.9.2 lines 1360-1374.
+// here rather than at `helm install`. spec: §17.9.2.
 // F-17.9.1.
 func TestCatalogAnswerFilesConformToSchema_spec_17_9_2_1374(t *testing.T) {
 	schema, err := Generate()
@@ -123,7 +122,7 @@ func TestCatalogAnswerFilesConformToSchema_spec_17_9_2_1374(t *testing.T) {
 			t.Errorf("catalog answer file %s does not conform: %v", base, err)
 		}
 	}
-	// spec: §17.9.2 lines 1364-1372 — the curated catalog enumerates these
+	// spec: §17.9.2 — the curated catalog enumerates these
 	// nine files. A missing file means the documented composition is not
 	// reachable from the shipped chart.
 	for _, want := range []string{
@@ -154,7 +153,7 @@ func mustSchema(t *testing.T) []byte {
 
 // TestRejectsUnknownTopLevelKey is the operator-typo guard: a values
 // document with a key not in Root is rejected (root
-// additionalProperties:false). spec: §17.6 line 653.
+// additionalProperties:false). spec: §17.6.
 func TestRejectsUnknownTopLevelKey(t *testing.T) {
 	err := ValidateYAML(mustSchema(t), []byte("gatway:\n  replicas: 2\n"))
 	if err == nil {
@@ -162,7 +161,7 @@ func TestRejectsUnknownTopLevelKey(t *testing.T) {
 	}
 }
 
-// TestRejectsDevTenantIDPattern enforces the §17.6 line 373 schema
+// TestRejectsDevTenantIDPattern enforces the §17.6 schema
 // constraint: devTenantId must match the canonical tenant_id regex.
 func TestRejectsDevTenantIDPattern_spec_17_6_373(t *testing.T) {
 	schema := mustSchema(t)
@@ -177,7 +176,7 @@ func TestRejectsDevTenantIDPattern_spec_17_6_373(t *testing.T) {
 	}
 }
 
-// TestRejectsNoEnvironmentPolicyEnum enforces the §17.6 line 365
+// TestRejectsNoEnvironmentPolicyEnum enforces the §17.6
 // security-affecting enum.
 func TestRejectsNoEnvironmentPolicyEnum_spec_17_6_365(t *testing.T) {
 	schema := mustSchema(t)
@@ -191,31 +190,82 @@ func TestRejectsNoEnvironmentPolicyEnum_spec_17_6_365(t *testing.T) {
 	}
 }
 
-// TestRejectsBearerTTLOutOfRange enforces the §27.3 60..3600 bound the
-// gateway also clamps.
-func TestRejectsBearerTTLOutOfRange(t *testing.T) {
+// TestRejectsCapabilityTokenTTLOutOfRange_spec_10_2 enforces the §10.2
+// 120..3600 bound on auth.capabilityTokenTtlSeconds, which the gateway and
+// the Token Service also refuse at startup, and pins the removal of the
+// retired playground.bearerTtlSeconds key (no alias is kept).
+//
+// spec: 10.2 (Authentication), 27 (Web Playground)
+func TestRejectsCapabilityTokenTTLOutOfRange_spec_10_2(t *testing.T) {
 	schema := mustSchema(t)
-	if err := ValidateYAML(schema, []byte("playground:\n  bearerTtlSeconds: 5\n")); err == nil {
-		t.Error("expected bearerTtlSeconds below 60 to be rejected")
+	cases := []struct {
+		name  string
+		yaml  string
+		valid bool
+	}{
+		{"below floor", "auth:\n  capabilityTokenTtlSeconds: 119\n", false},
+		{"at floor", "auth:\n  capabilityTokenTtlSeconds: 120\n", true},
+		{"default", "auth:\n  capabilityTokenTtlSeconds: 900\n", true},
+		{"at ceiling", "auth:\n  capabilityTokenTtlSeconds: 3600\n", true},
+		{"above ceiling", "auth:\n  capabilityTokenTtlSeconds: 3601\n", false},
+		{"siblings stay open", "auth:\n  multiTenant: true\n  capabilityTokenTtlSeconds: 900\n", true},
+		{"retired playground key", "playground:\n  bearerTtlSeconds: 900\n", false},
 	}
-	if err := ValidateYAML(schema, []byte("playground:\n  bearerTtlSeconds: 99999\n")); err == nil {
-		t.Error("expected bearerTtlSeconds above 3600 to be rejected")
-	}
-	if err := ValidateYAML(schema, []byte("playground:\n  bearerTtlSeconds: 900\n")); err != nil {
-		t.Errorf("expected an in-range bearerTtlSeconds to pass: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateYAML(schema, []byte(tc.yaml))
+			if tc.valid && err != nil {
+				t.Errorf("expected %q to pass: %v", tc.yaml, err)
+			}
+			if !tc.valid && err == nil {
+				t.Errorf("expected %q to be rejected", tc.yaml)
+			}
+		})
 	}
 }
 
-// TestAcceptsEmptyDeploymentTier guards the deliberate choice to leave
-// deploymentTier a free string: the chart sets it to "" to omit the
-// deployment_tier metric relabel, and the schema must not reject that.
-func TestAcceptsEmptyDeploymentTier(t *testing.T) {
-	if err := ValidateYAML(mustSchema(t), []byte("global:\n  deploymentTier: \"\"\n")); err != nil {
-		t.Errorf("expected an empty deploymentTier to pass: %v", err)
+// TestKMSSignQuotaPerSecondMinimum_spec_17_8_2 enforces the §17.8.2
+// minimum of 1 on kms.signQuotaPerSecond while leaving the other kms
+// sub-keys free-form. The required-on-cloud rule is a render guard in the
+// chart (charts/lenny/tests/kms-guard_test.yaml).
+//
+// spec: 17.8.2 (Capacity Tier Reference), 10.2 (Authentication)
+func TestKMSSignQuotaPerSecondMinimum_spec_17_8_2(t *testing.T) {
+	schema := mustSchema(t)
+	if err := ValidateYAML(schema, []byte("kms:\n  signQuotaPerSecond: 0\n")); err == nil {
+		t.Error("expected signQuotaPerSecond 0 to be rejected")
+	}
+	if err := ValidateYAML(schema, []byte("kms:\n  provider: aws\n  aliases: \"\"\n  signQuotaPerSecond: 1\n")); err != nil {
+		t.Errorf("expected signQuotaPerSecond 1 with sibling keys to pass: %v", err)
 	}
 }
 
-// TestRejectsWrongType enforces the "wrong types" half of §17.6 line 653:
+// TestDeploymentTierClosedSet_spec_16_1_1 pins global.deploymentTier to the
+// §16.1.1 closed set: tier1, tier2, and tier3 pass, and every other value,
+// including the empty string, a case variant, and a typo, is refused. An
+// omitted key passes and keeps the values.yaml default tier1. The value
+// also renders the lenny-ops --platform-tier flag, where an off-set value
+// would drop the §25.4 Tier 2/3 required Idempotency-Key. F-25.4.38.
+//
+// spec: 16.1.1 (Attribute Naming) deployment_tier, 25.4 (The lenny-ops Service) Idempotency-Key, 17.6 (Packaging and Installation)
+func TestDeploymentTierClosedSet_spec_16_1_1(t *testing.T) {
+	schema := mustSchema(t)
+	for _, tier := range []string{"tier1", "tier2", "tier3"} {
+		if err := ValidateYAML(schema, []byte("global:\n  deploymentTier: "+tier+"\n")); err != nil {
+			t.Errorf("expected deploymentTier %q to pass: %v", tier, err)
+		}
+	}
+	for _, tier := range []string{`""`, "TIER2", "Tier3", "tier4", "tier0", "teir2", "2", `" tier2"`} {
+		if err := ValidateYAML(schema, []byte("global:\n  deploymentTier: "+tier+"\n")); err == nil {
+			t.Errorf("expected deploymentTier %s to be rejected", tier)
+		}
+	}
+	if err := ValidateYAML(schema, []byte("global:\n  devMode: false\n")); err != nil {
+		t.Errorf("expected an omitted deploymentTier to pass: %v", err)
+	}
+}
+
+// TestRejectsWrongType enforces the "wrong types" half of §17.6:
 // a scalar where the schema expects an object is rejected.
 func TestRejectsWrongType_spec_17_6_653(t *testing.T) {
 	if err := ValidateYAML(mustSchema(t), []byte("global: not-an-object\n")); err == nil {

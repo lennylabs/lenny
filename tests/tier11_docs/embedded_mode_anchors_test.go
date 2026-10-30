@@ -8,13 +8,13 @@
 package tier11_docs_test
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 // specCrossRef names one intra-spec link added by proposal 0013: the
@@ -78,13 +78,13 @@ func TestEmbeddedModeCrossRefsResolveToLiveHeadings(t *testing.T) {
 // Standard/Full surface may assert a host-side Linux-only requirement.
 //
 // spec: §15.4.3 (transport platform note), §17.4 (macOS/Windows note).
-// Proposal 0013 §3.5, §3.6, §3.9.
+// spec: §15.4.5 (Standard-level surface requirement).
 func TestAbstractSocketRestrictionScopedToHostSideModes(t *testing.T) {
 	root := repoRoot(t)
 
 	cases := []struct {
 		file        string
-		mustContain []string // reconciliation text proposal §3.5/§3.6 added
+		mustContain []string // reconciliation text spec §15.4.3/§17.4 added
 	}{
 		{
 			file: filepath.Join(root, "spec", "15_external-api-surface.md"),
@@ -111,14 +111,14 @@ func TestAbstractSocketRestrictionScopedToHostSideModes(t *testing.T) {
 		content := string(b)
 		for _, want := range c.mustContain {
 			if !strings.Contains(content, want) {
-				t.Errorf("%s missing abstract-socket reconciliation text %q (proposal §3.5/§3.6 regression)",
+				t.Errorf("%s missing abstract-socket reconciliation text %q (spec §15.4.3/§17.4 regression)",
 					filepath.Base(c.file), want)
 			}
 		}
 	}
 }
 
-// diagnosis: the §17.4 local-fidelity disclosure from proposal §3.10
+// diagnosis: the §17.4 local-fidelity disclosure
 // regressed. The disclosure must name gVisor and Kata degradation with
 // their distinct per-mechanism causes (a missing RuntimeClass/runsc shim
 // for gVisor, missing nested hardware virtualization for Kata) and the
@@ -126,7 +126,7 @@ func TestAbstractSocketRestrictionScopedToHostSideModes(t *testing.T) {
 // under one "nested virtualization" cause is itself a spec defect.
 //
 // spec: §17.4 (local isolation fidelity), §5.3 (isolation profiles),
-// §13.2 (network isolation). Proposal 0013 §3.10.
+// §13.2 (network isolation).
 func TestLocalFidelityDisclosurePresentWithDistinctCauses(t *testing.T) {
 	root := repoRoot(t)
 	b, err := os.ReadFile(filepath.Join(root, "spec", "17_deployment-topology.md"))
@@ -144,7 +144,7 @@ func TestLocalFidelityDisclosurePresentWithDistinctCauses(t *testing.T) {
 		"#132-network-isolation",
 	} {
 		if !strings.Contains(content, want) {
-			t.Errorf("§17.4 local-fidelity disclosure missing %q (proposal §3.10 regression)", want)
+			t.Errorf("§17.4 local-fidelity disclosure missing %q (regression)", want)
 		}
 	}
 
@@ -156,10 +156,10 @@ func TestLocalFidelityDisclosurePresentWithDistinctCauses(t *testing.T) {
 		t.Fatal("could not locate the **Local isolation fidelity.** paragraph in §17.4")
 	}
 	if !strings.Contains(fidelity, "gVisor degrades because") {
-		t.Errorf("§17.4 disclosure does not state gVisor's distinct cause; proposal §3.10 keeps gVisor and Kata causes separate")
+		t.Errorf("§17.4 disclosure does not state gVisor's distinct cause; §17.4 keeps gVisor and Kata causes separate")
 	}
 	if !strings.Contains(fidelity, "Kata degrades because") {
-		t.Errorf("§17.4 disclosure does not state Kata's distinct cause; proposal §3.10 keeps gVisor and Kata causes separate")
+		t.Errorf("§17.4 disclosure does not state Kata's distinct cause; §17.4 keeps gVisor and Kata causes separate")
 	}
 }
 
@@ -178,30 +178,28 @@ func localFidelityParagraph(content string) string {
 	return rest
 }
 
-// atxHeading matches an ATX markdown heading line (## … ######) and
-// captures the heading text after the marker and the single space.
-var atxHeading = regexp.MustCompile(`^#{1,6}\s+(.*)$`)
+// atxHeading matches an ATX markdown heading line (# … ######) and
+// captures the marker run and the heading text after the single space.
+var atxHeading = regexp.MustCompile(`^(#{1,6})\s+(.*)$`)
 
-// headingSlugs reads a markdown file and returns the set of GitHub-style
-// anchor slugs for every ATX heading in it. The slug derivation mirrors
-// GitHub's: lowercase, drop characters that are not letters, digits,
-// spaces, or hyphens (so backticks, parentheses, and dots vanish), then
-// replace each run-internal space with a single hyphen.
-func headingSlugs(path string) (map[string]bool, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
-	}
-	defer f.Close()
+// markdownHeading is one ATX heading of a markdown document: its level
+// (the number of leading '#' characters) and its text.
+type markdownHeading struct {
+	level int
+	text  string
+}
 
-	slugs := map[string]bool{}
+// scanMarkdownHeadings returns every ATX heading of doc, in document
+// order. A heading line inside a fenced code block is example content
+// rather than a heading: it produces no anchor, so the scan skips it.
+// This is the single heading scanner the package uses; anchor checks
+// that need one level only filter the result.
+func scanMarkdownHeadings(doc string) []markdownHeading {
+	var headings []markdownHeading
 	inFence := false
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
-	for sc.Scan() {
-		line := sc.Text()
-		// Skip fenced code blocks: a ``` or ~~~ line toggles the fence,
-		// and headings inside a fence are not real headings.
+	for _, line := range strings.Split(doc, "\n") {
+		// A ``` or ~~~ line toggles the fence, and headings inside a
+		// fence are not real headings.
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
 			inFence = !inFence
@@ -214,28 +212,44 @@ func headingSlugs(path string) (map[string]bool, error) {
 		if m == nil {
 			continue
 		}
-		slugs[slugify(m[1])] = true
+		headings = append(headings, markdownHeading{level: len(m[1]), text: strings.TrimSpace(m[2])})
 	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("scan %s: %w", path, err)
+	return headings
+}
+
+// headingSlugs reads a markdown file and returns the set of anchor slugs
+// for every ATX heading in it.
+func headingSlugs(path string) (map[string]bool, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	slugs := map[string]bool{}
+	for _, h := range scanMarkdownHeadings(string(b)) {
+		slugs[slugify(h.text)] = true
 	}
 	return slugs, nil
 }
 
-// slugify converts heading text to a GitHub anchor slug.
+// slugify converts heading text to an anchor slug under the rule the
+// tree's existing anchors follow: lowercase the text, delete every
+// character that is not a letter, a digit, a space, a hyphen, or an
+// underscore (so backticks, parentheses, and dots vanish), and replace
+// each remaining space with one hyphen. Deleting punctuation rather than
+// collapsing a run of it to a single hyphen is what makes
+// "28.1 Naming law" resolve to "281-naming-law".
+//
+// spec: §28
 func slugify(text string) string {
 	var b strings.Builder
-	for _, r := range strings.ToLower(text) {
+	for _, r := range strings.ToLower(strings.TrimSpace(text)) {
 		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case unicode.IsLetter(r), unicode.IsDigit(r):
 			b.WriteRune(r)
 		case r == ' ':
 			b.WriteRune('-')
-		case r == '-':
-			b.WriteRune('-')
-		default:
-			// Drop everything else (backticks, parentheses, dots,
-			// em-dashes): GitHub removes these from the slug.
+		case r == '-', r == '_':
+			b.WriteRune(r)
 		}
 	}
 	return b.String()

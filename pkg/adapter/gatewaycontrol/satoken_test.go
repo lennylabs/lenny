@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-// spec: §10.3 line 334 — the projected SA token is read from disk and
+// spec: §10.3 — the projected SA token is read from disk and
 // attached as the authorization bearer header on each call.
 func TestSATokenCredentialsAttachesBearer_spec_10_3_334(t *testing.T) {
 	dir := t.TempDir()
@@ -33,7 +33,7 @@ func TestSATokenCredentialsAttachesBearer_spec_10_3_334(t *testing.T) {
 }
 
 // A re-read picks up a kubelet token refresh without reconstructing the
-// credential. spec: §10.3 line 334.
+// credential. spec: §10.3.
 func TestSATokenCredentialsRereadsOnRefresh_spec_10_3_334(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "token")

@@ -7,12 +7,12 @@ import (
 	"time"
 )
 
-// DefaultFailOpenMaxConsecutive is the §4.8 line 1030 default ceiling on
+// DefaultFailOpenMaxConsecutive is the §4.8 default ceiling on
 // fail-open interceptor errors within the rolling window before the
 // gateway auto-escalates the interceptor to fail-closed.
 const DefaultFailOpenMaxConsecutive = 10
 
-// DefaultFailOpenWindow is the §4.8 line 1030 rolling window over which
+// DefaultFailOpenWindow is the §4.8 rolling window over which
 // fail-open errors are counted toward the escalation ceiling.
 const DefaultFailOpenWindow = 5 * time.Minute
 
@@ -36,7 +36,7 @@ type FailOpenEvent struct {
 	MaxConsecutive int
 }
 
-// FailOpenObserver receives the §4.8 line 1030 escalation transitions.
+// FailOpenObserver receives the §4.8 escalation transitions.
 // The gateway implements it to write the two audit events to the
 // per-tenant §11.7 chain. A nil observer disables event emission;
 // escalation still takes effect.
@@ -49,7 +49,7 @@ type FailOpenObserver interface {
 	FailOpenRestored(ctx context.Context, ev FailOpenEvent)
 }
 
-// SetFailOpenEscalation configures the §4.8 line 1030 cumulative
+// SetFailOpenEscalation configures the §4.8 cumulative
 // fail-open escalation. maxConsecutive ≤ 0 selects
 // DefaultFailOpenMaxConsecutive; window ≤ 0 selects DefaultFailOpenWindow.
 // observer may be nil. clock overrides time.Now for tests; pass nil in

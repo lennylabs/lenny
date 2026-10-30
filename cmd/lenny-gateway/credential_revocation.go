@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/lennylabs/lenny/pkg/credential"
+	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
@@ -14,9 +15,33 @@ import (
 // credential revoked in the CredentialPoolStore on their own; the
 // adapter here carries the deny-list propagation onto infrastructure the
 // admin layer does not own — the per-replica credential deny list and
-// the credential-lease store. It mirrors the §11.4 full_revoke
-// userLeaseRevoker and is independently optional: a minimal gateway that
-// wires neither still marks the store and emits the §4.9.2 audit event.
+// the credential-lease store. It is independently optional: a minimal
+// gateway that wires neither still marks the store and emits the §4.9.2
+// audit event.
+
+// credentialDenyList is the §4.9 deny list a revoked pool credential is
+// added to. The marker method IsCrossReplicaPropagator is intentional:
+// §4.9 emergency revocation must reach every replica's deny list, and a
+// bare *denylist.DenyList carries a revocation only on the calling replica.
+// Requiring the marker bars an accidental wiring downgrade, because only
+// the credential-lease revocation propagator (which applies locally and
+// publishes on Redis pub/sub) satisfies it. A propagator built with a nil
+// bus still satisfies the marker; that is the explicit local-only
+// single-replica posture.
+//
+// spec: §4.9 (Credential Leasing Service: Emergency Credential Revocation)
+type credentialDenyList interface {
+	Revoke(key credential.CredentialKey)
+	IsCrossReplicaPropagator()
+}
+
+// Compile-time assertion that the §4.9 credential-lease revocation
+// propagator satisfies credentialDenyList. A refactor that drops the
+// `IsCrossReplicaPropagator()` marker on *credrenewalprop.Propagator
+// fails to build, so the emergency-revocation wiring contract is enforced
+// at compile time rather than runtime. spec: §4.9 (Credential Leasing
+// Service: Emergency Credential Revocation).
+var _ credentialDenyList = (*credrenewalprop.Propagator)(nil)
 
 // poolLeaseStore is the slice of the §4.9 credential-lease store the
 // emergency-revocation fan-out needs: enumerate the leases backed by a
@@ -40,7 +65,7 @@ type poolLeaseStore interface {
 // upstream request. The lease is retained rather than removed because under
 // the shared-Postgres lease store a delete would remove the row every
 // replica reads, making the deny-list check unreachable and degrading the
-// rejection to LEASE_TOKEN_INVALID. spec: §4.9 lines 1640-1652, 1671.
+// rejection to LEASE_TOKEN_INVALID. spec: §4.9.
 type poolCredentialRevoker struct {
 	leases   poolLeaseStore
 	denyList credentialDenyList
@@ -73,7 +98,7 @@ func (p *poolCredentialRevoker) RevokePoolCredentials(_ context.Context, poolID 
 var _ admin.PoolCredentialRevoker = (*poolCredentialRevoker)(nil)
 
 // directModeRevocationRotator implements §4.9 emergency revocation step 5
-// (spec/04_system-components.md line 1649): for a revoked pool credential
+// (§4.9): for a revoked pool credential
 // it sends a RotateCredentials RPC to every direct-delivery pod holding a
 // lease against the credential, so the pod is proactively pushed off the
 // materialized key rather than waiting for the lease's natural TTL.
@@ -93,7 +118,7 @@ type directModeRevocationRotator struct {
 	leases poolLeaseStore
 	// markRevoked marks the credential unselectable in the credential-
 	// assignment service so the replacement mint draws a *different*
-	// credential from the pool (§4.9 line 1649: "a different credential in
+	// credential from the pool (§4.9: "a different credential in
 	// the pool"). It runs before the rotate is dispatched.
 	markRevoked func(poolID, credentialID string)
 	// rotate mints a replacement lease from nextPool and pushes it to the
@@ -110,10 +135,10 @@ type directModeRevocationRotator struct {
 // onRevoke rotates every direct-delivery pod on this replica off a
 // revoked pool credential. It first marks the credential unselectable so
 // the replacement mint skips it, then re-mints from the lease's own pool
-// (the §4.9 line 1649 "different credential in the pool" path) under the
-// emergency_revocation trigger and pushes it to the pod. A user-backed
-// revocation (§11.4 full_revoke) carries no pool credential and is
-// ignored. When the pool has no other assignable credential the rotate
+// (the §4.9 path) under the
+// emergency_revocation trigger and pushes it to the pod. A revocation
+// that names no pool credential is ignored; §11.4 full_revoke writes no
+// deny-list entry and never reaches this hook. When the pool has no other assignable credential the rotate
 // mints nothing and the pod retains its now-revoked key until provider-
 // side rotation, the §4.9 direct-mode residual risk the spec documents.
 func (d *directModeRevocationRotator) onRevoke(key credential.CredentialKey) {

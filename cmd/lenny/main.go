@@ -17,7 +17,7 @@
 //
 // The lenny binary is the same executable as lenny-ctl (§24) under a
 // short name. Both names dispatch through pkg/ctlcli and support every
-// subcommand per the §24 preamble (line 17): `lenny bootstrap`,
+// subcommand per the §24 preamble: `lenny bootstrap`,
 // `lenny admin tenants list`, and `lenny drift report` behave identically
 // to their `lenny-ctl` forms. Invoked as lenny, the version banner names
 // the short binary; the Embedded Mode local commands target the local
@@ -34,7 +34,7 @@ import (
 // -ldflags "-X main.version=<tag>"; source builds report "dev". The
 // symbol must exist for the linker override to bind (the release job
 // passes the ldflag to ./cmd/lenny as well as ./cmd/lenny-ctl).
-// spec: §24.0 line 23, §17.6 line 360.
+// spec: §24.0, §17.6.
 var version = "dev"
 
 func main() {

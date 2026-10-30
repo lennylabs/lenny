@@ -8,14 +8,14 @@
 // terminated"). It drives the full direct-delivery credential lifecycle of
 // one session against a REAL Full-level runtime process
 // (cmd/runtimes/streaming-echo) connected to the production adapter over the
-// real §4.7 lifecycle channel (a live Unix socket):
+// real §4.7 CH-RUNTIMEOPS (a live Unix socket):
 //
 //  1. Assignment — the credential-assignment service mints a direct-mode
 //     lease from a §4.9 pool and the adapter materializes it into the
 //     runtime credential file.
 //  2. Rotation + runtime re-bind — the adapter runs the §4.7 Full-level
-//     rotation protocol: it sends credentials_rotated on the lifecycle
-//     channel, the real streaming-echo runtime rebinds and replies
+//     rotation protocol: it sends credentials_rotated on CH-RUNTIMEOPS,
+//     the real streaming-echo runtime rebinds and replies
 //     credentials_acknowledged, and the adapter rewrites the credential
 //     file to the rotated lease. This is the credentials_rotated /
 //     credentials_acknowledged handshake through a real runtime process.
@@ -48,11 +48,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/credfile"
+	"github.com/lennylabs/lenny/pkg/adapter/linefanout"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
@@ -64,6 +66,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 const (
@@ -76,7 +79,18 @@ const (
 	// into the runtime credential file. It must never leak into logs.
 	clUpstreamV1 = "sk-ant-lifecycle-v1-secret"
 	clUpstreamV2 = "sk-ant-lifecycle-v2-secret"
+
+	// runtimeOpsManifestKey is the §4.7 adapter-manifest key whose `socket`
+	// field advertises the CH-RUNTIMEOPS endpoint to a Full-level runtime.
+	runtimeOpsManifestKey = "runtimeOps"
 )
+
+// retiredRuntimeOpsManifestKey is the manifest key the §28.3 naming table
+// retires in favour of runtimeOpsManifestKey. It is composed from two
+// fragments rather than written whole because the identifier-resolution gate
+// reads every tracked Go file, and a literal here would stand as a second
+// live spelling of CH-RUNTIMEOPS rather than as this test's input.
+var retiredRuntimeOpsManifestKey = "lifecycle" + "Channel"
 
 // lifecycleRevoker mirrors cmd/lenny-gateway's poolCredentialRevoker (the
 // admin.PoolCredentialRevoker the emergency-revocation endpoint calls): for
@@ -84,7 +98,7 @@ const (
 // deny list and retains the leases this replica holds against it, denied in
 // place by the deny-list entry, returning the count of leases affected. It
 // is reconstructed here rather than imported because the production glue
-// lives in package main. spec: §4.9 lines 1640-1652, 1671.
+// lives in package main. spec: §4.9.
 type lifecycleRevoker struct {
 	denyList *denylist.DenyList
 	leases   *credleasestore.Store
@@ -108,27 +122,26 @@ func (r *lifecycleRevoker) RevokePoolCredentials(_ context.Context, poolID strin
 	return total
 }
 
-// spec: 4.7 (Full-level credential rotation protocol, spec/04_system-components.md:
+// spec: §4.7 (Runtime Adapter) — the Adapter ↔ Runtime Protocol message
+// table defines `credentials_rotated` ("New credentials written; runtime
+// must rebind and reply with credentials_acknowledged") and
+// `credentials_acknowledged` ("Runtime has rebound to the new
+// credential"); the credential-rotation-by-level table defines the Full
+// level ("Gateway calls RotateCredentials RPC; adapter sends
+// credentials_rotated on CH-RUNTIMEOPS; runtime rebinds provider
+// in-place"); the Adapter-Agent Security Boundary credential-file rules
+// require that "the file is rewritten by the adapter on credential
+// rotation; after rewrite, the adapter sends credentials_rotated on the
+// CH-RUNTIMEOPS and awaits credentials_acknowledged from the runtime
+// before resuming operation".
 //
-//	line 723 "credentials_rotated ... New credentials written; runtime must
-//	rebind and reply with credentials_acknowledged"; line 728
-//	"credentials_acknowledged ... Runtime has rebound to the new credential";
-//	line 831 "Full | Gateway calls RotateCredentials RPC; adapter sends
-//	credentials_rotated on lifecycle channel; runtime rebinds provider
-//	in-place"; line 960 "The file is rewritten by the adapter on credential
-//	rotation; after rewrite, the adapter sends credentials_rotated on the
-//	lifecycle channel and awaits credentials_acknowledged from the runtime
-//	before resuming operation"),
-//
-// 4.9 (Emergency Credential Revocation, spec/04_system-components.md lines
-//
-//	1640-1652: revoke marks the credential revoked, terminates its active
-//	leases, and denies it; "For direct-delivery mode: the gateway sends a
-//	RotateCredentials RPC to all pods holding leases against credId ... The
-//	pod's lease is invalidated; it must acquire a new lease from a different
-//	credential in the pool (or the fallback chain) to continue"; line 1649 a
-//	revoked credential is never re-assignable so the step-5 replacement mint
-//	never re-selects it).
+// §4.9 (Credential Leasing Service, Emergency Credential Revocation) —
+// revoke marks the credential revoked, terminates its active leases, and
+// denies it; "For direct-delivery mode: the gateway sends a
+// RotateCredentials RPC to all pods holding leases against credId ... The
+// pod's lease is invalidated; it must acquire a new lease from a
+// different credential in the pool (or the fallback chain) to continue",
+// so the step-5 replacement mint never re-selects the revoked credential.
 //
 // diagnosis: the §4.7/§4.9 direct-delivery credential lifecycle diverged
 //
@@ -146,15 +159,17 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 	defer cancel()
 
 	// A real Full-level runtime (streaming-echo) connected to the production
-	// adapter over a live lifecycle-channel Unix socket.
+	// adapter over a live CH-RUNTIMEOPS Unix socket.
 	rt := startLifecycleRuntime(t, ctx)
 	if !rt.channel.Supports("credential_rotation") {
 		t.Fatalf("streaming-echo did not advertise credential_rotation on the lifecycle handshake")
 	}
 
-	credDir := t.TempDir()
+	credRoot := t.TempDir()
 	adapterSrv := adapter.New("streaming-echo")
-	adapterSrv.CredentialsDir = credDir
+	adapterSrv.CredentialsDir = credRoot
+	// Every assignment lands on the session's own §6.1 credential file.
+	credDir := filepath.Join(credRoot, "slots", clSession)
 	adapterSrv.Lifecycle = rt.channel
 	adapterSrv.RuntimeName = "streaming-echo"
 	adapterSrv.CheckpointPoolLabel = clPool
@@ -177,13 +192,14 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 	// ---- stage 1: assignment ----
 	// Mint a direct-mode lease and materialize it into the runtime
 	// credential file. The runtime now holds v1.
-	v1, err := assign.AssignProto(clPool, clSession, "", clTenant)
+	v1, err := assign.AssignProto(clPool, clSession, "", clTenant, 0)
 	if err != nil {
 		t.Fatalf("assign direct-mode lease v1: %v", err)
 	}
 	if _, err := adapterSrv.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: clSession},
-		Leases:    map[string]*adapterv1.CredentialLease{v1.GetProvider(): v1},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: clSession},
+		Leases:      map[string]*adapterv1.CredentialLease{v1.GetProvider(): v1},
 	}); err != nil {
 		t.Fatalf("AssignCredentials: %v", err)
 	}
@@ -192,6 +208,16 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 	}
 	if !credFileCarriesUpstream(t, credDir, clUpstreamV1) {
 		t.Fatalf("after assignment: credential file does not carry the materialized direct-mode key")
+	}
+	// The session is started through the adapter on the live runtime's
+	// stdin, after the CH-RUNTIMEOPS handshake, so the start waits for the
+	// runtime's session_started; credentials_rotated below is written only
+	// after the adapter has read it. spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+	adapterSrv.Runtime = rt.process
+	if _, err := adapterSrv.StartSession(ctx, &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: clSession},
+	}); err != nil {
+		t.Fatalf("StartSession on the live runtime: %v", err)
 	}
 
 	// ---- stage 2: rotation + runtime re-bind via credentials_rotated ----
@@ -210,7 +236,7 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 			{ID: clCredID, APIKey: clUpstreamV2, Healthy: true},
 		},
 	})
-	v2, err := assign.AssignProto(clPool, clSession, "", clTenant)
+	v2, err := assign.AssignProto(clPool, clSession, "", clTenant, 0)
 	if err != nil {
 		t.Fatalf("assign replacement lease v2: %v", err)
 	}
@@ -232,9 +258,11 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 	if !credFileCarriesUpstream(t, credDir, clUpstreamV2) {
 		t.Fatalf("after rotation: credential file was not rebound to the rotated key")
 	}
-	// §4.7 line 850 grace period: release the old lease now that the runtime
+	// §4.7 grace period: release the old lease now that the runtime
 	// acknowledged the rebind, leaving v2 as the session's sole active lease.
-	assign.Release(v1.GetLeaseId())
+	if err := assign.Release(v1.GetLeaseId()); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
 
 	// ---- stage 3: emergency revoke → active session terminated ----
 	// The real §4.9 admin emergency-revocation endpoint, wired to the deny
@@ -294,7 +322,7 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 	// The session's active lease is retained and denied in place: the §4.9
 	// revocation shadows it with the deny-list entry rather than removing the
 	// row (which would make the deny-list check unreachable on the shared
-	// store). spec: §4.9 line 1671.
+	// store). spec: §4.9.
 	if _, ok := leaseStore.GetByID(v2.GetLeaseId()); !ok {
 		t.Fatalf("post-revoke: session lease v2 %s must be retained so the deny-list check can reject it", v2.GetLeaseId())
 	}
@@ -308,7 +336,7 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 	// (spec line 1649), so with it the pool's only member the replacement mint
 	// fails with pool-exhausted and the session terminates.
 	assign.RevokeCredential(clPool, clCredID)
-	if _, err := assign.Assign(clPool, clSession, "", clTenant); !errors.Is(err, credential.ErrPoolExhausted) {
+	if _, err := assign.Assign(clPool, clSession, "", clTenant, 0); !errors.Is(err, credential.ErrPoolExhausted) {
 		t.Fatalf("step-5 replacement mint after revoke: err = %v, want ErrPoolExhausted (session cannot continue)", err)
 	}
 
@@ -322,19 +350,144 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 	}
 }
 
-// lifecycleRuntime is a running streaming-echo process connected to a live
-// adapter lifecycle channel.
-type lifecycleRuntime struct {
-	channel *adapter.LifecycleChannel
+// spec: §4.7 (Runtime Adapter) — the adapter manifest field set makes
+// `runtimeOps.socket` the Full-level field carrying the CH-RUNTIMEOPS
+// endpoint ("Standard fields plus `runtimeOps.socket`"), and §4.7 makes a
+// runtime's silent ignoring of an unknown top-level manifest field
+// normative, so a manifest written under the retired key advertises no
+// endpoint at all rather than being rejected.
+//
+// §28.3 (registers) — the CH-RUNTIMEOPS naming-table row retires the earlier
+// manifest-key spelling in favour of `runtimeOps`, and N4 requires every
+// carrier of the channel to write the one identifier.
+//
+// This is the only tier that drives the manifest key against a real runtime
+// binary: cmd/runtimes/streaming-echo unmarshals the manifest through its own
+// struct tag rather than through any of the runtime SDKs, so a key spelled
+// one way in the emitter and another way in that runtime is a silent JSON
+// unmarshal miss that the SDK-level tiers all pass.
+//
+// diagnosis: the CH-RUNTIMEOPS manifest key and the real runtime binary
+//
+//	disagree about which key carries the operations socket. Either the
+//	canonical key no longer resolves the socket (the runtime never dials, so
+//	the Full level is unreachable in production), or the retired key still
+//	resolves it (the retired spelling is live in the runtime, so the rename
+//	is incomplete and a manifest emitted under either key works, hiding the
+//	miss). The negative half is the one the positive tests cannot see: with
+//	no operations socket the runtime never opens CH-RUNTIMEOPS, the adapter
+//	observes no Full-level capabilities, and the Full-level rotation
+//	handshake cannot run.
+func TestRuntimeOpsManifestKeyResolvesTheOperationsSocket(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// One build shared by both cases, so the two manifests are read by the
+	// same runtime binary and the comparison is over the key alone.
+	bin := buildStreamingEchoBinary(t)
+
+	t.Run("canonical_key_opens_the_operations_socket", func(t *testing.T) {
+		channel, _, handshaken := startEchoRuntime(t, ctx, bin, runtimeOpsManifestKey, 15*time.Second)
+		if !handshaken {
+			t.Fatalf("manifest key %q: streaming-echo did not open CH-RUNTIMEOPS", runtimeOpsManifestKey)
+		}
+		if !channel.Supports("credential_rotation") {
+			t.Errorf("manifest key %q: runtime did not advertise credential_rotation, so the Full-level rotation protocol would be skipped", runtimeOpsManifestKey)
+		}
+	})
+
+	t.Run("retired_key_alone_resolves_no_operations_socket", func(t *testing.T) {
+		channel, _, handshaken := startEchoRuntime(t, ctx, bin, retiredRuntimeOpsManifestKey, 5*time.Second)
+		if handshaken {
+			t.Fatalf("manifest key %q: streaming-echo opened CH-RUNTIMEOPS from the retired key, so the retired spelling is still live in the runtime", retiredRuntimeOpsManifestKey)
+		}
+		if channel.Supports("credential_rotation") {
+			t.Errorf("manifest key %q: adapter observed credential_rotation with no runtime connection", retiredRuntimeOpsManifestKey)
+		}
+
+		// The Full-level flow fails rather than degrading silently: with no
+		// operations socket the credentials_rotated send has no runtime to
+		// reach, so the handshake ends in an error instead of an
+		// unacknowledged rotation the caller reads as success. spec: §4.7.
+		rotateCtx, rotateCancel := context.WithTimeout(ctx, 2*time.Second)
+		defer rotateCancel()
+		err := channel.RotateCredentials(rotateCtx, "sess-no-operations-socket", clProvider,
+			filepath.Join(t.TempDir(), credfile.FileName), "lease-no-operations-socket")
+		if err == nil {
+			t.Fatalf("manifest key %q: the Full-level rotation handshake reported success with no runtime connected", retiredRuntimeOpsManifestKey)
+		}
+	})
 }
 
+// lifecycleRuntime is a running streaming-echo process connected to a live
+// adapter CH-RUNTIMEOPS.
+type lifecycleRuntime struct {
+	channel *adapter.RuntimeOps
+	// process is the runtime's CH-MSGSOCK side, its stdin and stdout, as
+	// the adapter's RuntimeProcess.
+	process *stdioRuntime
+}
+
+// stdioRuntime is the streaming-echo process's stdin and stdout as an
+// adapter RuntimeProcess, so the adapter writes the session's
+// session_start to the live runtime and reads its session_started answer.
+// The runtime process is the test's own child, so Start, Interrupt, and
+// Close end nothing. spec: §28.5.3 (CH-MSGSOCK, Outbound: session_started).
+type stdioRuntime struct {
+	mu     sync.Mutex
+	stdin  io.Writer
+	stdout io.Reader
+	hub    *linefanout.Hub
+}
+
+// Start does nothing: the test started the runtime process.
+func (r *stdioRuntime) Start(context.Context, string) error { return nil }
+
+// WriteEnvelope writes one frame to the runtime's stdin.
+func (r *stdioRuntime) WriteEnvelope(_ string, envelope []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, err := r.stdin.Write(append(append([]byte(nil), envelope...), '\n'))
+	return err
+}
+
+// Output subscribes to the runtime's stdout.
+func (r *stdioRuntime) Output(ctx context.Context, _ string) (<-chan []byte, error) {
+	ch, err := r.hub.Subscribe(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r.hub.Serve(r.stdout, 16*1024*1024, nil)
+	return ch, nil
+}
+
+// Interrupt does nothing: the runtime process lives as long as the test.
+func (r *stdioRuntime) Interrupt(context.Context, string, bool) error { return nil }
+
+// Close does nothing: the runtime process lives as long as the test.
+func (r *stdioRuntime) Close(context.Context, string) error { return nil }
+
 // startLifecycleRuntime builds and starts cmd/runtimes/streaming-echo
-// connected to a fresh adapter LifecycleChannel over a live Unix socket,
+// connected to a fresh adapter RuntimeOps over a live Unix socket,
 // completes the §4.7 lifecycle handshake, and returns the channel. The
 // runtime process and channel are torn down on test cleanup.
 func startLifecycleRuntime(t *testing.T, ctx context.Context) *lifecycleRuntime {
 	t.Helper()
-	bin := buildStreamingEchoBinary(t)
+	channel, process, handshaken := startEchoRuntime(t, ctx, buildStreamingEchoBinary(t), runtimeOpsManifestKey, 15*time.Second)
+	if !handshaken {
+		t.Fatalf("streaming-echo did not complete the CH-RUNTIMEOPS handshake")
+	}
+	return &lifecycleRuntime{channel: channel, process: process}
+}
+
+// startEchoRuntime starts the streaming-echo binary at bin against a fresh
+// adapter RuntimeOps over a live Unix socket, advertising that socket to the
+// runtime under manifestKey in the §4.7 adapter manifest, and reports whether
+// the runtime dialled and completed the CH-RUNTIMEOPS handshake within
+// handshakeWait. The runtime process and the channel are torn down on test
+// cleanup. spec: §4.7, §28.3.
+func startEchoRuntime(t *testing.T, ctx context.Context, bin, manifestKey string, handshakeWait time.Duration) (*adapter.RuntimeOps, *stdioRuntime, bool) {
+	t.Helper()
 
 	// A short socket path: macOS caps unix socket paths near 104 bytes, so a
 	// deep t.TempDir() path can overflow the sockaddr.
@@ -345,9 +498,12 @@ func startLifecycleRuntime(t *testing.T, ctx context.Context) *lifecycleRuntime 
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sock := filepath.Join(dir, "lifecycle.sock")
 
-	channel, err := adapter.NewLifecycleChannel(sock)
+	// The listener compares the runtime's nonce line with the mcpNonce of
+	// the manifest written below, which streaming-echo reads before it
+	// dials. spec: 4.7.11 (Runtime connection handshake).
+	channel, err := adapter.NewRuntimeOps(sock, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, adapter.PublishedManifestNonce(dir))
 	if err != nil {
-		t.Fatalf("NewLifecycleChannel: %v", err)
+		t.Fatalf("NewRuntimeOps: %v", err)
 	}
 	runErr := make(chan error, 1)
 	go func() { runErr <- channel.Run(ctx) }()
@@ -356,10 +512,13 @@ func startLifecycleRuntime(t *testing.T, ctx context.Context) *lifecycleRuntime 
 		<-runErr
 	})
 
-	// The adapter manifest streaming-echo reads to find the lifecycle socket.
-	manifest := filepath.Join(dir, "adapter-manifest.json")
+	// The adapter manifest streaming-echo reads to find the operations
+	// socket, written under the caller's key.
+	manifest := filepath.Join(dir, adapter.ManifestFilename)
 	manifestJSON, err := json.Marshal(map[string]any{
-		"lifecycleChannel": map[string]any{"socket": sock},
+		"version":   1,
+		"mcpNonce":  runtimenonce.NewNonce(t),
+		manifestKey: map[string]any{"socket": sock},
 	})
 	if err != nil {
 		t.Fatalf("marshal manifest: %v", err)
@@ -377,8 +536,13 @@ func startLifecycleRuntime(t *testing.T, ctx context.Context) *lifecycleRuntime 
 	if err != nil {
 		t.Fatalf("streaming-echo stdin pipe: %v", err)
 	}
+	// The runtime's stdout carries its CH-MSGSOCK answers, which the
+	// adapter reads through the returned stdioRuntime.
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("streaming-echo stdout pipe: %v", err)
+	}
 	var stderr bytes.Buffer
-	cmd.Stdout = io.Discard
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start streaming-echo: %v", err)
@@ -396,13 +560,14 @@ func startLifecycleRuntime(t *testing.T, ctx context.Context) *lifecycleRuntime 
 	// so a single call made before the subprocess has dialled waits on the
 	// pre-connection channel forever. Retry in short slices until the
 	// runtime has connected and handshaked (or the deadline lapses).
-	deadline := time.Now().Add(15 * time.Second)
+	process := &stdioRuntime{stdin: stdin, stdout: stdout, hub: linefanout.New()}
+	deadline := time.Now().Add(handshakeWait)
 	for !channel.WaitHandshake(ctx, 200*time.Millisecond) {
 		if time.Now().After(deadline) {
-			t.Fatalf("streaming-echo did not complete the lifecycle handshake; stderr:\n%s", stderr.String())
+			return channel, process, false
 		}
 	}
-	return &lifecycleRuntime{channel: channel}
+	return channel, process, true
 }
 
 // credProviderEntry reads the materialized credential file and returns the

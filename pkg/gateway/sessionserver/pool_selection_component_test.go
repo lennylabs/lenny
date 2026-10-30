@@ -51,9 +51,10 @@ func poolSelectTenantAccess(t *testing.T, pools ...string) tenantaccessstore.Sto
 // behavior is back: the session scheduled on a different pool (or the
 // disambiguation picked the wrong one) despite the explicit pin.
 func TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = rt
 
 	// Two pools both back echo / sandboxed: without a pin the resolution is
@@ -72,6 +73,7 @@ func TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1(t *testing.T) {
 	registry := podsession.NewRegistry()
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-pin-ok" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -101,7 +103,7 @@ func TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1(t *testing.T) {
 	}
 }
 
-// spec: §7.1 (pool selector, line 18 / line 75), §14.1 (CreateSessionRequest.pool)
+// spec: §7.1, §14.1 (CreateSessionRequest.pool)
 // diagnosis: a pinned pool whose profile differs from the deployment
 // default is rejected when the client omits isolationProfile. A failure
 // here means the gate passed the defaulted profile (the deployment
@@ -112,9 +114,10 @@ func TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1(t *testing.T) {
 // microvm while the default is sandboxed, with isolationProfile omitted, so
 // it must schedule.
 func TestCreateBodyPoolHonorsPinnedProfileWhenIsolationOmitted_spec_7_1(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = rt
 
 	// The pinned pool runs the microvm profile, which differs from the
@@ -131,6 +134,7 @@ func TestCreateBodyPoolHonorsPinnedProfileWhenIsolationOmitted_spec_7_1(t *testi
 	registry := podsession.NewRegistry()
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-pin-defer" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -163,9 +167,10 @@ func TestCreateBodyPoolHonorsPinnedProfileWhenIsolationOmitted_spec_7_1(t *testi
 // wrong status), instead of the deterministic 400 VALIDATION_ERROR F-CS2
 // requires. The cases share one envtest cluster.
 func TestCreateBodyPoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = rt
 
 	cluster := podBindClient(
@@ -182,6 +187,7 @@ func TestCreateBodyPoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
 	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-pin-bad" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -239,9 +245,10 @@ func TestCreateBodyPoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
 // the runtime + isolation), so the rejection is the authorization gate,
 // not the satisfiability gate.
 func TestCreateBodyPoolRejectsUnauthorizedPin_spec_7_1(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = rt
 
 	cluster := podBindClient(
@@ -253,6 +260,7 @@ func TestCreateBodyPoolRejectsUnauthorizedPin_spec_7_1(t *testing.T) {
 	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-pin-403" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,

@@ -14,23 +14,23 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 )
 
-func warmPool(name, templateRef string) *lennyv1.SandboxWarmPool {
+func warmPool(ns, name, templateRef string) *lennyv1.SandboxWarmPool {
 	return &lennyv1.SandboxWarmPool{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: templateRef, MinWarm: 1, MaxWarm: 5},
 	}
 }
 
-func sandboxTemplate(name, runtimeRef, isolation string) *lennyv1.SandboxTemplate {
+func sandboxTemplate(ns, name, runtimeRef, isolation string) *lennyv1.SandboxTemplate {
 	return &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: runtimeRef, IsolationProfile: isolation},
 	}
 }
 
-func spiffeBindingTemplate(name, runtimeRef, isolation, spiffeBinding string) *lennyv1.SandboxTemplate {
+func spiffeBindingTemplate(ns, name, runtimeRef, isolation, spiffeBinding string) *lennyv1.SandboxTemplate {
 	return &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: lennyv1.SandboxTemplateSpec{
 			RuntimeRef:       runtimeRef,
 			IsolationProfile: isolation,
@@ -39,9 +39,9 @@ func spiffeBindingTemplate(name, runtimeRef, isolation, spiffeBinding string) *l
 	}
 }
 
-func serviceTemplate(name, runtimeRef, isolation string, maxConcurrent int32) *lennyv1.SandboxTemplate {
+func serviceTemplate(ns, name, runtimeRef, isolation string, maxConcurrent int32) *lennyv1.SandboxTemplate {
 	return &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: lennyv1.SandboxTemplateSpec{
 			RuntimeRef:       runtimeRef,
 			IsolationProfile: isolation,
@@ -74,8 +74,10 @@ func (f fakePolicyReader) PoolPolicy(_ context.Context, name string) (podsession
 // the poolstore mirror, not the CRD pair, so ResolvePool reads them
 // through the PoolPolicyReader keyed by the resolved pool name.
 func TestResolvePoolFoldsPolicyMirror(t *testing.T) {
-	tmpl := sandboxTemplate("conc-tmpl", "conc-runtime", "microvm")
-	c := k8sClient(t, warmPool("conc-pool", "conc-tmpl"), tmpl)
+	ns := testNamespace(t)
+	tmpl := sandboxTemplate(ns, "conc-tmpl", "conc-runtime", "microvm")
+	c := k8sClient(t, warmPool(ns, "conc-pool", "conc-tmpl"), tmpl)
+	slotRetries := 3
 	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
 		"conc-pool": {
 			MaxConcurrentSessions: 4,
@@ -83,10 +85,11 @@ func TestResolvePoolFoldsPolicyMirror(t *testing.T) {
 			MaxPodUptimeSeconds:   86400,
 			CleanupCommands:       []string{"rm -rf /tmp/work", "reset"},
 			CleanupTimeoutSeconds: 30,
+			SlotRetries:           &slotRetries,
 		},
 	}}
 
-	got, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "conc-runtime", "microvm", "")
+	got, err := podsession.ResolvePool(context.Background(), c, policy, ns, "conc-runtime", "microvm", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -107,20 +110,26 @@ func TestResolvePoolFoldsPolicyMirror(t *testing.T) {
 	if len(got.CleanupCommands) != 2 || got.CleanupCommands[0] != "rm -rf /tmp/work" || got.CleanupCommands[1] != "reset" {
 		t.Errorf("CleanupCommands = %v, want [rm -rf /tmp/work reset] (from the mirror)", got.CleanupCommands)
 	}
+	// spec: §5.2 (Slot retry policy) — the slot retry budget folds in from
+	// the mirror so the concurrent-workspace retry loop reads the pool value.
+	if got.SlotRetries == nil || *got.SlotRetries != 3 {
+		t.Errorf("SlotRetries = %v, want 3 (from the mirror)", got.SlotRetries)
+	}
 }
 
-// spec: §10.1 line 131 / §5.2 — the per-pool checkpointGrantWindow
+// spec: §10.1.7 / §5.2 — the per-pool checkpointGrantWindow
 // override is declared on the SandboxTemplate, so ResolvePool copies it
 // onto the PoolMatch for the checkpoint driver to prefer over the
 // deployment-wide default. A pool that declares no override leaves the
 // field nil so the driver falls back to the deployment-wide default.
 func TestResolvePoolCopiesCheckpointGrantWindowFromTemplate_spec_10_1(t *testing.T) {
-	tmpl := sandboxTemplate("cp-tmpl", "cp-runtime", "microvm")
+	ns := testNamespace(t)
+	tmpl := sandboxTemplate(ns, "cp-tmpl", "cp-runtime", "microvm")
 	window := int32(8)
 	tmpl.Spec.CheckpointGrantWindow = &window
-	c := k8sClient(t, warmPool("cp-pool", "cp-tmpl"), tmpl)
+	c := k8sClient(t, warmPool(ns, "cp-pool", "cp-tmpl"), tmpl)
 
-	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "cp-runtime", "microvm", "")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "cp-runtime", "microvm", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -132,14 +141,15 @@ func TestResolvePoolCopiesCheckpointGrantWindowFromTemplate_spec_10_1(t *testing
 	}
 }
 
-// spec: §10.1 line 131 / §5.2 — a pool that declares no per-pool
+// spec: §10.1.7 / §5.2 — a pool that declares no per-pool
 // checkpointGrantWindow leaves the PoolMatch field nil so the checkpoint
 // driver resolves the deployment-wide default.
 func TestResolvePoolLeavesCheckpointGrantWindowNilWithoutOverride_spec_10_1(t *testing.T) {
-	tmpl := sandboxTemplate("cp-tmpl", "cp-runtime", "microvm")
-	c := k8sClient(t, warmPool("cp-pool", "cp-tmpl"), tmpl)
+	ns := testNamespace(t)
+	tmpl := sandboxTemplate(ns, "cp-tmpl", "cp-runtime", "microvm")
+	c := k8sClient(t, warmPool(ns, "cp-pool", "cp-tmpl"), tmpl)
 
-	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "cp-runtime", "microvm", "")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "cp-runtime", "microvm", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -148,20 +158,21 @@ func TestResolvePoolLeavesCheckpointGrantWindowNilWithoutOverride_spec_10_1(t *t
 	}
 }
 
-// spec: §10.1 line 131 / §5.2 — a poolstore mirror row that carries a
+// spec: §10.1.7 / §5.2 — a poolstore mirror row that carries a
 // checkpointGrantWindow override wins over the template-derived value, so
 // the gateway-enforced pool policy governs the driver's per-pool window.
 func TestResolvePoolMirrorOverridesCheckpointGrantWindow_spec_10_1(t *testing.T) {
-	tmpl := sandboxTemplate("cp-tmpl", "cp-runtime", "microvm")
+	ns := testNamespace(t)
+	tmpl := sandboxTemplate(ns, "cp-tmpl", "cp-runtime", "microvm")
 	tmplWindow := int32(8)
 	tmpl.Spec.CheckpointGrantWindow = &tmplWindow
-	c := k8sClient(t, warmPool("cp-pool", "cp-tmpl"), tmpl)
+	c := k8sClient(t, warmPool(ns, "cp-pool", "cp-tmpl"), tmpl)
 	mirrorWindow := int32(2)
 	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
 		"cp-pool": {CheckpointGrantWindow: &mirrorWindow},
 	}}
 
-	got, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "cp-runtime", "microvm", "")
+	got, err := podsession.ResolvePool(context.Background(), c, policy, ns, "cp-runtime", "microvm", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -183,13 +194,14 @@ func TestResolvePoolMirrorOverridesCheckpointGrantWindow_spec_10_1(t *testing.T)
 // (sessionPolicyToCRD), so a standard-profile pool's recycle.enabled
 // reaches the gateway solely through this mirror fold.
 func TestResolvePoolFoldsRecycleForStandardScrubProfile(t *testing.T) {
-	tmpl := sandboxTemplate("reuse-tmpl", "reuse-runtime", "standard")
-	c := k8sClient(t, warmPool("reuse-pool", "reuse-tmpl"), tmpl)
+	ns := testNamespace(t)
+	tmpl := sandboxTemplate(ns, "reuse-tmpl", "reuse-runtime", "standard")
+	c := k8sClient(t, warmPool(ns, "reuse-pool", "reuse-tmpl"), tmpl)
 	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
 		"reuse-pool": {Recycle: true},
 	}}
 
-	got, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "reuse-runtime", "standard", "")
+	got, err := podsession.ResolvePool(context.Background(), c, policy, ns, "reuse-runtime", "standard", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -198,29 +210,91 @@ func TestResolvePoolFoldsRecycleForStandardScrubProfile(t *testing.T) {
 	}
 }
 
-// spec: §5.2 (Recycle lifecycle, Kata/microvm scrub variant) — the CRD
-// pair sets SessionPolicy.Recycle for a microvm cross-tenant-reuse pool
-// (a non-empty scrubProfile); TestResolvePoolFoldsPolicyMirror's mirror
-// carries no Recycle field (the zero value), so this pins the OR
-// combination: a CRD-derived true must never be downgraded by a mirror
-// row that omits the flag.
-func TestResolvePoolKeepsCRDRecycleWhenMirrorOmitsIt(t *testing.T) {
-	tmpl := serviceTemplate("microvm-reuse-tmpl", "microvm-reuse-runtime", "microvm", 1)
-	tmpl.Spec.ExecutionMode = "session"
-	tmpl.Spec.SessionPolicy = &lennyv1.SessionPolicy{
-		Recycle: &lennyv1.RecyclePolicy{ScrubProfile: "vm-restart"},
+// spec: §5.2 (Recycle lifecycle; Deployer acknowledgment (runtime process
+// kept across sessions)), §7.1 (sessionIsolationLevel) — podReuse is true
+// exactly when the pool's recycle.enabled is true, and the claim made at
+// session creation uses the same resolution as the isolation level. The
+// stored recycle.enabled (the poolstore mirror) therefore decides
+// PoolMatch.Recycle whenever the pool has a mirror row. The CRD's
+// sessionPolicy.recycle block is a proxy rendered for a scrub profile or a
+// runtime-process lifetime, and it lags an admitted pool update until the
+// PoolScalingController's next reconcile; it decides only when no mirror
+// row exists.
+//
+// diagnosis: a failure on a "stale CRD" row means a session created right
+// after an update to recycle.enabled: false reports podReuse: true and
+// recycles its pod at release, because the CRD block from before the update
+// overrode the stored policy (the tier-9
+// TestPoolEditOutsideRuleNeverDispatchesIntoKeptRuntime symptom). A failure
+// on a "no mirror row" row means the Postgres-less posture lost its only
+// recycle signal.
+func TestResolvePoolRecycleFollowsStoredPolicyOverCRDBlock_spec_5_2(t *testing.T) {
+	keep := &lennyv1.SessionPolicy{Recycle: &lennyv1.RecyclePolicy{RuntimeProcess: "keep"}}
+	vmRestart := &lennyv1.SessionPolicy{Recycle: &lennyv1.RecyclePolicy{ScrubProfile: "vm-restart"}}
+	cases := []struct {
+		name      string
+		isolation string
+		crd       *lennyv1.SessionPolicy
+		mirror    *podsession.PoolPolicyMirror // nil: the reader has no row for the pool
+		nilReader bool
+		want      bool
+	}{
+		{
+			name: "stale CRD keep block, stored recycle disabled", isolation: "standard",
+			crd: keep, mirror: &podsession.PoolPolicyMirror{Recycle: false}, want: false,
+		},
+		{
+			name: "stale CRD vm-restart block, stored recycle disabled", isolation: "microvm",
+			crd: vmRestart, mirror: &podsession.PoolPolicyMirror{AllowCrossTenantReuse: true}, want: false,
+		},
+		{
+			name: "CRD vm-restart block, stored recycle enabled", isolation: "microvm",
+			crd: vmRestart, mirror: &podsession.PoolPolicyMirror{Recycle: true, AllowCrossTenantReuse: true}, want: true,
+		},
+		{
+			name: "CRD not yet rendered, stored recycle enabled", isolation: "standard",
+			crd: nil, mirror: &podsession.PoolPolicyMirror{Recycle: true}, want: true,
+		},
+		{
+			name: "no CRD block, stored recycle disabled", isolation: "standard",
+			crd: nil, mirror: &podsession.PoolPolicyMirror{}, want: false,
+		},
+		{
+			name: "no mirror row falls back to the CRD block", isolation: "standard",
+			crd: keep, mirror: nil, want: true,
+		},
+		{
+			name: "no reader falls back to the CRD block", isolation: "microvm",
+			crd: vmRestart, nilReader: true, want: true,
+		},
+		{
+			name: "no reader and no CRD block", isolation: "standard",
+			crd: nil, nilReader: true, want: false,
+		},
 	}
-	c := k8sClient(t, warmPool("microvm-reuse-pool", "microvm-reuse-tmpl"), tmpl)
-	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
-		"microvm-reuse-pool": {AllowCrossTenantReuse: true},
-	}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ns := testNamespace(t)
+			tmpl := sandboxTemplate(ns, "recycle-tmpl", "recycle-runtime", tc.isolation)
+			tmpl.Spec.SessionPolicy = tc.crd
+			c := k8sClient(t, warmPool(ns, "recycle-pool", "recycle-tmpl"), tmpl)
+			var policy podsession.PoolPolicyReader
+			if !tc.nilReader {
+				mirrors := map[string]podsession.PoolPolicyMirror{}
+				if tc.mirror != nil {
+					mirrors["recycle-pool"] = *tc.mirror
+				}
+				policy = fakePolicyReader{mirrors: mirrors}
+			}
 
-	got, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "microvm-reuse-runtime", "microvm", "")
-	if err != nil {
-		t.Fatalf("ResolvePool: %v", err)
-	}
-	if !got.Recycle {
-		t.Error("Recycle = false, want true (the CRD-derived scrubProfile signal must survive the fold)")
+			got, err := podsession.ResolvePool(context.Background(), c, policy, ns, "recycle-runtime", tc.isolation, "")
+			if err != nil {
+				t.Fatalf("ResolvePool: %v", err)
+			}
+			if got.Recycle != tc.want {
+				t.Errorf("Recycle = %v, want %v", got.Recycle, tc.want)
+			}
+		})
 	}
 }
 
@@ -231,14 +305,15 @@ func TestResolvePoolKeepsCRDRecycleWhenMirrorOmitsIt(t *testing.T) {
 // the adapter. A pool with no mirror row leaves both empty rather than
 // erroring, matching how AllowCrossTenantReuse is folded.
 func TestResolvePoolFoldsCleanupCommands(t *testing.T) {
-	tmpl := sandboxTemplate("scrub-tmpl", "scrub-runtime", "microvm")
-	c := k8sClient(t, warmPool("scrub-pool", "scrub-tmpl"), tmpl)
+	ns := testNamespace(t)
+	tmpl := sandboxTemplate(ns, "scrub-tmpl", "scrub-runtime", "microvm")
+	c := k8sClient(t, warmPool(ns, "scrub-pool", "scrub-tmpl"), tmpl)
 
 	// A mirror carrying the two cleanup fields folds them onto PoolMatch.
 	withMirror := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
 		"scrub-pool": {CleanupCommands: []string{"purge"}, CleanupTimeoutSeconds: 12},
 	}}
-	got, err := podsession.ResolvePool(context.Background(), c, withMirror, testNS, "scrub-runtime", "microvm", "")
+	got, err := podsession.ResolvePool(context.Background(), c, withMirror, ns, "scrub-runtime", "microvm", "")
 	if err != nil {
 		t.Fatalf("ResolvePool (mirror): %v", err)
 	}
@@ -248,7 +323,7 @@ func TestResolvePoolFoldsCleanupCommands(t *testing.T) {
 
 	// The no-mirror-row case leaves the cleanup fields empty.
 	noMirror := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{}}
-	got, err = podsession.ResolvePool(context.Background(), c, noMirror, testNS, "scrub-runtime", "microvm", "")
+	got, err = podsession.ResolvePool(context.Background(), c, noMirror, ns, "scrub-runtime", "microvm", "")
 	if err != nil {
 		t.Fatalf("ResolvePool (no mirror): %v", err)
 	}
@@ -264,13 +339,14 @@ func TestResolvePoolFoldsCleanupCommands(t *testing.T) {
 // start path's claim queue reads the gateway-enforced values rather than the
 // always-empty CRD pair.
 func TestResolvePoolFoldsPoolExhaustionDisposition(t *testing.T) {
-	tmpl := sandboxTemplate("queue-tmpl", "queue-runtime", "sandboxed")
-	c := k8sClient(t, warmPool("queue-pool", "queue-tmpl"), tmpl)
+	ns := testNamespace(t)
+	tmpl := sandboxTemplate(ns, "queue-tmpl", "queue-runtime", "sandboxed")
+	c := k8sClient(t, warmPool(ns, "queue-pool", "queue-tmpl"), tmpl)
 	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
 		"queue-pool": {OnPoolExhausted: "queue", MaxQueueWaitSeconds: 45},
 	}}
 
-	got, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "queue-runtime", "sandboxed", "")
+	got, err := podsession.ResolvePool(context.Background(), c, policy, ns, "queue-runtime", "sandboxed", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -287,11 +363,12 @@ func TestResolvePoolFoldsPoolExhaustionDisposition(t *testing.T) {
 // disposition: a pool with no mirror row (or an empty disposition) leaves
 // OnPoolExhausted empty, which the start path treats as reject.
 func TestResolvePoolDefaultsToRejectWithoutMirror(t *testing.T) {
-	tmpl := sandboxTemplate("reject-tmpl", "reject-runtime", "sandboxed")
-	c := k8sClient(t, warmPool("reject-pool", "reject-tmpl"), tmpl)
+	ns := testNamespace(t)
+	tmpl := sandboxTemplate(ns, "reject-tmpl", "reject-runtime", "sandboxed")
+	c := k8sClient(t, warmPool(ns, "reject-pool", "reject-tmpl"), tmpl)
 	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{}}
 
-	got, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "reject-runtime", "sandboxed", "")
+	got, err := podsession.ResolvePool(context.Background(), c, policy, ns, "reject-runtime", "sandboxed", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -309,16 +386,17 @@ func TestResolvePoolDefaultsToRejectWithoutMirror(t *testing.T) {
 // for the per-pod request capacity, so a non-zero mirror value overrides
 // the CRD-derived MaxConcurrent.
 func TestResolvePoolMirrorOverridesServiceMaxConcurrent(t *testing.T) {
+	ns := testNamespace(t)
 	c := k8sClient(
 		t,
-		warmPool("svc-pool", "svc-tmpl"),
-		serviceTemplate("svc-tmpl", "load-svc-runtime", "sandboxed", 8),
+		warmPool(ns, "svc-pool", "svc-tmpl"),
+		serviceTemplate(ns, "svc-tmpl", "load-svc-runtime", "sandboxed", 8),
 	)
 	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
 		"svc-pool": {MaxConcurrent: 16},
 	}}
 
-	got, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "load-svc-runtime", "sandboxed", "")
+	got, err := podsession.ResolvePool(context.Background(), c, policy, ns, "load-svc-runtime", "sandboxed", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -332,11 +410,12 @@ func TestResolvePoolMirrorOverridesServiceMaxConcurrent(t *testing.T) {
 // read failure surfaces as a ResolvePool error rather than silently
 // falling back to always-zero dispatch fields.
 func TestResolvePoolPropagatesPolicyError(t *testing.T) {
-	tmpl := sandboxTemplate("err-tmpl", "err-runtime", "sandboxed")
-	c := k8sClient(t, warmPool("err-pool", "err-tmpl"), tmpl)
+	ns := testNamespace(t)
+	tmpl := sandboxTemplate(ns, "err-tmpl", "err-runtime", "sandboxed")
+	c := k8sClient(t, warmPool(ns, "err-pool", "err-tmpl"), tmpl)
 	policy := fakePolicyReader{err: errors.New("mirror down")}
 
-	_, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "err-runtime", "sandboxed", "")
+	_, err := podsession.ResolvePool(context.Background(), c, policy, ns, "err-runtime", "sandboxed", "")
 	if err == nil {
 		t.Fatal("ResolvePool: want a propagated error when the policy mirror read fails")
 	}
@@ -347,11 +426,12 @@ func TestResolvePoolPropagatesPolicyError(t *testing.T) {
 // Postgres-only / CRD-only posture: a pool with no mirror row leaves the
 // dispatch fields at their CRD-derived defaults instead of erroring.
 func TestResolvePoolKeepsCRDDefaultsWhenMirrorAbsent(t *testing.T) {
-	tmpl := sandboxTemplate("nomirror-tmpl", "nomirror-runtime", "sandboxed")
-	c := k8sClient(t, warmPool("nomirror-pool", "nomirror-tmpl"), tmpl)
+	ns := testNamespace(t)
+	tmpl := sandboxTemplate(ns, "nomirror-tmpl", "nomirror-runtime", "sandboxed")
+	c := k8sClient(t, warmPool(ns, "nomirror-pool", "nomirror-tmpl"), tmpl)
 	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{}}
 
-	got, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "nomirror-runtime", "sandboxed", "")
+	got, err := podsession.ResolvePool(context.Background(), c, policy, ns, "nomirror-runtime", "sandboxed", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -367,12 +447,13 @@ func TestResolvePoolKeepsCRDDefaultsWhenMirrorAbsent(t *testing.T) {
 // fields now reach the gateway through the poolstore sessionPolicy
 // mirror; the CRD carries only the execution mode and per-pod slot bound.
 func TestResolvePoolReturnsServiceDispatchFields(t *testing.T) {
+	ns := testNamespace(t)
 	c := k8sClient(
 		t,
-		warmPool("svc-pool", "svc-tmpl"),
-		serviceTemplate("svc-tmpl", "load-svc-runtime", "sandboxed", 8),
+		warmPool(ns, "svc-pool", "svc-tmpl"),
+		serviceTemplate(ns, "svc-tmpl", "load-svc-runtime", "sandboxed", 8),
 	)
-	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "load-svc-runtime", "sandboxed", "")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "load-svc-runtime", "sandboxed", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -392,12 +473,13 @@ func TestResolvePoolReturnsServiceDispatchFields(t *testing.T) {
 // the dispatch fields empty so the start path takes the session-claim
 // path.
 func TestResolvePoolSessionModeLeavesDispatchFieldsEmpty(t *testing.T) {
+	ns := testNamespace(t)
 	c := k8sClient(
 		t,
-		warmPool("session-pool", "session-tmpl"),
-		sandboxTemplate("session-tmpl", "claude-code", "sandboxed"),
+		warmPool(ns, "session-pool", "session-tmpl"),
+		sandboxTemplate(ns, "session-tmpl", "claude-code", "sandboxed"),
 	)
-	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "sandboxed", "")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "sandboxed", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -420,7 +502,8 @@ func TestResolvePoolSessionModeLeavesDispatchFieldsEmpty(t *testing.T) {
 //
 // spec: §5.2 (Kata/microvm scrub variant).
 func TestResolvePoolSurfacesScrubProfile(t *testing.T) {
-	tmpl := serviceTemplate("recycle-tmpl", "recycle-runtime", "microvm", 1)
+	ns := testNamespace(t)
+	tmpl := serviceTemplate(ns, "recycle-tmpl", "recycle-runtime", "microvm", 1)
 	tmpl.Spec.ExecutionMode = "session"
 	tmpl.Spec.SessionPolicy = &lennyv1.SessionPolicy{
 		Recycle: &lennyv1.RecyclePolicy{
@@ -428,9 +511,9 @@ func TestResolvePoolSurfacesScrubProfile(t *testing.T) {
 			AcknowledgeMicrovmResidualState: true,
 		},
 	}
-	c := k8sClient(t, warmPool("recycle-pool", "recycle-tmpl"), tmpl)
+	c := k8sClient(t, warmPool(ns, "recycle-pool", "recycle-tmpl"), tmpl)
 
-	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "recycle-runtime", "microvm", "")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "recycle-runtime", "microvm", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -443,10 +526,11 @@ func TestResolvePoolSurfacesScrubProfile(t *testing.T) {
 // a pool with no recycle block leaves the scrub-profile dispatch field
 // empty.
 func TestResolvePoolLeavesScrubProfileUnsetWithoutRecycle(t *testing.T) {
-	tmpl := sandboxTemplate("plain-tmpl", "plain-runtime", "sandboxed")
-	c := k8sClient(t, warmPool("plain-pool", "plain-tmpl"), tmpl)
+	ns := testNamespace(t)
+	tmpl := sandboxTemplate(ns, "plain-tmpl", "plain-runtime", "sandboxed")
+	c := k8sClient(t, warmPool(ns, "plain-pool", "plain-tmpl"), tmpl)
 
-	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "plain-runtime", "sandboxed", "")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "plain-runtime", "sandboxed", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -456,12 +540,13 @@ func TestResolvePoolLeavesScrubProfileUnsetWithoutRecycle(t *testing.T) {
 }
 
 func TestResolvePoolMatchesByRuntime(t *testing.T) {
+	ns := testNamespace(t)
 	c := k8sClient(
 		t,
-		warmPool("claude-pool", "claude-tmpl"),
-		sandboxTemplate("claude-tmpl", "claude-code", "sandboxed"),
+		warmPool(ns, "claude-pool", "claude-tmpl"),
+		sandboxTemplate(ns, "claude-tmpl", "claude-code", "sandboxed"),
 	)
-	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "", "")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -475,12 +560,13 @@ func TestResolvePoolMatchesByRuntime(t *testing.T) {
 // the bound pod's binding with each resolved CredentialPool's effective
 // deliveryMode. TestResolvePoolCopiesSpiffeBinding pins the populated case.
 func TestResolvePoolCopiesSpiffeBinding(t *testing.T) {
+	ns := testNamespace(t)
 	c := k8sClient(
 		t,
-		warmPool("claude-pool", "claude-tmpl"),
-		spiffeBindingTemplate("claude-tmpl", "claude-code", "standard", "disabled"),
+		warmPool(ns, "claude-pool", "claude-tmpl"),
+		spiffeBindingTemplate(ns, "claude-tmpl", "claude-code", "standard", "disabled"),
 	)
-	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "", "")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -493,12 +579,13 @@ func TestResolvePoolCopiesSpiffeBinding(t *testing.T) {
 // PoolMatch field at its empty default rather than fabricating a value the
 // credential-delivery gate would misread.
 func TestResolvePoolLeavesSpiffeBindingEmptyByDefault(t *testing.T) {
+	ns := testNamespace(t)
 	c := k8sClient(
 		t,
-		warmPool("claude-pool", "claude-tmpl"),
-		sandboxTemplate("claude-tmpl", "claude-code", "sandboxed"),
+		warmPool(ns, "claude-pool", "claude-tmpl"),
+		sandboxTemplate(ns, "claude-tmpl", "claude-code", "sandboxed"),
 	)
-	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "", "")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -508,26 +595,28 @@ func TestResolvePoolLeavesSpiffeBindingEmptyByDefault(t *testing.T) {
 }
 
 func TestResolvePoolNoMatch(t *testing.T) {
+	ns := testNamespace(t)
 	c := k8sClient(
 		t,
-		warmPool("claude-pool", "claude-tmpl"),
-		sandboxTemplate("claude-tmpl", "claude-code", "sandboxed"),
+		warmPool(ns, "claude-pool", "claude-tmpl"),
+		sandboxTemplate(ns, "claude-tmpl", "claude-code", "sandboxed"),
 	)
-	_, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "other-runtime", "", "")
+	_, err := podsession.ResolvePool(context.Background(), c, nil, ns, "other-runtime", "", "")
 	if !errors.Is(err, podsession.ErrNoMatchingPool) {
 		t.Errorf("error = %v, want ErrNoMatchingPool", err)
 	}
 }
 
 func TestResolvePoolDisambiguatesByIsolation(t *testing.T) {
+	ns := testNamespace(t)
 	c := k8sClient(
 		t,
-		warmPool("claude-gvisor", "tmpl-gvisor"),
-		sandboxTemplate("tmpl-gvisor", "claude-code", "sandboxed"),
-		warmPool("claude-kata", "tmpl-kata"),
-		sandboxTemplate("tmpl-kata", "claude-code", "microvm"),
+		warmPool(ns, "claude-gvisor", "tmpl-gvisor"),
+		sandboxTemplate(ns, "tmpl-gvisor", "claude-code", "sandboxed"),
+		warmPool(ns, "claude-kata", "tmpl-kata"),
+		sandboxTemplate(ns, "tmpl-kata", "claude-code", "microvm"),
 	)
-	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "microvm", "")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "microvm", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -537,31 +626,33 @@ func TestResolvePoolDisambiguatesByIsolation(t *testing.T) {
 }
 
 func TestResolvePoolAmbiguous(t *testing.T) {
+	ns := testNamespace(t)
 	// Two pools with the same runtime and isolation: the gateway cannot
 	// pick one.
 	c := k8sClient(
 		t,
-		warmPool("pool-a", "tmpl-a"),
-		sandboxTemplate("tmpl-a", "claude-code", "sandboxed"),
-		warmPool("pool-b", "tmpl-b"),
-		sandboxTemplate("tmpl-b", "claude-code", "sandboxed"),
+		warmPool(ns, "pool-a", "tmpl-a"),
+		sandboxTemplate(ns, "tmpl-a", "claude-code", "sandboxed"),
+		warmPool(ns, "pool-b", "tmpl-b"),
+		sandboxTemplate(ns, "tmpl-b", "claude-code", "sandboxed"),
 	)
-	_, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "sandboxed", "")
+	_, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "sandboxed", "")
 	if !errors.Is(err, podsession.ErrAmbiguousPool) {
 		t.Errorf("error = %v, want ErrAmbiguousPool", err)
 	}
 }
 
 func TestResolvePoolSkipsDanglingTemplateRef(t *testing.T) {
+	ns := testNamespace(t)
 	// The pool with a dangling template ref is skipped; the valid pool
 	// still resolves.
 	c := k8sClient(
 		t,
-		warmPool("broken-pool", "missing-tmpl"),
-		warmPool("claude-pool", "claude-tmpl"),
-		sandboxTemplate("claude-tmpl", "claude-code", "sandboxed"),
+		warmPool(ns, "broken-pool", "missing-tmpl"),
+		warmPool(ns, "claude-pool", "claude-tmpl"),
+		sandboxTemplate(ns, "claude-tmpl", "claude-code", "sandboxed"),
 	)
-	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "sandboxed", "")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "sandboxed", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -576,10 +667,11 @@ func TestResolvePoolSkipsDanglingTemplateRef(t *testing.T) {
 // exercised against a realistic bootstrap-window status.
 func seedPoolStatus(t *testing.T, c client.Client, templateName, poolName string, warm, ready int32, warming bool) {
 	t.Helper()
+	ns := testNamespace(t)
 	ctx := context.Background()
 
 	var tmpl lennyv1.SandboxTemplate
-	if err := c.Get(ctx, client.ObjectKey{Namespace: testNS, Name: templateName}, &tmpl); err != nil {
+	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: templateName}, &tmpl); err != nil {
 		t.Fatalf("get template %s: %v", templateName, err)
 	}
 	status, reason := metav1.ConditionFalse, "Available"
@@ -598,7 +690,7 @@ func seedPoolStatus(t *testing.T, c client.Client, templateName, poolName string
 	}
 
 	var pool lennyv1.SandboxWarmPool
-	if err := c.Get(ctx, client.ObjectKey{Namespace: testNS, Name: poolName}, &pool); err != nil {
+	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: poolName}, &pool); err != nil {
 		t.Fatalf("get pool %s: %v", poolName, err)
 	}
 	pool.Status.WarmCount, pool.Status.ReadyCount = warm, ready
@@ -607,19 +699,20 @@ func seedPoolStatus(t *testing.T, c client.Client, templateName, poolName string
 	}
 }
 
-// spec: §5.2 lines 594, 602-625 — ResolvePool surfaces the PoolWarmingUp
+// spec: §5.2 — ResolvePool surfaces the PoolWarmingUp
 // condition and the warming-pod count so the start path can answer a
 // session creation against a bootstrapping pool with the 503 Pool Not
 // Ready response instead of burning a claim attempt.
 func TestResolvePoolSurfacesPoolWarmingUp(t *testing.T) {
+	ns := testNamespace(t)
 	c := k8sClient(
 		t,
-		warmPool("warming-pool", "warming-tmpl"),
-		sandboxTemplate("warming-tmpl", "claude-code", "sandboxed"),
+		warmPool(ns, "warming-pool", "warming-tmpl"),
+		sandboxTemplate(ns, "warming-tmpl", "claude-code", "sandboxed"),
 	)
 	seedPoolStatus(t, c, "warming-tmpl", "warming-pool", 2, 0, true)
 
-	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "sandboxed", "")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "sandboxed", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -631,17 +724,18 @@ func TestResolvePoolSurfacesPoolWarmingUp(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 600 — a pool with idle pods is not warming; PodsWarming
+// spec: §5.2 — a pool with idle pods is not warming; PodsWarming
 // clamps at zero.
 func TestResolvePoolNotWarmingWhenReady(t *testing.T) {
+	ns := testNamespace(t)
 	c := k8sClient(
 		t,
-		warmPool("ready-pool", "ready-tmpl"),
-		sandboxTemplate("ready-tmpl", "claude-code", "sandboxed"),
+		warmPool(ns, "ready-pool", "ready-tmpl"),
+		sandboxTemplate(ns, "ready-tmpl", "claude-code", "sandboxed"),
 	)
 	seedPoolStatus(t, c, "ready-tmpl", "ready-pool", 3, 3, false)
 
-	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "sandboxed", "")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "sandboxed", "")
 	if err != nil {
 		t.Fatalf("ResolvePool: %v", err)
 	}
@@ -653,21 +747,22 @@ func TestResolvePoolNotWarmingWhenReady(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 629 — PoolStatusLookup feeds the admin pool GET's
+// spec: §5.2 — PoolStatusLookup feeds the admin pool GET's
 // poolCondition and idlePodCount. One client carries a warming pool, a
 // ready pool, and an absent pool so the three cases share one envtest.
 func TestPoolStatusLookup(t *testing.T) {
+	ns := testNamespace(t)
 	c := k8sClient(
 		t,
-		warmPool("warming-p", "warming-t"),
-		sandboxTemplate("warming-t", "rt-warming", "sandboxed"),
-		warmPool("ready-p", "ready-t"),
-		sandboxTemplate("ready-t", "rt-ready", "sandboxed"),
+		warmPool(ns, "warming-p", "warming-t"),
+		sandboxTemplate(ns, "warming-t", "rt-warming", "sandboxed"),
+		warmPool(ns, "ready-p", "ready-t"),
+		sandboxTemplate(ns, "ready-t", "rt-ready", "sandboxed"),
 	)
 	seedPoolStatus(t, c, "warming-t", "warming-p", 2, 0, true)
 	seedPoolStatus(t, c, "ready-t", "ready-p", 4, 4, false)
 
-	l := podsession.PoolStatusLookup{Reader: c, Namespace: testNS}
+	l := podsession.PoolStatusLookup{Reader: c, Namespace: ns}
 	ctx := context.Background()
 
 	cond, idle, found, err := l.PoolStatus(ctx, "warming-p")
@@ -699,14 +794,15 @@ func TestPoolStatusLookup(t *testing.T) {
 // pools that both back the runtime + profile (ambiguous without a pin),
 // the named pin selects exactly that pool.
 func TestResolvePoolHonorsPinnedPool_spec_7_1(t *testing.T) {
+	ns := testNamespace(t)
 	c := k8sClient(
 		t,
-		warmPool("pool-a", "tmpl-a"),
-		sandboxTemplate("tmpl-a", "claude-code", "sandboxed"),
-		warmPool("pool-b", "tmpl-b"),
-		sandboxTemplate("tmpl-b", "claude-code", "sandboxed"),
+		warmPool(ns, "pool-a", "tmpl-a"),
+		sandboxTemplate(ns, "tmpl-a", "claude-code", "sandboxed"),
+		warmPool(ns, "pool-b", "tmpl-b"),
+		sandboxTemplate(ns, "tmpl-b", "claude-code", "sandboxed"),
 	)
-	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "claude-code", "sandboxed", "pool-b")
+	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "sandboxed", "pool-b")
 	if err != nil {
 		t.Fatalf("ResolvePool with a satisfiable pin: %v", err)
 	}
@@ -722,14 +818,15 @@ func TestResolvePoolHonorsPinnedPool_spec_7_1(t *testing.T) {
 // error class, breaking the F-CS2 fail-closed contract. The cases share
 // one envtest client.
 func TestResolvePoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
+	ns := testNamespace(t)
 	c := k8sClient(
 		t,
 		// A pool backed by claude-code / sandboxed.
-		warmPool("claude-pool", "claude-tmpl"),
-		sandboxTemplate("claude-tmpl", "claude-code", "sandboxed"),
+		warmPool(ns, "claude-pool", "claude-tmpl"),
+		sandboxTemplate(ns, "claude-tmpl", "claude-code", "sandboxed"),
 		// A pool backed by a different runtime, isolation microvm.
-		warmPool("other-pool", "other-tmpl"),
-		sandboxTemplate("other-tmpl", "other-runtime", "microvm"),
+		warmPool(ns, "other-pool", "other-tmpl"),
+		sandboxTemplate(ns, "other-tmpl", "other-runtime", "microvm"),
 	)
 	cases := []struct {
 		name             string
@@ -743,7 +840,7 @@ func TestResolvePoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := podsession.ResolvePool(context.Background(), c, nil, testNS,
+			_, err := podsession.ResolvePool(context.Background(), c, nil, ns,
 				tc.runtimeRef, tc.isolationProfile, tc.pinnedPool)
 			if !errors.Is(err, podsession.ErrPoolNotSatisfiable) {
 				t.Errorf("error = %v, want ErrPoolNotSatisfiable", err)
@@ -755,5 +852,46 @@ func TestResolvePoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
 				t.Errorf("error = %v, must not be ErrNoMatchingPool for a client pin", err)
 			}
 		})
+	}
+}
+
+// spec: 5.2 (Deployer acknowledgment (runtime process kept across sessions))
+// diagnosis: the resolved pool match drops or crosses the predicate pair, so
+// the claim refuses a pod its tenant may reuse, admits a used `keep` pod on a
+// pool that does not require the acknowledgment, or reports a pool with no
+// mirror row or no reader as one that reuses pods.
+func TestResolvePoolCopiesReuseAndAcknowledgmentPredicates_spec_5_2(t *testing.T) {
+	ns := testNamespace(t)
+	tmpl := sandboxTemplate(ns, "keep-tmpl", "keep-runtime", "sandboxed")
+	c := k8sClient(t, warmPool(ns, "keep-pool", "keep-tmpl"), tmpl)
+
+	for _, tc := range []struct{ reuse, ack bool }{{true, true}, {true, false}, {false, false}} {
+		withMirror := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
+			"keep-pool": {ReusesPods: tc.reuse, RequiresProcessAcknowledgment: tc.ack},
+		}}
+		got, err := podsession.ResolvePool(context.Background(), c, withMirror, ns, "keep-runtime", "sandboxed", "")
+		if err != nil {
+			t.Fatalf("ResolvePool (mirror %+v): %v", tc, err)
+		}
+		if got.ReusesPods != tc.reuse || got.RequiresProcessAcknowledgment != tc.ack {
+			t.Errorf("mirror %+v: match = (%v, %v)", tc, got.ReusesPods, got.RequiresProcessAcknowledgment)
+		}
+	}
+
+	noRow := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{}}
+	got, err := podsession.ResolvePool(context.Background(), c, noRow, ns, "keep-runtime", "sandboxed", "")
+	if err != nil {
+		t.Fatalf("ResolvePool (no mirror row): %v", err)
+	}
+	if got.ReusesPods || got.RequiresProcessAcknowledgment {
+		t.Error("a pool with no mirror row reads a predicate true, want both false")
+	}
+
+	got, err = podsession.ResolvePool(context.Background(), c, nil, ns, "keep-runtime", "sandboxed", "")
+	if err != nil {
+		t.Fatalf("ResolvePool (no reader): %v", err)
+	}
+	if got.ReusesPods || got.RequiresProcessAcknowledgment {
+		t.Error("a resolution with no reader reads a predicate true, want both false")
 	}
 }

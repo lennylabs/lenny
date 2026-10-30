@@ -22,7 +22,7 @@ import (
 // patch.
 var claimResource = schema.GroupResource{Group: lennyv1.GroupVersion.Group, Resource: "sandboxclaims"}
 
-// TestClaimRebindFallsThroughWhenHoldExpiresMidRebind covers the §3.2
+// TestClaimRebindFallsThroughWhenHoldExpiresMidRebind covers the
 // rebind-vs-hold-expiry race in the acquisition path: a reserved pod looks
 // eligible for a within-hold rebind, but its hold-expiry DELETE lands between
 // the eligibility read and the rebind status patch, so WriteRebindStatus sees
@@ -38,11 +38,13 @@ var claimResource = schema.GroupResource{Group: lennyv1.GroupVersion.Group, Reso
 // claim error (so a racing client sees a spurious failure) or stalls on the
 // vanished reserved pod instead of acquiring a fresh idle one.
 func TestClaimRebindFallsThroughWhenHoldExpiresMidRebind_spec_3_2(t *testing.T) {
+	ns := testNamespace(t)
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	base := newEnvtestClient(
 		t,
-		reservedSandbox("sbx-held", "acme"),
-		sandboxIn(testPool, "sbx-idle", "idle"),
+		reservedSandbox(ns, "sbx-held", "acme"),
+		lifetimePod(ns, testPool, "sbx-held", "acme", "keep"),
+		sandboxIn(ns, testPool, "sbx-idle", "idle"),
 	)
 	seedReservedClaim(t, base, "sbx-held", "acme", now, 30*time.Second)
 
@@ -61,11 +63,11 @@ func TestClaimRebindFallsThroughWhenHoldExpiresMidRebind_spec_3_2(t *testing.T) 
 	})
 
 	claimer := &podclaim.Claimer{
-		Client: raced, Namespace: testNS,
+		Client: raced, Namespace: ns,
 		Now: func() time.Time { return now.Add(5 * time.Second) }, // within the hold
 	}
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
-		Pool: testPool, SessionID: "sess-race", TenantID: "acme",
+		Pool: testPool, SessionID: "sess-race", TenantID: "acme", ReusesPods: true, RequiresProcessAcknowledgment: true,
 	})
 	if err != nil {
 		t.Fatalf("Claim: the rebind-vs-expiry race must fall through, got %v", err)

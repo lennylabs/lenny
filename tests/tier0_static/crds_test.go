@@ -160,61 +160,35 @@ func findControllerGen() string {
 	return ""
 }
 
-// postProcessLine reports whether a manifest line is one of the two
-// post-generation additions the committed CRDs carry that controller-gen
-// does not emit: the `lenny.dev/schema-version` annotation (and its
-// explanatory comment) and the top-level spec/status
-// `x-kubernetes-preserve-unknown-fields: true` markers. §10 line 437
-// applies the schema-version annotation by hand after generation; the
-// preserve-unknown markers keep a stale CRD from stripping fields a newer
-// controller writes. The drift check normalizes these away so it compares
-// the controller-gen-owned schema rather than the hand-applied wrappers.
-// The nested `workspacePlan` preserve-unknown marker is controller-gen
-// output (the Go field carries +kubebuilder:pruning:PreserveUnknownFields)
-// and is indented deeper than 12 spaces, so it is not stripped here.
-func postProcessLine(line string) bool {
-	trimmed := strings.TrimSpace(line)
-	switch {
-	case strings.HasPrefix(trimmed, "lenny.dev/schema-version:"):
-		return true
-	case strings.HasPrefix(trimmed, "# spec: §10 line 437"),
-		strings.HasPrefix(trimmed, "# read at controller startup"),
-		strings.HasPrefix(trimmed, "# FATAL exit so stale CRDs"),
-		strings.HasPrefix(trimmed, "# F-15.5.12."):
-		return true
-	case line == "            x-kubernetes-preserve-unknown-fields: true":
-		// Exactly the top-level spec/status marker (12-space indent). The
-		// deeper-nested workspacePlan marker has more leading whitespace.
-		return true
-	default:
-		return false
+// findGoimports locates the goimports binary the same way findControllerGen
+// locates controller-gen. Returns "" when the tool is unavailable.
+func findGoimports() string {
+	if p, err := exec.LookPath("goimports"); err == nil {
+		return p
 	}
-}
-
-// stripPostProcessing removes the hand-applied post-generation lines so a
-// committed manifest can be compared against raw controller-gen output.
-func stripPostProcessing(manifest []byte) string {
-	var b strings.Builder
-	for _, line := range strings.Split(string(manifest), "\n") {
-		if postProcessLine(line) {
-			continue
-		}
-		b.WriteString(line)
-		b.WriteByte('\n')
+	out, err := exec.Command("go", "env", "GOPATH").Output()
+	if err != nil {
+		return ""
 	}
-	return b.String()
+	p := filepath.Join(strings.TrimSpace(string(out)), "bin", "goimports")
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	return ""
 }
 
 // spec: 4 (CRD manifests are generated artifacts; they must not drift
 //
-//	from the Go API types)
+//	from the Go API types), 10.5 (Upgrade and Rollback Strategy)
 //
-// diagnosis: A pkg/apis/lenny/v1alpha1 type changed but the committed CRD
+// diagnosis: A pkg/apis/lenny/v1alpha1 type or marker changed but the
 //
-//	manifests were not regenerated. Run `make generate`, re-apply the
-//	lenny.dev/schema-version annotation and the top-level
-//	spec/status x-kubernetes-preserve-unknown-fields markers, and
-//	commit charts/lenny/crds/.
+//	committed CRD manifests were not regenerated, or a committed manifest
+//	carries a hand edit the generator does not reproduce. Run `make
+//	generate` and commit charts/lenny/crds/ and pkg/embedded/crds/. The
+//	lenny.dev/schema-version annotation and the top-level spec/status
+//	x-kubernetes-preserve-unknown-fields markers come from +kubebuilder
+//	markers on the root types; change the marker rather than the YAML.
 func TestCRDManifestsInSyncWithGoTypes(t *testing.T) {
 	cg := findControllerGen()
 	if cg == "" {
@@ -249,11 +223,169 @@ func TestCRDManifestsInSyncWithGoTypes(t *testing.T) {
 			t.Errorf("charts/lenny/crds/%s is missing; run `make generate`", e.Name())
 			continue
 		}
-		// Compare the controller-gen-owned schema, normalizing away the
-		// hand-applied schema-version annotation and the top-level
-		// spec/status preserve-unknown markers the committed manifest adds.
-		if stripPostProcessing(got) != stripPostProcessing(want) {
-			t.Errorf("charts/lenny/crds/%s is stale — its controller-gen schema differs from the Go types; run `make generate` and re-apply the schema-version annotation + spec/status preserve-unknown markers", e.Name())
+		// Byte for byte: `make generate` writes exactly this output, so any
+		// difference is either stale output or a hand edit the next
+		// regeneration would silently drop (F-10.5.16).
+		if string(got) != string(want) {
+			t.Errorf("charts/lenny/crds/%s differs from controller-gen output; run `make generate` (and move any hand edit into a +kubebuilder marker)", e.Name())
 		}
 	}
+	assertCRDManifestsCarryUpgradeMarkers(t, tmp)
+}
+
+// assertCRDManifestsCarryUpgradeMarkers checks that the generator output in
+// dir carries the §10.5 additions the committed manifests used to receive by
+// hand: the lenny.dev/schema-version annotation and the top-level spec and
+// status x-kubernetes-preserve-unknown-fields markers. Without this check, a
+// marker dropped from a root type would regenerate a manifest without them
+// and the byte comparison would accept the loss once the tree is
+// regenerated.
+func assertCRDManifestsCarryUpgradeMarkers(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+	for _, e := range entries {
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		var crd struct {
+			Metadata struct {
+				Annotations map[string]string `yaml:"annotations"`
+			} `yaml:"metadata"`
+			Spec struct {
+				Versions []struct {
+					Name   string `yaml:"name"`
+					Schema struct {
+						OpenAPIV3Schema struct {
+							Properties map[string]struct {
+								PreserveUnknown bool `yaml:"x-kubernetes-preserve-unknown-fields"`
+							} `yaml:"properties"`
+						} `yaml:"openAPIV3Schema"`
+					} `yaml:"schema"`
+				} `yaml:"versions"`
+			} `yaml:"spec"`
+		}
+		if err := yaml.Unmarshal(data, &crd); err != nil {
+			t.Fatalf("%s: not valid YAML: %v", e.Name(), err)
+		}
+		if got := crd.Metadata.Annotations["lenny.dev/schema-version"]; got == "" {
+			t.Errorf("%s: generated manifest has no lenny.dev/schema-version annotation; the root type lost its +kubebuilder:metadata:annotations marker", e.Name())
+		}
+		for _, v := range crd.Spec.Versions {
+			for _, field := range []string{"spec", "status"} {
+				if !v.Schema.OpenAPIV3Schema.Properties[field].PreserveUnknown {
+					t.Errorf("%s %s: top-level %s lacks x-kubernetes-preserve-unknown-fields; the root type's %s field lost its +kubebuilder:pruning:PreserveUnknownFields marker",
+						e.Name(), v.Name, field, field)
+				}
+			}
+		}
+	}
+}
+
+// spec: 4 (the CRD API types' DeepCopy methods are generated artifacts)
+//
+// diagnosis: The committed pkg/apis/lenny/v1alpha1/zz_generated.deepcopy.go
+//
+//	differs from what `make generate` writes (controller-gen object, then
+//	goimports with the repository's local prefix). Either a type changed
+//	without a regeneration, or the file was edited by hand. Run `make
+//	generate` and commit the file.
+func TestDeepCopyInSyncWithGoTypes(t *testing.T) {
+	cg := findControllerGen()
+	if cg == "" {
+		t.Skip("blocked: controller-gen is not installed; run scripts/setup-dev.sh to install it")
+	}
+	gi := findGoimports()
+	if gi == "" {
+		t.Skip("blocked: goimports is not installed; run scripts/setup-dev.sh to install it")
+	}
+	root := schematest.RepoRoot(t)
+	tmp := t.TempDir()
+
+	// The same two steps the Makefile generate target runs, with the output
+	// redirected so the check never writes to the tree.
+	cmd := exec.Command(cg, "object:headerFile=hack/boilerplate.go.txt",
+		"paths=./pkg/apis/lenny/v1alpha1/...",
+		"output:object:dir="+tmp)
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("controller-gen object: %v\n%s", err, out)
+	}
+	regen := filepath.Join(tmp, "zz_generated.deepcopy.go")
+	if out, err := exec.Command(gi, "-w", "-local", "github.com/lennylabs/lenny", regen).CombinedOutput(); err != nil {
+		t.Fatalf("goimports: %v\n%s", err, out)
+	}
+	want, err := os.ReadFile(regen)
+	if err != nil {
+		t.Fatalf("read regenerated DeepCopy: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "pkg", "apis", "lenny", "v1alpha1", "zz_generated.deepcopy.go"))
+	if err != nil {
+		t.Fatalf("read committed DeepCopy: %v", err)
+	}
+	if string(got) != string(want) {
+		t.Error("pkg/apis/lenny/v1alpha1/zz_generated.deepcopy.go differs from `make generate` output; run `make generate` and commit it")
+	}
+}
+
+// spec: 4 (generated artifacts), 17.4 (Embedded Mode CRD install)
+//
+// diagnosis: The Makefile generate target no longer runs one of the steps
+//
+//	that keep a regeneration idempotent: goimports over the DeepCopy file,
+//	or the copy of the chart CRDs into pkg/embedded/crds/. Without them a
+//	clean `make generate` leaves a diff that the tier-0 and embedded-CRD
+//	drift checks then reject. Restore the step in the Makefile.
+func TestMakeGenerateRunsIdempotenceSteps(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(schematest.RepoRoot(t), "Makefile"))
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	recipe := generateRecipe(string(data))
+	if recipe == "" {
+		t.Fatal("Makefile has no generate target")
+	}
+	for _, want := range []string{
+		"goimports -w -local github.com/lennylabs/lenny pkg/apis/lenny/v1alpha1/zz_generated.deepcopy.go",
+		"controller-gen crd paths=./pkg/apis/lenny/v1alpha1/... output:crd:dir=charts/lenny/crds",
+		"cp charts/lenny/crds/*.yaml pkg/embedded/crds/",
+	} {
+		if !strings.Contains(recipe, want) {
+			t.Errorf("Makefile generate recipe does not run %q", want)
+		}
+	}
+	// Order matters: the goimports pass must follow the DeepCopy
+	// generation it formats, and the copy must follow the CRD generation.
+	if strings.Index(recipe, "goimports -w") < strings.Index(recipe, "controller-gen object") {
+		t.Error("Makefile generate recipe runs goimports before controller-gen object")
+	}
+	if strings.Index(recipe, "cp charts/lenny/crds") < strings.Index(recipe, "controller-gen crd") {
+		t.Error("Makefile generate recipe copies the CRDs before controller-gen crd writes them")
+	}
+}
+
+// generateRecipe returns the recipe lines of the Makefile's generate
+// target: the tab-indented lines after `generate:` up to the first line that
+// is not a recipe line.
+func generateRecipe(makefile string) string {
+	var b strings.Builder
+	in := false
+	for _, line := range strings.Split(makefile, "\n") {
+		if strings.HasPrefix(line, "generate:") {
+			in = true
+			continue
+		}
+		if !in {
+			continue
+		}
+		if !strings.HasPrefix(line, "\t") {
+			break
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
 }

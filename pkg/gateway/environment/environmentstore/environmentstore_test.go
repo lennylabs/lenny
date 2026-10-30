@@ -46,7 +46,7 @@ func TestCreateAndGet(t *testing.T) {
 	}
 }
 
-// spec: §10.6 lines 562-565 — description is a human-facing label and
+// spec: §10.6 — description is a human-facing label and
 // must be bounded so a misuse cannot deposit an unbounded blob. The
 // at-the-cap value round-trips; one byte over is rejected. F-10.6.12.
 func TestDescriptionLengthIsCapped_spec_10_6_562(t *testing.T) {
@@ -77,7 +77,7 @@ func TestCreateRejectsInvalidEnvironment(t *testing.T) {
 	}
 }
 
-// spec: §10.6 lines 595-599 — the connectorSelector and the
+// spec: §10.6 — the connectorSelector and the
 // mcpRuntimeFilter capability lists are validated: a name must be
 // non-empty, must not repeat within a list, and must not appear in both
 // the allowed and denied lists. F-10.6.3.
@@ -234,7 +234,7 @@ func TestCloneIsolatesNestedState(t *testing.T) {
 	}
 }
 
-// spec: §10.6 lines 613-625 — the outbound declaration names a
+// spec: §10.6 — the outbound declaration names a
 // literal target environment; "*" is described only for inbound. The
 // admission validator rejects a "*" outbound target so admins reading
 // the inbound wildcard example and generalising to outbound fail
@@ -273,7 +273,7 @@ func TestCreateRejectsOutboundEmptyTargetEnvironment(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 619 — inbound rules accept "*" for any source; an
+// spec: §10.6 — inbound rules accept "*" for any source; an
 // empty sourceEnvironment is a malformed rule. F-10.6.13.
 func TestCreateRejectsInboundEmptySourceEnvironment(t *testing.T) {
 	m := environmentstore.NewMemory()
@@ -291,7 +291,7 @@ func TestCreateRejectsInboundEmptySourceEnvironment(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 619 — inbound "*" wildcard MUST remain admissible.
+// spec: §10.6 — inbound "*" wildcard MUST remain admissible.
 // Asserts the positive case so the F-10.6.13 outbound rejection does
 // not regress the inbound wildcard contract. F-10.6.13.
 func TestCreateAcceptsInboundWildcardSourceEnvironment(t *testing.T) {

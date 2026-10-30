@@ -5,9 +5,9 @@ package adapter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -17,7 +17,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// §4.7 lines 822-824 Full-level rotation protocol constants.
+// §4.7 Full-level rotation protocol constants.
 const (
 	// defaultRotationInflightCeiling caps the in-flight gate wait for any
 	// rotationTrigger other than proactive_renewal (spec line 822).
@@ -38,7 +38,7 @@ const (
 	proactiveRenewalTrigger = "proactive_renewal"
 )
 
-// RotationCeilingHit carries the §4.7 line 822 / §4.9.2
+// RotationCeilingHit carries the §4.7 / §4.9.2
 // credential.rotation_ceiling_hit forensic fields to the audit emitter.
 type RotationCeilingHit struct {
 	SessionID           string
@@ -68,36 +68,19 @@ func (s *Server) AssignCredentials(_ context.Context, req *adapterv1.AssignCrede
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "AssignCredentials requires a session id")
 	}
-	// spec: §6.1 line 28 — a slot-qualified assignment writes the slot's
-	// own /run/lenny/slots/{slotId}/credentials.json so a sibling slot's
-	// credential file is untouched.
-	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
-		return s.assignCredentialsSlot(sessionID, slotID, req.GetLeases())
-	}
-	if s.CredentialsDir == "" {
-		return nil, status.Error(codes.FailedPrecondition,
-			"adapter is not configured with a credentials directory")
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.credSessionID != "" && s.credSessionID != sessionID {
-		return nil, status.Errorf(codes.FailedPrecondition,
-			"credentials are already assigned to session %s", s.credSessionID)
-	}
-
-	leases := make(map[string]*adapterv1.CredentialLease, len(req.GetLeases()))
-	for provider, lease := range req.GetLeases() {
-		leases[provider] = lease
-	}
-	if err := s.writeCredentialFile(leases); err != nil {
+	// spec: §4.7.1 rule 1 — AssignCredentials is never mid-session, so it
+	// carries a bind attempt token.
+	if err := validateBindFields(req.GetBindAttempt(), false); err != nil {
 		return nil, err
 	}
-	s.credSessionID = sessionID
-	s.credLeases = leases
-	// §4.9 line 1149: arm a local expiry timer for each direct-mode lease.
-	s.reconcileExpiryTimers(leases)
-	return &adapterv1.AssignCredentialsResponse{}, nil
+	// spec: §6.1 — the assignment writes the session's own
+	// /run/lenny/slots/{sessionId}/credentials.json, so a co-tenant's
+	// credential file is untouched. Every session is bound to a slot on
+	// every pod, so this is the only assignment path.
+	return s.assignCredentialsSlot(sessionID, sessionID, req.GetLeases(), slotResolve{
+		bindAttempt: req.GetBindAttempt(),
+		allowCreate: true,
+	})
 }
 
 // RotateCredentials replaces the leases for the providers named in the
@@ -110,31 +93,52 @@ func (s *Server) RotateCredentials(ctx context.Context, req *adapterv1.RotateCre
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "RotateCredentials requires a session id")
 	}
-	// spec: §6.1 line 28 — a slot-qualified rotation rewrites only the
-	// slot's own credential file, so sibling slots' in-flight requests are
-	// unaffected.
-	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
-		return s.rotateCredentialsSlot(sessionID, slotID, req.GetLeases())
-	}
-
-	rotated, err := s.applyRotation(sessionID, req.GetLeases())
+	// spec: §6.1 — the rotation rewrites the session's own credential
+	// file, so a co-tenant's in-flight requests are unaffected.
+	resp, err := s.rotateCredentialsSlot(sessionID, sessionID, req.GetLeases())
 	if err != nil {
 		return nil, err
+	}
+	rotated := make([]rotatedLease, 0, len(req.GetLeases()))
+	for provider, lease := range req.GetLeases() {
+		rotated = append(rotated, rotatedLease{provider: provider, leaseID: lease.GetLeaseId()})
 	}
 
 	// §4.7: a Full-level runtime rebinds the rotated credential in place.
 	// The adapter runs the strict in-flight-gate / ceiling / ack-timeout
-	// rotation protocol per provider (spec lines 816-829).
+	// rotation protocol per provider against that session's own file.
+	//
+	// The request resolves the session's entry once, with its credential
+	// path, and every provider's credentials_rotated waits on that entry's
+	// acknowledgement gate. spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
 	if s.Lifecycle != nil && s.Lifecycle.Supports("credential_rotation") {
-		path := filepath.Join(s.CredentialsDir, credfile.FileName)
+		path, st, perr := s.sessionCredentialFile(sessionID)
+		if perr != nil {
+			return nil, perr
+		}
 		trigger := req.GetRotationTrigger()
 		for _, r := range rotated {
-			if err := s.rotateProviderFull(ctx, sessionID, r, path, trigger); err != nil {
+			if err := s.rotateProviderFull(ctx, st, sessionID, r, path, trigger); err != nil {
 				return nil, err
 			}
 		}
 	}
-	return &adapterv1.RotateCredentialsResponse{}, nil
+	return resp, nil
+}
+
+// sessionCredentialFile returns the absolute path of the session's own
+// §6.1 credential file, with the registry entry it resolved. The entry is
+// the one whose acknowledgement gate the rotation's credentials_rotated
+// frames wait on. spec: §6.1; §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (s *Server) sessionCredentialFile(sessionID string) (string, *slotState, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.slotStateLocked(sessionID)
+	if !ok || st.paths.CredentialsDir == "" {
+		return "", nil, status.Errorf(codes.FailedPrecondition,
+			"session %s has no credential directory on this pod", sessionID)
+	}
+	return filepath.Join(st.paths.CredentialsDir, credfile.FileName), st, nil
 }
 
 // ExtendCredentialLease re-arms a still-valid direct-mode credential
@@ -144,38 +148,30 @@ func (s *Server) RotateCredentials(ctx context.Context, req *adapterv1.RotateCre
 // Token Service circuit breaker is open and the lease has not yet expired,
 // the gateway extends the enforced deadline from the lease record it
 // already holds, so no Token Service call is made. It touches neither the
-// credential file nor s.credLeases.
+// session's credential file nor its slot's lease set.
 //
-// spec: §4.9 line 1470.
+// spec: §4.9.
 func (s *Server) ExtendCredentialLease(_ context.Context, req *adapterv1.ExtendCredentialLeaseRequest) (*adapterv1.ExtendCredentialLeaseResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "ExtendCredentialLease requires a session id")
 	}
 	newExpiresAt := time.UnixMilli(req.GetExpiresAtUnixMs())
-	// spec: §6.1 line 28 — a slot-qualified extension re-arms only the
-	// slot's own timer, so sibling slots' deadlines are untouched.
-	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
-		return s.extendCredentialLeaseSlot(slotID, req.GetProvider(), req.GetLeaseId(), newExpiresAt)
-	}
-	s.mu.Lock()
-	s.extendExpiryTimer(req.GetProvider(), req.GetLeaseId(), newExpiresAt)
-	s.mu.Unlock()
-	return &adapterv1.ExtendCredentialLeaseResponse{}, nil
+	// spec: §6.1 — the extension re-arms only this session's own timer,
+	// so a co-tenant's deadline is untouched.
+	return s.extendCredentialLeaseSlot(sessionID, req.GetProvider(), req.GetLeaseId(), newExpiresAt)
 }
 
-// rotateProviderFull runs the §4.7 Full-level rotation protocol for one
-// provider: the in-flight LLM-request completion gate (spec line 820)
+// rotateProviderFull runs the §4.7 Full-level rotation protocol for one provider: the in-flight LLM-request completion gate
 // with the 300s revocation ceiling (line 822), the credentials_rotated
 // send, and the 60s credentials_acknowledged timeout that falls through
-// to the standard rotation path (line 824). It records the four §4.7
-// metrics and the grace-period interval (line 829).
+// to the standard rotation path (line 824). It records the four §4.7 metrics and the grace-period interval.
 //
-// spec: §4.7 lines 816-829
-func (s *Server) rotateProviderFull(ctx context.Context, sessionID string, r rotatedLease, credentialsPath, trigger string) error {
+// spec: §4.7
+func (s *Server) rotateProviderFull(ctx context.Context, st *slotState, sessionID string, r rotatedLease, credentialsPath, trigger string) error {
 	pool := s.CheckpointPoolLabel
 
-	// §4.7 line 820: wait for in-flight LLM requests to drain before
+	// §4.7: wait for in-flight LLM requests to drain before
 	// signalling rotation, so no request reaches the provider with the
 	// old credential after the rotation decision.
 	elapsed, ceilingHit, err := s.awaitInflightGate(ctx, r.provider, trigger)
@@ -188,7 +184,7 @@ func (s *Server) rotateProviderFull(ctx context.Context, sessionID string, r rot
 			sessionID, r.leaseID, r.provider, elapsed)
 	}
 	if ceilingHit {
-		// §4.7 line 822: send credentials_rotated regardless and record the
+		// §4.7: send credentials_rotated regardless and record the
 		// compromise-indicator signals — the counter, alert, and durable
 		// audit event are the forensic record of every ceiling-hit rotation.
 		incRotationCeilingHit(pool, ceilingTriggerLabel(trigger))
@@ -205,7 +201,7 @@ func (s *Server) rotateProviderFull(ctx context.Context, sessionID string, r rot
 		}
 	}
 
-	// §4.7 line 824: bound the credentials_acknowledged wait at 60s. The
+	// §4.7: bound the credentials_acknowledged wait at 60s. The
 	// old credential is released either on ack or on timeout (line 829),
 	// so the grace interval is recorded on both outcomes.
 	ackTimeout := s.CredentialsAckTimeout
@@ -215,13 +211,19 @@ func (s *Server) rotateProviderFull(ctx context.Context, sessionID string, r rot
 	ackCtx, cancel := context.WithTimeout(ctx, ackTimeout)
 	defer cancel()
 	sentAt := time.Now()
-	err = s.Lifecycle.RotateCredentials(ackCtx, r.provider, credentialsPath, r.leaseID)
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages) — the frame names the
+	// session whose credential file was rewritten, and it is written only
+	// after the adapter has read the session's session_started. The wait
+	// shares the acknowledgement bound, and a gate that does not admit the
+	// frame takes the timeout fallback a runtime that never acknowledges
+	// takes.
+	err = s.sendCredentialsRotated(ackCtx, st, sessionID, r, credentialsPath)
 	observeRotationGracePeriod(pool, r.provider, time.Since(sentAt).Seconds())
 	switch {
 	case err == nil:
 		return nil
 	case errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil:
-		// §4.7 line 824-826: the runtime did not acknowledge within 60s.
+		// §4.7: the runtime did not acknowledge within 60s.
 		// Emit the timeout signals and hand back to the gateway so it can
 		// take the Standard-level path (Checkpoint → terminate → replace →
 		// AssignCredentials → Resume).
@@ -231,7 +233,7 @@ func (s *Server) rotateProviderFull(ctx context.Context, sessionID string, r rot
 		return status.Errorf(codes.DeadlineExceeded,
 			"credentials_acknowledged timeout for provider %s; gateway must take the standard rotation path", r.provider)
 	default:
-		// §4.7 lines 652-662: the runtime could not rebind to the rotated
+		// §4.7: the runtime could not rebind to the rotated
 		// credential (or the caller cancelled), so surface LEASE_REJECTED
 		// to the gateway before failing the RPC.
 		s.EmitLeaseRejected(r.provider, r.leaseID, err.Error())
@@ -239,9 +241,22 @@ func (s *Server) rotateProviderFull(ctx context.Context, sessionID string, r rot
 	}
 }
 
+// sendCredentialsRotated writes one provider's credentials_rotated once the
+// entry's acknowledgement gate admits it and waits for the runtime's
+// acknowledgement, all within ackCtx. A gate that does not admit the frame
+// is reported as context.DeadlineExceeded, so rotateProviderFull answers it
+// on the timeout branch, which hands the rotation back to the gateway's
+// standard path. spec: §4.7; §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (s *Server) sendCredentialsRotated(ackCtx context.Context, st *slotState, sessionID string, r rotatedLease, credentialsPath string) error {
+	if err := s.awaitSessionStarted(ackCtx, st); err != nil {
+		return fmt.Errorf("%w: %w", context.DeadlineExceeded, err)
+	}
+	return s.Lifecycle.RotateCredentials(ackCtx, sessionID, r.provider, credentialsPath, r.leaseID)
+}
+
 // awaitInflightGate blocks until the per-provider in-flight LLM-request
 // counter reaches zero (spec line 820). For any trigger other than
-// proactive_renewal the wait is capped at the §4.7 line 822 ceiling; on
+// proactive_renewal the wait is capped at the §4.7 ceiling; on
 // ceiling hit it returns ceilingHit=true so the caller sends
 // credentials_rotated regardless. proactive_renewal waits unbounded
 // (only the caller's context cancels it). It returns the elapsed wait.
@@ -289,36 +304,10 @@ func ceilingTriggerLabel(trigger string) string {
 }
 
 // rotatedLease names one provider's credential lease rotated by a
-// RotateCredentials call, for the lifecycle-channel notification.
+// RotateCredentials call, for the CH-RUNTIMEOPS notification.
 type rotatedLease struct {
 	provider string
 	leaseID  string
-}
-
-// applyRotation merges the new leases into the credential file under
-// s.mu and returns the rotated providers. The lock is released before
-// the caller's lifecycle-channel round-trip so a slow runtime does not
-// block other credential RPCs.
-func (s *Server) applyRotation(sessionID string, newLeases map[string]*adapterv1.CredentialLease) ([]rotatedLease, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.checkCredentialSession(sessionID); err != nil {
-		return nil, err
-	}
-	leases := s.cloneCredentialLeases()
-	rotated := make([]rotatedLease, 0, len(newLeases))
-	for provider, lease := range newLeases {
-		leases[provider] = lease
-		rotated = append(rotated, rotatedLease{provider: provider, leaseID: lease.GetLeaseId()})
-	}
-	if err := s.writeCredentialFile(leases); err != nil {
-		return nil, err
-	}
-	s.credLeases = leases
-	// §4.9 line 1149: a rotated direct-mode lease re-arms its expiry timer
-	// at the new expiresAt; unchanged providers keep their existing timer.
-	s.reconcileExpiryTimers(leases)
-	return rotated, nil
 }
 
 // RevokeCredentials removes the named providers' leases and rewrites
@@ -328,77 +317,7 @@ func (s *Server) RevokeCredentials(_ context.Context, req *adapterv1.RevokeCrede
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "RevokeCredentials requires a session id")
 	}
-	// spec: §6.1 line 28 — a slot-qualified revoke drops providers from
-	// the slot's own credential file only.
-	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
-		return s.revokeCredentialsSlot(sessionID, slotID, req.GetProviders())
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.checkCredentialSession(sessionID); err != nil {
-		return nil, err
-	}
-
-	leases := s.cloneCredentialLeases()
-	for _, provider := range req.GetProviders() {
-		delete(leases, provider)
-	}
-	if err := s.writeCredentialFile(leases); err != nil {
-		return nil, err
-	}
-	s.credLeases = leases
-	// §4.9 line 1149: a revoked provider's expiry timer is cancelled so
-	// it cannot fire AUTH_EXPIRED after the lease is already gone.
-	s.reconcileExpiryTimers(leases)
-	return &adapterv1.RevokeCredentialsResponse{}, nil
-}
-
-// checkCredentialSession confirms credentials were assigned for
-// sessionID and the adapter is configured to write them. Callers hold
-// s.mu.
-func (s *Server) checkCredentialSession(sessionID string) error {
-	if s.CredentialsDir == "" {
-		return status.Error(codes.FailedPrecondition,
-			"adapter is not configured with a credentials directory")
-	}
-	if s.credSessionID == "" {
-		return status.Error(codes.FailedPrecondition,
-			"no credentials have been assigned to this pod")
-	}
-	if s.credSessionID != sessionID {
-		return status.Errorf(codes.NotFound,
-			"credentials are assigned to session %s, not %s", s.credSessionID, sessionID)
-	}
-	return nil
-}
-
-// cloneCredentialLeases returns a copy of the current lease set so a
-// rewrite is computed off-line and committed only when the file write
-// succeeds. Callers hold s.mu.
-func (s *Server) cloneCredentialLeases() map[string]*adapterv1.CredentialLease {
-	leases := make(map[string]*adapterv1.CredentialLease, len(s.credLeases))
-	for provider, lease := range s.credLeases {
-		leases[provider] = lease
-	}
-	return leases
-}
-
-// writeCredentialFile materializes leases to the credential file,
-// ordered by provider for a deterministic file. Callers hold s.mu.
-func (s *Server) writeCredentialFile(leases map[string]*adapterv1.CredentialLease) error {
-	providers := make([]string, 0, len(leases))
-	for provider := range leases {
-		providers = append(providers, provider)
-	}
-	sort.Strings(providers)
-
-	ordered := make([]*adapterv1.CredentialLease, 0, len(providers))
-	for _, provider := range providers {
-		ordered = append(ordered, leases[provider])
-	}
-	if err := credfile.Write(s.CredentialsDir, ordered); err != nil {
-		return status.Errorf(codes.Internal, "write credential file: %v", err)
-	}
-	return nil
+	// spec: §6.1 — the revoke drops the named providers from the
+	// session's own credential file only.
+	return s.revokeCredentialsSlot(sessionID, sessionID, req.GetProviders())
 }

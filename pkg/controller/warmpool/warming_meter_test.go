@@ -13,7 +13,7 @@ import (
 // tracks the warming flag so the WarmPoolBootstrapping rule's
 // `lenny_pool_warming_up == 1` expression has a live producer.
 //
-// spec: §5.2 line 627.
+// spec: §5.2.
 func TestSetPoolWarmingUp_spec_5_2_627(t *testing.T) {
 	const pool = "warming-gauge-set"
 	t.Cleanup(func() { forgetPoolWarmingUp(pool) })
@@ -32,7 +32,7 @@ func TestSetPoolWarmingUp_spec_5_2_627(t *testing.T) {
 // TestForgetPoolWarmingUp_spec_5_2_627 verifies a deleted pool's gauge
 // series is removed so a removed pool leaves no stale series.
 //
-// spec: §5.2 line 627.
+// spec: §5.2.
 func TestForgetPoolWarmingUp_spec_5_2_627(t *testing.T) {
 	const pool = "warming-gauge-forget"
 	setPoolWarmingUp(pool, true)
@@ -54,7 +54,7 @@ func TestForgetPoolWarmingUp_spec_5_2_627(t *testing.T) {
 // exact condition-status expression the reconcile uses at the call site, so
 // a True condition yields gauge=1 and a non-True condition yields gauge=0.
 //
-// spec: §5.2 line 627.
+// spec: §5.2.
 func TestPoolWarmingUpConditionDrivesGauge_spec_5_2_627(t *testing.T) {
 	const pool = "warming-gauge-condition"
 	t.Cleanup(func() { forgetPoolWarmingUp(pool) })

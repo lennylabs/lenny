@@ -20,8 +20,8 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
-// spec: §25.9 line 3653 (raw-canonical), line 3662 (retranslate);
-// §11.7 line 424 (DEADLETTER_REDACTED on a redacted dead-letter row).
+// spec: §25.9;
+// §11.7.
 
 // withAuditScopePrincipal authenticates as a platform-admin carrying
 // the §25.1 scope claim, so HasScope enforces the per-endpoint scope
@@ -97,7 +97,7 @@ func TestGetAuditEventRawCanonical_spec_25_9_3653(t *testing.T) {
 	// A raw-canonical reader carries both the route-level read scope the
 	// central §25.1 gate enforces on GET /v1/admin/audit-events/{seq}
 	// (tools:audit:read) and the handler-conditional raw-canonical scope
-	// the ?format=raw-canonical branch requires. spec: §25.9 line 3653.
+	// the ?format=raw-canonical branch requires. spec: §25.9.
 	rr = httptest.NewRecorder()
 	router.Handler().ServeHTTP(rr, withAuditScopePrincipal(t,
 		httptest.NewRequest(http.MethodGet, "/v1/admin/audit-events/1?tenantId=platform&format=raw-canonical", nil),

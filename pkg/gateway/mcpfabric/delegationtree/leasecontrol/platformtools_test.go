@@ -38,10 +38,9 @@ func (f *fakePlatformTools) CallPlatformTool(_ context.Context, sessionID, toolN
 
 func newServiceWithTools(t *testing.T, pt leasecontrol.PlatformToolService) *leasecontrol.Service {
 	t.Helper()
-	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets := newMemBudget()
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:       budgets,
-		Tenants:       budgets,
 		PlatformTools: pt,
 	})
 	if err != nil {
@@ -58,7 +57,7 @@ func reqCall(session, tool string) *adapterv1.CallPlatformToolRequest {
 	}
 }
 
-// spec: §9.1 line 14 — CallPlatformTool forwards to the platform tool
+// spec: §9.1 — CallPlatformTool forwards to the platform tool
 // service and returns the MCP result with its isError flag.
 func TestCallPlatformToolSuccess_spec_9_1(t *testing.T) {
 	pt := &fakePlatformTools{callResult: []byte(`{"content":[]}`), callIsErr: true}
@@ -117,7 +116,7 @@ func TestCallPlatformToolServiceErrorIsInternal_spec_9_1(t *testing.T) {
 	}
 }
 
-// spec: §9.1 lines 14-31 — ListPlatformTools maps the catalog onto the
+// spec: §9.1 — ListPlatformTools maps the catalog onto the
 // proto descriptors.
 func TestListPlatformToolsSuccess_spec_9_1(t *testing.T) {
 	pt := &fakePlatformTools{listResult: []leasecontrol.PlatformToolDescriptor{

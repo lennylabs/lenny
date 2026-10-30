@@ -21,7 +21,7 @@ import (
 // then hand the typed outcome to this interface, which owns the side
 // effects the spec assigns to the gateway: the per-pod recycle-counter
 // writes on agent_pod_state, the unhealthy-threshold drain ledger behind
-// the lenny.dev/drain-request annotation, the §6.39 host-node
+// the lenny.dev/drain-request annotation, the §6.2 host-node
 // schedulability read, the podscrub recycle disposition, and the
 // SandboxClaim binding-state patches that drive the recycle or retire.
 //
@@ -31,21 +31,22 @@ import (
 // tests pass a fake.
 //
 // spec: §4.7 (ReportSessionScrub/ReportPodScrub), §5.2 (scrub model,
-// onScrubFailure), §3.4 (recycle disposition, retire triggers), §6.39
-// (host-node schedulability retire at recycle disposition).
+// onScrubFailure), §6.2 (host-node schedulability retire at the
+// recycle disposition, with the retire triggers).
 type ScrubReportService interface {
 	// RecordSessionScrub records the §5.2 per-slot cleanup outcome at a
 	// session release. It increments sessionsServed on the pod's
 	// agent_pod_state row, and when leaked is true it feeds the
 	// unhealthy-threshold drain ledger behind lenny.dev/drain-request
-	// (§4.6.3). slotID is empty unless the pod runs concurrent sessions.
-	// A gateway-side failure is returned as an error the handler maps to a
-	// gRPC status. spec: §4.7 (ReportSessionScrub increments sessionsServed;
-	// leaked feeds the drain ledger), §5.2.
-	RecordSessionScrub(ctx context.Context, podID, sessionID, slotID string, leaked bool) error
+	// (§4.6.3). The session identifier also names the slot that session
+	// held on the pod (§5.2). A gateway-side failure is returned as an
+	// error the handler maps to a gRPC status. spec: §4.7
+	// (ReportSessionScrub increments sessionsServed; leaked feeds the drain
+	// ledger), §5.2.
+	RecordSessionScrub(ctx context.Context, podID, sessionID string, leaked bool) error
 
 	// RecordPodScrub records the §5.2 whole-pod scrub outcome at the
-	// occupancy-zero recycle boundary and drives the §3.4 / §6.39 recycle
+	// occupancy-zero recycle boundary and drives the §6.2 recycle
 	// disposition. When failed is true it increments scrubFailureCount on
 	// the pod's agent_pod_state row. It then reads the pod's
 	// lenny.dev/host-schedulable label, computes the disposition against the
@@ -53,17 +54,21 @@ type ScrubReportService interface {
 	// drives it: on recycle, a preConnect pod stamps rewarmStartedAt and
 	// coordinates the SDK re-warm before reserving, a non-preConnect pod
 	// patches the claim directly to reserved; on retire (a limit reached, or
-	// the §6.39 unschedulable-host-node trigger when the label reads "false"
-	// or is absent), it writes the terminal disposition so the projection
-	// drains. detail carries an optional adapter-side failure description for
-	// the audit trail. A gateway-side failure is returned as an error.
+	// the §6.2 unschedulable-host-node trigger when the label reads "false"
+	// or is absent, or the §5.2 runtime-not-live retire when runtimeLive is
+	// false), it writes the terminal disposition so the projection drains.
+	// runtimeLive is the adapter's report that its runtime process can serve
+	// the pod's next session. detail carries an optional adapter-side failure
+	// description for the audit trail. A gateway-side failure is returned as
+	// an error.
 	// spec: §4.7 (ReportPodScrub increments scrubFailureCount, computes
-	// disposition), §3.4, §5.2, §6.39.
-	RecordPodScrub(ctx context.Context, podID string, failed bool, detail string) error
+	// disposition), §5.2 (Pod retirement policy, Runtime not live), §6.2.
+	RecordPodScrub(ctx context.Context, podID string, failed, runtimeLive bool, detail string) error
 }
 
 // ReportSessionScrub handles the §4.7 adapter→gateway per-slot cleanup
-// report. The adapter sends it on every session release. The handler
+// report. The adapter sends it for the outcome of a cleanup a `Shutdown`
+// performs to reclaim a slot that reached `running`. The handler
 // fail-closed-validates the request and feeds the typed outcome to the
 // ScrubReportService, which increments sessionsServed and routes a leaked
 // outcome into the unhealthy-threshold drain ledger.
@@ -88,10 +93,7 @@ func (s *Service) ReportSessionScrub(ctx context.Context, req *adapterv1.ReportS
 	if err != nil {
 		return nil, err
 	}
-	// slot_id is set only when the pod runs concurrent sessions; an empty
-	// value is the single-session case and the service ignores it.
-	slotID := req.GetSlotId().GetValue()
-	if err := s.scrubReports.RecordSessionScrub(ctx, podID, sessionID, slotID, leaked); err != nil {
+	if err := s.scrubReports.RecordSessionScrub(ctx, podID, sessionID, leaked); err != nil {
 		return nil, status.Errorf(codes.Internal, "leasecontrol: record session scrub for pod %s session %s: %v", podID, sessionID, err)
 	}
 	return &adapterv1.ReportSessionScrubResponse{}, nil
@@ -102,14 +104,14 @@ func (s *Service) ReportSessionScrub(ctx context.Context, req *adapterv1.ReportS
 // the gateway has patched the claim to recycling. The handler
 // fail-closed-validates the request and feeds the binary outcome to the
 // ScrubReportService, which increments scrubFailureCount on failure and
-// computes and drives the recycle disposition (including the §6.39
+// computes and drives the recycle disposition (including the §6.2
 // unschedulable-host-node retire).
 //
 // A POD_SCRUB_OUTCOME_UNSPECIFIED outcome is rejected fail-closed: the
 // gateway cannot tell a clean scrub from a failure, so it cannot decide
 // between reuse and the scrub-failure retirement path. The handler returns
 // InvalidArgument rather than assuming success and risking reuse of a pod
-// whose residual state was not cleared. spec: §4.7; §5.2; §3.4; §6.39.
+// whose residual state was not cleared. spec: §4.7; §5.2; §6.2.
 func (s *Service) ReportPodScrub(ctx context.Context, req *adapterv1.ReportPodScrubRequest) (*adapterv1.ReportPodScrubResponse, error) {
 	if s.scrubReports == nil {
 		return nil, status.Error(codes.Unimplemented, "leasecontrol: scrub-report handling is not configured on this gateway")
@@ -122,7 +124,10 @@ func (s *Service) ReportPodScrub(ctx context.Context, req *adapterv1.ReportPodSc
 	if err != nil {
 		return nil, err
 	}
-	if err := s.scrubReports.RecordPodScrub(ctx, podID, failed, req.GetDetail()); err != nil {
+	// An absent runtime_live reads as false, so a report that omits the
+	// fact retires the pod (fail closed). spec: §5.2 (Pod retirement
+	// policy, Runtime not live).
+	if err := s.scrubReports.RecordPodScrub(ctx, podID, failed, req.GetRuntimeLive(), req.GetDetail()); err != nil {
 		return nil, status.Errorf(codes.Internal, "leasecontrol: record pod scrub for pod %s: %v", podID, err)
 	}
 	return &adapterv1.ReportPodScrubResponse{}, nil
@@ -160,8 +165,8 @@ func podScrubFailed(o adapterv1.PodScrubOutcome) (bool, error) {
 }
 
 // RecycleCounterStore is the §4.7 recycle-counter seam the ScrubReporter
-// drives: the two per-pod counters on the agent_pod_state row the §3.4 /
-// §6.39 recycle disposition evaluates. *agentpodstate.Store (the Postgres
+// drives: the two per-pod counters on the agent_pod_state row the
+// §6.2 recycle disposition evaluates. *agentpodstate.Store (the Postgres
 // mirror) satisfies it; the interface is kept narrow so leasecontrol does
 // not depend on the full mirror surface. A missing pod row reports
 // found=false so the caller fails closed (a scrub report for a pod the
@@ -188,14 +193,17 @@ type RecycleCounterStore interface {
 // the annotation stamp are the ledger's own concern. spec: §4.7 (leaked
 // feeds the unhealthy-threshold ledger), §4.6.3 (drain-request).
 type DrainLedger interface {
-	// RecordLeak records one leaked session-scrub outcome for podID. The
-	// ledger decides when the pod crosses the unhealthy threshold and stamps
-	// the drain-request annotation.
-	RecordLeak(ctx context.Context, podID string) error
+	// RecordLeak records one leaked session-scrub outcome for the slot slotID
+	// on podID. The ledger decides when the pod crosses the unhealthy
+	// threshold and stamps the drain-request annotation. The record is keyed
+	// by slot, so a second record of the same slot is a no-op; an empty or
+	// constant slotID would collapse a pod's leaks to one and the drain would
+	// never fire. spec: §5.2 (pool configuration and execution modes).
+	RecordLeak(ctx context.Context, podID, slotID string) error
 }
 
 // SessionCountRetirer is the §5.2 per-release maxSessionsPerPod retirement
-// seam for a concurrent non-vm-restart pool. On every session release the
+// seam for a concurrent non-vm-restart pool. On each cleanup-outcome report the
 // ScrubReporter reports the atomic post-increment served-session count so the
 // retirer can drive the per-release drain decoupled from the whole-pod scrub:
 // a persistently `leaked` slot can hold total occupancy above zero
@@ -216,7 +224,7 @@ type DrainLedger interface {
 // free of the Kubernetes client and poolstore. spec: §5.2 (per-release
 // maxSessionsPerPod drain on a concurrent non-vm-restart pool), §16.1
 // (session_count_limit counted once on the per-release path), §12
-// (sessions_served evaluated per release on a concurrent pool).
+// (sessions_served written on each cleanup-outcome report on a concurrent pool).
 type SessionCountRetirer interface {
 	// RetireOnSessionCount evaluates the served-session count for podID at a
 	// session release. count is the atomic post-increment sessions_served
@@ -263,7 +271,7 @@ type PodRecyclePolicy struct {
 	VMRestart bool
 	// HostSchedulable is the lenny.dev/host-schedulable pod label read at the
 	// recycle boundary: true only when the label reads "true". An absent or
-	// "false" label is fail-safe-unschedulable. spec: §6.39.
+	// "false" label is fail-safe-unschedulable. spec: §6.2.
 	HostSchedulable bool
 	// PodUptimeSeconds is the pod's wall-clock uptime in whole seconds,
 	// floored at zero. spec: §6.2 (maxPodUptimeSeconds retire).
@@ -279,13 +287,13 @@ type PodRecyclePolicy struct {
 	RuntimeClass string
 }
 
-// PodInspector resolves the §5.2 recycle policy and §6.39 host-node
+// PodInspector resolves the §5.2 recycle policy and §6.2 host-node
 // schedulability for the pod under a whole-pod scrub report. It reads the
 // pod's lenny.dev/host-schedulable label via the gateway's existing get
 // access on the Pods resource (no Node verbs), the pool's resolved
 // sessionPolicy.recycle, and the pod's uptime. A missing pod (the absent
-// label case) reports HostSchedulable false, fail-safe per §6.39.
-// spec: §6.39 (host-node schedulability read via Pods get), §5.2 (recycle
+// label case) reports HostSchedulable false, fail-safe per §6.2.
+// spec: §6.2 (host-node schedulability read via Pods get), §5.2 (recycle
 // policy resolution).
 type PodInspector interface {
 	// InspectForRecycle resolves the recycle policy and pod facts for podID
@@ -294,19 +302,18 @@ type PodInspector interface {
 	InspectForRecycle(ctx context.Context, podID string) (policy PodRecyclePolicy, found bool, err error)
 }
 
-// ClaimDispositionDriver applies a resolved §3.4 recycle disposition to the
+// ClaimDispositionDriver applies a resolved recycle disposition to the
 // pod's SandboxClaim binding state. The gateway satisfies it with the
 // podclaim binding-state writers (WriteRewarmStartedStatus,
 // WriteReservedStatus, WriteDispositionStatus). The interface keeps
 // leasecontrol free of the Kubernetes client and podclaim import.
-// spec: §3.4 (recycle disposition drives the claim binding state), §5.2.
+// spec: §5.2.
 type ClaimDispositionDriver interface {
 	// Recycle drives the reuse disposition. On a preConnect pool it stamps
 	// rewarmStartedAt on the recycling claim and coordinates the SDK re-warm
 	// before the claim enters reserved; on a non-preConnect pool it patches
 	// the claim directly to reserved. scrubWarning carries the warn-policy
-	// scrub_warning annotation through the transition. spec: §5.2 (recycle
-	// lifecycle, line 449), §6.2 (preConnect re-warm).
+	// scrub_warning annotation through the transition. spec: §5.2, §6.2 (preConnect re-warm).
 	Recycle(ctx context.Context, podID string, preConnect, scrubWarning bool) error
 	// Retire writes the terminal disposition on the claim so the projection
 	// drains the pod. failed selects the claim's `failed` terminal versus its
@@ -315,7 +322,7 @@ type ClaimDispositionDriver interface {
 	// every other retire is a drain that maps to `released`. The drain-to-
 	// `released` set is every limit-reached retirement — maxSessionsPerPod,
 	// maxPodUptimeSeconds, AND the cumulative maxScrubFailures limit under the
-	// warn policy — plus the §6.39 unschedulable-host cordon-drain. The
+	// warn policy — plus the §6.2 unschedulable-host cordon-drain. The
 	// scrub-failure-limit drain belongs to `released` (not `failed`) because
 	// `failed` is scoped to the fail policy and to crashed sessions: a warn-
 	// policy pod that exhausts maxScrubFailures is retired as a lifecycle limit,
@@ -325,14 +332,28 @@ type ClaimDispositionDriver interface {
 	// (scrub_failure_limit grouped with the other two drain retirements).
 	//
 	// scrubWarning stamps the scrub_warning audit annotation onto the retire,
-	// set only on the §6.39 cordon-drain-under-warn path where the disposition
+	// set only on the §6.2 cordon-drain-under-warn path where the disposition
 	// retains the residual-state marker (the package doc's `draining
 	// [scrub_warning]` case); the limit-reached and fail-policy retires clear
 	// it. reason is the stable observability label, and detail is the optional
 	// adapter-side failure description retained in the audit trail on a FAILED
-	// outcome. spec: §3.4 (retire disposition), §6.39, §5.2 (audit retention of
-	// the failed pod's metadata).
-	Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, detail string) error
+	// outcome. lifetime carries the pod's lifetime session count and uptime
+	// the disposition read, which the driver records on the Info log of a
+	// released retire. spec: §6.2, §5.2 (audit retention of the failed pod's
+	// metadata; Pod retirement policy).
+	Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, lifetime PodLifetime, detail string) error
+}
+
+// PodLifetime is the pod's lifetime usage the recycle disposition read: the
+// sessions it has served, including the one that just ended, and its
+// wall-clock uptime. The retire path logs it so an operator can tell a pod
+// that retired on a limit from one that retired early, such as on
+// runtime_not_live. spec: §5.2 (Pod retirement policy).
+type PodLifetime struct {
+	// SessionsServed is the pod's lifetime served-session count.
+	SessionsServed int
+	// UptimeSeconds is the pod's wall-clock uptime in seconds.
+	UptimeSeconds int64
 }
 
 // RetirementMetrics records the §16.1 pod-retirement and scrub-failure
@@ -357,7 +378,7 @@ type RetirementMetrics interface {
 	// (lenny_gateway_pod_retirement_total{reason, pool, runtime_class}). The
 	// caller emits it only for a gateway-owned reason in the frozen §16.1
 	// vocabulary (session_count_limit, scrub_failure_limit); it suppresses the
-	// uptime_limit emission (the controller owns that count), and the §6.39
+	// uptime_limit emission (the controller owns that count), and the §6.2
 	// cordon-drain and the fail-policy termination drain without a
 	// retirement-counter increment, so a sink never observes an
 	// out-of-vocabulary reason value. spec: §16.1
@@ -373,11 +394,11 @@ var ErrPodNotInMirror = errors.New("leasecontrol: pod not found in agent_pod_sta
 
 // ScrubReporter is the gateway-side ScrubReportService implementation. It
 // wires the §4.7 recycle-counter writes, the §5.2 unhealthy-threshold drain
-// ledger, the §6.39 host-node schedulability read, the pure podscrub
-// recycle disposition, and the §3.4 claim binding-state patches behind the
+// ledger, the §6.2 host-node schedulability read, the pure podscrub
+// recycle disposition, and the claim binding-state patches behind the
 // narrow seams above so leasecontrol stays free of the Kubernetes client.
 //
-// spec: §4.7, §3.4, §5.2, §6.39.
+// spec: §4.7, §5.2, §6.2.
 type ScrubReporter struct {
 	counters  RecycleCounterStore
 	ledger    DrainLedger
@@ -451,7 +472,7 @@ func NewScrubReporter(opts ScrubReporterOptions) (*ScrubReporter, error) {
 // leaked slot can hold total occupancy above zero indefinitely. A pod absent
 // from the mirror returns ErrPodNotInMirror so a stale report does not
 // silently no-op. spec: §4.7; §5.2 (per-release maxSessionsPerPod drain).
-func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, _, _ string, leaked bool) error {
+func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, sessionID string, leaked bool) error {
 	// Capture the atomic post-increment served-session count: the per-release
 	// retirement gates its exact-equality counter emit on this exact value, so
 	// re-reading the counter (which a concurrent release could have advanced)
@@ -467,14 +488,16 @@ func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, _, _ stri
 	if leaked {
 		// §4.7: a leaked per-slot cleanup feeds the unhealthy-threshold drain
 		// ledger behind lenny.dev/drain-request. The ledger owns the threshold
-		// check and the annotation stamp.
-		if err := r.ledger.RecordLeak(ctx, podID); err != nil {
+		// check and the annotation stamp. The session identifier is the slot
+		// identifier, and the ledger keys its record by it so a slot that
+		// reaches the ledger twice counts once (§5.2).
+		if err := r.ledger.RecordLeak(ctx, podID, sessionID); err != nil {
 			return fmt.Errorf("record leak for pod %s: %w", podID, err)
 		}
 	}
-	// §5.2: evaluate the served-session count on every release so a concurrent
-	// non-vm-restart pool drains within maxSessionsPerPod even while a
-	// persistently leaked slot holds total occupancy above zero and the
+	// §5.2: evaluate the served-session count on each cleanup-outcome report
+	// so a concurrent non-vm-restart pool drains within maxSessionsPerPod even
+	// while a persistently leaked slot holds total occupancy above zero and the
 	// occupancy-zero podscrub.Decide check never fires. The retirer gates
 	// internally on maxConcurrentSessions > 1 && scrubProfile != vm-restart;
 	// a single-session or vm-restart pool is a no-op there.
@@ -485,13 +508,15 @@ func (r *ScrubReporter) RecordSessionScrub(ctx context.Context, podID, _, _ stri
 }
 
 // RecordPodScrub increments scrubFailureCount on a failed scrub, resolves
-// the §3.4 / §6.39 recycle disposition through podscrub.Decide against
+// the recycle disposition through podscrub.Decide against
 // the pod's recycle counters, sessionPolicy, uptime, and host-node
 // schedulability, and drives the resulting disposition onto the claim
 // binding state. detail carries an optional adapter-side failure
 // description that the retire path retains in the audit trail on a FAILED
-// outcome. spec: §4.7; §3.4; §5.2; §6.39.
-func (r *ScrubReporter) RecordPodScrub(ctx context.Context, podID string, failed bool, detail string) error {
+// outcome. runtimeLive is the adapter's report that its runtime process can
+// serve the pod's next session; false retires the pod with runtime_not_live.
+// spec: §4.7; §5.2 (Pod retirement policy, Runtime not live); §6.2.
+func (r *ScrubReporter) RecordPodScrub(ctx context.Context, podID string, failed, runtimeLive bool, detail string) error {
 	// Resolve the recycle policy first: it carries the pool and
 	// runtime_class dimensions the §16.1 scrub-failure and retirement
 	// metrics require, so the counter advance below can emit them. A pod or
@@ -523,8 +548,10 @@ func (r *ScrubReporter) RecordPodScrub(ctx context.Context, podID string, failed
 		PodUptimeSeconds:    policy.PodUptimeSeconds,
 		MaxPodUptimeSeconds: policy.MaxPodUptimeSeconds,
 		HostSchedulable:     policy.HostSchedulable,
+		RuntimeNotLive:      !runtimeLive,
 	})
-	return r.applyDisposition(ctx, podID, policy, detail, d)
+	lifetime := PodLifetime{SessionsServed: sessionsServed, UptimeSeconds: policy.PodUptimeSeconds}
+	return r.applyDisposition(ctx, podID, policy, lifetime, detail, d)
 }
 
 // advanceScrubCounters increments the scrub-failure counter on a failed
@@ -570,19 +597,21 @@ func (r *ScrubReporter) advanceScrubCounters(ctx context.Context, podID string, 
 // applyDisposition drives a resolved disposition onto the claim binding
 // state and emits the gateway retirement metric for a gateway-owned reason in
 // the §16.1 vocabulary. A retire writes the terminal disposition (failed vs
-// released), carrying the scrub_warning the §6.39 cordon-drain-under-warn path
+// released), carrying the scrub_warning the §6.2 cordon-drain-under-warn path
 // computes and the adapter-supplied failure detail for the audit trail; a reuse
 // drives the recycle path. policy.Pool and policy.RuntimeClass label
 // lenny_gateway_pod_retirement_total, which is incremented only for a
 // gateway-owned reason the §16.1 inventory declares (session_count_limit,
-// scrub_failure_limit; the uptime_limit count is controller-owned); the §6.39
+// scrub_failure_limit; the uptime_limit count is controller-owned); the §6.2
 // cordon-drain and the fail-policy termination drain without a counter
 // increment. On a concurrent non-vm-restart pool the session_count_limit
 // counter is additionally suppressed here because the per-release
 // SessionCountRetirer owns that emission for that pod class; the occupancy-zero
-// disposition still retires the pod as the state backstop. spec: §3.4, §6.39,
-// §16.1, §5.2 (per-release maxSessionsPerPod drain).
-func (r *ScrubReporter) applyDisposition(ctx context.Context, podID string, policy PodRecyclePolicy, detail string, d podscrub.Disposition) error {
+// disposition still retires the pod as the state backstop. lifetime is the
+// pod's served-session count and uptime the disposition read, passed to the
+// driver's retire log. spec: §6.2, §16.1, §5.2 (per-release maxSessionsPerPod
+// drain; Pod retirement policy).
+func (r *ScrubReporter) applyDisposition(ctx context.Context, podID string, policy PodRecyclePolicy, lifetime PodLifetime, detail string, d podscrub.Disposition) error {
 	pool, runtimeClass := policy.Pool, policy.RuntimeClass
 	if d.Retire {
 		// lenny_gateway_pod_retirement_total{reason} carries only the
@@ -597,7 +626,7 @@ func (r *ScrubReporter) applyDisposition(ctx context.Context, podID string, poli
 		// emitter. Suppressing the gateway emission here keeps an over-uptime pod
 		// that drains its last slot to occupancy zero from being counted twice
 		// (once by this applyDisposition, once by the controller reconcileUptime)
-		// through the §16.1 summing recording rule. The §6.39 cordon-drain retire
+		// through the §16.1 summing recording rule. The §6.2 cordon-drain retire
 		// and the onScrubFailure: fail termination drive the drain but are not
 		// members of the vocabulary, so the counter is incremented only for a
 		// gateway-owned reason; emitting d.Reason for a non-vocabulary or
@@ -618,19 +647,19 @@ func (r *ScrubReporter) applyDisposition(ctx context.Context, podID string, poli
 		// `failed`; every other retire is a drain → claim `released`. Decide
 		// returns state.Draining for all three limit retirements
 		// (session_count_limit, uptime_limit, AND scrub_failure_limit) and for
-		// the §6.39 host_unschedulable cordon-drain, so the scrub-failure-limit
+		// the §6.2 host_unschedulable cordon-drain, so the scrub-failure-limit
 		// retirement (maxScrubFailures reached under the warn policy) routes to
 		// `released` alongside the other two lifecycle limits rather than to
 		// `failed`. `failed` is reserved for the fail-policy termination, which
 		// Decide alone returns as state.Failed. spec: §4.6.3 (`released` vs
 		// `failed` binding terminals), §16.1 (scrub_failure_limit is a drain
 		// retirement, grouped with the session-count and uptime limits).
-		// d.ScrubWarning is set only on the §6.39 cordon-drain-under-warn path;
+		// d.ScrubWarning is set only on the §6.2 cordon-drain-under-warn path;
 		// it stamps the scrub_warning audit annotation onto the retire so the
 		// residual-state marker the disposition computed is retained. detail
 		// carries the adapter-side failure description for the audit trail on a
 		// FAILED outcome.
-		if err := r.driver.Retire(ctx, podID, d.NextPhase == state.Failed, d.ScrubWarning, d.Reason, detail); err != nil {
+		if err := r.driver.Retire(ctx, podID, d.NextPhase == state.Failed, d.ScrubWarning, d.Reason, lifetime, detail); err != nil {
 			return fmt.Errorf("retire pod %s (%s): %w", podID, d.Reason, err)
 		}
 		return nil

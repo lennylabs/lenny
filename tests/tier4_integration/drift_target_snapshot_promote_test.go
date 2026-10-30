@@ -22,7 +22,6 @@ package tier4_integration_test
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -31,18 +30,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	upgradepgstore "github.com/lennylabs/lenny/pkg/ops/upgradeservice/pgstore"
 	"github.com/lennylabs/lenny/pkg/upgrade"
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// spec: §25.10 lines 3793-3795 ("At the end of an upgrade
+// spec: §25.10 ("At the end of an upgrade
 // (Verification phase completion). The target snapshot is promoted to the
 // live snapshot atomically. From this point onward, GET /v1/admin/drift
 // compares against the new desired state." and "agents can pass
 // ?against=target to compare against the in-flight target snapshot, or
-// ?against=both to receive both diffs in a single response"); §25.10 line
-// 3792 (new lenny-ops writes bootstrap_seed_snapshot_target early in
-// OpsRoll).
+// ?against=both to receive both diffs in a single response"); §25.10.
 //
 // diagnosis: a failure means the promote half of the target-snapshot
 // lifecycle does not work across the real upgradeservice/driftservice
@@ -67,10 +62,9 @@ import (
 // row now carries the target's desired state and provenance, and the
 // target row is gone so against=target returns DRIFT_NO_TARGET_SNAPSHOT).
 func TestUpgradePromotesTargetSnapshotToLiveDurable(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	pool := pg.Pool
 
 	// The three states under test, keyed on one pool's minWarm so each diff

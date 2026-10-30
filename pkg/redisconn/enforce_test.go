@@ -10,8 +10,7 @@ import (
 	"testing"
 )
 
-// TestNewClientEnforcesAuth_spec_12_4 covers the §12.4 line 197 "Redis
-// AUTH (ACLs) ... are required" invariant: with enforcement active
+// TestNewClientEnforcesAuth_spec_12_4 covers the §12.4 invariant: with enforcement active
 // (AllowInsecure false) a missing AUTH credential fails closed on both
 // the direct-URL and Sentinel paths.
 func TestNewClientEnforcesAuth_spec_12_4(t *testing.T) {
@@ -32,8 +31,7 @@ func TestNewClientEnforcesAuth_spec_12_4(t *testing.T) {
 	}
 }
 
-// TestNewClientEnforcesTLS_spec_12_4 covers the §12.4 line 197 "... and
-// TLS are required" invariant: a plaintext redis:// URL with a valid
+// TestNewClientEnforcesTLS_spec_12_4 covers the §12.4 invariant: a plaintext redis:// URL with a valid
 // AUTH credential still fails closed because the scheme is not TLS.
 func TestNewClientEnforcesTLS_spec_12_4(t *testing.T) {
 	if _, err := NewClient(Config{URL: "redis://:secret@localhost:6379/0"}); !errors.Is(err, ErrTLSRequired) {

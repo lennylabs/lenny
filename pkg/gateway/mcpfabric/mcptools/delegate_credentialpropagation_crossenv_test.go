@@ -40,11 +40,12 @@ func newCrossEnvInheritMCP(t *testing.T, childProviders []string) (*mcp.Server, 
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        store,
-		Executor:     executor.NewEchoExecutor(),
-		Runtimes:     runtimes,
-		Environments: envs,
-		Tenants:      tenants,
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		Environments:      envs,
+		Tenants:           tenants,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),

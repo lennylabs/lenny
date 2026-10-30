@@ -30,6 +30,7 @@ import (
 	"strings"
 
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 )
 
 // DefaultSimilarityThreshold is the §4.9 CachePolicy similarityThreshold
@@ -236,9 +237,11 @@ type Store interface {
 }
 
 // keyPrefix returns the §12.4 t:{tenant_id}:scache: prefix for a
-// tenant.
+// tenant. The tenant segment is the rediskeys.TenantPrefix hash tag, so
+// an entry, its index set, and the rest of the tenant's cache share one
+// Redis Cluster slot.
 func keyPrefix(tenantID string) string {
-	return "t:" + tenantID + ":scache:"
+	return rediskeys.TenantPrefix(tenantID) + "scache:"
 }
 
 // TenantKeyPrefix returns the §12.4 t:{tenant_id}:scache: prefix that

@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Component test for the §4.2 line 177 lenny.admin_mode trigger on
+// Component test for the §4.2 lenny.admin_mode trigger on
 // runtime_tenant_access and pool_tenant_access. The trigger is the
 // defense-in-depth guard that rejects any write whose transaction has
 // not set lenny.admin_mode = 'true'. Combined with the application-
@@ -38,7 +38,7 @@ func seedRuntime(t *testing.T, ctx context.Context, pg *containers.Postgres, nam
 	}
 }
 
-// spec: §4.2 line 177
+// spec: §4.2
 // diagnosis: a write to runtime_tenant_access without
 // lenny.admin_mode = 'true' must be rejected by the
 // lenny_admin_mode_required trigger.
@@ -107,7 +107,7 @@ func TestAdminModeRequiredOnRuntimeTenantAccess(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 177
+// spec: §4.2
 // diagnosis: a write to pool_tenant_access without lenny.admin_mode
 // must be rejected by the trigger, mirroring the runtime_tenant_access
 // guard.
@@ -150,7 +150,7 @@ func TestAdminModeRequiredOnPoolTenantAccess(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 177
+// spec: §4.2
 // diagnosis: the tenantaccessstore pgstore wraps Grant/Revoke in
 // InAdminMode so the admin code path round-trips through the trigger
 // without explicit GUC handling at the call site.
@@ -190,7 +190,7 @@ func TestTenantAccessStoreGrantRevokeUseAdminMode(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 163
+// spec: §4.2
 // diagnosis: the lenny_tenant_isolation RLS policy must use the
 // `false` form of current_setting so an unset GUC is rejected rather
 // than silently treated as the empty string. For Postgres custom
@@ -203,7 +203,7 @@ func TestTenantAccessStoreGrantRevokeUseAdminMode(t *testing.T) {
 // value returns zero rows, and a SELECT after explicitly setting the
 // tenant context returns the expected row.
 //
-// spec: §4.2 line 163.
+// spec: §4.2.
 // diagnosis: a failure means the RLS predicate treats an unset
 // app.current_tenant GUC as a readable context, so a fresh connection
 // with no tenant SET could read rows instead of being filtered to zero.
@@ -228,7 +228,7 @@ func TestRLSHardErrorOnMissingContext(t *testing.T) {
 
 	// Simulate the PgBouncer connect_query sentinel: a fresh server
 	// connection arrives with app.current_tenant = '__unset__'. Under
-	// the §4.2 line 163 RLS policy, no row's tenant_id equals
+	// the §4.2 RLS policy, no row's tenant_id equals
 	// '__unset__' and the row predicate filters everything out — the
 	// defense-in-depth that prevents a leaked pooled connection from
 	// surfacing tenant data before the application-layer SET runs.

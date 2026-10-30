@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
@@ -17,7 +18,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/childtoken"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/exportwire"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
@@ -44,7 +44,7 @@ import (
 // MCP fabric. It constructs the §8.3 delegation-policy, §4.8/SEC-013
 // external-interceptor, and §16.7 deployment-config stores, the §8.2
 // delegation service (with its §8.7 export materializer, §8.3 export-scan
-// resolver, and §8.2 child-token minter), the §9.1 MCP server, registers
+// resolver), the §9.1 MCP server, registers
 // every MCP tool family on it (lenny/create_session, the §15.2 client-facing
 // lifecycle tools, §8.2 delegate_task, §7.2 send_message, §8.8 await_children,
 // §26.2 vcs_token, and the rest), and wires the §15.2 Streamable HTTP SSE
@@ -60,7 +60,6 @@ func (w *gatewayWiring) buildMCPSurface(
 	auditSink admin.AuditSink,
 	auditAppender policy.AuditAppender,
 	policyAuditSink *policy.AuditSink,
-	childLeaseRegistrar delegation.LeaseChildRegistrar,
 	maxInputResolver *maxInputSizeResolverHolder,
 	environments environmentstore.Store,
 	resolvedNoEnvPolicy string,
@@ -128,11 +127,11 @@ func (w *gatewayWiring) buildMCPSurface(
 			mcpDelegationAuditor{sink: auditSink, billing: w.billingEmitter},
 		)
 	}
-	// §8.3 lines 160-181 / §13.5 mitigation 4: the per-file export-scan
+	// §8.3 / §13.5 mitigation 4: the per-file export-scan
 	// resolver routes each exported file through the DelegationPolicy's
 	// contentPolicy.interceptorRef at PreExportMaterialization. The
 	// resolver looks the ref up among the PreDelegation interceptors
-	// registered on policyChain (§4.8 line 1038: the same named interceptor
+	// registered on policyChain (§4.8: the same named interceptor
 	// in force on the parent's policy) and stamps an observer that emits
 	// the §11.7 delegation.export_file_scan_rejected / export_scan_failed_open
 	// audit events and the §16.1 lenny_export_file_scans_total /
@@ -144,20 +143,9 @@ func (w *gatewayWiring) buildMCPSurface(
 		policy.NewExportScanObserver(auditAppender, gwMetrics, nil).WithBilling(w.billingEmitter),
 	)
 	// §13.3 revocation cache: the auth middleware rejects a token whose
-	// jti is in this set, and the §8.2 line 61 child-token exchange reads
-	// the parent (actor) token's jti against it inside the minting step.
-	// Constructed here so both the delegation child-token minter and the
-	// revocation propagator (below) share the one cache instance. F-8.1.2.
+	// jti is in this set. Constructed here so the auth middleware and the
+	// revocation propagator (below) share the one cache instance.
 	revCache := revocation.NewCache()
-	// §8.2 line 59 / §13.3: the in-process child-token minter the
-	// delegation service runs after admission. It narrows scope, builds
-	// the act chain, fixes delegation_depth at parent + 1, caps exp, and
-	// fails closed with DELEGATION_PARENT_REVOKED when the parent jti is
-	// revoked. F-8.1.2 / F-8.2.7.
-	childTokenMinter := childtoken.NewMinter(childtoken.Options{
-		Revocations: revCache,
-		Clock:       clockinject.Now,
-	})
 	delegationSvc := delegation.NewService(w.sessions, delegation.Options{
 		Experiments:             w.experiments,
 		Runtimes:                w.runtimes,
@@ -166,24 +154,23 @@ func (w *gatewayWiring) buildMCPSurface(
 		ExportMaterializer:      exportMaterializer,
 		ExportScanChainResolver: exportScanResolver,
 		TreeBudgetReserver:      w.treeBudgetReserver,
-		ChildTokenMinter:        childTokenMinter,
-		// §8.6 line 648: register each admitted child with the lease-
-		// extension budget source, capped at the parent's own lease, so a
-		// later in-process budget-exhaustion extension from the child (the
-		// gateway LLM Proxy's ExtendForBudget trigger) resolves its tree.
-		// F-15.3.5.
-		LeaseRegistrar: childLeaseRegistrar,
-		// §11.1 line 9 — per-user active-delegated-children admission cap.
+		// §8.3 / §8.6 — the reservation's token cap adds the tree's
+		// cumulative extension grant from the delegation_tree_budget row,
+		// and a reservation detection runs the BUDGET_KEYS_EXPIRED tree
+		// cleanup on the session server.
+		TreeGrants:        treeGrantReader{denials: w.leaseDenials},
+		BudgetKeysExpired: sessionSrv,
+		// §11.1 — per-user active-delegated-children admission cap.
 		// Zero leaves the scope unlimited. F-11.1.4.
 		MaxActiveChildrenPerUser: *delegationMaxActiveChildrenPerUser,
 		// §8.2 LayerPlatform — Helm value gateway.allowSelfRecursion.
 		PlatformAllowSelfRecursion: *gatewayAllowSelfRecursion,
-		// §8.2.bis line 89 — Helm value gateway.delegation.defaultMaxDepth.
+		// §8.2.bis — Helm value gateway.delegation.defaultMaxDepth.
 		DefaultMaxDepth: *delegationDefaultMaxDepth,
-		// §8.3 line 181 — Helm value gateway.interceptorWeakeningCooldownSeconds.
+		// §8.3 — Helm value gateway.interceptorWeakeningCooldownSeconds.
 		// F-8.7.12 / F-13.5.7.
 		InterceptorWeakeningCooldown: time.Duration(*interceptorWeakeningCooldownSeconds) * time.Second,
-		// §4.8 line 1034 / §8.3 SEC-013 — reject delegate_task whose
+		// §4.8 / §8.3 SEC-013 — reject delegate_task whose
 		// effective interceptorRef names an interceptor inside the
 		// fail-closed → fail-open weakening cooldown. F-4.8.17.
 		InterceptorCooldown: interceptorCooldownResolver,
@@ -192,25 +179,30 @@ func (w *gatewayWiring) buildMCPSurface(
 		// `lenny_delegation_would_have_blocked_total` through the
 		// gateway metrics registry.
 		Metrics: gwMetrics,
-		// spec: §11.7 line 62 / §16.7 — wire the §11.7 audit sink so
+		// spec: §11.7 / §16.7 — wire the §11.7 audit sink so
 		// the service emits `delegation.spawned`,
 		// `delegation.self_recursion_allowed`, and `delegation.cycle_warning`.
 		// F-8.5.8 / F-8.5.9.
 		Auditor: mcpDelegationAuditor{sink: auditSink, billing: w.billingEmitter},
-		// spec: §8.2 line 90 / §10.7 — `independent` propagation
+		// spec: §8.2 / §10.7 — `independent` propagation
 		// routes the child afresh through the same ExperimentRouter
 		// the top-level session-creation path uses. Wired as a
 		// pointer to *sessionserver.Server, which implements
 		// delegation.ExperimentRouter via ApplyExperimentRouting.
 		ExperimentRouter: sessionSrv,
+		// spec: §12.8 (Lifecycle fence and drain) — the undo of a
+		// refused or failed delegation deletes its export objects through
+		// the blob store's per-session deletion. A store without it leaves
+		// the option nil, and the undo keeps the child ID's reservation.
+		SessionObjects: delegationSessionObjects(w.blobs),
 	})
-	// §8.3 line 157 / §4.8 line 974: now that delegationSvc exists, fill
+	// §8.3 / §4.8: now that delegationSvc exists, fill
 	// in the holder so the DelegationPolicyEvaluator measures TaskSpec.input
 	// against the parent runtime's effective contentPolicy.maxInputSize
 	// rather than the cluster default alone. F-13.5.1 / F-8.2.9.
 	maxInputResolver.inner = delegationSvc
 	mcpSrv := mcp.NewServer()
-	// spec: §8.8 lines 981-997 — the subtree deadlock detector. The await
+	// spec: §8.8 — the subtree deadlock detector. The await
 	// tracker records which session awaits which children (registered by
 	// lenny/await_children for the duration of each poll); the manager
 	// holds the active deadlocked subtrees so the await poll can surface a
@@ -223,21 +215,25 @@ func (w *gatewayWiring) buildMCPSurface(
 	}
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		Store: w.sessions,
-		// spec: §15.2.1 rule 1 line 1380 — route lenny/create_session
+		// spec: §15.2.1 rule 1 — route lenny/create_session
 		// through the gateway's shared §15.1 session-creation service so
 		// the MCP surface runs the same admission gates and returns the
 		// same envelope the REST POST /v1/sessions handler does. F-15.2.4.
 		SessionCreator: sessionSrv,
-		// spec: §15.2 lines 1284-1306 — route the overlapping client-facing
+		// spec: §15.2 — route the overlapping client-facing
 		// lifecycle/read tools through the same shared service layer so the
 		// MCP surface runs the identical REST routes and validation. F-15.2.3.
 		SessionService: sessionSrv,
-		// spec: §8.3 line 470 — run the delegation-time pre-claim credential
+		// spec: §29.3 Forwarding — lenny/send_message and
+		// lenny/cancel_session forward to the session's coordinating replica
+		// through the same session server's ForwardToolCall.
+		HolderForward: sessionSrv,
+		// spec: §8.3 — run the delegation-time pre-claim credential
 		// availability check through the same session server that owns the
 		// §4.9 engine, so lenny/delegate_task rejects an exhausted pool with
 		// CREDENTIAL_POOL_EXHAUSTED before allocating a warm pod.
 		CredAvailability: sessionSrv,
-		// spec: §8.2 lines 93-97 — materialize the admitted StateCreated
+		// spec: §8.2 — materialize the admitted StateCreated
 		// child synchronously within lenny/delegate_task: claim its warm
 		// pod, assign the credential lease, stream the stamped
 		// WorkspacePlan, launch, and transition it to running so the
@@ -250,6 +246,7 @@ func (w *gatewayWiring) buildMCPSurface(
 		DevMode:                    *devMode,
 		Delegation:                 delegationSvc,
 		Users:                      w.users,
+		CallerCheck:                sessionCallerCheck(w.pgPool, w.auditValidator),
 		Runtimes:                   w.runtimes,
 		CapabilityOverrides:        w.capOverrides,
 		Environments:               environments,
@@ -258,42 +255,57 @@ func (w *gatewayWiring) buildMCPSurface(
 		Audit:                      mcpDelegationAuditor{sink: auditSink, billing: w.billingEmitter},
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 		Interceptors:               policyChain,
-		// spec: §8.3 lines 157-188 / §4.8 lines 1036, 1040 / §13.5
+		// spec: §8.3 / §4.8 / §13.5
 		// mitigations 2-3 — lenny/delegate_task and lenny/send_message
 		// resolve the effective contentPolicy.interceptorRef and run only
 		// that named external scanner (and enforce the message-side
 		// maxInputSize) rather than every registered external interceptor.
 		// F-8.2.9 / F-13.5.2.
 		ContentPolicies: delegationSvc,
-		// §4.8 line 1034 / §8.3 SEC-013 — gate lenny/send_message on the
+		// §4.8 / §8.3 SEC-013 — gate lenny/send_message on the
 		// interceptor fail-policy weakening cooldown, mirroring the
 		// delegate_task gate inside the delegation Service. F-4.8.17.
 		CooldownChecker: delegationSvc,
 		PolicyAudit:     policyAuditSink,
 		Events:          w.eventBus,
 		InputWaits:      inputWaits,
-		// spec: §6.2 line 276 — keep a parent blocked in await_children
+		// spec: §6.2 — keep a parent blocked in await_children
 		// non-idle so the §11.3 watchdog does not reap it while it waits
 		// on slow children. F-11.3.7.
-		ActivityStamper:    activityStamper,
-		TreeArchive:        w.treeArchive,
-		TaskUsage:          taskUsageBuilder,
+		ActivityStamper: activityStamper,
+		TreeArchive:     w.treeArchive,
+		TaskUsage:       taskUsageBuilder,
+		// spec: §8.8 (TaskRecord and TaskResult Schema) — resolve
+		// retriesExhausted against the deployer retry caps the session
+		// server's failure path enforces.
+		RetryBudget: sessionSrv,
+		// spec: §7.2 (Interactive Session Model) — the cancel tools open
+		// the session server's terminal claim and run its post-terminal
+		// hook, so an MCP cancel seals, drains, emits the terminal events,
+		// and releases the pod as every other terminal writer does.
+		Terminal: sessionSrv,
+		// spec: §7.2 (Message delivery routing — seven paths, path 6) —
+		// lenny/send_message and lenny/delegate_task take the session
+		// server's delivery lock, deliver held messages, hold a message to a
+		// suspended or recovering target, and resume a suspended one.
+		Delivery:           sessionSrv,
+		PrimaryReadTimeout: *w.f.sessionPrimaryReadTimeout,
 		Interactions:       w.interactions,
 		Memory:             w.memories,
 		ElicitationMetrics: gwMetrics,
-		// spec: §16.1 lines 60–63; §16.5 line 458. F-9.2.14 — the
+		// spec: §16.1; §16.5. F-9.2.14 — the
 		// §9.2 dispatcher emits admit/terminal lifecycle samples that
 		// drive the ElicitationBacklogHigh alert and the operator
 		// roundtrip / timeout / suppressed dashboards.
 		ElicitationLifecycleMetrics: gwMetrics,
-		// spec: §16.1 line 64; §9.2 line 60 — the §9.2 chain walker
+		// spec: §16.1; §9.2 — the §9.2 chain walker
 		// reports a content-tamper detection through this recorder, which
 		// increments lenny_elicitation_content_tamper_detected_total
 		// {origin_pod, tampering_pod, enforcement_mode}. Without it the
 		// dispatcher's tamper branch is a no-op and the §16.5
 		// ElicitationContentTamperDetected alert can never fire. F-9.2.4.
 		ElicitationTamperMetrics: gwMetrics,
-		// spec: §9.2 lines 58–64 — resolve the per-tenant effective
+		// spec: §9.2 — resolve the per-tenant effective
 		// content-integrity enforcement mode (max of the platform floor
 		// and the tenant stored mode) on the elicitation dispatch path so
 		// an operator's enforce / detect-only / off setting takes effect:
@@ -307,7 +319,7 @@ func (w *gatewayWiring) buildMCPSurface(
 			}
 			return elicitation.ResolveEffectiveWithDefaults(elicitationFloorProvider.Floor(), stored)
 		},
-		// spec: §9.2 / §16.1 / §15.2 line 1335 — Deps.TenantID is the
+		// spec: §9.2 / §16.1 / §15.2 — Deps.TenantID is the
 		// fallback for transports without an authenticated principal
 		// (tests, the dev-headers path). Every production handler
 		// re-resolves the per-request tenant from the auth middleware's
@@ -316,7 +328,11 @@ func (w *gatewayWiring) buildMCPSurface(
 		// chain lookup, the §16.7 audit emission, and the §16.1 tamper
 		// metric to the right tenant. F-9.2.13 / F-15.2.15.
 		TenantID: "default",
-		// spec: §7.2 lines 236-272; §8.3 lines 269-272 — deployment
+		// spec: §10.2 — only a dev-mode gateway lets a tool call with no
+		// principal fall back to TenantID; outside dev mode the call is
+		// refused with UNAUTHORIZED before any tool runs. F-10.2.21.
+		DevTenantFallback: *devMode,
+		// spec: §7.2; §8.3 — deployment
 		// messagingScope (default + ceiling) and the per-session
 		// send_message rate limits. The same cross-replica rate counter
 		// the §11.1 admission limits use backs the per-minute messaging
@@ -335,12 +351,12 @@ func (w *gatewayWiring) buildMCPSurface(
 		// F-7.2.5.
 		Messaging: w.messagingCoord,
 		Clock:     clockinject.Now,
-		// §8.9 line 1003 / §11.7 / §16.1 — same tree-walker cycle
+		// §8.9 / §11.7 / §16.1 — same tree-walker cycle
 		// observer the REST /tree handler uses, so the audit row +
 		// counter fire regardless of which surface walked the tree.
 		// F-8.9.10.
 		TreeCycleObserver: mcpToolsTreeCycleObserver{emitter: treeCycleEmitter{metrics: gwMetrics}},
-		// spec: §26.2 line 119; §4.9 — the in-pod git-credential helper
+		// spec: §26.2; §4.9 — the in-pod git-credential helper
 		// (git-credential-lenny) reaches lenny/vcs_token over the §9.1
 		// platform MCP socket to mint a short-lived VCS token from the
 		// session tenant's credential pool. Reuses the same
@@ -351,7 +367,7 @@ func (w *gatewayWiring) buildMCPSurface(
 		VCSLeaseAuditor: mcpVCSLeaseAuditor{appender: auditAppender, billing: w.billingEmitter},
 	})
 
-	// spec: §15.2 lines 1331-1333 — wire the Streamable HTTP SSE channel
+	// spec: §15.2 — wire the Streamable HTTP SSE channel
 	// into the MCP transport so an attach_session tools/call sent with
 	// Accept: text/event-stream is upgraded to the per-session event
 	// stream (sourced from the same §15.1 event bus the REST
@@ -393,4 +409,15 @@ func (w *gatewayWiring) buildMCPSurface(
 	w.revCache = revCache
 	w.deadlockTracker = deadlockTracker
 	w.deadlockManager = deadlockManager
+}
+
+// delegationSessionObjects returns the blob store as the delegation
+// service's session-object deleter when it can delete by session, and nil
+// otherwise, the same assertion buildSessionScopedErasers makes.
+// spec: §12.8 (Lifecycle fence and drain).
+func delegationSessionObjects(blobs blobstore.Store) delegation.SessionObjectDeleter {
+	if d, ok := blobs.(sessionArtifactDeleter); ok {
+		return d
+	}
+	return nil
 }

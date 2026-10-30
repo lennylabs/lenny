@@ -100,7 +100,7 @@ type ValidateReport struct {
 //
 // It returns one of the Validate* codes.
 //
-// spec: §24.18 line 231 (declared-vs-observed reconciliation); §15.4.6
+// spec: §24.18; §15.4.6
 // (conformance categories and the observed-level algorithm).
 func Validate(opts ValidateOptions, stdout, stderr io.Writer) int {
 	path := opts.Path
@@ -182,7 +182,7 @@ func Validate(opts ValidateOptions, stdout, stderr io.Writer) int {
 		case errors.Is(perr, compliance.ErrHarnessNotFound):
 			fmt.Fprintln(stdout,
 				"Observed integration level: not probed — the lenny-compliance harness "+
-					"was not found on PATH. Install it (TESTING.md) to run the §15.4.6 "+
+					"was not found on PATH. Install it to run the §15.4.6 "+
 					"reconciliation.")
 		case perr != nil:
 			findings = append(findings, "observed-level probe failed: "+perr.Error())

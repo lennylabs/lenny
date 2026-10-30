@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §10.1 lines 165-166, 393. Migration 0148 creates the
+// spec: §10.1. Migration 0148 creates the
 // session_checkpoint_meta table the gateway writes after receiving a
 // CheckpointBarrierAck during graceful drain. The row persists the
 // barrier_id, the checkpoint_ref the barrier flush produced, and the

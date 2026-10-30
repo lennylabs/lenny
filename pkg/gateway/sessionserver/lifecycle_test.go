@@ -18,15 +18,16 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
-// spec: §7.1 line 77 (default retention on create), §7.2 line 137
+// spec: §7.1, §7.2
 // (status_change on transitions).
 
 func TestCreateStampsDefaultRetention_spec_7_1_5(t *testing.T) {
 	store := memstore.New()
 	created := time.Date(2026, 5, 26, 0, 0, 0, 0, time.UTC)
 	srv := sessionserver.New(store, sessionserver.Options{
-		Clock:  func() time.Time { return created },
-		IDFunc: func() string { return "sess_ret" },
+		DevTenantHeader: true,
+		Clock:           func() time.Time { return created },
+		IDFunc:          func() string { return "sess_ret" },
 	})
 
 	buf, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
@@ -56,7 +57,7 @@ func TestInterruptEmitsStatusChangeSuspended_spec_7_2_2(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	bus := sessionevents.NewBus(64)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_i/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")

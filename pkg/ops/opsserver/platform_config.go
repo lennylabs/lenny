@@ -15,7 +15,7 @@ import (
 // nil service leaves them unmapped (404), the cold-start posture for a
 // deployment without a gateway config client.
 //
-// spec: §25.8 Config Diff and Config Apply (lines 3566-3574).
+// spec: §25.8 Config Diff and Config Apply.
 func (s *Server) registerPlatformConfigRoutes() {
 	if s.platformConfig == nil {
 		return
@@ -70,7 +70,7 @@ func (s *Server) handleConfigApply(w http.ResponseWriter, r *http.Request) {
 		s.writeConfigError(w, err)
 		return
 	}
-	// §25.8 line 3574: a confirmed apply that needs a gateway restart
+	// §25.8: a confirmed apply that needs a gateway restart
 	// returns 422 CONFIG_RESTART_REQUIRED — the change is applied but takes
 	// effect only after restart. The dry-run never returns the code.
 	if res.Applied && res.RestartRequired {
@@ -92,7 +92,7 @@ func (s *Server) configUnavailable(w http.ResponseWriter) {
 // writeConfigError classifies a configservice error into the §25.8
 // canonical envelope. A schema-validation failure maps to 422
 // CONFIG_VALIDATION_FAILED with details.errors; a gateway-unavailable
-// failure maps to 503 TRANSIENT (§25.8 line 3610 degradation).
+// failure maps to 503 TRANSIENT (§25.8 degradation).
 func (s *Server) writeConfigError(w http.ResponseWriter, err error) {
 	var invalid *configservice.ValidationFailed
 	switch {

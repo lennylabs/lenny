@@ -31,7 +31,7 @@ func hasMount(c corev1.Container, name string) (corev1.VolumeMount, bool) {
 	return corev1.VolumeMount{}, false
 }
 
-// TestBuildMountsProjectedSAToken_spec_6_1 verifies the §6.1 line 14 /
+// TestBuildMountsProjectedSAToken_spec_6_1 verifies the §6.1 /
 // §10.3 projected service-account token: an audience-bound, 900s-TTL token
 // mounted read-only on the adapter container (the sidecar model's
 // gateway-facing process), with the default token automount disabled.
@@ -112,7 +112,7 @@ func TestBuildOmitsSATokenWithoutAudience_spec_10_3(t *testing.T) {
 	}
 }
 
-// TestBuildDeclaresReadinessGate_spec_6_1 verifies the §6.1 line 18 pod
+// TestBuildDeclaresReadinessGate_spec_6_1 verifies the §6.1 pod
 // readiness gate is declared so the WarmPoolController gates claimability.
 func TestBuildDeclaresReadinessGate_spec_6_1(t *testing.T) {
 	for _, model := range []string{"", "embedded"} {
@@ -129,7 +129,7 @@ func TestBuildDeclaresReadinessGate_spec_6_1(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("model=%q: pod is missing the %q readiness gate (§6.1 line 18)", model, podspec.ReadinessGateSandboxReady)
+			t.Errorf("model=%q: pod is missing the %q readiness gate (§6.1)", model, podspec.ReadinessGateSandboxReady)
 		}
 	}
 }

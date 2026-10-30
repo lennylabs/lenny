@@ -22,7 +22,7 @@ import (
 // propagated so the admin handler maps it to 503
 // CREDENTIAL_PROBE_UNAVAILABLE and never fails open.
 //
-// spec: §4.9 line 1212.
+// spec: §4.9.
 type tokenServiceSecretProber struct {
 	stub tokensv1.TokenServiceClient
 }

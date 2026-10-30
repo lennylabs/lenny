@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §15.1 lines 826-828 — the platform-managed role assignment for a
+// spec: §15.1 — the platform-managed role assignment for a
 // user within a tenant. Migration 0146 adds the role_assigned presence
 // flag (controlling the §10.2 OIDC override) plus the role_assigned_by /
 // role_assigned_at provenance columns surfaced by GET

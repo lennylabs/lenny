@@ -19,7 +19,7 @@ import (
 
 func ptrInt64(v int64) *int64 { return &v }
 
-// TestCheckTerminationGracePeriods_spec_5_2_516 covers the §5.2 line 516
+// TestCheckTerminationGracePeriods_spec_5_2_516 covers the §5.2
 // node-drain-timeout warning: only pools above 600s warn, the 600s
 // boundary does not, an unset grace period is ignored, and the check is
 // always advisory (never fails the install).

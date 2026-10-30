@@ -33,7 +33,7 @@ func expiredCredLease(leaseID, credID string, expiresAt time.Time) credential.Le
 // deny entry once the store reports no remaining active lease, realizing
 // the "expire when the credential's natural lease TTL lapses" promise.
 //
-// spec: §4.9 line 1671.
+// spec: §4.9.
 func TestExpiredLeaseSweepExpiresDenyEntryWhenLastLeaseLapses(t *testing.T) {
 	now := time.Now()
 	leases := credleasestore.New()
@@ -64,7 +64,7 @@ func TestExpiredLeaseSweepExpiresDenyEntryWhenLastLeaseLapses(t *testing.T) {
 // while any active lease still resolves against it, so the proxy keeps
 // rejecting it with CREDENTIAL_REVOKED until the lease lapses.
 //
-// spec: §4.9 line 1671.
+// spec: §4.9.
 func TestExpiredLeaseSweepRetainsDenyEntryWhileLeaseResolves(t *testing.T) {
 	now := time.Now()
 	leases := credleasestore.New()
@@ -97,7 +97,7 @@ func TestExpiredLeaseSweepRetainsDenyEntryWhileLeaseResolves(t *testing.T) {
 // A removal set derived from the deleted rows would leave the peer's
 // entry in place until restart, which is defect (C)'s unbounded growth.
 //
-// spec: §4.9 line 1671.
+// spec: §4.9.
 func TestExpiredLeaseSweepBoundsNonWinningPeerReplica(t *testing.T) {
 	now := time.Now()
 	shared := credleasestore.New()
@@ -154,7 +154,7 @@ func (e errLeaseSweeper) LeasesByCredentialCount(context.Context, credential.Cre
 // CREDENTIAL_REVOKED bypass. A count query that returns (0, nil) would
 // wrongly drop the entry; the error path must not.
 //
-// spec: §4.9 line 1671 (fail closed on the security path).
+// spec: §4.9.
 func TestExpiredLeaseSweepFailsClosedOnStoreError(t *testing.T) {
 	now := time.Now()
 	deny := denylist.New()
@@ -176,7 +176,7 @@ func TestExpiredLeaseSweepFailsClosedOnStoreError(t *testing.T) {
 // TestExpiredLeaseSweepAbortsOnDeleteError asserts a DeleteExpired failure
 // surfaces as an error and leaves the deny list untouched for this tick.
 //
-// spec: §4.9 line 1671.
+// spec: §4.9.
 func TestExpiredLeaseSweepAbortsOnDeleteError(t *testing.T) {
 	now := time.Now()
 	deny := denylist.New()
@@ -217,7 +217,7 @@ func (c *countingSweepMetrics) total() int {
 // records the swept count on metrics, and returns when its context is
 // cancelled.
 //
-// spec: §4.9 line 1671.
+// spec: §4.9.
 func TestCredentialLeaseSweepLoopReclaimsThenStops(t *testing.T) {
 	now := time.Now()
 	leases := credleasestore.New()
@@ -260,7 +260,7 @@ func TestCredentialLeaseSweepLoopReclaimsThenStops(t *testing.T) {
 // error does not stop the loop: it logs and retries the next tick, and the
 // loop still returns cleanly on context cancellation.
 //
-// spec: §4.9 line 1671 (fail closed without aborting the sweep worker).
+// spec: §4.9.
 func TestCredentialLeaseSweepLoopContinuesOnStoreError(t *testing.T) {
 	deny := denylist.New()
 	deny.Revoke(poolCredKey("key-1"))

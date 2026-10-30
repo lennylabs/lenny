@@ -1,0 +1,2 @@
+# spec: §12.5 line 341 tombstone
+# hard-prune interval follows

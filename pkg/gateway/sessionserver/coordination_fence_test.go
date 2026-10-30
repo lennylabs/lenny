@@ -15,21 +15,20 @@ import (
 )
 
 // fenceTestServer builds a sessionserver wired only with the in-memory
-// store so the CAS-fence tests can exercise the §7.2 line 214 (a)
+// store so the CAS-fence tests can exercise the §7.2 (a)
 // snapshot-close bump without any §15.1 precondition gates getting in
 // the way of the seeded states.
 func fenceTestServer(t *testing.T) (*sessionserver.Server, sessionstore.Store) {
 	t.Helper()
 	clock := func() time.Time { return time.Date(2026, 5, 27, 9, 0, 0, 0, time.UTC) }
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{Clock: clock})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Clock: clock})
 	return srv, store
 }
 
 // TestDeleteFromResumingBumpsCoordinationGeneration_spec_7_2_F_7_1_14
-// verifies §7.2 line 197 (resuming → cancelled via DELETE
-// /v1/sessions/{id}) bumps coordination_generation in the same logical
-// write that records the terminal state, per the §7.2 line 214 (a)
+// verifies §7.2 bumps coordination_generation in the same logical
+// write that records the terminal state, per the §7.2 (a)
 // snapshot-close fence. F-7.1.14.
 func TestDeleteFromResumingBumpsCoordinationGeneration_spec_7_2_F_7_1_14(t *testing.T) {
 	srv, store := fenceTestServer(t)
@@ -56,7 +55,7 @@ func TestDeleteFromResumingBumpsCoordinationGeneration_spec_7_2_F_7_1_14(t *test
 		t.Errorf("CoordinationGeneration = %d, want 5 (bumped on resuming → cancelled)", got.CoordinationGeneration)
 	}
 	if got.RecoveryGeneration != 2 {
-		t.Errorf("RecoveryGeneration = %d, want 2 (frozen per §7.2 line 214 (b))", got.RecoveryGeneration)
+		t.Errorf("RecoveryGeneration = %d, want 2 (frozen per §7.2 (b))", got.RecoveryGeneration)
 	}
 }
 
@@ -87,16 +86,16 @@ func TestDeleteFromRunningDoesNotBumpCoordinationGeneration_spec_7_2_F_7_1_14(t 
 	}
 }
 
-// TestReportSessionFailureFromResumingBumpsAndWritesAwaiting_spec_7_3_8
-// drives a §7.3 mid-resume failure report against a session seeded in
-// `resuming`. The §7.3 lines 470-472 collapse rule says the API view
-// is resume_pending → running, but the internal state machine MUST
-// traverse `resuming` so the mid-resume terminal-collapse edges
-// (§7.2 lines 197-198) are reachable. The fence bump verifies the
-// row was actually in `resuming` at the moment of collapse.
+// TestReportSessionFailureFromResumingWritesAwaitingAtG_spec_7_3_8 drives a
+// §7.3 mid-resume failure report against a session in `resuming`, as a resume
+// attempt files it at its entry generation G. The internal state machine
+// traverses `resuming` so the mid-resume edges (§7.2) are reachable: the
+// report observes `resuming` as its source state, writes
+// awaiting_client_action, and leaves coordination_generation at G, because
+// the attempt's entry write advanced it once for the incarnation.
 //
-// spec: §7.3 lines 470-472; §7.2 lines 197-198, 214. F-7.3.8.
-func TestReportSessionFailureFromResumingBumpsAndWritesAwaiting_spec_7_3_8(t *testing.T) {
+// spec: §7.3 (Resume driver); §7.2. F-7.3.8.
+func TestReportSessionFailureFromResumingWritesAwaitingAtG_spec_7_3_8(t *testing.T) {
 	srv, store := fenceTestServer(t)
 	row := sessionstore.Session{
 		ID: "sess-collapse-res", TenantID: "acme", RuntimeRef: "claude-code",
@@ -107,24 +106,25 @@ func TestReportSessionFailureFromResumingBumpsAndWritesAwaiting_spec_7_3_8(t *te
 	}
 	disp, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
 		TenantID: "acme", SessionID: "sess-collapse-res", Reason: "workspace_validation_failed",
+		ExpectedCoordinationGeneration: 14,
 	})
 	if err != nil {
 		t.Fatalf("ReportSessionFailure: %v", err)
 	}
-	if disp.From != session.StateResuming {
-		t.Fatalf("From = %q, want resuming (mid-resume terminal-collapse must observe `resuming` source state)", disp.From)
+	if disp.From != session.StateResuming || disp.To != session.StateAwaitingClientAction {
+		t.Fatalf("disposition = %q -> %q, want resuming -> awaiting_client_action", disp.From, disp.To)
 	}
 	got, err := store.Get(context.Background(), "acme", "sess-collapse-res")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.CoordinationGeneration <= 14 {
-		t.Errorf("CoordinationGeneration = %d, want > 14 (snapshot-close bump must fire)", got.CoordinationGeneration)
+	if got.CoordinationGeneration != 14 {
+		t.Errorf("CoordinationGeneration = %d, want 14 unchanged", got.CoordinationGeneration)
 	}
 }
 
 // TestStoreMonotonicityRejectsCoordinationGenerationDecrease_spec_4_2_F_7_1_14
-// covers the §4.2 line 156 monotonicity floor on CoordinationGeneration.
+// covers the §4.2 monotonicity floor on CoordinationGeneration.
 // Without this floor, a buggy caller could "rewind" the counter and
 // silently re-admit a stale coordinator. F-7.1.14.
 func TestStoreMonotonicityRejectsCoordinationGenerationDecrease_spec_4_2_F_7_1_14(t *testing.T) {

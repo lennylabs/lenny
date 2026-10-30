@@ -52,13 +52,15 @@ const (
 	Adapter_Resume_FullMethodName                      = "/lenny.adapter.v1.Adapter/Resume"
 	Adapter_CoordinatorFence_FullMethodName            = "/lenny.adapter.v1.Adapter/CoordinatorFence"
 	Adapter_CheckpointBarrier_FullMethodName           = "/lenny.adapter.v1.Adapter/CheckpointBarrier"
+	Adapter_SealSession_FullMethodName                 = "/lenny.adapter.v1.Adapter/SealSession"
+	Adapter_UnsealSession_FullMethodName               = "/lenny.adapter.v1.Adapter/UnsealSession"
 	Adapter_ExportPaths_FullMethodName                 = "/lenny.adapter.v1.Adapter/ExportPaths"
 	Adapter_ReportUsage_FullMethodName                 = "/lenny.adapter.v1.Adapter/ReportUsage"
 	Adapter_Shutdown_FullMethodName                    = "/lenny.adapter.v1.Adapter/Shutdown"
 	Adapter_DemoteSDK_FullMethodName                   = "/lenny.adapter.v1.Adapter/DemoteSDK"
 	Adapter_NegotiateVersion_FullMethodName            = "/lenny.adapter.v1.Adapter/NegotiateVersion"
 	Adapter_GetObservedIntegrationLevel_FullMethodName = "/lenny.adapter.v1.Adapter/GetObservedIntegrationLevel"
-	Adapter_LifecycleChannel_FullMethodName            = "/lenny.adapter.v1.Adapter/LifecycleChannel"
+	Adapter_AdapterEvents_FullMethodName               = "/lenny.adapter.v1.Adapter/AdapterEvents"
 )
 
 // AdapterClient is the client API for Adapter service.
@@ -70,19 +72,21 @@ const (
 // session lifecycle, credential delivery, interrupt control, checkpoint
 // orchestration, and usage reporting. Pod → gateway traffic is initiated
 // by the gateway only; the adapter responds to RPCs and emits structured
-// events via a separate streaming RPC (the lifecycle channel).
+// events via a separate streaming RPC (the CH-ADAPTEREVENTS).
 type AdapterClient interface {
-	// PrepareWorkspace accepts streamed upload-file content into the pod's
-	// staging area. It is the first RPC in the §4.7 session assignment
-	// sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
-	// StartSession). Frames sharing an upload_ref are concatenated in
-	// arrival order into one staged file; FinalizeWorkspace then
-	// materializes the uploadFile and uploadArchive plan sources from the
-	// staged content.
+	// PrepareWorkspace accepts streamed upload-file content into the named
+	// session's /workspace/slots/{sessionId}/staging, which is the tree
+	// FinalizeWorkspace promotes from. It is the first RPC in the §4.7
+	// session assignment sequence (PrepareWorkspace, FinalizeWorkspace,
+	// RunSetup, StartSession). Frames sharing an upload_ref are
+	// concatenated in arrival order into one staged file;
+	// FinalizeWorkspace then materializes the uploadFile and uploadArchive
+	// plan sources from the staged content.
 	PrepareWorkspace(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[PrepareWorkspaceRequest, PrepareWorkspaceResponse], error)
 	// FinalizeWorkspace validates the staged workspace content and
-	// materializes the §14 WorkspacePlan into /workspace/current. It is
-	// the second RPC in the §4.7 session assignment sequence
+	// materializes the §14 WorkspacePlan into the named session's
+	// /workspace/slots/{sessionId}/current. It is the second RPC in the
+	// §4.7 session assignment sequence
 	// (PrepareWorkspace, FinalizeWorkspace, RunSetup, StartSession).
 	FinalizeWorkspace(ctx context.Context, in *FinalizeWorkspaceRequest, opts ...grpc.CallOption) (*FinalizeWorkspaceResponse, error)
 	// RunSetup executes the §14 WorkspacePlan setup commands against the
@@ -113,7 +117,7 @@ type AdapterClient interface {
 	// running session (spec §4.7 RPC table: "Connect client stream to running
 	// session"). The gateway streams client-to-agent envelopes in; the adapter
 	// streams the agent's response, tool-call, and status envelopes back.
-	// Envelope payloads are §15.4.1 JSONL frames carried verbatim as JSON
+	// Envelope payloads are §28.5.3 JSONL frames carried verbatim as JSON
 	// bytes, mirroring SendMessage.envelope_json.
 	Attach(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachRequest, AttachResponse], error)
 	// AssignCredentials pushes a per-session credential lease map to the
@@ -131,13 +135,13 @@ type AdapterClient interface {
 	// guard when the Token Service circuit breaker is open and the lease
 	// has not yet expired. Requires no Token Service call: the gateway
 	// supplies the new deadline from the lease record it already holds.
-	// spec: §4.9 line 1470.
+	// spec: §4.9.
 	ExtendCredentialLease(ctx context.Context, in *ExtendCredentialLeaseRequest, opts ...grpc.CallOption) (*ExtendCredentialLeaseResponse, error)
 	// RevokeCredentials removes a credential lease immediately. The agent
 	// receives no chance to drain in-flight requests; emergency revocation.
 	RevokeCredentials(ctx context.Context, in *RevokeCredentialsRequest, opts ...grpc.CallOption) (*RevokeCredentialsResponse, error)
 	// Interrupt asks the agent to pause and (optionally) checkpoint. Two
-	// modes: clean (graceful, with deadline) and hard (SIGTERM/SIGKILL).
+	// modes: clean (graceful, with deadline) and hard (immediate).
 	Interrupt(ctx context.Context, in *InterruptRequest, opts ...grpc.CallOption) (*InterruptResponse, error)
 	// Checkpoint is the gateway-driven bidirectional grant/confirm stream
 	// that exports recoverable session state (§4.7 RPC table, §10.1). The
@@ -155,43 +159,51 @@ type AdapterClient interface {
 	// terminates the stream with a gRPC FailedPrecondition status before any
 	// grant is minted, and carries no CheckpointFailed frame. The adapter
 	// never mints a `checkpoint_id`; the id the gateway
-	// sends in CheckpointStart is authoritative (§10.1 line 130). Used for
+	// sends in CheckpointStart is authoritative (§10.1.7). Used for
 	// eviction, drain, periodic, and pre-scale-down checkpoints — this is
 	// the single upload path for every trigger.
 	Checkpoint(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CheckpointRequest, CheckpointResponse], error)
 	// SignalDeadline warns the running session's runtime that the session is
-	// approaching its §11.3 line 240 deadline so the agent can checkpoint and
+	// approaching its §11.3 deadline so the agent can checkpoint and
 	// the client can wrap up. The gateway watchdog fires it once, five minutes
 	// before `maxSessionAge` expires. The adapter forwards it as a
-	// DEADLINE_APPROACHING frame over the §15.4.6 lifecycle channel; a
-	// Basic/Standard runtime with no lifecycle channel cannot receive advance
-	// notice (§15 line 2141) and the call returns delivered=false rather than
+	// DEADLINE_APPROACHING frame over the §15.4.6 CH-RUNTIMEOPS; a
+	// Basic/Standard runtime with no CH-RUNTIMEOPS cannot receive advance
+	// notice (§15) and the call returns delivered=false rather than
 	// erroring so the watchdog's best-effort warning never fails. One-way: the
 	// adapter does not block on a runtime acknowledgement.
 	SignalDeadline(ctx context.Context, in *SignalDeadlineRequest, opts ...grpc.CallOption) (*SignalDeadlineResponse, error)
 	// Resume restores a session's workspace from a checkpoint on a
 	// replacement pod (§4.7, §7.1). The adapter claims the session,
-	// rebuilds /workspace/current from the named checkpoint, and starts
-	// the runtime — the replacement-pod counterpart of StartSession.
+	// rebuilds /workspace/slots/{sessionId}/current from the named
+	// checkpoint, and starts the runtime — the replacement-pod
+	// counterpart of StartSession.
 	Resume(ctx context.Context, in *ResumeRequest, opts ...grpc.CallOption) (*ResumeResponse, error)
 	// CoordinatorFence announces a new `coordination_generation` to the pod
-	// on coordinator handoff (§4.7 line 632, §10.1). The pod records the new
-	// generation and from this point rejects any RPC carrying an older one.
-	// Deadline: 5 s (hard-coded, §11.3). Includes gap detection: if the
-	// received generation skips one or more values relative to the last
-	// acknowledged fence, the adapter cancels and discards every in-flight
-	// RPC received under the missing generation(s), resets transient
-	// tool-call state, and logs a `coordinator_generation_gap` event before
-	// acknowledging the new generation. The first call on a pod's lifetime
-	// is never treated as a gap regardless of value.
+	// on coordinator handoff (§4.7, §10.1). The pod records the generation
+	// against the session the fence names, and from that point rejects any
+	// RPC carrying a generation older than the one it holds for that
+	// session. A fence for one session does not change the generation the
+	// pod holds for another. Deadline: 5 s (hard-coded, §11.3). Includes
+	// gap detection: if the received generation skips one or more values
+	// relative to that session's last acknowledged fence, the adapter
+	// cancels and discards every in-flight RPC received for that session
+	// under the missing generation(s), resets the transient tool-call state
+	// that session accumulated, and logs a `coordinator_generation_gap`
+	// event before acknowledging the new generation. The first fence for
+	// that session within its current binding on this pod is never treated
+	// as a gap regardless of value.
 	CoordinatorFence(ctx context.Context, in *CoordinatorFenceRequest, opts ...grpc.CallOption) (*CoordinatorFenceResponse, error)
 	// CheckpointBarrier dispatches a barrier signal during gateway graceful
-	// drain (§4.7 line 631, §10.1). The adapter validates the request's
-	// `coordination_generation` against the last fenced generation, quiesces
-	// tool-call dispatch, and holds the quiesced state open while the
-	// gateway drives the Checkpoint stream against the held pod. The adapter
-	// acknowledges via `CheckpointBarrierAck` on the LifecycleChannel
-	// control stream (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`)
+	// drain (§4.7, §10.1). The adapter validates the request's
+	// `coordination_generation` against the generation the pod holds for
+	// the session the request names; a barrier naming a bound session for
+	// which the pod holds no fenced generation is accepted and records no
+	// value. The adapter then quiesces tool-call dispatch and holds the
+	// quiesced state open while the gateway drives the Checkpoint stream
+	// against the held pod. The adapter
+	// acknowledges via `CheckpointBarrierAck` on the AdapterEvents
+	// control stream (§4.7 — fields: `barrier_id`, `checkpoint_ref`)
 	// only after that gateway-driven stream terminates, then releases
 	// quiescence. The RPC return value mirrors the ack so a synchronous
 	// caller has the same information; the control-stream emit is the
@@ -201,20 +213,39 @@ type AdapterClient interface {
 	// wall-clock deadline `checkpointBarrierAckTimeoutSeconds` is enforced by
 	// the gateway across all coordinated pods.
 	CheckpointBarrier(ctx context.Context, in *CheckpointBarrierRequest, opts ...grpc.CallOption) (*CheckpointBarrierResponse, error)
-	// ExportPaths packages files from /workspace/current for delegation,
-	// rebased per the export spec (§8.7). The adapter resolves each export
+	// SealSession seals the named session against `message` delivery when
+	// the adapter observed no activity for the session in the idle window
+	// the request names (§4.7.1 **Session seal.**). It refuses a session
+	// whose `session_start` the adapter has not written, and a session whose
+	// runtime output the adapter does not read. It answers not sealed, with
+	// the time since the session's last activity, when activity occurred
+	// within the window or a CH-MCP-PLATFORM or CH-MCP-CONNECTOR call for the
+	// session is in flight, and leaves a seal it placed earlier in place.
+	// While the session is sealed the adapter writes no `message` frame for
+	// it to the runtime. Deadline: 5 s. spec: §4.7.1, §28.5.1.
+	SealSession(ctx context.Context, in *SealSessionRequest, opts ...grpc.CallOption) (*SealSessionResponse, error)
+	// UnsealSession lifts the named session's seal (§4.7.1 **Session
+	// seal.**). Removal of the session's registry entry also ends the seal.
+	// Deadline: 5 s. spec: §4.7.1, §28.5.1.
+	UnsealSession(ctx context.Context, in *UnsealSessionRequest, opts ...grpc.CallOption) (*UnsealSessionResponse, error)
+	// ExportPaths packages files from the named session's
+	// /workspace/slots/{sessionId}/current for delegation, rebased per the
+	// export spec (§8.7). The adapter resolves each export
 	// source glob inside the workspace root, rejects any matched file whose
 	// realpath escapes the workspace via symlink, strips the glob's base
 	// path, and re-roots each file under the export's dest_prefix. The
 	// gateway applies the lease's fileExportLimits and optional content
-	// scanning to the returned set. Spec: §4.7 line 633, §8.7.
+	// scanning to the returned set. Spec: §4.7, §8.7.
 	ExportPaths(ctx context.Context, in *ExportPathsRequest, opts ...grpc.CallOption) (*ExportPathsResponse, error)
 	// ReportUsage returns token-usage and time-usage accounting since the
 	// last call. The gateway uses this for budget enforcement and billing.
 	ReportUsage(ctx context.Context, in *ReportUsageRequest, opts ...grpc.CallOption) (*ReportUsageResponse, error)
-	// Shutdown asks the adapter to terminate the agent and release the pod.
-	// The adapter forwards a JSONL `shutdown` to the agent with the supplied
-	// deadline. Returns when the agent process has exited.
+	// Shutdown ends the named session's use of the pod's runtime process,
+	// which outlives the session on a keep pod and, on a restart pod, ends in
+	// the next whole-pod scrub or when the pod retires (§4.7.10, Runtime
+	// process lifetime), and releases the session's slot. The adapter forwards a JSONL `shutdown` to the agent
+	// with the supplied deadline. Returns without waiting for the runtime
+	// process to exit.
 	Shutdown(ctx context.Context, in *ShutdownRequest, opts ...grpc.CallOption) (*ShutdownResponse, error)
 	// DemoteSDK is required for runtimes that declare
 	// `capabilities.preConnect: true`. The gateway calls DemoteSDK when an
@@ -231,19 +262,22 @@ type AdapterClient interface {
 	NegotiateVersion(ctx context.Context, in *NegotiateVersionRequest, opts ...grpc.CallOption) (*NegotiateVersionResponse, error)
 	// GetObservedIntegrationLevel reports the §5.1 / §15.4.3 integration
 	// level the adapter observed the runtime actually implement, derived
-	// from whether the runtime completed the §4.7
+	// from whether the runtime completed the §28.5.3 CH-RUNTIMEOPS
 	// lifecycle_capabilities/lifecycle_support exchange (full) and whether
-	// it connected to the intra-pod platform MCP server (standard). The
-	// gateway calls it once per runtime on the first session assignment to
-	// compare the observed level against the runtime's declared
-	// integrationLevel and reject an underperforming runtime
-	// (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
+	// it connected to the §28.5.3 CH-MCP-PLATFORM intra-pod platform MCP
+	// server (standard). The gateway calls it once per runtime on the
+	// first session assignment to compare the observed level against the
+	// runtime's declared integrationLevel and reject an underperforming
+	// runtime (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
 	GetObservedIntegrationLevel(ctx context.Context, in *GetObservedIntegrationLevelRequest, opts ...grpc.CallOption) (*GetObservedIntegrationLevelResponse, error)
-	// LifecycleChannel is a bidirectional stream the adapter uses to surface
-	// Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
-	// credentials_acknowledged, deadline_approaching). See spec §15.4 for
-	// the event taxonomy.
-	LifecycleChannel(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[LifecycleChannelRequest, LifecycleChannelResponse], error)
+	// AdapterEvents is the bidirectional stream over which the adapter
+	// surfaces operational events to the gateway: RATE_LIMITED,
+	// AUTH_EXPIRED, PROVIDER_UNAVAILABLE, LEASE_REJECTED,
+	// AdapterTerminating, FINAL_USAGE_REPORT, and CheckpointBarrierAck.
+	// The gateway opens the stream and the adapter originates the
+	// messages. The event taxonomy is the adapter→gateway events table in
+	// spec/04_system-components.md (§4.7.3).
+	AdapterEvents(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AdapterEventsRequest, AdapterEventsResponse], error)
 }
 
 type adapterClient struct {
@@ -433,6 +467,26 @@ func (c *adapterClient) CheckpointBarrier(ctx context.Context, in *CheckpointBar
 	return out, nil
 }
 
+func (c *adapterClient) SealSession(ctx context.Context, in *SealSessionRequest, opts ...grpc.CallOption) (*SealSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SealSessionResponse)
+	err := c.cc.Invoke(ctx, Adapter_SealSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adapterClient) UnsealSession(ctx context.Context, in *UnsealSessionRequest, opts ...grpc.CallOption) (*UnsealSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UnsealSessionResponse)
+	err := c.cc.Invoke(ctx, Adapter_UnsealSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *adapterClient) ExportPaths(ctx context.Context, in *ExportPathsRequest, opts ...grpc.CallOption) (*ExportPathsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ExportPathsResponse)
@@ -493,18 +547,18 @@ func (c *adapterClient) GetObservedIntegrationLevel(ctx context.Context, in *Get
 	return out, nil
 }
 
-func (c *adapterClient) LifecycleChannel(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[LifecycleChannelRequest, LifecycleChannelResponse], error) {
+func (c *adapterClient) AdapterEvents(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AdapterEventsRequest, AdapterEventsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[3], Adapter_LifecycleChannel_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[3], Adapter_AdapterEvents_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[LifecycleChannelRequest, LifecycleChannelResponse]{ClientStream: stream}
+	x := &grpc.GenericClientStream[AdapterEventsRequest, AdapterEventsResponse]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Adapter_LifecycleChannelClient = grpc.BidiStreamingClient[LifecycleChannelRequest, LifecycleChannelResponse]
+type Adapter_AdapterEventsClient = grpc.BidiStreamingClient[AdapterEventsRequest, AdapterEventsResponse]
 
 // AdapterServer is the server API for Adapter service.
 // All implementations should embed UnimplementedAdapterServer
@@ -515,19 +569,21 @@ type Adapter_LifecycleChannelClient = grpc.BidiStreamingClient[LifecycleChannelR
 // session lifecycle, credential delivery, interrupt control, checkpoint
 // orchestration, and usage reporting. Pod → gateway traffic is initiated
 // by the gateway only; the adapter responds to RPCs and emits structured
-// events via a separate streaming RPC (the lifecycle channel).
+// events via a separate streaming RPC (the CH-ADAPTEREVENTS).
 type AdapterServer interface {
-	// PrepareWorkspace accepts streamed upload-file content into the pod's
-	// staging area. It is the first RPC in the §4.7 session assignment
-	// sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
-	// StartSession). Frames sharing an upload_ref are concatenated in
-	// arrival order into one staged file; FinalizeWorkspace then
-	// materializes the uploadFile and uploadArchive plan sources from the
-	// staged content.
+	// PrepareWorkspace accepts streamed upload-file content into the named
+	// session's /workspace/slots/{sessionId}/staging, which is the tree
+	// FinalizeWorkspace promotes from. It is the first RPC in the §4.7
+	// session assignment sequence (PrepareWorkspace, FinalizeWorkspace,
+	// RunSetup, StartSession). Frames sharing an upload_ref are
+	// concatenated in arrival order into one staged file;
+	// FinalizeWorkspace then materializes the uploadFile and uploadArchive
+	// plan sources from the staged content.
 	PrepareWorkspace(grpc.ClientStreamingServer[PrepareWorkspaceRequest, PrepareWorkspaceResponse]) error
 	// FinalizeWorkspace validates the staged workspace content and
-	// materializes the §14 WorkspacePlan into /workspace/current. It is
-	// the second RPC in the §4.7 session assignment sequence
+	// materializes the §14 WorkspacePlan into the named session's
+	// /workspace/slots/{sessionId}/current. It is the second RPC in the
+	// §4.7 session assignment sequence
 	// (PrepareWorkspace, FinalizeWorkspace, RunSetup, StartSession).
 	FinalizeWorkspace(context.Context, *FinalizeWorkspaceRequest) (*FinalizeWorkspaceResponse, error)
 	// RunSetup executes the §14 WorkspacePlan setup commands against the
@@ -558,7 +614,7 @@ type AdapterServer interface {
 	// running session (spec §4.7 RPC table: "Connect client stream to running
 	// session"). The gateway streams client-to-agent envelopes in; the adapter
 	// streams the agent's response, tool-call, and status envelopes back.
-	// Envelope payloads are §15.4.1 JSONL frames carried verbatim as JSON
+	// Envelope payloads are §28.5.3 JSONL frames carried verbatim as JSON
 	// bytes, mirroring SendMessage.envelope_json.
 	Attach(grpc.BidiStreamingServer[AttachRequest, AttachResponse]) error
 	// AssignCredentials pushes a per-session credential lease map to the
@@ -576,13 +632,13 @@ type AdapterServer interface {
 	// guard when the Token Service circuit breaker is open and the lease
 	// has not yet expired. Requires no Token Service call: the gateway
 	// supplies the new deadline from the lease record it already holds.
-	// spec: §4.9 line 1470.
+	// spec: §4.9.
 	ExtendCredentialLease(context.Context, *ExtendCredentialLeaseRequest) (*ExtendCredentialLeaseResponse, error)
 	// RevokeCredentials removes a credential lease immediately. The agent
 	// receives no chance to drain in-flight requests; emergency revocation.
 	RevokeCredentials(context.Context, *RevokeCredentialsRequest) (*RevokeCredentialsResponse, error)
 	// Interrupt asks the agent to pause and (optionally) checkpoint. Two
-	// modes: clean (graceful, with deadline) and hard (SIGTERM/SIGKILL).
+	// modes: clean (graceful, with deadline) and hard (immediate).
 	Interrupt(context.Context, *InterruptRequest) (*InterruptResponse, error)
 	// Checkpoint is the gateway-driven bidirectional grant/confirm stream
 	// that exports recoverable session state (§4.7 RPC table, §10.1). The
@@ -600,43 +656,51 @@ type AdapterServer interface {
 	// terminates the stream with a gRPC FailedPrecondition status before any
 	// grant is minted, and carries no CheckpointFailed frame. The adapter
 	// never mints a `checkpoint_id`; the id the gateway
-	// sends in CheckpointStart is authoritative (§10.1 line 130). Used for
+	// sends in CheckpointStart is authoritative (§10.1.7). Used for
 	// eviction, drain, periodic, and pre-scale-down checkpoints — this is
 	// the single upload path for every trigger.
 	Checkpoint(grpc.BidiStreamingServer[CheckpointRequest, CheckpointResponse]) error
 	// SignalDeadline warns the running session's runtime that the session is
-	// approaching its §11.3 line 240 deadline so the agent can checkpoint and
+	// approaching its §11.3 deadline so the agent can checkpoint and
 	// the client can wrap up. The gateway watchdog fires it once, five minutes
 	// before `maxSessionAge` expires. The adapter forwards it as a
-	// DEADLINE_APPROACHING frame over the §15.4.6 lifecycle channel; a
-	// Basic/Standard runtime with no lifecycle channel cannot receive advance
-	// notice (§15 line 2141) and the call returns delivered=false rather than
+	// DEADLINE_APPROACHING frame over the §15.4.6 CH-RUNTIMEOPS; a
+	// Basic/Standard runtime with no CH-RUNTIMEOPS cannot receive advance
+	// notice (§15) and the call returns delivered=false rather than
 	// erroring so the watchdog's best-effort warning never fails. One-way: the
 	// adapter does not block on a runtime acknowledgement.
 	SignalDeadline(context.Context, *SignalDeadlineRequest) (*SignalDeadlineResponse, error)
 	// Resume restores a session's workspace from a checkpoint on a
 	// replacement pod (§4.7, §7.1). The adapter claims the session,
-	// rebuilds /workspace/current from the named checkpoint, and starts
-	// the runtime — the replacement-pod counterpart of StartSession.
+	// rebuilds /workspace/slots/{sessionId}/current from the named
+	// checkpoint, and starts the runtime — the replacement-pod
+	// counterpart of StartSession.
 	Resume(context.Context, *ResumeRequest) (*ResumeResponse, error)
 	// CoordinatorFence announces a new `coordination_generation` to the pod
-	// on coordinator handoff (§4.7 line 632, §10.1). The pod records the new
-	// generation and from this point rejects any RPC carrying an older one.
-	// Deadline: 5 s (hard-coded, §11.3). Includes gap detection: if the
-	// received generation skips one or more values relative to the last
-	// acknowledged fence, the adapter cancels and discards every in-flight
-	// RPC received under the missing generation(s), resets transient
-	// tool-call state, and logs a `coordinator_generation_gap` event before
-	// acknowledging the new generation. The first call on a pod's lifetime
-	// is never treated as a gap regardless of value.
+	// on coordinator handoff (§4.7, §10.1). The pod records the generation
+	// against the session the fence names, and from that point rejects any
+	// RPC carrying a generation older than the one it holds for that
+	// session. A fence for one session does not change the generation the
+	// pod holds for another. Deadline: 5 s (hard-coded, §11.3). Includes
+	// gap detection: if the received generation skips one or more values
+	// relative to that session's last acknowledged fence, the adapter
+	// cancels and discards every in-flight RPC received for that session
+	// under the missing generation(s), resets the transient tool-call state
+	// that session accumulated, and logs a `coordinator_generation_gap`
+	// event before acknowledging the new generation. The first fence for
+	// that session within its current binding on this pod is never treated
+	// as a gap regardless of value.
 	CoordinatorFence(context.Context, *CoordinatorFenceRequest) (*CoordinatorFenceResponse, error)
 	// CheckpointBarrier dispatches a barrier signal during gateway graceful
-	// drain (§4.7 line 631, §10.1). The adapter validates the request's
-	// `coordination_generation` against the last fenced generation, quiesces
-	// tool-call dispatch, and holds the quiesced state open while the
-	// gateway drives the Checkpoint stream against the held pod. The adapter
-	// acknowledges via `CheckpointBarrierAck` on the LifecycleChannel
-	// control stream (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`)
+	// drain (§4.7, §10.1). The adapter validates the request's
+	// `coordination_generation` against the generation the pod holds for
+	// the session the request names; a barrier naming a bound session for
+	// which the pod holds no fenced generation is accepted and records no
+	// value. The adapter then quiesces tool-call dispatch and holds the
+	// quiesced state open while the gateway drives the Checkpoint stream
+	// against the held pod. The adapter
+	// acknowledges via `CheckpointBarrierAck` on the AdapterEvents
+	// control stream (§4.7 — fields: `barrier_id`, `checkpoint_ref`)
 	// only after that gateway-driven stream terminates, then releases
 	// quiescence. The RPC return value mirrors the ack so a synchronous
 	// caller has the same information; the control-stream emit is the
@@ -646,20 +710,39 @@ type AdapterServer interface {
 	// wall-clock deadline `checkpointBarrierAckTimeoutSeconds` is enforced by
 	// the gateway across all coordinated pods.
 	CheckpointBarrier(context.Context, *CheckpointBarrierRequest) (*CheckpointBarrierResponse, error)
-	// ExportPaths packages files from /workspace/current for delegation,
-	// rebased per the export spec (§8.7). The adapter resolves each export
+	// SealSession seals the named session against `message` delivery when
+	// the adapter observed no activity for the session in the idle window
+	// the request names (§4.7.1 **Session seal.**). It refuses a session
+	// whose `session_start` the adapter has not written, and a session whose
+	// runtime output the adapter does not read. It answers not sealed, with
+	// the time since the session's last activity, when activity occurred
+	// within the window or a CH-MCP-PLATFORM or CH-MCP-CONNECTOR call for the
+	// session is in flight, and leaves a seal it placed earlier in place.
+	// While the session is sealed the adapter writes no `message` frame for
+	// it to the runtime. Deadline: 5 s. spec: §4.7.1, §28.5.1.
+	SealSession(context.Context, *SealSessionRequest) (*SealSessionResponse, error)
+	// UnsealSession lifts the named session's seal (§4.7.1 **Session
+	// seal.**). Removal of the session's registry entry also ends the seal.
+	// Deadline: 5 s. spec: §4.7.1, §28.5.1.
+	UnsealSession(context.Context, *UnsealSessionRequest) (*UnsealSessionResponse, error)
+	// ExportPaths packages files from the named session's
+	// /workspace/slots/{sessionId}/current for delegation, rebased per the
+	// export spec (§8.7). The adapter resolves each export
 	// source glob inside the workspace root, rejects any matched file whose
 	// realpath escapes the workspace via symlink, strips the glob's base
 	// path, and re-roots each file under the export's dest_prefix. The
 	// gateway applies the lease's fileExportLimits and optional content
-	// scanning to the returned set. Spec: §4.7 line 633, §8.7.
+	// scanning to the returned set. Spec: §4.7, §8.7.
 	ExportPaths(context.Context, *ExportPathsRequest) (*ExportPathsResponse, error)
 	// ReportUsage returns token-usage and time-usage accounting since the
 	// last call. The gateway uses this for budget enforcement and billing.
 	ReportUsage(context.Context, *ReportUsageRequest) (*ReportUsageResponse, error)
-	// Shutdown asks the adapter to terminate the agent and release the pod.
-	// The adapter forwards a JSONL `shutdown` to the agent with the supplied
-	// deadline. Returns when the agent process has exited.
+	// Shutdown ends the named session's use of the pod's runtime process,
+	// which outlives the session on a keep pod and, on a restart pod, ends in
+	// the next whole-pod scrub or when the pod retires (§4.7.10, Runtime
+	// process lifetime), and releases the session's slot. The adapter forwards a JSONL `shutdown` to the agent
+	// with the supplied deadline. Returns without waiting for the runtime
+	// process to exit.
 	Shutdown(context.Context, *ShutdownRequest) (*ShutdownResponse, error)
 	// DemoteSDK is required for runtimes that declare
 	// `capabilities.preConnect: true`. The gateway calls DemoteSDK when an
@@ -676,19 +759,22 @@ type AdapterServer interface {
 	NegotiateVersion(context.Context, *NegotiateVersionRequest) (*NegotiateVersionResponse, error)
 	// GetObservedIntegrationLevel reports the §5.1 / §15.4.3 integration
 	// level the adapter observed the runtime actually implement, derived
-	// from whether the runtime completed the §4.7
+	// from whether the runtime completed the §28.5.3 CH-RUNTIMEOPS
 	// lifecycle_capabilities/lifecycle_support exchange (full) and whether
-	// it connected to the intra-pod platform MCP server (standard). The
-	// gateway calls it once per runtime on the first session assignment to
-	// compare the observed level against the runtime's declared
-	// integrationLevel and reject an underperforming runtime
-	// (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
+	// it connected to the §28.5.3 CH-MCP-PLATFORM intra-pod platform MCP
+	// server (standard). The gateway calls it once per runtime on the
+	// first session assignment to compare the observed level against the
+	// runtime's declared integrationLevel and reject an underperforming
+	// runtime (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
 	GetObservedIntegrationLevel(context.Context, *GetObservedIntegrationLevelRequest) (*GetObservedIntegrationLevelResponse, error)
-	// LifecycleChannel is a bidirectional stream the adapter uses to surface
-	// Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
-	// credentials_acknowledged, deadline_approaching). See spec §15.4 for
-	// the event taxonomy.
-	LifecycleChannel(grpc.BidiStreamingServer[LifecycleChannelRequest, LifecycleChannelResponse]) error
+	// AdapterEvents is the bidirectional stream over which the adapter
+	// surfaces operational events to the gateway: RATE_LIMITED,
+	// AUTH_EXPIRED, PROVIDER_UNAVAILABLE, LEASE_REJECTED,
+	// AdapterTerminating, FINAL_USAGE_REPORT, and CheckpointBarrierAck.
+	// The gateway opens the stream and the adapter originates the
+	// messages. The event taxonomy is the adapter→gateway events table in
+	// spec/04_system-components.md (§4.7.3).
+	AdapterEvents(grpc.BidiStreamingServer[AdapterEventsRequest, AdapterEventsResponse]) error
 }
 
 // UnimplementedAdapterServer should be embedded to have
@@ -701,74 +787,105 @@ type UnimplementedAdapterServer struct{}
 func (UnimplementedAdapterServer) PrepareWorkspace(grpc.ClientStreamingServer[PrepareWorkspaceRequest, PrepareWorkspaceResponse]) error {
 	return status.Error(codes.Unimplemented, "method PrepareWorkspace not implemented")
 }
+
 func (UnimplementedAdapterServer) FinalizeWorkspace(context.Context, *FinalizeWorkspaceRequest) (*FinalizeWorkspaceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FinalizeWorkspace not implemented")
 }
+
 func (UnimplementedAdapterServer) RunSetup(context.Context, *RunSetupRequest) (*RunSetupResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RunSetup not implemented")
 }
+
 func (UnimplementedAdapterServer) StartSession(context.Context, *StartSessionRequest) (*StartSessionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StartSession not implemented")
 }
+
 func (UnimplementedAdapterServer) ConfigureWorkspace(context.Context, *ConfigureWorkspaceRequest) (*ConfigureWorkspaceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ConfigureWorkspace not implemented")
 }
+
 func (UnimplementedAdapterServer) SendMessage(context.Context, *SendMessageRequest) (*SendMessageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SendMessage not implemented")
 }
+
 func (UnimplementedAdapterServer) Attach(grpc.BidiStreamingServer[AttachRequest, AttachResponse]) error {
 	return status.Error(codes.Unimplemented, "method Attach not implemented")
 }
+
 func (UnimplementedAdapterServer) AssignCredentials(context.Context, *AssignCredentialsRequest) (*AssignCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AssignCredentials not implemented")
 }
+
 func (UnimplementedAdapterServer) RotateCredentials(context.Context, *RotateCredentialsRequest) (*RotateCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RotateCredentials not implemented")
 }
+
 func (UnimplementedAdapterServer) ExtendCredentialLease(context.Context, *ExtendCredentialLeaseRequest) (*ExtendCredentialLeaseResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExtendCredentialLease not implemented")
 }
+
 func (UnimplementedAdapterServer) RevokeCredentials(context.Context, *RevokeCredentialsRequest) (*RevokeCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RevokeCredentials not implemented")
 }
+
 func (UnimplementedAdapterServer) Interrupt(context.Context, *InterruptRequest) (*InterruptResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Interrupt not implemented")
 }
+
 func (UnimplementedAdapterServer) Checkpoint(grpc.BidiStreamingServer[CheckpointRequest, CheckpointResponse]) error {
 	return status.Error(codes.Unimplemented, "method Checkpoint not implemented")
 }
+
 func (UnimplementedAdapterServer) SignalDeadline(context.Context, *SignalDeadlineRequest) (*SignalDeadlineResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SignalDeadline not implemented")
 }
+
 func (UnimplementedAdapterServer) Resume(context.Context, *ResumeRequest) (*ResumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Resume not implemented")
 }
+
 func (UnimplementedAdapterServer) CoordinatorFence(context.Context, *CoordinatorFenceRequest) (*CoordinatorFenceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CoordinatorFence not implemented")
 }
+
 func (UnimplementedAdapterServer) CheckpointBarrier(context.Context, *CheckpointBarrierRequest) (*CheckpointBarrierResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CheckpointBarrier not implemented")
 }
+
+func (UnimplementedAdapterServer) SealSession(context.Context, *SealSessionRequest) (*SealSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SealSession not implemented")
+}
+
+func (UnimplementedAdapterServer) UnsealSession(context.Context, *UnsealSessionRequest) (*UnsealSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UnsealSession not implemented")
+}
+
 func (UnimplementedAdapterServer) ExportPaths(context.Context, *ExportPathsRequest) (*ExportPathsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExportPaths not implemented")
 }
+
 func (UnimplementedAdapterServer) ReportUsage(context.Context, *ReportUsageRequest) (*ReportUsageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportUsage not implemented")
 }
+
 func (UnimplementedAdapterServer) Shutdown(context.Context, *ShutdownRequest) (*ShutdownResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Shutdown not implemented")
 }
+
 func (UnimplementedAdapterServer) DemoteSDK(context.Context, *DemoteSDKRequest) (*DemoteSDKResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DemoteSDK not implemented")
 }
+
 func (UnimplementedAdapterServer) NegotiateVersion(context.Context, *NegotiateVersionRequest) (*NegotiateVersionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method NegotiateVersion not implemented")
 }
+
 func (UnimplementedAdapterServer) GetObservedIntegrationLevel(context.Context, *GetObservedIntegrationLevelRequest) (*GetObservedIntegrationLevelResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetObservedIntegrationLevel not implemented")
 }
-func (UnimplementedAdapterServer) LifecycleChannel(grpc.BidiStreamingServer[LifecycleChannelRequest, LifecycleChannelResponse]) error {
-	return status.Error(codes.Unimplemented, "method LifecycleChannel not implemented")
+
+func (UnimplementedAdapterServer) AdapterEvents(grpc.BidiStreamingServer[AdapterEventsRequest, AdapterEventsResponse]) error {
+	return status.Error(codes.Unimplemented, "method AdapterEvents not implemented")
 }
 func (UnimplementedAdapterServer) testEmbeddedByValue() {}
 
@@ -1063,6 +1180,42 @@ func _Adapter_CheckpointBarrier_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Adapter_SealSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SealSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdapterServer).SealSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Adapter_SealSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdapterServer).SealSession(ctx, req.(*SealSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Adapter_UnsealSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnsealSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdapterServer).UnsealSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Adapter_UnsealSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdapterServer).UnsealSession(ctx, req.(*UnsealSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Adapter_ExportPaths_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ExportPathsRequest)
 	if err := dec(in); err != nil {
@@ -1171,12 +1324,12 @@ func _Adapter_GetObservedIntegrationLevel_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Adapter_LifecycleChannel_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(AdapterServer).LifecycleChannel(&grpc.GenericServerStream[LifecycleChannelRequest, LifecycleChannelResponse]{ServerStream: stream})
+func _Adapter_AdapterEvents_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(AdapterServer).AdapterEvents(&grpc.GenericServerStream[AdapterEventsRequest, AdapterEventsResponse]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Adapter_LifecycleChannelServer = grpc.BidiStreamingServer[LifecycleChannelRequest, LifecycleChannelResponse]
+type Adapter_AdapterEventsServer = grpc.BidiStreamingServer[AdapterEventsRequest, AdapterEventsResponse]
 
 // Adapter_ServiceDesc is the grpc.ServiceDesc for Adapter service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -1242,6 +1395,14 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Adapter_CheckpointBarrier_Handler,
 		},
 		{
+			MethodName: "SealSession",
+			Handler:    _Adapter_SealSession_Handler,
+		},
+		{
+			MethodName: "UnsealSession",
+			Handler:    _Adapter_UnsealSession_Handler,
+		},
+		{
 			MethodName: "ExportPaths",
 			Handler:    _Adapter_ExportPaths_Handler,
 		},
@@ -1285,8 +1446,8 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 		{
-			StreamName:    "LifecycleChannel",
-			Handler:       _Adapter_LifecycleChannel_Handler,
+			StreamName:    "AdapterEvents",
+			Handler:       _Adapter_AdapterEvents_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},
@@ -1326,12 +1487,11 @@ const (
 // trigger is driven by the gateway LLM Proxy in-process, so no adapter
 // RPC requests it.
 type GatewayControlClient interface {
-	// ListPlatformTools returns the §9.1 platform tool catalog (lines
-	// 14-31: lenny/delegate_task, lenny/await_children, ...) the adapter's
+	// ListPlatformTools returns the §9.1 platform tool catalog the adapter's
 	// intra-pod platform MCP server advertises to a type:agent runtime on
 	// tools/list. The catalog is sourced from the gateway's platform tool
 	// surface so the intra-pod server never duplicates the tool schemas.
-	// spec: §9.1 lines 14-31.
+	// spec: §9.1.
 	ListPlatformTools(ctx context.Context, in *ListPlatformToolsRequest, opts ...grpc.CallOption) (*ListPlatformToolsResponse, error)
 	// CallPlatformTool dispatches one §9.1 platform tool call a type:agent
 	// runtime made against the adapter's intra-pod platform MCP server
@@ -1340,7 +1500,7 @@ type GatewayControlClient interface {
 	// handler the gateway-edge /mcp surface runs, so the intra-pod and
 	// edge surfaces stay in lockstep. The response carries the JSON-encoded
 	// MCP tool result; a tool-level failure is an is_error result rather
-	// than a gRPC error. spec: §9.1 line 14; §4.7 line 942.
+	// than a gRPC error. spec: §9.1; §4.7.
 	CallPlatformTool(ctx context.Context, in *CallPlatformToolRequest, opts ...grpc.CallOption) (*CallPlatformToolResponse, error)
 	// ListSessionConnectors returns the §9.3 connectors a session's
 	// effective delegation policy permits. The adapter opens one intra-pod
@@ -1349,7 +1509,7 @@ type GatewayControlClient interface {
 	// type:agent runtime can reach every external tool its policy admits.
 	// The gateway filters the tenant's connector registry by the calling
 	// session's delegation policy, so a connector the policy denies is
-	// never advertised to the pod. spec: §9.3 line 142.
+	// never advertised to the pod. spec: §9.3.
 	ListSessionConnectors(ctx context.Context, in *ListSessionConnectorsRequest, opts ...grpc.CallOption) (*ListSessionConnectorsResponse, error)
 	// ListConnectorTools returns the tool catalog a single §9.3 connector
 	// exposes, for the adapter's intra-pod per-connector MCP server to
@@ -1357,7 +1517,7 @@ type GatewayControlClient interface {
 	// external endpoint (the connector's mcpServerUrl), using the
 	// gateway-held OAuth credential — the credential never transits the
 	// pod. A connector the calling session's policy denies is rejected.
-	// spec: §9.3 lines 142-164.
+	// spec: §9.3.
 	ListConnectorTools(ctx context.Context, in *ListConnectorToolsRequest, opts ...grpc.CallOption) (*ListConnectorToolsResponse, error)
 	// CallConnectorTool forwards one §9.3 external tool call a type:agent
 	// runtime made against the adapter's intra-pod @lenny-connector-<id>
@@ -1366,14 +1526,12 @@ type GatewayControlClient interface {
 	// tools/call to the external MCP endpoint with the gateway-held
 	// credential. The response carries the JSON-encoded MCP tool result; a
 	// tool-level failure is an is_error result rather than a gRPC error.
-	// spec: §9.3 lines 142-164.
+	// spec: §9.3.
 	CallConnectorTool(ctx context.Context, in *CallConnectorToolRequest, opts ...grpc.CallOption) (*CallConnectorToolResponse, error)
-	// ReportSessionScrub reports the outcome of the per-slot cleanup the
-	// adapter runs on every session release (§5.2), across the
-	// `maxConcurrentSessions > 1` and recycling cases alike. The outcome is
-	// RELEASED when the slot's runtime, credential timers, and per-slot
-	// directory tree were torn down cleanly, or LEAKED when a resource could
-	// not be reclaimed. The gateway resolves the pod from pod_id, increments
+	// ReportSessionScrub reports a per-slot cleanup's outcome for the
+	// cleanups §5.2 states the adapter reports, and for no other release.
+	// RELEASED and LEAKED are the outcomes §5.2 states for the cleanup.
+	// The gateway resolves the pod from pod_id, increments
 	// sessionsServed on its agent_pod_state row, and feeds a LEAKED outcome
 	// into the unhealthy-threshold ledger behind the lenny.dev/drain-request
 	// annotation (§4.6.3). The adapter initiates this RPC; a transport
@@ -1392,7 +1550,7 @@ type GatewayControlClient interface {
 	// reserved otherwise. A missing report is bounded by a gateway-side
 	// timeout (cleanupTimeoutSeconds plus a grace period). The adapter
 	// initiates this RPC; a transport failure is a gRPC status error.
-	// spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model; §3.4 recycle disposition.
+	// spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model; §6.2 recycle disposition.
 	ReportPodScrub(ctx context.Context, in *ReportPodScrubRequest, opts ...grpc.CallOption) (*ReportPodScrubResponse, error)
 }
 
@@ -1496,12 +1654,11 @@ func (c *gatewayControlClient) ReportPodScrub(ctx context.Context, in *ReportPod
 // trigger is driven by the gateway LLM Proxy in-process, so no adapter
 // RPC requests it.
 type GatewayControlServer interface {
-	// ListPlatformTools returns the §9.1 platform tool catalog (lines
-	// 14-31: lenny/delegate_task, lenny/await_children, ...) the adapter's
+	// ListPlatformTools returns the §9.1 platform tool catalog the adapter's
 	// intra-pod platform MCP server advertises to a type:agent runtime on
 	// tools/list. The catalog is sourced from the gateway's platform tool
 	// surface so the intra-pod server never duplicates the tool schemas.
-	// spec: §9.1 lines 14-31.
+	// spec: §9.1.
 	ListPlatformTools(context.Context, *ListPlatformToolsRequest) (*ListPlatformToolsResponse, error)
 	// CallPlatformTool dispatches one §9.1 platform tool call a type:agent
 	// runtime made against the adapter's intra-pod platform MCP server
@@ -1510,7 +1667,7 @@ type GatewayControlServer interface {
 	// handler the gateway-edge /mcp surface runs, so the intra-pod and
 	// edge surfaces stay in lockstep. The response carries the JSON-encoded
 	// MCP tool result; a tool-level failure is an is_error result rather
-	// than a gRPC error. spec: §9.1 line 14; §4.7 line 942.
+	// than a gRPC error. spec: §9.1; §4.7.
 	CallPlatformTool(context.Context, *CallPlatformToolRequest) (*CallPlatformToolResponse, error)
 	// ListSessionConnectors returns the §9.3 connectors a session's
 	// effective delegation policy permits. The adapter opens one intra-pod
@@ -1519,7 +1676,7 @@ type GatewayControlServer interface {
 	// type:agent runtime can reach every external tool its policy admits.
 	// The gateway filters the tenant's connector registry by the calling
 	// session's delegation policy, so a connector the policy denies is
-	// never advertised to the pod. spec: §9.3 line 142.
+	// never advertised to the pod. spec: §9.3.
 	ListSessionConnectors(context.Context, *ListSessionConnectorsRequest) (*ListSessionConnectorsResponse, error)
 	// ListConnectorTools returns the tool catalog a single §9.3 connector
 	// exposes, for the adapter's intra-pod per-connector MCP server to
@@ -1527,7 +1684,7 @@ type GatewayControlServer interface {
 	// external endpoint (the connector's mcpServerUrl), using the
 	// gateway-held OAuth credential — the credential never transits the
 	// pod. A connector the calling session's policy denies is rejected.
-	// spec: §9.3 lines 142-164.
+	// spec: §9.3.
 	ListConnectorTools(context.Context, *ListConnectorToolsRequest) (*ListConnectorToolsResponse, error)
 	// CallConnectorTool forwards one §9.3 external tool call a type:agent
 	// runtime made against the adapter's intra-pod @lenny-connector-<id>
@@ -1536,14 +1693,12 @@ type GatewayControlServer interface {
 	// tools/call to the external MCP endpoint with the gateway-held
 	// credential. The response carries the JSON-encoded MCP tool result; a
 	// tool-level failure is an is_error result rather than a gRPC error.
-	// spec: §9.3 lines 142-164.
+	// spec: §9.3.
 	CallConnectorTool(context.Context, *CallConnectorToolRequest) (*CallConnectorToolResponse, error)
-	// ReportSessionScrub reports the outcome of the per-slot cleanup the
-	// adapter runs on every session release (§5.2), across the
-	// `maxConcurrentSessions > 1` and recycling cases alike. The outcome is
-	// RELEASED when the slot's runtime, credential timers, and per-slot
-	// directory tree were torn down cleanly, or LEAKED when a resource could
-	// not be reclaimed. The gateway resolves the pod from pod_id, increments
+	// ReportSessionScrub reports a per-slot cleanup's outcome for the
+	// cleanups §5.2 states the adapter reports, and for no other release.
+	// RELEASED and LEAKED are the outcomes §5.2 states for the cleanup.
+	// The gateway resolves the pod from pod_id, increments
 	// sessionsServed on its agent_pod_state row, and feeds a LEAKED outcome
 	// into the unhealthy-threshold ledger behind the lenny.dev/drain-request
 	// annotation (§4.6.3). The adapter initiates this RPC; a transport
@@ -1562,7 +1717,7 @@ type GatewayControlServer interface {
 	// reserved otherwise. A missing report is bounded by a gateway-side
 	// timeout (cleanupTimeoutSeconds plus a grace period). The adapter
 	// initiates this RPC; a transport failure is a gRPC status error.
-	// spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model; §3.4 recycle disposition.
+	// spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model; §6.2 recycle disposition.
 	ReportPodScrub(context.Context, *ReportPodScrubRequest) (*ReportPodScrubResponse, error)
 }
 
@@ -1576,21 +1731,27 @@ type UnimplementedGatewayControlServer struct{}
 func (UnimplementedGatewayControlServer) ListPlatformTools(context.Context, *ListPlatformToolsRequest) (*ListPlatformToolsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListPlatformTools not implemented")
 }
+
 func (UnimplementedGatewayControlServer) CallPlatformTool(context.Context, *CallPlatformToolRequest) (*CallPlatformToolResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CallPlatformTool not implemented")
 }
+
 func (UnimplementedGatewayControlServer) ListSessionConnectors(context.Context, *ListSessionConnectorsRequest) (*ListSessionConnectorsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListSessionConnectors not implemented")
 }
+
 func (UnimplementedGatewayControlServer) ListConnectorTools(context.Context, *ListConnectorToolsRequest) (*ListConnectorToolsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListConnectorTools not implemented")
 }
+
 func (UnimplementedGatewayControlServer) CallConnectorTool(context.Context, *CallConnectorToolRequest) (*CallConnectorToolResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CallConnectorTool not implemented")
 }
+
 func (UnimplementedGatewayControlServer) ReportSessionScrub(context.Context, *ReportSessionScrubRequest) (*ReportSessionScrubResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportSessionScrub not implemented")
 }
+
 func (UnimplementedGatewayControlServer) ReportPodScrub(context.Context, *ReportPodScrubRequest) (*ReportPodScrubResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportPodScrub not implemented")
 }

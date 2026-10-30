@@ -11,6 +11,7 @@ package sessiondriver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -67,8 +68,9 @@ func TestCreateAndStartWrapsPoolNotReadyAfterRetries(t *testing.T) {
 	}
 }
 
-// spec: 7.1 line 28 (SESSION_CREATION_FAILED atomic-unit fallback), 15.1
-// line 1138 (Retry-After)
+// spec: 7.1 (Normal Flow, "Atomicity of session creation (steps 2-8)":
+// SESSION_CREATION_FAILED atomic-unit fallback), 15.1 (REST API,
+// Retry-After response header)
 //
 // A freshly-claimed pod whose adapter the gateway cannot yet dial on :50051
 // (the pod's network still settling on a loaded cluster) surfaces as a
@@ -115,7 +117,8 @@ func TestCreateAndStartRetriesTransientSessionCreationFailed(t *testing.T) {
 	}
 }
 
-// spec: 7.1 line 28 (SESSION_CREATION_FAILED), 5.2 (pool-not-ready
+// spec: 7.1 (Normal Flow, "Atomicity of session creation (steps 2-8)":
+// SESSION_CREATION_FAILED), 5.2 (pool-not-ready
 // classification)
 //
 // A SESSION_CREATION_FAILED that never clears within the retry window is not a
@@ -152,7 +155,7 @@ func TestCreateAndStartDoesNotWrapPoolNotReadyOnPersistentSessionCreationFailed(
 	}
 }
 
-// spec: 15.1 line 1138 (Retry-After) — retryAfterBackoff parses the
+// spec: 15.1 (REST API, Retry-After response header) — retryAfterBackoff parses the
 // delta-seconds Retry-After form, caps a large hint at 10s so a server value
 // cannot stall the window past the caller's context, and yields zero for the
 // absent or non-numeric (HTTP-date) forms so the caller keeps its linear
@@ -231,5 +234,39 @@ func TestCreateAndStartDoesNotWrapPoolNotReadyOnOtherFailures(t *testing.T) {
 				t.Errorf("a %s must not wrap ErrPoolNotReady; a live-session test would wrongly skip it", tc.name)
 			}
 		})
+	}
+}
+
+// TestCreateAndStartSendsTheOwnerUserID pins that CreateAndStartWithOptions
+// sends StartOptions.UserID as the body's userId, the owner of the new
+// session row, and omits the field when it is empty. The tier-5 erasure
+// case relies on it: a session started without the owner is not reached by
+// the user's erasure, so its pod claim stays bound and the case cannot
+// exercise the cross-replica release.
+//
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 15.1 (REST API)
+func TestCreateAndStartSendsTheOwnerUserID(t *testing.T) {
+	for _, user := range []string{"alice", ""} {
+		var got map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"sessionId":"s1","state":"running","podAssignment":"p1"}`))
+		}))
+		d := newTestDriver(srv.URL)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, err := d.CreateAndStartWithOptions(ctx, "acme", EchoRuntimeSidecar, StartOptions{UserID: user})
+		cancel()
+		srv.Close()
+		if err != nil {
+			t.Fatalf("create and start as %q: %v", user, err)
+		}
+		v, present := got["userId"]
+		if user == "" && present {
+			t.Fatalf("body carries userId %v for an empty owner", v)
+		}
+		if user != "" && v != user {
+			t.Fatalf("body userId = %v, want %q", v, user)
+		}
 	}
 }

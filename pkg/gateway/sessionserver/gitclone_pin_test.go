@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -41,7 +42,7 @@ const pinSHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
 
 // pinStubResolver is a workspaceplan.RefResolver for the pinning tests.
 // lastCred records the credential the resolver was handed so a test can
-// assert the §14 line 102 credential threading.
+// assert the §14 credential threading.
 type pinStubResolver struct {
 	shas     map[string]string
 	err      error
@@ -97,8 +98,9 @@ func TestCreatePinsGitCloneShaRef(t *testing.T) {
 	// A ref already in commit-SHA form is pinned directly — the resolver
 	// is never consulted.
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc:      func() string { return "sess_pin_sha" },
-		RefResolver: &pinStubResolver{},
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_pin_sha" },
+		RefResolver:     &pinStubResolver{},
 	})
 	h := srv.Handler()
 	rr := createRequest(t, h, sessionserver.CreateSessionRequest{
@@ -114,8 +116,9 @@ func TestCreatePinsGitCloneShaRef(t *testing.T) {
 
 func TestCreatePinsGitCloneBranchRef(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc:      func() string { return "sess_pin_branch" },
-		RefResolver: &pinStubResolver{shas: map[string]string{"main": pinSHA}},
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_pin_branch" },
+		RefResolver:     &pinStubResolver{shas: map[string]string{"main": pinSHA}},
 	})
 	h := srv.Handler()
 	rr := createRequest(t, h, sessionserver.CreateSessionRequest{
@@ -129,16 +132,17 @@ func TestCreatePinsGitCloneBranchRef(t *testing.T) {
 	}
 }
 
-// spec: §14 line 102 — the gateway resolves a private gitClone ref using
+// spec: §14 — the gateway resolves a private gitClone ref using
 // the same credential the clone will, so create-time ref pinning threads
 // the materialized VCS token to the ls-remote resolver.
 func TestCreateThreadsVCSCredentialToResolver(t *testing.T) {
 	stub := &pinStubResolver{shas: map[string]string{"main": pinSHA}}
 	creds := &stubVCSCreds{cred: vcscred.Credential{Username: "x-access-token", Token: "ghs_secret"}}
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc:         func() string { return "sess_vcs_thread" },
-		RefResolver:    stub,
-		VCSCredentials: creds,
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_vcs_thread" },
+		RefResolver:     stub,
+		VCSCredentials:  creds,
 	})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", "main"),
@@ -157,16 +161,17 @@ func TestCreateThreadsVCSCredentialToResolver(t *testing.T) {
 	}
 }
 
-// spec: §14 line 102 — a credential-materialization failure fails the
+// spec: §14 — a credential-materialization failure fails the
 // create as a non-retryable GIT_CLONE_REF_UNRESOLVABLE, not later at
 // clone time.
 func TestCreateVCSCredentialFailureIsUnresolvable(t *testing.T) {
 	stub := &pinStubResolver{shas: map[string]string{"main": pinSHA}}
 	creds := &stubVCSCreds{err: errors.New("pool exhausted")}
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc:         func() string { return "sess_vcs_fail" },
-		RefResolver:    stub,
-		VCSCredentials: creds,
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_vcs_fail" },
+		RefResolver:     stub,
+		VCSCredentials:  creds,
 	})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", "main"),
@@ -184,7 +189,8 @@ func TestCreateVCSCredentialFailureIsUnresolvable(t *testing.T) {
 
 func TestCreateGitCloneTransientResolveError(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc: func() string { return "sess_transient" },
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_transient" },
 		RefResolver: &pinStubResolver{err: &workspaceplan.ResolveError{
 			Reason: workspaceplan.ResolveNetworkError, Err: errors.New("connection reset"),
 		}},
@@ -202,7 +208,8 @@ func TestCreateGitCloneTransientResolveError(t *testing.T) {
 
 func TestCreateGitCloneUnresolvableError(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc: func() string { return "sess_unresolvable" },
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_unresolvable" },
 		RefResolver: &pinStubResolver{err: &workspaceplan.ResolveError{
 			Reason: workspaceplan.ResolveRefNotFound, Err: errors.New("ref not found"),
 		}},
@@ -222,7 +229,8 @@ func TestCreateGitCloneNoResolverStoresVerbatim(t *testing.T) {
 	// With no RefResolver wired the gateway stores the submitted plan
 	// unchanged — a non-SHA gitClone ref is not pinned and not rejected.
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc: func() string { return "sess_noresolver" },
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_noresolver" },
 	})
 	h := srv.Handler()
 	rr := createRequest(t, h, sessionserver.CreateSessionRequest{
@@ -264,6 +272,7 @@ func gitCloneAuthPlanJSON(host, ref string) json.RawMessage {
 
 func TestCreateGitCloneAuthBindsToPool(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_auth_ok" },
 		RefResolver:     &pinStubResolver{},
 		CredentialPools: vcsPoolStore(t, githubPool("github-pool", "github.com")),
@@ -278,6 +287,7 @@ func TestCreateGitCloneAuthBindsToPool(t *testing.T) {
 
 func TestCreateGitCloneAuthUnsupportedHost(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_auth_unsupported" },
 		CredentialPools: vcsPoolStore(t, githubPool("github-pool", "github.com")),
 	})
@@ -294,7 +304,8 @@ func TestCreateGitCloneAuthUnsupportedHost(t *testing.T) {
 
 func TestCreateGitCloneAuthAmbiguousHost(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc: func() string { return "sess_auth_ambiguous" },
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_auth_ambiguous" },
 		CredentialPools: vcsPoolStore(
 			t,
 			githubPool("gh-a", "github.com"),
@@ -316,8 +327,9 @@ func TestCreateGitCloneAuthNoPoolStoreSkipsCheck(t *testing.T) {
 	// With no CredentialPools store wired the §14 auth binding check is
 	// skipped, so a gateway without one is unchanged.
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc:      func() string { return "sess_auth_skip" },
-		RefResolver: &pinStubResolver{},
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_auth_skip" },
+		RefResolver:     &pinStubResolver{},
 	})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", pinSHA),
@@ -331,6 +343,7 @@ func TestCreateGitClonePublicSkipsAuthCheck(t *testing.T) {
 	// A gitClone source with no auth block is public; the binding check
 	// does not apply even when a pool store is wired.
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_public" },
 		RefResolver:     &pinStubResolver{},
 		CredentialPools: vcsPoolStore(t, githubPool("github-pool", "github.com")),
@@ -341,5 +354,120 @@ func TestCreateGitClonePublicSkipsAuthCheck(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status %d, want 201 (a public gitClone needs no auth binding); body %s",
 			rr.Code, rr.Body.String())
+	}
+}
+
+// createPlanlessThenFinalize creates a session without a plan under id and
+// finalizes it with a body carrying plan, returning the finalize response.
+func createPlanlessThenFinalize(t *testing.T, h http.Handler, id string, plan json.RawMessage) *httptest.ResponseRecorder {
+	t.Helper()
+	if rr := createRequest(t, h, sessionserver.CreateSessionRequest{RuntimeRef: "echo"}); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	body, err := json.Marshal(map[string]json.RawMessage{"workspacePlan": plan})
+	if err != nil {
+		t.Fatalf("marshal finalize body: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+id+"/finalize", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+// spec: 14.1 (WorkspacePlan Schema Versioning), 14 (Workspace Plan Schema)
+//
+// A plan bound at finalize pins each gitClone ref when it binds, exactly
+// as a plan bound at creation does: the stored plan of a session created
+// without a plan carries the resolver's commit SHA after finalize.
+func TestFinalizePinsGitCloneBranchRef_spec_14_1(t *testing.T) {
+	const id = "sess_fin_pin"
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader: true,
+		IDFunc:          func() string { return id },
+		RefResolver:     &pinStubResolver{shas: map[string]string{"main": pinSHA}},
+	})
+	h := srv.Handler()
+	if rr := createPlanlessThenFinalize(t, h, id, gitClonePlanJSON("main")); rr.Code != http.StatusOK {
+		t.Fatalf("finalize: status %d, body %s", rr.Code, rr.Body.String())
+	}
+	if got := storedPlanSource(t, h, id)["resolvedCommitSha"]; got != pinSHA {
+		t.Errorf("stored resolvedCommitSha = %v, want %q", got, pinSHA)
+	}
+}
+
+// spec: 14.1 (WorkspacePlan Schema Versioning), 14 (Workspace Plan Schema), 15.1
+//
+// A finalize-bound plan whose gitClone source fails the auth binding or
+// the ref pin is rejected with the create-time code, and the rejection
+// precedes the created → finalizing write: the row stays created and binds
+// no plan. The empty-plan assertion catches an ordering that persists the
+// plan before the resolver rejects it.
+func TestFinalizeGitCloneRejectionBindsNothing_spec_14_1(t *testing.T) {
+	cases := []struct {
+		name       string
+		resolver   workspaceplan.RefResolver
+		pools      bool
+		plan       json.RawMessage
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name: "unresolvable ref",
+			resolver: &pinStubResolver{err: &workspaceplan.ResolveError{
+				Reason: workspaceplan.ResolveRefNotFound, Err: errors.New("ref not found"),
+			}},
+			plan:       gitClonePlanJSON("no-such-ref"),
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "GIT_CLONE_REF_UNRESOLVABLE",
+		},
+		{
+			name: "transient resolve failure",
+			resolver: &pinStubResolver{err: &workspaceplan.ResolveError{
+				Reason: workspaceplan.ResolveNetworkError, Err: errors.New("connection reset"),
+			}},
+			plan:       gitClonePlanJSON("main"),
+			wantStatus: http.StatusServiceUnavailable,
+			wantCode:   "GIT_CLONE_REF_RESOLVE_TRANSIENT",
+		},
+		{
+			name:       "auth host matches no pool",
+			pools:      true,
+			plan:       gitCloneAuthPlanJSON("git.acme.internal", pinSHA),
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "GIT_CLONE_AUTH_UNSUPPORTED_HOST",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			const id = "sess_fin_reject"
+			store := memstore.New()
+			opts := sessionserver.Options{
+				DevTenantHeader: true,
+				IDFunc:          func() string { return id },
+				RefResolver:     tc.resolver,
+			}
+			if tc.pools {
+				opts.CredentialPools = vcsPoolStore(t, githubPool("github-pool", "github.com"))
+			}
+			rr := createPlanlessThenFinalize(t, sessionserver.New(store, opts).Handler(), id, tc.plan)
+			if rr.Code != tc.wantStatus {
+				t.Fatalf("finalize: status %d, want %d; body %s", rr.Code, tc.wantStatus, rr.Body.String())
+			}
+			if body := rr.Body.String(); !strings.Contains(body, tc.wantCode) {
+				t.Errorf("body = %s, want %s", body, tc.wantCode)
+			}
+			row, err := store.Get(context.Background(), "acme", id)
+			if err != nil {
+				t.Fatalf("get: %v", err)
+			}
+			if row.State != session.StateCreated {
+				t.Errorf("state = %q, want created after the rejected finalize", row.State)
+			}
+			if len(row.WorkspacePlan) != 0 {
+				t.Errorf("stored plan = %s, want none after the rejected finalize", row.WorkspacePlan)
+			}
+		})
 	}
 }

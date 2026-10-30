@@ -56,7 +56,7 @@ type renewalProvider struct {
 	provider string
 	// tenantID is the owning tenant the original lease was minted for,
 	// replayed so the replacement carries the same tenant attribution
-	// (spec: §4.9 line 1468 — proxy-extracted usage attribution).
+	// (spec: §4.9 — proxy-extracted usage attribution).
 	tenantID string
 }
 
@@ -85,14 +85,13 @@ type credRenewalWiring struct {
 	// ExpiresAt/RenewBefore here so the proxy's server-side expiry check
 	// honors the extension. Typed as the interface so it can hold the
 	// Postgres-backed pgstore.Store the proxy reads under a durable
-	// deployment. spec: §4.9 line 1470.
+	// deployment. spec: §4.9.
 	leases credleasestore.LeaseStore
 	// terminator force-transitions a session to its §8.8 expired terminal
 	// state. The §4.9 cumulative-extension cap routes a capped lease's
 	// session here with the expired:lease reason rather than into the
 	// Fallback Flow, so a permanently-open breaker tears the session down
-	// without re-minting against the still-open breaker. spec: §4.9 line
-	// 1470.
+	// without re-minting against the still-open breaker. spec: §4.9.
 	terminator sessionbudget.Terminator
 
 	mu sync.Mutex
@@ -143,7 +142,7 @@ func (w *credRenewalWiring) track(worker *credrenewal.Worker, pool, provider str
 // lifetime (ExpiresAt - IssuedAt, i.e. min(leaseTTLSeconds, providerMaxTTL)
 // per spec/04 line 1145) so the §4.9 cumulative-extension cap is
 // TTL-derived rather than falling back to DefaultMaxExtensions.
-// spec: §4.9 line 1470.
+// spec: §4.9.
 func renewalLease(lease credential.Lease) credrenewal.Lease {
 	return credrenewal.Lease{
 		LeaseID:      lease.LeaseID,
@@ -160,25 +159,41 @@ func renewalLease(lease credential.Lease) credrenewal.Lease {
 // pool the original lease was minted from (spec §4.9 Proactive Lease
 // Renewal, step 2), records the replacement's pool binding, and drops
 // the spent lease's binding. It satisfies credrenewal.Renewer.
+//
+// Renewal never re-mints a lease that was released on purpose. Renew mints
+// nothing and returns credrenewal.ErrLeaseReleased when the lease store holds
+// no record of the spent lease (a nil store counts as none) or the spent lease
+// has no pool binding. A failed lookup is an ordinary error the worker
+// retries. After Assign returns, Renew looks the spent lease up again: when it
+// is gone, a release ran while the replacement was minted, so Renew releases
+// the replacement, deletes both leases' pool bindings, and returns the
+// sentinel; when the lookup fails, it releases the replacement, deletes only
+// the replacement's binding, and returns the error. The replacement records
+// the spent lease's coordination generation, so the session's pod release
+// scopes it as it scoped the spent lease.
+//
+// spec: §4.9 (Proactive Lease Renewal), §7.3 (Credential leases on the
+// replacement pod).
 func (w *credRenewalWiring) Renew(_ context.Context, lease credrenewal.Lease) (credrenewal.Lease, error) {
+	spent, recorded, err := w.lookupLease(lease.LeaseID)
+	if err != nil {
+		return credrenewal.Lease{}, err
+	}
 	w.mu.Lock()
-	rp, ok := w.pools[lease.LeaseID]
+	rp, bound := w.pools[lease.LeaseID]
 	w.mu.Unlock()
-	if !ok {
-		// The lease was not registered through track; without its pool
-		// binding the worker cannot re-mint. Returning an error lets the
-		// worker retry and ultimately fall through to fault rotation.
-		return credrenewal.Lease{}, errNoPoolBinding
+	if !recorded || !bound {
+		return credrenewal.Lease{}, credrenewal.ErrLeaseReleased
 	}
 
 	// §4.9 step 2: the renewal worker calls the same path as
 	// AssignCredentials, selecting a credential from the same pool. The
 	// SPIFFE-binding identity is re-derived at proxy-request time from
 	// the lease record, so the renewal mint does not need it here.
-	next, err := w.assign.Assign(rp.pool, lease.SessionID, "", rp.tenantID)
+	next, err := w.assign.Assign(rp.pool, lease.SessionID, "", rp.tenantID, spent.CoordinationGeneration)
 	if err != nil {
 		if errors.Is(err, credassign.ErrTokenServiceUnavailable) {
-			// spec: §4.9 line 1470 — Token Service unavailability guard.
+			// spec: §4.9 — Token Service unavailability guard.
 			// Surface the breaker-open failure as the credrenewal sentinel
 			// so the worker holds and reschedules the still-valid lease
 			// instead of exhausting it into the Fallback Flow. The
@@ -186,6 +201,17 @@ func (w *credRenewalWiring) Renew(_ context.Context, lease credrenewal.Lease) (c
 			return credrenewal.Lease{}, fmt.Errorf("%w: %w", credrenewal.ErrRenewInfraUnavailable, err)
 		}
 		return credrenewal.Lease{}, err
+	}
+
+	if _, still, lerr := w.lookupLease(lease.LeaseID); lerr != nil || !still {
+		w.releaseReplacement(next.LeaseID)
+		if lerr != nil {
+			return credrenewal.Lease{}, lerr
+		}
+		w.mu.Lock()
+		delete(w.pools, lease.LeaseID)
+		w.mu.Unlock()
+		return credrenewal.Lease{}, credrenewal.ErrLeaseReleased
 	}
 
 	w.mu.Lock()
@@ -204,6 +230,27 @@ func (w *credRenewalWiring) Renew(_ context.Context, lease credrenewal.Lease) (c
 		// TTL-derived extension budget rather than DefaultMaxExtensions.
 		LeaseTTL: next.ExpiresAt.Sub(next.IssuedAt),
 	}, nil
+}
+
+// lookupLease reads the lease store's record of leaseID. A nil store holds
+// no record.
+func (w *credRenewalWiring) lookupLease(leaseID string) (credential.Lease, bool, error) {
+	if w.leases == nil {
+		return credential.Lease{}, false, nil
+	}
+	return w.leases.Lookup(leaseID)
+}
+
+// releaseReplacement returns, by identifier, a replacement lease Renew minted
+// and could not hand over, outside w.mu, and drops its pool binding.
+// spec: §4.9 (Proactive Lease Renewal).
+func (w *credRenewalWiring) releaseReplacement(leaseID string) {
+	if err := w.assign.Release(leaseID); err != nil {
+		log.Printf("lenny-gateway: §4.9 proactive renewal: release replacement lease %s: %v", leaseID, err)
+	}
+	w.mu.Lock()
+	delete(w.pools, leaseID)
+	w.mu.Unlock()
 }
 
 // onRenewed pushes a proactively renewed lease to its session's pod via
@@ -254,7 +301,7 @@ func (w *credRenewalWiring) onRenewed(renewed credrenewal.Lease) {
 	// §4.9 rotationTrigger: proactive_renewal. The trigger rides the RPC
 	// so the adapter keeps the unbounded §4.7 in-flight wait (the old
 	// credential is still valid) instead of applying the fault ceiling.
-	// spec: §4.9 line 1413 / §4.7 line 822. F-13.3.10.
+	// spec: §4.9 / §4.7. F-13.3.10.
 	if err := bind.Adapter.RotateCredentials(ctx, renewed.SessionID,
 		map[string]*adapterv1.CredentialLease{provider: wire},
 		credential.TriggerProactiveRenewal); err != nil {
@@ -282,51 +329,57 @@ func (w *credRenewalWiring) onExhausted(lease credrenewal.Lease) {
 
 // onExtend is the §4.9 Token Service unavailability guard's extension
 // hook. It extends a still-valid lease's enforced deadline to
-// newExpiresAt without any Token Service call, dispatching by delivery
-// mode: a direct-mode lease re-arms the adapter expiry timer over the
-// ExtendCredentialLease RPC; a proxy-mode lease's ExpiresAt/RenewBefore
-// is advanced in the gateway lease store the LLM Proxy reads. An error
-// return signals the worker that the enforcement point was unreachable,
-// so it does not advance its own view of the deadline and the lease
-// falls through to the retry and Fallback path. spec: §4.9 line 1470.
+// newExpiresAt without any Token Service call. On both delivery modes it
+// first advances the lease store record's ExpiresAt and RenewBefore through
+// LeaseStore.Advance, which updates an existing record and inserts none; a
+// direct-mode lease then re-arms the adapter expiry timer over the
+// ExtendCredentialLease RPC. A lease with no record, or whose Advance finds no
+// row, was released on purpose, and onExtend returns
+// credrenewal.ErrLeaseReleased so the worker stops tracking it. Any other
+// error signals the worker that the enforcement point was unreachable, so it
+// does not advance its own view of the deadline and the lease falls through to
+// the retry and Fallback path.
+//
+// spec: §4.9 (Proactive Lease Renewal).
 func (w *credRenewalWiring) onExtend(lease credrenewal.Lease, newExpiresAt time.Time) error {
 	if w == nil {
 		return nil
 	}
-	if w.leases == nil {
-		return fmt.Errorf("§4.9 extend: no lease store wired")
+	rec, recorded, err := w.lookupLease(lease.LeaseID)
+	if err != nil {
+		return err
 	}
-	rec, ok := w.leases.GetByID(lease.LeaseID)
-	if !ok {
-		return fmt.Errorf("§4.9 extend: lease %s not in store", lease.LeaseID)
+	if !recorded {
+		return credrenewal.ErrLeaseReleased
 	}
 	// The pre-extension ExpiresAt becomes the new RenewBefore, so the
 	// rescheduled renewal fires one buffer later. This mirrors the worker's
 	// own arithmetic (RenewBefore = old ExpiresAt).
-	newRenewBefore := lease.ExpiresAt
-	switch rec.DeliveryMode {
-	case credential.DeliveryProxy:
-		rec.ExpiresAt = newExpiresAt
-		rec.RenewBefore = newRenewBefore
-		// Both the in-memory Store and the Postgres-backed pgstore.Store
-		// implement Put on the LeaseStore interface, so the advance lands on
-		// whichever backend the proxy reads.
-		return w.leases.Put(rec)
-	default: // direct
-		if w.registry == nil {
-			return fmt.Errorf("§4.9 extend: no pod registry for direct-mode lease %s", lease.LeaseID)
-		}
-		w.mu.Lock()
-		rp := w.pools[lease.LeaseID]
-		w.mu.Unlock()
-		bind, ok := w.registry.Get(lease.SessionID)
-		if !ok || bind.Adapter == nil {
-			return fmt.Errorf("§4.9 extend: no pod binding for session %s", lease.SessionID)
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), credRotateRPCTimeout)
-		defer cancel()
-		return bind.Adapter.ExtendCredentialLease(ctx, lease.SessionID, rp.provider, lease.LeaseID, newExpiresAt)
+	rec.ExpiresAt = newExpiresAt
+	rec.RenewBefore = lease.ExpiresAt
+	advanced, err := w.leases.Advance(rec)
+	if err != nil {
+		return err
 	}
+	if !advanced {
+		return credrenewal.ErrLeaseReleased
+	}
+	if rec.DeliveryMode == credential.DeliveryProxy {
+		return nil
+	}
+	if w.registry == nil {
+		return fmt.Errorf("§4.9 extend: no pod registry for direct-mode lease %s", lease.LeaseID)
+	}
+	w.mu.Lock()
+	rp := w.pools[lease.LeaseID]
+	w.mu.Unlock()
+	bind, ok := w.registry.Get(lease.SessionID)
+	if !ok || bind.Adapter == nil {
+		return fmt.Errorf("§4.9 extend: no pod binding for session %s", lease.SessionID)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), credRotateRPCTimeout)
+	defer cancel()
+	return bind.Adapter.ExtendCredentialLease(ctx, lease.SessionID, rp.provider, lease.LeaseID, newExpiresAt)
 }
 
 // onExtensionCapReached is the §4.9 cumulative-extension-cap terminal
@@ -338,8 +391,7 @@ func (w *credRenewalWiring) onExtend(lease credrenewal.Lease, newExpiresAt time.
 // credential-lease expiry), which the §8.8 MCP adapter surfaces to
 // clients as a failed task carrying the expired:lease error code. It does
 // NOT enter the Fallback Flow: a re-mint against the still-open breaker
-// would re-enter the restart loop the guard prevents. spec: §4.9 line
-// 1470; §8.8 line 869.
+// would re-enter the restart loop the guard prevents. spec: §4.9; §8.8.
 func (w *credRenewalWiring) onExtensionCapReached(lease credrenewal.Lease) {
 	if w == nil || w.terminator == nil {
 		return
@@ -402,7 +454,7 @@ func (w *credRenewalWiring) emitCredentialPoolExhausted(lease credrenewal.Lease,
 	})
 }
 
-// logCredentialExpiryWarning emits the §11.3 line 215 expiry-warning
+// logCredentialExpiryWarning emits the §11.3 expiry-warning
 // log line once per lease when the renewal worker reports the lease has
 // entered its `credentials.expiryWarningLeadSeconds` window. The log is
 // the deployer-facing surface for impending lease expiry — operators
@@ -410,18 +462,8 @@ func (w *credRenewalWiring) emitCredentialPoolExhausted(lease credrenewal.Lease,
 // §4.9 fault-rotation fall-through is consumed. F-11.3.20.
 func logCredentialExpiryWarning(lease credrenewal.Lease) {
 	log.Printf(
-		"lenny-gateway: §11.3 line 215 credential lease %s for session %s (credential %s) expires at %s — expiry warning lead reached",
+		"lenny-gateway: §11.3 credential lease %s for session %s (credential %s) expires at %s — expiry warning lead reached",
 		lease.LeaseID, lease.SessionID, lease.CredentialID,
 		lease.ExpiresAt.UTC().Format(time.RFC3339),
 	)
-}
-
-// errNoPoolBinding reports that a lease handed to Renew was never
-// registered through track, so the worker has no pool to re-mint from.
-var errNoPoolBinding = errNoPoolBindingErr{}
-
-type errNoPoolBindingErr struct{}
-
-func (errNoPoolBindingErr) Error() string {
-	return "credrenewal: lease has no recorded pool binding; cannot re-mint a replacement"
 }

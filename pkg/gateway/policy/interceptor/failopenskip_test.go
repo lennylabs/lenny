@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
-// spec: §11.7 line 70 / line 122 — Chain.Run surfaces a fail-open skip
+// spec: §11.7 — Chain.Run surfaces a fail-open skip
 // on Result.FailOpenSkips so the §8.7 export-scan caller can emit
 // delegation.export_scan_failed_open and the failed_open metric instead
 // of mistaking the admit for a clean ALLOW. F-8.7.9; F-8.7.10.

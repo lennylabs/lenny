@@ -1,4 +1,4 @@
--- §8.2 line 52 / §8.3 line 286 — the gateway automatically attaches the
+-- §8.2 / §8.3 — the gateway automatically attaches the
 -- parent's registered `tracingContext` (map[string]string of opaque
 -- tracing identifiers a runtime registered via lenny/set_tracing_context)
 -- to every delegated child. A pod restart that triggers a session reload
@@ -9,7 +9,7 @@
 ALTER TABLE sessions
     ADD COLUMN IF NOT EXISTS tracing_context JSONB NULL;
 
--- §8.3 line 266 / §8.10 — `cascadeOnFailure` is the lease policy that
+-- §8.3 / §8.10 — `cascadeOnFailure` is the lease policy that
 -- governs the fate of a session's children when the session reaches a
 -- terminal state. The §8.10 default (`cancel_all`) applies when the
 -- session names no value. Persisting it on the sessions row is what lets

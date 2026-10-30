@@ -81,4 +81,4 @@ The probe returns `ok` for every required dimension and `GET /v1/admin/tenants/<
 
 Page security and compliance for any sustained escrow-region misconfiguration. Page platform engineering when the probe fails repeatedly despite valid configuration.
 
-Cross-reference: [§12.8](../../spec/12_storage-architecture.md#128-compliance-interfaces), [§17.5](../../spec/17_deployment-topology.md#175-cloud-deployment-shapes).
+Cross-reference: [§12.8](../../spec/12_storage-architecture.md#128-compliance-interfaces), [§17.5](../../spec/17_deployment-topology.md#175-cloud-portability).

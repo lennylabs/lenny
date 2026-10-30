@@ -2,7 +2,7 @@
 
 //go:build contract
 
-// Tier-3 contract scaffolds for the §11.7 / §12.3.5 OCSF audit-event
+// Tier-3 contract scaffolds for the §11.7 / TESTING.md §12.3.5 OCSF audit-event
 // schema.
 //
 // TestOCSFTranslationCoversEveryEventType, TestOCSFRetranslationRetry,

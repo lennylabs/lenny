@@ -18,10 +18,10 @@ import (
 
 // F-7.4.15: publishWorkspaceWarnings emits one SSE workspace_plan_warning
 // frame per §14 advisory the adapter returned from FinalizeWorkspace.
-// spec: §7.4 line 459.
+// spec: §7.4.
 func TestPublishWorkspaceWarnings_EmitsOnePerWarning_spec_7_4_15(t *testing.T) {
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 
 	result := &podsession.BindResult{
 		TenantID:  "default",
@@ -47,7 +47,7 @@ func TestPublishWorkspaceWarnings_EmitsOnePerWarning_spec_7_4_15(t *testing.T) {
 // F-7.4.15: a nil result or empty warnings is a no-op.
 func TestPublishWorkspaceWarnings_NilSafe_spec_7_4_15(t *testing.T) {
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 
 	srv.publishWorkspaceWarnings(nil)
 	srv.publishWorkspaceWarnings(&podsession.BindResult{TenantID: "default", SessionID: "sess_w"})
@@ -57,13 +57,13 @@ func TestPublishWorkspaceWarnings_NilSafe_spec_7_4_15(t *testing.T) {
 	}
 }
 
-// F-14.1.18: spec §14 line 100 — the strip-components-skip SSE event
+// F-14.1.18: spec §14 — the strip-components-skip SSE event
 // carries `entryPath`, `segmentCount`, and `stripComponents` so a
 // consumer that matches on these structured fields can extract them
 // without parsing the human-readable message.
 func TestPublishWorkspaceWarnings_CarriesStructuredFields_spec_14_100(t *testing.T) {
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 
 	result := &podsession.BindResult{
 		TenantID:  "default",
@@ -96,13 +96,13 @@ func TestPublishWorkspaceWarnings_CarriesStructuredFields_spec_14_100(t *testing
 	}
 }
 
-// F-14.1.9: spec §14 line 338 — the materialization-time
+// F-14.1.9: spec §14 — the materialization-time
 // workspace_plan_path_collision warning is published on the per-session
 // SSE bus with `path`, `winningSourceIndex`, and `losingSourceIndex`
 // structured fields. Other warning codes (empty path) do not leak them.
 func TestPublishWorkspaceWarnings_PathCollisionFields_spec_14_338(t *testing.T) {
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 
 	result := &podsession.BindResult{
 		TenantID:  "default",
@@ -153,12 +153,12 @@ func TestPublishWorkspaceWarnings_PathCollisionFields_spec_14_338(t *testing.T) 
 	}
 }
 
-// F-14.1.17 / F-14.1.18: spec §14 line 334 — the parse-time
+// F-14.1.17 / F-14.1.18: spec §14 — the parse-time
 // unknown-source-type warning is published on the per-session SSE
 // bus with `schemaVersion` and `unknownType` structured fields.
 func TestPublishParsePlanWarnings_UnknownSourceType_spec_14_334(t *testing.T) {
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 
 	sv := 1
 	srv.publishParsePlanWarnings("default", "sess_p", []workspaceplan.Warning{{
@@ -192,13 +192,13 @@ func TestPublishParsePlanWarnings_UnknownSourceType_spec_14_334(t *testing.T) {
 	}
 }
 
-// F-14.1.17 / F-14.1.18: spec §14 line 338 — the parse-time
+// F-14.1.17 / F-14.1.18: spec §14 — the parse-time
 // path-collision warning is published on the per-session SSE bus with
 // `path`, `winningSourceIndex`, and `losingSourceIndex` structured
 // fields.
 func TestPublishParsePlanWarnings_PathCollision_spec_14_338(t *testing.T) {
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 
 	win := 1
 	lose := 0
@@ -235,7 +235,7 @@ func TestPublishParsePlanWarnings_PathCollision_spec_14_338(t *testing.T) {
 // fabricated short-circuit cannot leak an event.
 func TestPublishParsePlanWarnings_NoOpOnEmpty_spec_14(t *testing.T) {
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 
 	srv.publishParsePlanWarnings("default", "sess_e", nil)
 	srv.publishParsePlanWarnings("default", "", []workspaceplan.Warning{{Code: workspaceplan.WarnPathCollision}})
@@ -245,7 +245,7 @@ func TestPublishParsePlanWarnings_NoOpOnEmpty_spec_14(t *testing.T) {
 	}
 }
 
-// F-14.1.17: spec §14 lines 100/334/338 — each warning is also
+// F-14.1.17: spec §14 — each warning is also
 // published on the §16.6 / §25.3 operational-event stream so Ops
 // consoles, audit pipelines, and AI DevOps agents (per §25) see them
 // without subscribing to the per-session SSE feed.
@@ -253,7 +253,7 @@ func TestPublishParsePlanWarnings_EmitsOpsEvent_spec_25_3(t *testing.T) {
 	buf := eventbuffer.NewEventBuffer(0)
 	emitter := eventbuffer.NewEmitter(buf, "test-replica")
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus, OpsEmitter: emitter})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus, OpsEmitter: emitter})
 
 	sv := 1
 	srv.publishParsePlanWarnings("default", "sess_o", []workspaceplan.Warning{{
@@ -296,7 +296,7 @@ func TestPublishWorkspaceWarnings_EmitsOpsEvent_spec_25_3(t *testing.T) {
 	buf := eventbuffer.NewEventBuffer(0)
 	emitter := eventbuffer.NewEmitter(buf, "test-replica")
 	bus := sessionevents.NewBus(0)
-	srv := New(memstore.New(), Options{Events: bus, OpsEmitter: emitter})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus, OpsEmitter: emitter})
 
 	result := &podsession.BindResult{
 		TenantID:  "default",

@@ -42,7 +42,7 @@ func (stubTokenServer) AssignCredentials(context.Context, *tokensv1.AssignCreden
 // spec: §4.3 — "Gateway replicas call the Token Service over mTLS —
 // they cannot directly decrypt stored tokens" and "Each gateway replica
 // has a distinct mTLS identity so compromise of one is attributable and
-// revocable independently." TESTING §12.9.2 requires that plaintext
+// revocable independently." This requires that plaintext
 // connections to the gateway-to-token-service gRPC link are rejected and
 // that the mTLS handshake requires both certificates.
 //

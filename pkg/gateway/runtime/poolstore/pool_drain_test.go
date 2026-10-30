@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 )
 
-// TestPoolPhase verifies the §15.1 line 797 phase derivation: a pool with
+// TestPoolPhase verifies the §15.1 phase derivation: a pool with
 // no DrainingSince is active, one with a set DrainingSince is draining.
 func TestPoolPhase_spec_15_1_797(t *testing.T) {
 	active := poolstore.Pool{Name: "p"}
@@ -23,7 +23,7 @@ func TestPoolPhase_spec_15_1_797(t *testing.T) {
 	}
 }
 
-// TestEstimatedDrainSeconds covers the §15.1 line 797 drain-estimate
+// TestEstimatedDrainSeconds covers the §15.1 drain-estimate
 // formula: the longest active session age, capped at maxSessionAgeSeconds,
 // floored at zero, uncapped when the pool has no lifetime bound.
 func TestEstimatedDrainSeconds_spec_15_1_797(t *testing.T) {
@@ -51,7 +51,7 @@ func TestEstimatedDrainSeconds_spec_15_1_797(t *testing.T) {
 
 // TestDrainingSurvivesStoreRoundTrip verifies the Memory store preserves
 // DrainingSince across an Update mutation (the drain handler sets it via
-// Update). spec: §15.1 line 797.
+// Update). spec: §15.1.
 func TestDrainingSurvivesStoreRoundTrip_spec_15_1_797(t *testing.T) {
 	s := poolstore.NewMemory()
 	ctx := context.Background()

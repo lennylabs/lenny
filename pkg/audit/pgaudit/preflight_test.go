@@ -58,7 +58,7 @@ func (q *fakeQuerier) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row {
 func extensionRow(installed bool) fakeRow { return fakeRow{vals: []any{installed}} }
 func logRow(setting any) fakeRow          { return fakeRow{vals: []any{setting}} }
 
-// spec: §11.7 line 375 — the preflight passes when the extension is
+// spec: §11.7 — the preflight passes when the extension is
 // installed and pgaudit.log carries both ddl and role.
 func TestPreflightPasses_spec_11_7_375(t *testing.T) {
 	for _, setting := range []string{"ddl, role", "role,ddl", "all", "write, ddl, role, misc", "all, -misc"} {
@@ -69,7 +69,7 @@ func TestPreflightPasses_spec_11_7_375(t *testing.T) {
 	}
 }
 
-// spec: §11.7 line 375 — a missing extension fails with
+// spec: §11.7 — a missing extension fails with
 // ErrExtensionNotInstalled (no log read attempted).
 func TestPreflightExtensionMissing_spec_11_7_375(t *testing.T) {
 	q := &fakeQuerier{rows: []fakeRow{extensionRow(false)}}
@@ -78,7 +78,7 @@ func TestPreflightExtensionMissing_spec_11_7_375(t *testing.T) {
 	}
 }
 
-// spec: §11.7 line 375 — pgaudit.log without both ddl and role (including
+// spec: §11.7 — pgaudit.log without both ddl and role (including
 // an unset NULL setting and an `all, -role` subtraction) fails with
 // ErrLogClassesMissing.
 func TestPreflightLogClassesMissing_spec_11_7_375(t *testing.T) {

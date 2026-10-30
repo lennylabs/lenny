@@ -8,9 +8,9 @@ import (
 	"strings"
 )
 
-// §27.9 line 251 — the playground raw-frame inspector "displays redacted
+// §27.9 — the playground raw-frame inspector "displays redacted
 // frames only; the gateway applies the same redaction rules as the audit
-// log (§16.4) before sending frames to the browser." The §16.4 line 376
+// log (§16.4) before sending frames to the browser." The §16.4
 // rule excludes credential-sensitive material from any payload-level
 // surface (logs, gRPC access logs, OTel span attributes). For the MCP
 // WebSocket leg the analogue is a per-frame field scrub: before a
@@ -40,7 +40,7 @@ const frameRedactionMarker = "[REDACTED]"
 // deliberately absent so identifiers like "publicKey"/"keyId" survive)
 // while covering the credential field names MCP tool calls carry.
 //
-// spec: §16.4 line 376 (credential-sensitive exclusion); §27.9 line 251.
+// spec: §16.4; §27.9.
 var frameSensitiveKeyMarkers = []string{
 	"authorization",
 	"secret", // client_secret, secret_key, webhook_secret
@@ -68,7 +68,7 @@ func isSensitiveFrameKey(key string) bool {
 	return false
 }
 
-// redactPlaygroundFrame applies the §27.9 line 251 raw-frame redaction to
+// redactPlaygroundFrame applies the §27.9 raw-frame redaction to
 // one outbound MCP response frame. It parses the frame as JSON, walks it
 // recursively, and replaces every credential-bearing field's value with
 // frameRedactionMarker. Numbers are preserved exactly (UseNumber) so the
@@ -80,7 +80,7 @@ func isSensitiveFrameKey(key string) bool {
 // bytes keeps the inspector functional. Re-marshalling cannot fail for a
 // value that decoded successfully, so the same fallback covers that edge.
 //
-// spec: §27.9 line 251; §16.4 line 376. F-27.9.1.
+// spec: §27.9; §16.4. F-27.9.1.
 func redactPlaygroundFrame(raw []byte) []byte {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()

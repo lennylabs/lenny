@@ -11,10 +11,10 @@ import (
 	"time"
 )
 
-// connectTimeout is the §14 line 111 callback connect timeout.
+// connectTimeout is the §14 callback connect timeout.
 const connectTimeout = 5 * time.Second
 
-// requestTimeout bounds one delivery attempt end to end. §14 line 111
+// requestTimeout bounds one delivery attempt end to end. §14
 // names a 5 s connect and a 10 s response-read timeout; the client
 // Timeout is their sum so a slow receiver cannot pin a worker goroutine.
 const requestTimeout = connectTimeout + 10*time.Second
@@ -27,12 +27,12 @@ func (defaultResolver) LookupNetIP(ctx context.Context, network, host string) ([
 }
 
 // errNoRedirect is returned by the callback client's CheckRedirect:
-// §14 line 111 requires that callback requests never follow redirects,
+// §14 requires that callback requests never follow redirects,
 // so a 3xx is a delivery failure rather than a hop to a new host that
 // would bypass the registration-time SSRF pin.
 var errNoRedirect = errors.New("sessioncallback: callback redirects are not followed")
 
-// pinnedHTTPClient returns the §14 line 110-111 isolated callback HTTP
+// pinnedHTTPClient returns the §14 isolated callback HTTP
 // client: it dials the registration-time pinned IP regardless of how the
 // hostname re-resolves (defeating DNS rebinding), bounds the attempt by
 // the connect and request timeouts, and refuses redirects. The TLS

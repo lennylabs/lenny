@@ -3,7 +3,7 @@
 // Package sessionrecord models the §8.8 TaskRecord and TaskResult
 // envelopes: the durable, protocol-bridging contract for a delegated
 // task. The types here are the canonical Go representation of the §8.8
-// JSON schemas (TaskRecord, TaskResult) and the §15.4.1 MessagePart
+// JSON schemas (TaskRecord, TaskResult) and the §28.5.3 MessagePart
 // content envelope. The gateway projects a TaskRecord on read (from the
 // session row plus its transcript) and writes a TaskResult into the
 // §8.10 tree archive when a child settles; both routes go through these
@@ -17,8 +17,8 @@
 // (row + transcript → Record) and error classification live in the
 // gateway, where the stores and the §15.2.1 classifier are available.
 //
-// spec: §8.8 lines 804-940 (TaskRecord / TaskResult); §15.4.1 lines
-// 1479-1540 (MessagePart).
+// spec: §8.8 (TaskRecord / TaskResult); §15.4 Internal MessagePart
+// Format, with §28.5.3 for the adapter protocol that carries it.
 package sessionrecord
 
 import (
@@ -34,26 +34,26 @@ import (
 // is immutable once a record is created and envelope schema changes are
 // additive-only; ReconcileSchemaVersion enforces the immutability rule
 // on any read-modify-write path.
-// spec: §8.8 lines 806, 825-827; §15.5 item 7.
+// spec: §8.8; §15.5 item 7.
 const SchemaVersion = 1
 
 // Message-entry roles on a §8.8 TaskRecord. The messages array uses
 // caller/agent, distinct from the §7.2 transcript's user/assistant/
 // system roles; the gateway maps transcript roles onto these at
 // projection time.
-// spec: §8.8 lines 810-817.
+// spec: §8.8.
 const (
 	RoleCaller = "caller"
 	RoleAgent  = "agent"
 )
 
-// MessagePart is the §15.4.1 internal content envelope. It carries its
+// MessagePart is the §28.5.3 internal content envelope. It carries its
 // own per-type SchemaVersion, independent of the enclosing TaskRecord
-// envelope version: the two version axes evolve separately per §8.8
-// line 825. v1 producers emit `text` parts; the full canonical type
+// envelope version: the two version axes evolve separately per §8.8. v1 producers emit `text` parts; the full canonical type
 // registry (code, image, diff, file, execution_result, error, ...) is
-// an open string per §15.4.1.
-// spec: §15.4.1 lines 1483-1540.
+// an open string per §28.5.3.
+// spec: §15.4 Internal MessagePart Format, with §28.5.3 for the
+// adapter protocol that carries it.
 type MessagePart struct {
 	SchemaVersion int            `json:"schemaVersion"`
 	ID            string         `json:"id,omitempty"`
@@ -66,11 +66,11 @@ type MessagePart struct {
 	Status        string         `json:"status,omitempty"`
 }
 
-// TextPart builds a §15.4.1 `text` MessagePart carrying inline content.
+// TextPart builds a §28.5.3 `text` MessagePart carrying inline content.
 // It is the projection used when the source is a plain-text transcript
 // entry; a runtime that emits richer parts (image, file ref) populates
 // MessagePart directly.
-// spec: §15.4.1 lines 1530-1531 — `text` guarantees type, inline,
+// spec: §28.5.3 — `text` guarantees type, inline,
 // mimeType (text/plain).
 func TextPart(content string) MessagePart {
 	return MessagePart{
@@ -83,7 +83,7 @@ func TextPart(content string) MessagePart {
 }
 
 // MessageContent is the §15.4 `MessageEnvelope.input` union: a message's
-// inbound content is either a bare string or a §15.4.1 `MessagePart[]`
+// inbound content is either a bare string or a §28.5.3 `MessagePart[]`
 // array. The two forms are one contract — §15.4 binds `MessageEnvelope`
 // identically across the stdin binary protocol, the platform MCP server
 // tools, and every external API, so the REST `/messages` endpoint and the
@@ -102,7 +102,7 @@ func TextPart(content string) MessagePart {
 // spec: §15.4 (MessageEnvelope.input oneOf(string, MessagePart[])),
 // §15.2.1 (REST/MCP parity).
 type MessageContent struct {
-	// parts is the canonical §15.4.1 MessagePart array. A bare-string
+	// parts is the canonical §28.5.3 MessagePart array. A bare-string
 	// input is normalized to a single text part here at unmarshal time.
 	parts []MessagePart
 	// wasString records that the wire input arrived as a bare string, so
@@ -114,12 +114,12 @@ type MessageContent struct {
 // expressed as a JSON Schema fragment: `oneOf(string, MessagePart[])`. It
 // is defined once here so the REST OpenAPI schema and the MCP
 // `lenny/send_message` `inputSchema` express the identical union and the
-// two surfaces cannot drift. The MessagePart branch lists the §15.4.1
-// part fields; `type` is the only required field per the §15.4.1 part
+// two surfaces cannot drift. The MessagePart branch lists the §28.5.3
+// part fields; `type` is the only required field per the §28.5.3 part
 // contract. A `oneOf` is valid in an MCP tool input schema, so the union
 // is MCP-compliant. spec: §15.4 (MessageEnvelope.input), §15.2.1 (REST/MCP
 // parity).
-const MessageContentJSONSchema = `{"oneOf":[{"type":"string","description":"§15.4 bare-string shorthand: sugar for a single text MessagePart."},{"type":"array","description":"§15.4.1 MessagePart[] structured content.","items":{"type":"object","required":["type"],"properties":{"type":{"type":"string"},"mimeType":{"type":"string"},"inline":{"type":"string"},"ref":{"type":"string"},"schemaVersion":{"type":"integer"},"annotations":{"type":"object"}}}}]}`
+const MessageContentJSONSchema = `{"oneOf":[{"type":"string","description":"§15.4 bare-string shorthand: sugar for a single text MessagePart."},{"type":"array","description":"§28.5.3 MessagePart[] structured content.","items":{"type":"object","required":["type"],"properties":{"type":{"type":"string"},"mimeType":{"type":"string"},"inline":{"type":"string"},"ref":{"type":"string"},"schemaVersion":{"type":"integer"},"annotations":{"type":"object"}}}}]}`
 
 // MessageContentFromText builds a MessageContent carrying a single text
 // part from a plain string. It is the constructor the REST and MCP send
@@ -131,13 +131,13 @@ func MessageContentFromText(s string) MessageContent {
 }
 
 // MessageContentFromParts builds a MessageContent from an explicit
-// §15.4.1 MessagePart array.
+// §28.5.3 MessagePart array.
 // spec: §15.4 (MessageEnvelope.input MessagePart[]).
 func MessageContentFromParts(parts []MessagePart) MessageContent {
 	return MessageContent{parts: parts}
 }
 
-// Parts returns the canonical §15.4.1 MessagePart array. A bare-string
+// Parts returns the canonical §28.5.3 MessagePart array. A bare-string
 // input is already normalized to a single text part, so a consumer reads
 // Parts uniformly regardless of which wire form arrived.
 func (m MessageContent) Parts() []MessagePart { return m.parts }
@@ -146,7 +146,7 @@ func (m MessageContent) Parts() []MessagePart { return m.parts }
 // every `text` part's inline content. It is the projection the gateway's
 // text-only delivery, transcript, and interceptor paths consume until they
 // carry the full multipart envelope. A non-text part contributes no text.
-// spec: §15.4.1 (text part inline content).
+// spec: §28.5.3 (text part inline content).
 func (m MessageContent) Text() string {
 	if len(m.parts) == 1 && m.parts[0].Type == "text" {
 		return m.parts[0].Inline
@@ -213,7 +213,7 @@ func (m MessageContent) MarshalJSON() ([]byte, error) {
 
 // Message is one entry in a §8.8 TaskRecord messages array. State is
 // set only on agent entries that have reached a terminal task state.
-// spec: §8.8 lines 810-817.
+// spec: §8.8.
 type Message struct {
 	Role  string        `json:"role"`
 	Parts []MessagePart `json:"parts"`
@@ -221,7 +221,7 @@ type Message struct {
 }
 
 // Usage is the §8.8 per-task usage rollup.
-// spec: §8.8 lines 897-903.
+// spec: §8.8.
 type Usage struct {
 	InputTokens            int64   `json:"inputTokens"`
 	OutputTokens           int64   `json:"outputTokens"`
@@ -234,7 +234,7 @@ type Usage struct {
 // every descendant's. It is populated by the gateway only after all
 // descendants settle; the producer surfaces a nil *TreeUsage (JSON
 // null) for an in-progress task or one with unsettled descendants.
-// spec: §8.8 lines 904-917.
+// spec: §8.8.
 type TreeUsage struct {
 	Usage
 	TotalTasks int64 `json:"totalTasks"`
@@ -244,7 +244,7 @@ type TreeUsage struct {
 // bridging record for a task. Usage and TreeUsage are pointers so an
 // unpopulated rollup serializes as absent / null rather than a zeroed
 // object.
-// spec: §8.8 lines 806-823.
+// spec: §8.8 TaskRecord.
 type Record struct {
 	SchemaVersion int        `json:"schemaVersion"`
 	TaskID        string     `json:"taskId"`
@@ -259,7 +259,7 @@ type Record struct {
 // §8.10 tree archive persists for a settled child. Output is present on
 // a completed task and nil (JSON-absent) on a failed/cancelled/expired
 // one; Error is the inverse.
-// spec: §8.8 lines 885-940.
+// spec: §8.8.
 type Result struct {
 	SchemaVersion int        `json:"schemaVersion"`
 	TaskID        string     `json:"taskId"`
@@ -273,7 +273,7 @@ type Result struct {
 // Output is the §8.8 TaskResult.output block: the child's emitted parts
 // plus any lenny-blob:// artifact references. Both arrays are always
 // present (possibly empty) when Output itself is set.
-// spec: §8.8 lines 888-891.
+// spec: §8.8.
 type Output struct {
 	Parts        []MessagePart `json:"parts"`
 	ArtifactRefs []string      `json:"artifactRefs"`
@@ -283,8 +283,7 @@ type Output struct {
 // §16.3 error taxonomy value the gateway classifier assigns to Code;
 // RetriesExhausted reports whether the gateway exhausted its automatic
 // recovery budget before declaring the terminal failure.
-// spec: §8.8 lines 922-940 (failure example: code, category, message,
-// retriesExhausted).
+// spec: §8.8.
 type Error struct {
 	Code             string `json:"code"`
 	Category         string `json:"category,omitempty"`
@@ -312,16 +311,17 @@ func (e *Error) Error() string {
 // crash, so the head is dropped when the capture exceeds the cap.
 const maxCrashStderrBytes = 4096
 
-// RuntimeCrash synthesizes the §15.4.1 RUNTIME_CRASH error block from a
+// RuntimeCrash synthesizes the §28.5.3 RUNTIME_CRASH error block from a
 // non-zero runtime exit code and the runtime's captured stderr. The §8.8
-// failure taxonomy classifies a runtime crash as TRANSIENT: the gateway
-// retries on a fresh pod, and only marks retriesExhausted after the
-// pod-crash retry budget is spent (a property the gateway sets later, not
-// at synthesis time). The stderr tail is trimmed of trailing whitespace
+// error.category of a runtime crash is TRANSIENT. The category does not
+// record whether the gateway retried the failure: the session's §7.3
+// retryPolicy decides that, and retriesExhausted records whether the
+// retry budget was spent (a property the gateway sets later, not at
+// synthesis time). The stderr tail is trimmed of trailing whitespace
 // and capped to the last maxCrashStderrBytes so the message stays bounded.
-// spec: §15.4.1 line 1889 — "When the process exits non-zero without
+// spec: §28.5.3 — "When the process exits non-zero without
 // emitting a `response`, the adapter synthesizes a `RUNTIME_CRASH` error
-// from the exit code and stderr."; §8.8 lines 936-938.
+// from the exit status the runtime supervisor reports"; §8.8.
 func RuntimeCrash(exitCode int, stderr string) *Error {
 	trimmed := strings.TrimRight(stderr, " \t\r\n")
 	if len(trimmed) > maxCrashStderrBytes {
@@ -347,7 +347,7 @@ func RuntimeCrash(exitCode int, stderr string) *Error {
 // original version rather than re-deriving it. This is how a rolling
 // gateway upgrade where replica B knows schema 2 does not silently
 // mutate a schema-1 record replica A created.
-// spec: §8.8 lines 825-827; §15.5 item 7.
+// spec: §8.8; §15.5 item 7.
 func ReconcileSchemaVersion(existing, producer int) int {
 	if existing > 0 {
 		return existing
@@ -363,8 +363,7 @@ func ReconcileSchemaVersion(existing, producer int) int {
 // (maxRetries == 0) it falls back to "ran at least one automatic
 // recovery attempt", which is the row-only witness that the gateway
 // drove the session through the retry path before it terminated.
-// spec: §8.8 lines 936-938 (RUNTIME_CRASH → retriesExhausted: true after
-// the pod-crash retries are exhausted); §7.3 lines 408-411.
+// spec: §8.8; §7.3.
 func RetriesExhausted(retryCount int64, maxRetries int) bool {
 	if maxRetries > 0 {
 		return retryCount >= int64(maxRetries)

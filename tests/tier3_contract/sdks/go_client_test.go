@@ -35,6 +35,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -71,9 +72,10 @@ func newMCPGateway(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    memstore.New(),
-		Executor: executor.NewEchoExecutor(),
-		TenantID: "acme",
+		DevTenantFallback: true,
+		Store:             memstore.New(),
+		Executor:          executor.NewEchoExecutor(),
+		TenantID:          "acme",
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -128,7 +130,7 @@ func buildGoHelper(t *testing.T) string {
 // t.Cleanup closes it.
 func newGateway(t *testing.T) *httptest.Server {
 	t.Helper()
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts
@@ -236,7 +238,7 @@ func TestGoClientStreamingReconnect(t *testing.T) {
 	// stream the SDK consumes.
 	bus := sessionevents.NewBus(64)
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 
 	// disconnector wraps the gateway handler. The first time the SDK
 	// opens the events stream it serves the gateway handler with a
@@ -520,7 +522,7 @@ func TestGoClientIdempotencyKeyHandling(t *testing.T) {
 	// The gateway is wrapped in the §11.5 idempotency middleware so a
 	// replayed key returns the cached create response.
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	ts := httptest.NewServer(idempotencyWrapped(srv.Handler()))
 	t.Cleanup(ts.Close)
 	h := spawnHelper(t, ts.URL)
@@ -758,4 +760,103 @@ func TestGoClientErgonomics(t *testing.T) {
 //	images; the in-process gateway exposes a single version only.
 func TestGoClientCompatibilityMatrix(t *testing.T) {
 	t.Logf("non-skip — documented follow-on: §15.6 Go client compatibility matrix — requires a pinned set of gateway images covering the §15.5 support window and a matrix driver; the in-process httptest gateway exposes one version")
+}
+
+// spec: 15.4 (MessageEnvelope), 7.2 (message dispatch)
+// diagnosis: The Go client SDK encoded a slot address into the
+// POST /v1/sessions/{id}/messages body. A client addresses a session
+// rather than a slot: the path's session identifier names the slot, so the
+// encoded payload carries no slotId key.
+func TestGoClientMessageBodyOmitsSlotAddress(t *testing.T) {
+	var got []byte
+	rec := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"deliveryReceipt":{"messageId":"msg_1","status":"delivered"}}`))
+	}))
+	defer rec.Close()
+
+	client, err := lenny.New(rec.URL, lenny.WithTenant("acme"))
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	if _, err := client.SendMessages(context.Background(), "sess_1", lenny.SendMessagesRequest{
+		Messages: []lenny.MessagePayload{{Role: "user", Content: "hello", Delivery: "queued"}},
+	}); err != nil {
+		t.Fatalf("SendMessages: %v", err)
+	}
+
+	var body struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(got, &body); err != nil {
+		t.Fatalf("decode encoded request body: %v (body=%s)", err, got)
+	}
+	if len(body.Messages) != 1 {
+		t.Fatalf("encoded %d message payloads, want 1: %s", len(body.Messages), got)
+	}
+	if _, ok := body.Messages[0]["slotId"]; ok {
+		t.Errorf("encoded message payload carries a slotId key: %s", got)
+	}
+}
+
+// startingFailedStub is a stub gateway that answers every POST
+// /v1/sessions/{id}/start with 503 STARTING_FAILED and Retry-After, and
+// counts the /start requests it receives.
+type startingFailedStub struct {
+	mu     sync.Mutex
+	starts int
+}
+
+func newStartingFailedStub(t *testing.T) (*httptest.Server, *startingFailedStub) {
+	t.Helper()
+	stub := &startingFailedStub{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/start") {
+			stub.mu.Lock()
+			stub.starts++
+			stub.mu.Unlock()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+			"code": "STARTING_FAILED", "category": "TRANSIENT",
+			"message": "could not place the session on a warm pod", "retryable": true,
+		}})
+	}))
+	t.Cleanup(ts.Close)
+	return ts, stub
+}
+
+func (s *startingFailedStub) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.starts
+}
+
+// assertSingleAttemptStart sends the start op through the helper and
+// asserts the SDK surfaced STARTING_FAILED after exactly one /start request.
+func assertSingleAttemptStart(t *testing.T, h *harness.Helper, stub *startingFailedStub) {
+	t.Helper()
+	resp := send(t, h, harness.Command{Op: "start", Args: map[string]any{"id": "sess_start_once"}})
+	if resp.OK {
+		t.Fatal("start against a 503 STARTING_FAILED stub succeeded")
+	}
+	if resp.Code != "STARTING_FAILED" {
+		t.Errorf("error code = %q (message %q), want STARTING_FAILED", resp.Code, resp.Error)
+	}
+	if n := stub.count(); n != 1 {
+		t.Errorf("/start requests = %d, want 1: the SDK start retried a failed start", n)
+	}
+}
+
+// spec: 15.6 (Client SDKs), 15.1 (/start), 7.2 (starting → failed)
+// diagnosis: the Go SDK Start retried a retryable 503 STARTING_FAILED
+// under its default retry policy. A failed /start leaves the session failed,
+// so a repeated /start is refused; Start must send its request once.
+func TestGoClientStartMakesOneAttempt_spec_15_6(t *testing.T) {
+	ts, stub := newStartingFailedStub(t)
+	h := spawnHelper(t, ts.URL)
+	assertSingleAttemptStart(t, h, stub)
 }

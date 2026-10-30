@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Contract test for the §12.2.1 EvictionStateStore, exercising the
+// Contract test for the TESTING.md §12.2.1 EvictionStateStore, exercising the
 // Postgres-backed pkg/gateway/evictionstatestore/pgstore against a
 // real container with the production migrations applied. Covers
 // upsert + Get round-trip, MinIO context-key storage, idempotent
@@ -240,7 +240,7 @@ func TestEvictionStateStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §4.4 lines 268–273 — the §4.4 fallback writer populates
+	// spec: §4.4 — the §4.4 fallback writer populates
 	// recovery_generation, coordination_generation, conversation_cursor,
 	// evicted_at, workspace_lost, and context_truncated alongside the
 	// inline / MinIO-key payload. The §7.2 resume path reads them back
@@ -290,7 +290,7 @@ func TestEvictionStateStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §4.4 line 272 — evicted_at is nullable on the row so a
+	// spec: §4.4 — evicted_at is nullable on the row so a
 	// caller that omits the timestamp leaves the column SQL NULL
 	// rather than recording the UNIX epoch.
 	t.Run("zero EvictedAt stays NULL on the row", func(t *testing.T) {

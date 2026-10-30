@@ -13,7 +13,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// spec: §7.5 line 475, §7.3 line 387, §16.1 line 124 — F-7.5.9.
+// spec: §7.5, §7.3, §16.1 — F-7.5.9.
 //
 // recordSetupCommandFailed must fire the §16.1 warmup_failure_total
 // counter with error_type=setup_command_failed and append the §11.7
@@ -81,7 +81,7 @@ func TestRecordSetupCommandFailedSafeFallbacks(t *testing.T) {
 	}
 }
 
-// spec: §7.5 line 475 — F-7.5.4. setupOutputsFromBind round-trips every
+// spec: §7.5 — F-7.5.4. setupOutputsFromBind round-trips every
 // captured field from the adapter wire form to the session-row form.
 func TestSetupOutputsFromBindRoundTrip(t *testing.T) {
 	if got := setupOutputsFromBind(nil); got != nil {

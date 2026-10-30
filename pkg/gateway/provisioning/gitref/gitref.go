@@ -60,7 +60,7 @@ func NewLsRemoteResolver(opts Options) *LsRemoteResolver {
 
 // Resolve runs `git ls-remote` for src and returns the commit SHA its
 // ref points to. When cred carries a token the ls-remote authenticates
-// with it (the §14 line 102 "same credential-lease as the clone")
+// with it (the §14)
 // injected through the process environment, so a private repository
 // resolves; a zero cred resolves a public repository. Interactive
 // credential prompts are disabled, so a private repository with no

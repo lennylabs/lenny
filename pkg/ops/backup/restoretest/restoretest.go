@@ -10,7 +10,7 @@
 // and lenny-ops publishes it, mirroring the
 // lenny_backup_last_successful_timestamp sampling path.
 //
-// spec: §25.11 lines 4098, 4128-4133, 4254-4256; §16.1 restore-test gate.
+// spec: §25.11; §16.1 restore-test gate.
 package restoretest
 
 import (

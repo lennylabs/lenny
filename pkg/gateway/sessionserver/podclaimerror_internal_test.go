@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -31,12 +32,12 @@ func decodeErrorBody(t *testing.T, body []byte) map[string]any {
 	return env.Error
 }
 
-// spec: §4.9 line 1476 — a runtime↔pool proxy-dialect mismatch surfaces
+// spec: §4.9 — a runtime↔pool proxy-dialect mismatch surfaces
 // as 422 INVALID_POOL_PROXY_DIALECT (PERMANENT, not retryable) carrying
 // the offending pool and dialect in details and the verbatim spec
 // message. The errors.As check sees through %w wrapping.
 func TestWritePodClaimErrorInvalidProxyDialect_spec_4_9_1476(t *testing.T) {
-	s := New(memstore.New(), Options{})
+	s := New(memstore.New(), Options{DevTenantHeader: true})
 	base := &PoolProxyDialectError{Pool: "claude-prod", Dialect: "openai"}
 	for _, tc := range []struct {
 		name string
@@ -71,13 +72,13 @@ func TestWritePodClaimErrorInvalidProxyDialect_spec_4_9_1476(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 519 — pod and slot exhaustion both map to
+// spec: §5.2 — pod and slot exhaustion both map to
 // WARM_POOL_EXHAUSTED, with details.reason distinguishing the cause:
 // an empty pool is "no_idle_pods" and pods-exist-but-full is
 // "concurrent_slots_exhausted". The errors.Is checks see through %w
 // wrapping the binder adds.
 func TestWritePodClaimErrorWarmPoolExhausted(t *testing.T) {
-	s := New(memstore.New(), Options{})
+	s := New(memstore.New(), Options{DevTenantHeader: true})
 	cases := []struct {
 		name       string
 		err        error
@@ -107,7 +108,7 @@ func TestWritePodClaimErrorWarmPoolExhausted(t *testing.T) {
 			if details["reason"] != tc.wantReason {
 				t.Errorf("details.reason = %v, want %q", details["reason"], tc.wantReason)
 			}
-			// spec: §15.2.1 line 1017 / §4.6.1 — the WARM_POOL_EXHAUSTED
+			// spec: §15.2.1 / §4.6.1 — the WARM_POOL_EXHAUSTED
 			// envelope carries a Retry-After header so a client backs off
 			// with a deterministic budget (both the reject path and the
 			// onPoolExhausted: queue timeout path).
@@ -118,7 +119,7 @@ func TestWritePodClaimErrorWarmPoolExhausted(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 23 (atomicity note) / §4.1 (proposal) — a create-time
+// spec: §7.1 — a create-time
 // pod-claim exhaustion (claimAtCreate wraps ErrNoIdlePod as
 // errCreateClaimExhausted) surfaces the create-handler fallback envelope
 // SESSION_CREATION_FAILED, not the §5.2 WARM_POOL_EXHAUSTED code the
@@ -127,7 +128,7 @@ func TestWritePodClaimErrorWarmPoolExhausted(t *testing.T) {
 // through %w wrapping. The body carries details.reason=no_idle_pods so an
 // operator can still see the underlying cause, and a Retry-After header.
 func TestWritePodClaimErrorCreateClaimExhausted_spec_7_1_23(t *testing.T) {
-	s := New(memstore.New(), Options{})
+	s := New(memstore.New(), Options{DevTenantHeader: true})
 	for _, tc := range []struct {
 		name string
 		err  error
@@ -151,7 +152,7 @@ func TestWritePodClaimErrorCreateClaimExhausted_spec_7_1_23(t *testing.T) {
 				t.Errorf("details.reason = %v, want no_idle_pods", details["reason"])
 			}
 			if w.Header().Get("Retry-After") == "" {
-				t.Error("create-time exhaustion 503 must carry a Retry-After header (§15.1 line 1138)")
+				t.Error("create-time exhaustion 503 must carry a Retry-After header (§15.1)")
 			}
 		})
 	}
@@ -170,12 +171,12 @@ func TestWritePodClaimErrorCreateClaimExhausted_spec_7_1_23(t *testing.T) {
 	})
 }
 
-// spec: §5.2 lines 602-625 — a PoolWarmingError maps to the 503
+// spec: §5.2 — a PoolWarmingError maps to the 503
 // RUNTIME_UNAVAILABLE "Pool Not Ready" response with Retry-After and a
 // details block carrying poolName, poolCondition, estimatedReadyIn, and
 // podsWarming.
 func TestWritePodClaimErrorPoolWarming(t *testing.T) {
-	s := New(memstore.New(), Options{})
+	s := New(memstore.New(), Options{DevTenantHeader: true})
 	w := httptest.NewRecorder()
 	s.writePodClaimError(w, &podsession.PoolWarmingError{Pool: "acme-pool", PodsWarming: 3},
 		"SESSION_CREATION_FAILED", "could not place the session on a warm pod")
@@ -200,11 +201,11 @@ func TestWritePodClaimErrorPoolWarming(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 625 — Retry-After is max(30, estimatedWarmupSeconds);
+// spec: §5.2 — Retry-After is max(30, estimatedWarmupSeconds);
 // a sub-30s estimate still reports the true estimate in the body while
 // the header floors at 30.
 func TestWritePoolWarmingRetryAfterFloor(t *testing.T) {
-	s := New(memstore.New(), Options{WarmupEstimateSeconds: 10})
+	s := New(memstore.New(), Options{DevTenantHeader: true, WarmupEstimateSeconds: 10})
 	w := httptest.NewRecorder()
 	s.writePoolWarming(w, &podsession.PoolWarmingError{Pool: "p"})
 	if ra := w.Header().Get("Retry-After"); ra != "30" {
@@ -217,12 +218,12 @@ func TestWritePoolWarmingRetryAfterFloor(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 28 / §15.1 line 1138 — a claim failure that is
+// spec: §7.1 / §15.1 — a claim failure that is
 // neither exhaustion nor warming surfaces as a retryable 503 carrying
 // the caller-named fallback code (SESSION_CREATION_FAILED for atomic
-// create / start, STARTING_FAILED for the two-step start, RESUME_FAILED
-// for resume) plus a Retry-After header so clients back off with a
-// deterministic budget.
+// create / start, STARTING_FAILED for the two-step start) plus a
+// Retry-After header so clients back off with a deterministic budget. A
+// resume claims no pod, so it has no fallback code.
 func TestWritePodClaimErrorFallback_spec_7_1_4(t *testing.T) {
 	cases := []struct {
 		name string
@@ -230,11 +231,10 @@ func TestWritePodClaimErrorFallback_spec_7_1_4(t *testing.T) {
 	}{
 		{"create_and_start", "SESSION_CREATION_FAILED"},
 		{"two_step_start", "STARTING_FAILED"},
-		{"resume", "RESUME_FAILED"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := New(memstore.New(), Options{})
+			s := New(memstore.New(), Options{DevTenantHeader: true})
 			w := httptest.NewRecorder()
 			s.writePodClaimError(w, errors.New("boom"), tc.code, "could not place the session on a warm pod")
 			body := decodeErrorBody(t, w.Body.Bytes())
@@ -244,7 +244,7 @@ func TestWritePodClaimErrorFallback_spec_7_1_4(t *testing.T) {
 			if msg, _ := body["message"].(string); msg != "could not place the session on a warm pod: boom" {
 				t.Errorf("message = %q, want the fallback message with the cause appended", msg)
 			}
-			// spec: §15.1 line 1138 — every retryable 503 carries Retry-After.
+			// spec: §15.1 — every retryable 503 carries Retry-After.
 			if ra := w.Header().Get("Retry-After"); ra != "5" {
 				t.Errorf("Retry-After = %q, want 5 (the §7.1 atomic-unit floor)", ra)
 			}
@@ -253,9 +253,9 @@ func TestWritePodClaimErrorFallback_spec_7_1_4(t *testing.T) {
 }
 
 // setupFailWith wraps a gRPC status code in the *podsession.SetupCommandFailure
-// the binder produces, so the writePodClaimError / isTransientPodClaimError
-// branch can be exercised at the gRPC-code boundary that governs both the
-// wire envelope and the /resume row-state demotion.
+// the binder produces, so the writePodClaimError branch and the resume
+// driver's failure-reason classification can be exercised at the gRPC-code
+// boundary that governs both.
 func setupFailWith(code codes.Code) *podsession.SetupCommandFailure {
 	return &podsession.SetupCommandFailure{
 		Pod:   "sbx-1",
@@ -272,7 +272,7 @@ func setupFailWith(code codes.Code) *podsession.SetupCommandFailure {
 // a wrapped non-status cause reported as Unknown, and Internal) stays the
 // retryable 503 fallback + Retry-After so §6.2 recovers it on a fresh pod.
 func TestWritePodClaimErrorSetupCommandFailed_spec_7_3(t *testing.T) {
-	s := New(memstore.New(), Options{})
+	s := New(memstore.New(), Options{DevTenantHeader: true})
 
 	t.Run("FailedPrecondition is the non-retryable 422", func(t *testing.T) {
 		for _, tc := range []struct {
@@ -318,7 +318,7 @@ func TestWritePodClaimErrorSetupCommandFailed_spec_7_3(t *testing.T) {
 		}{
 			{"unavailable_crashed_pod", codes.Unavailable, "SESSION_CREATION_FAILED"},
 			{"deadline_exceeded", codes.DeadlineExceeded, "STARTING_FAILED"},
-			{"unknown_wrapped_cause", codes.Unknown, "RESUME_FAILED"},
+			{"unknown_wrapped_cause", codes.Unknown, "STARTING_FAILED"},
 			{"internal", codes.Internal, "SESSION_CREATION_FAILED"},
 		}
 		for _, tc := range cases {
@@ -348,36 +348,93 @@ func TestWritePodClaimErrorSetupCommandFailed_spec_7_3(t *testing.T) {
 	})
 }
 
-// spec: §7.3 (awaiting_client_action holding state for a retryable resume
-// failure), §6.2 (transient setup failure retried on a fresh pod) — the
-// /resume row-state demotion and the wire envelope share one boundary:
-// isTransientPodClaimError treats a SetupCommandFailure whose Cause is any
-// code other than codes.FailedPrecondition as transient (row stays
-// awaiting_client_action), and the deterministic FailedPrecondition exit as
-// non-transient (row demotes to failed). A non-status / wrapped cause reports
-// codes.Unknown and is treated as transient.
-func TestIsTransientPodClaimErrorSetupCommand_spec_7_3(t *testing.T) {
+// TestResumeFailureReasonSetupCommand_spec_7_3 asserts the resume driver's
+// classification of a failure after its entry write: a setup-command failure
+// whose cause is the deterministic codes.FailedPrecondition exit is reported
+// as setup_command_failed, which the default policy treats as non-retryable,
+// and every other setup-window cause (Unavailable, DeadlineExceeded,
+// Internal, or a non-status cause that reports codes.Unknown) is reported as
+// runtime_crash, which spends one retry and re-enters resume_pending. The
+// same codes.FailedPrecondition boundary governs the wire envelope.
+//
+// spec: §7.3 (Resume driver; Retry and Resume), §6.2 (Pod State Machine).
+func TestResumeFailureReasonSetupCommand_spec_7_3(t *testing.T) {
 	cases := []struct {
-		name        string
-		err         error
-		wantTransit bool
+		name string
+		err  error
+		want session.FailureReason
 	}{
-		{"failed_precondition_deterministic", setupFailWith(codes.FailedPrecondition), false},
-		{"unavailable_transient", setupFailWith(codes.Unavailable), true},
-		{"deadline_exceeded_transient", setupFailWith(codes.DeadlineExceeded), true},
-		{"internal_transient", setupFailWith(codes.Internal), true},
+		{"failed_precondition_deterministic", setupFailWith(codes.FailedPrecondition), session.FailureSetupCommandFailed},
+		{"unavailable_transient", setupFailWith(codes.Unavailable), session.FailureRuntimeCrash},
+		{"deadline_exceeded_transient", setupFailWith(codes.DeadlineExceeded), session.FailureRuntimeCrash},
+		{"internal_transient", setupFailWith(codes.Internal), session.FailureRuntimeCrash},
 		{
 			"non_status_cause_is_unknown_transient",
 			&podsession.SetupCommandFailure{Pod: "sbx-1", Cause: errors.New("wrapped non-status boom")},
-			true,
+			session.FailureRuntimeCrash,
 		},
-		{"wrapped_failed_precondition_demotes", fmt.Errorf("resume: %w", setupFailWith(codes.FailedPrecondition)), false},
-		{"wrapped_unavailable_resumable", fmt.Errorf("resume: %w", setupFailWith(codes.Unavailable)), true},
+		{"wrapped_failed_precondition", fmt.Errorf("resume: %w", setupFailWith(codes.FailedPrecondition)), session.FailureSetupCommandFailed},
+		{"wrapped_unavailable", fmt.Errorf("resume: %w", setupFailWith(codes.Unavailable)), session.FailureRuntimeCrash},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isTransientPodClaimError(tc.err); got != tc.wantTransit {
-				t.Errorf("isTransientPodClaimError = %v, want %v", got, tc.wantTransit)
+			if got := resumeFailureReason(tc.err); got != string(tc.want) {
+				t.Errorf("resumeFailureReason = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// spec: §5.2 "Client error on exhaustion" — the 422 SLOT_FAILED body names
+// the session whose slot failed on error.sessionId and carries no slot
+// address. A session-mode slot's identifier is its session's identifier, so
+// a separate slot key would duplicate an identifier the client already has,
+// and one of the two routes that reaches this mapper is the one-call
+// POST /v1/sessions/start, whose session row is rolled back rather than
+// persisted; the body has to name the session on both routes. The case runs
+// over both routes' fallback pairs (the one-call SESSION_CREATION_FAILED and
+// the two-step STARTING_FAILED) because the typed SlotFailedError takes
+// precedence over the fallback on each.
+func TestWritePodClaimErrorSlotFailedNamesSession_spec_5_2(t *testing.T) {
+	s := New(memstore.New(), Options{DevTenantHeader: true})
+	slotFailed := &podsession.SlotFailedError{
+		Category:  string(podsession.SlotReasonWorkspaceValidation),
+		SessionID: "sess-1",
+		Pool:      "conc-pool",
+		Err:       errors.New("workspace plan rejected"),
+	}
+	for _, tc := range []struct {
+		name         string
+		err          error
+		fallbackCode string
+		fallbackMsg  string
+	}{
+		{"one-call start", slotFailed, "SESSION_CREATION_FAILED", "could not place the session on a warm pod"},
+		{"two-step start", slotFailed, "STARTING_FAILED", "could not place the session on a warm pod"},
+		{"wrapped", fmt.Errorf("start on pod: %w", slotFailed), "STARTING_FAILED", "could not place the session on a warm pod"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			s.writePodClaimError(w, tc.err, tc.fallbackCode, tc.fallbackMsg)
+			if w.Code != 422 {
+				t.Fatalf("status = %d, want 422; body=%s", w.Code, w.Body.String())
+			}
+			body := decodeErrorBody(t, w.Body.Bytes())
+			if body["code"] != "SLOT_FAILED" {
+				t.Errorf("code = %v, want SLOT_FAILED", body["code"])
+			}
+			details, _ := body["details"].(map[string]any)
+			if details["sessionId"] != "sess-1" {
+				t.Errorf("details.sessionId = %v, want sess-1", details["sessionId"])
+			}
+			if _, ok := details["slotId"]; ok {
+				t.Errorf("details carries slotId = %v; the 422 body names the session and no slot", details["slotId"])
+			}
+			if details["category"] != string(podsession.SlotReasonWorkspaceValidation) {
+				t.Errorf("details.category = %v, want workspace_validation", details["category"])
+			}
+			if details["retryable"] != false {
+				t.Errorf("details.retryable = %v, want false", details["retryable"])
 			}
 		})
 	}

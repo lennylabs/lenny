@@ -2,7 +2,7 @@
 
 //go:build security
 
-// Tier-9 security tests for the §12.9.3 lenny-pod-security credential
+// Tier-9 security tests for the TESTING.md §12.9.3 lenny-pod-security credential
 // controls. The e2e Kind cluster runs the live pod-security webhook
 // over Pod CREATE in the lenny-agents namespace, so the §13.1 fsGroup
 // invariant and the §13.1 lenny-cred-readers membership boundary are
@@ -29,6 +29,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
@@ -37,8 +38,8 @@ import (
 // credential fsGroup.
 const credFsGroupMissingReason = "POD_SPEC_CRED_FSGROUP_MISSING"
 
-// spec: 12.9.3
-// diagnosis: the §12.9.3 lenny-pod-security webhook admits an agent pod
+// spec: 12.9.3, 13.1 (Pod Security)
+// diagnosis: the TESTING.md §12.9.3 lenny-pod-security webhook admits an agent pod
 // whose pod-level securityContext omits fsGroup. The test drives a pod
 // that is §13.1-compliant in every other respect but carries no
 // pod-level fsGroup through the live admission chain and asserts
@@ -51,7 +52,7 @@ func TestAdmissionPolicyFsGroupMissing(t *testing.T) {
 
 	out, err := c.DryRunApplyStdin(t, fsGroupMissingPodManifest())
 	if err == nil {
-		t.Fatalf("§12.9.3 violation: the API server admitted an agent pod whose pod-level "+
+		t.Fatalf("TESTING.md §12.9.3 violation: the API server admitted an agent pod whose pod-level "+
 			"securityContext omits fsGroup; the lenny-pod-security webhook did not enforce the §13.1 "+
 			"credential-fsGroup control.\noutput:\n%s", out)
 	}
@@ -64,7 +65,7 @@ func TestAdmissionPolicyFsGroupMissing(t *testing.T) {
 		t.Errorf("the %s rejection of the fsGroup-missing pod lacks the §13.1 reason %q.\noutput:\n%s",
 			podSecurityWebhook, credFsGroupMissingReason, out)
 	}
-	t.Logf("§12.9.3: %s rejected the fsGroup-missing agent pod: %s",
+	t.Logf("TESTING.md §12.9.3: %s rejected the fsGroup-missing agent pod: %s",
 		podSecurityWebhook, rejectionLine(out))
 }
 
@@ -74,7 +75,8 @@ func TestAdmissionPolicyFsGroupMissing(t *testing.T) {
 // attributable to the missing fsGroup alone: runAsNonRoot and the
 // RuntimeDefault seccomp profile are set at the pod level, and the
 // container drops all capabilities, sets allowPrivilegeEscalation false,
-// and runs a read-only root filesystem.
+// runs a read-only root filesystem, and sets the explicit non-reserved
+// runAsUser and runAsGroup §13.1 (Container identity) requires.
 func fsGroupMissingPodManifest() string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Pod
@@ -92,9 +94,11 @@ spec:
       securityContext:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
+        runAsUser: %d
+        runAsGroup: %d
         capabilities:
           drop: ["ALL"]
-`, agentNamespace)
+`, agentNamespace, injectedSidecarUID, injectedSidecarUID)
 }
 
 // credGroupOverbroadReason is the §13.1 reason code the lenny-pod-security
@@ -108,11 +112,11 @@ const credGroupOverbroadReason = "POD_SPEC_CRED_GROUP_OVERBROAD"
 // runAsGroup against it.
 const credReadersGID = 65534
 
-// spec: 12.9.3
-// diagnosis: the §12.9.3 lenny-pod-security webhook admits an agent pod
+// spec: 12.9.3, 13.1 (Pod Security)
+// diagnosis: the TESTING.md §12.9.3 lenny-pod-security webhook admits an agent pod
 // whose non-adapter, non-agent container declares the lenny-cred-readers
-// GID in runAsGroup. §13.1 confines that group membership to the
-// adapter and agent containers. The test drives a pod with a compliant
+// GID in runAsGroup. §13.1 permits only the adapter and agent containers
+// to declare that GID in container-level runAsGroup. The test drives a pod with a compliant
 // adapter and runtime container plus a third container carrying the GID
 // and asserts lenny-pod-security rejects it with
 // POD_SPEC_CRED_GROUP_OVERBROAD. An admitted pod means an injected
@@ -122,7 +126,7 @@ func TestAdmissionPolicyCredGroupOverbroad(t *testing.T) {
 
 	out, err := c.DryRunApplyStdin(t, credGroupOverbroadPodManifest())
 	if err == nil {
-		t.Fatalf("§12.9.3 violation: the API server admitted an agent pod whose non-credential "+
+		t.Fatalf("TESTING.md §12.9.3 violation: the API server admitted an agent pod whose non-credential "+
 			"container declares the lenny-cred-readers GID; the lenny-pod-security webhook did not "+
 			"enforce the §13.1 cred-group boundary.\noutput:\n%s", out)
 	}
@@ -134,7 +138,7 @@ func TestAdmissionPolicyCredGroupOverbroad(t *testing.T) {
 		t.Errorf("the %s rejection lacks the §13.1 reason %q.\noutput:\n%s",
 			podSecurityWebhook, credGroupOverbroadReason, out)
 	}
-	t.Logf("§12.9.3: %s rejected the cred-group-overbroad agent pod: %s",
+	t.Logf("TESTING.md §12.9.3: %s rejected the cred-group-overbroad agent pod: %s",
 		podSecurityWebhook, rejectionLine(out))
 }
 
@@ -142,8 +146,11 @@ func TestAdmissionPolicyCredGroupOverbroad(t *testing.T) {
 // §13.1-compliant in every respect except that a third container,
 // neither the adapter nor the agent, declares the lenny-cred-readers
 // GID in runAsGroup. The adapter and runtime containers carry the §4.7
-// names the webhook reads as the credential containers, so the
-// rejection is attributable to the third container alone.
+// names the webhook reads as the credential containers and run at their
+// own reserved UIDs, and the third container runs at a non-reserved
+// UID, so the §13.1 container identity clause admits every container
+// and the rejection is attributable to the third container's group
+// alone.
 func credGroupOverbroadPodManifest() string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Pod
@@ -157,27 +164,16 @@ spec:
     seccompProfile:
       type: RuntimeDefault
   containers:
-    - name: adapter
+%s%s    - name: sidecar
       image: busybox:1.36
       securityContext:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
-        capabilities:
-          drop: ["ALL"]
-    - name: runtime
-      image: busybox:1.36
-      securityContext:
-        allowPrivilegeEscalation: false
-        readOnlyRootFilesystem: true
-        capabilities:
-          drop: ["ALL"]
-    - name: sidecar
-      image: busybox:1.36
-      securityContext:
-        allowPrivilegeEscalation: false
-        readOnlyRootFilesystem: true
+        runAsUser: %d
         runAsGroup: %d
         capabilities:
           drop: ["ALL"]
-`, agentNamespace, credReadersGID, credReadersGID)
+`, agentNamespace, credReadersGID,
+		containerYAML("adapter", podspec.AdapterUID), containerYAML("runtime", podspec.AgentUID),
+		injectedSidecarUID, credReadersGID)
 }

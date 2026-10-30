@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT
+#
+# The substitution is itself a site of the class the pass removes, so
+# writing it would leave the site standing.
+kind: reserved-phrase-senses
+version: 1
+entries:
+  - file: pkg/carrier/carrier.go
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
+    replacement: the CH-PODLIFECYCLE lifecycle channel

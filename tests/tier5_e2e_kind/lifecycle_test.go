@@ -2,7 +2,7 @@
 
 //go:build e2e_kind
 
-// Tier-5 e2e Kind tests for the §13.7 install lifecycle: the
+// Tier-5 e2e Kind tests for the TESTING.md §13.7 install lifecycle: the
 // lenny-ops first deploy and the chart's first-install bootstrap. Each
 // test installs the Lenny control plane on a Kind cluster via the
 // install.sh-backed kind.InstallLenny harness and asserts the named
@@ -19,7 +19,7 @@ import (
 )
 
 // spec: 13.7
-// diagnosis: the §13.7 lenny-ops component did not deploy. The test
+// diagnosis: the TESTING.md §13.7 lenny-ops component did not deploy. The test
 // confirms the lenny-ops Deployment exists in lenny-system and that
 // its desired replica count is fully Ready. lenny-ops is the
 // operability control loop; a failure means the chart did not render

@@ -40,7 +40,7 @@ func (f *fakeRekeyer) CountStale(_ context.Context, _ string) (int, error) {
 	return f.stale, nil
 }
 
-// spec: §4.9.1 lines 1718-1723 — a single Run re-keys every store and
+// spec: §4.9.1 — a single Run re-keys every store and
 // the verification count reaches zero, yielding Verified.
 func TestRun_RekeysAllStoresAndVerifies(t *testing.T) {
 	creds := &fakeRekeyer{name: "credentials", stale: 5}
@@ -62,7 +62,7 @@ func TestRun_RekeysAllStoresAndVerifies(t *testing.T) {
 	}
 }
 
-// spec: §4.9.1 lines 1718-1721 — the job is idempotent: a second Run on
+// spec: §4.9.1 — the job is idempotent: a second Run on
 // a fully re-keyed tenant advances zero rows and still verifies.
 func TestRun_IdempotentSecondPass(t *testing.T) {
 	creds := &fakeRekeyer{name: "credentials", stale: 4}
@@ -83,7 +83,7 @@ func TestRun_IdempotentSecondPass(t *testing.T) {
 	}
 }
 
-// spec: §4.9.1 lines 1723-1724 — Verify is the gate before disabling the
+// spec: §4.9.1 — Verify is the gate before disabling the
 // old key: it returns ErrRekeyIncomplete with the remaining count while
 // any row is below the current version, and nil once all are advanced.
 func TestVerify_GatesOnStaleRows(t *testing.T) {
@@ -111,7 +111,7 @@ func TestVerify_GatesOnStaleRows(t *testing.T) {
 	}
 }
 
-// spec: §4.9.1 lines 1718-1721 — a store error aborts the run naming the
+// spec: §4.9.1 — a store error aborts the run naming the
 // store; committed progress in earlier stores survives so a re-run
 // resumes. The fake advances 2 of 5 rows per pass to model partial work.
 func TestRun_PartialFailureResumes(t *testing.T) {

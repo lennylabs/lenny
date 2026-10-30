@@ -9,16 +9,17 @@ import (
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 )
 
-// buildKMSAndSigner resolves the §4 / §17.5 KMS provider from the parsed flags
-// and constructs the §4-KMS-envelope-backed, circuit-broken JWT signer. The
-// in-process kms.Local provider is the no-cloud development KEK; cloud
-// deployments swap in an AWS/GCP/Azure provider behind the same kms.Provider
-// interface by setting --kms-provider. The KMS-backed signer is wrapped in the
-// JWTSigner circuit breaker so KMS outages convert to KMS_SIGNING_UNAVAILABLE
-// rather than hanging the request path.
+// buildKMSAndSigner resolves the §4 / §17.5 KMS provider from the parsed
+// flags, loads the §10.2 key set once, and builds the shared remote
+// ES256 signer from the key set's signing entry, wrapped in the JWTSigner
+// circuit breaker. The Token Service signs with the same
+// platform:jwt-signing key as the gateway, and the key set verifies the
+// caller, subject, and actor tokens whichever process signed them. A
+// process that cannot load its key set exits before it serves.
 //
-// spec: F-4.3.11 / F-17.5.2 — the pluggable KMS provider; §10.2 line 225 /
-// F-10.2.6 — the JWTSigner circuit breaker.
+// spec: §10.2 (Authentication) "Signing topology", "Verifier key set and
+// rotation"; §4.3 item 3 — the Token Service mints through the shared
+// signer; F-4.3.11 / F-17.5.2 — the pluggable KMS provider.
 func (w *tokenServiceWiring) buildKMSAndSigner() {
 	kmsProvider, err := providerflags.Resolve(ctx, *w.f.kmsOpts)
 	if err != nil {
@@ -27,9 +28,15 @@ func (w *tokenServiceWiring) buildKMSAndSigner() {
 	w.kmsProvider = kmsProvider
 	log.Printf("lenny-token-service: §4 KMS provider = %s (environment=%s)",
 		w.f.kmsOpts.Provider, w.f.kmsOpts.Environment)
-	kmsBackedSigner, err := jwt.NewKMSSigner(ctx, kmsProvider, jwt.TokenServiceKEKAlias, "dev-1")
+	// spec: §16.1 — the breaker observer counts every sign request on
+	// lenny_jwt_sign_requests_total{component="token-service"} and every
+	// counted failure or refusal on lenny_gateway_kms_signing_errors_total.
+	keySet, signer, err := jwt.LoadSigning(ctx, kmsProvider, w.f.kmsOpts.AliasToKey, w.metricsEmitter.SigningObserver())
 	if err != nil {
-		fatalf("kms-backed signer: %v", err)
+		fatalf("§10.2 JWT key set: %v", err)
 	}
-	w.signer = &jwt.BreakerSigner{Inner: kmsBackedSigner}
+	log.Printf("lenny-token-service: §10.2 JWT key set loaded (%d key(s), signing kid %s)",
+		keySet.Len(), keySet.Signing().KeyID)
+	w.keySet = keySet
+	w.signer = signer
 }

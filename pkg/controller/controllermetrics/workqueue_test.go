@@ -15,7 +15,7 @@ func req(name string) reconcile.Request {
 	return reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: name}}
 }
 
-// spec: §4.6.1 line 425 — at max depth, new reconciliation events are
+// spec: §4.6.1 — at max depth, new reconciliation events are
 // dropped and lenny_controller_queue_overflow_total is incremented.
 func TestBoundedQueueShedsNewEventsAtMaxDepth(t *testing.T) {
 	const ctrl = "shed-test"

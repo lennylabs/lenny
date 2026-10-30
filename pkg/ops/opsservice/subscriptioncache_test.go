@@ -96,7 +96,7 @@ func TestSubscriptionCacheInitialLoad(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2645 — an inactive subscription is excluded from the
+// spec: §25.5 — an inactive subscription is excluded from the
 // delivery set the worker reads.
 func TestSubscriptionCacheSkipsInactive(t *testing.T) {
 	store := &stubStore{rows: []eventsubscription.Record{

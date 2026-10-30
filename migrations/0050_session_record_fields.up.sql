@@ -1,6 +1,6 @@
 -- §4.2 Session record fields the spec lists but Phase 1.5 did not yet
 -- carry: cwd, pod assignment, recovery_generation, coordination_generation,
--- and schema_version. See spec/04_system-components.md §4.2 line 156:
+-- and schema_version. See spec/04_system-components.md §4.2:
 --
 --   "Session records (id, tenant_id, user_id, state, pool, pod
 --    assignment, cwd, recovery_generation, coordination_generation,

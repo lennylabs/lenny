@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Component coverage for the §4.2 line 179 session_dlq_archive
+// Component coverage for the §4.2 session_dlq_archive
 // table scaffold. Exercises the tenant-isolation machinery:
 //
 //   - the lenny_tenant_guard trigger fires on writes (reject
@@ -14,7 +14,7 @@
 //   - the platform-admin __all__ sentinel reads rows across tenants
 //     when paired with the lenny.allow_all_sentinel opt-in.
 //
-// spec: §4.2 line 179.
+// spec: §4.2.
 package rls_test
 
 import (
@@ -54,7 +54,7 @@ func seedDLQ(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant,
 	return sessID
 }
 
-// spec: §4.2 line 179 — session_dlq_archive carries the
+// spec: §4.2 — session_dlq_archive carries the
 // lenny_tenant_guard trigger; an insert whose row tenant_id does
 // not match app.current_tenant is rejected.
 // diagnosis: a failure means the lenny_tenant_guard trigger on
@@ -90,11 +90,11 @@ func TestSessionDLQArchiveTriggerRejectsMismatchedTenant(t *testing.T) {
 		return err
 	})
 	if err == nil {
-		t.Errorf("mismatched-tenant DLQ insert succeeded; trigger must reject (§4.2 line 179)")
+		t.Errorf("mismatched-tenant DLQ insert succeeded; trigger must reject (§4.2)")
 	}
 }
 
-// spec: §4.2 line 179 — the composite PK keeps two tenants from
+// spec: §4.2 — the composite PK keeps two tenants from
 // colliding on the same (session_id, message_id) pair. Bob and alice
 // can each archive a row with message_id=msg-1 even if the session
 // IDs happen to match (which they cannot under the FK, but the PK
@@ -131,7 +131,7 @@ func TestSessionDLQArchiveCompositePK(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 179 — RLS isolates DLQ rows by tenant. Bob's
+// spec: §4.2 — RLS isolates DLQ rows by tenant. Bob's
 // SELECT only sees bob's row; alice's only alice's.
 // diagnosis: a failure means RLS on session_dlq_archive does not isolate
 // rows per tenant, so one tenant's SELECT could read another tenant's

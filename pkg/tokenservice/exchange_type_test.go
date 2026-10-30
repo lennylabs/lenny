@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/pkg/tokenexchange"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // exchangePayloads extracts every token.exchanged payload from a
@@ -31,7 +33,7 @@ func exchangePayloads(t *testing.T, rows []recordedAudit) []exchangeAuditPayload
 	return out
 }
 
-// spec: §16.7 line 672 — every token.exchanged row carries the mandatory
+// spec: §16.7 — every token.exchanged row carries the mandatory
 // exchange_type classification. Before this change exchangeAuditPayload
 // omitted the field on every row, so the §16.7 payload contract was
 // violated. This asserts the field is present and correctly classified
@@ -41,11 +43,13 @@ func TestExchangedRowCarriesExchangeType_Rotation_spec_16_7(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
 	store := &recordingIssuedTokenStore{}
-	srv := NewServer(Options{
-		Signer:       signer,
-		Issuer:       "https://lenny.dev.test/token",
-		IssuedTokens: store,
-		Auditor:      auditor,
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		IssuedTokens:       store,
+		Auditor:            auditor,
 	})
 	// A self-rotation: caller authenticates with — and rotates — its own
 	// token, preserving scope and audience.
@@ -85,17 +89,19 @@ func TestExchangedRowCarriesExchangeType_Rotation_spec_16_7(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 672 — a delegation child mint (actor_token present)
+// spec: §16.7 — a delegation child mint (actor_token present)
 // classifies as delegation_mint.
 func TestExchangedRowCarriesExchangeType_DelegationMint_spec_16_7(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
 	store := &recordingIssuedTokenStore{}
-	srv := NewServer(Options{
-		Signer:       signer,
-		Issuer:       "https://lenny.dev.test/token",
-		IssuedTokens: store,
-		Auditor:      auditor,
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		IssuedTokens:       store,
+		Auditor:            auditor,
 	})
 	tok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
@@ -119,17 +125,19 @@ func TestExchangedRowCarriesExchangeType_DelegationMint_spec_16_7(t *testing.T) 
 	}
 }
 
-// spec: §16.7 line 672 — a self-exchange that narrows scope is a
+// spec: §16.7 — a self-exchange that narrows scope is a
 // scope_narrow derivation.
 func TestExchangedRowCarriesExchangeType_ScopeNarrow_spec_16_7(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
 	store := &recordingIssuedTokenStore{}
-	srv := NewServer(Options{
-		Signer:       signer,
-		Issuer:       "https://lenny.dev.test/token",
-		IssuedTokens: store,
-		Auditor:      auditor,
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		IssuedTokens:       store,
+		Auditor:            auditor,
 	})
 	tok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
@@ -153,7 +161,7 @@ func TestExchangedRowCarriesExchangeType_ScopeNarrow_spec_16_7(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 672 — the classifier maps each accepted exchange to
+// spec: §16.7 — the classifier maps each accepted exchange to
 // its exchange_type. A session-capability issued token (no actor, not a
 // rotation) is a credential-lease issuance; a plain narrowing derivation
 // is scope_narrow; an actor-bearing exchange is delegation_mint; a
@@ -181,17 +189,19 @@ func TestClassifyExchangeType_spec_16_7(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 672 — a rejected exchange still carries an
+// spec: §16.7 — a rejected exchange still carries an
 // exchange_type on its token.exchanged row so the SIEM classifies the
 // probe. A rejected delegation-mint attempt (actor present) classifies
 // as delegation_mint.
 func TestRejectedExchangeCarriesExchangeType_spec_16_7(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
-	srv := NewServer(Options{
-		Signer:  signer,
-		Issuer:  "https://lenny.dev.test/token",
-		Auditor: auditor,
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		Auditor:            auditor,
 	})
 	// Broaden scope beyond the subject's — the validator rejects it.
 	tok := mintToken(t, signer, jwt.Claims{

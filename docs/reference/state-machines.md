@@ -32,33 +32,40 @@ stateDiagram-v2
     finalizing --> ready : Workspace materialized
     ready --> starting : StartSession
     starting --> running : Agent session started
+    starting --> failed : Start fails or times out
 
     running --> suspended : interrupt_request + acknowledged
+    running --> suspended : Idle suspension (maxClientIdleSeconds elapsed)
     running --> input_required : lenny/request_input (sub-state)
     running --> completed : Agent finishes
-    running --> failed : Unrecoverable error / retries exhausted / BUDGET_KEYS_EXPIRED
+    running --> failed : Non-retryable failure / BUDGET_KEYS_EXPIRED
     running --> cancelled : Client or parent cancels
     running --> expired : Lease/budget/deadline exhausted
-    running --> resume_pending : Pod crash (retryCount < maxRetries)
+    running --> expired : Idle expiry (session cannot be idle-suspended)
+    running --> resume_pending : Retryable failure (retries remain)
+    running --> awaiting_client_action : Retryable failure (retries exhausted)
 
     input_required --> running : Input provided / request expires / cancelled
     input_required --> cancelled : Parent cancels
     input_required --> expired : Deadline reached
-    input_required --> resume_pending : Pod crash (retries remain)
-    input_required --> failed : Pod crash (retries exhausted) / BUDGET_KEYS_EXPIRED
+    input_required --> resume_pending : Retryable failure (retries remain)
+    input_required --> awaiting_client_action : Retryable failure (retries exhausted)
+    input_required --> failed : Non-retryable failure / BUDGET_KEYS_EXPIRED
+    input_required --> completed : terminate
 
-    suspended --> running : resume_session (pod still held)
-    suspended --> running : delivery:immediate message (pod still held)
-    suspended --> resume_pending : resume_session (pod released)
-    suspended --> resume_pending : delivery:immediate message (pod released)
-    suspended --> resume_pending : Pod failure while suspended (pod still held)
+    suspended --> running : resume_session or POST resume (pod still held)
+    suspended --> running : Any message (pod still held)
+    suspended --> resume_pending : resume_session or POST resume (pod released)
+    suspended --> resume_pending : Any message (pod released)
+    suspended --> resume_pending : Retryable failure, pod still held (retries remain)
+    suspended --> awaiting_client_action : Retryable failure, pod still held (retries exhausted)
     suspended --> completed : terminate
     suspended --> cancelled : Client or parent cancels
-    suspended --> expired : perChildMaxAge wall-clock expiry
-    suspended --> failed : BUDGET_KEYS_EXPIRED
+    suspended --> expired : maxSuspendedSessionSeconds or perChildMaxAge elapsed
+    suspended --> failed : Non-retryable failure, pod still held / BUDGET_KEYS_EXPIRED
 
     resume_pending --> running : Pod allocated, resume successful
-    resume_pending --> awaiting_client_action : Timeout (no pod available)
+    resume_pending --> awaiting_client_action : maxResumeWindowSeconds elapsed
 
     note right of resume_pending
         resuming is an internal-only
@@ -84,46 +91,55 @@ stateDiagram-v2
 | State | Description |
 |:------|:------------|
 | `created` | Session record created in Postgres. Pod claimed. Credential lease assigned. Upload token issued. Waiting for workspace upload. Governed by `maxCreatedStateTimeoutSeconds` (default: 300s). |
-| `finalizing` | `FinalizeWorkspace` called. Staging files validated and promoted to `/workspace/current`. Setup commands executing. |
+| `finalizing` | `FinalizeWorkspace` called. Staging files validated and promoted to `/workspace/slots/{sessionId}/current`. Setup commands executing. |
 | `ready` | Workspace materialized. Pod ready to start the agent session. |
-| `starting` | `StartSession` called. Agent binary launching. For SDK-warm pods, `ConfigureWorkspace` points the pre-connected session at the finalized workspace. |
+| `starting` | `StartSession` called. The runtime process becomes live for the session: in the sidecar model, when the pod has launched no runtime process since its creation or since the platform last ended one, and the adapter has not marked the runtime not live, the runtime supervisor launches the runtime's `command` after the adapter writes the manifest and the binary dials the adapter, and a session that starts while a process is live reaches that process. For SDK-warm pods, `ConfigureWorkspace` points the pre-connected session at the finalized workspace. |
 | `running` | Agent session active. Bidirectional streaming between client and pod via gateway. |
 | `input_required` | Sub-state of `running` (not a peer state). Pod is live and runtime is active, but the agent is blocked inside `lenny/request_input` awaiting a response. Visible to clients via `status_change(state: "input_required")`. The session remains logically `running` while in this sub-state. |
-| `suspended` | Session paused via interrupt. Pod may still be held (up to `maxSuspendedPodHoldSeconds`). `maxSessionAge` timer paused. `maxClientIdleSeconds` timer paused. `perChildMaxAge` continues ticking. |
-| `resume_pending` | Pod lost or released. Gateway is attempting to allocate a new pod. `maxResumeWindowSeconds` timer running. |
+| `suspended` | Session suspended, either by an interrupt or by idle suspension after `maxClientIdleSeconds` without activity. Workspace preserved. After an interrupt the pod is held for up to `maxSuspendedPodHoldSeconds` and then released after a checkpoint; an idle suspension checkpoints the workspace and releases the pod or slot as it suspends the session. Any message, `resume_session`, or `POST /v1/sessions/{id}/resume` resumes the session. Not counted toward the concurrent-session limits. `maxSessionAge` timer paused. `maxClientIdleSeconds` timer paused. `perChildMaxAge` continues ticking. Expires after `gateway.maxSuspendedSessionSeconds` (default: 604800s / 7 days) in this state. |
+| `resume_pending` | Pod lost, or a `suspended` session whose pod was released is being resumed. The gateway's resume driver claims a replacement pod and restores the session onto it. `maxResumeWindowSeconds` timer running. |
 | `resuming` | **Internal-only state.** New pod allocated; workspace checkpoint replaying and session file restoring. External clients never see this state -- the API reports the transition as `resume_pending` to `running` directly. |
 | `awaiting_client_action` | Automatic retries exhausted or `maxResumeWindowSeconds` elapsed. Client intervention required. Expires after `maxAwaitingClientActionSeconds` (default: 900s). Active children continue running. |
-| `completed` | Terminal. Agent finished normally. Workspace sealed and exported. |
-| `failed` | Terminal. Unrecoverable error, retries exhausted, or `BUDGET_KEYS_EXPIRED`. |
+| `completed` | Terminal. Agent finished normally. The gateway then exports the final workspace. When the export does not finish within `maxWorkspaceSealDurationSeconds`, the session is recorded as `failed` with reason `workspace_seal_timeout`. |
+| `failed` | Terminal. A non-retryable failure or other unrecoverable error, or `BUDGET_KEYS_EXPIRED`. |
 | `cancelled` | Terminal. Client or parent explicitly cancelled the session. |
 | `expired` | Terminal. Session deadline, lease expiry, or budget exhausted. |
 
 ### Transition table
+
+The session's retry policy (`retryPolicy`) classifies each pod or runtime failure of an active session as retryable or non-retryable. A retryable failure moves the session to `resume_pending` while retries remain and to `awaiting_client_action` when they are exhausted. A non-retryable failure moves it to `failed`.
 
 | From | To | Trigger | API endpoint / event |
 |:-----|:---|:--------|:---------------------|
 | `created` | `finalizing` | Client calls FinalizeWorkspace | `POST /v1/sessions/{id}/finalize` |
 | `finalizing` | `ready` | Workspace validation and setup complete | Internal |
 | `ready` | `starting` | Client calls StartSession | `POST /v1/sessions/{id}/start` |
-| `starting` | `running` | Agent binary starts successfully | Internal |
+| `starting` | `running` | Agent runtime reaches ready | Internal |
+| `starting` | `failed` | Start fails or times out | `POST /v1/sessions/{id}/start`, or internal timer |
 | `running` | `suspended` | Interrupt acknowledged (or timeout) | `POST /v1/sessions/{id}/interrupt` |
+| `running` | `suspended` | Idle suspension: `maxClientIdleSeconds` elapsed with no activity, and the runtime adapter observed none in the window; workspace checkpointed and pod or slot released. Applies only to a session that can be idle-suspended, which excludes a `type: mcp` runtime and an `executionMode: service` pool | Internal timer |
 | `running` | `input_required` | Runtime calls `lenny/request_input` | Internal (pod -> gateway) |
 | `running` | `completed` | Agent finishes | Internal |
-| `running` | `failed` | Crash, unrecoverable error, retries exhausted | Internal |
+| `running` | `failed` | Non-retryable failure or `BUDGET_KEYS_EXPIRED` | Internal |
 | `running` | `cancelled` | Cancel request | `DELETE /v1/sessions/{id}` |
 | `running` | `expired` | Deadline/budget/lease exhausted | Internal timer |
-| `running` | `resume_pending` | Pod crash with retries remaining | Internal |
+| `running` | `expired` | Idle expiry: `maxClientIdleSeconds` elapsed with no activity for a session that cannot be idle-suspended (a `type: mcp` runtime or an `executionMode: service` pool); reason `max_idle_time` | Internal timer |
+| `running` | `resume_pending` | Retryable failure with retries remaining | Internal |
+| `running` | `awaiting_client_action` | Retryable failure with retries exhausted | Internal |
 | `input_required` | `running` | Input provided, request expires, or cancelled | `POST /v1/sessions/{id}/elicitations/{elicitationId}/respond` |
 | `input_required` | `cancelled` | Parent cancels | Internal |
 | `input_required` | `expired` | Deadline reached | Internal timer |
-| `input_required` | `resume_pending` | Pod crash with retries remaining | Internal |
-| `input_required` | `failed` | Pod crash, retries exhausted | Internal |
-| `suspended` | `running` | Resume (pod still held) | `POST /v1/sessions/{id}/resume` or `delivery:immediate` message |
-| `suspended` | `resume_pending` | Resume or `delivery:immediate` message (pod released), or pod failure | `POST /v1/sessions/{id}/resume` or `delivery:immediate` message |
+| `input_required` | `resume_pending` | Retryable failure with retries remaining | Internal |
+| `input_required` | `awaiting_client_action` | Retryable failure with retries exhausted | Internal |
+| `input_required` | `failed` | Non-retryable failure | Internal |
+| `input_required` | `completed` | Terminate | `POST /v1/sessions/{id}/terminate` |
+| `suspended` | `running` | Resume or any message, whatever its `delivery` value (pod still held); subject to the concurrent-session admission check | `POST /v1/sessions/{id}/resume`, `resume_session`, or a message |
+| `suspended` | `resume_pending` | Resume or any message, whatever its `delivery` value (pod released), subject to the concurrent-session admission check; or a retryable failure with retries remaining (pod still held) | `POST /v1/sessions/{id}/resume`, `resume_session`, a message, or internal |
+| `suspended` | `awaiting_client_action` | Retryable failure with retries exhausted (pod still held) | Internal |
 | `suspended` | `completed` | Terminate | `POST /v1/sessions/{id}/terminate` |
 | `suspended` | `cancelled` | Cancel | `DELETE /v1/sessions/{id}` |
-| `suspended` | `expired` | `perChildMaxAge` wall-clock expiry | Internal timer |
-| `suspended` | `failed` | `BUDGET_KEYS_EXPIRED` | Internal |
+| `suspended` | `expired` | `gateway.maxSuspendedSessionSeconds` elapsed since entry to `suspended`, or `perChildMaxAge` wall-clock expiry | Internal timer |
+| `suspended` | `failed` | Non-retryable failure (pod still held) or `BUDGET_KEYS_EXPIRED` | Internal |
 | `resume_pending` | `running` | Pod allocated and resume successful (internal-only `resuming` state is traversed transparently) | Internal |
 | `resume_pending` | `awaiting_client_action` | `maxResumeWindowSeconds` elapsed | Internal timer |
 | `awaiting_client_action` | `resume_pending` | Client resumes explicitly (then proceeds to `running` via resume path) | `POST /v1/sessions/{id}/resume` |
@@ -135,7 +151,7 @@ stateDiagram-v2
 
 ## Pod state machine
 
-`Sandbox.status.phase` carries the coarse pod-occupancy enum: `warming`, `idle`, `reserved`, `claimed`, `sdk_connecting`, `draining`, `failed`, and `terminated`. Pod states are internal to the platform and are NOT exposed via the client API. The WarmPoolController is the sole writer of the phase and computes it as a level-triggered projection of the per-pod `SandboxClaim`: claim existence, the claim's binding state and disposition, and `sessionPolicy`. A pod with no claim projects `idle`; a `bound` claim projects `claimed`; a `recycling` claim projects `claimed` until its whole-pod scrub reports successful and `sdk_connecting` during the preConnect SDK re-warm leg that follows; a `reserved` claim projects `reserved`; a claim deleted on a recycling pod under its limits projects `idle`; and a terminal claim disposition (`released` or `failed`), or a claim deleted on a pod with `recycle.enabled: false`, projects `draining` then `terminated`. The fine session-lifecycle states live in the Postgres session model and are not projected onto the CRD.
+`Sandbox.status.phase` carries the coarse pod-occupancy enum: `warming`, `idle`, `reserved`, `claimed`, `sdk_connecting`, `draining`, `failed`, and `terminated`. Pod states are internal to the platform and are NOT exposed via the client API. The WarmPoolController is the sole writer of the phase and computes it as a level-triggered projection of per-pod `SandboxClaim` existence, the claim's binding state and disposition, `sessionPolicy`, and the phase the pod currently projects. A pod in a warm-inventory phase with no claim projects `idle`; a `bound` claim projects `claimed`; a `recycling` claim projects `claimed` until its whole-pod scrub reports successful and `sdk_connecting` during the preConnect SDK re-warm leg that follows; a `reserved` claim projects `reserved`; a claim deleted while the pod projects `reserved`, its scrub and any re-warm already complete, projects `idle`; and a terminal claim disposition (`released` or `failed`), or a claim deleted while the pod projects `claimed`, on a pool of either recycle setting, projects `draining` then `terminated`. The fine session-lifecycle states live in the Postgres session model and are not projected onto the CRD.
 
 ### Pod-warm path diagram
 
@@ -174,8 +190,8 @@ stateDiagram-v2
     idle --> claimed : Session claims pod
     claimed --> receiving_uploads : File upload begins
     receiving_uploads --> finalizing_workspace : All files received
-    finalizing_workspace --> running_setup : Demotion required
-    finalizing_workspace --> attached : No demotion needed
+    finalizing_workspace --> running_setup : Plan has setup commands
+    finalizing_workspace --> attached : No setup commands
     running_setup --> attached : Setup complete
 ```
 
@@ -184,20 +200,24 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
     attached --> completed : Session finishes
-    attached --> failed : Pod crash (retries exhausted)
-    attached --> resume_pending : Pod crash (retries remain)
-    attached --> suspended : Interrupt
+    attached --> failed : Non-retryable failure
+    attached --> resume_pending : Retryable failure (retries remain)
+    attached --> awaiting_client_action : Retryable failure (retries exhausted)
+    attached --> suspended : Interrupt or idle suspension
     attached --> cancelled : Cancel
 
     suspended --> running_resumed : Resume
     suspended --> completed : Terminate
-    suspended --> resume_pending : Pod failure or pod released
+    suspended --> resume_pending : Retryable failure (retries remain) or resume after pod release
+    suspended --> awaiting_client_action : Retryable failure (retries exhausted)
+    suspended --> failed : Non-retryable failure
     suspended --> cancelled : Cancel
 
     resume_pending --> resuming : New pod allocated
     resume_pending --> awaiting_client_action : Timeout
 
     resuming --> attached : Resume successful
+    resuming --> resume_pending : Retryable failure or resuming watchdog (retries remain)
 
     state running_resumed {
         [*] --> active
@@ -208,7 +228,7 @@ stateDiagram-v2
 
 ### Recycle transitions (`recycle.enabled: true`)
 
-When occupancy reaches zero on a recycling pod, the gateway patches the claim's binding state to `recycling`, the whole-pod scrub runs while the pod projects `claimed`, and the recycle disposition decides whether to hold the pod or retire it. On preConnect pools a successful scrub report begins the SDK re-warm (the pod projects `sdk_connecting`) before the claim enters `reserved`.
+When occupancy reaches zero on a recycling pod, unless the release ends the occupancy without reuse ([Recycle lifecycle](execution-modes#recycle-lifecycle)), the gateway patches the claim's binding state to `recycling`, the whole-pod scrub runs while the pod projects `claimed`, and the recycle disposition decides whether to hold the pod or retire it. On preConnect pools a successful scrub report begins the SDK re-warm (the pod projects `sdk_connecting`) before the claim enters `reserved`.
 
 | From | To | Trigger |
 |:-----|:---|:--------|
@@ -216,18 +236,31 @@ When occupancy reaches zero on a recycling pod, the gateway patches the claim's 
 | `claimed` | `sdk_connecting` | `preConnect: true`, scrub reported (success or `scrub_warning`), disposition is recycle, host node schedulable; re-warm clock anchored at the re-warm-start stamp on the claim status |
 | `claimed` | `reserved` | `preConnect: false`, scrub reported, disposition is recycle; claim patched to `reserved` with no re-warm leg |
 | `sdk_connecting` | `reserved` | SDK re-warm completes within `sdkConnectTimeoutSeconds` measured from the re-warm-start stamp |
-| `sdk_connecting` | `failed` | Re-warm watchdog fires |
-| `claimed` | `draining` | Recycle disposition retires the pod: `recycle.maxSessionsPerPod`, `maxScrubFailures`, or `maxPodUptimeSeconds` reached, `onScrubFailure: fail`, a failed session, or an unschedulable host node |
+| `sdk_connecting` | `failed` | Re-warm watchdog fires, or the adapter or runtime container terminates (see [Runtime Supervisor](../runtime-author-guide/lifecycle.md#runtime-supervisor)) |
+| `claimed` | `draining` | A release that ends the occupancy without reuse, such as the release of a failed session on a pool with `maxConcurrentSessions: 1`, deletes the claim instead of patching it to `recycling` (see [Recycle lifecycle](execution-modes#recycle-lifecycle)) |
+| `claimed` | `draining` | Recycle disposition retires the pod: `recycle.maxSessionsPerPod`, `maxScrubFailures`, or `maxPodUptimeSeconds` reached, `onScrubFailure: fail`, an unschedulable host node, or a runtime reported as unable to serve the next session (see the [retirement list](execution-modes#recycle-lifecycle)) |
 | `reserved` | `claimed` | Same-tenant session rebinds within the hold TTL (`reserved → bound` claim patch, no acquisition) |
-| `reserved` | `idle` | Hold TTL expires; precondition-guarded claim DELETE; the pod is scrubbed and SDK-warm, so no second re-warm |
-| `idle` | `draining` | `recycle.maxPodUptimeSeconds` exceeded. The WarmPoolController derives the pod's uptime from its `CreationTimestamp` and level-triggers the drain regardless of session activity. |
+| `reserved` | `idle` | Hold TTL expires; precondition-guarded claim DELETE; the pod is scrubbed and SDK-warm, so no second re-warm. The gateway also ends the hold, with the same precondition-guarded DELETE, when an acquisition refuses the pod under the [runtime-process acknowledgment rule](execution-modes#runtime-process-lifetime) |
+| `idle` | `draining` | `recycle.maxPodUptimeSeconds` exceeded. The WarmPoolController derives the pod's uptime from its `CreationTimestamp` and level-triggers the drain regardless of session activity. The gateway also stamps the `lenny.dev/drain-request` annotation on a pinned idle pod that an acquisition refuses under the [runtime-process acknowledgment rule](execution-modes#runtime-process-lifetime). The pod also drains when its adapter or runtime container terminates (see [Runtime Supervisor](../runtime-author-guide/lifecycle.md#runtime-supervisor)). |
 | `draining` | `terminated` | Replacement provisioned |
 
-The reserved hold extends an occupancy episode across an idle gap: a recycled pod's claim is held rather than deleted for the deployment-level hold TTL (`gateway.claimHoldTTLSeconds`, default 10s), so a same-tenant session arriving within the window rebinds with no acquisition round trip. The PoolScalingController counts `reserved` pods as occupied for inventory purposes.
+The reserved hold extends an occupancy episode across an idle gap: a recycled pod's claim is held rather than deleted for the deployment-level hold TTL (`gateway.claimHoldTTLSeconds`, default 10s), so a same-tenant session arriving within the window rebinds with no acquisition round trip. When the pool's current configuration no longer admits the pod for reuse, the next acquisition ends the hold instead of rebinding it. The PoolScalingController counts `reserved` pods as occupied for inventory purposes.
+
+### Per-slot sub-states
+
+Every session is bound to a [slot](glossary#slot) on the pod that runs it, whatever the pool's `maxConcurrentSessions`, and each slot progresses through its own sub-states beside the pod-level phase. The sub-states are tracked per session and are never projected onto `Sandbox.status.phase`.
+
+| From | To | Trigger |
+|:-----|:---|:--------|
+| `slot_assigned` | `receiving_uploads` | Workspace materialization begins for this slot |
+| `receiving_uploads` | `running` | Workspace ready; the adapter records the pod's shared runtime process as holding the session |
+| `receiving_uploads` | `slot_cleanup` | A cleanup runs on the slot after its bind is abandoned or fails before the slot reaches `running`, a start still in flight included |
+| `running` | `slot_cleanup` | Session completes or fails |
+| `slot_cleanup` | `released` | The cleanup ends and the slot stops counting toward the pod's occupancy |
 
 ### Concurrent-session occupancy (`maxConcurrentSessions > 1`)
 
-A pod serving `maxConcurrentSessions > 1` has a two-level model: the pod-level coarse phase is `claimed` whenever the Redis-counter occupancy is nonzero, while per-slot sub-states track each slot's progress. When occupancy reaches zero the pod leaves `claimed` through the recycle edges above when `recycle.enabled` is true, or through `draining` otherwise.
+A pod serving `maxConcurrentSessions > 1` has a two-level model: the pod-level coarse phase is `claimed` whenever the pod's Redis slot set is nonempty, while the per-slot sub-states above track each slot's progress. When occupancy reaches zero and the last release ends the occupancy without reuse ([Recycle lifecycle](execution-modes#recycle-lifecycle)), the gateway deletes the claim and the pod leaves `claimed` through `draining`. Every release on a pool without `recycle.enabled` ends the occupancy without reuse. Otherwise the pod leaves `claimed` through the recycle edges above.
 
 | From | To | Trigger |
 |:-----|:---|:--------|
@@ -237,7 +270,7 @@ A pod serving `maxConcurrentSessions > 1` has a two-level model: the pod-level c
 | `claimed` | `draining` | Served-session count reaches `recycle.maxSessionsPerPod` on a session release, `scrubProfile` is not `vm-restart`. The gateway stamps the drain request per release, decoupled from the occupancy-zero whole-pod scrub, because a persistently leaked slot can hold total occupancy above zero indefinitely. |
 | `draining` | `terminated` | All slots complete, replacement provisioned |
 
-Per-slot sub-states: `slot_assigned` -> `receiving_uploads` -> `running` -> `slot_cleanup`.
+Two further per-slot edges apply only to a pod serving more than one concurrent session. A slot moves `running -> failed` on a non-retryable error (an OOM kill, a workspace validation error, or a policy rejection) or when its session's stream to the pod fails after the session has started, such as when the runtime stops answering heartbeats. A slot whose stream failed counts toward the `claimed -> draining` threshold above even when its session is retried on another pod, and a runtime that stops answering heartbeats ends the stream of every open session on the pod. A slot moves `slot_cleanup -> leaked` when the gateway reads a `leaked` cleanup-outcome report or a `Shutdown` response that reports no clean exit, or a reclaim it sent is never answered, and the slot is not reclaimed until the pod terminates. A leaked slot stays counted in the pod's Redis slot set and counts toward the `claimed -> draining` threshold above. It stays counted until a Redis restart loses the set, because the gateway rebuilds the set from the session records, which record no leaked slots.
 
 ---
 
@@ -253,7 +286,7 @@ stateDiagram-v2
     submitted --> running : Pod assigned, task started
 
     running --> completed : Task finishes
-    running --> failed : Crash, retries exhausted, or BUDGET_KEYS_EXPIRED
+    running --> failed : Non-retryable failure or BUDGET_KEYS_EXPIRED
     running --> cancelled : Parent cancels or cascade policy
     running --> expired : Lease/budget/deadline exhausted
     running --> input_required : lenny/request_input
@@ -261,7 +294,8 @@ stateDiagram-v2
     input_required --> running : Input provided / timeout / cancelled
     input_required --> cancelled : Parent cancels
     input_required --> expired : Deadline reached
-    input_required --> failed : Pod crash (retries exhausted) / BUDGET_KEYS_EXPIRED
+    input_required --> failed : Non-retryable failure / BUDGET_KEYS_EXPIRED
+    input_required --> completed : terminate
 
     completed --> [*]
     failed --> [*]
@@ -269,7 +303,7 @@ stateDiagram-v2
     expired --> [*]
 ```
 
-Recovery transitions (pod crash with `retryCount < maxRetries`) are handled at the session level: the underlying session enters `resume_pending` and, on successful recovery, the task returns to `running` or `input_required`. On retry exhaustion the task transitions to `failed`. External protocol clients observing the task via `TaskRecord` see `resume_pending` surfaced as `working + metadata.resuming: true` per the session-level mapping below; the canonical task state set above does not include transient recovery states.
+Recovery transitions (a retryable failure with `retryCount < maxRetries`) are handled at the session level: the underlying session enters `resume_pending` and, on successful recovery, the task returns to `running` or `input_required`. On retry exhaustion the underlying session enters `awaiting_client_action`, which external protocol clients see as `input_required` (see the session-level mapping below), and a non-retryable failure moves the task to `failed`. External protocol clients observing the task via `TaskRecord` see `resume_pending` surfaced as `working + metadata.resuming: true` per the session-level mapping below; the canonical task state set above does not include transient recovery states.
 
 ### Protocol mapping
 

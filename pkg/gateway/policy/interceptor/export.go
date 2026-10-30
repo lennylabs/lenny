@@ -33,7 +33,7 @@ const (
 	// interceptor call is made and the whole export fails.
 	CodeExportFileScanSizeExceeded = "EXPORT_FILE_SCAN_SIZE_EXCEEDED"
 
-	// CodeExportFileScanUnavailable is the §15.1 line 1073 error code
+	// CodeExportFileScanUnavailable is the §15.1 error code
 	// returned when a PreExportMaterialization interceptor call timed out
 	// or returned a gRPC error under a fail-closed FailPolicy. The §15.1
 	// classifier marks it TRANSIENT (HTTP 503): the underlying scanner is
@@ -43,7 +43,7 @@ const (
 	// instead — that branch returns no error. Callers stamp
 	// details.{filePath, interceptorRef, reason} on the §15.1 envelope
 	// from the *ExportScanError this package returns. F-8.7.8.
-	// spec: §15.1 line 1073; §8.3 rule 3 line 164; §4.8 line 1038
+	// spec: §15.1; §8.3 rule 3; §4.8
 	CodeExportFileScanUnavailable = "EXPORT_FILE_SCAN_UNAVAILABLE"
 
 	// CodeInterceptorImmutableFieldViolation is the §4.8 error code
@@ -53,7 +53,7 @@ const (
 	// re-derives file_size and sha256 rather than comparing them.
 	CodeInterceptorImmutableFieldViolation = "INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION"
 
-	// CodeExportFileHashMismatch is the §7.4 line 446 error code returned
+	// CodeExportFileHashMismatch is the §7.4 error code returned
 	// when the gateway's hash check on an exported file fails. The
 	// gateway computes SHA-256 of the bytes at every boundary (parent
 	// export, post-MODIFY, child delivery) and verifies it against a
@@ -85,7 +85,7 @@ type ExportFile struct {
 	// DelegationContext carries the §4.8 delegation_context block. It is
 	// immutable across a MODIFY.
 	DelegationContext ExportDelegationContext
-	// Hash is the §7.4 line 446 mandatory SHA-256 of Content, hex-encoded
+	// Hash is the §7.4 mandatory SHA-256 of Content, hex-encoded
 	// lowercase. RunPreExportMaterialization verifies an inbound non-
 	// empty Hash against the bytes and refuses on mismatch; every
 	// returned file carries Hash set to the post-pipeline content's
@@ -95,7 +95,7 @@ type ExportFile struct {
 	Hash string
 }
 
-// ComputeExportFileHash returns the §7.4 line 446 hex-encoded SHA-256
+// ComputeExportFileHash returns the §7.4 hex-encoded SHA-256
 // of content. Used by the delegation export-to-child flow at both the
 // parent-export step (stamp the hash on the resolved ExportFile) and
 // the child-delivery step (verify the persisted bytes match the
@@ -110,7 +110,7 @@ func ComputeExportFileHash(content []byte) string {
 // *ExportScanError{Code: CodeExportFileHashMismatch} on disagreement.
 // Pass an empty expected value to skip the check ("optional for
 // client uploads"); the export-to-child flow always passes a
-// non-empty value (mandatory per §7.4 line 446). F-7.4.10.
+// non-empty value (mandatory per §7.4). F-7.4.10.
 func VerifyExportFileHash(path string, content []byte, expected string) error {
 	if expected == "" {
 		return nil
@@ -175,7 +175,7 @@ func (e *ExportScanError) Error() string {
 	return fmt.Sprintf("%s: exported file %q rejected", e.Code, e.Path)
 }
 
-// ExportScanOutcome is the §16.1 line 80 lenny_export_file_scans_total
+// ExportScanOutcome is the §16.1 lenny_export_file_scans_total
 // `outcome` label for one scanned exported file. The values match the
 // spec enum admitted | modified | rejected | failed_open | failed_closed.
 type ExportScanOutcome string
@@ -205,7 +205,7 @@ const (
 // outcome: the §16.1 counter increments "once per scanned file", so a
 // size-rejected file produces no ExportScanEvent.
 type ExportScanEvent struct {
-	// Pool, TenantID, PolicyName, InterceptorRef are the §16.1 line 80
+	// Pool, TenantID, PolicyName, InterceptorRef are the §16.1
 	// lenny_export_file_scans_total label set (TenantID comes from the
 	// RunPreExportMaterialization call, the rest from ExportScanContext).
 	Pool           string
@@ -213,18 +213,18 @@ type ExportScanEvent struct {
 	SessionID      string
 	PolicyName     string
 	InterceptorRef string
-	// FilePath and FileSize are the §11.7 lines 120-121 audit fields:
+	// FilePath and FileSize are the §11.7 audit fields:
 	// the exported file's child-workspace-relative path and its byte
 	// length as exported (pre-MODIFY).
 	FilePath string
 	FileSize uint64
 	// Outcome is the §16.1 metric outcome label.
 	Outcome ExportScanOutcome
-	// Reason carries the §11.7 line 122 reason: the interceptor-provided
+	// Reason carries the §11.7 reason: the interceptor-provided
 	// reason for OutcomeRejected (may be empty) or the timeout/grpc_error
 	// token for OutcomeFailedOpen. Empty for admitted/modified.
 	Reason string
-	// Duration is the per-file interceptor latency for the §16.1 line 80
+	// Duration is the per-file interceptor latency for the §16.1
 	// lenny_export_file_scan_duration_seconds histogram.
 	Duration time.Duration
 }
@@ -248,7 +248,7 @@ type ExportScanObserver interface {
 type ExportScanContext struct {
 	// Pool is the §16.1 pool label (the SandboxTemplate name).
 	Pool string
-	// PolicyName is the §11.7 line 119 policy_name: the DelegationPolicy
+	// PolicyName is the §11.7 policy_name: the DelegationPolicy
 	// whose contentPolicy owns the export.
 	PolicyName string
 	// InterceptorRef is the §11.7 / §16.1 interceptor_ref: the policy's
@@ -279,8 +279,7 @@ func (sc ExportScanContext) emit(ctx context.Context, tenantID, sessionID, fileP
 }
 
 // ExportScanChainFor builds the §8.7 per-file export-scan chain for the
-// DelegationPolicy contentPolicy.interceptorRef named ref. Per §4.8 lines
-// 1038, 1050 the PreExportMaterialization phase is not independently
+// DelegationPolicy contentPolicy.interceptorRef named ref. Per §4.8 the PreExportMaterialization phase is not independently
 // registerable: the interceptor invoked is always the same named
 // interceptor already in force on the parent's DelegationPolicy at the
 // PreDelegation phase. This method finds that interceptor by name among
@@ -295,13 +294,13 @@ func (sc ExportScanContext) emit(ctx context.Context, tenantID, sessionID, fileP
 // delegation path's (§8.3 rule 5 keys the weakening cooldown on the
 // interceptor's failPolicy, not on the phase).
 //
-// spec: §4.8 lines 1036-1050; §8.3 lines 160-181.
+// spec: §4.8; §8.3.
 func (c *Chain) ExportScanChainFor(ref string) (*Chain, bool) {
 	if ref == "" {
 		return nil, false
 	}
 	var found Interceptor
-	// §4.8 line 1036: contentPolicy.interceptorRef hooks the PreDelegation
+	// §4.8: contentPolicy.interceptorRef hooks the PreDelegation
 	// phase, so the named interceptor is registered there.
 	for _, e := range c.byPhase[PhasePreDelegation] {
 		if e.ic.Name() == ref {
@@ -406,7 +405,7 @@ func RunPreExportMaterialization(ctx context.Context, c *Chain, sc ExportScanCon
 	out := make([]ExportFile, 0, len(files))
 	for _, f := range files {
 		fileSize := uint64(len(f.Content))
-		// §7.4 line 446: when the caller stamped an inbound Hash on a
+		// §7.4: when the caller stamped an inbound Hash on a
 		// resolved ExportFile (the parent-export step's
 		// ComputeExportFileHash output), verify the bytes have not
 		// been tampered with before any interceptor call. F-7.4.10.
@@ -431,7 +430,7 @@ func RunPreExportMaterialization(ctx context.Context, c *Chain, sc ExportScanCon
 		scanned, res, err := scanExportFile(ctx, c, tenantID, sessionID, f)
 		dur := time.Since(start)
 		if err != nil {
-			// spec: §16.1 line 80 / §11.7 lines 69-70 — classify the
+			// spec: §16.1 / §11.7 — classify the
 			// per-file rejection so the observer increments the right
 			// outcome and emits delegation.export_file_scan_rejected for a
 			// deliberate REJECT. A fail-closed scanner outage
@@ -450,9 +449,8 @@ func RunPreExportMaterialization(ctx context.Context, c *Chain, sc ExportScanCon
 			spanErr = err
 			return nil, err
 		}
-		// spec: §16.1 line 80 — a fail-open skip means the file was
-		// admitted without inspection; report failed_open with the §11.7
-		// line 122 reason token rather than the admitted/modified the
+		// spec: §16.1 — a fail-open skip means the file was
+		// admitted without inspection; report failed_open with the §11.7 reason token rather than the admitted/modified the
 		// action alone would imply. F-8.7.9; F-8.7.10.
 		outcome, reason := OutcomeAdmitted, ""
 		switch {
@@ -463,7 +461,7 @@ func RunPreExportMaterialization(ctx context.Context, c *Chain, sc ExportScanCon
 			outcome = OutcomeModified
 		}
 		sc.emit(ctx, tenantID, sessionID, f.Path, fileSize, outcome, reason, dur)
-		// §7.4 line 446: stamp the post-pipeline Hash so the
+		// §7.4: stamp the post-pipeline Hash so the
 		// child-delivery step can re-verify the bytes against this
 		// reference. MODIFY may have rewritten Content; the stamped
 		// Hash reflects the final bytes regardless. F-7.4.10.
@@ -502,7 +500,7 @@ func scanExportFile(ctx context.Context, c *Chain, tenantID, sessionID string, f
 
 	switch res.Action {
 	case ActionReject:
-		// spec: §15.1 line 1073; §8.3 rule 3 line 164 — a fail-closed
+		// spec: §15.1; §8.3 rule 3 — a fail-closed
 		// scanner that timed out or errored surfaces from Chain.Run as
 		// ActionReject with Code == CodeInterceptorTimeout. The §15.1
 		// classifier treats that as TRANSIENT (scanner unavailable)

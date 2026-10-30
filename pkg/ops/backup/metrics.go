@@ -38,7 +38,7 @@ var durationBuckets = []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600, 720
 // leader-independent (any replica that can read the store reports the
 // same cumulative totals), so they ride the collector instead.
 //
-// spec: §25.11 Metrics table (lines 4304-4311).
+// spec: §25.11 Metrics table.
 type MetricsCollector struct {
 	svc *Service
 

@@ -36,7 +36,7 @@ func advancingClock() func() time.Time {
 	}
 }
 
-// spec §25.2 line 393: the upgrade orchestrator folds the completed
+// spec §25.2: the upgrade orchestrator folds the completed
 // upgrade's wall-clock duration into the baseline table on the Complete
 // transition, exactly once, under the platform_upgrade kind.
 func TestUpgradeRecordsBaselineOnComplete(t *testing.T) {
@@ -66,7 +66,7 @@ func TestUpgradeRecordsBaselineOnComplete(t *testing.T) {
 	}
 }
 
-// spec §25.2 line 393: a rollback is not a successful completion and is
+// spec §25.2: a rollback is not a successful completion and is
 // not recorded as a baseline.
 func TestUpgradeDoesNotRecordBaselineOnRollback(t *testing.T) {
 	rec := &fakeBaselineRecorder{}

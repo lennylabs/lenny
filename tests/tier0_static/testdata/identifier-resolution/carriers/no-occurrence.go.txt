@@ -1,0 +1,6 @@
+// SPDX-License-Identifier: MIT
+
+package adapter
+
+// Dial opens the channel this carrier is named after.
+func Dial() error { return nil }

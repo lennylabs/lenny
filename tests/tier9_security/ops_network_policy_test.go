@@ -85,6 +85,7 @@ const defaultNS = "default"
 // or the default profile leaks the plaintext admin-API port.
 func TestOpsNetworkPolicyPosture_spec_25_4(t *testing.T) {
 	c := kind.InstallLenny(t)
+	requireNonDevAdminAPIProfile(t, c)
 
 	present := systemNetworkPolicyNames(t, c)
 	for _, name := range []string{
@@ -335,6 +336,7 @@ func TestOpsDenyAllIngress_spec_25_4(t *testing.T) {
 // admin JWT over http:// rather than TLS.
 func TestOpsAdminAPINoPlaintextHandshake_spec_25_4(t *testing.T) {
 	c := kind.InstallLenny(t)
+	requireNonDevAdminAPIProfile(t, c)
 
 	opsPod := podNameBySelector(t, c, lennySystemNS, opsPodLabel)
 	if opsPod == "" {
@@ -566,4 +568,34 @@ func metricSeriesValue(body, series string) float64 {
 		}
 	}
 	return 0
+}
+
+// requireNonDevAdminAPIProfile skips the calling test when this
+// deployment runs the gateway in dev mode.
+//
+// §25.4 NET-070 requires the lenny-ops to gateway admin-API hop to
+// carry the platform-admin JWT over TLS in every non-dev profile, and
+// the chart's ops-tls-guard accepts the plaintext path only under an
+// explicit acknowledgment, which global.devMode implies. A dev-mode
+// install is therefore on the acknowledged-plaintext path by
+// configuration: it renders no lenny-ops-tls Certificate, renders the
+// gateway plaintext port into lenny-ops-egress, and records plaintext
+// admin-API handshakes. Asserting the TLS profile against it reports a
+// configuration choice as a violation.
+//
+// The dev-mode flag on the gateway Deployment is read rather than the
+// rendered ops policy, so the check does not read the same object the
+// caller is asserting on.
+//
+// spec: §25.4 (NET-070)
+func requireNonDevAdminAPIProfile(t *testing.T, c *kind.Cluster) {
+	t.Helper()
+	args := jsonpathOut(t, c, "deployment", gatewayDeploymentName,
+		"{.spec.template.spec.containers[0].args}")
+	if strings.Contains(args, "--dev-mode") {
+		t.Skip("blocked: the gateway runs with --dev-mode, so this install is on the §25.4 " +
+			"acknowledged-plaintext admin-API path (ops.tls.internalEnabled: false) and renders no " +
+			"ops TLS material at all; the route back is an install that sets ops.tls.internalEnabled " +
+			"with a cert-manager issuer and a gateway that binds an admin-API TLS listener")
+	}
 }

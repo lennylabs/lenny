@@ -62,7 +62,7 @@ func TestCreateEnvironment(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 562 — a tenant-admin asserting a tenantId different
+// spec: §10.6 — a tenant-admin asserting a tenantId different
 // from its own authorized tenant must be rejected, not silently
 // rewritten to its own tenant. F-10.6.12.
 func TestCreateEnvironmentRejectsMismatchedTenantID_spec_10_6_562(t *testing.T) {
@@ -79,7 +79,7 @@ func TestCreateEnvironmentRejectsMismatchedTenantID_spec_10_6_562(t *testing.T) 
 	}
 }
 
-// spec: §10.6 line 562 — same cross-check on Update. F-10.6.12.
+// spec: §10.6 — same cross-check on Update. F-10.6.12.
 func TestUpdateEnvironmentRejectsMismatchedTenantID_spec_10_6_562(t *testing.T) {
 	router, _, _ := newEnvironmentAdmin(t)
 	doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/environments",
@@ -185,7 +185,7 @@ func TestUpdateEnvironmentRoundTripsSelectorExpressions(t *testing.T) {
 	}
 }
 
-// spec: §10.6 lines 613-625 — the bilateral cross-environment-delegation
+// spec: §10.6 — the bilateral cross-environment-delegation
 // block names the peer under `targetEnvironment` (outbound) and
 // `sourceEnvironment` (inbound). The wire shape must round-trip both
 // distinct field names rather than collapse them onto a single
@@ -249,7 +249,7 @@ func TestCrossEnvironmentDelegationWireRoundTrip_spec_10_6_613(t *testing.T) {
 	}
 }
 
-// spec: §10.6 lines 595-599 — connectorSelector carries the tag
+// spec: §10.6 — connectorSelector carries the tag
 // selector plus the allowedCapabilities / deniedCapabilities lists. The
 // admin wire shape must round-trip both halves: the capability lists are
 // no longer silently dropped on write or invisible on GET. F-10.6.3.
@@ -299,7 +299,7 @@ func TestConnectorSelectorCapabilitiesWireRoundTrip_spec_10_6_595(t *testing.T) 
 	}
 }
 
-// spec: §10.6 lines 595-599 — a capability that appears in both the
+// spec: §10.6 — a capability that appears in both the
 // allowed and denied lists is a contradictory rule; admission rejects it.
 // F-10.6.3.
 func TestConnectorSelectorCapabilitiesRejectsOverlap_spec_10_6_595(t *testing.T) {

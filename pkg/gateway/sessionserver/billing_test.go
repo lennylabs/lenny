@@ -57,7 +57,7 @@ func billingEventTypes(t *testing.T, billing *billingstore.Memory) []billingstor
 
 func TestCreateEmitsSessionCreatedBillingEvent(t *testing.T) {
 	billing := billingstore.NewMemory()
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Billing: billing})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
 
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
@@ -91,7 +91,7 @@ func TestCreateEmitsSessionCreatedBillingEvent(t *testing.T) {
 
 func TestCreateAndStartEmitsSessionCreatedBillingEvent(t *testing.T) {
 	billing := billingstore.NewMemory()
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Billing: billing})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
 
 	rr := postSession(t, srv.Handler(), "/v1/sessions/start", "bob@acme.com", "acme")
 	if rr.Code != http.StatusCreated {
@@ -107,11 +107,11 @@ func TestCreateAndStartEmitsSessionCreatedBillingEvent(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 663 — `environmentId` populated on all billing events
+// spec: §10.6 — `environmentId` populated on all billing events
 // for sessions created in an environment context. F-10.6.9.
 func TestCreateEmitsBillingEventEnvironmentID_spec_10_6_663(t *testing.T) {
 	billing := billingstore.NewMemory()
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Billing: billing})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:  "claude-code",
 		UserID:      "alice@acme.com",
@@ -129,11 +129,11 @@ func TestCreateEmitsBillingEventEnvironmentID_spec_10_6_663(t *testing.T) {
 	}
 }
 
-// spec: §10.6 line 663 — sessions outside an environment carry the
+// spec: §10.6 — sessions outside an environment carry the
 // empty environment id (no stamp). F-10.6.9.
 func TestCreateEmitsBillingEventNoEnvironmentWhenUnscoped_spec_10_6_663(t *testing.T) {
 	billing := billingstore.NewMemory()
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Billing: billing})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		UserID:     "alice@acme.com",
@@ -152,7 +152,7 @@ func TestCreateEmitsBillingEventNoEnvironmentWhenUnscoped_spec_10_6_663(t *testi
 
 func TestCreateWithoutBillingStoreDoesNotFail(t *testing.T) {
 	// Billing is nil: the create path must still succeed.
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	})
@@ -163,7 +163,7 @@ func TestCreateWithoutBillingStoreDoesNotFail(t *testing.T) {
 
 func TestTerminateEmitsSessionCompletedBillingEvent(t *testing.T) {
 	billing := billingstore.NewMemory()
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Billing: billing})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
 	h := srv.Handler()
 
 	id := createSessionID(t, h)
@@ -183,7 +183,7 @@ func TestTerminateEmitsSessionCompletedBillingEvent(t *testing.T) {
 
 func TestDeleteEmitsSessionCompletedBillingEvent(t *testing.T) {
 	billing := billingstore.NewMemory()
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Billing: billing})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
 	h := srv.Handler()
 
 	id := createSessionID(t, h)
@@ -200,7 +200,7 @@ func TestDeleteEmitsSessionCompletedBillingEvent(t *testing.T) {
 
 func TestNonTerminalTransitionEmitsNoCompletedEvent(t *testing.T) {
 	billing := billingstore.NewMemory()
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Billing: billing})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
 	h := srv.Handler()
 
 	id := createSessionID(t, h)

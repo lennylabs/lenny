@@ -50,7 +50,7 @@ func (s *Server) registerDiagnosticsRoutes() {
 // OK otherwise. The 207 status mirrors the DIAGNOSTICS_PARTIAL → 207
 // mapping the error path already uses, so a degraded-but-successful
 // diagnosis and a partial-failure error reach the caller with the same
-// status. spec: §25.6 lines 2908-2920 (partial results). F-25.6.1.
+// status. spec: §25.6. F-25.6.1.
 func writeDiagnosis(w http.ResponseWriter, diag any, degraded *conventions.Degradation) {
 	status := http.StatusOK
 	if degraded != nil {
@@ -82,7 +82,7 @@ func (s *Server) handleDiagnoseSession(w http.ResponseWriter, r *http.Request) {
 		writeDiagnosticsError(w, err)
 		return
 	}
-	// spec: §25.9 line 3699 — record the diagnostic access, coalesced
+	// spec: §25.9 — record the diagnostic access, coalesced
 	// per session within a 60s window. F-25.9.15.
 	s.recordDiagnosticAudit(r, eventSessionDiagnosed, "session", id)
 	writeDiagnosis(w, diag, diag.Degradation)
@@ -103,7 +103,7 @@ func (s *Server) handleDiagnosePool(w http.ResponseWriter, r *http.Request) {
 		writeDiagnosticsError(w, err)
 		return
 	}
-	// spec: §25.9 line 3699 — coalesced per pool within a 60s window.
+	// spec: §25.9 — coalesced per pool within a 60s window.
 	s.recordDiagnosticAudit(r, eventPoolDiagnosed, "pool", name)
 	writeDiagnosis(w, diag, diag.Degradation)
 }
@@ -123,7 +123,7 @@ func (s *Server) handleDiagnoseCredentialPool(w http.ResponseWriter, r *http.Req
 		writeDiagnosticsError(w, err)
 		return
 	}
-	// spec: §25.9 line 3699 — coalesced per credential pool within a 60s window.
+	// spec: §25.9 — coalesced per credential pool within a 60s window.
 	s.recordDiagnosticAudit(r, eventCredentialPoolDiagnosed, "credential-pool", name)
 	writeDiagnosis(w, diag, diag.Degradation)
 }

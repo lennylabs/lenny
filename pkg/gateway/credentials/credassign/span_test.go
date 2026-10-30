@@ -16,7 +16,7 @@ import (
 
 // installSpanRecorder swaps the global OTel TracerProvider for an
 // SDK-backed recorder so a test can read every span the function under
-// test emitted. spec: §16.3 line 351.
+// test emitted. spec: §16.3.
 func installSpanRecorder(t *testing.T) (*tracetest.SpanRecorder, func()) {
 	t.Helper()
 	rec := tracetest.NewSpanRecorder()
@@ -55,7 +55,7 @@ func TestAssignEmitsCredentialAssignSpan_spec_16_3(t *testing.T) {
 	svc.RegisterPool(proxyPool("claude-prod", credential.StrategyLeastLoaded,
 		healthyCred("key-1", "sk-ant-real")))
 
-	if _, err := svc.Assign("claude-prod", "s_1", "", "tenant-a"); err != nil {
+	if _, err := svc.Assign("claude-prod", "s_1", "", "tenant-a", 0); err != nil {
 		t.Fatalf("Assign: %v", err)
 	}
 
@@ -89,7 +89,7 @@ func TestAssignSpanRecordsUnknownPoolError_spec_16_3(t *testing.T) {
 	defer restore()
 
 	svc, _, _ := newService(t)
-	if _, err := svc.Assign("missing", "s_2", "", "tenant-a"); err == nil {
+	if _, err := svc.Assign("missing", "s_2", "", "tenant-a", 0); err == nil {
 		t.Fatal("Assign against an unknown pool should fail")
 	}
 

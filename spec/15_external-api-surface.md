@@ -65,7 +65,7 @@ type AdapterCapabilities struct {
     SupportsElicitation bool
 
     // SupportsInterrupt indicates the adapter handles interrupt_request signals
-    // from the lifecycle channel and can surface them to the client.
+    // from the CH-RUNTIMEOPS and can surface them to the client.
     SupportsInterrupt bool
 }
 
@@ -244,16 +244,16 @@ type CallerIdentity struct {
     // issuance only.
     Scope string
 
-    // Act carries the RFC 8693 `act` claim when the session was created via
-    // a delegation child token ([Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)).
-    // Nil for root sessions. When non-nil, adapters that surface delegation
+    // Act carries the RFC 8693 `act` claim of the caller's bearer
+    // ([Section 13.3](13_security-model.md#133-credential-flow)). Nil when the
+    // bearer carries none. When non-nil, adapters that surface delegation
     // provenance (e.g., A2A `delegator` agent card field) SHOULD render
     // Act.Sub as the delegating actor.
     Act *ActorClaim
 }
 
 // ActorClaim is the RFC 8693 `act` claim projection exposed to adapters. It
-// identifies the session's delegating actor. Fields mirror the JWT `act`
+// identifies the delegating actor of the caller's bearer. Fields mirror the JWT `act`
 // claim one-for-one.
 type ActorClaim struct {
     // Sub is the delegating actor's JWT `sub`.
@@ -264,13 +264,11 @@ type ActorClaim struct {
     // delegation is forbidden — see [Section 13.3](13_security-model.md#133-credential-flow)).
     TenantID string
 
-    // SessionID is the parent session's ID. Empty for actors that are not
+    // SessionID is the delegating actor's session ID. Empty for actors that are not
     // themselves Lenny sessions (e.g., external service principals).
     SessionID string
 
-    // DelegationDepth is the parent's delegation depth; the current
-    // session's depth (SessionMetadata.DelegationDepth) equals this value
-    // plus one.
+    // DelegationDepth is the delegating actor's delegation depth.
     DelegationDepth int
 }
 
@@ -546,7 +544,7 @@ The `SessionEventKind` enum above is **closed** — the gateway will never dispa
 | Kind            | Constant                  | `SessionEvent.Payload` schema                                                                                                                         | Fires when                                                                                                                  |
 | --------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `state_change`  | `SessionEventStateChange` | `{ "from": "<state>", "to": "<state>", "subState": "<input_required\|suspended\|...>?" }` — states and sub-states enumerated in [Section 7.2](07_session-lifecycle.md#72-interactive-session-model). | The session transitions between top-level states or between `running` sub-states (`input_required`, `suspended`, etc.). One event per transition. |
-| `output`        | `SessionEventOutput`      | `MessagePart[]` — the canonical output array defined in the `MessagePart` schema (see "Internal `MessagePart` Format" below).                           | The runtime emits an `agent_output` frame; each frame becomes one `SessionEvent` (or is batched per adapter-declared policy). |
+| `output`        | `SessionEventOutput`      | `MessagePart[]` — the canonical output array defined in the `MessagePart` schema (see [§28.5.3](28_communication-channels.md#2853-intra-pod) "Internal `MessagePart` Format").                           | The runtime emits an `agent_output` frame; each frame becomes one `SessionEvent` (or is batched per adapter-declared policy). |
 | `elicitation`   | `SessionEventElicitation` | `MessageEnvelope` with `type: "message"` carrying the `lenny/request_elicitation` payload ([Section 9.2](09_mcp-integration.md#92-elicitation-chain)); adapters that also surface `lenny/request_input` MAY carry it under this kind. | The runtime calls `lenny/request_elicitation` or `lenny/request_input` and the elicitation chain surfaces the request to the adapter. |
 | `tool_use`      | `SessionEventToolUse`     | `{ "toolCallId": "...", "tool": "...", "arguments": {...}, "phase": "requested\|approved\|denied\|completed", "result": MessagePart[]? }` — the adapter-facing projection of the `lenny/tool_call` lifecycle ([Section 9](09_mcp-integration.md)). | A tool call enters a new lifecycle phase (requested, approved/denied, completed). One event per phase transition.            |
 | `error`         | `SessionEventError`       | `{ "code": "<ErrorCode>", "category": "TRANSIENT\|PERMANENT\|POLICY\|UPSTREAM", "message": "...", "retryable": bool, "details": {...}? }` — the shared error taxonomy from [Section 15.2.1](#1521-restmcp-consistency-contract) item 3. | A non-terminal error surfaces mid-session (validation, policy, upstream degradation) that the adapter should reflect to the client. |
@@ -623,14 +621,15 @@ The REST API covers all non-interactive operations. It is the primary integratio
 | -------- | ----------------------------- | ------------------------------------------------------------------------- |
 | `POST`   | `/v1/sessions`                | Create a new session                                                      |
 | `POST`   | `/v1/sessions/start`          | Create, upload inline files, and start in one call (convenience). Runs setup commands in one call, so a deterministic non-zero setup command surfaces as the non-retryable `SETUP_COMMAND_FAILED` (422). |
-| `GET`    | `/v1/sessions/{id}`           | Get session status and metadata. Response includes the stored `workspacePlan` with any gateway-written read-only fields populated (notably `sources[<n>].resolvedCommitSha` for `gitClone` entries, pinned at session creation per [§14](14_workspace-plan-schema.md) `gitClone.ref` resolution). |
+| `GET`    | `/v1/sessions/{id}`           | Get session status and metadata. Response includes the stored `workspacePlan` with any gateway-written read-only fields populated (notably `sources[<n>].resolvedCommitSha` for `gitClone` entries, pinned when the plan binds per [§14](14_workspace-plan-schema.md) `gitClone.ref` resolution). |
 | `GET`    | `/v1/sessions`                | List sessions (filterable by status, runtime, tenant, labels)             |
-| `POST`   | `/v1/sessions/{id}/upload`    | Upload workspace files (pre-start or mid-session if enabled)              |
-| `POST`   | `/v1/sessions/{id}/finalize`  | Finalize workspace and run setup                                          |
+| `POST`   | `/v1/sessions/{id}/upload`    | Upload workspace content (pre-start or mid-session if enabled). The `201` response carries the `uploadRef` that an `uploadFile` source names ([§14](14_workspace-plan-schema.md) `uploadRef` field note). |
+| `POST`   | `/v1/sessions/{id}/upload-archive` | Upload a workspace archive for extraction in the gateway ([Section 7.4](07_session-lifecycle.md#74-upload-safety)). The `201` response carries the `uploadRef` that an `uploadArchive` source names ([§14](14_workspace-plan-schema.md) `uploadRef` field note). |
+| `POST`   | `/v1/sessions/{id}/finalize`  | Finalize workspace and run setup. An optional body binds the session's `workspacePlan` (see the precondition table below). |
 | `POST`   | `/v1/sessions/{id}/start`     | Start the agent runtime                                                   |
 | `POST`   | `/v1/sessions/{id}/interrupt` | Interrupt current agent work                                              |
 | `POST`   | `/v1/sessions/{id}/terminate` | End a session                                                             |
-| `POST`   | `/v1/sessions/{id}/resume`    | Explicitly resume after retry exhaustion                                  |
+| `POST`   | `/v1/sessions/{id}/resume`    | Resume a session in `awaiting_client_action` or `suspended`                                  |
 | `POST`   | `/v1/sessions/{id}/derive`    | Create a new session pre-populated with this session's workspace snapshot |
 | `POST`   | `/v1/sessions/{id}/tool-use/{toolCallId}/approve` | Approve a pending tool call                                |
 | `POST`   | `/v1/sessions/{id}/tool-use/{toolCallId}/deny`    | Deny a pending tool call. Optional body: `{"reason": "<string>"}` |
@@ -642,13 +641,13 @@ The REST API covers all non-interactive operations. It is the primary integratio
 
 | Endpoint                           | Valid precondition states                                          | Resulting transition                                                                   | Notes                                                                                                                           |
 | ---------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /v1/sessions/{id}/upload`    | `created`; also `running` when runtime declares `capabilities.midSessionUpload: true` and deployer policy allows it | remains in current state                                                               | Pre-start: gateway rejects if session already finalized or started. Mid-session: see [Section 7.4](07_session-lifecycle.md#74-upload-safety)                                |
-| `POST /v1/sessions/{id}/finalize`  | `created`                                                          | `finalizing` → `ready`                                                                 | Triggers workspace materialization, setup commands, and credential-lease assignment. A credential failure can surface here as `CREDENTIAL_POOL_EXHAUSTED`, covering a lease-materialization failure rendered to the client as pool-exhausted and a check-to-assignment mismatch (see [Section 4.9](04_system-components.md#49-credential-leasing-service)). `USER_CREDENTIAL_NOT_FOUND` remains a `POST /v1/sessions` error. A deterministic non-zero setup command surfaces here as the non-retryable `SETUP_COMMAND_FAILED` (422). |
+| `POST /v1/sessions/{id}/upload`, `POST /v1/sessions/{id}/upload-archive` | `created`; also `running` when runtime declares `capabilities.midSessionUpload: true` and deployer policy allows it | remains in current state                                                               | Pre-start: gateway rejects if session already finalized or started. Mid-session: see [Section 7.4](07_session-lifecycle.md#74-upload-safety)                                |
+| `POST /v1/sessions/{id}/finalize`  | `created`                                                          | `finalizing` → `ready`                                                                 | Triggers workspace materialization, setup commands, and credential-lease assignment. The optional request body `{"workspacePlan": <WorkspacePlan>}` binds the session's plan when its `CreateSessionRequest` carried none ([Section 14.1](14_workspace-plan-schema.md#141-workspaceplan-schema-versioning) **Plan binding.**). A credential failure can surface here as `CREDENTIAL_POOL_EXHAUSTED`, covering a lease-materialization failure rendered to the client as pool-exhausted and a check-to-assignment mismatch (see [Section 4.9](04_system-components.md#49-credential-leasing-service)). `USER_CREDENTIAL_NOT_FOUND` remains a `POST /v1/sessions` error. A deterministic non-zero setup command surfaces here as the non-retryable `SETUP_COMMAND_FAILED` (422). When any request or gateway process other than this finalize call moves the session to a terminal state while finalization is in progress, the session keeps that terminal state and the finalize call returns `409 INVALID_STATE_TRANSITION` with `details.currentState` set to the terminal state, in place of any error the call's own prepare phase returns. |
 | `POST /v1/sessions/{id}/start`     | `ready`                                                            | `starting` → `running`                                                                 | Starts the agent runtime. On a concurrent-workspace pool whose reserved slot materializes and runs setup at start, a deterministic non-zero setup command surfaces here as the non-retryable `SETUP_COMMAND_FAILED` (422). |
 | `POST /v1/sessions/{id}/interrupt` | `running`                                                          | `suspended`                                                                            | Only valid while the agent is actively executing. Not valid in `suspended`, `starting`, `finalizing`, or any terminal state.    |
-| `POST /v1/sessions/{id}/terminate` | `created`, `finalizing`, `ready`, `starting`, `running`, `suspended`, `resume_pending`, `awaiting_client_action` | `completed`                                                                            | Valid in any non-terminal state. For `created`, the gateway cancels any pending finalization, releases resources if any were allocated, and marks the session `completed`. For `finalizing` and `ready`, the gateway aborts the in-progress setup or dequeues the waiting session, releases the pod, and marks the session `completed`. Graceful shutdown.                                                                  |
-| `POST /v1/sessions/{id}/resume`    | `awaiting_client_action`                                           | `resume_pending` → `running`                                                           | Only valid after automatic retries are exhausted. Not valid in `suspended` (use message delivery or `resume_session` for that). `resuming` is an internal-only transient state between `resume_pending` and `running`; the API reports the transition as `resume_pending` → `running`. Resume-time setup runs against a freshly materialized slot or pool, so a deterministic non-zero setup command surfaces here as the non-retryable `SETUP_COMMAND_FAILED` (422). |
-| `POST /v1/sessions/{id}/messages`  | Any non-terminal state. Delivery semantics vary by state: `running` and `suspended` deliver or buffer per [Section 7.2](07_session-lifecycle.md#72-interactive-session-model) paths 1-7; `resume_pending` and `awaiting_client_action` enqueue to DLQ; pre-running states buffer (inter-session) or reject with `TARGET_NOT_READY` (external client). | `running` (if `suspended` with `delivery: immediate`, atomically resumes and delivers); no state change for other states | See [Section 7.2](07_session-lifecycle.md#72-interactive-session-model) for full delivery semantics per state.                                                                                         |
+| `POST /v1/sessions/{id}/terminate` | `created`, `finalizing`, `ready`, `starting`, `running`, `input_required`, `suspended`, `resume_pending`, `awaiting_client_action` | `completed`                                                                            | Valid in any non-terminal state. For `created`, the gateway cancels any pending finalization, releases resources if any were allocated, and marks the session `completed`. For `finalizing` and `ready`, the gateway aborts the in-progress setup or dequeues the waiting session, releases the pod, and marks the session `completed`. Graceful shutdown.                                                                  |
+| `POST /v1/sessions/{id}/resume`    | `awaiting_client_action`, `suspended`                              | `awaiting_client_action` → `resume_pending`; `suspended` → `resume_pending` when the pod was released; `suspended` → `running` when the pod is still held | The REST counterpart of the `resume_session` tool ([Section 15.2](#152-mcp-api)). From `awaiting_client_action`, and from a `suspended` session whose pod was released, the call returns `200` with the session row in `resume_pending`, the coordinating replica's resume driver performs the restore ([Section 7.3](07_session-lifecycle.md#73-retry-and-resume)), and the restore's outcome arrives on the event stream as a `status_change` event. From a `suspended` session whose pod is still held, the call returns `200` with the row in `running`. Both `suspended` transitions follow [Section 7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6. Both `suspended` transitions are subject to the [Section 11.1](11_policy-and-controls.md#111-admission-and-fairness) **Resume admission.** check. `resuming` is an internal-only transient state between `resume_pending` and `running`; the API reports the transition as `resume_pending` → `running`. |
+| `POST /v1/sessions/{id}/messages`  | Any non-terminal state. Delivery semantics vary by state: `running` and `suspended` deliver or buffer per [Section 7.2](07_session-lifecycle.md#72-interactive-session-model) paths 1-7; `resume_pending` and `awaiting_client_action` enqueue to DLQ; pre-running states buffer (inter-session) or reject with `TARGET_NOT_READY` (external client). | `suspended` → `running` or `resume_pending` as [§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6 states, for any `delivery` value, subject to its **Admission.** bullet; no state change for other states | See [Section 7.2](07_session-lifecycle.md#72-interactive-session-model) for full delivery semantics per state.                                                                                         |
 | `POST /v1/sessions/{id}/derive`    | `completed`, `failed`, `cancelled`, `expired` (default); `running`, `suspended`, `resume_pending`, `awaiting_client_action` (requires `allowStale: true` in request body) | Creates a new session (original unchanged) | Terminal sessions use the sealed or last-checkpoint snapshot. Non-terminal sessions require `allowStale: true`; derive uses the most recent successful checkpoint snapshot. Response includes `workspaceSnapshotSource` and `workspaceSnapshotTimestamp`. See [Section 7.1](07_session-lifecycle.md#71-normal-flow) derive semantics. |
 | `DELETE /v1/sessions/{id}`         | Any non-terminal state                                             | `cancelled`                                                                            | Force-cancels the session and releases resources. Unlike `/terminate` (which marks the session `completed` as a graceful, successful end), `DELETE` always records a `cancelled` terminal state for audit and billing purposes. Use `/terminate` to signal normal completion; use `DELETE` to abandon a session. |
 
@@ -656,13 +655,13 @@ The REST API covers all non-interactive operations. It is the primary integratio
 
 | External session state (returned in API) | Description                                                   | Terminal? |
 | ---------------------------------------- | ------------------------------------------------------------- | --------- |
-| `created`                                | Session created. For a top-level session a warm pod has been claimed and credential availability has been pre-checked (see [§7.1](07_session-lifecycle.md#71-normal-flow) steps 3–4) before the session enters `created`; the credential lease is assigned at finalize, awaiting workspace file uploads or finalization. A delegated child ([§8.2](08_recursive-delegation.md#82-delegation-mechanism)) is committed to `created` before its warm pod is claimed and claims its pod during the §8.2 materialization step, passing transiently through `created` before reaching `running` within the same `delegate_task` call. **TTL:** `maxCreatedStateTimeoutSeconds` (default 300s). On expiry the gateway transitions the session to `expired`, releases the pod claim back to the pool, and revokes the credential lease if one has been assigned. `maxCreatedStateTimeoutSeconds` prevents stale sessions from accumulating indefinitely. Configurable via `gateway.maxCreatedStateTimeoutSeconds`. | No        |
+| `created`                                | Session created. For a top-level session a warm pod has been claimed and credential availability has been pre-checked (see [§7.1](07_session-lifecycle.md#71-normal-flow) steps 3–4) before the session enters `created`; the credential lease is assigned at finalize, awaiting workspace file uploads or finalization. A delegated child ([§8.2](08_recursive-delegation.md#82-delegation-mechanism)) is committed to `created` before its warm pod is claimed and claims its pod during the §8.2 materialization step, passing transiently through `created` before reaching `running` within the same `delegate_task` call. **TTL:** `maxCreatedStateTimeoutSeconds` (default 300s). On expiry the gateway transitions the session to `expired`, releases the pod claim ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)), and revokes the credential lease if one has been assigned. `maxCreatedStateTimeoutSeconds` prevents stale sessions from accumulating indefinitely. Configurable via `gateway.maxCreatedStateTimeoutSeconds`. | No        |
 | `finalizing`                             | Workspace materialization and setup commands in progress      | No        |
 | `ready`                                  | Setup complete, awaiting `start`                              | No        |
 | `starting`                               | Agent runtime is launching                                    | No        |
 | `running`                                | Agent is actively executing                                   | No        |
-| `suspended`                              | Agent paused via `interrupt`; pod held, workspace preserved   | No        |
-| `resume_pending`                         | Pod failed; gateway is retrying on a new pod                  | No        |
+| `suspended`                              | Agent paused via `interrupt` or by idle suspension; workspace preserved; after an interrupt the pod is held until released, and an idle suspension releases it ([Section 6.2](06_warm-pod-model.md#62-pod-state-machine))   | No        |
+| `resume_pending`                         | Gateway is restoring the session onto a new pod                  | No        |
 | `awaiting_client_action`                 | Retries exhausted; client must explicitly resume or terminate | No        |
 | `completed`                              | Agent finished successfully                                   | Yes       |
 | `failed`                                 | Unrecoverable error                                           | Yes       |
@@ -683,7 +682,7 @@ Internal-only states are **never** returned in external API responses. The coars
 | `POST /v1/sessions/{id}/terminate`                                        | Returns `409 INVALID_STATE_TRANSITION` — row is already terminal. `details.currentState = "failed"`, `details.allowedStates` lists the non-terminal states per the precondition table.                                         |
 | `POST /v1/sessions/{id}/start`                                            | Returns `409 INVALID_STATE_TRANSITION` — row is already terminal.                                                                                                                                                              |
 | `POST /v1/sessions/{id}/resume`                                           | Returns `409 INVALID_STATE_TRANSITION` — row is already terminal.                                                                                                                                                              |
-| `POST /v1/sessions/{id}/interrupt`, `/upload`, `/finalize`, `/messages`, `/eval`, `/replay` | Return `409 INVALID_STATE_TRANSITION` — row is already terminal. `/replay` additionally fails because no workspace snapshot exists (no MinIO object was ever written for the derived session).                                |
+| `POST /v1/sessions/{id}/interrupt`, `/upload`, `/upload-archive`, `/finalize`, `/messages`, `/eval`, `/replay` | Return `409 INVALID_STATE_TRANSITION` — row is already terminal. `/replay` additionally fails because no workspace snapshot exists (no MinIO object was ever written for the derived session).                                |
 | `DELETE /v1/sessions/{id}`                                                | Returns `409 INVALID_STATE_TRANSITION` — row is already terminal. To permanently remove an audit row, operators use tenant-scoped retention/purge tooling ([§12.8](12_storage-architecture.md#128-compliance-interfaces)).     |
 | `POST /v1/sessions/{id}/derive`                                            | Returns `400 VALIDATION_ERROR` with `details.fields[0].field: "sourceSessionId"` and message `"source session has no resolvable workspace snapshot"` (same error as deriving from any session that never produced a snapshot). |
 | Event-stream attach (`attach_session`, SSE reconnect, `/v1/sessions/{id}/events`) | Returns `404 RESOURCE_NOT_FOUND`. No `SeqNum` counter was ever allocated; no events were ever emitted; the row is not `attach_session`-reachable.                                                                               |
@@ -705,13 +704,13 @@ These rows do **not** consume active-session quota (they are terminal from birth
 | `GET`  | `/v1/sessions/{id}/usage`            | Get token and resource usage. Returns tree-aggregated usage (including all descendant tasks) when the session has a delegation tree. |
 | `POST` | `/v1/sessions/{id}/extend-retention` | Extend artifact retention TTL. Body: `{"ttlSeconds": <n>}`. See [Section 7.1](07_session-lifecycle.md#71-normal-flow).                                                        |
 | `GET`  | `/v1/sessions/{id}/webhook-events`   | List undelivered webhook events after retry exhaustion. See [Section 14](14_workspace-plan-schema.md) (`callbackUrl` field).                                        |
-| `GET`  | `/v1/sessions/{id}/events`           | Stream session activity. Content-negotiated: `Accept: text/event-stream` returns the Server-Sent Events stream of `SessionEvent` frames (see the [SessionEvent Kind Registry](#sessionevent-kind-registry)); `Accept: application/json` returns the paginated list envelope `{items, cursor, hasMore}` over the retained replay buffer. SSE reconnect with `Last-Event-ID` resumes from the last delivered `SeqNum` per the [Event-stream resume](#152-mcp-api) contract. |
+| `GET`  | `/v1/sessions/{id}/events`           | Stream session activity. Content-negotiated: `Accept: text/event-stream` returns the Server-Sent Events stream of `SessionEvent` frames (see the [SessionEvent Kind Registry](#sessionevent-kind-registry)); `Accept: application/json` returns the paginated list envelope `{items, cursor, hasMore}` over the backlog the serving replica reads from the shared session-event relay `CH-EVENTRELAY` ([§28.5.7](28_communication-channels.md#2857-gateway-to-store)). SSE reconnect with `Last-Event-ID` resumes from the last delivered `SeqNum` per the [Event-stream resume](#152-mcp-api) contract. |
 
 **Blob resolution:**
 
 | Method | Endpoint              | Description                                                                                                                                                                                                                                                                                                                                                                        |
 | ------ | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`  | `/v1/blobs/{ref}`     | Resolve and download a `lenny-blob://` reference (see [Section 15.4.1](#1541-adapterbinary-protocol), `LennyBlobURI` scheme). `{ref}` is the full `lenny-blob://` URI, URL-encoded. The gateway verifies that the caller's identity has read access to the tenant and session embedded in the URI (`tenant_id`, `session_id` components) before retrieving the blob from the artifact store and streaming it back. Returns the blob bytes with the `Content-Type` header set to the blob's `mimeType`. Returns `404` if the blob has expired (`ttl` elapsed) or was never written; returns `403` if the caller lacks access to the owning session. REST adapter clients use this endpoint to dereference `ref` fields in `MessagePart` responses — external protocol adapters (MCP, OpenAI, A2A) MUST dereference `ref` fields internally and MUST NOT pass `lenny-blob://` URIs to external callers. |
+| `GET`  | `/v1/blobs/{ref}`     | Resolve and download a `lenny-blob://` reference (see [Section 28.5.3](28_communication-channels.md#2853-intra-pod), `LennyBlobURI` scheme). `{ref}` is the full `lenny-blob://` URI, URL-encoded. The gateway verifies that the caller's identity has read access to the tenant and session embedded in the URI (`tenant_id`, `session_id` components) before retrieving the blob from the artifact store and streaming it back. Returns the blob bytes with the `Content-Type` header set to the blob's `mimeType`. Returns `404` if the blob has expired (`ttl` elapsed) or was never written; returns `403` if the caller lacks access to the owning session. REST adapter clients use this endpoint to dereference `ref` fields in `MessagePart` responses — external protocol adapters (MCP, OpenAI, A2A) MUST dereference `ref` fields internally and MUST NOT pass `lenny-blob://` URIs to external callers. |
 
 **Async job support:**
 
@@ -845,7 +844,7 @@ All admin CRUD resources use `{name}` as the path identifier (human-readable, un
 | `GET`    | `/v1/admin/tenants/{id}`                                        | Get a specific tenant. For tenants with `workspaceTier: T4`, the response includes `t4KmsLastProbeSuccessAt` — the RFC 3339 UTC timestamp of the most recent successful continuous KMS availability probe against the tenant's `tenant:{tenant_id}` KMS key, mirroring the `lenny_t4_kms_probe_last_success_timestamp` gauge ([Section 16.1](16_observability.md#161-metrics)). A stale value (older than `2 * storage.t4KmsProbeInterval`) indicates the tenant has drifted into a fail-closed write posture and paired with the `T4KmsKeyUnusable` alert ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)); an idempotent `PUT /v1/admin/tenants/{id}` re-assert of `workspaceTier: T4` that reaches the admin-time probe also refreshes this field in the response. Field is omitted for non-T4 tenants. See [Section 12.5](12_storage-architecture.md#125-artifact-store) T4 per-tenant KMS key lifecycle. |
 | `PUT`    | `/v1/admin/tenants/{id}`                                        | Update a tenant (requires `If-Match`). A `workspaceTier: T4` update — whether a new promotion or an idempotent re-assert — runs the admin-time KMS availability probe described in [Section 12.5](12_storage-architecture.md#125-artifact-store); on success the response body carries the same `t4KmsLastProbeSuccessAt` timestamp documented under the `GET` endpoint above. The `complianceProfile` field is subject to the one-way ratchet `none < soc2 < fedramp < hipaa` ([§11.7](11_policy-and-controls.md#117-audit-logging) "Compliance profile downgrade ratchet") — a request that lowers the value is rejected with `422 COMPLIANCE_PROFILE_DOWNGRADE_PROHIBITED` ([§15.1](#151-rest-api)); legitimate wind-down requires `POST /v1/admin/tenants/{id}/compliance-profile/decommission` (below). The `workspaceTier` field is similarly ratcheted (stricter only) by [§12.9](12_storage-architecture.md#129-data-classification). |
 | `DELETE` | `/v1/admin/tenants/{id}`                                        | Delete a tenant                                                                                                                                                                                                                                                                                                            |
-| `POST`   | `/v1/admin/tenants/{id}/suspend`                                | Suspend a tenant. Body: `{"reason": "<string>"}`. All active sessions in the tenant are drained; new session creation and message injection are rejected with `TENANT_SUSPENDED` until the tenant is resumed. The suspension is recorded in the audit trail with operator identity and reason. Requires `platform-admin`. |
+| `POST`   | `/v1/admin/tenants/{id}/suspend`                                | Suspend a tenant. Body: `{"reason": "<string>"}`. All active sessions in the tenant are drained ([§12.8](12_storage-architecture.md#128-compliance-interfaces) **Lifecycle fence and drain**); the creation fence refuses new sessions, and message injection is rejected with `TENANT_SUSPENDED`, until the tenant is resumed. Every suspend request, a repeat included, is recorded in the audit trail with operator identity and reason ([§11.7](11_policy-and-controls.md#117-audit-logging)). A suspend request for an already-suspended tenant leaves the marker unchanged and runs the drain again. The response body reports `drainedSessions`, the number of sessions the drain terminated, and `failedSessions`, the IDs of sessions the drain did not bring to a terminal state. A non-empty `failedSessions` means the drain is incomplete. When the drain cannot list the tenant's sessions, the request returns `INTERNAL_ERROR` and the suspension marker stays set. Requires `platform-admin`. |
 | `POST`   | `/v1/admin/tenants/{id}/resume`                                 | Resume a previously suspended tenant. Restores normal tenant operation. Existing sessions remain terminated — suspension is not a pause. Requires `platform-admin`.                                                                                                                                                        |
 | `PUT`    | `/v1/admin/tenants/{id}/rbac-config`                            | Set tenant RBAC configuration (requires `If-Match`)                                                                                                                                                                                                                                                                        |
 | `GET`    | `/v1/admin/tenants/{id}/rbac-config`                            | Get tenant RBAC configuration                                                                                                                                                                                                                                                                                              |
@@ -863,6 +862,9 @@ All admin CRUD resources use `{name}` as the path identifier (human-readable, un
 | `DELETE` | `/v1/admin/tenants/{id}/roles/{name}`                         | Delete a custom role. Blocked if any users are assigned this role (`RESOURCE_HAS_DEPENDENTS`). Requires `platform-admin` or `tenant-admin`. |
 | `POST`   | `/v1/admin/users/{userId}/invalidate`                          | Terminate all active sessions for a user and revoke their tokens immediately. Used during incident response to stop an active attacker's sessions. Requires `platform-admin` or `tenant-admin` (scoped to own tenant). Emits `user.invalidated` audit event. See [Section 11.4](11_policy-and-controls.md#114-user-invalidation).                                             |
 | `POST`   | `/v1/admin/users/{userId}/rotate-token`                        | Rotate the bootstrap `lenny-admin` credential. The gateway mints the replacement token in process, patches the `lenny-admin-token` Kubernetes Secret server-side, and durably revokes the superseded token (immediately invalidated, not a grace period) — the CLI does not call `/v1/oauth/token` for this rotation. Returns `404` for any user other than the managed bootstrap admin. Emits `token.exchanged` (`exchange_type: admin_rotation`) and `token.revoked` (`revocation_reason: rotation_replaced`) audit events. Requires `platform-admin`. See [Section 17.6](17_deployment-topology.md#176-packaging-and-installation) (admin-token rotation procedure) and [Section 24.9](24_lenny-ctl-command-reference.md#249-user-and-token-management) for the CLI mapping. |
+| `POST`   | `/v1/admin/impersonation`                                       | Start a platform-admin impersonation session ([§13.3](13_security-model.md#133-credential-flow) "Platform-admin impersonation" rule 1). Body: `{"targetTenantId", "targetUserId", "reason", "ticketId", "durationSeconds"}`; every field is required, and `durationSeconds` is from 60 to 3600 (the maximum impersonation duration). Response `200`: `{"impersonationSessionId", "bearerToken", "tokenType": "Bearer", "targetTenantId", "targetUserId", "expiresAt"}`; the bearer is a `user_bearer` for the target user in the target tenant. Emits `admin.impersonation_started`. Errors: `400 VALIDATION_ERROR` (a missing field, or `durationSeconds` out of range), `403 FORBIDDEN` (the caller lacks `platform-admin`, or [§13.3](13_security-model.md#133-credential-flow) "Platform-admin impersonation" rule 1 refuses the call), `404 RESOURCE_NOT_FOUND` (the target tenant or user does not exist), `422 PLATFORM_AUDIT_REGION_UNRESOLVABLE`, `503 KMS_SIGNING_UNAVAILABLE`, and `500 INTERNAL_ERROR`. Requires `platform-admin`. |
+| `GET`    | `/v1/admin/impersonation`                                       | List the active impersonation sessions in every tenant ([§13.3](13_security-model.md#133-credential-flow) "Platform-admin impersonation" rule 2). Any gateway replica serves the call. Response `200`: the cursor-paginated envelope ("Cursor-based pagination" in this section), whose `items` are `{"impersonationSessionId", "adminSub", "targetTenantId", "targetUserId", "issuedAt", "expiresAt"}`. Reads across tenants as [§13.3](13_security-model.md#133-credential-flow) "Platform-admin impersonation" rule 7 states. Errors: `400 VALIDATION_ERROR` (an invalid `sort` field or an expired cursor, as "Cursor-based pagination" states), `403 FORBIDDEN`, and `500 INTERNAL_ERROR` (including when the cross-tenant-read audit event cannot be written, in which case no list is returned). Requires `platform-admin`. |
+| `DELETE` | `/v1/admin/impersonation/{id}`                                  | End an impersonation session by revoking its bearer ([§13.3](13_security-model.md#133-credential-flow) "Platform-admin impersonation" rule 3). Any gateway replica serves the call. Response `200`: `{"impersonationSessionId", "endedAt"}`. Emits `admin.impersonation_ended`. Reads across tenants as [§13.3](13_security-model.md#133-credential-flow) "Platform-admin impersonation" rule 7 states. A failure to write the ended event after the revocation commits leaves the bearer revoked ([§13.3](13_security-model.md#133-credential-flow) "Platform-admin impersonation"). Errors: `403 FORBIDDEN`, `404 RESOURCE_NOT_FOUND` (no impersonation session has the id), `409 INVALID_STATE_TRANSITION` (the bearer is revoked or expired; `details.currentState` is `revoked` or `expired`, and `details.allowedStates` is `["active"]`), `422 PLATFORM_AUDIT_REGION_UNRESOLVABLE` (the ended event could not be written and the bearer stays revoked), and `500 INTERNAL_ERROR`. Requires `platform-admin`. |
 | `POST`   | `/v1/admin/environments`                                        | Create an environment                                                                                                                                                                                                                                                                                                      |
 | `GET`    | `/v1/admin/environments`                                        | List all environments                                                                                                                                                                                                                                                                                                      |
 | `GET`    | `/v1/admin/environments/{name}`                                 | Get a specific environment                                                                                                                                                                                                                                                                                                 |
@@ -886,10 +888,10 @@ All admin CRUD resources use `{name}` as the path identifier (human-readable, un
 | `DELETE` | `/v1/admin/external-adapters/{name}`                            | Delete an external adapter                                                                                                                                                                                                                                                                                                 |
 | `GET`    | `/v1/admin/sessions/{id}`                                       | Get session state, metadata, and assigned pod for operator investigation. Returns the same session state model as `GET /v1/sessions/{id}` plus internal pod assignment and pool details. Requires `platform-admin`. See [Section 24.11](24_lenny-ctl-command-reference.md#2411-session-investigation).                                                                                      |
 | `POST`   | `/v1/admin/sessions/{id}/force-terminate`                       | Force-terminate a session                                                                                                                                                                                                                                                                                                  |
-| `POST`   | `/v1/admin/users/{userId}/erase`                               | Initiate a GDPR user-level erasure job. Returns a job ID. Requires `platform-admin` or `tenant-admin` role. Runs the DeleteByUser legal-hold preflight ([§12.8](12_storage-architecture.md#128-compliance-interfaces) Step 0) before queuing the job: if any active legal hold is scoped to the target user (sessions, artifacts, audit ranges, or workspace snapshots), the request is rejected with `409 ERASURE_BLOCKED_BY_LEGAL_HOLD` and emits a `gdpr.erasure_blocked_by_hold` audit event. `platform-admin` callers may override the preflight by submitting `{"acknowledgeHoldOverride": true, "justification": "<required text>"}` in the request body — the override is separately audited as `gdpr.legal_hold_overridden` and does not clear the underlying holds. `tenant-admin` callers cannot self-override. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces) Step 0.                                                                                                                                                                                              |
+| `POST`   | `/v1/admin/users/{userId}/erase`                               | Initiate a GDPR user-level erasure job. Returns a job ID. Requires `platform-admin` or `tenant-admin` role. Runs the DeleteByUser legal-hold preflight ([§12.8](12_storage-architecture.md#128-compliance-interfaces) Step 0) before queuing the job: if any active legal hold is scoped to the target user (sessions, artifacts, audit ranges, or workspace snapshots), the request is rejected with `409 ERASURE_BLOCKED_BY_LEGAL_HOLD` and emits a `gdpr.erasure_blocked_by_hold` audit event. `platform-admin` callers may override the preflight by submitting `{"acknowledgeHoldOverride": true, "justification": "<required text>"}` in the request body — the override is separately audited as `gdpr.legal_hold_overridden` and does not clear the underlying holds. `tenant-admin` callers cannot self-override. A request for a user who already has an erasure job in progress is answered as the [Section 12.8](12_storage-architecture.md#128-compliance-interfaces) **User-level erasure invocation** paragraph states. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces) Step 0.                                                                                                                                                                                              |
 | `GET`    | `/v1/admin/erasure-jobs/{jobId}`                               | Query erasure job status: phase, completion percentage, time elapsed, errors. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces).                                                                                                                                                                                                                            |
-| `POST`   | `/v1/admin/erasure-jobs/{jobId}/retry`                         | Retry a failed erasure job. The job must be in `failed` state. Requires `platform-admin`. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces).                                                                                                                                                                                                                |
-| `POST`   | `/v1/admin/erasure-jobs/{jobId}/clear-processing-restriction`  | Manually clear the `processing_restricted` flag for a user after a failed erasure job. Body: `{"justification": "<text>"}`. Operator identity and justification are recorded in the audit trail. Requires `platform-admin`. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces).                                                                              |
+| `POST`   | `/v1/admin/erasure-jobs/{jobId}/retry`                         | Retry a failed erasure job. The job must be in `failed` state. The legal-hold preflight ([§12.8](12_storage-architecture.md#128-compliance-interfaces) Step 0) runs before the job restarts. Requires `platform-admin`. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces).                                                                                                                                                                                                                |
+| `POST`   | `/v1/admin/erasure-jobs/{jobId}/clear-processing-restriction`  | Manually clear the `processing_restricted` flag for a user after a failed erasure job. The job must be in `failed` state, and a request for any other job is rejected with `409 ERASURE_JOB_NOT_FAILED`. The request is rejected with `409 INVALID_STATE_TRANSITION` while the flag records another erasure job of the user. Body: `{"justification": "<text>"}`. Operator identity and justification are recorded in the audit trail. Requires `platform-admin`. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces).                                                                              |
 | `POST`   | `/v1/admin/billing-corrections`                                 | Issue a billing correction event. Requires `platform-admin`. Body: `tenant_id`, `corrects_sequence`, `correction_reason_code` (enum), optional `correction_detail`, replacement values (`tokens_input`, `tokens_output`, `pod_minutes`). Returns the correction event with assigned `sequence_number`. See [Section 11.2.1](11_policy-and-controls.md#1121-billing-event-stream). |
 | `POST`   | `/v1/admin/bootstrap`                                           | Apply a seed file (idempotent upsert of runtimes, pools, tenants, etc.). A tenant the seed creates is provisioned the same per-tenant Postgres billing and audit sequences as `POST /v1/admin/tenants` under the [Section 10.2](10_gateway-internals.md#102-authentication) derived names, so a bootstrap-seeded tenant (including the Day-1 `default` tenant) has both sequences before its first billing or audit event. Same schema as `bootstrap` Helm values. See [Section 17.6](17_deployment-topology.md#176-packaging-and-installation). Every invocation emits a `platform.bootstrap_applied` audit event (T3) recording: calling service account identity, seed file SHA-256 hash, resource changes summary (resource type, name, action: `created`/`updated`/`skipped`/`error`), and `dryRun: true/false`. The audit event is emitted even when `?dryRun=true` (with the dry-run flag set) so operators have a record of what a bootstrap run would have changed. The bootstrap Job's ServiceAccount is documented in [Section 17.6](17_deployment-topology.md#176-packaging-and-installation) — it uses a minimal-RBAC ServiceAccount scoped to `lenny-system` with no cluster-wide permissions. |
 | `POST`   | `/v1/admin/legal-hold`                                          | Set or clear a legal hold on a session or artifact. Body: `{"resourceType": "session"\|"artifact", "resourceId": "<id>", "hold": true\|false, "note": "<string> (required when hold is true)"}`. Requires `platform-admin` or `tenant-admin`. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces).                                                                                                             |
@@ -908,7 +910,7 @@ All admin CRUD resources use `{name}` as the path identifier (human-readable, un
 | `PUT`    | `/v1/admin/credential-pools/{name}/credentials/{credId}`        | Update a credential in the pool (body may change `secretRef`). Requires `If-Match`. When `secretRef` changes, the handler performs the admin-time RBAC live-probe ([Section 4.9](04_system-components.md#49-credential-leasing-service)); fails with `422 CREDENTIAL_SECRET_RBAC_MISSING` if the Token Service ServiceAccount lacks `get` on the new Secret. See [Section 24.5](24_lenny-ctl-command-reference.md#245-credential-management). |
 | `DELETE` | `/v1/admin/credential-pools/{name}/credentials/{credId}`        | Remove a credential from a pool. Active leases backed by the credential are rotated via the standard fallback path ([Section 4.9](04_system-components.md#49-credential-leasing-service) Fallback Flow). See [Section 24.5](24_lenny-ctl-command-reference.md#245-credential-management). |
 | `POST`   | `/v1/admin/quota/reconcile`                                     | Re-aggregate in-flight session usage from Postgres into Redis after Redis recovery. See [Section 24.6](24_lenny-ctl-command-reference.md#246-quota-operations).                                                                                                                                                                                                                       |
-| `POST`   | `/v1/oauth/token`                                               | [RFC 6749](https://www.rfc-editor.org/rfc/rfc6749) token endpoint augmented with [RFC 8693 token exchange](https://www.rfc-editor.org/rfc/rfc8693) (`grant_type=urn:ietf:params:oauth:grant-type:token-exchange`). Canonical endpoint for: the general self/service-principal rotation grant, in which a platform-admin, tenant-admin, service-principal, or end-user caller presents its own current token as `subject_token` and requests a privilege-equivalent replacement (`requested_token_type=<same>`); delegation child-token minting (internal; `actor_token=<parent_session_token>`, narrowed `scope`); credential-lease token issuance; and operability-scope narrowing. The bootstrap `lenny-admin` credential rotation is not minted here — the gateway mints and patches its Secret in process (see `POST /v1/admin/users/{userId}/rotate-token` below). See [Section 13](13_security-model.md#13-security-model) for the claim-mapping table. |
+| `POST`   | `/v1/oauth/token`                                               | [RFC 6749](https://www.rfc-editor.org/rfc/rfc6749) token endpoint augmented with [RFC 8693 token exchange](https://www.rfc-editor.org/rfc/rfc8693) (`grant_type=urn:ietf:params:oauth:grant-type:token-exchange`). Canonical endpoint for: the general self/service-principal rotation grant, in which a platform-admin, tenant-admin, service-principal, or end-user caller presents its own current token as `subject_token` and requests a privilege-equivalent replacement (`requested_token_type=<same>`); `a2a_delegation` child-token minting (`actor_token` = the delegating caller's token, narrowed `scope`); credential-lease token issuance; and operability-scope narrowing. The bootstrap `lenny-admin` credential rotation is not minted here — the gateway mints and patches its Secret in process (see `POST /v1/admin/users/{userId}/rotate-token` below). See [Section 13](13_security-model.md#13-security-model) for the claim-mapping table. |
 | `POST`   | `/v1/admin/billing-corrections/{id}/approve`                    | Approve a pending billing correction. Requires `platform-admin`; submitter cannot approve their own request (self-approval rejected). See [Section 11.2.1](11_policy-and-controls.md#1121-billing-event-stream).                                                                                                                                                                   |
 | `POST`   | `/v1/admin/billing-corrections/{id}/reject`                     | Reject a pending billing correction. Requires `platform-admin`; submitter cannot reject their own request (self-rejection rejected). The correction remains in `billing_correction_pending` state with `rejected` outcome for audit purposes and is never promoted to the billing stream. See [Section 11.2.1](11_policy-and-controls.md#1121-billing-event-stream).                |
 | `POST`   | `/v1/admin/billing-correction-reasons`                          | Add a deployer-defined `correction_reason_code` to the closed enum. Body: `{"code": "<string>", "description": "<string>"}`. Requires `platform-admin`. Audit-logged. See [Section 11.2.1](11_policy-and-controls.md#1121-billing-event-stream).                                                                                                                                  |
@@ -979,7 +981,7 @@ This list is the source-of-truth; new domains must be added here before being in
 
 **MCP endpoint boundary.** Lenny exposes two distinct MCP endpoint families and they MUST NOT be confused:
 
-- `/mcp/runtimes/{runtime-name}` — agent-pod tool proxy (already documented in §15 above). Served by the gateway; authentication is a session-scoped token; tool surface is runtime-supplied.
+- `/mcp/runtimes/{runtime-name}` — agent-pod tool proxy (already documented in §15 above). Served by the gateway; authentication is the caller's bearer ([§10.2](10_gateway-internals.md#102-authentication)); tool surface is runtime-supplied.
 - `/mcp/management` — admin/operability surface (§25.12). Served by `lenny-ops`; authentication is the same OIDC/JWT mechanism as REST admin calls; tool surface is auto-generated from the admin OpenAPI spec.
 
 Both speak the MCP protocol; neither proxies to the other.
@@ -1007,7 +1009,7 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | Code                        | Category    | HTTP Status | Description                                                                                                                                                                                                                                              |
 | --------------------------- | ----------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `VALIDATION_ERROR`          | `PERMANENT` | 400         | Request body or query parameters failed validation                                                                                                                                                                                                       |
-| `WORKSPACE_PLAN_INVALID`    | `PERMANENT` | 400         | Inner `workspacePlan` payload on `POST /v1/sessions` (or `POST /v1/sessions/start`) failed JSON Schema validation against the published `WorkspacePlan` schema. Reserved for inner-plan schema failures only; outer-envelope field failures use field-specific codes (`ENV_VAR_BLOCKLISTED`, `RUNTIME_OPTIONS_INVALID`, etc.) per [Section 14](14_workspace-plan-schema.md). `details.field` identifies the offending plan path (e.g., `"sources[<n>].mode"`, `"sources[<n>].resolvedCommitSha"`), `details.reason` carries a short sub-code (e.g., `"invalid_mode_format"`, `"setuid_setgid_prohibited"`, `"sticky_on_file_prohibited"`, `"gateway_written_field"`), and `details.fields` (when multiple violations are reported) carries the JSON Schema validation report. Not retryable without request-body changes. |
+| `WORKSPACE_PLAN_INVALID`    | `PERMANENT` | 400         | Inner `workspacePlan` payload of a request that binds a plan ([Section 14.1](14_workspace-plan-schema.md#141-workspaceplan-schema-versioning) **Plan binding.**) failed JSON Schema validation against the published `WorkspacePlan` schema. Reserved for inner-plan schema failures only; outer-envelope field failures use field-specific codes (`ENV_VAR_BLOCKLISTED`, `RUNTIME_OPTIONS_INVALID`, etc.) per [Section 14](14_workspace-plan-schema.md). `details.field` identifies the offending plan path (e.g., `"sources[<n>].mode"`, `"sources[<n>].resolvedCommitSha"`), `details.reason` carries a short sub-code (e.g., `"invalid_mode_format"`, `"setuid_setgid_prohibited"`, `"sticky_on_file_prohibited"`, `"gateway_written_field"`), and `details.fields` (when multiple violations are reported) carries the JSON Schema validation report. Not retryable without request-body changes. |
 | `INVALID_STATE_TRANSITION`  | `PERMANENT` | 409         | Requested operation is not valid for the current resource state                                                                                                                                                                                          |
 | `RESOURCE_NOT_FOUND`        | `PERMANENT` | 404         | The requested resource does not exist or is not visible to the caller                                                                                                                                                                                    |
 | `RESOURCE_ALREADY_EXISTS`   | `PERMANENT` | 409         | A resource with the given identifier already exists                                                                                                                                                                                                      |
@@ -1016,7 +1018,7 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `ETAG_REQUIRED`             | `PERMANENT` | 428         | `If-Match` header is required on PUT but was not provided                                                                                                                                                                                                |
 | `UNAUTHORIZED`              | `PERMANENT` | 401         | Missing or invalid authentication credentials                                                                                                                                                                                                            |
 | `FORBIDDEN`                 | `POLICY`    | 403         | Authenticated but not authorized for this operation                                                                                                                                                                                                      |
-| `QUOTA_EXCEEDED`            | `POLICY`    | 429         | Tenant or user quota exceeded                                                                                                                                                                                                                            |
+| `QUOTA_EXCEEDED`            | `POLICY`    | 429         | Tenant or user quota exceeded, including a concurrent-session limit that refuses a session creation or the resume of a `suspended` session ([Section 11.1](11_policy-and-controls.md#111-admission-and-fairness)) |
 | `RATE_LIMITED`              | `POLICY`    | 429         | Request rate limit exceeded                                                                                                                                                                                                                              |
 | `CREDENTIAL_POOL_EXHAUSTED` | `POLICY`    | 503         | No available credentials in the assigned pool                                                                                                                                                                                                            |
 | `CREDENTIAL_SECRET_RBAC_MISSING` | `PERMANENT` | 422    | Admin credential-pool write rejected because the Token-Service-owned live-probe returned `DENIED` or `NOT_FOUND` for one or more referenced Secrets — the Token Service's own ServiceAccount lacks `get` permission on (or the API server does not contain) each named Secret. Returned by pool creation (`POST /v1/admin/credential-pools`), credential addition (`POST /v1/admin/credential-pools/{name}/credentials`), and credential update (`PUT /v1/admin/credential-pools/{name}/credentials/{credId}`). `details.resourceNames` is an array naming the missing Secret(s) and `details.rbacPatch` contains the required RBAC patch command (equivalent to `lenny-ctl admin credential-pools add-credential`'s emitted patch) covering the full set. Apply the grant and retry. See [Section 4.9](04_system-components.md#49-credential-leasing-service) (Admin-time RBAC live-probe).                                                                                                |
@@ -1064,25 +1066,26 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `INVALID_BREAKER_SCOPE`     | `PERMANENT` | 422         | `POST /v1/admin/circuit-breakers/{name}/open` rejected because the request body's `limit_tier` / `scope` pair is absent, outside its closed vocabulary, or mismatched against the breaker's persisted scope. Returned when: `limit_tier` is absent or not one of `runtime` \| `pool` \| `connector` \| `operation_type`; `scope` is absent; the `scope` object's keys do not match the selected `limit_tier` (e.g., `limit_tier: "runtime"` with `scope: {"pool": "..."}`); a tier-specific enumerated value is outside its closed value set (currently applies to `operation_type`, whose closed set is `uploads` \| `delegation_depth` \| `session_creation` \| `message_injection`); or the breaker `{name}` already exists with a different persisted `limit_tier`/`scope` (scope is immutable across the breaker's lifecycle — close and re-open under a new `{name}` to change scope). `details.field` identifies the offending field (`limit_tier`, `scope`, `scope.operation_type`, or `persisted_scope_mismatch`) and `details.reason` carries a short description. See [Section 11.6](11_policy-and-controls.md#116-circuit-breakers) (Admin API body schema). |
 | `POOL_DRAINING`             | `TRANSIENT` | 503         | Session creation rejected because the target pool is in `draining` state and is no longer accepting new sessions. `Retry-After` header indicates estimated drain completion. `details.pool` and `details.estimatedDrainSeconds` are included. See [Section 15.1](#151-rest-api) (pool drain). |
 | `DELEGATION_CYCLE_DETECTED` | `PERMANENT` | 400         | Delegation rejected because the target's resolved `(runtime_name, pool_name)` identity tuple appears in the caller's delegation lineage and the §8.2 three-layer AND gate did not unanimously opt in. `details.cycleRuntimeName` and `details.cyclePoolName` identify the offending identity. `details.blockedBy` (`platform` \| `runtime` \| `policy`) names the first layer in declared order whose value was `false`, so operators know which configuration to flip. `details.effectiveSettings` is the resolved `{mode, platform, runtime, policy}` tuple at decision time (e.g., `{"mode": "enforce", "platform": "yes", "runtime": false, "policy": false}`) — present even under `mode: warn` for diagnostic correlation, omitted under `mode: permissive` because no rejection occurs. Not retryable as-is — the caller must either choose a different target or operators must opt in the named layer. See [Section 8.2](08_recursive-delegation.md#82-delegation-mechanism). |
-| `DELEGATION_PARENT_REVOKED` | `POLICY`    | 403         | `lenny/delegate_task` rejected because the parent session's token was rotated or revoked between the call and the internal child-token exchange, so the actor_token's `jti` resolves to a revoked entry in the revocation cache. No child token is issued and no child pod is allocated. Also returned to any concurrent `lenny/delegate_task` calls pending on a parent that is the subject of a recursive revocation. `details.parentSessionId` and `details.revocationReason` (e.g., `token_rotated`, `recursive_revocation`) are included. Not retryable — the caller must re-authenticate or the parent session has been terminated. Aligned with the canonical §15.4 pattern for credential-identity revocation rejections (matches `CREDENTIAL_REVOKED`, `LEASE_SPIFFE_MISMATCH`, `INJECTION_REJECTED`); HTTP 403 is reserved for credential-identity and role/scope-based authz denials, distinct from HTTP 409 which is reserved for resource-state conflicts (`INVALID_STATE_TRANSITION`, `TARGET_TERMINAL`, `REPLAY_ON_LIVE_SESSION`). See [Section 8.2](08_recursive-delegation.md#82-delegation-mechanism) (actor-token freshness) and [Section 13.3](13_security-model.md#133-credential-flow) (token rotation and revocation). |
-| `DELEGATION_AUDIT_CONTENTION` | `TRANSIENT` | 503         | `lenny/delegate_task` rejected because the per-tenant audit advisory lock could not be acquired within `audit.lock.acquireTimeoutMs` during the child-token exchange's audit write, after the gateway exhausted `audit.lock.maxRetries` internal retries. The exchange fails closed: no child token is issued and no child pod is allocated. Retryable with backoff; the `Retry-After` header indicates the recommended wait. The parent agent MUST retry the entire `lenny/delegate_task` call (not just the token exchange step) so that policy evaluation, cycle detection, interceptors, and the actor-token freshness check all re-run on retry. `details.tenantId` and `details.retryAfterSeconds` are included. See [Section 8.2](08_recursive-delegation.md#82-delegation-mechanism) (retry semantics on audit contention) and [Section 11.7](11_policy-and-controls.md#117-audit-logging). |
-| `MESSAGEPART_TOO_LARGE`      | `PERMANENT` | 413         | A `MessagePart` payload exceeds the per-part size limit (50 MB). The part was rejected at ingress. `details.partIndex`, `details.sizeBytes`, and `details.limitBytes` are included. See [Section 15.4.1](#1541-adapterbinary-protocol). |
+| `DELEGATION_PARENT_REVOKED` | `POLICY`    | 403         | `lenny/delegate_task` rejected because the parent session was in a terminal state or absent when the child session row was inserted ([Section 8.2](08_recursive-delegation.md#82-delegation-mechanism) "Parent freshness"; [Section 12.8](12_storage-architecture.md#128-compliance-interfaces)). No child session is created and no child pod is allocated. `details.parentSessionId` is included. Not retryable. |
+| `MESSAGEPART_TOO_LARGE`      | `PERMANENT` | 413         | A `MessagePart` payload exceeds the per-part size limit (50 MB). The part was rejected at ingress. `details.partIndex`, `details.sizeBytes`, and `details.limitBytes` are included. See [Section 28.5.3](28_communication-channels.md#2853-intra-pod). |
 | `REQUEST_INPUT_TIMEOUT`     | `TRANSIENT` | 504         | A `lenny/request_input` call blocked longer than `maxRequestInputWaitSeconds` without receiving a response. Delivered as a tool-call error to the blocking runtime. `details.requestId` and `details.timeoutSeconds` are included. See [Section 11.3](11_policy-and-controls.md#113-timeouts-and-cancellation). |
-| `ERASURE_IN_PROGRESS`       | `POLICY`    | 403         | Session creation rejected because the target `user_id` has a pending GDPR erasure job and `processing_restricted: true` is set. `details.userId` and `details.jobId` are included. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces). |
-| `ERASURE_BLOCKED_BY_LEGAL_HOLD` | `POLICY` | 409         | `POST /v1/admin/users/{userId}/erase` rejected by the DeleteByUser legal-hold preflight ([§12.8](12_storage-architecture.md#128-compliance-interfaces) Step 0). One or more active legal holds scoped to the target user (sessions, artifacts, audit ranges, or workspace snapshots) would be destroyed by the erasure, which would constitute spoliation of evidence subject to preservation orders. `details.userId`, `details.holdCount`, and `details.holds` (array of `{resourceType, resourceId, holdSetAt, holdSetBy, note}`) are included. Not retryable as-is — the caller must either release the blocking holds via `POST /v1/admin/legal-hold` (with `hold: false`) or re-invoke erasure with `{"acknowledgeHoldOverride": true, "justification": "<text>"}` (requires `platform-admin`; audited as `gdpr.legal_hold_overridden`). Emits `gdpr.erasure_blocked_by_hold` audit event. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces) Step 0. |
+| `ERASURE_IN_PROGRESS`       | `POLICY`    | 403         | The request is rejected because a user has a pending GDPR erasure job and `processing_restricted: true` is set ([§12.8](12_storage-architecture.md#128-compliance-interfaces) **Processing restriction during erasure (GDPR Article 18)**): the user makes the request, owns the session being created, or owns the source session of a derive or replay. A session creation is also rejected with this code when the erasure of the new session's owner ended the reservation of its ID ([§12.8](12_storage-architecture.md#128-compliance-interfaces) **Lifecycle fence and drain**). `details.userId` names that user, and `details.jobId` is included when `processing_restricted` is set. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces). |
+| `USER_INVALIDATED`          | `POLICY`    | 403         | The request is rejected because the authenticated or owning user is invalidated ([§11.4](11_policy-and-controls.md#114-user-invalidation)). The code is returned for session creation on every creation path, delegated-task creation, and interaction resolution. Not retryable. |
+| `ERASURE_BLOCKED_BY_LEGAL_HOLD` | `POLICY` | 409         | `POST /v1/admin/users/{userId}/erase` or `POST /v1/admin/erasure-jobs/{jobId}/retry` rejected by the DeleteByUser legal-hold preflight ([§12.8](12_storage-architecture.md#128-compliance-interfaces) Step 0). One or more active legal holds scoped to the target user (sessions, artifacts, audit ranges, or workspace snapshots) would be destroyed by the erasure, which would constitute spoliation of evidence subject to preservation orders. `details.userId`, `details.holdCount`, and `details.holds` (array of `{resourceType, resourceId, holdSetAt, holdSetBy, note}`) are included. Not retryable as-is — the caller must either release the blocking holds via `POST /v1/admin/legal-hold` (with `hold: false`) or re-invoke erasure with `{"acknowledgeHoldOverride": true, "justification": "<text>"}` (requires `platform-admin`; audited as `gdpr.legal_hold_overridden`). Emits `gdpr.erasure_blocked_by_hold` audit event. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces) Step 0. |
+| `ERASURE_JOB_NOT_FAILED` | `PERMANENT` | 409         | The erasure job is not in `failed` state. Returned by `POST /v1/admin/erasure-jobs/{jobId}/retry` and `POST /v1/admin/erasure-jobs/{jobId}/clear-processing-restriction`, which act only on a failed job. Not retryable. |
 | `TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD` | `POLICY` | 409   | Tenant deletion rejected by the Phase 3.5 legal-hold segregation gate ([§12.8](12_storage-architecture.md#128-compliance-interfaces) tenant deletion lifecycle, **Legal hold interaction during deletion**). Returned when tenant-delete (including `POST /v1/admin/tenants/{id}/force-delete` **without** `acknowledgeHoldOverride: true`) would advance to Phase 4 while one or more active legal holds are scoped to the tenant's sessions, artifacts, audit ranges, or workspace snapshots — Phase 4's `DeleteByTenant` and Phase 4a's tenant KMS destruction would render that evidence cryptographically unrecoverable, constituting spoliation. `details.tenantId`, `details.holdCount`, and `details.holds` (array of `{resourceType, resourceId, holdSetAt, holdSetBy, note}`) are included. Not retryable as-is — the caller must either release the blocking holds via `POST /v1/admin/legal-hold` (with `hold: false`) and re-enter the deletion lifecycle, or re-invoke force-delete with `{"acknowledgeHoldOverride": true, "justification": "<text>"}` (requires `platform-admin`; audited as `gdpr.legal_hold_overridden_tenant`, raises the `LegalHoldOverrideUsedTenant` warning alert, triggers the Phase 3.5 re-encryption of held evidence under the region-scoped `platform:legal_hold_escrow:<region>` KEK and migration to the region-scoped legal-hold escrow bucket). Emits `admin.tenant.deletion_blocked` audit event. This is the tenant-scope analog of `ERASURE_BLOCKED_BY_LEGAL_HOLD`. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces) tenant deletion lifecycle Phase 3.5. |
 | `LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | Phase 3.5 of the tenant force-delete lifecycle ([§12.8](12_storage-architecture.md#128-compliance-interfaces)) aborted because the resolved target escrow region — derived from the tenant's `dataResidencyRegion` (or the deployment's single-region default when unset) — has no corresponding `storage.regions.<region>.legalHoldEscrow.{endpoint, bucket, kmsKeyId, escrowKekId}` entry, or that region's escrow KMS key is unreachable, or its escrow bucket endpoint is unreachable. Fail-closed mirror of `BACKUP_REGION_UNRESOLVABLE` (§12.5) and `ARTIFACT_REPLICATION_REGION_UNRESOLVABLE` (§15.4) applied to the legal-hold escrow surface: cross-region escrow is never allowed, preventing both the pre-fix CMP-052 destruction-of-evidence path and the CMP-054 residency-violating single-global-bucket path. `details.tenantId`, `details.resolvedRegion`, and `details.failureMode` (`missing_entry` / `kms_unreachable` / `endpoint_unreachable`) are included. Not retryable until the missing `storage.regions.<region>.legalHoldEscrow` entry is configured (Helm chart render validation performs the same check at install/upgrade time and rejects the release). Emits `DataResidencyViolationAttempt` audit event (`operation: "legal_hold_escrow"`) and raises the `LegalHoldEscrowResidencyViolation` critical alert. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces) tenant deletion lifecycle Phase 3.5 and [Section 17.6](17_deployment-topology.md#176-packaging-and-installation) per-region escrow defaults. |
-| `PLATFORM_AUDIT_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | A platform-tenant audit event referencing a non-platform `target_tenant_id` (e.g., `security.audit_write_rejected`, `admin.impersonation_started` / `admin.impersonation_ended`, `gdpr.legal_hold_overridden_tenant`, `legal_hold.escrow_region_resolved`, `legal_hold.escrowed`, `legal_hold.escrow_released`, `compliance.profile_decommissioned`) failed to commit because the target tenant's `dataResidencyRegion` resolves to no `storage.regions.<region>.postgresEndpoint` entry or that region's platform-Postgres is unreachable. Fail-closed mirror of `BACKUP_REGION_UNRESOLVABLE`, `ARTIFACT_REPLICATION_REGION_UNRESOLVABLE`, and `LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE` applied to the platform-tenant audit-write surface (CMP-058). Because the *fact* of a platform-tenant event referencing a regulated tenant is itself personal data describing that tenant, routing it cross-region would constitute a prohibited GDPR Art. 44–46 transfer identical to a runtime write violation. The originating operation halts (impersonation ticket issuance fails, Phase 3.5 escrow ledger write aborts the tenant-delete into `deleting` state, `compliance.profile_decommissioned` rolls back) because audit must be durable before any externally observable side effect. `details.targetTenantId`, `details.resolvedRegion`, `details.eventType` (the originating audit event type that failed to write), and `details.failureMode` (`missing_entry` / `postgres_unreachable`) are included. Not retryable until the missing `storage.regions.<region>.postgresEndpoint` entry is configured or the region's platform-Postgres is restored (Helm chart render validation performs the same check at install/upgrade time and rejects the release). Emits `DataResidencyViolationAttempt` audit event (`operation: "platform_audit_write"`) — itself routed under the same rules (falls back to the global `PlatformPostgres()` if the target region is the source of the failure so the incident is still recorded) — and raises the `PlatformAuditResidencyViolation` critical alert ([§16.5](16_observability.md#165-alerting-rules-and-slos)). See [Section 11.7](11_policy-and-controls.md#117-audit-logging) "Platform-tenant audit event residency" and [Section 25.11](25_agent-operability.md#2511-backup-and-restore-api) Storage Routing `PlatformPostgres(region)`. |
+| `PLATFORM_AUDIT_REGION_UNRESOLVABLE` | `PERMANENT` | 422 | A platform-tenant audit event referencing a non-platform `target_tenant_id` (e.g., `security.audit_write_rejected`, `admin.impersonation_started` / `admin.impersonation_ended`, `gdpr.legal_hold_overridden_tenant`, `legal_hold.escrow_region_resolved`, `legal_hold.escrowed`, `legal_hold.escrow_released`, `compliance.profile_decommissioned`) failed to commit because the target tenant's `dataResidencyRegion` resolves to no `storage.regions.<region>.postgresEndpoint` entry or that region's platform-Postgres is unreachable. Fail-closed mirror of `BACKUP_REGION_UNRESOLVABLE`, `ARTIFACT_REPLICATION_REGION_UNRESOLVABLE`, and `LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE` applied to the platform-tenant audit-write surface (CMP-058). Because the *fact* of a platform-tenant event referencing a regulated tenant is itself personal data describing that tenant, routing it cross-region would constitute a prohibited GDPR Art. 44–46 transfer identical to a runtime write violation. `details.targetTenantId`, `details.resolvedRegion`, `details.eventType` (the originating audit event type that failed to write), and `details.failureMode` (`missing_entry` / `postgres_unreachable`) are included. Not retryable until the missing `storage.regions.<region>.postgresEndpoint` entry is configured or the region's platform-Postgres is restored (Helm chart render validation performs the same check at install/upgrade time and rejects the release). Emits `DataResidencyViolationAttempt` audit event (`operation: "platform_audit_write"`) — itself routed under the same rules (falls back to the global `PlatformPostgres()` if the target region is the source of the failure so the incident is still recorded) — and raises the `PlatformAuditResidencyViolation` critical alert ([§16.5](16_observability.md#165-alerting-rules-and-slos)). See [Section 11.7](11_policy-and-controls.md#117-audit-logging) "Platform-tenant audit event residency" and [Section 25.11](25_agent-operability.md#2511-backup-and-restore-api) Storage Routing `PlatformPostgres(region)`. |
 | `URL_MODE_ELICITATION_DOMAIN_REQUIRED` | `PERMANENT` | 400 | Pool registration or update rejected because `urlModeElicitation.enabled: true` was set without a non-empty `domainAllowlist`. See [Section 7.2](07_session-lifecycle.md#72-interactive-session-model) (elicitation). |
 | `DUPLICATE_MESSAGE_ID`      | `PERMANENT` | 400         | A sender-supplied message `id` is not globally unique within the tenant — a message with the same ID was received within the deduplication window. `details.duplicateId` is included. See [Section 7.2](07_session-lifecycle.md#72-interactive-session-model). |
-| `UNREGISTERED_PART_TYPE`    | `WARNING`   | —           | A `MessagePart` carries an unprefixed `type` not present in the current platform-defined registry. The part is passed through with a custom-type-to-`text` fallback and an `unregistered_platform_type` warning annotation. Third-party types should use the `x-<vendor>/` namespace prefix. `details.type` is included. See [Section 15.4.1](#1541-adapterbinary-protocol). |
+| `UNREGISTERED_PART_TYPE`    | `WARNING`   | —           | A `MessagePart` carries an unprefixed `type` not present in the current platform-defined registry. The part is passed through with a custom-type-to-`text` fallback and an `unregistered_platform_type` warning annotation. Third-party types should use the `x-<vendor>/` namespace prefix. `details.type` is included. See [Section 28.5.3](28_communication-channels.md#2853-intra-pod). |
 | `REPLAY_ON_LIVE_SESSION`    | `PERMANENT` | 409         | `POST /v1/sessions/{id}/replay` rejected because the source session is not in a terminal state. The source session must be `completed`, `failed`, `cancelled`, or `expired`. See [Section 15.1](#151-rest-api) (session replay). |
 | `INCOMPATIBLE_RUNTIME`      | `PERMANENT` | 400         | `POST /v1/sessions/{id}/replay` rejected because `targetRuntime` has a different `executionMode` than the source session. Replay requires matching execution mode. `details.sourceExecutionMode` and `details.targetExecutionMode` are included. See [Section 15.1](#151-rest-api) (session replay). |
 | `DOMAIN_NOT_ALLOWLISTED`    | `POLICY`    | 403         | An agent-initiated URL-mode elicitation was dropped because the URL's effective host does not match any entry in the pool's `urlModeElicitation.domainAllowlist`. `details.host` and `details.allowlist` are included. See [Section 7.2](07_session-lifecycle.md#72-interactive-session-model) (elicitation). |
 | `COMPLIANCE_PGAUDIT_REQUIRED` | `PERMANENT` | 422       | Tenant creation or update rejected because the tenant's `complianceProfile` requires `audit.pgaudit.enabled: true` with a configured `sinkEndpoint`, but these are not set. Configure pgaudit before creating a regulated tenant. See [Section 11.7](11_policy-and-controls.md#117-audit-logging). |
 | `DERIVE_ON_LIVE_SESSION`      | `PERMANENT` | 409         | `POST /v1/sessions/{id}/derive` rejected because the source session is not in a terminal state and `allowStale: true` was not set in the request body. See [Section 15.1](#151-rest-api) (derive semantics). |
 | `DERIVE_LOCK_CONTENTION`      | `POLICY`    | 429         | `POST /v1/sessions/{id}/derive` rejected because too many concurrent derive operations are in progress for this session. Retry with exponential backoff. See [Section 15.1](#151-rest-api) (derive semantics). |
-| `DERIVE_SNAPSHOT_UNAVAILABLE` | `TRANSIENT` | 503         | `POST /v1/sessions/{id}/derive` failed because the referenced workspace snapshot object was not found in object storage (e.g., deleted by a GC bug or premature TTL expiry). Retrying immediately is unlikely to help; the caller should wait and retry or derive from a different source state. `details.snapshotRef` includes the missing object path. See [Section 15.1](#151-rest-api) (derive semantics). |
+| `DERIVE_SNAPSHOT_UNAVAILABLE` | `TRANSIENT` | 503         | `POST /v1/sessions/{id}/derive` or `POST /v1/sessions/{id}/replay` failed because the source's workspace snapshot was not found ([Section 7.1](07_session-lifecycle.md#71-normal-flow) **Concurrent derive serialization.**). Retrying immediately is unlikely to help; the caller should wait and retry or derive from a different source state. `details.snapshotRef` carries the source's snapshot ref. See [Section 15.1](#151-rest-api) (derive semantics). |
 | `ISOLATION_MONOTONICITY_VIOLATED` | `POLICY` | 422         | Request rejected because the target pool's `sessionIsolationLevel.isolationProfile` is weaker than the source (parent or derive/replay source) session's (`standard` < `sandboxed` < `microvm`). Applies uniformly to `delegate_task` (calling session's `minIsolationProfile`), `POST /v1/sessions/{id}/derive`, and `POST /v1/sessions/{id}/replay` with `replayMode: workspace_derive`. `details.sourceIsolationProfile`, `details.targetIsolationProfile`, and `details.targetPool` are included (delegation responses may use the legacy `details.parentIsolation` / `details.targetIsolation` keys as aliases). On derive/replay only, overridable by `platform-admin` callers via `allowIsolationDowngrade: true` in the request body — this path emits a `derive.isolation_downgrade` audit event. See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease) delegation monotonicity, [Section 7.1](07_session-lifecycle.md#71-normal-flow) derive semantics, and [Section 15.1](#151-rest-api) replay semantics. |
 | `VARIANT_ISOLATION_UNAVAILABLE` | `POLICY` | 422         | Session creation rejected because the `ExperimentRouter`'s isolation monotonicity check ([Section 10.7](10_gateway-internals.md#107-experiment-primitives)) found the active experiment's variant pool isolation profile weaker than the session's `minIsolationProfile`, and the router fails closed rather than silently falling through to the control bucket (which would contaminate control-group eval aggregates with a non-randomly-sampled subset). `details.experimentId`, `details.variantId`, `details.sessionMinIsolation`, and `details.variantPoolIsolation` are included. The caller must either relax the session's `minIsolationProfile`, or the operator must re-provision the variant pool at a compatible isolation profile. Not retryable as-is. An `experiment.isolation_mismatch` warning event is emitted alongside the rejection. |
 | `REGION_CONSTRAINT_VIOLATED`  | `POLICY`    | 403         | Request rejected because the resolved storage region does not satisfy the session's `dataResidencyRegion` constraint. `details.requiredRegion` and `details.resolvedRegion` are included. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces). |
@@ -1091,10 +1094,10 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `KMS_REGION_UNRESOLVABLE`     | `PERMANENT` | 422         | Session or credential operation rejected because no KMS key is configured for the required region. `details.region` and `details.provider` are included. See [Section 4.9](04_system-components.md#49-credential-leasing-service). |
 | `LEASE_SPIFFE_MISMATCH`       | `POLICY`    | 403         | A pod presented a SPIFFE identity that does not match the credential lease's expected identity (`details.expectedSpiffeId`, `details.actualSpiffeId`). The lease is invalidated. See [Section 4.9](04_system-components.md#49-credential-leasing-service). |
 | `ENV_VAR_BLOCKLISTED`         | `PERMANENT` | 400         | Session creation or runtime registration rejected because one or more requested environment variables are on the platform blocklist. `details.blocklisted` lists the offending variable names. See [Section 14](14_workspace-plan-schema.md). |
-| `GIT_CLONE_AUTH_UNSUPPORTED_HOST` | `POLICY`    | 422     | Session creation rejected because a `gitClone` source has `auth` set but the URL's host does not match any VCS credential pool's `hostPatterns` in the tenant. `details.host` and `details.sourceIndex` are included. The caller must register a VCS credential pool whose `hostPatterns` covers the host, or remove `auth` for public repos. See [Section 14](14_workspace-plan-schema.md) and [Section 4.9](04_system-components.md#49-credential-leasing-service). |
-| `GIT_CLONE_AUTH_HOST_AMBIGUOUS` | `POLICY`    | 422       | Session creation rejected because a `gitClone` URL's host matches multiple VCS credential pools' `hostPatterns` in the tenant. `details.host`, `details.sourceIndex`, and `details.matchingPools` are included. Operators must tighten `hostPatterns` so exactly one pool matches any given host. See [Section 4.9](04_system-components.md#49-credential-leasing-service). |
-| `GIT_CLONE_REF_UNRESOLVABLE`  | `PERMANENT` | 422         | Session creation rejected because the gateway could not resolve a `gitClone.ref` to an immutable commit SHA via `git ls-remote` at session creation and the failure mode is not retryable. `details.url`, `details.ref`, `details.sourceIndex`, and `details.reason` — one of `auth_failed` (credential lease rejected by the remote) or `ref_not_found` (the ref does not exist on the remote) — are included. The caller must supply a ref that exists on the remote, correct the credential pool binding, or pre-resolve to a commit SHA. Transient network failures during `ls-remote` are classified separately as `GIT_CLONE_REF_RESOLVE_TRANSIENT` (below) so clients can retry them. See [Section 14](14_workspace-plan-schema.md) `gitClone.ref` resolution. |
-| `GIT_CLONE_REF_RESOLVE_TRANSIENT` | `TRANSIENT` | 503     | Session creation rejected because a `git ls-remote` to resolve `gitClone.ref` failed with a transient network-level error (DNS, connection reset, TLS handshake failure, remote-host timeout). The request is retryable without modification. `details.url`, `details.ref`, `details.sourceIndex`, and `details.reason` (`network_error`; additional sub-codes may be added later without changing the top-level code) are included; `Retry-After` carries a recommended delay. Authentication failures and unknown refs are classified separately as `GIT_CLONE_REF_UNRESOLVABLE` (above) and are NOT retryable under this code. See [Section 14](14_workspace-plan-schema.md) `gitClone.ref` resolution. |
+| `GIT_CLONE_AUTH_UNSUPPORTED_HOST` | `POLICY`    | 422     | A request that binds a `WorkspacePlan` ([Section 14.1](14_workspace-plan-schema.md#141-workspaceplan-schema-versioning) **Plan binding.**) was rejected because a `gitClone` source has `auth` set but the URL's host does not match any VCS credential pool's `hostPatterns` in the tenant. `details.host` and `details.sourceIndex` are included. The caller must register a VCS credential pool whose `hostPatterns` covers the host, or remove `auth` for public repos. See [Section 14](14_workspace-plan-schema.md) and [Section 4.9](04_system-components.md#49-credential-leasing-service). |
+| `GIT_CLONE_AUTH_HOST_AMBIGUOUS` | `POLICY`    | 422       | A request that binds a `WorkspacePlan` ([Section 14.1](14_workspace-plan-schema.md#141-workspaceplan-schema-versioning) **Plan binding.**) was rejected because a `gitClone` URL's host matches multiple VCS credential pools' `hostPatterns` in the tenant. `details.host`, `details.sourceIndex`, and `details.matchingPools` are included. Operators must tighten `hostPatterns` so exactly one pool matches any given host. See [Section 4.9](04_system-components.md#49-credential-leasing-service). |
+| `GIT_CLONE_REF_UNRESOLVABLE`  | `PERMANENT` | 422         | A request that binds a `WorkspacePlan` ([Section 14.1](14_workspace-plan-schema.md#141-workspaceplan-schema-versioning) **Plan binding.**) was rejected because the gateway could not resolve a `gitClone.ref` to an immutable commit SHA via `git ls-remote` when binding the plan and the failure mode is not retryable. `details.url`, `details.ref`, `details.sourceIndex`, and `details.reason` — one of `auth_failed` (credential lease rejected by the remote) or `ref_not_found` (the ref does not exist on the remote) — are included. The caller must supply a ref that exists on the remote, correct the credential pool binding, or pre-resolve to a commit SHA. Transient network failures during `ls-remote` are classified separately as `GIT_CLONE_REF_RESOLVE_TRANSIENT` (below) so clients can retry them. See [Section 14](14_workspace-plan-schema.md) `gitClone.ref` resolution. |
+| `GIT_CLONE_REF_RESOLVE_TRANSIENT` | `TRANSIENT` | 503     | A request that binds a `WorkspacePlan` ([Section 14.1](14_workspace-plan-schema.md#141-workspaceplan-schema-versioning) **Plan binding.**) was rejected because a `git ls-remote` to resolve `gitClone.ref` failed with a transient network-level error (DNS, connection reset, TLS handshake failure, remote-host timeout). The request is retryable without modification. `details.url`, `details.ref`, `details.sourceIndex`, and `details.reason` (`network_error`; additional sub-codes may be added later without changing the top-level code) are included; `Retry-After` carries a recommended delay. Authentication failures and unknown refs are classified separately as `GIT_CLONE_REF_UNRESOLVABLE` (above) and are NOT retryable under this code. See [Section 14](14_workspace-plan-schema.md) `gitClone.ref` resolution. |
 | `INPUT_TOO_LARGE`             | `PERMANENT` | 413         | Delegation rejected because `TaskSpec.input` exceeds `contentPolicy.maxInputSize`. `details.sizeBytes` and `details.limitBytes` are included. Not retryable — the caller must reduce input size. See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease). |
 | `CONTENT_POLICY_WEAKENING`    | `POLICY`    | 422         | Delegation rejected because the child lease's `contentPolicy` weakens the parent's. Raised in any of these cases: (a) child sets `contentPolicy.interceptorRef: null` when the parent had a non-null reference; (b) child transitions `contentPolicy.scanExportedFiles` from `true` to `false`; (c) child sets `contentPolicy.maxExportedFileSize` to a larger value than the parent's. `details.field` identifies which axis was weakened (`interceptorRef`, `scanExportedFiles`, or `maxExportedFileSize`); `details.parentValue` and `details.childValue` are included. Removing or relaxing a content check is always a weakening and is not permitted. Aligned with the canonical §15.4 pattern for delegation-admission POLICY rejections of well-formed requests (matches `ISOLATION_MONOTONICITY_VIOLATED`, `CREDENTIAL_PROVIDER_MISMATCH`, `VARIANT_ISOLATION_UNAVAILABLE`); HTTP 422 is reserved for unprocessable semantic rejections, distinct from HTTP 403 which is reserved for role/scope-based authz denials (`FORBIDDEN`, `PERMISSION_DENIED`, `SCOPE_FORBIDDEN`). See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease). |
 | `CONTENT_POLICY_INTERCEPTOR_SUBSTITUTION` | `POLICY` | 422  | Delegation rejected because the child lease names a different `contentPolicy.interceptorRef` than the parent without retaining the parent's reference. A child lease may not substitute the parent's named interceptor with an unrelated one. Aligned with the canonical §15.4 pattern for delegation-admission POLICY rejections of well-formed requests (matches `ISOLATION_MONOTONICITY_VIOLATED`, `CREDENTIAL_PROVIDER_MISMATCH`, `VARIANT_ISOLATION_UNAVAILABLE`). See [Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease). |
@@ -1109,9 +1112,9 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `CLASSIFICATION_CONTROL_VIOLATION` | `POLICY` | 422         | Storage-tier classification control rejection. Emitted when a T4 tenant's online KMS availability probe fails on `PUT /v1/admin/tenants/{id}` (tenant-scoped KMS key unreachable), when a T4 artifact write cannot proceed because the `tenant:{tenant_id}` KMS key is unavailable at write time, or when a write's effective tier does not match the configured store (e.g., T4 data directed to a store without envelope encryption). `details.tenantId`, `details.tier`, and `details.reason` (e.g., `kms_probe_failed`, `kms_unavailable`, `tier_store_mismatch`) are included. Not retryable at the API layer — the operator must restore KMS key availability or correct the storage-tier configuration before retrying. See [Section 12.5](12_storage-architecture.md#125-artifact-store) and [Section 12.9](12_storage-architecture.md#129-data-classification). |
 | `BUDGET_EXHAUSTED`            | `POLICY`    | 429         | Delegation or lease extension rejected because the remaining token budget or tree-size budget is insufficient. `details.limitType` is `token_budget`, `tree_size`, or `tree_memory` (distinguishing the exhausted resource). `TOKEN_BUDGET_EXHAUSTED` and `TREE_SIZE_EXCEEDED` are internal Lua script result codes; the wire error code is always `BUDGET_EXHAUSTED`. Not retryable without a budget extension. See Sections 8.3, 8.6. |
 | `EXTENSION_COOL_OFF_ACTIVE`   | `POLICY`    | 403         | Lease-extension request auto-rejected because the requesting subtree is in a rejection cool-off window following a user-denied extension elicitation. `details.subtreeId` identifies the denied subtree and `details.coolOffExpiresAt` is the UTC timestamp at which the cool-off window ends. Not retryable until cool-off expires; operators may clear the denial early via `DELETE /v1/admin/trees/{rootSessionId}/subtrees/{sessionId}/extension-denial`. See [Section 8.6](08_recursive-delegation.md#86-lease-extension). |
-| `MESSAGEPART_INLINE_REF_CONFLICT` | `PERMANENT` | 400      | A `MessagePart` has both `inline` and `ref` fields set, which are mutually exclusive. Set exactly one field: `inline` for direct byte embedding or `ref` for external blob storage reference. See [Section 15.4.1](#1541-adapterbinary-protocol). |
+| `MESSAGEPART_INLINE_REF_CONFLICT` | `PERMANENT` | 400      | A `MessagePart` has both `inline` and `ref` fields set, which are mutually exclusive. Set exactly one field: `inline` for direct byte embedding or `ref` for external blob storage reference. See [Section 28.5.3](28_communication-channels.md#2853-intra-pod). |
 | `INVALID_DELIVERY_VALUE`      | `PERMANENT` | 400         | A message delivery envelope contains an unrecognized `delivery` field value. Valid values are `queued` and `immediate`. See [Section 7.2](07_session-lifecycle.md#72-interactive-session-model). |
-| `SDK_DEMOTION_NOT_SUPPORTED`  | `PERMANENT` | 422         | Session creation failed because the pool uses SDK-warm mode (`preConnect: true`) and the adapter does not implement the `DemoteSDK` RPC. The workspace includes files from `sdkWarmBlockingPaths` that require demotion, but demotion is unavailable. Runtime authors must implement `DemoteSDK` before declaring `preConnect: true`. See [Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like). |
+| `SDK_DEMOTION_NOT_SUPPORTED`  | `PERMANENT` | 422         | The session failed because the pool uses SDK-warm mode (`preConnect: true`) and the adapter does not implement the `DemoteSDK` RPC. The workspace includes files from `sdkWarmBlockingPaths` that require demotion, but demotion is unavailable. Runtime authors must implement `DemoteSDK` before declaring `preConnect: true`. See [Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like). |
 | `ELICITATION_NOT_FOUND`       | `PERMANENT` | 404         | `respond_to_elicitation` or `dismiss_elicitation` rejected because the `(session_id, user_id, elicitation_id)` triple does not match any pending elicitation. The ID is unknown, belongs to a different session, or belongs to a different user. 404 is returned in all mismatch cases to avoid leaking the existence of elicitations in other sessions. See [Section 9.2](09_mcp-integration.md#92-elicitation-chain). |
 | `ELICITATION_CONTENT_TAMPERED` | `PERMANENT` | 409         | Returned only when the tenant's **effective** elicitation content integrity enforcement mode is `enforce` (see [Section 9.2](09_mcp-integration.md#92-elicitation-chain) and the `PUT /v1/admin/tenants/{id}/elicitation-content-integrity` endpoint above). An intermediate pod re-emitted an MCP `elicitation/create` wire frame (see [Section 15.2.1](#1521-restmcp-consistency-contract) per-kind wire projection) for an existing `elicitation_id` carrying a `{message, schema}` pair that diverges from the gateway-recorded original (the gateway-origin-binding invariant in [Section 9.2](09_mcp-integration.md#92-elicitation-chain)). The forward attempt is dropped before the modified text can reach the client; the originating pod sees its pending elicitation fail with a tamper signal, the tampering pod receives this error on its forward call, and `lenny_elicitation_content_tamper_detected_total{origin_pod, tampering_pod, enforcement_mode="enforce"}` is incremented to fire `ElicitationContentTamperDetected` ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)). `details.elicitationId`, `details.originPod`, `details.tamperingPod`, and `details.enforcementMode` (`enforce`) are included. Under effective mode `detect-only` the same divergence is recorded (audit event emitted, counter incremented under the `detect-only` label, `ElicitationContentIntegrityPermissiveTamper` warning alert fires) but the forward is NOT dropped and this error is NOT returned. Under effective mode `off` no check is performed. To present transformed text to a different audience, the intermediate pod must emit a new `lenny/request_elicitation` establishing a fresh `elicitation_id` rather than rewriting an existing one. Not retryable as-is. See [Section 9.2](09_mcp-integration.md#92-elicitation-chain) (elicitation content integrity). |
 | `ELICITATION_INTEGRITY_JUSTIFICATION_REQUIRED` | `PERMANENT` | 400 | `PUT /v1/admin/tenants/{id}/elicitation-content-integrity` rejected because the request body sets `mode` to `detect-only` or `off` without a non-empty `justification` string. The justification is mandatory whenever the stored mode is weaker than `enforce` so that the operator identity and the reason for weakening the integrity posture are captured in the audit trail. Not retryable as-is — the caller must resubmit with a non-empty `justification`. See [Section 9.2](09_mcp-integration.md#92-elicitation-chain) and [Section 15.1](#151-rest-api) (`PUT /v1/admin/tenants/{id}/elicitation-content-integrity`). |
@@ -1125,16 +1128,15 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `TARGET_NOT_READY`            | `TRANSIENT` | 409         | Inter-session message rejected because the target session is in a pre-running state (`created`, `ready`, `starting`, `finalizing`) and has no inbox. Retry after the session transitions to `running`. See [Section 7.2](07_session-lifecycle.md#72-interactive-session-model). |
 | `CROSS_TENANT_MESSAGE_DENIED` | `POLICY`    | 403         | Inter-session message rejected because the sender and target sessions belong to different tenants. Cross-tenant messaging is unconditionally prohibited. See [Section 7.2](07_session-lifecycle.md#72-interactive-session-model). |
 | `TENANT_SUSPENDED`            | `POLICY`    | 403         | Tenant is suspended. New session creation and message injection are rejected. The suspension is recorded in the audit trail. Wait for tenant resumption or contact administrators. See [Section 15.1](#151-rest-api) (`POST /v1/admin/tenants/{id}/suspend`). |
+| `TENANT_NOT_ACTIVE`           | `POLICY`    | 403         | Session creation rejected because the tenant's `TenantState` is not `active` ([§12.8](12_storage-architecture.md#128-compliance-interfaces) **Lifecycle fence and drain**). `details.tenantId` and `details.state` are included. Not retryable. |
 | `INVALID_CALLBACK_URL`        | `PERMANENT` | 400         | A caller-supplied push-notification callback URL failed SSRF validation at registration time. Applies to the A2A adapter's `pushNotification.url` field on `POST /a2a/{runtime}/tasks`, rejected at `OpenOutboundChannel` before the subscription is stored. The URL must be HTTPS, must resolve to a public (non-private/non-link-local/non-loopback) IP under DNS pinning, must not target cloud metadata hostnames, and must match the optional domain allowlist when configured. `details.reason` describes the specific validation failure (e.g., `scheme_not_https`, `private_ip`, `metadata_host`, `domain_not_allowlisted`). Distinct from `WEBHOOK_VALIDATION_FAILED` ([Section 25.5](25_agent-operability.md#255-operational-event-stream)), which applies to `lenny-ops` event-subscription webhooks. Not retryable — the caller must supply a conformant URL. See [Section 21.1](21_planned-post-v1.md) (A2A outbound push) and [Section 14](14_workspace-plan-schema.md) (SSRF validation rules). |
-| `LENNY_PLAYGROUND_BEARER_TYPE_REJECTED` | `PERMANENT` | 401 | Playground `/playground/*` mint path (apiKey mode or, as defense-in-depth, OIDC cookie-to-bearer exchange) rejected the subject token because its `typ` is not `user_bearer`. A `session_capability`, `a2a_delegation`, or `service_token` pasted into the playground API-key form cannot be re-minted into a broader, fresh-lifetime playground JWT — this invariant mirrors the OAuth token-exchange tenant invariant in [§13.3](13_security-model.md#133-credential-flow) with a symmetric subject-type restriction. `details.subjectTyp` carries the offending value (`session_capability` \| `a2a_delegation` \| `service_token`); `details.ingressPath` records the `/playground/*` route. Not retryable as-is — the caller must obtain a `user_bearer`-typed credential (an OIDC ID token or rotated `user_bearer` JWT) or switch to `authMode=oidc` for human-user access. See [Section 10.2](10_gateway-internals.md#102-authentication) (Playground mint invariants) and [Section 27.3](27_web-playground.md#273-authentication). |
-| `EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN` | `PERMANENT` | 422 | `pods/ephemeralcontainers` subresource request rejected by the `lenny-ephemeral-container-cred-guard` ValidatingAdmissionWebhook ([Section 17.2](17_deployment-topology.md#172-namespace-layout) admission-policies inventory item 13) because the proposed ephemeral container would reach through the agent pod's credential-file read boundary ([Section 13.1](13_security-model.md#131-pod-security) `lenny-cred-readers` membership boundary, four-condition enforcement). `details.reason` carries the specific sub-code, one per rejected condition branch: conditions (i)–(iii) on the `securityContext` UID/GID surface — `runAsUser_equals_adapter_uid`, `runAsUser_equals_agent_uid`, `cred_readers_gid_in_supplementalGroups`, `cred_readers_gid_in_runAsGroup`, `runAsUser_absent`, `runAsGroup_absent`, `supplementalGroups_absent`; condition (iv) on the `volumeMounts` surface (closing the fsGroup-inheritance side-channel) — `credential_volume_mounted` (the ephemeral container declares a `volumeMount` whose `name` matches the pod-level credential tmpfs volume) or `run_lenny_path_mounted` (the ephemeral container declares a `volumeMount` whose `mountPath` equals `/run/lenny` or begins with `/run/lenny/`). `details.targetPod` identifies the target pod namespace/name. Not retryable as-is — the caller must submit an ephemeral container whose `securityContext` explicitly sets `runAsUser`/`runAsGroup`/`supplementalGroups` to values outside the adapter UID, agent UID, and `lenny-cred-readers` GID, AND whose `volumeMounts` contain no entry referencing the pod-level credential tmpfs volume by name and no entry whose `mountPath` equals `/run/lenny` or begins with `/run/lenny/`. See [Section 17.2](17_deployment-topology.md#172-namespace-layout) admission-policies inventory and [Section 13.1](13_security-model.md#131-pod-security) (four-condition rationale). |
+| `LENNY_PLAYGROUND_BEARER_TYPE_REJECTED` | `PERMANENT` | 401 | Playground `/playground/*` mint path (apiKey mode or, as defense-in-depth, OIDC cookie-to-bearer exchange) rejected the subject token because its `typ` is not `user_bearer` or because [§13.3](13_security-model.md#133-credential-flow) "Write-before-issue ordering" step (1a) rejects it. A `session_capability`, `a2a_delegation`, or `service_token` pasted into the playground API-key form cannot be re-minted into a broader, fresh-lifetime playground JWT — this invariant mirrors the OAuth token-exchange tenant invariant in [§13.3](13_security-model.md#133-credential-flow) with a symmetric subject-type restriction. `details.subjectTyp` carries the subject's `typ`; `details.ingressPath` records the `/playground/*` route. Not retryable as-is — the caller must obtain a `user_bearer`-typed credential that step (1a) admits (an OIDC ID token or rotated `user_bearer` JWT) or switch to `authMode=oidc` for human-user access. See [Section 10.2](10_gateway-internals.md#102-authentication) (Playground mint invariants) and [Section 27.3](27_web-playground.md#273-authentication). |
 | `SESSION_CREATION_FAILED`   | `TRANSIENT` | 503         | Atomic session-creation unit failed for a generic reason (claim, materialize, or setup outside a more specific code). `Retry-After` is set. Retryable: the creation is a single atomic unit and a retry rebinds a fresh pod. See [Section 7.1](07_session-lifecycle.md#71-normal-flow). |
-| `STARTING_FAILED`           | `TRANSIENT` | 503         | The two-step `POST /v1/sessions/{id}/start` transition failed for a generic reason. `Retry-After` is set. Retryable for the same reason as `SESSION_CREATION_FAILED`. See [Section 7.1](07_session-lifecycle.md#71-normal-flow). |
-| `RESUME_FAILED`             | `TRANSIENT` | 503         | A `POST /v1/sessions/{id}/resume` restore onto a fresh warm pool failed for a generic reason (pool or credential exhaustion, a Token Service outage, or a transient setup-time transport failure). `Retry-After` is set. Retryable: the session row stays in `awaiting_client_action` so the explicit `POST /v1/sessions/{id}/resume` retry succeeds once the condition clears. See [Section 7.3](07_session-lifecycle.md#73-retry-and-resume). |
-| `KMS_SIGNING_UNAVAILABLE`   | `TRANSIENT` | 503         | The gateway JWT signer could not reach the signing backend (the `JWTSigner` circuit breaker is open), so a session token could not be minted. Existing sessions are unaffected until token expiry. Retry after the backend recovers. See [Section 4.3](04_system-components.md#43-token-service). |
+| `STARTING_FAILED`           | `TRANSIENT` | 503         | The two-step `POST /v1/sessions/{id}/start` transition failed for a generic reason. `Retry-After` is set. Retryable by creating a new session, because the failed start leaves this session `failed` ([Section 7.2](07_session-lifecycle.md#72-interactive-session-model)). See [Section 7.1](07_session-lifecycle.md#71-normal-flow). |
+| `KMS_SIGNING_UNAVAILABLE`   | `TRANSIENT` | 503         | The JWT signer (gateway or Token Service) could not obtain a signature, so no token was minted. The response carries `Retry-After`. See [Section 10.2](10_gateway-internals.md#102-authentication). |
 | `CONFIRMATION_REQUIRED`     | `PERMANENT` | 422         | A destructive admin operation (e.g. a migration) requires an explicit confirmation flag that was not supplied. Re-issue the request with the confirmation flag set. See [Section 25](25_agent-operability.md). |
-| `SETUP_COMMAND_FAILED`      | `PERMANENT` | 422         | A session setup command exited non-zero (or hit its hard timeout), which the adapter reports as a deterministic `FailedPrecondition` failure. Surfaced wherever the gateway runs setup commands: `POST /v1/sessions/{id}/finalize` (decomposed lifecycle), `POST /v1/sessions/start` (combined create-and-start), `POST /v1/sessions/{id}/start` (concurrent-workspace pool, whose slot materializes and runs setup at start), and `POST /v1/sessions/{id}/resume` (resume-time setup). Deterministic and not retryable without changing the workspace plan or setup script, consistent with `setup_command_failed` under `retryPolicy.nonRetryableFailures` in [Section 7.3](07_session-lifecycle.md#73-retry-and-resume). Any other setup-window failure (every gRPC code other than `FailedPrecondition`, including a crashed pod surfaced as `Unavailable` or `DeadlineExceeded` and a wrapped cause reported as `Unknown`) is not this code; it stays the retryable `SESSION_CREATION_FAILED`/`STARTING_FAILED`/`RESUME_FAILED` fallback and is recovered with a fresh pod per [Section 6.2](06_warm-pod-model.md#62-pod-state-machine). `details.reason` is `setup_command_failed`; the per-command stdout and stderr are retrievable via `GET /v1/sessions/{id}/setup-output`. |
-| `SERVICE_UNAVAILABLE`       | `TRANSIENT` | 503         | The gateway could not complete the request because a backing store or dependency it consulted returned a transient error rather than a definite answer. Returned by the [Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime) injection gate when either the runtime-store read or the per-tenant capability-override-store read fails with a non-not-found error, and by the pool-resolution path when the pool lookup is transiently unresolvable, all of which fail closed rather than degrade open. `Retry-After` is set. Retryable once the dependency recovers. The granular underlying cause is recorded in gateway logs and metrics rather than as a distinct client code. |
+| `SETUP_COMMAND_FAILED`      | `PERMANENT` | 422         | A session setup command exited non-zero (or hit its hard timeout), which the adapter reports as a deterministic `FailedPrecondition` failure. Surfaced wherever the gateway runs setup commands: `POST /v1/sessions/{id}/finalize` (decomposed lifecycle), `POST /v1/sessions/start` (combined create-and-start), and `POST /v1/sessions/{id}/start` (concurrent-workspace pool, whose slot materializes and runs setup at start). A setup command that fails during a resume is not returned to a caller ([Section 7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume driver.** item 3). Deterministic and not retryable without changing the workspace plan or setup script, consistent with `setup_command_failed` under `retryPolicy.nonRetryableFailures` in [Section 7.3](07_session-lifecycle.md#73-retry-and-resume). Any other setup-window failure (every gRPC code other than `FailedPrecondition`, including a crashed pod surfaced as `Unavailable` or `DeadlineExceeded` and a wrapped cause reported as `Unknown`) is not this code; it stays the retryable `SESSION_CREATION_FAILED`/`STARTING_FAILED` fallback and is recovered with a fresh pod per [Section 6.2](06_warm-pod-model.md#62-pod-state-machine). A slot-bind refusal that [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states is not this code, whichever gRPC code it arrives on; that section states its envelope. `details.reason` is `setup_command_failed`; the per-command stdout and stderr are retrievable via `GET /v1/sessions/{id}/setup-output`. |
+| `SERVICE_UNAVAILABLE`       | `TRANSIENT` | 503         | The gateway could not complete the request because a backing store or dependency it consulted returned a transient error rather than a definite answer. Returned by the [Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime) injection gate when either the runtime-store read or the per-tenant capability-override-store read fails with a non-not-found error, by the pool-resolution path when the pool lookup is transiently unresolvable, and by a request or delegation that binds a `WorkspacePlan` when a transient store error prevents reading its runtime ([Section 14.1](14_workspace-plan-schema.md#141-workspaceplan-schema-versioning) **Runtime workspace defaults.** rule 4), all of which fail closed rather than degrade open. `Retry-After` is set. Retryable once the dependency recovers. The granular underlying cause is recorded in gateway logs and metrics rather than as a distinct client code. |
 
 **Validation error format.** When `code` is `VALIDATION_ERROR`, the `details` field contains a `fields` array describing each validation failure:
 
@@ -1326,7 +1328,7 @@ The MCP interface is for **interactive streaming sessions** and **recursive dele
 | `create_session`           | Create a new agent session                                     |
 | `create_and_start_session` | Create, upload inline files, and start in one call             |
 | `upload_files`             | Upload workspace files                                         |
-| `finalize_workspace`       | Seal workspace, run setup                                      |
+| `finalize_workspace`       | Seal workspace, run setup. The optional `workspacePlan` argument binds the session's plan as the REST finalize body does ([Section 14.1](14_workspace-plan-schema.md#141-workspaceplan-schema-versioning) **Plan binding.**). |
 | `start_session`            | Start the agent runtime                                        |
 | `attach_session`           | Attach to a running session (returns streaming task). Accepts optional `resumeFromSeq: uint64` to replay buffered events with `SeqNum > resumeFromSeq` before streaming new ones (see "Event-stream resume" below).           |
 | `send_message`             | Send a message to a session (unified — replaces `send_prompt`) |
@@ -1339,7 +1341,7 @@ The MCP interface is for **interactive streaming sessions** and **recursive dele
 | `download_artifact`        | Download a specific artifact                                   |
 | `terminate_session`        | End a session gracefully (marks `completed`)                   |
 | `cancel_session`           | Force-cancel a session (marks `cancelled`); REST equivalent is `DELETE /v1/sessions/{id}` |
-| `resume_session`           | Resume a suspended or paused session                           |
+| `resume_session`           | Resume a `suspended` session or a session in `awaiting_client_action`; REST equivalent is `POST /v1/sessions/{id}/resume`                           |
 | `list_sessions`            | List active/recent sessions (filterable)                       |
 | `list_runtimes`            | List available runtimes (identity-filtered, policy-scoped)     |
 
@@ -1396,7 +1398,7 @@ The six declared kinds cover the full closed `SessionEventKind` enum defined in 
 | `SessionEventKind`       | MCP wire projection                                                                                   | MCP method / notification name           | Notes                                                                                                                                                                                                                                                                                                                 |
 | ------------------------ | ----------------------------------------------------------------------------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SessionEventStateChange` | MCP task status notification (Tasks feature) carrying `{from, to, subState?}` in `params.metadata`.   | `notifications/tasks/statusUpdate`       | `from` / `to` values are translated through the Lenny-state → MCP-Tasks mapping in [Section 8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema); `subState` (when present) is surfaced in `params.metadata.subState`.                                                                                |
-| `SessionEventOutput`      | MCP streaming content block(s) appended to the `attach_session` task response.                        | Streaming content frames on `attach_session` (no standalone notification method) | Each `MessagePart` in the payload is translated through the [Translation Fidelity Matrix](#translation-fidelity-matrix) MCP column; `ref` fields are dereferenced per the [Adapter dereference obligation](#internal-messagepart-format).                                                                               |
+| `SessionEventOutput`      | MCP streaming content block(s) appended to the `attach_session` task response.                        | Streaming content frames on `attach_session` (no standalone notification method) | Each `MessagePart` in the payload is translated through the [Translation Fidelity Matrix](#translation-fidelity-matrix) MCP column; `ref` fields are dereferenced per the [Adapter dereference obligation](28_communication-channels.md#2853-intra-pod).                                                                               |
 | `SessionEventElicitation` | Native MCP `elicitation/create` request (MCP Elicitation feature) carrying the `lenny/request_elicitation` / `lenny/request_input` payload. | `elicitation/create`                     | The client's response flows back over the same SSE channel as the MCP elicitation reply; the gateway routes it through the hop-by-hop elicitation chain ([Section 9.2](09_mcp-integration.md#92-elicitation-chain)).                                                                                                  |
 | `SessionEventToolUse` (phase: `requested`, approval required) | Native MCP `elicitation/create` request carrying the tool-approval prompt (`toolCallId`, `tool`, `arguments`). | `elicitation/create`                     | The elicitation reply carries the approve/deny decision, which the gateway consumes to emit the subsequent `phase: approved` or `phase: denied` wire frame (see row below). The approval-required requested-phase frame is the **only** `tool_use` projection that uses MCP Elicitation; this preserves the existing §15.2.1 "MCP elicitation exchanges" contract for exactly this case. |
 | `SessionEventToolUse` (phase: `requested`, auto-approved or replay of already-approved) | MCP notification carrying the full `tool_use` payload (`toolCallId`, `tool`, `arguments`, `phase: "requested"`). | `notifications/lenny/toolCall`           | Used when policy does not require approval, or when the event is replayed from the event buffer for an already-resolved tool call. A notifications frame — not an elicitation request — because no client response is expected.                                                                                      |
@@ -1443,7 +1445,7 @@ The REST API ([Section 15.1](#151-rest-api)) and MCP tools ([Section 15.2](#152-
 
    **`RegisterAdapterUnderTest` test matrix.** The contract test harness exposes a `RegisterAdapterUnderTest(adapter ExternalProtocolAdapter)` entry point so that third-party adapter authors can run the suite against their implementation. The test matrix covers the full operation set of overlapping endpoints:
    - All session lifecycle operations: create, get status, interrupt, resume, terminate, list artifacts, retrieve artifact.
-   - All error classes: `VALIDATION_ERROR`, `QUOTA_EXCEEDED`, `RATE_LIMITED`, `RESOURCE_NOT_FOUND`, `INVALID_STATE_TRANSITION`, `PERMISSION_DENIED`, `CREDENTIAL_REVOKED`, `CREDENTIAL_POOL_EXHAUSTED`, `ISOLATION_MONOTONICITY_VIOLATED`, and the session-creation rejection family catalogued in §15.4 (`VARIANT_ISOLATION_UNAVAILABLE`, `REGION_CONSTRAINT_UNRESOLVABLE`, `GIT_CLONE_AUTH_UNSUPPORTED_HOST`, `GIT_CLONE_AUTH_HOST_AMBIGUOUS`, `GIT_CLONE_REF_UNRESOLVABLE`, `GIT_CLONE_REF_RESOLVE_TRANSIENT`, `ENV_VAR_BLOCKLISTED`, `SDK_DEMOTION_NOT_SUPPORTED`, `POOL_DRAINING`, `CIRCUIT_BREAKER_OPEN`, `ERASURE_IN_PROGRESS`, `TENANT_SUSPENDED`) — each exercised with a canonical triggering input on `POST /v1/sessions` and its MCP `create_session` counterpart. For each, the test asserts identical `code`, `category`, `retryable`, and HTTP status (REST-side) / structured-error status (MCP-side) values, keeping the matrix in lockstep with the §15.4 error code catalog (any future session-creation rejection added to §15.4 MUST be added to this list in the same change).
+   - All error classes: `VALIDATION_ERROR`, `QUOTA_EXCEEDED`, `RATE_LIMITED`, `RESOURCE_NOT_FOUND`, `INVALID_STATE_TRANSITION`, `PERMISSION_DENIED`, `CREDENTIAL_REVOKED`, `CREDENTIAL_POOL_EXHAUSTED`, `ISOLATION_MONOTONICITY_VIOLATED`, and the session-creation rejection family catalogued in the [Section 15.1](#151-rest-api) **Error code catalog** (`VARIANT_ISOLATION_UNAVAILABLE`, `REGION_CONSTRAINT_UNRESOLVABLE`, `GIT_CLONE_AUTH_UNSUPPORTED_HOST`, `GIT_CLONE_AUTH_HOST_AMBIGUOUS`, `GIT_CLONE_REF_UNRESOLVABLE`, `GIT_CLONE_REF_RESOLVE_TRANSIENT`, `ENV_VAR_BLOCKLISTED`, `POOL_DRAINING`, `CIRCUIT_BREAKER_OPEN`, `ERASURE_IN_PROGRESS`, `TENANT_SUSPENDED`, `TENANT_NOT_ACTIVE`, `USER_INVALIDATED`) — each exercised with a canonical triggering input on `POST /v1/sessions` and its MCP `create_session` counterpart. For each, the test asserts identical `code`, `category`, `retryable`, and HTTP status (REST-side) / structured-error status (MCP-side) values, keeping the matrix in lockstep with the §15.1 Error code catalog (any future session-creation rejection added to that catalog MUST be added to this list in the same change).
    - All state transition sequences: at minimum the sequences `create→running→completed`, `create→running→interrupted→resumed→completed`, and `create→running→terminated`.
    - Pagination: multi-page artifact list traversal asserting cursor behavior and total result set identity.
    - Event-stream resume: after a forced stream disconnect, a subsequent `attach_session` with `resumeFromSeq` (or SSE `Last-Event-ID`) returns all events with `SeqNum > resumeFromSeq` in order; when the requested sequence is beyond the replay buffer ([§10.4](10_gateway-internals.md#104-gateway-reliability)), a single `gap_detected` protocol-level frame precedes the oldest retained event.
@@ -1453,50 +1455,32 @@ The REST API ([Section 15.1](#151-rest-api)) and MCP tools ([Section 15.2](#152-
 
 ### 15.3 Internal Control API (Custom Protocol)
 
-Gateway ↔ Pod communication over gRPC + mTLS. See [Section 4.7](04_system-components.md#47-runtime-adapter) (Runtime Adapter) for the full RPC surface. The wire contract is published as machine-readable artifacts in [Section 15.4](#154-runtime-adapter-specification); this section (15.4 and its subsections) is the normative prose reference and is kept in sync with those artifacts.
+Gateway ↔ Pod communication over gRPC + mTLS. See [Section 4.7](04_system-components.md#47-runtime-adapter) (Runtime Adapter) for the full RPC surface. [Section 28](28_communication-channels.md) is the normative reference for the gateway-to-pod channel contract, and [Section 15.4](#154-runtime-adapter-specification) is the normative reference for the wire artifacts that contract is published as, which are kept in sync with the prose.
 
 ### 15.4 Runtime Adapter Specification
 
-The runtime adapter contract is published as three machine-readable artifacts committed to the repository and released alongside each Lenny release:
+The runtime adapter contract is published as the machine-readable artifacts listed below, committed to the repository and released alongside each Lenny release:
 
 - **`schemas/lenny-adapter.proto`** — Protobuf service and message definitions for the gateway ↔ adapter gRPC surface ([Section 4.7](04_system-components.md#47-runtime-adapter) RPC table). Includes the structured error code enum with categories (transient, permanent, policy), the `Attach` bidirectional streaming messages, the version negotiation protocol (adapter advertises capabilities at startup; gateway selects a compatible protocol version), and the gRPC Health Checking Protocol binding.
-- **`schemas/lenny-adapter-jsonl.schema.json`** — JSON Schema (Draft 2020-12) for every adapter↔binary stdin/stdout message defined in [Section 15.4.1](#1541-adapterbinary-protocol) (`message`, `tool_result`, `heartbeat`, `shutdown`, `response`, `tool_call`, `heartbeat_ack`, `status`, `set_tracing_context`, and every lifecycle-channel message). Open-string `type` fields are modeled via `anyOf` with pass-through for unknown types per the canonical type registry contract.
+- **`schemas/lenny-adapter-jsonl.schema.json`** — JSON Schema (Draft 2020-12) for every adapter↔binary stdin/stdout message defined in [Section 28.5.3](28_communication-channels.md#2853-intra-pod). The CH-RUNTIMEOPS frames are schematized in `schemas/runtime-ops-events.schema.json` rather than in this artifact. Open-string `type` fields are modeled via `anyOf` with pass-through for unknown types per the canonical type registry contract.
 - **`schemas/messagepart.schema.json`** — JSON Schema for the `MessagePart` envelope, including the canonical type registry tables, `schemaVersion` per-type field contract, and the namespace convention for third-party `x-<vendor>/<typeName>` types.
+- **`schemas/runtime-ops-events.schema.json`** — JSON Schema for the `CH-RUNTIMEOPS` frames the adapter and the runtime exchange on the intra-pod runtime-operations channel ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)), which `schemas/lenny-adapter-jsonl.schema.json` deliberately does not schematize.
 
-The artifacts are versioned by Lenny release tag. Breaking changes to the `.proto` file follow [buf](https://buf.build/)-style breaking-change rules; JSON Schema changes follow the `additionalProperties` discipline documented per message. A Go reference implementation of the adapter (`examples/runtimes/echo/`) is built from the same `.proto` file and serves as the executable reference. **This section (15.4 and its subsections) remains the normative prose description**; any discrepancy between the artifacts and this prose is a bug that must be reconciled before release.
+The artifacts are versioned by Lenny release tag. Breaking changes to the `.proto` file follow [buf](https://buf.build/)-style breaking-change rules; JSON Schema changes follow the `additionalProperties` discipline documented per message. A Go reference implementation of the adapter (`examples/runtimes/echo/`) is built from the same `.proto` file and serves as the executable reference.
 
-**SDK-warm demotion contract:** Adapters for runtimes that declare `capabilities.preConnect: true` **must** implement the `DemoteSDK` RPC. This RPC cleanly terminates the pre-connected agent process and returns the pod to a pod-warm state so that workspace files (including those matching `sdkWarmBlockingPaths`) can be materialized before the agent starts. The specification must document: expected teardown behavior, timeout (default: 10s — if the SDK process does not exit within this window, the adapter sends SIGKILL), post-demotion pod state (equivalent to a freshly warmed pod-warm pod), and the `UNIMPLEMENTED` error code for adapters that do not support demotion. Runtime authors who set `preConnect: true` without implementing `DemoteSDK` will see session failures whenever a client uploads files matching `sdkWarmBlockingPaths`.
+**SDK-warm demotion contract:** Adapters for runtimes that declare `capabilities.preConnect: true` **must** implement the `DemoteSDK` RPC. This RPC cleanly terminates the pre-connected agent process and returns the pod to a pod-warm state so that workspace files (including those matching `sdkWarmBlockingPaths`) can be materialized before the agent starts. The specification must document: expected teardown behavior, timeout (default: 10s — if the SDK process does not exit within this window, the process is sent SIGKILL ([Section 4.7.10](04_system-components.md#4710-deployment-model), **Runtime supervisor.**, **SDK-warm.**)), post-demotion pod state (equivalent to a freshly warmed pod-warm pod), and the `UNIMPLEMENTED` error code for adapters that do not support demotion. Runtime authors who set `preConnect: true` without implementing `DemoteSDK` will see session failures whenever a client uploads files matching `sdkWarmBlockingPaths`.
 
-#### 15.4.1 Adapter↔Binary Protocol
+**Bind attempt token contract:** [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states the bind attempt token, the requests that carry it, the stamp-once rule, the registry critical section, and the numbered rules an adapter applies, and that statement is normative for a third-party adapter. An adapter conforms when, on every request, it refuses or admits, performs or withholds the acts, and answers as that section states for that request, and an adapter that behaves otherwise on any request does not conform.
 
-The runtime adapter communicates with the agent binary over **stdin/stdout** using newline-delimited JSON (JSON Lines). Each message is a single JSON object terminated by `\n`. The `prompt` message type is removed — the unified `message` type handles all inbound content delivery.
+**Slot-identifier reclaim hold:** [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states the reclaim hold, its window, and the requests it refuses. This block states what an adapter must exhibit on the wire. While the identifier is held, a request the [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) hold refuses is refused with the gRPC status code `ABORTED`, which is the transient classification a caller retries on. An adapter that admits a request that hold refuses does not conform. An adapter that refuses one with a permanent status, or that answers a status the caller cannot retry, does not conform. `Shutdown` is outside this hold, on the terms [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) states, and is answered under the rules [Section 4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract) states for it.
 
-**Inbound messages (adapter → agent binary via stdin):**
+#### 15.4.1 Message Format and Binary I/O Requirements
 
-| `type` field  | Description                                                                                                                                                         |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `message`     | All content delivery: initial task, mid-session injection, reply to `request_input`, sibling notification. Carries optional `slotId` on pods whose pool sets `maxConcurrentSessions > 1`. |
-| `tool_result` | The result of a tool call requested by the agent. Carries `slotId` when `maxConcurrentSessions > 1`. |
-| `heartbeat`   | Periodic liveness ping; agent must respond                                                                                                                          |
-| `shutdown`    | Graceful shutdown with no new task                                                                                                                                  |
-
-The `message` type carries an `input` field containing a `MessagePart[]` array (see Internal `MessagePart` Format below), supporting text, images, structured data, and other content types. The REST inbound message input is this same `input: ["MessagePart[]"]` form, with no REST-specific carve-out; the structured part array is the canonical message input on every external surface. A bare string is a permitted shorthand for a single text `MessagePart`, accepted identically on the REST `/messages` endpoint and the platform MCP `lenny/send_message` tool so the common single-text case stays terse. No `sessionState` field — the runtime knows it's receiving its first message by virtue of just having started. No `follow_up` or `prompt` type anywhere in the protocol.
-
-**Outbound messages (agent binary → adapter via stdout):**
-
-| `type` field             | Description                                                                                           |
-| ------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `response`               | Streamed or complete response carrying `MessagePart[]`. Carries `slotId` when `maxConcurrentSessions > 1`. |
-| `tool_call`              | Agent requests execution of a tool. Carries `slotId` when `maxConcurrentSessions > 1`. |
-| `heartbeat_ack`          | Acknowledges an inbound `heartbeat`. Protocol-level; no content payload.                              |
-| `status`                 | Optional status/trace update                                                                          |
-| `set_tracing_context`    | Registers tracing identifiers for propagation through delegation. Payload: `{"type": "set_tracing_context", "context": {"langsmith_run_id": "run_abc123"}}`. The adapter stores the context and automatically attaches it to all subsequent `lenny/delegate_task` gRPC requests. Validation rules ([Section 8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)) are enforced by the gateway when the delegation request arrives. Available at all tiers. See [Section 16.3](16_observability.md#163-distributed-tracing) for the two-tier tracing model. |
+The `message` type carries an `input` field containing a `MessagePart[]` array (see [§28.5.3](28_communication-channels.md#2853-intra-pod) "Internal `MessagePart` Format"), supporting text, images, structured data, and other content types. The REST inbound message input is this same `input: ["MessagePart[]"]` form, with no REST-specific carve-out; the structured part array is the canonical message input on every external surface. A bare string is a permitted shorthand for a single text `MessagePart`, accepted identically on the REST `/messages` endpoint and the platform MCP `lenny/send_message` tool so the common single-text case stays terse. No `sessionState` field. No `follow_up` or `prompt` type anywhere in the protocol.
 
 **`input_required` outbound message type removed.** Replaced by `lenny/request_input` blocking MCP tool call on the platform MCP server.
 
-**`slotId` for concurrent-session multiplexing:** Messages on a pod whose pool sets `sessionPolicy.maxConcurrentSessions: 1` never carry `slotId`, and runtimes on those pods never see it. Runtimes serving a pool with `maxConcurrentSessions > 1` implement a dispatch loop keyed on `slotId`: each concurrent slot's messages carry a distinct `slotId` assigned by the adapter. This allows multiple independent concurrent session streams through a single stdin channel.
-
-**stderr** is captured by the adapter for logging and diagnostics but is **not** parsed as protocol messages.
+**stderr** goes to its container's log and is **not** parsed as protocol messages.
 
 **stdout flushing requirement:** Every JSON Lines message written to stdout MUST be followed by a flush before the binary blocks on the next `read_line(stdin)`. Many language runtimes buffer stdout by default; without an explicit flush the adapter never receives the message and the session hangs silently. Language-specific guidance:
 
@@ -1512,143 +1496,9 @@ The `message` type carries an `input` field containing a `MessagePart[]` array (
 
 Runtimes that use a line-buffered or fully-buffered stdout MUST flush after every outbound message. The reference Go implementation (`examples/runtimes/echo/`) writes directly to `os.Stdout` (unbuffered) and requires no explicit flush call.
 
-#### Internal `MessagePart` Format
-
-`agent_text` streaming event is replaced by `agent_output` carrying `MessagePart` array. `TaskResult` and `TaskSpec` use `MessagePart` arrays. This is Lenny's internal content model — the adapter translates to/from external protocol formats (MCP, A2A) at the boundary.
-
-```json
-{
-  "schemaVersion": 1,
-  "id": "part_abc123",
-  "type": "text",
-  "mimeType": "text/plain",
-  "inline": "content here",
-  "ref": "lenny-blob://...",
-  "annotations": { "role": "primary", "final": true },
-  "parts": [],
-  "status": "streaming | complete | failed"
-}
-```
-
-**Properties:**
-
-- **`schemaVersion` is an integer identifying the MessagePart schema revision (default `1`).** Present on every persisted `MessagePart`. The forward-compatibility contract has obligations on both sides:
-  - **Producer obligation:** Producers MUST set `schemaVersion` to the highest version required by the fields they emit. When a schema version introduces semantically important fields (e.g., `citations` in v2), the producer MUST set `schemaVersion` to that version so consumers can detect the presence of fields they may not understand.
-  - **Consumer obligation — streaming/live delivery:** Consumers MUST NOT reject a `MessagePart` solely because its `schemaVersion` is higher than the consumer understands. When a consumer encounters a `schemaVersion` it does not recognize, it processes the fields it does understand and MUST surface a **degradation signal**: a `schema_version_ahead` annotation on the parent `MessageEnvelope` (with `"knownVersion"` and `"encounteredVersion"` fields) so the end user or upstream caller is informed that the response may be incomplete. Consumers MUST NOT silently discard unknown fields without this signal. This ensures data loss from schema mismatch is always visible rather than hidden. `schema_version_ahead` is scoped specifically to the "new writer, old reader" direction on the `schemaVersion` field of a record; it is one of several distinct degradation annotation kinds catalogued in [Section 15.5](#155-api-versioning-and-stability) item 7 (Degradation annotation catalog) and MUST NOT be reused for unrelated signals such as retired MCP protocol versions.
-  - **Consumer obligation — durable storage (TaskRecord):** When `MessagePart` arrays are persisted as part of a `TaskRecord` ([Section 8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema)), the forward-read rule from [Section 15.5](#155-api-versioning-and-stability) item 7 applies: if a reader encounters a `MessagePart` with a `schemaVersion` it does not recognize, it MUST **forward-read** — process all fields it understands and preserve all unknown fields verbatim (pass-through) — rather than rejecting the record. Billing and audit records retained for 13 months will span multiple schema revisions; silent data loss or outright rejection in these records is unacceptable. If a durable consumer cannot safely pass through unknown fields (e.g., it writes to a schema-strict sink), it MUST emit a `durable_schema_version_ahead` structured error to an operator alert channel and queue the record for manual review rather than dropping it. This rule is consistent with the general durable-consumer rule in [Section 15.5](#155-api-versioning-and-stability) item 7 and extends it explicitly to `MessagePart` arrays embedded within persisted `TaskRecord` objects.
-- **`type` is an open string — not a closed enum — with a versioned canonical type registry.** The registry defines platform-defined types and their guaranteed translation behavior per adapter. Unprefixed names are reserved for the platform registry; third-party extensibility uses the `x-<vendor>/` namespace (see namespace convention below). Any type not in the current registry version is treated as a custom type and falls back to `text` with the original type preserved in `annotations.originalType`. Types may be added to the registry in minor releases; removing a type or changing its translation behavior is a breaking change requiring a major version bump. To preserve forward-compatibility across minor releases, unknown unprefixed types are **not** rejected at ingress — they are passed through with the same custom-type fallback, plus an `unregistered_platform_type` warning annotation, so that a newly registered type can be emitted by an updated runtime before all gateways have been upgraded. This retains open-string extensibility while making translation deterministic across adapter implementations.
-
-  **Canonical Type Registry (v1):**
-
-  | Type               | Description                                   | MCP Translation                                              | OpenAI Translation                           | A2A Translation                                      |
-  | ------------------ | --------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------- | ---------------------------------------------------- |
-  | `text`             | Plain or formatted text                       | `TextContent` block                                          | `text` content                               | A2A `TextPart`                                       |
-  | `code`             | Source code with optional language annotation | `TextContent` with `language` annotation                     | `text` content                               | A2A `TextPart` with `mimeType`                       |
-  | `reasoning_trace`  | Model reasoning/chain-of-thought              | `TextContent` with `thinking` annotation                     | `text` content (reasoning not representable) | A2A `TextPart` with `metadata.semantic: "reasoning"` |
-  | `citation`         | Source citation or reference                  | `TextContent` with citation annotation                       | `text` content                               | A2A `TextPart` with `metadata.semantic: "citation"`  |
-  | `screenshot`       | Screen capture image                          | `ImageContent` block                                         | `image_url` content                          | A2A `FilePart` with image MIME type                  |
-  | `image`            | General image content                         | `ImageContent` block                                         | `image_url` content                          | A2A `FilePart` with image MIME type                  |
-  | `diff`             | Code diff / patch                             | `TextContent` with `language: "diff"`                        | `text` content                               | A2A `TextPart` with `mimeType: "text/x-diff"`        |
-  | `file`             | File content (binary or text)                 | `ResourceContent` block                                      | Resolved to inline `text` or dropped         | A2A `FilePart`                                       |
-  | `execution_result` | Compound output from code execution           | Flattened to sequential `TextContent` blocks with `parentId` | Flattened to sequential `text` entries       | A2A composite part                                   |
-  | `error`            | Error or diagnostic message                   | `TextContent` with `isError: true`                           | `text` content                               | A2A `TextPart` with `metadata.semantic: "error"`     |
-
-  **Custom types** (any `type` value not listed above): collapsed to `text` with `annotations.originalType` set to the original type string. Runtimes may emit any custom type; the gateway passes them through internally but adapters apply the fallback rule at the protocol boundary. The registry is published as part of the runtime adapter specification and versioned alongside the adapter protocol.
-
-  **Namespace convention for third-party types.** To avoid collisions with future platform-defined types, all vendor- or community-defined custom types MUST use a reverse-DNS namespace prefix in the form `x-<vendor>/<typeName>` (e.g., `x-acme/heatmap`, `x-myorg/audio-transcript`). Unprefixed names are reserved for platform-defined registry types. The gateway logs and annotates unknown unprefixed types at ingress (adding an `unregistered_platform_type` warning annotation with the unrecognized type string) but does **not** reject them — they fall through to the standard custom-type-to-`text` collapse so that newly registered types introduced in a minor release are forward-compatible across gateway versions that have not yet been upgraded.
-
-  **`schemaVersion` per-type contract.** The `schemaVersion` field on a `MessagePart` is scoped to the envelope schema (field set, semantics of existing fields). The stable field set guaranteed at each registry version is:
-
-  | Type               | `schemaVersion` 1 — guaranteed fields                                               | Notes on future versions                                              |
-  | ------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-  | `text`             | `type`, `inline`, `mimeType` (`text/plain`)                                         | v2 may add `citations[]`                                              |
-  | `code`             | `type`, `inline`, `mimeType`, `annotations.language`                                | —                                                                     |
-  | `reasoning_trace`  | `type`, `inline`                                                                    | v2 may add structured `steps[]`                                       |
-  | `citation`         | `type`, `inline`, `annotations.source`                                              | —                                                                     |
-  | `screenshot`       | `type`, `inline` (base64) or `ref`, `mimeType` (image/*)                            | —                                                                     |
-  | `image`            | `type`, `inline` (base64) or `ref`, `mimeType` (image/*)                            | —                                                                     |
-  | `diff`             | `type`, `inline`, `annotations.language` (`diff`)                                   | —                                                                     |
-  | `file`             | `type`, `inline` or `ref`, `mimeType`                                               | —                                                                     |
-  | `execution_result` | `type`, `parts[]` (each part is a full `MessagePart`)                                | v2 may add `exitCode`, `duration`                                     |
-  | `error`            | `type`, `inline` (human-readable message), `annotations.errorCode` (optional)       | —                                                                     |
-
-  A producer emitting fields that were introduced in a later schema version MUST set `schemaVersion` to that version. Consumers that encounter a `(type, schemaVersion)` combination they do not recognize apply the forward-compatibility rules defined above: degradation signal for live delivery; forward-read with unknown-field preservation for durable storage (see [Section 15.5](#155-api-versioning-and-stability) item 7).
-
-- **`mimeType` handles encoding separately.** The gateway validates, logs, and routes based on MIME type without understanding semantics.
-- **`inline` vs `ref` — resolution protocol.** A part either contains bytes inline (`inline` field set, base64 for binary content) or references external blob storage (`ref` field set). The two fields are mutually exclusive on any given part; setting both is a validation error (`400 MESSAGEPART_INLINE_REF_CONFLICT`). The gateway selects the representation automatically based on part size:
-
-  | Part size | Gateway action | Consumer sees |
-  | --- | --- | --- |
-  | ≤ 64 KB | Store inline (base64 for binary, UTF-8 for text) | `inline` field populated; `ref` absent |
-  | > 64 KB and ≤ 50 MB | Stage to blob store; set `ref` to `LennyBlobURI` | `ref` populated; `inline` absent |
-  | > 50 MB | Rejected at ingress | `413 MESSAGEPART_TOO_LARGE` |
-
-  **`LennyBlobURI` scheme.** Blob references use the URI scheme `lenny-blob://`:
-
-  ```
-  lenny-blob://{tenant_id}/{session_id}/{part_id}?ttl={seconds}&enc=aes256gcm
-  ```
-
-  | Component | Description |
-  | --- | --- |
-  | `tenant_id` | Tenant namespace — prevents cross-tenant dereference |
-  | `session_id` | Originating session — scopes the blob to one session |
-  | `part_id` | Stable part identifier (matches `MessagePart.id`) |
-  | `ttl` | Seconds until the blob expires in storage (see TTL table below) |
-  | `enc` | Encryption indicator; always `aes256gcm` for stored blobs |
-
-  **Immutability guarantee.** Blob storage is write-once per `(tenant_id, session_id, part_id)` triple. The gateway writes a blob exactly once when staging a `MessagePart`; subsequent reads always return the same bytes. No `generation` component is needed in the URI because part IDs are globally unique within a session — the internal `coordination_generation` counter ([Section 10.1](10_gateway-internals.md#101-horizontal-scaling)) is used only for coordinator fencing and never causes part IDs to be reused or existing blobs to be overwritten. A `lenny-blob://` URI is safe to cache and share for the duration of its `ttl`.
-
-  **TTL policy by context:**
-
-  | Context | Default TTL | Configurable? |
-  | --- | --- | --- |
-  | Live streaming delivery (session active) | 3 600 s (1 h) | Yes — `blobStore.liveDeliveryTtlSeconds` |
-  | Persisted in `TaskRecord` | 2 592 000 s (30 d) | Yes — `blobStore.taskRecordTtlSeconds` |
-  | Audit / billing event payload | 34 128 000 s (13 months) | Yes — `blobStore.auditTtlSeconds` |
-  | Delegation export (parent → child) | Duration of child session + 1 h | Fixed |
-
-  **Consumer fallback obligation.** When a consumer encounters a `ref` it cannot dereference (blob expired, storage unavailable, network partition), it MUST:
-  1. Surface a `blob_ref_unresolvable` degradation annotation on the `MessageEnvelope` (fields: `partId`, `ref`, `reason`).
-  2. Substitute a placeholder `MessagePart` of type `error` with `inline: "Blob reference unresolvable: {reason}"`.
-  3. Never silently drop the part.
-
-  **Adapter dereference obligation.** External protocol adapters (MCP, OpenAI, A2A) MUST dereference `ref` fields before serializing outbound messages to external clients — external protocols do not speak `lenny-blob://`. The REST adapter passes `ref` values through as-is (REST clients may dereference directly via `GET /v1/blobs/{ref}`).
-- **`annotations` as an open metadata map.** `role`, `confidence`, `language`, `final`, `audience` — any metadata. The gateway can index and filter on annotations without understanding the part type.
-- **`parts` for nesting.** Compound outputs (e.g., `execution_result` containing code, stdout, stderr, chart) are first-class.
-- **`id` enables part-level streaming updates** — concurrent part delivery where text streams while an image renders.
-
-**Rationale for internal format over MCP content blocks directly:** Runtimes are insulated from external protocol evolution. When MCP adds new block types or A2A parts change, only the gateway's `ExternalProtocolAdapter` translation layer updates — runtimes are untouched.
-
-**MCP content block → MessagePart mapping (inbound translation):** When the gateway receives MCP content blocks from a client and delivers them to a runtime, the adapter translates each MCP block to a `MessagePart` as follows:
-
-| MCP content block type | → `MessagePart.type` | `MessagePart.inline` source                  | `MessagePart.mimeType`          | `MessagePart.ref` source   | Notes                                                             |
-| ---------------------- | ------------------- | ------------------------------------------- | ------------------------------ | ------------------------- | ----------------------------------------------------------------- |
-| `TextContent`          | `text`              | `text` field                                | `text/plain`                   | —                         | `language` annotation → `annotations.language` if present        |
-| `ImageContent` (url)   | `image`             | —                                           | from `mimeType` if present     | `url.url`                 | URL set as `ref`; inline not populated                            |
-| `ImageContent` (base64)| `image`             | base64 data string                          | `mimeType`                     | —                         | Stored inline                                                     |
-| `EmbeddedResource` (text blob) | `file`    | resource text content                       | `text/plain` or resource MIME  | —                         | Stored inline when small; large blobs staged to artifact store    |
-| `EmbeddedResource` (blob)      | `file`    | —                                           | resource MIME type             | artifact URI              | Staged to artifact store; `ref` set to `lenny-blob://` URI        |
-| `EmbeddedResource` (uri)       | `file`    | —                                           | resource MIME type             | resource URI              | `ref` set directly from resource URI                              |
-| MCP `isError: true` annotation | `error`   | inherited from enclosing block              | —                              | —                         | `type` overridden to `error`; `annotations.errorCode` populated if present |
-
-Runtime authors who produce output using MCP-familiar content block objects can use the `from_mcp_content()` helper (see below) to perform this translation without manual field mapping.
-
-**Minimum required fields for Basic-level runtimes:** Only `type` and `inline` are required. All other fields (`schemaVersion`, `id`, `mimeType`, `ref`, `annotations`, `parts`, `status`) are optional and have sensible defaults — `schemaVersion` defaults to `1` if absent, `id` is generated by the adapter if absent, `mimeType` defaults to `text/plain` for `type: "text"`, `status` defaults to `complete` for non-streaming responses. A minimal valid `MessagePart` is `{"type": "text", "inline": "hello"}`.
-
-**Simplified text-only response shorthand:** Basic-level runtimes may emit a simplified response form with a top-level `text` field instead of an `output` array:
-
-```json
-{ "type": "response", "text": "The answer is 4." }
-```
-
-The adapter normalizes this to the canonical form `{"type": "response", "output": [{"type": "text", "inline": "The answer is 4."}]}` before forwarding to the gateway. This shorthand is strictly equivalent — runtimes that need structured output (multiple parts, non-text types, annotations) use the full `output` array form.
-
-**Optional SDK helper `from_mcp_content(blocks)`** converts MCP content blocks to `MessagePart` arrays for runtime authors who want to produce output using familiar MCP formats. Availability:
-
-- **Go:** Ships in the `github.com/lennylabs/runtime-sdk-go/messagepart` sub-package of the Runtime Author SDK ([§15.7](#157-runtime-author-sdks)) (Phase 2 deliverable). Import the package and call `messagepart.FromMCPContent(blocks)`.
-- **Other languages:** Not yet published as a library. Use the mapping table above to implement the conversion inline — the logic is a straightforward switch on `content.type`. A copy-paste reference implementation is distributed alongside the runtime adapter specification artifacts ([Section 15.4](#154-runtime-adapter-specification)).
-- **No SDK required:** Runtimes can construct `MessagePart` objects directly without any Lenny SDK dependency. The SDK helper is a convenience only.
+The internal `MessagePart` format is stated by the `CH-MSGSOCK` card in
+[Section 28.5.3](28_communication-channels.md#2853-intra-pod), which owns the adapter-to-binary
+contract.
 
 #### Translation Fidelity Matrix
 
@@ -1707,7 +1557,7 @@ Adapters ignore hint keys they do not recognize. Runtimes that do not set `proto
 
 #### `MessageEnvelope` — Unified Message Format
 
-All inbound **content** messages (type `message`) use a unified `MessageEnvelope` across the stdin binary protocol, platform MCP server tools, and all external APIs. Non-content lifecycle messages (`heartbeat`, `shutdown`, `heartbeat_ack`) use their own minimal schemas and are not `MessageEnvelope` instances — see Protocol Reference below.
+All inbound **content** messages (type `message`) use a unified `MessageEnvelope` across the stdin binary protocol, platform MCP server tools, and all external APIs. Non-content lifecycle messages use their own minimal schemas and are not `MessageEnvelope` instances — see the `CH-MSGSOCK` message schemas in [Section 28.5.3](28_communication-channels.md#2853-intra-pod).
 
 ```json
 {
@@ -1722,7 +1572,7 @@ All inbound **content** messages (type `message`) use a unified `MessageEnvelope
   "threadId": "thread_001",
   "delivery": "immediate",
   "delegationDepth": 0,
-  "slotId": "slot_01",
+  "sessionId": "sess_01J5K9...",
   "input": ["MessagePart[]"]
 }
 ```
@@ -1746,15 +1596,17 @@ The adapter populates `from.kind` and `from.id` from execution context before de
 
 - `requestId` in `lenny/request_input` — generated by the gateway; runtime only supplies `parts`
 
-**`slotId`** — optional string; present only on pods whose pool sets `sessionPolicy.maxConcurrentSessions > 1` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). Identifies the concurrent slot this message is addressed to. Messages on pods serving one session at a time never carry `slotId`. See the `slotId` multiplexing note in the Protocol Reference.
+**`sessionId`** — string; the adapter populates it on every session-scoped frame on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). Names the session this frame is addressed to. On a `message` frame, `from.id` separately names the sending session, which may be a different session; delivery follows `sessionId`. A runtime-to-adapter frame may omit it only on a pod holding at most one slot, where it resolves to the stream's own binding; on a pod holding more than one slot an unaddressed session-scoped frame is rejected and relayed to no stream. See the `sessionId` multiplexing note in [§28.5.3](28_communication-channels.md#2853-intra-pod).
 
 **`delivery`** — optional closed enum controlling interrupt behaviour. Defined values:
 
 | Value | Meaning | Gateway behaviour |
 | --- | --- | --- |
-| `"immediate"` | Interrupt the running agent and deliver now. | If session is `running`, the gateway sends an interrupt signal on the lifecycle channel and writes the message to stdin as soon as the runtime emits `interrupt_acknowledged` (Full-level) or immediately after the in-flight stdin write completes (Basic/Standard-level). If session is `suspended`, the gateway atomically resumes (`suspended → running`) then delivers. **Exception — `input_required`:** When the session is in the `input_required` sub-state (blocked in `lenny/request_input`), `delivery: "immediate"` does **not** override path 3 buffering ([Section 7.2](07_session-lifecycle.md#72-interactive-session-model)). The runtime is not reading from stdin while blocked in a `request_input` call, so direct delivery is impossible regardless of the `delivery` flag. The message is buffered in the session inbox and delivered in FIFO order once the `request_input` resolves. Receipt: `queued`. For all other `running` sub-states, receipt: `delivered` once the runtime confirms stdin consumption within the delivery timeout (default: 30 seconds). If the runtime does not confirm message consumption within this timeout, the message falls through to inbox buffering (path 5 behavior in [Section 7.2](07_session-lifecycle.md#72-interactive-session-model)) with receipt status `queued`. |
+| `"immediate"` | Interrupt the running agent and deliver now. | If session is `running`, the gateway calls the adapter's `Interrupt` RPC ([Section 4.7](04_system-components.md#47-runtime-adapter)), the adapter writes `interrupt_request` to the runtime on CH-RUNTIMEOPS, and the gateway writes the message to stdin as soon as the runtime emits `interrupt_acknowledged` on that channel (Full-level) or immediately after the in-flight stdin write completes (Basic/Standard-level). **Exception — `input_required`:** When the session is in the `input_required` sub-state (blocked in `lenny/request_input`), `delivery: "immediate"` does **not** override path 3 buffering ([Section 7.2](07_session-lifecycle.md#72-interactive-session-model)). The runtime is not reading from stdin while blocked in a `request_input` call, so direct delivery is impossible regardless of the `delivery` flag. The message is buffered in the session inbox and delivered in FIFO order once the `request_input` resolves. Receipt: `queued`. For all other `running` sub-states, receipt: `delivered` once the runtime confirms stdin consumption within the delivery timeout (default: 30 seconds). If the runtime does not confirm message consumption within this timeout, the message falls through to inbox buffering (path 5 behavior in [Section 7.2](07_session-lifecycle.md#72-interactive-session-model)) with receipt status `queued`. |
 | `"queued"` | Buffer for next natural pause. | Message appended to the session inbox. Delivered in FIFO order when the runtime next enters `ready_for_input`. Receipt: `queued`. |
 | absent | Same as `"queued"`. | Default behaviour. |
+
+A message addressed to a `suspended` session, whatever its `delivery` value, is handled as [Section 7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6 states, in place of the gateway behaviour its row states, and receives the delivery receipt that path states.
 
 No other values are valid. The gateway rejects unknown `delivery` values with `400 INVALID_DELIVERY_VALUE`.
 
@@ -1770,7 +1622,7 @@ No other values are valid. The gateway rejects unknown `delivery` values with `4
 }
 ```
 
-`status` values: `delivered` (runtime consumed); `queued` (buffered in inbox); `dropped` (overflow — oldest entry evicted; `reason: "inbox_overflow"` when the session inbox is full, or `reason: "dlq_overflow"` when the dead-letter queue is full); `expired` (DLQ TTL elapsed before delivery); `rate_limited` (inbound rate cap exceeded, [Section 7.2](07_session-lifecycle.md#72-interactive-session-model)); `error` (delivery failed due to infrastructure error, e.g., `reason: "inbox_unavailable"` when Redis is unreachable for durable inbox, or `reason: "scope_denied"` when messaging scope denies the target).
+`status` values: `delivered` (runtime consumed); `queued` (buffered in inbox); `dropped` (overflow — oldest entry evicted; `reason: "inbox_overflow"` when the session inbox is full, or `reason: "dlq_overflow"` when the dead-letter queue is full); `expired` (DLQ TTL elapsed before delivery); `rate_limited` (inbound rate cap exceeded, [Section 7.2](07_session-lifecycle.md#72-interactive-session-model)); `error` (delivery failed due to infrastructure error, e.g., `reason: "inbox_unavailable"` when Redis is unreachable, or `reason: "scope_denied"` when messaging scope denies the target).
 
 **`delivery_receipt.reason` enum.** When the receipt carries a `reason` field, it is drawn from a canonical closed enum, keyed by the `status` value:
 
@@ -1778,7 +1630,7 @@ No other values are valid. The gateway rejects unknown `delivery` values with `4
 | --- | --- | --- |
 | `dropped` | `inbox_overflow` | The session inbox reached `maxInboxSize` and the oldest buffered message was evicted. See [§7.2](07_session-lifecycle.md#72-interactive-session-model) session inbox definition. |
 | `dropped` | `dlq_overflow` | The dead-letter queue reached `maxDLQSize` and the oldest DLQ entry was evicted. See [§7.2](07_session-lifecycle.md#72-interactive-session-model) dead-letter handling. |
-| `error` | `inbox_unavailable` | Durable inbox enqueue failed because Redis was unreachable (`durableInbox: true` deployments only). See [§7.2](07_session-lifecycle.md#72-interactive-session-model) durable inbox prerequisites. |
+| `error` | `inbox_unavailable` | A durable-inbox or DLQ enqueue failed because Redis was unreachable, or the session re-read after a DLQ enqueue failed ([§7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6 **Enqueue racing a terminal transition.**). |
 | `error` | `scope_denied` | The sender's effective `messagingScope` does not permit messaging the target session. Corresponds to the `SCOPE_DENIED` error code ([§15.1](#151-rest-api) error code catalog). |
 
 For `status: "delivered"` and `status: "queued"`, the `reason` field is omitted (the status is self-describing). For `status: "expired"` and `status: "rate_limited"`, v1 does not define additional `reason` enum values — the status alone conveys the condition. No other values are valid. Implementations MUST NOT emit ad-hoc reason strings; new reason values require a spec update.
@@ -1787,8 +1639,8 @@ For `status: "delivered"` and `status: "queued"`, the `reason` field is omitted 
 
 | Reason | Emitted when |
 | --- | --- |
-| `dlq_ttl_expired` | Pre-terminal DLQ TTL elapsed while the target session remained in a recovering state (`resume_pending` or `awaiting_client_action`) and no resume occurred before the TTL boundary. |
-| `durable_inbox_ttl_expired` | The durable-inbox `per_message_ttl` elapsed while the target session remained in a recovering state. The durable-inbox trimmer is state-gated — it is a no-op while the session is `running` and activates only during `resume_pending` / `awaiting_client_action`, so this reason is emitted only for messages that were still buffered when the target entered a recovering state and failed to resume before the TTL boundary. See the durable-mode Per-message TTL row in [Section 7.2](07_session-lifecycle.md#72-interactive-session-model). |
+| `dlq_ttl_expired` | The expiry sweep removed a DLQ entry whose TTL had elapsed, as [Section 7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6 **Delivery of held messages.** states. |
+| `durable_inbox_ttl_expired` | The durable-inbox `per_message_ttl` elapsed while the target session remained in a recovering state. See the durable-mode Per-message TTL row in [Section 7.2](07_session-lifecycle.md#72-interactive-session-model). |
 | `target_terminated` | The target session transitioned to a terminal state (`completed`, `failed`, `cancelled`, `expired`) while messages were still buffered. This covers both the in-memory/durable inbox drain-on-terminal path and the DLQ drain-on-terminal path in [Section 7.2](07_session-lifecycle.md#72-interactive-session-model); senders handle both identically. |
 
 No other values are valid. Implementations MUST NOT emit synonyms (e.g., `session_terminal`, `target_ttl_exceeded`) — these legacy strings were consolidated into the three canonical values above.
@@ -1826,244 +1678,16 @@ The event is persisted to the sender session's event store and replayable within
 - Each message node has: `id` (self), `inReplyTo` (parent edge, optional), `threadId` (thread label, optional).
 - In v1 there is one implicit thread per session (`threadId` absent or the same value for all messages). Multi-thread sessions are additive post-v1.
 - The gateway records every delivered message in the session's `MessageDAG` store (Postgres `session_messages` table, indexed on `(session_id, id, thread_id)`). Clients may retrieve the DAG via `GET /v1/sessions/{id}/messages` with optional `?threadId=` and `?since=` filters.
-- **Ordering guarantee:** Within a single thread, messages are ordered by the coordinator-local sequence number assigned at inbox-enqueue time (a monotonic integer per session, persisted to Postgres). This provides **coordinator-local FIFO** — not global wall-clock order. Cross-sender causal ordering requires application-level sequence numbers or vector clocks embedded in message content.
+- **Ordering guarantee:** Within a single thread, messages are ordered by the coordinator-local sequence number assigned at inbox-enqueue time (a monotonic integer per session, persisted to Postgres). This provides **coordinator-local FIFO** — not global wall-clock order. The order of messages held in the target's DLQ is the order [Section 7.2](07_session-lifecycle.md#72-interactive-session-model) delivery path 6 **Delivery of held messages.** states. Cross-sender causal ordering requires application-level sequence numbers or vector clocks embedded in message content.
 - **Delegation forwarding:** When a `lenny/send_message` call targets a session in a different delegation tree node, the `delegationDepth` field (integer, 0-based, gateway-injected) records how many tree hops the message crossed. Runtimes MAY inspect `delegationDepth` to detect unexpected cross-tree routing. The field is informational; the gateway does not alter delivery semantics based on it.
 
 **`threadId`** — optional. In v1 one implicit thread per session. Multi-thread sessions are additive post-v1.
 
 **Future-proof:** `MessageEnvelope` with `id`, `from`, `inReplyTo`, `threadId`, `delivery`, and `delegationDepth` accommodates all future conversational patterns without schema changes: threaded messages, multiple participants, non-linear context retrieval, broadcast, external agent participation.
 
-#### Protocol Reference — Message Schemas
-
-All **content** messages on stdin (type `message`) use the full `MessageEnvelope` format ([Section 15.4.1](#1541-adapterbinary-protocol)). Lifecycle messages (`heartbeat`, `shutdown`) use their own minimal schemas defined below and are not `MessageEnvelope` instances. Runtimes MUST ignore unrecognized fields. Basic-level runtimes need only read `type`, `id`, and `input` — all other envelope fields (`from`, `inReplyTo`, `threadId`, `delivery`, `delegationDepth`, `slotId`) can be safely ignored.
-
-##### Inbound: `message`
-
-```json
-{
-  "type": "message",
-  "id": "msg_001",
-  "input": [{ "type": "text", "inline": "What is 2+2?" }],
-  "from": { "kind": "client", "id": "client_8f3a2b" },
-  "threadId": "t_01",
-  "delivery": "queued",
-  "slotId": "slot_01"
-}
-```
-
-Basic-level: read `type`, `id`, `input`. Ignore all other fields. `slotId` is optional and is present only on pods with `maxConcurrentSessions > 1`.
-
-##### Inbound: `heartbeat`
-
-```json
-{ "type": "heartbeat", "ts": 1717430400 }
-```
-
-Agent must respond with `heartbeat_ack` (see below). If no ack within 10 seconds, the adapter considers the process hung and sends SIGTERM.
-
-##### Inbound: `shutdown`
-
-```json
-{ "type": "shutdown", "reason": "drain", "deadline_ms": 10000 }
-```
-
-Agent must finish current work and exit within `deadline_ms`. No acknowledgment required — the adapter watches for process exit. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds.
-
-##### Inbound: `tool_result`
-
-Schema:
-
-```json
-{
-  "type": "tool_result",
-  "id": "<string, required — matches the tool_call.id this result responds to>",
-  "content": ["<MessagePart[], required — result content>"],
-  "isError": "<boolean, optional — true if tool execution failed; defaults to false>",
-  "slotId": "<string, optional — present only on pods with maxConcurrentSessions > 1>"
-}
-```
-
-Example:
-
-```json
-{
-  "type": "tool_result",
-  "id": "tc_001",
-  "content": [{ "type": "text", "inline": "file contents here" }],
-  "isError": false
-}
-```
-
-**Correlation:** Every `tool_result.id` MUST match the `id` of a previously emitted `tool_call`. The adapter validates this — a `tool_result` with an unknown `id` is dropped and logged as a protocol error. Agents may have multiple outstanding `tool_call` requests; results may arrive in any order.
-
-**Delivery semantics:** Tool calls use synchronous request/response semantics within the stdin/stdout channel. The agent emits a `tool_call`, then continues reading stdin until it receives the matching `tool_result` (identified by `id`). Other inbound messages (`heartbeat`, additional `message` content) may arrive before the `tool_result` — the agent must handle interleaved delivery. There is no async callback or webhook mechanism; all tool results are delivered inline on stdin.
-
-**Tool access by level:**
-
-| Level        | Tool access                                                                                                        | `tool_call` / `tool_result` behavior                                                                                                                                                                                                                               |
-| ------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Basic**    | No MCP tools available. The agent binary has no platform MCP server or connector MCP servers.                      | Agents MAY still emit `tool_call` for adapter-local tools (e.g., `read_file`, `write_file` provided by the adapter's local sandbox tooling). The adapter resolves these locally and returns `tool_result` on stdin. No platform or connector tools are accessible. |
-| **Standard** | Platform MCP server tools (`lenny/delegate_task`, `lenny/request_input`, etc.) and per-connector MCP server tools. | The agent calls MCP tools via the MCP client connection to the adapter's local servers (not via `tool_call` on stdin). The stdin `tool_call`/`tool_result` channel is used for adapter-local tools only.                                                           |
-| **Full**     | Same as Standard plus lifecycle channel capabilities.                                                              | Same as Standard.                                                                                                                                                                                                                                                  |
-
-##### Outbound: `response`
-
-```json
-{
-  "type": "response",
-  "output": [{ "type": "text", "inline": "The answer is 4." }],
-  "slotId": "<string, optional — present only on pods with maxConcurrentSessions > 1>"
-}
-```
-
-Basic-level shorthand (adapter normalizes to canonical form above):
-
-```json
-{ "type": "response", "text": "The answer is 4." }
-```
-
-**Error reporting via `response`.** The `response` message supports an optional `error` field for structured error reporting: `{"code": string, "message": string}`, matching the `TaskResult.error` shape. When `error` is present, the adapter maps the task to `failed` state and populates `TaskResult.error` from the response error. This allows runtimes to report failure details while still delivering partial output in the `output` array, without relying solely on non-zero exit codes (which lose error context). When `error` is absent and the process exits zero, the task completes successfully. When the process exits non-zero without emitting a `response`, the adapter synthesizes a `RUNTIME_CRASH` error from the exit code and stderr.
-
-**Relationship between `lenny/output` and stdout `response`:** At Standard and Full levels, runtimes may emit output parts incrementally via the `lenny/output` platform MCP tool. The stdout `{type: "response"}` message is always required to signal task completion, regardless of whether `lenny/output` was used. Its `output` array contains only parts not already emitted via `lenny/output`; runtimes that have already emitted all output parts via `lenny/output` send an empty `output` array (`[])`. The adapter concatenates `lenny/output` parts (in call order) with the final `response.output` parts to form the complete task output. Basic-level runtimes, which have no access to `lenny/output`, must include all output in the stdout `response.output` array. Standard-level runtimes may use either delivery path or both.
-
-##### Outbound: `tool_call`
-
-Schema:
-
-```json
-{
-  "type": "tool_call",
-  "id": "<string, required — unique call identifier; used to correlate the inbound tool_result>",
-  "name": "<string, required — tool name>",
-  "arguments": "<object, required — tool-specific parameters; validated by the adapter against the tool's input schema>",
-  "slotId": "<string, optional — present only on pods with maxConcurrentSessions > 1>"
-}
-```
-
-Example:
-
-```json
-{
-  "type": "tool_call",
-  "id": "tc_001",
-  "name": "read_file",
-  "arguments": { "path": "/workspace/foo.txt" }
-}
-```
-
-The `id` field is generated by the agent and must be unique within the session. Recommended format: `tc_` prefix with a monotonic counter or random suffix (e.g., `tc_001`, `tc_a7f3b`). The adapter uses this `id` to route the corresponding `tool_result` back on stdin.
-
-**Adapter-Local Tool Reference**
-
-Adapter-local tools are resolved entirely within the adapter process — no MCP server, no platform access, and no network call is required. They are available at all levels (Basic, Standard, Full). The following tools are built into every adapter:
-
-| Tool name     | Description                                                       |
-| ------------- | ----------------------------------------------------------------- |
-| `read_file`   | Read the contents of a file in the workspace                      |
-| `write_file`  | Create or overwrite a file in the workspace                       |
-| `list_dir`    | List the entries of a directory in the workspace                  |
-| `delete_file` | Delete a file or empty directory from the workspace               |
-
-Discovery: agents discover adapter-local tools by inspecting the `adapterLocalTools` array in the adapter manifest (`/run/lenny/adapter-manifest.json`). Each entry contains the tool `name`, a human-readable `description`, and a JSON Schema `inputSchema` for its `arguments` object. Adapters MUST populate this array before spawning the runtime; the set is fixed for the lifetime of the pod.
-
-Schemas for the four built-in tools:
-
-```json
-[
-  {
-    "name": "read_file",
-    "description": "Read the contents of a file in the workspace.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "path": { "type": "string", "description": "Workspace-relative or absolute path to the file." }
-      },
-      "required": ["path"]
-    }
-  },
-  {
-    "name": "write_file",
-    "description": "Create or overwrite a file in the workspace.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "path":    { "type": "string", "description": "Workspace-relative or absolute path to the file." },
-        "content": { "type": "string", "description": "UTF-8 text content to write." }
-      },
-      "required": ["path", "content"]
-    }
-  },
-  {
-    "name": "list_dir",
-    "description": "List the entries of a directory in the workspace.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "path": { "type": "string", "description": "Workspace-relative or absolute path to the directory." }
-      },
-      "required": ["path"]
-    }
-  },
-  {
-    "name": "delete_file",
-    "description": "Delete a file or empty directory from the workspace.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "path": { "type": "string", "description": "Workspace-relative or absolute path to the target." }
-      },
-      "required": ["path"]
-    }
-  }
-]
-```
-
-All `read_file` / `write_file` / `list_dir` / `delete_file` calls are confined to the pod's workspace volume (`/workspace`). The adapter rejects any path that resolves outside `/workspace` with a `tool_result` carrying `isError: true` and `content[0].inline` set to the string `"path_outside_workspace"`. Custom adapters MAY extend this list with additional adapter-local tools; they MUST declare all custom tools in `adapterLocalTools` before spawning the runtime.
-
-##### Outbound: `heartbeat_ack`
-
-```json
-{ "type": "heartbeat_ack" }
-```
-
-##### Outbound: `status` (optional)
-
-```json
-{ "type": "status", "state": "thinking", "message": "Analyzing code..." }
-```
-
-**Exit Codes**
-
-| Code | Meaning                                                            |
-| ---- | ------------------------------------------------------------------ |
-| 0    | Normal completion — session ended cleanly or shutdown honored      |
-| 1    | Runtime error — adapter logs stderr and reports failure to gateway |
-| 2    | Protocol error — agent could not parse inbound messages            |
-| 137  | SIGKILL (set by OS) — adapter treats as crash, pod is not reused   |
-
-Any non-zero exit during an active session causes the gateway to report a session error to the client. During draining, exit code 0 confirms graceful shutdown; non-zero triggers an alert but the session result (if any) is still delivered.
-
-**Annotated Protocol Trace — Basic-Level Session**
-
-```
-1. Adapter starts agent binary, stdin/stdout pipes open.
-2. Adapter writes to stdin:
-   {"type": "message", "id": "msg_001", "input": [{"type": "text", "inline": "Hello"}], "from": {"kind": "client", "id": "client_8f3a2b"}, "threadId": "t_01"}
-3. Agent reads line from stdin, parses JSON, reads type/id/input (ignores other fields).
-4. Agent writes to stdout (either form is valid):
-   {"type": "response", "text": "Echo: Hello"}
-   — or equivalently —
-   {"type": "response", "output": [{"type": "text", "inline": "Echo: Hello"}]}
-5. Adapter reads line from stdout, delivers response to gateway.
-6. [Heartbeat interval] Adapter writes:
-   {"type": "heartbeat", "ts": 1717430410}
-7. Agent writes:
-   {"type": "heartbeat_ack"}
-8. Gateway initiates shutdown. Adapter writes:
-   {"type": "shutdown", "reason": "drain", "deadline_ms": 10000}
-9. Agent finishes, exits with code 0.
-10. Adapter reports clean termination to gateway.
-```
+The message schemas of the adapter↔binary stdin and stdout messages are stated by the `CH-MSGSOCK` card
+in [Section 28.5.3](28_communication-channels.md#2853-intra-pod), which owns the adapter-to-binary
+contract.
 
 #### 15.4.2 RPC Lifecycle State Machine
 
@@ -2071,20 +1695,20 @@ The adapter follows a well-defined state machine:
 
 ```
 INIT ──→ READY ──→ ACTIVE ──→ DRAINING ──→ TERMINATED
-                     │                          ▲
-                     └──────────────────────────┘
-                       (session ends normally)
+           ▲         │
+           └─────────┘
+  (session ends; the pod is recycled)
 ```
 
 | State        | Description                                                                                           |
 | ------------ | ----------------------------------------------------------------------------------------------------- |
 | `INIT`       | Adapter process starts, opens gRPC connection to gateway (mTLS), writes placeholder manifest. The adapter sends an `AdapterInit` message on the control stream with `adapterProtocolVersion` (semver string, e.g., `"1.0.0"`). The gateway responds with `AdapterInitAck` carrying `selectedVersion` (the highest compatible version the gateway supports) or closes the stream with `PROTOCOL_VERSION_INCOMPATIBLE` if no compatible version exists. Major version changes are breaking; minor/patch are backwards compatible. Current protocol version: `"1.0.0"`. |
 | `READY`      | Adapter signals readiness. Pod enters warm pool. Gateway may now assign sessions.                     |
-| `ACTIVE`     | A session is in progress. Adapter manages MCP servers, lifecycle channel, and stdin/stdout relay.     |
-| `DRAINING`   | Graceful shutdown requested. The adapter finishes the current exchange and signals the agent to stop. |
+| `ACTIVE`     | A session is in progress. Adapter manages MCP servers, CH-RUNTIMEOPS, and stdin/stdout relay.     |
+| `DRAINING`   | Graceful shutdown requested. The adapter finishes the current exchange. No drain coordination exists at pod exit at any integration level: the runtime process ends with the pod ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime"). |
 | `TERMINATED` | The adapter has exited. The gateway marks the pod as no longer available.                             |
 
-Transitions are initiated by either the gateway (e.g., session assignment, drain request) or the adapter itself (e.g., readiness signal, exit on completion).
+Transitions are initiated by either the gateway (e.g., session assignment, drain request) or the adapter itself (e.g., readiness signal).
 
 #### 15.4.3 Runtime Integration Levels
 
@@ -2094,9 +1718,10 @@ To lower the barrier for third-party runtime authors, the spec defines three int
 
 - stdin/stdout binary protocol only
 - Reads `{type: "message"}` from stdin, writes `{type: "response"}` and `{type: "tool_call"}` to stdout
-- Must handle `{type: "heartbeat"}` by responding with `{type: "heartbeat_ack"}` — failure to ack within 10 seconds causes SIGTERM
+- Must handle `{type: "heartbeat"}` by responding with `{type: "heartbeat_ack"}` — failure to ack within 10 seconds ends that session's stream, as the `CH-MSGSOCK` **Timing.** bullet in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) states; a runtime reports `busy: true` with the heartbeat's `sessionId` on its ack while it does any work for the session, as **Outbound: `heartbeat_ack`** in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) states
 - Must handle `{type: "shutdown"}` by exiting within the specified `deadline_ms`
-- Zero Lenny knowledge required beyond the above message types
+- Handles `{type: "session_start"}` and `{type: "session_end"}`, and writes `{type: "session_started"}`, as the `CH-MSGSOCK` card in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) states; a runtime that keeps no per-session context and opens no `CH-RUNTIMEOPS` connection ignores both and writes no `session_started`
+- Zero Lenny knowledge required beyond the above message types and, on a socket connection, the connection handshake ([Section 4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1)
 - No checkpoint/restore support, no detailed health reporting
 
 **Standard** — minimum plus MCP integration:
@@ -2112,8 +1737,8 @@ Standard-level runtimes connect to the adapter's local MCP servers as a standard
 - **Transport.** All intra-pod MCP servers use **abstract Unix sockets** exclusively (names listed in the adapter manifest, e.g., `@lenny-platform-mcp`, `@lenny-connector-github`). There is no stdio transport for intra-pod MCP — stdio is reserved for the binary protocol between the adapter and the runtime. **Platform compatibility note:** Abstract Unix sockets (names beginning with `@`) are a Linux kernel feature. They are available wherever the adapter and runtime binary run inside an in-cluster Linux pod. Under Embedded Mode (`lenny up`) the adapter and runtime binary run in an in-cluster pod — on macOS and Windows that pod runs under Docker Desktop's Linux VM (see [Section 17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev) Embedded Mode) — so Standard- and Full-level runtime authors on macOS and Windows can develop against Embedded Mode. Source Mode (`make run`) runs the adapter on the host, where abstract sockets are **not supported on macOS**; `make run` therefore supports macOS for Basic-level runtimes only, since Basic level uses the stdin/stdout binary protocol exclusively and does not open any Unix sockets. macOS developers who use Source Mode for Standard- or Full-level work should use `docker compose up` ([Section 17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev) Compose Mode) instead, which runs the adapter inside a Linux container.
 - **Protocol version.** The adapter's local MCP servers speak **MCP 2025-03-26** (the platform's target MCP spec version; see [Section 15.2](#152-mcp-api) for version negotiation details). The local servers also accept **MCP 2024-11-05** for backward compatibility. Intra-pod MCP version support follows the same rolling two-version policy as the gateway ([Section 15.5](#155-api-versioning-and-stability) item 2): the oldest accepted version enters a 6-month deprecation window when a new MCP spec version is adopted, and removal applies only to new connection negotiations (active sessions on the deprecated version are not forcibly terminated).
 - **Client libraries.** Runtime authors should use an existing MCP client library for their language (e.g., `mcp-go` for Go, `@modelcontextprotocol/sdk` for TypeScript/Node.js, `mcp` for Python). These libraries work against the adapter's local servers with one Lenny-specific addition: the runtime must send the manifest nonce as the first message of the MCP `initialize` handshake (see Authentication below).
-- **Tool discovery.** The runtime calls `tools/list` on each MCP server (platform and connectors) to discover available tools. The platform MCP server exposes the tools listed in Part A of this section (e.g., `lenny/delegate_task`, `lenny/output`). Each connector server exposes that connector's tools.
-- **Authentication.** Intra-pod MCP connections require a manifest-nonce handshake, identical in mechanism to the lifecycle channel handshake ([Section 4.7](04_system-components.md#47-runtime-adapter), item 1). The adapter writes a random nonce into the adapter manifest (`/run/lenny/adapter-manifest.json`, read-only to the agent container) before spawning the runtime. The runtime must present this nonce as the first message of the MCP `initialize` handshake on each MCP connection (platform MCP server and every connector MCP server). The adapter rejects — with an immediate close — any MCP connection that does not present a valid nonce before dispatching tools. This prevents any process that has not read the manifest from connecting to a privileged MCP server, regardless of its UID. The nonce is stored in the manifest under the top-level key `mcpNonce` (a random 256-bit hex string, regenerated per session alongside the rest of the manifest).
+- **Tool discovery.** The runtime calls `tools/list` on each MCP server (platform and connectors) to discover available tools. The platform MCP server exposes the tools listed by the `CH-MCP-PLATFORM` card in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) (e.g., `lenny/delegate_task`, `lenny/output`). Each connector server exposes that connector's tools.
+- **Authentication.** Intra-pod MCP connections require a manifest-nonce handshake. The adapter writes a random nonce into the adapter manifest (`/run/lenny/adapter-manifest.json`, read-only to the agent container) before the runtime process is launched. The manifest nonce authenticates a connection to the pod's intra-pod MCP servers, which are pod-wide and started at most once per pod. The runtime must present this nonce as the first message of the MCP `initialize` handshake on each MCP connection (platform MCP server and every connector MCP server). The adapter rejects — with an immediate close — any MCP connection that does not present a valid nonce before dispatching tools. This prevents any process that has not read the manifest from connecting to a privileged MCP server, regardless of its UID. The nonce is stored in the manifest under the top-level key `mcpNonce` (a random 256-bit hex string, rewritten by each session's start alongside the rest of the manifest). The nonce a server validates against is the one the manifest carried at the start that bound that server, and a later session's manifest write does not re-arm a running server. Because the intra-pod MCP servers are pod-wide rather than scoped to a session, the adapter resolves the calling session at call time and refuses a `tools/list` or `tools/call` unless the pod's shared runtime process has been given exactly one session and that session is the caller.
 
   **Nonce wire format (v1 — intra-pod only).** The nonce is a Lenny-private convention for intra-pod MCP connections only; it does not appear on any external-facing MCP endpoint and is not part of the MCP specification. The canonical injection location is the top-level `_lennyNonce` field in the MCP `initialize` request's `params` object:
   ```json
@@ -2129,7 +1754,7 @@ Standard-level runtimes connect to the adapter's local MCP servers as a standard
     }
   }
   ```
-  The adapter validates the `_lennyNonce` value against the manifest's `mcpNonce` field before processing any tool dispatch. The nonce must be the hex-encoded 256-bit value exactly as written in the manifest; no normalization or encoding is applied. After successful validation, the adapter **strips** the `_lennyNonce` field from `params` before dispatching the `initialize` request to its internal MCP server implementation, ensuring the MCP server never sees the non-standard field. This stripping is required because the adapter's MCP server validates `initialize` params against the MCP schema, which does not include `_lennyNonce`.
+  The adapter validates the `_lennyNonce` value before processing any tool dispatch, against the nonce the manifest's `mcpNonce` field carried at the start that bound the server the connection addresses rather than against that field's current value. The nonce must be the hex-encoded 256-bit value exactly as written in the manifest; no normalization or encoding is applied. After successful validation, the adapter **strips** the `_lennyNonce` field from `params` before dispatching the `initialize` request to its internal MCP server implementation, ensuring the MCP server never sees the non-standard field. This stripping is required because the adapter's MCP server validates `initialize` params against the MCP schema, which does not include `_lennyNonce`.
 
   > **Strict MCP client libraries.** Some MCP client libraries enforce schema validation on outgoing requests and may reject the `_lennyNonce` field in `params`. Runtime authors using such libraries should either (a) add `_lennyNonce` to the `initialize` params after the library constructs the request but before it is serialized to the socket, or (b) disable outbound schema validation for the `initialize` call only. The adapter accepts the field regardless of its position relative to other `params` keys.
 
@@ -2137,11 +1762,10 @@ Standard-level runtimes connect to the adapter's local MCP servers as a standard
 
   > **Migration path — v2 out-of-band handshake.** Injecting authentication material into MCP `initialize` parameters is a stopgap. Adapter manifest `version: 2` will replace this with a pre-`initialize` out-of-band handshake: the runtime sends a single JSON line `{"type":"lenny_nonce","nonce":"<nonce_hex>"}` on the socket before the MCP `initialize` exchange, keeping the nonce entirely outside the MCP message stream. The `params._lennyNonce` field will be supported (but ignored) in `version: 2` for a two-release backward-compat window; runtimes should migrate to the pre-initialize message at `version: 2` adoption.
 
-**Full** — standard plus lifecycle channel:
+**Full** — standard plus CH-RUNTIMEOPS:
 
-- Opens the lifecycle channel for operational signals
+- Opens the CH-RUNTIMEOPS for operational signals
 - True session continuity, clean interrupt points, mid-session credential rotation
-- `DRAINING` state with graceful shutdown coordination
 - Checkpoint/restore support
 
 **Level Comparison Matrix**
@@ -2154,29 +1778,28 @@ The following matrix enumerates every level-sensitive capability with its behavi
 | **Heartbeat / shutdown handling**                                          | Yes                                                                                                                                           | Yes                                                                                                                                        | Yes                                                                                                                                             |
 | **Platform MCP server** (delegation, discovery, elicitation, output parts) | N/A — runtime operates without platform tools                                                                                                 | Yes                                                                                                                                        | Yes                                                                                                                                             |
 | **Connector MCP servers**                                                  | N/A — no connector access                                                                                                                     | Yes                                                                                                                                        | Yes                                                                                                                                             |
-| **Lifecycle channel**                                                      | N/A — operates in fallback-only mode                                                                                                          | N/A — operates in fallback-only mode                                                                                                       | Yes                                                                                                                                             |
-| **Checkpoint / restore**                                                   | No checkpoint support; pod failure loses in-flight context. Gateway restarts session from last gateway-persisted state.                       | Best-effort snapshot without runtime pause (`consistency: best-effort`). Minor workspace inconsistencies possible on resume ([Section 4.4](04_system-components.md#44-event--checkpoint-store)). | Consistent checkpoint with runtime pause via lifecycle channel `checkpoint_request` / `checkpoint_ready`.                                       |
-| **Interrupt**                                                              | No clean interrupt. Gateway sends SIGTERM; runtime has no opportunity to reach a safe stop point.                                             | No clean interrupt. Same SIGTERM-based termination as Basic.                                                                               | Clean interrupt via `interrupt_request` on lifecycle channel; runtime acknowledges with `interrupt_acknowledged` and reaches a safe stop point. |
+| **CH-RUNTIMEOPS**                                                      | N/A — operates in fallback-only mode                                                                                                          | N/A — operates in fallback-only mode                                                                                                       | Yes                                                                                                                                             |
+| **Checkpoint / restore**                                                   | No checkpoint support; pod failure loses in-flight context. Gateway restarts session from last gateway-persisted state.                       | Best-effort snapshot without runtime pause (`consistency: best-effort`). Minor workspace inconsistencies possible on resume ([Section 4.4](04_system-components.md#44-event--checkpoint-store)). | Consistent checkpoint with runtime pause via CH-RUNTIMEOPS `checkpoint_request` / `checkpoint_ready`.                                       |
+| **Interrupt**                                                              | No clean interrupt, and the runtime process receives no signal ([Section 4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime").                                             | No clean interrupt. Same as Basic.                                                                               | Clean interrupt via `interrupt_request` on CH-RUNTIMEOPS; runtime acknowledges with `interrupt_acknowledged` and reaches a safe stop point. |
 | **Credential rotation**                                                    | Checkpoint → pod restart → `AssignCredentials` with new lease → `Resume`. If checkpoint unsupported, in-flight context is lost ([Section 4.7](04_system-components.md#47-runtime-adapter)). | Checkpoint → pod restart → `AssignCredentials` with new lease → `Resume`. Brief session pause; client sees reconnect.                      | In-place rotation via `RotateCredentials` RPC and `credentials_rotated` lifecycle message. No session interruption.                             |
-| **Deadline / expiry warning**                                              | No advance warning. `DEADLINE_APPROACHING` signal requires lifecycle channel; Basic-level receives only `shutdown` at expiry.                | No advance warning. Same as Basic — no lifecycle channel to deliver `DEADLINE_APPROACHING`.                                                | `DEADLINE_APPROACHING` signal delivered on lifecycle channel before session expiry ([Section 10](10_gateway-internals.md)).                                                |
-| **Graceful drain (`DRAINING` state)**                                      | No drain coordination. Adapter sends `shutdown` with `deadline_ms`; SIGTERM on timeout.                                                       | No drain coordination. Same as Basic.                                                                                                      | `DRAINING` state via lifecycle channel enables graceful shutdown coordination before `shutdown`.                                                |
-| **Simplified response shorthand** (`{type: "response", text: "..."}`)      | Yes — adapter normalizes to canonical `MessagePart` form ([Section 15.4.1](#1541-adapterbinary-protocol)).                                                                     | Yes — available but typically unused since Standard runtimes produce structured output.                                                    | Yes — available but typically unused.                                                                                                           |
-| **MessagePart minimal fields**                                              | Only `type` and `inline` required; all other fields optional with defaults ([Section 15.4.1](#1541-adapterbinary-protocol)).                                                  | Full `MessagePart` schema available.                                                                                                        | Full `MessagePart` schema available.                                                                                                             |
-| **MessageEnvelope fields**                                                 | Only `type`, `id`, `input` needed; all other envelope fields safely ignored ([Section 15.4.1](#1541-adapterbinary-protocol)).                                                 | Full envelope including `from`, `inReplyTo`, `threadId`, `delivery`.                                                                       | Full envelope including `from`, `inReplyTo`, `threadId`, `delivery`.                                                                            |
+| **Deadline / expiry warning**                                              | No advance warning. `DEADLINE_APPROACHING` signal requires CH-RUNTIMEOPS.                | No advance warning. Same as Basic — no CH-RUNTIMEOPS to deliver `DEADLINE_APPROACHING`.                                                | `DEADLINE_APPROACHING` signal delivered on CH-RUNTIMEOPS before session expiry ([Section 10](10_gateway-internals.md)).                                                |
+| **Graceful drain (`DRAINING` state)**                                      | No drain coordination. Adapter sends `shutdown` with `deadline_ms`; SIGTERM on timeout.                                                       | No drain coordination. Same as Basic.                                                                                                      | No drain coordination at pod exit ([Section 15.4.2](#1542-rpc-lifecycle-state-machine)).                                                |
+| **Simplified response shorthand** (`{type: "response", sessionId: "...", text: "..."}`)      | Yes — adapter normalizes to the canonical `MessagePart` form, which carries the same `sessionId` the runtime echoed ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)).                                                                     | Yes — available but typically unused since Standard runtimes produce structured output.                                                    | Yes — available but typically unused.                                                                                                           |
+| **MessagePart minimal fields**                                              | Only `type` and `inline` required; all other fields optional with defaults ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)).                                                  | Full `MessagePart` schema available.                                                                                                        | Full `MessagePart` schema available.                                                                                                             |
+| **MessageEnvelope fields**                                                 | Only `type`, `id`, and `input` needed; all other envelope fields safely ignored ([Section 15.4](#messageenvelope--unified-message-format)). `sessionId` is excepted from that permission: a Basic-level runtime echoes it on the session-scoped frames it emits in response, on every pod, other than `heartbeat_ack` ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)).                                                 | Full envelope including `from`, `inReplyTo`, `threadId`, `delivery`.                                                                       | Full envelope including `from`, `inReplyTo`, `threadId`, `delivery`.                                                                            |
 
-Pod recycling under `sessionPolicy.recycle` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) is not a level-sensitive capability and does not appear in the matrix: the platform scrubs the pod and starts a fresh runtime process for each session, so recycling requires no runtime cooperation and is available at every integration level.
+Pod recycling under `sessionPolicy.recycle` ([Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) is not a level-sensitive capability and does not appear in the matrix: recycling needs no CH-RUNTIMEOPS exchange and is available at every integration level, on the terms [Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) **Recycling and integration levels** states.
 
 > **Basic-level limitations — complete list:**
-> Basic-level runtimes operate without the lifecycle channel and without platform MCP server access. The following capabilities are **unavailable** at Basic level and have no fallback:
+> Basic-level runtimes operate without the CH-RUNTIMEOPS and without platform MCP server access. The following capabilities are **unavailable** at Basic level and have no fallback:
 >
 > - **Checkpoint / restore:** Pod failure loses all in-flight context. The gateway restarts the session from the last gateway-persisted state; any unsaved intermediate work is gone.
-> - **Clean interrupt:** No opportunity for the runtime to reach a safe stop point. The gateway issues `shutdown` on stdin and follows with SIGTERM after `deadline_ms`; the runtime cannot acknowledge an interrupt cleanly.
+> - **Clean interrupt:** No opportunity for the runtime to reach a safe stop point. The runtime cannot acknowledge an interrupt cleanly.
 > - **Credential rotation without disruption:** Rotation requires a full pod restart (checkpoint → restart → `AssignCredentials` → `Resume`). If the runtime does not support checkpoint, the in-flight context is lost during rotation.
 > - **Delegation (`lenny/delegate_task`):** Requires the platform MCP server, which is unavailable at Basic level. Basic-level runtimes cannot spawn sub-tasks.
 > - **Platform MCP tools** (including `lenny/output`, `lenny/request_input`, `lenny/discover_agents`): All platform-side tools are inaccessible. Runtimes must produce all output via the stdout binary protocol.
 > - **Connector MCP servers:** No connector (GitHub, filesystem, etc.) tool access.
-> - **`DEADLINE_APPROACHING` warning:** Requires the lifecycle channel. Basic-level runtimes receive only the `shutdown` message at expiry with no advance notice.
-> - **Graceful drain (`DRAINING` state):** No drain coordination signal. Shutdown is `shutdown`-on-stdin followed by SIGTERM.
+> - **`DEADLINE_APPROACHING` warning:** Requires the CH-RUNTIMEOPS. Basic-level runtimes receive no advance notice of a session's expiry.
 > - **Inter-session messaging (`lenny/send_message`):** Requires the platform MCP server. Basic-level runtimes cannot send messages to other sessions or participate in sibling coordination patterns.
 > - **Input-required blocking (`lenny/request_input`):** Requires the platform MCP server. Basic-level runtimes cannot request clarification from a parent or client mid-task. `one_shot` Basic-level runtimes must produce their response based solely on the initial input.
 >
@@ -2207,14 +1830,17 @@ Pseudocode (Basic-level):
                 // `output: [{type: "text", inline: "..."}]` form only when
                 // structured output (multiple parts, non-text types,
                 // annotations) is required.
+                // Echo the inbound sessionId on every session-scoped frame emitted
+                // in response; this is the Basic-level echo obligation.
                 write_line(stdout, json({
                     "type": "response",
+                    "sessionId": msg.sessionId,
                     "text": "echo [seq={seq}]: {msg.input[0].inline}"
                 }))
-                flush(stdout)   // REQUIRED: flush after every write (see Section 15.4.1)
+                flush(stdout)   // REQUIRED: flush after every write (see Section 28.5.3, CH-MSGSOCK)
             case "heartbeat":
                 write_line(stdout, json({"type": "heartbeat_ack"}))
-                flush(stdout)   // REQUIRED: flush after every write (see Section 15.4.1)
+                flush(stdout)   // REQUIRED: flush after every write (see Section 28.5.3, CH-MSGSOCK)
             case "shutdown":
                 exit(0)
             default:
@@ -2271,11 +1897,11 @@ Pseudocode (Standard-level addition — nonce + MCP):
                     "output": [{"type": "text",
                                 "inline": "echo [seq={seq}]: {msg.input[0].inline}"}]
                 })
-                write_line(stdout, json({"type": "response", "output": []}))
-                flush(stdout)   // REQUIRED: flush after every write (see Section 15.4.1)
+                write_line(stdout, json({"type": "response", "sessionId": msg.sessionId, "output": []}))
+                flush(stdout)   // REQUIRED: flush after every write (see Section 28.5.3, CH-MSGSOCK)
             case "heartbeat":
                 write_line(stdout, json({"type": "heartbeat_ack"}))
-                flush(stdout)   // REQUIRED: flush after every write (see Section 15.4.1)
+                flush(stdout)   // REQUIRED: flush after every write (see Section 28.5.3, CH-MSGSOCK)
             case "shutdown":
                 platform_mcp.close()
                 exit(0)
@@ -2285,7 +1911,7 @@ Pseudocode (Standard-level addition — nonce + MCP):
 ```
 
 ```
-Pseudocode (Full-level addition — lifecycle channel):
+Pseudocode (Full-level addition — CH-RUNTIMEOPS):
 
     // --- Startup: same manifest read and MCP setup as Standard-level ---
     manifest     = json_parse(read_file("/run/lenny/adapter-manifest.json"))
@@ -2298,11 +1924,12 @@ Pseudocode (Full-level addition — lifecycle channel):
     }})
     platform_mcp.recv()
 
-    // --- Lifecycle channel setup ---
-    // Connect to the lifecycle channel (Full-level runtimes only).
+    // --- CH-RUNTIMEOPS setup ---
+    // Connect to the CH-RUNTIMEOPS (Full-level runtimes only).
     // The socket path is advertised in the manifest; opening it is optional
     // but required for checkpoint, clean interrupt, and credential rotation.
-    lc = unix_connect(manifest.lifecycleChannel.socket)  // @lenny-lifecycle
+    lc = unix_connect(manifest.runtimeOps.socket)  // @lenny-runtime-ops
+    lc.send_line(json({"_lennyNonce": nonce}))  // connection handshake, §4.7.11 item 1
 
     // Capability negotiation: adapter sends lifecycle_capabilities first.
     cap_msg = json_parse(lc.recv_line())   // type: "lifecycle_capabilities"
@@ -2350,10 +1977,6 @@ Pseudocode (Full-level addition — lifecycle channel):
                     // Wrap up long-running work before forced termination
                     begin_graceful_wrap_up(lc_msg.remainingMs)
 
-                case "terminate":
-                    // Ordered shutdown — exit within deadlineMs
-                    cleanup_and_exit(0)
-
                 default:
                     // ignore unknown lifecycle messages for forward compatibility
 
@@ -2362,20 +1985,23 @@ Pseudocode (Full-level addition — lifecycle channel):
     while line = read_line(stdin):
         msg = json_parse(line)
         switch msg.type:
+            case "session_start":
+                // acknowledge the session (Section 28.5.3, CH-MSGSOCK Outbound: session_started)
+                write_line(stdout, json({"type": "session_started", "sessionId": msg.sessionId, "startId": msg.startId}))
+                flush(stdout)
             case "message":
                 seq += 1
                 result = platform_mcp.call("lenny/output", {
                     "output": [{"type": "text",
                                 "inline": "echo [seq={seq}]: {msg.input[0].inline}"}]
                 })
-                write_line(stdout, json({"type": "response", "output": []}))
-                flush(stdout)   // REQUIRED: flush after every write (see Section 15.4.1)
+                write_line(stdout, json({"type": "response", "sessionId": msg.sessionId, "output": []}))
+                flush(stdout)   // REQUIRED: flush after every write (see Section 28.5.3, CH-MSGSOCK)
             case "heartbeat":
                 write_line(stdout, json({"type": "heartbeat_ack"}))
-                flush(stdout)   // REQUIRED: flush after every write (see Section 15.4.1)
+                flush(stdout)   // REQUIRED: flush after every write (see Section 28.5.3, CH-MSGSOCK)
             case "shutdown":
-                // shutdown arrives on stdin even for Full-level; lifecycle terminate
-                // may arrive first — handle whichever comes first
+                // shutdown arrives on stdin even for Full-level
                 platform_mcp.close()
                 lc.close()
                 exit(0)
@@ -2391,20 +2017,21 @@ Runtime-author information is distributed across this specification. The followi
 **Basic-level (get a runtime working):**
 
 1. **[Section 15.4.4](#1544-sample-echo-runtime)** — Sample Echo Runtime. Copy this pseudocode as your starting point.
-2. **[Section 15.4.1](#1541-adapterbinary-protocol)** — Adapter↔Binary Protocol. The stdin/stdout JSON Lines contract, message types, `MessagePart` format, and simplified response shorthand.
+2. **[Section 28.5.3](28_communication-channels.md#2853-intra-pod)** — the message types, the `MessagePart` format, the stdin/stdout JSON Lines framing, and the simplified response shorthand,
+   with **[Section 15.4.1](#1541-message-format-and-binary-io-requirements)** for the stdout flushing requirement, which stays here.
 3. **[Section 15.4.2](#1542-rpc-lifecycle-state-machine)** — RPC Lifecycle State Machine. Read for context: the adapter (not your binary) owns this state machine. Knowing it helps you understand when your binary will start receiving messages (`ACTIVE`), and that `shutdown` arrives only during `DRAINING` — your binary never drives these transitions.
 4. **[Section 15.4.3](#1543-runtime-integration-levels)** — Runtime Integration Levels. Level definitions and the capability comparison matrix — confirms what Basic-level runtimes can skip.
-5. **[Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout)** — Pod Filesystem Layout. Where your binary's working directory, workspace, and scratch space live (`/workspace/current/`, `/tmp/`, `/artifacts/`).
+5. **[Section 6.4](06_warm-pod-model.md#64-pod-filesystem-layout)** — Pod Filesystem Layout. Where your binary's working directory, workspace, and scratch space live (`/workspace/slots/{sessionId}/current/`, `/tmp/`, `/artifacts/`).
 6. **[Section 17.4](17_deployment-topology.md#174-local-development-mode-lenny-dev)** — Local Development Mode (`lenny-dev`). Use `lenny up` (Embedded Mode, the primary path for runtime authors — exercises the real Kubernetes code path via the embedded stack and registers your runtime through the production admin API; on macOS and Windows the embedded k3s runs under Docker Desktop's Linux VM) or `make run` (Source Mode, for platform contributors who need to modify the gateway or controller source alongside their runtime).
 
 **Standard-level (add MCP integration):**
 
-7. **[Section 4.7](04_system-components.md#47-runtime-adapter)** — Runtime Adapter. Read for the **adapter manifest field reference** (`platformMcpServer.socket`, `connectorServers`, `mcpNonce`). The lifecycle channel message schemas (Part B) are Full-level only — skip for Standard level. The gRPC RPC table at the top of 4.7 is the gateway↔adapter contract and is not relevant to binary authors.
+7. **[Section 4.7](04_system-components.md#47-runtime-adapter)** — Runtime Adapter. Read for the **adapter manifest field reference** (`platformMcpServer.socket`, `connectorServers`, `mcpNonce`). The CH-RUNTIMEOPS message schemas are stated by the `CH-RUNTIMEOPS` card in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) and are Full-level only — skip for Standard level. The gRPC RPC table at the top of 4.7 is the gateway↔adapter contract and is not relevant to binary authors.
 8. **[Section 9.1](09_mcp-integration.md#91-where-mcp-is-used)** — MCP Integration. How the platform MCP server and connector MCP servers are exposed to your runtime.
 9. **[Section 8.2](08_recursive-delegation.md#82-delegation-mechanism)** — Delegation Mechanism. How `lenny/delegate_task` works if your runtime delegates sub-tasks.
 10. **[Section 5.1](05_runtime-registry-and-pool-model.md#51-runtime)** — Runtime. Runtime definition schema (`type`, `capabilities`, `baseRuntime`), registration via admin API.
 
-**Full-level (lifecycle channel and production hardening):**
+**Full-level (CH-RUNTIMEOPS and production hardening):**
 
 11. **[Section 5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)** — Pool Configuration and Execution Modes. The `session` and `service` execution modes, the `sessionPolicy` block, resource classes, and pool sizing.
 12. **[Section 7.1](07_session-lifecycle.md#71-normal-flow)** — Session Lifecycle Normal Flow. End-to-end session flow from pod claim through teardown.
@@ -2421,8 +2048,8 @@ Every runtime repository — first-party reference runtimes in [§26](26_referen
 
 **Declared vs. observed level reconciliation.** In addition to running the declared level's test categories, the validator probes the running runtime to determine its **observed** level:
 
-1. Start the runtime against the fake adapter with the full Full-level fixture set available (lifecycle channel listening, platform MCP server and connector fake reachable, manifest written).
-2. If the runtime connects to `@lenny-lifecycle` and completes the `lifecycle_capabilities` / `lifecycle_support` exchange within a 10 s grace window, observed level is at least `full`.
+1. Start the runtime against the fake adapter with the full Full-level fixture set available (CH-RUNTIMEOPS listening, platform MCP server and connector fake reachable, manifest written).
+2. If the runtime connects to `@lenny-runtime-ops` and completes the `lifecycle_capabilities` / `lifecycle_support` exchange within a 10 s grace window, observed level is at least `full`.
 3. Else if the runtime connects to `@lenny-platform-mcp` and presents a valid `_lennyNonce` during MCP `initialize`, observed level is at least `standard`.
 4. Otherwise observed level is `basic`.
 
@@ -2432,26 +2059,29 @@ The validator then reports:
 - **Observed > declared** (author under-declared). Exit `0` but print a WARN and set `"status": "underdeclared"`. Suggested remediation: raise `integrationLevel` in `runtime.yaml` to match observed behaviour so that callers and admission can rely on the higher level.
 - **Observed < declared** (runtime under-performs its claim). Exit **non-zero** with structured error `runtime_level_underperforms`: `{ "declared": "<x>", "observed": "<y>", "missing": [<capability names not exercised at observed level>] }`. The runtime does not meet the contract it has published; conformance tests for the missing level's categories are reported as failed.
 
-The observed-level probe is the local-tooling counterpart of the registration-time admission check described in [§5.1](05_runtime-registry-and-pool-model.md#51-runtime) `integrationLevel` documentation; both compare declared against the `lifecycle_support` handshake from [§4.7](04_system-components.md#47-runtime-adapter).
+The observed-level probe is the local-tooling counterpart of the registration-time admission check described in [§5.1](05_runtime-registry-and-pool-model.md#51-runtime) `integrationLevel` documentation; both compare declared against the `lifecycle_support` handshake stated by the `CH-RUNTIMEOPS` card in [§28.5.3](28_communication-channels.md#2853-intra-pod).
 
-**Test categories by integration level.** Each higher level inherits every test category from the levels below it.
+**Test categories by integration level.** Each higher level inherits every test category from the levels below it. A category that sends a session-scoped frame first writes `session_start` for the session that frame names, and before it writes a session-scoped `CH-RUNTIMEOPS` frame it reads the `session_started` that answers that `session_start` ([Section 28.5.3](28_communication-channels.md#2853-intra-pod)). A process-scoped frame, such as `lifecycle_capabilities`, has no such precondition.
 
 | Integration level | Test category | What it asserts |
 |---|---|---|
-| **Basic** | **stdin/stdout protocol framing** | The binary reads newline-delimited JSON from stdin and writes newline-delimited JSON to stdout; every outbound message is flushed before the next `read_line` call ([§15.4.1](#1541-adapterbinary-protocol) stdout flushing requirement); unknown inbound `type` values are ignored rather than aborting. |
-| **Basic** | **`message` / `response` round-trip** | A canonical `{type: "message", input: [...]}` produces a structurally valid `{type: "response", ...}` — either full form with `output: MessagePart[]` or Basic-level shorthand `{"type": "response", "text": "..."}`. The response matches `schemas/lenny-adapter-jsonl.schema.json`. |
+| **Basic** | **stdin/stdout protocol framing** | The binary reads newline-delimited JSON from stdin and writes newline-delimited JSON to stdout; every outbound message is flushed before the next `read_line` call ([§28.5.3](28_communication-channels.md#2853-intra-pod) stdout flushing requirement); unknown inbound `type` values are ignored rather than aborting. |
+| **Basic** | **`message` / `response` round-trip** | A canonical `{type: "message", sessionId: "...", input: [...]}` produces a structurally valid `{type: "response", sessionId: "...", ...}` — either full form with `output: MessagePart[]` or Basic-level shorthand `{"type": "response", "sessionId": "...", "text": "..."}`. The response matches `schemas/lenny-adapter-jsonl.schema.json`. |
 | **Basic** | **heartbeat ack** | Within 10 s of receiving `{type: "heartbeat"}`, the binary writes `{type: "heartbeat_ack"}` to stdout. Failure to ack within the window triggers the adapter's unresponsive-agent escalation ([§4.7](04_system-components.md#47-runtime-adapter)). |
-| **Basic** | **shutdown within `deadline_ms`** | On `{type: "shutdown", "deadline_ms": N}`, the binary exits cleanly before the deadline elapses (tested with `N = 5000`). Failing this test means the adapter will SIGKILL the process in production, losing any unflushed output. |
+| **Basic** | **heartbeat busy** | After `session_start` for a session, the harness writes a `message` for the session and then a `heartbeat` naming it, before it reads the `response`. When the binary writes the `heartbeat_ack` before that `response`, the ack carries `busy: true` and the session's `sessionId`. The harness does not fail a `heartbeat_ack` that carries `busy: true` with no `message` outstanding. |
+| **Basic** | **shutdown within `deadline_ms`** | On `{type: "shutdown", "deadline_ms": N}`, the binary exits cleanly before the deadline elapses (tested with `N = 5000`). Failing this test means the process is sent SIGKILL in production, losing any unflushed output. |
 | **Basic** | **`MessagePart` schema compliance** | Every `MessagePart` produced by the runtime validates against `schemas/messagepart.schema.json`, including the canonical type registry and the `x-<vendor>/` namespace convention for custom types. |
+| **Basic** | **per-session identifier echo** | The `response` the runtime returns for a `message` carries the same `sessionId` the inbound `message` was addressed with ([§28.5.3](28_communication-channels.md#2853-intra-pod)). A `response` that omits the identifier, or that carries a different value, fails the category. |
+| **Basic** | **session lifetime** | On one connection the harness writes `session_start` and a `message` for session A, reads the `response`, and writes `session_end`; then does the same for session B; then `session_start` for sessions C and D followed by alternating `message` frames for C and D before it reads any response. The binary answers every `message` with a `response`, answers a `heartbeat` written after each `session_end` with `heartbeat_ack`, and neither exits nor closes its stdout before the harness closes stdin. |
 | **Standard** | **MCP nonce handshake** | On startup, the runtime reads `/run/lenny/adapter-manifest.json`, connects to the platform MCP server, and presents `_lennyNonce` in the `initialize` params. The adapter's fake MCP server rejects any tool call without a valid nonce to verify enforcement. |
 | **Standard** | **platform MCP tool invocation** | The runtime successfully calls at least `lenny/output` and `lenny/request_input` via the MCP client. Responses are processed and forwarded through the stdin/stdout channel where applicable. |
 | **Standard** | **connector MCP server reachability** | If `manifest.connectorServers` is non-empty, the runtime connects to each with the same nonce and completes the `initialize` handshake. Test uses two fake connector servers. |
 | **Standard** | **`tool_call` / `tool_result` correlation** | Adapter-local `tool_call` emissions carry a unique `id` and the corresponding `tool_result` is read from stdin before the runtime emits its final `response`. |
-| **Full** | **lifecycle channel opening** | The runtime connects to the lifecycle channel advertised in the manifest (`@lenny-lifecycle` abstract Unix socket) and completes the `lifecycle_capabilities` / `lifecycle_support` exchange. |
+| **Full** | **CH-RUNTIMEOPS opening** | The runtime connects to the CH-RUNTIMEOPS advertised in the manifest (`@lenny-runtime-ops` abstract Unix socket) and completes the `lifecycle_capabilities` / `lifecycle_support` exchange. After that exchange, the runtime answers a `session_start` with a `session_started` that carries the same `sessionId` and `startId` and no `error` ([§28.5.3](28_communication-channels.md#2853-intra-pod)). |
 | **Full** | **checkpoint quiesce/resume** | On `checkpoint_request`, the runtime quiesces output, replies with `checkpoint_ready`, waits for `checkpoint_complete`, and resumes. Verified via fake-adapter fixture that times the quiesce window. |
 | **Full** | **interrupt acknowledgement** | On `interrupt_request`, the runtime reaches a safe stop point and replies with `interrupt_acknowledged` carrying the original `interruptId` within the deadline. |
-| **Full** | **credential rotation handling** | If the runtime declares `credential_rotation` support, it successfully re-reads refreshed credentials from the manifest or env on `credential_rotated` and continues to service the next message without restart. |
-| **Full** | **deadline signal handling** | On `deadline_signal`, the runtime writes a final `response` (possibly with `error.code: "DEADLINE_EXCEEDED"`) and exits cleanly before the deadline elapses. |
+| **Full** | **credential rotation handling** | If the runtime declares `credential_rotation` support, it successfully re-reads the credential file at the `credentialsPath` that `credentials_rotated` carries for the named session and continues to service the next message without restart. |
+| **Full** | **deadline signal handling** | If the runtime declares the `deadline_signal` capability in `lifecycle_support`, after the `session_started` read the **Test categories by integration level.** paragraph requires, the harness writes a `message` for the session, then `deadline_approaching` with that session's `sessionId` before reading the response. The runtime writes the response to that `message` (possibly with `error.code: "DEADLINE_EXCEEDED"`) before `remainingMs` elapses, writes no other `response` for that session after `deadline_approaching`, and still answers a later `heartbeat` with `heartbeat_ack`. |
 
 **How the suite is packaged.** The conformance fixtures (fake adapter, fake MCP server, fake connector servers, sample manifests, reference manifest JSON Schemas) ship inside the `lenny` binary as assets of the `lenny runtime validate` subcommand. No additional download is required. The fixtures are versioned with the Runtime Adapter Specification ([§15.4](#154-runtime-adapter-specification)); each Lenny release pins the fixture version that its `lenny runtime validate` executes against. Third-party runtime authors can pin a specific `lenny-ctl` version to stabilize the conformance surface, and can run `lenny runtime validate --report <path>` to emit a machine-readable JSON report for inclusion in release artifacts.
 
@@ -2486,7 +2116,7 @@ Community contributors and integrators need clear guarantees about which APIs ar
    - `beta`: May change between minor releases with deprecation notice.
    - `alpha`: May change without notice.
 
-7. **Schema versioning — bifurcated consumer rules.** All Postgres-persisted record types carry a `schemaVersion` integer field (starting at `1`) that identifies the schema revision used to write the record. This applies to: `TaskRecord` ([Section 8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema)), billing events ([Section 11.2.1](11_policy-and-controls.md#1121-billing-event-stream)), audit events (`EventStore`), checkpoint metadata ([Section 7.1](07_session-lifecycle.md#71-normal-flow)), session records ([Section 7](07_session-lifecycle.md)), `WorkspacePlan` ([Section 14](14_workspace-plan-schema.md)), and `MessageEnvelope` ([Section 15.4.1](#1541-adapterbinary-protocol), persisted in the `session_messages` table). The field is set at write time by the gateway and is immutable once written.
+7. **Schema versioning — bifurcated consumer rules.** All Postgres-persisted record types carry a `schemaVersion` integer field (starting at `1`) that identifies the schema revision used to write the record. This applies to: `TaskRecord` ([Section 8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema)), billing events ([Section 11.2.1](11_policy-and-controls.md#1121-billing-event-stream)), audit events (`EventStore`), checkpoint metadata ([Section 7.1](07_session-lifecycle.md#71-normal-flow)), session records ([Section 7](07_session-lifecycle.md)), `WorkspacePlan` ([Section 14](14_workspace-plan-schema.md)), and `MessageEnvelope` ([Section 15.4](#messageenvelope--unified-message-format), persisted in the `session_messages` table). The field is set at write time by the gateway and is immutable once written.
 
    The forward-compatibility rules differ between **live (streaming) consumers** and **durable (persisted) consumers**:
 
@@ -2511,7 +2141,7 @@ Community contributors and integrators need clear guarantees about which APIs ar
    - Durable consumers MUST NOT silently discard records based solely on an unrecognized `schemaVersion`.
    - **Migration window SLA:** When a new `schemaVersion` is introduced, all durable consumers MUST be upgraded to understand the new version within **90 days** of the version's release. After 90 days, the previous schema version may be retired from active write paths, but persisted records at the old version remain readable for the full retention period of each record type.
 
-   **Reader code** uses `schemaVersion` to select the correct deserialization path, enabling rolling schema migrations without downtime. **This durable-consumer forward-read rule extends to `MessagePart` arrays nested within `TaskRecord`:** if any `MessagePart` in a persisted `TaskRecord` carries a `schemaVersion` a durable consumer does not recognize, the consumer MUST forward-read (preserving unknown fields verbatim) rather than rejecting the record or silently dropping unrecognized fields — silent data loss in billing or audit records is unacceptable (see [Section 15.4.1](#1541-adapterbinary-protocol), "Consumer obligation — durable storage (TaskRecord)").
+   **Reader code** uses `schemaVersion` to select the correct deserialization path, enabling rolling schema migrations without downtime. **This durable-consumer forward-read rule extends to `MessagePart` arrays nested within `TaskRecord`:** if any `MessagePart` in a persisted `TaskRecord` carries a `schemaVersion` a durable consumer does not recognize, the consumer MUST forward-read (preserving unknown fields verbatim) rather than rejecting the record or silently dropping unrecognized fields — silent data loss in billing or audit records is unacceptable (see [Section 28.5.3](28_communication-channels.md#2853-intra-pod), "Consumer obligation — durable storage (TaskRecord)").
 
 ### 15.6 Client SDKs
 
@@ -2549,16 +2179,17 @@ All three SDKs are Apache-2.0 licensed and versioned in lockstep with the Runtim
 **What the SDKs provide.**
 
 - **Protocol codec.** Wire-level helpers for every transport the runtime binary touches, scoped by integration level ([§15.4.3](#1543-runtime-integration-levels)):
-    - **Binary protocol (all levels).** Line-delimited JSON (JSON Lines) framing and readline over **stdin/stdout** per [§15.4.1](#1541-adapterbinary-protocol), including the stdout-flushing requirement. This is the entire Basic-level wire surface.
-    - **Intra-pod abstract Unix sockets (Standard adds MCP; Full adds lifecycle).** Dial helpers for the Linux abstract-namespace sockets advertised in the adapter manifest (`/run/lenny/adapter-manifest.json`, [§4.7](04_system-components.md#47-runtime-adapter)): `@lenny-platform-mcp` (Standard: platform MCP proxy), `@lenny-connector-<id>` (Standard: per-connector MCP servers), and `@lenny-lifecycle` (Full: agent-side lifecycle channel). There is no `@lenny-<pod_id>-ctl` or equivalent catch-all control socket — every intra-pod channel is purpose-specific.
-    - **Intra-pod authentication.** The manifest-nonce handshake described in [§15.4.3](#1543-runtime-integration-levels) (injected as `params._lennyNonce` on the MCP `initialize` request and on the lifecycle channel), paired with the adapter-side `SO_PEERCRED` UID check from [§4.7](04_system-components.md#47-runtime-adapter). The runtime process does **not** participate in mTLS and is never issued a gateway certificate; mTLS is exclusively an adapter↔gateway transport concern ([§4.7](04_system-components.md#47-runtime-adapter) "internal gRPC/HTTP+mTLS API"). SDKs read the nonce from the manifest and attach it automatically.
-    - **Credential delivery.** Read-only access patterns for `/run/lenny/credentials.json` (present under both proxy and direct delivery modes per [§4.7](04_system-components.md#47-runtime-adapter) manifest `llm` fields), including the rebind-on-`credentials_rotated` loop for Full-level runtimes and the env-var export (`llm.apiKeyEnv`) for proxy mode.
-    - **Graceful shutdown.** SIGTERM handling and the `terminate` / `shutdown` deadline contract from [§4.7](04_system-components.md#47-runtime-adapter) and [§15.4.1](#1541-adapterbinary-protocol).
+    - **Binary protocol (all levels).** Line-delimited JSON (JSON Lines) framing and readline over **stdin/stdout** per [§28.5.3](28_communication-channels.md#2853-intra-pod), including the stdout-flushing requirement.
+    - **Intra-pod abstract Unix sockets (Standard adds MCP; Full adds lifecycle).** Dial helpers for the Linux abstract-namespace sockets advertised in the adapter manifest (`/run/lenny/adapter-manifest.json`, [§4.7](04_system-components.md#47-runtime-adapter)): `@lenny-platform-mcp` (Standard: platform MCP proxy), `@lenny-connector-<id>` (Standard: per-connector MCP servers), and `@lenny-runtime-ops` (Full: agent-side CH-RUNTIMEOPS). There is no `@lenny-<pod_id>-ctl` or equivalent catch-all control socket — every intra-pod channel is purpose-specific.
+    - **Intra-pod authentication.** The manifest-nonce handshake described in [§15.4.3](#1543-runtime-integration-levels) (injected as `params._lennyNonce` on the MCP `initialize` request, and sent as the nonce line that opens `CH-MSGSOCK` and `CH-RUNTIMEOPS`, [§4.7.11](04_system-components.md#4711-adapter-agent-security-boundary) item 1), paired with the adapter-side `SO_PEERCRED` UID check from [§4.7](04_system-components.md#47-runtime-adapter). The runtime process does **not** participate in mTLS and is never issued a gateway certificate; mTLS is exclusively an adapter↔gateway transport concern ([§4.7](04_system-components.md#47-runtime-adapter) "internal gRPC/HTTP+mTLS API"). SDKs read the nonce from the manifest, attach it automatically, and answer the nonce-only challenge.
+    - **Credential delivery.** Read-only access patterns for `/run/lenny/slots/{sessionId}/credentials.json` (present under both proxy and direct delivery modes per the `llm` fields of the session's `session_start` frame, [§28.5.3](28_communication-channels.md#2853-intra-pod)), including the rebind-on-`credentials_rotated` loop for Full-level runtimes and the per-session API key that `llm.apiKeyEnv` names for proxy mode.
+    - **Graceful shutdown.** SIGTERM handling and the `shutdown` deadline contract from the `CH-MSGSOCK` card in [§28.5.3](28_communication-channels.md#2853-intra-pod), and per-session routing of `CH-RUNTIMEOPS` events by `sessionId` ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime process lifetime").
     - **RPC vocabulary.** The `lenny.runtime.*` request/response vocabulary carried over the transports above.
-- **Platform MCP tool helpers.** Typed helpers for the platform MCP tool set defined in [§4.7](04_system-components.md#47-runtime-adapter): `lenny/delegate_task`, `lenny/await_children`, `lenny/cancel_child`, `lenny/discover_agents`, `lenny/output`, `lenny/request_elicitation`, `lenny/memory_write`, `lenny/memory_query`, `lenny/request_input`, `lenny/send_message`, `lenny/get_task_tree`, and `lenny/set_tracing_context`. [§4.7](04_system-components.md#47-runtime-adapter) is authoritative for the platform MCP tool set; this list tracks it. Note that `tool_call` is a stdin/stdout adapter protocol frame ([§15.4.1](#1541-adapterbinary-protocol)), not an MCP tool; `interrupt` is a gateway-initiated lifecycle signal ([§4.7](04_system-components.md#47-runtime-adapter) lifecycle), not an MCP tool; and there is no `lenny/ready` on the public surface.
-- **Credential access.** A thin wrapper around the credential-lease refresh loop (Proxy mode credential header injection, Direct mode env-var refresh), including the lease-renewal retry schedule from [§4.9](04_system-components.md#49-credential-leasing-service).
+- **Platform MCP tool helpers.** Typed helpers for the platform MCP tool set defined by the `CH-MCP-PLATFORM` card in [§28.5.3](28_communication-channels.md#2853-intra-pod): `lenny/delegate_task`, `lenny/await_children`, `lenny/cancel_child`, `lenny/discover_agents`, `lenny/output`, `lenny/request_elicitation`, `lenny/memory_write`, `lenny/memory_query`, `lenny/request_input`, `lenny/send_message`, `lenny/get_task_tree`, and `lenny/set_tracing_context`. The `CH-MCP-PLATFORM` card in [§28.5.3](28_communication-channels.md#2853-intra-pod) is authoritative for the platform MCP tool set and [§4.7](04_system-components.md#47-runtime-adapter) is authoritative for the adapter manifest; this list tracks the tool set. Note that `tool_call` is a stdin/stdout adapter protocol frame ([§28.5.3](28_communication-channels.md#2853-intra-pod)), not an MCP tool; `interrupt` is a gateway-initiated lifecycle signal ([§4.7](04_system-components.md#47-runtime-adapter) lifecycle), not an MCP tool; and there is no `lenny/ready` on the public surface.
+- **Credential access.** A thin wrapper around the credential-lease refresh loop (Proxy mode credential header injection, Direct mode per-session API-key refresh), including the lease-renewal retry schedule from [§4.9](04_system-components.md#49-credential-leasing-service).
 - **Workspace utilities.** Helpers for materializing files into `/workspace`, respecting the workspace plan ([§14](14_workspace-plan-schema.md)), and uploading checkpoints ([§7.1](07_session-lifecycle.md#71-normal-flow) seal-and-export).
 - **Telemetry.** Prometheus counters for request counts, errors, and latencies, and OpenTelemetry spans wrapping each request.
+- **Busy reporting.** Each SDK answers a `heartbeat` that names a session the process holds with that `sessionId`, and with `busy: true` from reading a `message` for the session until its handler has returned and the SDK has written any response the handler produced, or while a busy hold taken for the session is held, as **Outbound: `heartbeat_ack`** in [§28.5.3](28_communication-channels.md#2853-intra-pod) requires. A handler takes a busy hold for work it does for the session after its handler returns, such as the rest of a turn whose Reply is streaming and not final, a tool call it does not await, background work, or waiting on children, and releases the hold when that work ends. The SDK does not report work for which no hold is held. In Python and TypeScript the `CreateRequest` also carries the session's busy hold, which the Go SDK reaches through the `OnCreate` context.
 - **Test doubles.** In-process gateway fake for unit testing; a CI-friendly `runtime-sdk testserver` binary that speaks the gateway-side protocol against a runtime binary for integration tests.
 
 **API surface (Go).**
@@ -2566,49 +2197,63 @@ All three SDKs are Apache-2.0 licensed and versioned in lockstep with the Runtim
 ```go
 package runtime
 
-// Handler is the single interface runtime authors implement.
+// Handler is the single interface runtime authors implement. One runtime
+// process serves any number of sessions
+// ([§4.7.10](04_system-components.md#4710-deployment-model), "Runtime
+// process lifetime"). The SDK invokes OnCreate when a `session_start`
+// opens a session, under the `CH-MSGSOCK` card's **Inbound:
+// `session_start`** rules in
+// [§28.5.3](28_communication-channels.md#2853-intra-pod), and writes the
+// session's `session_started` once OnCreate returns; OnMessage for
+// each of the session's messages; and OnTerminate when that session ends,
+// on its `session_end` or at the end of the connection. Calls for different
+// sessions run concurrently, so an implementation keeps per-session state
+// keyed by session and is safe for concurrent use. A session whose OnCreate
+// fails is answered as the `CH-MSGSOCK` card's **Session errors.** rule in
+// [§28.5.3](28_communication-channels.md#2853-intra-pod) states.
 type Handler interface {
     OnCreate(ctx context.Context, req CreateRequest) error
     OnMessage(ctx context.Context, msg Message) (Reply, error)
-    OnTerminate(ctx context.Context, reason TerminationReason) error
+    OnTerminate(ctx context.Context, sessionID string, reason TerminationReason) error
 }
 
 // Run wires up stdin/stdout framing, dials the manifest-advertised
-// abstract Unix sockets (platform MCP, connector MCP, lifecycle channel)
-// with the manifest-nonce handshake, refreshes credentials from
-// /run/lenny/credentials.json, and drives the lenny.runtime.* dispatch
-// loop. Blocks until the adapter closes stdin or sends `terminate`.
+// platform MCP, connector MCP, and CH-RUNTIMEOPS sockets once per process
+// with the manifest-nonce handshake, loads each session's credentials from
+// the path its `session_start` names, and drives the lenny.runtime.*
+// dispatch loop.
+// Blocks until the adapter closes the connection or sends `shutdown`, then
+// ends every session the process holds.
 func Run(h Handler, opts ...Option) error
 ```
 
-**SDK Handler types.** `CreateRequest`, `Message`, and `Reply` are convenience wrappers materialized by the SDK from the lower-level wire contracts already defined in this spec: the adapter manifest ([§4.7](04_system-components.md#47-runtime-adapter)), the `AssignCredentials`/`StartSession` RPCs ([§4.7](04_system-components.md#47-runtime-adapter)), the `MessageEnvelope` ([§15.4.1](#1541-adapterbinary-protocol) "`MessageEnvelope` — Unified Message Format"), and the `MessagePart` format ([§15.4.1](#1541-adapterbinary-protocol) "Internal `MessagePart` Format"). They do not introduce new wire types — the SDK parses the manifest, stdin framing, and credential file into these structs before invoking the `Handler` methods. Python and TypeScript SDKs expose structurally equivalent types (idiomatic names per language).
+**SDK Handler types.** `CreateRequest`, `Message`, and `Reply` are convenience wrappers materialized by the SDK from the lower-level wire contracts already defined in this spec: the `session_start` frame ([§28.5.3](28_communication-channels.md#2853-intra-pod)), the pod-scoped adapter manifest ([§4.7](04_system-components.md#47-runtime-adapter)), the `AssignCredentials`/`StartSession` RPCs ([§4.7](04_system-components.md#47-runtime-adapter)), the `MessageEnvelope` ([§15.4](#messageenvelope--unified-message-format) "`MessageEnvelope` — Unified Message Format"), and the `MessagePart` format ([§28.5.3](28_communication-channels.md#2853-intra-pod) "Internal `MessagePart` Format"). They do not introduce new wire types — the SDK parses the `session_start` frame, the pod-scoped manifest, stdin framing, and the credential file into these structs before invoking the `Handler` methods. Python and TypeScript SDKs expose structurally equivalent types (idiomatic names per language).
 
 ```go
-// CreateRequest is the snapshot of task-scoped context handed to
-// Handler.OnCreate before the first Message is delivered on stdin. The SDK
-// assembles this value from (a) the adapter manifest written to
-// /run/lenny/adapter-manifest.json before the runtime binary is spawned
-// ([§4.7](04_system-components.md#47-runtime-adapter)), (b) the credential
-// file written by AssignCredentials at /run/lenny/credentials.json
-// ([§4.7](04_system-components.md#47-runtime-adapter) item 4), and (c) the
+// CreateRequest is the snapshot of session-scoped context handed to
+// Handler.OnCreate when the session's `session_start` arrives and before the
+// session's first Message is delivered. The SDK assembles this value from
+// (a) the session's `session_start` frame on CH-MSGSOCK
+// ([§28.5.3](28_communication-channels.md#2853-intra-pod)), (b) the
+// credential file at the path that frame names
+// ([§4.7](04_system-components.md#47-runtime-adapter) item 4), (c) the
+// pod-scoped adapter manifest at /run/lenny/adapter-manifest.json
+// ([§4.7](04_system-components.md#47-runtime-adapter)), and (d) the
 // StartSession RPC parameters the gateway forwarded to the adapter (see the
 // Startup Sequence in [§4.7](04_system-components.md#47-runtime-adapter)).
 // Handler implementations MUST treat CreateRequest as read-only — the wire
 // sources are authoritative and the SDK will refresh derived fields (notably
 // Credentials) in place on rotation events without re-invoking OnCreate.
 type CreateRequest struct {
-    // SessionID is the session this runtime instance is bound to. Matches
-    // `sessionId` in the adapter manifest and `SessionMetadata.SessionID`
+    // SessionID is the session this request opens. Matches `sessionId` in
+    // the session's `session_start` and `SessionMetadata.SessionID`
     // ([§15 Shared Adapter Types](#shared-adapter-types)).
     SessionID string `json:"sessionId"`
 
-    // TaskID is the session's external-protocol task identifier. Matches
-    // `taskId` in the adapter manifest. Each session has exactly one
-    // execution, and external protocols surface that execution as a Task
-    // ([§7.1](07_session-lifecycle.md#71-normal-flow)), so TaskID equals the
-    // session id; the adapter derives it from `sessionId`. TaskID is frozen
-    // for the session's lifetime and OnCreate is invoked once with this
-    // value.
+    // TaskID is the session's external-protocol task identifier. Each
+    // session has exactly one execution, and external protocols surface that
+    // execution as a Task ([§8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema)),
+    // so TaskID equals the session id; the SDK derives it from `sessionId`.
     TaskID string `json:"taskId"`
 
     // RuntimeOptions is the effective options map passed by the caller in
@@ -2622,67 +2267,78 @@ type CreateRequest struct {
     // WorkspacePlan is a reference to the materialized workspace plan for
     // this task ([§14](14_workspace-plan-schema.md)). The files and
     // directories described here have already been staged under
-    // `/workspace/current` (or the per-slot path when the pool sets
-    // `maxConcurrentSessions > 1`) before OnCreate is invoked; runtimes
-    // typically read this value
-    // for metadata (sources, setup commands actually run) rather than to
-    // drive materialization themselves.
+    // `/workspace/slots/{sessionId}/current` before OnCreate is invoked;
+    // runtimes typically read this value for metadata (sources, setup
+    // commands actually run) rather than to drive materialization
+    // themselves.
     WorkspacePlan *WorkspacePlan `json:"workspacePlan,omitempty"`
 
     // Credentials is the current credential bundle delivered via
-    // AssignCredentials and materialized at /run/lenny/credentials.json
+    // AssignCredentials and materialized at /run/lenny/slots/{sessionId}/credentials.json
     // ([§4.7](04_system-components.md#47-runtime-adapter) item 4 — Runtime
     // credential file contract). The SDK parses the file into this value;
     // on `credentials_rotated` lifecycle messages the SDK re-reads the file
     // and updates this pointer in place (Full-level runtimes) rather than
-    // calling OnCreate again. Nil only when the runtime's provider pool has
-    // no active lease (matches `llm: null` in the manifest).
+    // calling OnCreate again. Nil when the session's provider pool has no
+    // active lease (matches `llm: null` in the session's `session_start`) or
+    // when the session's `session_start` names no `credentialsPath`.
     Credentials *CredentialBundle `json:"credentials,omitempty"`
 
-    // ManifestSnapshot is the parsed adapter manifest
+    // ExperimentContext is the session's experiment enrollment from the
+    // session's `session_start` (`experimentContext`); nil when the session
+    // is not enrolled.
+    ExperimentContext *ExperimentContext `json:"experimentContext,omitempty"`
+
+    // TracingContext is the session's inherited tracing identifiers from the
+    // session's `session_start` (`tracingContext`); nil for a top-level
+    // session.
+    TracingContext map[string]string `json:"tracingContext,omitempty"`
+
+    // LLM is the session's LLM provider configuration from the session's
+    // `session_start` (`llm`); nil when the session has no active LLM lease.
+    LLM *LLMConfig `json:"llm,omitempty"`
+
+    // ManifestSnapshot is the parsed pod-scoped adapter manifest
     // ([§4.7](04_system-components.md#47-runtime-adapter) "Adapter manifest
-    // field reference"). Authors MAY consult it for platform MCP socket,
-    // lifecycle channel socket, connector servers, experiment context, and
-    // tracing context. The SDK has already dialed the advertised sockets
-    // and attached the `mcpNonce` before OnCreate is invoked; authors who
-    // only use SDK-provided MCP helpers do not need to read this field
-    // directly.
+    // field reference"). It carries only pod-scoped fields; the session's
+    // own context is in the fields above. Authors MAY consult it for the
+    // platform MCP socket, CH-RUNTIMEOPS socket, and connector servers. The
+    // SDK has dialed the advertised sockets and attached the `mcpNonce`
+    // before OnCreate is invoked; authors who only use
+    // SDK-provided MCP helpers do not need to read this field directly.
     ManifestSnapshot *AdapterManifest `json:"manifestSnapshot,omitempty"`
 }
 
 // Message is the per-turn envelope handed to Handler.OnMessage for every
 // `{type: "message"}` frame the adapter writes to stdin
-// ([§15.4.1](#1541-adapterbinary-protocol) "Inbound: `message`"). It wraps
-// the canonical MessageEnvelope with the session/task IDs the SDK resolved
-// from the adapter manifest, so Handler implementations do not have to
-// correlate against the manifest on every turn. Fields other than Envelope
-// are SDK-derived conveniences — the wire contract is in §15.4.1.
+// ([§28.5.3](28_communication-channels.md#2853-intra-pod) "Inbound: `message`"). It wraps
+// the canonical MessageEnvelope with the session and task IDs the SDK
+// resolved from the frame's `sessionId`. Fields other than Envelope
+// are SDK-derived conveniences — the wire contract is in §28.5.3.
 type Message struct {
     // Envelope is the canonical MessageEnvelope as defined in
-    // [§15.4.1](#1541-adapterbinary-protocol) "`MessageEnvelope` — Unified
+    // [§15.4](#messageenvelope--unified-message-format) "`MessageEnvelope` — Unified
     // Message Format". All message semantics (from, delivery, threadId,
-    // inReplyTo, delegationDepth, slotId, input MessagePart[]) live on this
+    // inReplyTo, delegationDepth, sessionId, input MessagePart[]) live on this
     // field. Basic-level handlers typically only read `Envelope.Input`.
     Envelope *MessageEnvelope `json:"envelope"`
 
     // SessionID is the session the message was delivered to. Populated
-    // from `sessionId` in the adapter manifest; equals
-    // CreateRequest.SessionID.
+    // from the inbound frame's `sessionId`; equals the CreateRequest.SessionID
+    // of that session's OnCreate.
     SessionID string `json:"sessionId"`
 
     // TaskID is the external-protocol task identifier of the session the
-    // message belongs to. Populated from `taskId` in the adapter manifest;
-    // it equals the session id (the adapter derives it from `sessionId`) and
-    // always equals CreateRequest.TaskID, which is frozen for the session's
-    // lifetime.
+    // message belongs to. It equals SessionID and the CreateRequest.TaskID
+    // of that session's OnCreate.
     TaskID string `json:"taskId"`
 
     // Sequence is a monotonically increasing, SDK-assigned, per-task
     // counter that orders messages as the SDK observed them on stdin.
     // Distinct from `MessageEnvelope.id` (which is globally unique) and
     // from the coordinator-local sequence number persisted server-side
-    // ([§15.4.1](#1541-adapterbinary-protocol) "Ordering guarantee"):
-    // Sequence is a local per-process counter suitable for logging and
+    // ([§15.4](#messageenvelope--unified-message-format) "Ordering guarantee"):
+    // Sequence is a local per-session counter suitable for logging and
     // in-handler ordering only.
     Sequence uint64 `json:"sequence"`
 
@@ -2694,16 +2350,16 @@ type Message struct {
 
 // Reply is the value Handler.OnMessage returns to the SDK. The SDK
 // serializes it into the stdout `{type: "response"}` frame defined in
-// [§15.4.1](#1541-adapterbinary-protocol) "Outbound: `response`" — Parts
+// [§28.5.3](28_communication-channels.md#2853-intra-pod) "Outbound: `response`" — Parts
 // becomes `output`, and the Streaming / Final flags drive how the SDK
 // reconciles incremental output delivered via the `lenny/output` platform
-// MCP tool ([§4.7](04_system-components.md#47-runtime-adapter) Part A) with
+// MCP tool (the `CH-MCP-PLATFORM` card in [§28.5.3](28_communication-channels.md#2853-intra-pod)) with
 // the final response frame.
 type Reply struct {
     // Parts is the MessagePart array the runtime emits for this turn. The
     // SDK places it verbatim into `response.output` after validating each
     // entry against the MessagePart schema
-    // ([§15.4.1](#1541-adapterbinary-protocol) "Internal `MessagePart`
+    // ([§28.5.3](28_communication-channels.md#2853-intra-pod) "Internal `MessagePart`
     // Format"). Nil or empty is valid when the runtime has already emitted
     // all output via `lenny/output` (Standard/Full levels).
     Parts []MessagePart `json:"parts,omitempty"`
@@ -2726,11 +2382,11 @@ type Reply struct {
 }
 ```
 
-Python and TypeScript SDKs expose an equivalent `Handler` protocol/interface and an equivalent `run()` entrypoint. `CreateRequest`, `Message`, and `Reply` are surfaced as idiomatic language types (e.g., `@dataclass` in Python, `interface` in TypeScript) with the same field set and the same JSON tag mapping above.
+Python and TypeScript SDKs expose an equivalent `Handler` protocol/interface and an equivalent `run()` entrypoint. `CreateRequest`, `Message`, and `Reply` are surfaced as idiomatic language types (e.g., `@dataclass` in Python, `interface` in TypeScript) with the same field set and the same JSON tag mapping above, plus the busy hold that **Busy reporting.** places on the Python and TypeScript `CreateRequest`.
 
 **`lenny runtime init` scaffolder.** The [§24](24_lenny-ctl-command-reference.md#24-lenny-ctl-command-reference) CLI includes a `lenny runtime init` subcommand that generates a new runtime skeleton (`<runtime>/`): `Dockerfile`, `main.<lang>` using the SDK's `Handler` interface (except for `--language binary --template minimal`, which emits a no-SDK stdin/stdout skeleton; see [§24.18](24_lenny-ctl-command-reference.md#2418-runtime-scaffolding)), `runtime.yaml` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)), a `Makefile` with `build`, `test`, and `push` targets, and a CI workflow that publishes images to `ghcr.io/<org>/runtime-<name>`. Supported templates: Go, Python, TypeScript, and the generic stdin/stdout binary template.
 
-**Versioning and stability.** SDK releases follow semver. A breaking change to the Runtime Adapter Specification bumps SDK major versions in lockstep; backward-compatible additions (new optional methods) bump the minor version. The gateway honors the protocol version negotiation from [§15.4.1](#1541-adapterbinary-protocol) so that a runtime built against an older SDK continues to work against a newer gateway within the same major version.
+**Versioning and stability.** SDK releases follow semver. A breaking change to the Runtime Adapter Specification bumps SDK major versions in lockstep; backward-compatible additions (new optional methods) bump the minor version. The gateway honors the protocol version negotiation from [§15.4.2](#1542-rpc-lifecycle-state-machine) so that a runtime built against an older SDK continues to work against a newer gateway within the same major version.
 
 **Relationship to reference runtime catalog.** Every reference runtime in [§26](26_reference-runtime-catalog.md) — `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, `openai-assistants`, `crewai` — is built on top of the Runtime Author SDKs above, using the scaffolder output as the starting point. Third-party runtimes get the same code path at release time: `lenny runtime init <name>` produces a repository identical in structure to the first-party reference runtimes.
 

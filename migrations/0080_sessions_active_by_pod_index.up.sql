@@ -16,7 +16,7 @@
 -- sessions are excluded. The four terminal states match
 -- session.TerminalStates().
 --
--- spec: spec/05_runtime-registry-and-pool-model.md §5.2 line 521
+-- spec: spec/05_runtime-registry-and-pool-model.md §5.2
 -- ("The GetActiveSlotsByPod query is indexed (sessions(pod_name) WHERE
 -- state = 'active') and returns at most maxConcurrent rows").
 CREATE INDEX idx_sessions_active_by_pod

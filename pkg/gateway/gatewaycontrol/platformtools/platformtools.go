@@ -20,11 +20,11 @@
 // The adapter is the mesh-authenticated (§10.3) infrastructure for its
 // pod's one session, so the bridge dispatches under the session id the
 // adapter presents. The intra-pod socket's SO_PEERCRED / nonce check
-// (§4.7 lines 879-883) keeps a compromised peer process out, so once
-// this bridge is wired the §4.7 line 942 boundary ("a compromised child
+// (§4.7) keeps a compromised peer process out, so once
+// this bridge is wired the §4.7 boundary ("a compromised child
 // process cannot call privileged platform tools") is enforceable.
 //
-// spec: §9.1 lines 8-31; §4.7 line 942. F-9.1.1.
+// spec: §9.1; §4.7. F-9.1.1.
 package platformtools
 
 import (
@@ -79,7 +79,7 @@ var _ leasecontrol.PlatformToolService = (*Bridge)(nil)
 // mcpRuntimeFilters scope delegation *targets* at discovery, not the
 // platform tools themselves), so the session id is not consulted here;
 // it is accepted for parity with CallPlatformTool and future per-session
-// scoping. spec: §9.1 lines 14-31. F-9.1.1.
+// scoping. spec: §9.1. F-9.1.1.
 func (b *Bridge) ListPlatformTools(_ context.Context, _ string) ([]leasecontrol.PlatformToolDescriptor, error) {
 	catalog := b.tools.Catalog()
 	out := make([]leasecontrol.PlatformToolDescriptor, 0, len(catalog))
@@ -101,26 +101,12 @@ func (b *Bridge) ListPlatformTools(_ context.Context, _ string) ([]leasecontrol.
 // a tool-level failure is an isError result with a nil error. An unknown
 // session maps to leasecontrol.ErrSessionNotFound and an unregistered
 // tool to leasecontrol.ErrPlatformToolNotFound so the GatewayControl
-// handler can return the right gRPC status. spec: §9.1 line 14. F-9.1.1.
+// handler can return the right gRPC status. spec: §9.1. F-9.1.1.
 func (b *Bridge) CallPlatformTool(ctx context.Context, sessionID, toolName string, arguments []byte) ([]byte, bool, error) {
-	sess, err := b.sessions.GetByID(ctx, sessionID)
+	ctx, err := WithSessionPrincipal(ctx, b.sessions, sessionID)
 	if err != nil {
-		if errors.Is(err, sessionstore.ErrNotFound) {
-			return nil, false, leasecontrol.ErrSessionNotFound
-		}
-		return nil, false, fmt.Errorf("platformtools: resolve session %s: %w", sessionID, err)
+		return nil, false, err
 	}
-
-	// spec: §9.1 line 14 — dispatch under the calling session's principal
-	// so the platform tool handlers resolve the same (session, tenant,
-	// owner) they would for a gateway-edge /mcp call. CallerType marks the
-	// in-pod agent origin.
-	ctx = authmw.WithPrincipal(ctx, authmw.Principal{
-		Subject:    sess.UserID,
-		TenantID:   sess.TenantID,
-		SessionID:  sessionID,
-		CallerType: "agent",
-	})
 
 	result, ok, err := b.tools.DispatchTool(ctx, toolName, json.RawMessage(arguments))
 	if err != nil {
@@ -134,4 +120,39 @@ func (b *Bridge) CallPlatformTool(ctx context.Context, sessionID, toolName strin
 		return nil, false, fmt.Errorf("platformtools: encode result of %s: %w", toolName, err)
 	}
 	return encoded, result.IsError, nil
+}
+
+// AgentCallerType is the principal CallerType a platform tool call from a
+// session's pod runs under. A replica that forwards such a call to the
+// coordinating replica carries the calling session's identifier instead of
+// a client credential, because the call reached it with none.
+const AgentCallerType = "agent"
+
+// WithSessionPrincipal resolves sessionID and returns ctx carrying the
+// principal a platform tool call from that session runs under. It is the one
+// place that principal is built: CallPlatformTool calls it for a call that
+// arrives over LNK-GWCONTROL, and the inter-replica forward listener calls it
+// for a forwarded call that carries the calling session's identifier. An
+// unknown session maps to leasecontrol.ErrSessionNotFound.
+//
+// spec: §9.1 (Platform tools), §29.3 (Interactive message send) Forwarding
+// rule 3
+func WithSessionPrincipal(ctx context.Context, sessions SessionResolver, sessionID string) (context.Context, error) {
+	sess, err := sessions.GetByID(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, sessionstore.ErrNotFound) {
+			return ctx, leasecontrol.ErrSessionNotFound
+		}
+		return ctx, fmt.Errorf("platformtools: resolve session %s: %w", sessionID, err)
+	}
+	// spec: §9.1 — dispatch under the calling session's principal so the
+	// platform tool handlers resolve the same (session, tenant, owner) they
+	// would for a gateway-edge /mcp call. CallerType marks the in-pod agent
+	// origin.
+	return authmw.WithPrincipal(ctx, authmw.Principal{
+		Subject:    sess.UserID,
+		TenantID:   sess.TenantID,
+		SessionID:  sessionID,
+		CallerType: AgentCallerType,
+	}), nil
 }

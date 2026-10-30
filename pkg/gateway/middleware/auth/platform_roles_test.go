@@ -27,7 +27,7 @@ func (s *stubPlatformRoles) ResolveRoles(_ context.Context, _, _ string) ([]pkga
 	return s.roles, s.found, s.err
 }
 
-// spec: §10.2 line 294 — when the platform-managed mapping returns a
+// spec: §10.2 — when the platform-managed mapping returns a
 // row, its Roles fully replace the JWT roles claim. F-10.2.3.
 func TestPlatformRolesOverrideJWTClaim(t *testing.T) {
 	secret := []byte("plat")

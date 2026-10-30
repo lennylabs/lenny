@@ -7,7 +7,7 @@ package events
 // last_checkpointed + window so it cannot replay a nonce that was used
 // after the last checkpoint but before the crash. window must exceed
 // every (the max number of unpersisted increments) for that guarantee to
-// hold. spec: §25.3 line 748.
+// hold. spec: §25.3.
 const (
 	defaultCheckpointEvery  uint64 = 128
 	defaultCheckpointWindow uint64 = 1024
@@ -18,7 +18,7 @@ const (
 // restart so the eventKey stays unique even when the replicaID is stable
 // across restarts (e.g. LENNY_REPLICA_ID pinned to the pod name). Every
 // and Window fall back to the package defaults when zero.
-// spec: §25.3 line 748.
+// spec: §25.3.
 type NonceCheckpoint struct {
 	// Path is the local-disk file the high-water mark is persisted to.
 	Path string
@@ -27,6 +27,6 @@ type NonceCheckpoint struct {
 	Every uint64
 	// Window is the safe_skip_window added to the persisted value on
 	// restart. Zero (or any value below Every) uses
-	// defaultCheckpointWindow. spec: §25.3 line 748.
+	// defaultCheckpointWindow. spec: §25.3.
 	Window uint64
 }

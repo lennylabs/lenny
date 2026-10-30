@@ -105,7 +105,7 @@ var recoveryNow = time.Date(2026, 6, 2, 14, 30, 0, 0, time.UTC)
 // proves the crash-recovery reader resolves a bound direct-mode session to its
 // (tenant, user) window and its per-tenant rollup, pulling the session
 // cumulative total with cumulative=true. It would fail against a reader that
-// pulled the incremental delta (cumulative=false), which the §11.2 line 46 MAX
+// pulled the incremental delta (cumulative=false), which the §11.2 MAX
 // rule cannot use to reconstruct a counter, or that dropped the per-user
 // attribution.
 //

@@ -72,7 +72,7 @@ func single(items ...map[string]any) []page {
 	return []page{{items: items}}
 }
 
-// spec: §25.10 line 3770 — running state read from the four admin LIST
+// spec: §25.10 — running state read from the four admin LIST
 // endpoints and normalized into the snapshot's resource-keyed structure.
 func TestRunningStateAllScopeCollectsEveryResourceType_spec_25_10_3770(t *testing.T) {
 	f := &fakeAdmin{pages: map[string][]page{
@@ -105,7 +105,7 @@ func TestRunningStateAllScopeCollectsEveryResourceType_spec_25_10_3770(t *testin
 	}
 }
 
-// spec: §25.10 line 3828 — a narrow scope collects only its resource type.
+// spec: §25.10 — a narrow scope collects only its resource type.
 func TestRunningStateNarrowScopeCollectsOnlyOneType_spec_25_10_3828(t *testing.T) {
 	f := &fakeAdmin{pages: map[string][]page{
 		"/v1/admin/pools":    single(map[string]any{"name": "p1"}),
@@ -130,7 +130,7 @@ func TestRunningStateNarrowScopeCollectsOnlyOneType_spec_25_10_3828(t *testing.T
 	}
 }
 
-// spec: §25.10 line 3773 — observed/server fields must not surface as
+// spec: §25.10 — observed/server fields must not surface as
 // spurious drift, so normalization strips them.
 func TestNormalizationStripsObservedFields_spec_25_10_3773(t *testing.T) {
 	f := &fakeAdmin{pages: map[string][]page{
@@ -167,7 +167,7 @@ func TestNormalizationStripsObservedFields_spec_25_10_3773(t *testing.T) {
 	}
 }
 
-// spec: §25.10 line 3770 — normalized running state diffs clean against a
+// spec: §25.10 — normalized running state diffs clean against a
 // matching desired snapshot (no false drift). This is the core
 // correctness invariant the reopened finding flagged: an unwired reader
 // reported every desired field as removed drift.
@@ -227,7 +227,7 @@ func TestRunningStateFollowsPagination_spec_15_1(t *testing.T) {
 	}
 }
 
-// spec: §25.10 line 3828 — an unrecognized scope collects nothing rather
+// spec: §25.10 — an unrecognized scope collects nothing rather
 // than erroring, preserving the empty-running-state posture.
 func TestRunningStateUnknownScopeIsEmpty_spec_25_10_3828(t *testing.T) {
 	f := &fakeAdmin{pages: map[string][]page{

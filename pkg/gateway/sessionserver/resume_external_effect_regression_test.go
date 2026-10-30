@@ -60,6 +60,7 @@ func (r *startRecordingRuntime) Output(context.Context, string) (<-chan []byte, 
 //     so the re-derivable effect is not suppressed and the at-least-once
 //     guarantee holds by construction.
 func TestResumeRestoresFromFreshestRefAndConsultsNoDedupLedger_spec_7_3(t *testing.T) {
+	t.Parallel()
 	rt := &startRecordingRuntime{}
 	// The recorded external effect (a lenny/* platform-tool action, a
 	// connector-tool call, or a delegate_task spawn) happened AFTER the periodic
@@ -73,7 +74,7 @@ func TestResumeRestoresFromFreshestRefAndConsultsNoDedupLedger_spec_7_3(t *testi
 	}
 
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = rt
 
 	cluster := podBindClient(
@@ -87,6 +88,7 @@ func TestResumeRestoresFromFreshestRefAndConsultsNoDedupLedger_spec_7_3(t *testi
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-alo-resume" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -107,7 +109,7 @@ func TestResumeRestoresFromFreshestRefAndConsultsNoDedupLedger_spec_7_3(t *testi
 		},
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-alo-resume/resume", nil)
+	rr := resumeAndDrive(t, srv, "sess-alo-resume")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}

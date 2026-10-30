@@ -54,7 +54,7 @@ func (d *DenyList) Revoke(key credential.CredentialKey) {
 // in the store query. The rebuild runs at startup, where the list is
 // empty, so Reset seeds without clobbering a live entry.
 //
-// spec: §4.9 lines 1668-1673 — a newly started gateway replica rebuilds
+// spec: §4.9 — a newly started gateway replica rebuilds
 // its deny list by executing a union across the credential stores.
 func (d *DenyList) Reset(keys []credential.CredentialKey) {
 	next := make(map[credential.CredentialKey]struct{}, len(keys))
@@ -71,7 +71,7 @@ func (d *DenyList) Reset(keys []credential.CredentialKey) {
 // store reports no remaining active lease for the credential, so a deny
 // entry expires when the credential's last lease lapses.
 //
-// spec: §4.9 line 1671 — a deny-list entry expires when the credential's
+// spec: §4.9 — a deny-list entry expires when the credential's
 // natural lease TTL lapses.
 func (d *DenyList) Remove(key credential.CredentialKey) {
 	d.mu.Lock()

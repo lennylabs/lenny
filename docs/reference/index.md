@@ -23,7 +23,7 @@ This section contains lookup tables, schemas, and diagrams for cross-cutting con
 | [Configuration Reference](configuration) | Complete `values.yaml` field reference organized by component, with types, defaults, and validation rules. |
 | [CloudEvents Catalog](cloudevents-catalog) | All CloudEvents types emitted by the platform (`dev.lenny.*`) with envelope, subject, and data-field schemas. |
 | [WorkspacePlan Schema](workspace-plan) | Session workspace declarative spec: sources, setup commands, env, timeouts, retries, callbacks, delegation lease. |
-| [Adapter Contract](adapter-contract) | The protocol between the Lenny adapter sidecar and a runtime binary: the gateway-to-adapter gRPC RPCs, the stdin/stdout JSON Lines frames, and the lifecycle channel. |
+| [Adapter Contract](adapter-contract) | The protocol between the Lenny adapter sidecar and a runtime binary: the gateway-to-adapter gRPC RPCs, the stdin/stdout JSON Lines frames, and the CH-RUNTIMEOPS. |
 | [Glossary](glossary) | Alphabetical definitions of all Lenny-specific terms and concepts. |
 
 ---

@@ -16,7 +16,7 @@
 -- §11.7 item-1 startup grant verification (which rejects table-level
 -- UPDATE/DELETE on audit_log for lenny_app) is unaffected.
 --
--- spec: §12.8 lines 810-827 (in-place dead-letter redaction); §11.7
+-- spec: §12.8; §11.7
 -- item 3 (hash-input columns immutable outside the erasure path).
 DO $$
 BEGIN

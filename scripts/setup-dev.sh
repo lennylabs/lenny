@@ -545,7 +545,7 @@ install_security() {
   esac
 }
 
-# ---- SDK toolchains (§14.13) ----
+# ---- SDK toolchains (TESTING.md §14.13) ----
 
 install_sdk_python() {
   # Detect system python.

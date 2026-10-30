@@ -101,7 +101,7 @@ type explicitEnvCtxKey struct{}
 // paths (`/mcp/environments/{name}`, the scoped model namespace on the
 // OpenAI/Open Responses surfaces) set it so session-creation and
 // discovery default to that environment without the caller repeating it
-// on each call. spec: §10.6 line 557.
+// on each call. spec: §10.6.
 func WithExplicitEnvironment(ctx context.Context, name string) context.Context {
 	return context.WithValue(ctx, explicitEnvCtxKey{}, name)
 }

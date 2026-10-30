@@ -138,6 +138,35 @@ func TestPoolStoreContract(t *testing.T) {
 		}); err == nil || !strings.Contains(err.Error(), "maxConcurrent") {
 			t.Errorf("session-mode pool with maxConcurrent should be rejected, got %v", err)
 		}
+
+		// spec: 5.2 (Deployer acknowledgment (runtime process kept across sessions))
+		// diagnosis: the Postgres store admits or persists a recycling pool
+		// that keeps a runtime process without the deployer acknowledgment.
+		keptRecycle := func() *runtimestore.RecyclePolicy {
+			return &runtimestore.RecyclePolicy{Enabled: true, AcknowledgeBestEffortScrub: true, MaxSessionsPerPod: 5, RuntimeProcess: runtimestore.RuntimeProcessKeep}
+		}
+		if err := store.Create(ctx, poolstore.Pool{
+			Name: poolName(t), ExecutionMode: runtimestore.ExecutionModeSession,
+			SessionPolicy: &runtimestore.SessionPolicy{Recycle: keptRecycle()},
+		}); err == nil || !strings.Contains(err.Error(), "acknowledgeProcessLevelIsolation") {
+			t.Errorf("unacknowledged recycling pool should be rejected, got %v", err)
+		}
+		acked := poolstore.Pool{
+			Name: poolName(t), RuntimeRef: "claude", ExecutionMode: runtimestore.ExecutionModeSession,
+			SessionPolicy: &runtimestore.SessionPolicy{AcknowledgeProcessLevelIsolation: true, Recycle: keptRecycle()},
+		}
+		if err := store.Create(ctx, acked); err != nil {
+			t.Fatalf("Create acknowledged recycling pool: %v", err)
+		}
+		if _, err := store.Update(ctx, acked.Name, func(p *poolstore.Pool) error {
+			p.SessionPolicy.AcknowledgeProcessLevelIsolation = false
+			return nil
+		}); err == nil || !strings.Contains(err.Error(), "acknowledgeProcessLevelIsolation") {
+			t.Errorf("an update clearing the acknowledgment should be rejected, got %v", err)
+		}
+		if got, err := store.Get(ctx, acked.Name); err != nil || !got.SessionPolicy.AcknowledgeProcessLevelIsolation {
+			t.Errorf("stored acknowledgment changed after a refused update: %+v, %v", got.SessionPolicy, err)
+		}
 	})
 
 	t.Run("duplicate and invalid pools are rejected", func(t *testing.T) {
@@ -220,7 +249,7 @@ func TestPoolStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §15.1 line 797 — the draining_since column persists the pool
+	// spec: §15.1 — the draining_since column persists the pool
 	// drain phase across a store round-trip so a restarted gateway still
 	// sees the pool as draining. F-15.1.8.
 	t.Run("draining_since round-trips", func(t *testing.T) {

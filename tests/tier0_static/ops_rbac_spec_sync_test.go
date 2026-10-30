@@ -136,16 +136,15 @@ func stringSliceOf(v any) []string {
 //
 // spec: §25.4 ServiceAccount and RBAC — "`lenny-ops` uses the
 // ServiceAccount `lenny-ops-sa` with the following bindings"
-// (spec/25_agent-operability.md:1075), followed by the "Role
-// `lenny-ops-namespace`" fenced yaml block (spec/25_agent-operability.md:
-// 1077-1104) and the "ClusterRole `lenny-ops-cluster`" fenced yaml block
-// (spec/25_agent-operability.md:1106-1122).
+// (§25.4), followed by the "Role
+// `lenny-ops-namespace`" fenced yaml block (§25.4) and the "ClusterRole `lenny-ops-cluster`" fenced yaml block
+// (§25.4).
 //
 // diagnosis: A failure lists rules present on one side but not the
 // other. A rule the chart renders but the spec block omits means the
 // chart grants a permission the spec's canonical RBAC enumeration does
 // not document (charts/lenny/templates/ops-rbac.yaml has drifted ahead
-// of the block at spec/25_agent-operability.md:1077-1122; the block
+// of the block at §25.4; the block
 // needs a spec-proposal update to include it, or the chart needs to stop
 // requesting the grant). A rule the spec block lists but the chart does
 // not render means the chart is missing a permission the spec requires.

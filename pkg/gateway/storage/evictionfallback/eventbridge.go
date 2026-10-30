@@ -12,12 +12,12 @@ import (
 )
 
 // SessionEventsBridge adapts a *sessionevents.Bus to the EventEmitter
-// interface so the gateway can publish §4.4 line 285 `session.lost`
+// interface so the gateway can publish §4.4
 // events onto the regular session event stream. It is a thin
 // translation layer; production callers wire the gateway's
 // sessionevents.Bus into the Writer's Events field via this bridge.
 //
-// spec: §4.4 line 285 — "Emit a session.lost event on the session's
+// spec: §4.4 — "Emit a session.lost event on the session's
 // event stream".
 type SessionEventsBridge struct {
 	// Bus is the §15.1 session event bus the gateway publishes onto.
@@ -29,7 +29,7 @@ type SessionEventsBridge struct {
 
 // EmitSessionLost publishes a `session.lost` event with the supplied
 // reason and fields onto the bridge's Bus. Best-effort: when the bus
-// is nil, the bridge logs the loss and returns (so the §4.4 line 285
+// is nil, the bridge logs the loss and returns (so the §4.4
 // "publishes ... before the preStop hook exits; if the event stream
 // itself is unavailable the emission is skipped (logged only)"
 // contract is honored).

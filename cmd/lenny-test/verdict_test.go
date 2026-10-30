@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/cmd/lenny-test/verdictstatus"
 )
 
 func TestTriggerMode(t *testing.T) {
@@ -151,6 +154,7 @@ func TestExitCodeFor(t *testing.T) {
 		"PASS":         0,
 		"FAIL":         1,
 		"INCONCLUSIVE": 2,
+		"UNVERIFIED":   3,
 		"":             1,
 		"weird":        1,
 	}
@@ -170,6 +174,305 @@ func TestRecordTierSkippedKeepsPass(t *testing.T) {
 	stat := v.Tiers["integration"]
 	if stat.Reason != "no docker on PATH" {
 		t.Fatalf("skipped detail not carried to Reason: %q", stat.Reason)
+	}
+}
+
+// TestRecordTierUnverifiedRaisesVerdict pins the aggregation of a tier
+// that could not reach a conclusion. The overall verdict starts at
+// PASS, so a status that leaves it untouched reports a green run for
+// work that was never verified.
+func TestRecordTierUnverifiedRaisesVerdict(t *testing.T) {
+	v := newVerdict(selector{tier: "static"})
+	v.recordTier("static", verdictstatus.Unverified, 5*time.Millisecond, "protoc not on PATH")
+	if v.Verdict != verdictstatus.VerdictUnverified {
+		t.Fatalf("unverified tier left the verdict at %q; want %q", v.Verdict, verdictstatus.VerdictUnverified)
+	}
+	if got := exitCodeFor(v.Verdict); got == 0 {
+		t.Fatalf("unverified run exited 0")
+	}
+	if stat := v.Tiers["static"]; stat.Reason != "protoc not on PATH" {
+		t.Fatalf("unverified detail not carried to Reason: %q", stat.Reason)
+	}
+}
+
+// TestRecordTierUnverifiedPrecedence pins the precedence of UNVERIFIED
+// against FAIL, INCONCLUSIVE, and PASS in both record orders. The
+// overall verdict must not depend on which tier ran first. INCONCLUSIVE
+// outranks UNVERIFIED so an infrastructure-class failure still reports
+// the verdict whose exit code drives the documented retry path
+// (per the harness's documented verdict rules), instead of being masked by an unrelated check
+// that could not reach a conclusion.
+func TestRecordTierUnverifiedPrecedence(t *testing.T) {
+	cases := []struct {
+		name     string
+		statuses []string
+		want     string
+	}{
+		{"fail then unverified", []string{verdictstatus.Fail, verdictstatus.Unverified}, verdictstatus.VerdictFail},
+		{"unverified then fail", []string{verdictstatus.Unverified, verdictstatus.Fail}, verdictstatus.VerdictFail},
+		{"pass then unverified", []string{verdictstatus.Pass, verdictstatus.Unverified}, verdictstatus.VerdictUnverified},
+		{"unverified then pass", []string{verdictstatus.Unverified, verdictstatus.Pass}, verdictstatus.VerdictUnverified},
+		{"inconclusive then unverified", []string{verdictstatus.Inconclusive, verdictstatus.Unverified}, verdictstatus.VerdictInconclusive},
+		{"unverified then inconclusive", []string{verdictstatus.Unverified, verdictstatus.Inconclusive}, verdictstatus.VerdictInconclusive},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v := newVerdict(selector{maxTier: "unit"})
+			for i, status := range tc.statuses {
+				v.recordTier(fmt.Sprintf("tier-%d", i), status, time.Millisecond, "")
+			}
+			if v.Verdict != tc.want {
+				t.Fatalf("recording %v gave verdict %q; want %q", tc.statuses, v.Verdict, tc.want)
+			}
+		})
+	}
+}
+
+// TestUnverifiedTierKeepsInfraFailureRetryable pins the exit code a run
+// reports when an infrastructure-class failure and an unverified check
+// land in the same run. The harness retries an infrastructure failure
+// with fresh infrastructure on the INCONCLUSIVE exit code, and a degraded
+// environment where part of the toolchain is
+// absent is also where infrastructure fails to start, so the two
+// statuses coincide. The run must still exit 2 in either record order.
+func TestUnverifiedTierKeepsInfraFailureRetryable(t *testing.T) {
+	infraFailure := func(v *verdict) {
+		v.recordTier("integration", verdictstatus.Fail, time.Millisecond, "docker daemon not running")
+	}
+	unverified := func(v *verdict) {
+		v.recordTier("static", verdictstatus.Unverified, time.Millisecond, "protoc not on PATH")
+	}
+	orders := [][2]func(v *verdict){
+		{infraFailure, unverified},
+		{unverified, infraFailure},
+	}
+	for _, order := range orders {
+		v := newVerdict(selector{maxTier: "integration"})
+		order[0](v)
+		order[1](v)
+		if v.Verdict != verdictstatus.VerdictInconclusive {
+			t.Fatalf("verdict %q; want %q so the infrastructure failure stays retryable", v.Verdict, verdictstatus.VerdictInconclusive)
+		}
+		if got := exitCodeFor(v.Verdict); got != 2 {
+			t.Fatalf("exit code %d; want 2 so CI takes the infrastructure retry path", got)
+		}
+		if stat := v.Tiers["integration"]; stat.Status != verdictstatus.Inconclusive {
+			t.Fatalf("infra-class failure recorded as %q; want %q", stat.Status, verdictstatus.Inconclusive)
+		}
+	}
+}
+
+// TestRecordTierUnknownStatusDoesNotKeepPass pins the fail-closed
+// branch. A status no branch of the switch recognizes established
+// nothing about the tier, and leaving the run at PASS with exit code 0
+// would report the unrecognized outcome as success.
+// The recorded tier status is normalized to "unverified" so the
+// document stays inside the tier-status enum every consumer switches
+// on, and the value that was passed in survives in the reason.
+func TestRecordTierUnknownStatusDoesNotKeepPass(t *testing.T) {
+	v := newVerdict(selector{tier: "static"})
+	v.recordTier("static", "banana", time.Millisecond, "protoc not on PATH")
+	if v.Verdict == verdictstatus.VerdictPass {
+		t.Fatalf("unrecognized tier status left the verdict at PASS")
+	}
+	if got := exitCodeFor(v.Verdict); got == 0 {
+		t.Fatalf("verdict %q after an unrecognized tier status exits 0", v.Verdict)
+	}
+	stat := v.Tiers["static"]
+	if stat.Status != verdictstatus.Unverified {
+		t.Fatalf("recorded tier status %q; want it normalized to %q", stat.Status, verdictstatus.Unverified)
+	}
+	if !strings.Contains(stat.Reason, `"banana"`) {
+		t.Fatalf("recorded reason %q does not name the unrecognized status", stat.Reason)
+	}
+	if !strings.Contains(stat.Reason, "protoc not on PATH") {
+		t.Fatalf("recorded reason %q dropped the detail passed in", stat.Reason)
+	}
+}
+
+// TestRecordedTierStatusStaysInTheEnum holds every status recordTier
+// writes to the declared tier-status set. A status outside it reaches
+// no branch of the emitters, which switch on that set.
+func TestRecordedTierStatusStaysInTheEnum(t *testing.T) {
+	declared := map[string]bool{}
+	for _, s := range verdictstatus.TierStatuses() {
+		declared[s] = true
+	}
+	inputs := append(verdictstatus.TierStatuses(), "banana", "")
+	for _, in := range inputs {
+		v := newVerdict(selector{tier: "static"})
+		v.recordTier("static", in, time.Millisecond, "")
+		if got := v.Tiers["static"].Status; !declared[got] {
+			t.Errorf("recordTier(%q) recorded status %q, which is outside the declared tier-status set", in, got)
+		}
+	}
+}
+
+// staticCheckStub builds a table entry whose run returns the given
+// output and error and whose classifier reads the shared unverified
+// marker, matching the tier-0 Go-test entry.
+func staticCheckStub(name, out string, err error) staticCheck {
+	return staticCheck{
+		name:     name,
+		run:      func() (string, error) { return out, err },
+		classify: classifyUnverified,
+	}
+}
+
+// TestComposeStaticChecksUnverifiedMarkerRaisesTierStatus pins the
+// producer side of the unverified tier status. A tier-0 check that ran,
+// exited zero, and wrote the marker reported that it proved nothing;
+// collapsing it to pass is the fail-open outcome the status exists to
+// prevent.
+func TestComposeStaticChecksUnverifiedMarkerRaisesTierStatus(t *testing.T) {
+	out := "ok  \tgithub.com/lennylabs/lenny/tests/tier0_static\t0.01s\n    " +
+		verdictstatus.UnverifiedMarker + " protoc not on PATH\n"
+	status, msg := composeStaticChecks([]staticCheck{
+		staticCheckStub("go test ./tests/tier0_static/...", out, nil),
+	})
+	if status != verdictstatus.Unverified {
+		t.Fatalf("check reporting no conclusion yielded status %q; want %q", status, verdictstatus.Unverified)
+	}
+	if !strings.Contains(msg, "protoc not on PATH") {
+		t.Fatalf("tier message dropped the reason: %q", msg)
+	}
+}
+
+// TestComposeStaticChecksFailOutranksUnverified holds a real failure
+// above a check that reached no conclusion, in either order, so the new
+// status cannot mask a failing tier.
+func TestComposeStaticChecksFailOutranksUnverified(t *testing.T) {
+	unverified := staticCheckStub("tier0 go test", verdictstatus.UnverifiedMarker+" generator absent", nil)
+	failing := staticCheckStub("go vet ./...", "vet: bad code", fmt.Errorf("exit status 1"))
+	cases := []struct {
+		name   string
+		checks []staticCheck
+	}{
+		{"unverified first", []staticCheck{unverified, failing}},
+		{"failing first", []staticCheck{failing, unverified}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, msg := composeStaticChecks(tc.checks)
+			if status != verdictstatus.Fail {
+				t.Fatalf("got status %q; want %q", status, verdictstatus.Fail)
+			}
+			if !strings.Contains(msg, "go vet ./... failed") {
+				t.Fatalf("failure message lost the failing check: %q", msg)
+			}
+		})
+	}
+}
+
+// TestComposeStaticChecksSilentChecksPass keeps the pre-existing
+// outcome for a table whose checks report nothing: the tier passes and
+// carries no message.
+func TestComposeStaticChecksSilentChecksPass(t *testing.T) {
+	status, msg := composeStaticChecks([]staticCheck{
+		staticCheckStub("tier0 go test", "ok  \tgithub.com/lennylabs/lenny/tests/tier0_static\t0.01s\n", nil),
+		{name: "no classifier", run: func() (string, error) {
+			return verdictstatus.UnverifiedMarker + " ignored without a classifier", nil
+		}},
+	})
+	if status != verdictstatus.Pass {
+		t.Fatalf("silent checks yielded status %q; want %q", status, verdictstatus.Pass)
+	}
+	if msg != "" {
+		t.Fatalf("passing tier carried a message: %q", msg)
+	}
+}
+
+// TestComposeStaticChecksPropagatesEveryClassifierStatus holds the
+// composer to the per-check status contract: whatever tier status a
+// classifier returns is the status the tier reports, rather than only
+// unverified surviving and every other value collapsing to pass.
+func TestComposeStaticChecksPropagatesEveryClassifierStatus(t *testing.T) {
+	cases := []struct {
+		classified string
+		want       string
+	}{
+		{verdictstatus.Pass, verdictstatus.Pass},
+		{verdictstatus.Unverified, verdictstatus.Unverified},
+		{verdictstatus.Inconclusive, verdictstatus.Inconclusive},
+		{verdictstatus.Fail, verdictstatus.Fail},
+	}
+	for _, tc := range cases {
+		t.Run(tc.classified, func(t *testing.T) {
+			status, msg := composeStaticChecks([]staticCheck{{
+				name: "classified check",
+				run:  func() (string, error) { return "", nil },
+				classify: func(string) (string, string) {
+					return tc.classified, "docker socket absent"
+				},
+			}})
+			if status != tc.want {
+				t.Fatalf("classifier returning %q yielded tier status %q; want %q", tc.classified, status, tc.want)
+			}
+			if tc.want == verdictstatus.Pass {
+				return
+			}
+			if !strings.Contains(msg, "classified check") || !strings.Contains(msg, "docker socket absent") {
+				t.Fatalf("tier message dropped the check or its detail: %q", msg)
+			}
+		})
+	}
+}
+
+// TestComposeStaticChecksUnrecognizedClassifierStatusFailsClosed pins
+// the fail-closed path for a classifier that returns a value outside
+// the tier-status set. The composer starts at pass, so treating an
+// unrecognized value as a pass would report a green tier that nothing
+// established.
+func TestComposeStaticChecksUnrecognizedClassifierStatusFailsClosed(t *testing.T) {
+	for _, bogus := range []string{"banana", ""} {
+		t.Run(fmt.Sprintf("status=%q", bogus), func(t *testing.T) {
+			status, msg := composeStaticChecks([]staticCheck{{
+				name:     "classified check",
+				run:      func() (string, error) { return "", nil },
+				classify: func(string) (string, string) { return bogus, "" },
+			}})
+			if status != verdictstatus.Unverified {
+				t.Fatalf("classifier returning %q yielded tier status %q; want %q", bogus, status, verdictstatus.Unverified)
+			}
+			if !strings.Contains(msg, fmt.Sprintf("unrecognized tier status %q", bogus)) {
+				t.Fatalf("tier message dropped the unrecognized value: %q", msg)
+			}
+		})
+	}
+}
+
+// TestComposeStaticChecksStrongestClassifierStatusWins keeps the
+// composer's ordering aligned with the verdict's: a failing classifier
+// outranks an inconclusive one, which outranks a check that reached no
+// conclusion, whatever order the table runs them in.
+func TestComposeStaticChecksStrongestClassifierStatusWins(t *testing.T) {
+	check := func(name, status string) staticCheck {
+		return staticCheck{
+			name:     name,
+			run:      func() (string, error) { return "", nil },
+			classify: func(string) (string, string) { return status, "" },
+		}
+	}
+	unverified := check("tier0 go test", verdictstatus.Unverified)
+	inconclusive := check("compose bring-up", verdictstatus.Inconclusive)
+	failing := check("schema check", verdictstatus.Fail)
+	cases := []struct {
+		name   string
+		checks []staticCheck
+		want   string
+	}{
+		{"fail after unverified", []staticCheck{unverified, failing}, verdictstatus.Fail},
+		{"fail before unverified", []staticCheck{failing, unverified}, verdictstatus.Fail},
+		{"inconclusive after unverified", []staticCheck{unverified, inconclusive}, verdictstatus.Inconclusive},
+		{"inconclusive before unverified", []staticCheck{inconclusive, unverified}, verdictstatus.Inconclusive},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, _ := composeStaticChecks(tc.checks)
+			if status != tc.want {
+				t.Fatalf("got tier status %q; want %q", status, tc.want)
+			}
+		})
 	}
 }
 

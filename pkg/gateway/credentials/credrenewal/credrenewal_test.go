@@ -241,7 +241,7 @@ var errTokenServiceBreakerOpen = fmt.Errorf(
 // extension therefore covers every subsequent tick at the same instant, and
 // no tick reaches the Fallback Flow while the breaker stays open.
 //
-// spec: §4.9 line 1470 (Token Service unavailability guard)
+// spec: §4.9
 func TestTickHoldsLeaseWhenTokenServiceBreakerOpen_spec_4_9(t *testing.T) {
 	// Breaker-open is modeled as the Renewer failing with the mapped
 	// sentinel; the lease's expiresAt is well in the future.
@@ -305,7 +305,7 @@ func TestTickHoldsLeaseWhenTokenServiceBreakerOpen_spec_4_9(t *testing.T) {
 // Fallback path, exhausting after MaxRenewalRetries. The deadline never
 // advances, so every attempt targets the same newExpiresAt.
 //
-// spec: §4.9 line 1470 (Token Service unavailability guard)
+// spec: §4.9
 func TestTickExhaustsWhenExtensionEnforcementFails_spec_4_9(t *testing.T) {
 	r := &fakeRenewer{err: errTokenServiceBreakerOpen}
 	var exhausted []string
@@ -351,7 +351,7 @@ func TestTickExhaustsWhenExtensionEnforcementFails_spec_4_9(t *testing.T) {
 // and fires OnExtensionCapReached without ever entering the Fallback Flow
 // (no OnExhausted, no re-mint).
 //
-// spec: §4.9 line 1470 (Token Service unavailability guard — Bounded extension)
+// spec: §4.9
 func TestTickCapsCumulativeExtensionAtLeaseTTL_spec_4_9(t *testing.T) {
 	r := &fakeRenewer{err: errTokenServiceBreakerOpen}
 	var exhausted []string
@@ -396,7 +396,7 @@ func TestTickCapsCumulativeExtensionAtLeaseTTL_spec_4_9(t *testing.T) {
 // follows the existing recordFailure/exhaust path rather than hanging or
 // extending past the cap.
 //
-// spec: §4.9 line 1470 (Token Service unavailability guard — Bounded extension)
+// spec: §4.9
 func TestTickFallsThroughWhenExtensionCapCallbackUnset_spec_4_9(t *testing.T) {
 	r := &fakeRenewer{err: errTokenServiceBreakerOpen}
 	var exhausted []string
@@ -440,7 +440,7 @@ func TestTickFallsThroughWhenExtensionCapCallbackUnset_spec_4_9(t *testing.T) {
 // renewal, then a full run of extensions on the fresh lease reaches the cap
 // only after another maxExtensions extensions rather than sooner.
 //
-// spec: §4.9 line 1470 (Token Service unavailability guard — Bounded extension)
+// spec: §4.9
 func TestTickResetsExtensionCountOnSuccessfulRenewal_spec_4_9(t *testing.T) {
 	r := &togglingRenewer{buffer: time.Hour, leaseTTL: 3 * time.Hour, open: true}
 	var extended int
@@ -539,13 +539,12 @@ func (r *flakyRenewer) Renew(_ context.Context, lease credrenewal.Lease) (credre
 	}, nil
 }
 
-// TestDefaultExpiryWarningLeadIsOneHour_spec_11_3_215 pins the §11.3
-// line 215 default (3600s) at the package layer so any future drift
+// TestDefaultExpiryWarningLeadIsOneHour_spec_11_3_215 pins the §11.3 default (3600s) at the package layer so any future drift
 // breaks the test rather than silently shrinking the lead time.
 // F-11.3.20.
 func TestDefaultExpiryWarningLeadIsOneHour_spec_11_3_215(t *testing.T) {
 	if credrenewal.DefaultExpiryWarningLead != 3600*time.Second {
-		t.Errorf("DefaultExpiryWarningLead = %s, want 3600s per §11.3 line 215",
+		t.Errorf("DefaultExpiryWarningLead = %s, want 3600s per §11.3",
 			credrenewal.DefaultExpiryWarningLead)
 	}
 }
@@ -649,4 +648,44 @@ func TestTickFiresExpiryWarningEvenWhenRenewalSucceeds_spec_11_3_215(t *testing.
 	if len(renewed) != 0 {
 		t.Errorf("OnRenewed fired for a lease whose renewBefore is in the future")
 	}
+}
+
+// releasedRenewer reports every lease released.
+type releasedRenewer struct{ calls int }
+
+func (r *releasedRenewer) Renew(context.Context, credrenewal.Lease) (credrenewal.Lease, error) {
+	r.calls++
+	return credrenewal.Lease{}, credrenewal.ErrLeaseReleased
+}
+
+// TestTickForgetsAReleasedLease_spec_4_9 asserts that a renewal or an
+// extension that reports credrenewal.ErrLeaseReleased stops tracking the
+// lease with no OnExhausted and no OnRenewed.
+//
+// spec: §4.9 (Proactive Lease Renewal)
+func TestTickForgetsAReleasedLease_spec_4_9(t *testing.T) {
+	t.Run("renewal", func(t *testing.T) {
+		exhausted, renewed := 0, 0
+		w := credrenewal.New(&releasedRenewer{}, credrenewal.Options{
+			OnExhausted: func(credrenewal.Lease) { exhausted++ },
+			OnRenewed:   func(credrenewal.Lease) { renewed++ },
+		})
+		w.Track(credrenewal.Lease{LeaseID: "cl-1", RenewBefore: base, ExpiresAt: base.Add(time.Hour)})
+		w.Tick(context.Background(), base.Add(time.Second))
+		if w.Tracked() != 0 || exhausted != 0 || renewed != 0 {
+			t.Errorf("tracked %d exhausted %d renewed %d, want 0/0/0", w.Tracked(), exhausted, renewed)
+		}
+	})
+	t.Run("extension", func(t *testing.T) {
+		exhausted := 0
+		w := credrenewal.New(&fakeRenewer{err: credrenewal.ErrRenewInfraUnavailable}, credrenewal.Options{
+			OnExhausted: func(credrenewal.Lease) { exhausted++ },
+			OnExtend:    func(credrenewal.Lease, time.Time) error { return credrenewal.ErrLeaseReleased },
+		})
+		w.Track(credrenewal.Lease{LeaseID: "cl-1", RenewBefore: base, ExpiresAt: base.Add(time.Hour), LeaseTTL: time.Hour})
+		w.Tick(context.Background(), base.Add(time.Second))
+		if w.Tracked() != 0 || exhausted != 0 {
+			t.Errorf("tracked %d exhausted %d, want the released lease forgotten", w.Tracked(), exhausted)
+		}
+	})
 }

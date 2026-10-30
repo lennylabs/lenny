@@ -49,7 +49,7 @@ func AllProfiles() []Profile {
 // Pools that omit `isolationProfile` resolve to this value.
 func Default() Profile { return ProfileSandboxed }
 
-// DevModeIsolationWarning is the §5.3 line 677 warning a binary logs
+// DevModeIsolationWarning is the §5.3 warning a binary logs
 // once at startup when global.devMode (LENNY_DEV_MODE=true) is set,
 // because the default isolation profile then falls back to runc.
 const DevModeIsolationWarning = "Dev mode: using runc isolation. Do not use in production."
@@ -62,7 +62,7 @@ const DevModeIsolationWarning = "Dev mode: using runc isolation. Do not use in p
 // startup so an accidental production dev-mode install is visible in the
 // logs.
 //
-// spec: §5.3 line 677.
+// spec: §5.3.
 func DefaultForMode(devMode bool) Profile {
 	if devMode {
 		return ProfileStandard

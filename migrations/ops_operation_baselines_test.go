@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §25.2 lines 393-394. Migration 0128 creates the
+// spec: §25.2. Migration 0128 creates the
 // ops_operation_baselines table backing the canonical Progress
 // Envelope's historical_p50 ETA method. It is platform-scoped (no RLS,
 // no tenant column); the down migration drops it.

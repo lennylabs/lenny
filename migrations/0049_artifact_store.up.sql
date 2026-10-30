@@ -16,8 +16,7 @@ CREATE TABLE artifact_store (
     session_id           TEXT        NOT NULL,
     part_id              TEXT        NOT NULL,
     mime_type            TEXT        NOT NULL DEFAULT '',
-    -- §12.5 line 309 names this column artifact_size_bytes; the §12.4
-    -- line 210 / §11.2 storage-quota rehydration query sums it across
+    -- §12.5 names this column artifact_size_bytes; the §12.4 / §11.2 storage-quota rehydration query sums it across
     -- live rows on Redis restart.
     artifact_size_bytes  BIGINT      NOT NULL DEFAULT 0,
     -- §12.5 lifecycle state: 'live', 'soft_deleted', or 'tombstoned'.
@@ -39,7 +38,7 @@ CREATE TABLE artifact_store (
         CHECK (state IN ('live', 'soft_deleted', 'tombstoned'))
 );
 
--- §12.5 GC sweep (lines 333, 341): the hard-prune pass deletes every
+-- §12.5 GC sweep: the hard-prune pass deletes every
 -- non-live row past its tombstone deadline, mirroring the spec's binary
 -- `deleted_at IS NOT NULL` predicate. The partial index spans both
 -- non-live states ('soft_deleted' produced by the retention sweep and

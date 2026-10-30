@@ -1,0 +1,518 @@
+// SPDX-License-Identifier: MIT
+
+//go:build integration
+
+// Tier-4 flows for the lifetime of the pod's runtime socket (CH-MSGSOCK).
+// The adapter binds that address once when it starts and accepts the
+// runtime's connection at the pod's first session start. The runtime process
+// lives as long as the pod: a session teardown ends nothing, the one
+// connection serves every later session, and the pod-scope teardown the
+// adapter process runs at exit closes the connection and the listener.
+//
+// The file carries two flows. The first drives a real adapter.Server over
+// its gRPC contract through two complete sessions in sequence on one
+// SocketRuntimeProcess, so the second session is served by the runtime
+// process and the connection the first session used. The second builds and runs the
+// real cmd/lenny-adapter binary with a filesystem-path runtime socket,
+// stops it with SIGTERM, and asserts that the socket file is gone, which is
+// what lets a restarted adapter bind the same path.
+//
+// spec: §5.2 (Pool Configuration and Execution Modes), §15.4.3 (Runtime
+// Integration Levels), §4.7.10 (Runtime process lifetime), §28.5.3 (Intra-pod).
+package tier4_integration_test
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
+
+	"github.com/lennylabs/lenny/pkg/adapter"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/runtimekit"
+	"github.com/lennylabs/lenny/tests/testinfra/binbuild"
+)
+
+// spec: 15.4.3 (Runtime Integration Levels), 5.2 (Pool Configuration and Execution Modes), 4.7.10 (Runtime process lifetime), 28.5.3 (CH-MSGSOCK)
+// diagnosis: a failure means the pod lost its runtime at the first
+//
+//	session's end, so no recycling pod can serve a second session, or the
+//	session frames on the pod's one runtime connection did not bracket each
+//	session: a frame for the second session arrived before the first
+//	session's session_end, a session's message arrived before its
+//	session_start, or a session_end was written after the pod-scope
+//	teardown ended the connection. A kept runtime then serves one session
+//	under another's context, or never learns a session ended.
+func TestAdapterServesTwoSequentialSessionsOverOneRuntimeSocket_spec_15_4_3(t *testing.T) {
+	echoBin := buildRepoBinary(t, "cmd/runtimes/echo")
+
+	base := t.TempDir()
+	srv := adapter.New("tier4-sequential-sessions")
+	srv.WorkspaceBase = filepath.Join(base, "workspace")
+	srv.SessionsRoot = filepath.Join(base, "sessions")
+	srv.ArtifactsRoot = filepath.Join(base, "artifacts")
+	srv.CredentialsDir = filepath.Join(base, "run", "lenny")
+	// The hold that the third session's coordinator loss arms fires
+	// quickly, and the timer seam reports when the termination returned.
+	srv.CoordinatorHoldTimeout = 200 * time.Millisecond
+	holdFired := make(chan struct{})
+	srv.HoldAfterFunc = func(d time.Duration, f func()) adapter.TimerHandle {
+		return time.AfterFunc(d, func() { f(); close(holdFired) })
+	}
+
+	rt, err := adapter.NewSocketRuntimeProcess(concurrentSocketAddr(t), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, publishSpawnedRuntimeManifest(t))
+	if err != nil {
+		t.Fatalf("bind pod runtime socket: %v", err)
+	}
+	// The transport outlives every session Close, so the pod-scope teardown
+	// runs separately. Registered first, this cleanup runs last.
+	t.Cleanup(func() { _ = rt.CloseListener() })
+	addr := rt.SocketPath()
+	// SpawnPath is the test-only spawn hook: the pod's first session start
+	// execs the echo runtime once, and the second session rides the same
+	// connection. The spawned echo dials the recording peer's proxy socket
+	// rather than the adapter's, and the peer dials the adapter's runtime
+	// socket on echo's behalf and relays both directions. Echo's own
+	// connection setup therefore runs end to end through the recorded path,
+	// and the peer logs every frame in the order the runtime receives it
+	// and observes the connection's end.
+	peer := startRecordingPeer(t, addr)
+	rt.SpawnPath = spawnDialing(t, echoBin, peer.proxyAddr)
+	rt.AcceptTimeout = 15 * time.Second
+	srv.Runtime = rt
+
+	client := concurrentAdapterClient(t, srv)
+	for _, sessionID := range []string{"sess-alice", "sess-bob"} {
+		runOneSession(t, client, sessionID)
+		peer.requireDialer(t, echoBin)
+		if got := rt.SocketPath(); got != addr {
+			t.Fatalf("runtime socket address after %s = %q, want the boot-time address %q", sessionID, got, addr)
+		}
+		if !rt.ServesNextSession() {
+			t.Fatalf("ServesNextSession() after %s = false, want the kept runtime able to serve the next session", sessionID)
+		}
+	}
+
+	// A third session is running when the coordinator hold timeout fires.
+	// The termination's pod-scope teardown ends the connection, and neither
+	// it nor the per-session termination that follows writes session_end:
+	// the runtime's log ends at the third session's session_start.
+	runHoldTimeoutTermination(t, client, "sess-carol", holdFired)
+	peer.awaitEnd(t)
+
+	want := []string{
+		"session_start:sess-alice", "message:sess-alice", "session_end:sess-alice",
+		"session_start:sess-bob", "message:sess-bob", "session_end:sess-bob",
+		"session_start:sess-carol",
+	}
+	if got := peer.log(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("runtime connection carried %v, want %v", got, want)
+	}
+}
+
+// runHoldTimeoutTermination starts sessionID, opens and then drops the
+// pod's CH-ADAPTEREVENTS stream while the session is running, which is the
+// coordinator-loss signal that arms the hold, and waits until the hold
+// timeout's termination has returned, which fired reports. The termination
+// runs the transport's pod-scope teardown and then terminates every started
+// session.
+// spec: §10.1.4 (Hold state timeout); §4.7.10 (Runtime process lifetime).
+func runHoldTimeoutTermination(t *testing.T, client adapterv1.AdapterClient, sessionID string, fired <-chan struct{}) {
+	t.Helper()
+	ctx := context.Background()
+	evCtx, dropEvents := context.WithCancel(ctx)
+	events, err := client.AdapterEvents(evCtx)
+	if err != nil {
+		dropEvents()
+		t.Fatalf("open AdapterEvents: %v", err)
+	}
+	go func() {
+		for {
+			if _, err := events.Recv(); err != nil {
+				return
+			}
+		}
+	}()
+	if _, err := client.StartSession(ctx, &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID}, Runtime: "echo",
+	}); err != nil {
+		dropEvents()
+		t.Fatalf("StartSession(%s): %v", sessionID, err)
+	}
+	dropEvents()
+	select {
+	case <-fired:
+	case <-time.After(15 * time.Second):
+		t.Fatalf("the coordinator hold timeout never terminated %s", sessionID)
+	}
+}
+
+// recordingPeer sits between the spawned echo runtime and the adapter's
+// runtime socket. It listens on a proxy socket that echo dials, dials the
+// adapter's socket once echo has connected, logs the type and sessionId of
+// every frame the adapter writes, and relays frames in both directions. The
+// log is the order the runtime received the frames in.
+type recordingPeer struct {
+	proxyAddr string
+
+	mu     sync.Mutex
+	frames []string
+	// dialer is the executable of the process that dialed the proxy socket,
+	// read from its peer credentials, or "" when it could not be read.
+	dialer string
+	ended  chan struct{}
+}
+
+// startRecordingPeer listens on a fresh proxy socket and, for the one
+// runtime connection it accepts, relays to adapterAddr.
+func startRecordingPeer(t *testing.T, adapterAddr string) *recordingPeer {
+	t.Helper()
+	// The Unix sun_path field holds about 104 bytes, and t.TempDir() can
+	// exceed that, so the proxy socket lives under a short temp directory.
+	dir, err := os.MkdirTemp("", "lrp")
+	if err != nil {
+		t.Fatalf("proxy socket temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	ln, err := net.Listen("unix", filepath.Join(dir, "rt.sock"))
+	if err != nil {
+		t.Fatalf("listen on the recording peer's proxy socket: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	p := &recordingPeer{proxyAddr: ln.Addr().String(), ended: make(chan struct{})}
+	go p.serve(t, ln, adapterAddr)
+	return p
+}
+
+// serve accepts the runtime's connection on the proxy socket, dials the
+// adapter's runtime socket for it, and relays until the adapter ends the
+// connection.
+func (p *recordingPeer) serve(t *testing.T, ln net.Listener, adapterAddr string) {
+	defer close(p.ended)
+	runtimeConn, err := ln.Accept()
+	if err != nil {
+		// The cleanup closes the listener when no runtime ever dialed; the
+		// failed StartSession has already reported that.
+		if !errors.Is(err, net.ErrClosed) {
+			t.Errorf("accept the spawned runtime on the proxy socket: %v", err)
+		}
+		return
+	}
+	defer runtimeConn.Close()
+	p.mu.Lock()
+	p.dialer = peerExecutable(runtimeConn)
+	p.mu.Unlock()
+	adapterConn, err := net.Dial("unix", dialableUnixAddr(adapterAddr))
+	if err != nil {
+		t.Errorf("dial the adapter's runtime socket for the spawned runtime: %v", err)
+		return
+	}
+	defer adapterConn.Close()
+	go func() { _, _ = io.Copy(adapterConn, runtimeConn) }()
+	p.record(adapterConn, runtimeConn)
+}
+
+// record logs and forwards each adapter frame to the runtime until the
+// adapter ends the connection.
+func (p *recordingPeer) record(adapterConn io.Reader, runtimeConn io.Writer) {
+	sc := bufio.NewScanner(adapterConn)
+	sc.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	for sc.Scan() {
+		var f struct {
+			Type      string `json:"type"`
+			SessionID string `json:"sessionId"`
+		}
+		_ = json.Unmarshal(sc.Bytes(), &f)
+		p.mu.Lock()
+		p.frames = append(p.frames, f.Type+":"+f.SessionID)
+		p.mu.Unlock()
+		if _, err := runtimeConn.Write(append(sc.Bytes(), '\n')); err != nil {
+			return
+		}
+	}
+}
+
+// awaitEnd blocks until the adapter ends the connection.
+func (p *recordingPeer) awaitEnd(t *testing.T) {
+	t.Helper()
+	select {
+	case <-p.ended:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the pod-scope teardown did not end the runtime connection")
+	}
+}
+
+// requireDialer requires that the runtime connection the peer relays was
+// dialed by want, the binary the adapter spawned, so the frames the peer
+// records are the ones that binary read.
+func (p *recordingPeer) requireDialer(t *testing.T, want string) {
+	t.Helper()
+	if !peerExecutableReadable {
+		return
+	}
+	p.mu.Lock()
+	got := p.dialer
+	p.mu.Unlock()
+	if got != want {
+		t.Fatalf("the runtime connection was dialed by %q, want the spawned runtime %q", got, want)
+	}
+}
+
+func (p *recordingPeer) log() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.frames...)
+}
+
+// spawnDialing returns a SpawnPath that execs runtimeBin in place with its
+// socket variable naming dialAddr. The adapter's spawn sets that variable to
+// its own socket, and a child's environment keeps the last assignment of a
+// name, so the override has to happen inside the spawned process. The exec
+// replaces the shell, so the process the adapter spawned, signals, and
+// reaps is the runtime itself.
+func spawnDialing(t *testing.T, runtimeBin, dialAddr string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "spawn-runtime.sh")
+	script := "#!/bin/sh\n" + runtimekit.SocketEnvVar + "=" + shellQuote(dialAddr) + " exec " + shellQuote(runtimeBin) + "\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write the runtime spawn wrapper: %v", err)
+	}
+	return path
+}
+
+// shellQuote quotes s as one POSIX shell word.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// dialableUnixAddr maps a runtime socket address to the form net.Dial takes:
+// a Linux abstract address written with a leading "@" is dialed with a
+// leading NUL, and a filesystem path is dialed as-is.
+func dialableUnixAddr(addr string) string {
+	if strings.HasPrefix(addr, "@") {
+		return "\x00" + addr[1:]
+	}
+	return addr
+}
+
+// runOneSession drives one complete session on the shared adapter:
+// StartSession, one message round trip on an Attach stream, and an
+// unconditional Shutdown. A failure to start or to receive the response is
+// fatal, because it means the pod cannot serve this session.
+func runOneSession(t *testing.T, client adapterv1.AdapterClient, sessionID string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := client.StartSession(ctx, &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: sessionID},
+		Runtime:   "echo",
+	}); err != nil {
+		t.Fatalf("StartSession(%s): %v", sessionID, err)
+	}
+
+	streamCtx, cancel := context.WithCancel(ctx)
+	stream, err := client.Attach(streamCtx)
+	if err != nil {
+		cancel()
+		t.Fatalf("Attach(%s): %v", sessionID, err)
+	}
+	text := "ping-" + sessionID
+	body, err := json.Marshal(map[string]any{
+		"type":  "message",
+		"id":    "m_" + sessionID,
+		"input": []map[string]any{{"type": "text", "inline": text}},
+	})
+	if err != nil {
+		cancel()
+		t.Fatalf("encode message for %s: %v", sessionID, err)
+	}
+	if err := stream.Send(&adapterv1.AttachRequest{
+		SessionId:    &adapterv1.SessionId{Value: sessionID},
+		EnvelopeJson: body,
+	}); err != nil {
+		cancel()
+		t.Fatalf("Send message(%s): %v", sessionID, err)
+	}
+	resp := recvResponse(t, stream)
+	cancel()
+	if len(resp.Output) != 1 || !strings.Contains(resp.Output[0].Inline, text) {
+		t.Fatalf("%s response output = %+v, want the echoed %q", sessionID, resp.Output, text)
+	}
+
+	if _, err := client.Shutdown(ctx, &adapterv1.ShutdownRequest{
+		SessionId:             &adapterv1.SessionId{Value: sessionID},
+		UnconditionalTeardown: true,
+	}); err != nil {
+		t.Fatalf("Shutdown(%s): %v", sessionID, err)
+	}
+}
+
+// spec: §4.7.10 (Deployment Model), §5.2 (Pool Configuration and Execution
+// Modes).
+// diagnosis: a failure means the adapter process exits without releasing its
+// runtime socket, so a filesystem-path socket file survives the process and
+// blocks a restarted adapter from binding the same path. If the process did
+// not exit cleanly, read the captured adapter log for the failing step.
+func TestAdapterProcessUnlinksItsRuntimeSocketOnSIGTERM_spec_5_2(t *testing.T) {
+	adapterBin := buildRepoBinary(t, "cmd/lenny-adapter")
+
+	// The Unix sun_path field holds about 104 bytes, and t.TempDir() can
+	// exceed that, so the socket lives under a short temp directory.
+	sockDir, err := os.MkdirTemp("", "lsk")
+	if err != nil {
+		t.Fatalf("socket temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sockPath := filepath.Join(sockDir, "rt.sock")
+
+	grpcAddr := reserveLoopbackAddr(t)
+	cmd := exec.Command(adapterBin, adapterArgsOutsideAPod(t.TempDir(), grpcAddr, sockPath)...)
+	logs := &processLog{}
+	cmd.Stdout = logs
+	cmd.Stderr = logs
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start lenny-adapter: %v", err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		select {
+		case <-exited:
+		case <-time.After(5 * time.Second):
+		}
+	})
+
+	// The socket file appears before main installs its SIGTERM handler, so
+	// the health check is the readiness signal.
+	waitForHealthServing(t, grpcAddr, exited, logs)
+	if _, err := os.Stat(sockPath); err != nil {
+		t.Fatalf("runtime socket %s absent while the adapter serves: %v", sockPath, err)
+	}
+
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("signal SIGTERM: %v", err)
+	}
+	select {
+	case err := <-exited:
+		if err != nil {
+			t.Fatalf("lenny-adapter exit after SIGTERM = %v, want a clean exit; log:\n%s", err, logs.String())
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("lenny-adapter did not exit within 30s of SIGTERM; log:\n%s", logs.String())
+	}
+	if _, err := os.Stat(sockPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("runtime socket %s after exit: stat err = %v, want it removed", sockPath, err)
+	}
+}
+
+// adapterArgsOutsideAPod returns the lenny-adapter flags that let the binary
+// start on a developer host: every pod-mounted directory points under root,
+// the gRPC server binds grpcAddr, and the sidecar runtime transport binds
+// sockPath. The adapter refuses --runtime-socket without the agent UID its
+// SO_PEERCRED peer check admits, so the flags name one. No runtime dials the
+// socket in these tests, so any non-root UID serves.
+func adapterArgsOutsideAPod(root, grpcAddr, sockPath string) []string {
+	dir := func(name string) string { return filepath.Join(root, name) }
+	return []string{
+		"--addr", grpcAddr,
+		"--runtime-socket", sockPath,
+		"--runtime-uid", "1001",
+		"--workspace-base", dir("workspace"),
+		"--sessions-root", dir("sessions"),
+		"--artifacts-root", dir("artifacts"),
+		"--staging-dir", filepath.Join(dir("workspace"), ".staging"),
+		"--credentials-dir", dir("run-lenny"),
+		"--shared-assets-dir", filepath.Join(dir("workspace"), "shared"),
+		"--heartbeat-interval-seconds", "0",
+	}
+}
+
+// reserveLoopbackAddr returns a loopback host:port that was free when the
+// test asked the kernel for one.
+func reserveLoopbackAddr(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve loopback port: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	if err := l.Close(); err != nil {
+		t.Fatalf("release reserved port: %v", err)
+	}
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+}
+
+// waitForHealthServing polls the grpc.health.v1 service on addr until it
+// reports SERVING, failing the test if the process exits first or the
+// deadline passes.
+func waitForHealthServing(t *testing.T, addr string, exited <-chan error, logs *processLog) {
+	t.Helper()
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial adapter %s: %v", addr, err)
+	}
+	defer func() { _ = conn.Close() }()
+	hc := healthv1.NewHealthClient(conn)
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-exited:
+			t.Fatalf("lenny-adapter exited before serving: %v; log:\n%s", err, logs.String())
+		default:
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		resp, err := hc.Check(ctx, &healthv1.HealthCheckRequest{})
+		cancel()
+		if err == nil && resp.GetStatus() == healthv1.HealthCheckResponse_SERVING {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("lenny-adapter health never reported SERVING on %s; log:\n%s", addr, logs.String())
+}
+
+// processLog collects a child process's output. The exec package copies
+// the output on its own goroutine, and the test reads the log while the
+// process may still be running, so access is serialized.
+type processLog struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+// Write appends p to the log.
+func (l *processLog) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+// String returns the output collected so far.
+func (l *processLog) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
+
+// buildRepoBinary returns the path of a binary of the repository's main
+// package pkg in a directory of t's own. The package is linked once per test
+// process (binbuild).
+func buildRepoBinary(t *testing.T, pkg string) string {
+	t.Helper()
+	return binbuild.Build(t, "./"+pkg, filepath.Base(pkg))
+}

@@ -11,7 +11,7 @@ import (
 
 func ptr[T any](v T) *T { return &v }
 
-// spec: §5.1 line 49 — an unset override field inherits the runtime's
+// spec: §5.1 — an unset override field inherits the runtime's
 // declared capability; a set field replaces it for the tenant.
 func TestApplyCapabilityOverride_spec_5_1_49(t *testing.T) {
 	base := runtimestore.Runtime{
@@ -97,7 +97,7 @@ func TestApplyCapabilityOverride_spec_5_1_49(t *testing.T) {
 	})
 }
 
-// spec: §5.1 line 49 — an override that sets a capability on a runtime
+// spec: §5.1 — an override that sets a capability on a runtime
 // that declares no capabilities block creates a fresh block.
 func TestApplyCapabilityOverride_NilCapabilities_spec_5_1_49(t *testing.T) {
 	rt := runtimestore.Runtime{Name: "mcp-only"}

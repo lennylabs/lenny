@@ -118,8 +118,7 @@ func TestCreateCredentialPoolRejectsInvalidCacheScope(t *testing.T) {
 	}
 }
 
-// TestCreateCredentialPoolRejectsHTTPProxyEndpoint covers the §4.9 line
-// 1513 rule: an http:// proxyEndpoint is rejected with 422
+// TestCreateCredentialPoolRejectsHTTPProxyEndpoint covers the §4.9 rule: an http:// proxyEndpoint is rejected with 422
 // INVALID_POOL_PROXY_ENDPOINT so a lease token is never sent in
 // plaintext on the cluster network.
 func TestCreateCredentialPoolRejectsHTTPProxyEndpoint(t *testing.T) {
@@ -190,8 +189,7 @@ func TestCreateCredentialPool(t *testing.T) {
 	}
 }
 
-// TestCredentialPoolCachePolicyRoundTrips covers the §4.9 cachePolicy
-// admin surface (spec lines 1542-1556): a POST persists the policy, a GET
+// TestCredentialPoolCachePolicyRoundTrips covers the §4.9 cachePolicy admin surface: a POST persists the policy, a GET
 // returns it, and a PUT replaces it. A pool created without a cachePolicy
 // reads back with none (caching off).
 func TestCredentialPoolCachePolicyRoundTrips(t *testing.T) {

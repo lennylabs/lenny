@@ -33,6 +33,11 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 )
 
+// journeyRuntimePrefix is the stem of the runtime, pool, and image
+// names this test mints per run. The start-time sweep uses it to
+// recognize what an earlier, killed run of this same test left behind.
+const journeyRuntimePrefix = "bob-agent-"
+
 // spec: 26 (day-one utility: "once the deployer registers the published
 // image digest, applies a Runtime CRD instance, and creates a warm pool
 // for it"; tenant access: "Operators grant access per tenant via POST
@@ -51,7 +56,7 @@ func TestRuntimePublishJourney(t *testing.T) {
 	c := kind.InstallLenny(t)
 	ctx := context.Background()
 
-	name := fmt.Sprintf("bob-agent-%d", time.Now().UnixNano()%1_000_000)
+	name := fmt.Sprintf("%s%d", journeyRuntimePrefix, time.Now().UnixNano()%1_000_000)
 	poolName := name + "-pool"
 	// A per-run tenant id, not a fixed constant or the doc-style "acme"
 	// example tenant: the tier-5 suite shares one long-lived Kind
@@ -97,7 +102,7 @@ func TestRuntimePublishJourney(t *testing.T) {
 
 	// Step: push to a real local OCI registry. install.sh's own images
 	// deliberately avoid a registry (kind load + pullPolicy: Never), but
-	// §26 line 8 requires "CI that publishes OCI images to the canonical
+	// §26 requires "CI that publishes OCI images to the canonical
 	// Lenny registry", so this test stands up a real one rather than
 	// reusing that shortcut.
 	registryAddr := startLocalRegistry(t)
@@ -109,13 +114,24 @@ func TestRuntimePublishJourney(t *testing.T) {
 	// Step: publish. `lenny runtime publish` (no --skip-push) both
 	// pushes pushTag with a real `docker push` and registers it against
 	// the gateway, reusing the `admin runtimes register` path. spec:
-	// §24.18 line 233.
+	// §24.18.
 	// The shared tier-5 Kind cluster accumulates concurrent load across
 	// the whole suite; a freshly created pool's first claim can take
 	// longer than the driver's 30s default under that load, so this
 	// gives the HTTP client more headroom than sessiondriver.New's
 	// default.
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 90 * time.Second})
+	// Reclaim what earlier runs of this test leaked. The pool below and
+	// the Runtime CRD above are removed in t.Cleanup, which does not run
+	// when the process is killed, and the name carries a per-run suffix
+	// so nothing a later run creates ever reuses the leaked object. Each
+	// leak leaves a warm pool that keeps recreating a member pod, and
+	// every such pod carries lenny.dev/managed=true, so any later test
+	// that waits on that label waits on the wreckage. The sweep is
+	// best-effort and never fails the run: its subject is what an
+	// earlier run left behind rather than anything this run asserts.
+	sweepStaleJourneyRuntimes(t, c, lennyCtl, repo, d.BaseURL(), poolName)
+
 	pubOut, err := runCLI(t, lennyCtl, repo,
 		"--api-url", d.BaseURL(), "--dev-tenant", "platform", "--dev-roles", "platform-admin",
 		"runtime", "publish", name, "--image", pushTag, "--manifest", "runtime.yaml")
@@ -128,8 +144,7 @@ func TestRuntimePublishJourney(t *testing.T) {
 	// (pkg/controller/runtime's doc comment).
 
 	// The registration response's image field is the digest-pinned
-	// reference cmdRuntimePublish resolved after the push (§5.1 line
-	// 690: registered images must be digest-pinned). Reading it back
+	// reference cmdRuntimePublish resolved after the push (§5.1: registered images must be digest-pinned). Reading it back
 	// from the actual response, rather than recomputing it locally,
 	// asserts what the CLI genuinely registered.
 	registeredImage := registeredImageField(t, pubOut, name)
@@ -146,7 +161,7 @@ func TestRuntimePublishJourney(t *testing.T) {
 	// locally on each node.
 	pinImageOnNodes(t, c, pushTag, registeredImage)
 
-	// Step: apply the Runtime CRD. §26 line 3 requires it explicitly: a
+	// Step: apply the Runtime CRD. §26 requires it explicitly: a
 	// session against a placeholder-pinned reference-runtime record
 	// "requires a runnable image digest, an applied Runtime CRD
 	// instance, and a warm pool before it starts." The admin
@@ -157,6 +172,10 @@ func TestRuntimePublishJourney(t *testing.T) {
 	// The image field carries the tag-stripped `<repo>@sha256:<id>`
 	// form to match pinImageOnNodes' local pin exactly (see its doc
 	// comment on the tag+digest normalization the kubelet performs).
+	// The command is the absolute path the scaffold's Dockerfile installs
+	// the binary at, /usr/local/bin/<runtime name>, because the runtime
+	// supervisor execs the Runtime command rather than the image
+	// entrypoint (§4.7.10 Deployment model, **Runtime supervisor.**).
 	runtimeCR := fmt.Sprintf(`apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
@@ -164,6 +183,7 @@ metadata:
 spec:
   type: agent
   image: %s
+  command: ["/usr/local/bin/%s"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
@@ -172,7 +192,7 @@ spec:
     injection:
       supported: true
       modes: [immediate]
-`, name, stripTag(registeredImage))
+`, name, stripTag(registeredImage), name)
 	if out, err := c.ApplyStdin(t, runtimeCR); err != nil {
 		t.Fatalf("kubectl apply Runtime %s: %v\n%s", name, err, out)
 	}
@@ -181,7 +201,7 @@ spec:
 	})
 
 	// Step: create a warm pool for the runtime via POST /v1/admin/pools
-	// (§15.1 line 792), the same admin surface an operator uses. The
+	// (§15.1), the same admin surface an operator uses. The
 	// PoolScalingController reconciles this Postgres-authoritative pool
 	// row into a SandboxTemplate/SandboxWarmPool CRD pair, and the
 	// Sandbox reconciler then produces a real agent pod from it.
@@ -204,9 +224,12 @@ spec:
 		t.Fatalf("lenny-ctl admin pools create: %v\n%s", err, out)
 	}
 	t.Cleanup(func() {
-		_, _ = runCLI(t, lennyCtl, repo,
-			"--api-url", d.BaseURL(), "--dev-tenant", "platform", "--dev-roles", "platform-admin",
-			"admin", "pools", "delete", poolName)
+		// A pool that survives its delete keeps a Ready member pod
+		// carrying lenny.dev/managed=true, which every later tier-5 case
+		// that waits on that label then has to reconcile against a
+		// Runtime this run removed. Report what the delete did rather
+		// than discarding it.
+		newJourneyPoolReclaim(t, c, lennyCtl, repo, d.BaseURL()).reclaim(poolName)
 	})
 
 	// The tenant row must exist before granting it runtime access (the
@@ -214,8 +237,12 @@ spec:
 	if err := d.BootstrapTenant(ctx, tenantID); err != nil {
 		t.Fatalf("bootstrap tenant %q: %v", tenantID, err)
 	}
+	// The journey's session names no environment, which a freshly
+	// bootstrapped tenant's deny-all §10.6 noEnvironmentPolicy rejects
+	// with 403 FORBIDDEN.
+	ensureTenantAllowsSessionsWithNoEnvironment(t, d, tenantID)
 
-	// Step: grant the tenant access to the runtime. spec: §26 line 30 —
+	// Step: grant the tenant access to the runtime. spec: §26 —
 	// "Operators grant access per tenant via POST
 	// /v1/admin/runtimes/{name}/tenant-access ... after install."
 	if out, err := runCLI(t, lennyCtl, repo,
@@ -297,7 +324,7 @@ func overrideIsolationProfile(t *testing.T, manifestPath string) {
 
 // buildImage runs `docker build` against repo, tagging the result as
 // tag. A missing docker binary or a build failure fails the test; both
-// are genuine external dependencies of this journey (§26 line 8: "CI
+// are genuine external dependencies of this journey (§26: "CI
 // that publishes OCI images to the canonical Lenny registry").
 func buildImage(t *testing.T, repo, tag string) {
 	t.Helper()
@@ -526,4 +553,126 @@ func createAndStartTolerant(t *testing.T, ctx context.Context, d *sessiondriver.
 		}
 		time.Sleep(5 * time.Second)
 	}
+}
+
+// sweepStaleJourneyRuntimes deletes the warm pools and Runtime objects
+// this test's own name prefix left on the shared Kind cluster, keeping
+// the pool this run is about to create. A pool row is authoritative in
+// Postgres, so the pool is removed through the same admin surface the
+// test creates it with; deleting only the reconciled CRD pair would let
+// the pool controller rebuild it.
+func sweepStaleJourneyRuntimes(t *testing.T, c *kind.Cluster, lennyCtl, repo, apiURL, keepPool string) {
+	t.Helper()
+	out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandboxwarmpool",
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}")
+	if err != nil {
+		t.Logf("sweep: list warm pools: %v (continuing)", err)
+		return
+	}
+	for _, pool := range strings.Fields(out) {
+		if pool == keepPool || !strings.HasPrefix(pool, journeyRuntimePrefix) ||
+			!strings.HasSuffix(pool, "-pool") {
+			continue
+		}
+		runtimeName := strings.TrimSuffix(pool, "-pool")
+		// The pool is swept whether or not its Runtime is still there: a
+		// half-completed cleanup leaves the pool alive with the Runtime
+		// already gone, and that is the residue this sweep exists for.
+		if !newJourneyPoolReclaim(t, c, lennyCtl, repo, apiURL).reclaim(pool) {
+			continue
+		}
+		if kOut, err := c.KubectlOut(t, "delete", "runtime", runtimeName, "--ignore-not-found"); err != nil {
+			t.Logf("sweep: delete stale Runtime %s: %v\n%s (continuing)", runtimeName, err, kOut)
+		}
+		t.Logf("sweep: reclaimed stale pool %s and Runtime %s from an earlier run", pool, runtimeName)
+	}
+}
+
+// journeyPoolReclaim deletes one warm pool through the admin surface the
+// test creates it with and confirms the reconciled SandboxWarmPool
+// object left the cluster. A pool row is authoritative in Postgres, so
+// deleting the CRD alone would let the pool controller rebuild it, and a
+// delete whose failure is discarded leaves a Ready member pod behind
+// that later cases mistake for live workload. Its dependencies are
+// injected so the reporting path is exercised without a cluster.
+//
+// spec: §4.6
+type journeyPoolReclaim struct {
+	deletePool  func(pool string) (string, error)
+	poolPresent func(pool string) (bool, error)
+	// removeObjects deletes the reconciled SandboxWarmPool and
+	// SandboxTemplate pair directly. It runs only once the admin delete
+	// has removed the authoritative Postgres row, so the pool controller
+	// has nothing left to rebuild the pair from.
+	removeObjects func(pool string) (string, error)
+	logf          func(format string, args ...any)
+	sleep         func(d time.Duration)
+	attempts      int
+	interval      time.Duration
+}
+
+// newJourneyPoolReclaim binds a reclaimer to the live cluster and the
+// admin API the test drives.
+func newJourneyPoolReclaim(t *testing.T, c *kind.Cluster, lennyCtl, repo, apiURL string) journeyPoolReclaim {
+	t.Helper()
+	return journeyPoolReclaim{
+		deletePool: func(pool string) (string, error) {
+			return runCLI(t, lennyCtl, repo,
+				"--api-url", apiURL, "--dev-tenant", "platform", "--dev-roles", "platform-admin",
+				"admin", "pools", "delete", pool)
+		},
+		poolPresent: func(pool string) (bool, error) {
+			out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandboxwarmpool", pool,
+				"--ignore-not-found", "-o", "name")
+			if err != nil {
+				return false, fmt.Errorf("read SandboxWarmPool %s back: %w", pool, err)
+			}
+			return strings.TrimSpace(out) != "", nil
+		},
+		removeObjects: func(pool string) (string, error) {
+			out, err := c.KubectlOut(t, "-n", "lenny-agents", "delete",
+				"sandboxwarmpool,sandboxtemplate", pool, "--ignore-not-found", "--timeout=60s")
+			if err != nil {
+				return out, fmt.Errorf("delete the reconciled objects of pool %s: %w", pool, err)
+			}
+			return out, nil
+		},
+		logf:     t.Logf,
+		sleep:    time.Sleep,
+		attempts: 12,
+		interval: 5 * time.Second,
+	}
+}
+
+// reclaim deletes the pool and reports whether the cluster is rid of it.
+// Every outcome that leaves the pool behind is logged, so a failed
+// delete is visible in the run that caused it.
+func (r journeyPoolReclaim) reclaim(pool string) bool {
+	out, err := r.deletePool(pool)
+	if err != nil {
+		r.logf("pool %s: admin delete failed: %v\n%s (the pool is left on the cluster)", pool, err, out)
+		return false
+	}
+	for attempt := 0; attempt < r.attempts; attempt++ {
+		present, err := r.poolPresent(pool)
+		if err != nil {
+			r.logf("pool %s: %v (cannot confirm the pool left the cluster)", pool, err)
+			return false
+		}
+		if !present {
+			return true
+		}
+		r.sleep(r.interval)
+	}
+	// The admin delete removed the pool row, so the reconciled pair is
+	// residue no controller will rebuild. Its member pod carries
+	// lenny.dev/managed=true, which later cases read as live workload, so
+	// the pair is removed here rather than left for a later run.
+	r.logf("pool %s: the SandboxWarmPool object is still present after the admin delete; "+
+		"removing the reconciled objects directly", pool)
+	if out, err := r.removeObjects(pool); err != nil {
+		r.logf("pool %s: %v\n%s (the pool is left on the cluster)", pool, err, out)
+		return false
+	}
+	return true
 }

@@ -4,74 +4,138 @@ package erasurejob
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
-// AgeSink receives the §12.8 line 768 erasure-SLA gauges the Sampler
-// publishes: the in-progress job age (per tenant + job), its removal on
-// termination, and the platform deadline the §16.5 ErasureJobOverdue
-// alert compares against. *gatewaymetrics.Metrics satisfies it via
-// SetErasureJobAge / ClearErasureJobAge / SetErasureJobDeadlineSeconds.
+// AgeSink receives the §12.8 erasure-SLA gauges the Sampler publishes:
+// each in-progress job's age and overdue seconds (per tenant and job),
+// the removal of both series for a job no longer in progress, and the
+// count of in-progress jobs. *gatewaymetrics.Metrics satisfies it.
 type AgeSink interface {
 	SetErasureJobAge(tenantID, jobID string, ageSeconds float64)
+	// SetErasureJobOverdue publishes the job's age minus its deadline, so
+	// a positive value means the job is past its deadline.
+	SetErasureJobOverdue(tenantID, jobID string, seconds float64)
+	// ClearErasureJobAge deletes both the age and the overdue series of
+	// the job.
 	ClearErasureJobAge(tenantID, jobID string)
-	SetErasureJobDeadlineSeconds(seconds float64)
+	SetErasureJobsActive(n int)
 }
 
-// Sampler publishes the §12.8 line 768 erasure-SLA gauges on a periodic
-// tick. The Runner cannot advance a job's age while it is blocked inside
-// a slow DeleteByUser, so a separate sampler reads the job registry and
-// republishes each in-progress job's age. The §16.5 ErasureJobOverdue
-// alert fires when a job's age exceeds the published deadline.
+// jobKey names one published (tenant, job) series pair.
+type jobKey struct{ tenantID, jobID string }
+
+// Sampler publishes the §12.8 erasure-SLA gauges on a periodic tick. The
+// Runner cannot advance a job's age while it is blocked inside a slow
+// DeleteByUser, so a separate sampler reads the job registry and
+// republishes each in-progress job's age and overdue seconds. The §16.5
+// ErasureJobOverdue alert fires when a job's overdue value is positive.
 //
-// spec: §12.8 line 768.
+// ListActive returns in-progress jobs only, so the sampler remembers the
+// jobs it published in the previous round and clears the series of every
+// job absent from the current one, whichever replica finished it.
+//
+// spec: §12.8 (Erasure SLA enforcement).
 type Sampler struct {
 	jobs            Store
 	sink            AgeSink
 	defaultDeadline time.Duration
 	clock           func() time.Time
+	crossTenantRead CrossTenantReadFunc
+
+	// mu guards published, the set of jobs whose series the previous
+	// round published, and serializes each round's sink writes with
+	// clearAll so no series is published after the final clear.
+	mu        sync.Mutex
+	published map[jobKey]struct{}
 }
 
 // NewSampler builds a Sampler over the job registry and the gauge sink.
-// defaultDeadline is the platform SLA the §16.5 alert compares against
-// (the §12.9 T3 72h bound is the common case; the per-job tier deadline
-// is recorded on each Job for the receipt). A nil clock defaults to
+// defaultDeadline is the SLA the overdue value is measured against for a
+// job that recorded no Deadline of its own. A nil clock defaults to
 // time.Now.
 func NewSampler(jobs Store, sink AgeSink, defaultDeadline time.Duration, clock func() time.Time) *Sampler {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
-	return &Sampler{jobs: jobs, sink: sink, defaultDeadline: defaultDeadline, clock: clock}
+	return &Sampler{
+		jobs: jobs, sink: sink, defaultDeadline: defaultDeadline, clock: clock,
+		published: map[jobKey]struct{}{},
+	}
 }
 
-// Sample publishes one round of erasure-SLA gauges: the platform
-// deadline, the age of every in-progress job, and a cleared age series
-// for every terminal job (so a completed erasure no longer reads as
-// in-progress). It is safe to call on a ticker.
+// WithCrossTenantReadAudit attaches the §12.3 cross_tenant_read recorder
+// Sample calls once per round after its all-tenants ListActive read. An
+// emit error makes the round publish nothing. A nil function emits
+// nothing. Returns the Sampler for call chaining.
+//
+// spec: §12.3 (Postgres HA Requirements).
+func (s *Sampler) WithCrossTenantReadAudit(f CrossTenantReadFunc) *Sampler {
+	s.crossTenantRead = f
+	return s
+}
+
+// Sample publishes one round of erasure-SLA gauges: the age and overdue
+// seconds of every in-progress job, the in-progress count, and a cleared
+// pair of series for every job published in the previous round that is no
+// longer in progress. A ListActive error or a cross_tenant_read emit error
+// publishes nothing and keeps the previous round's set. It is safe to call on a ticker.
 func (s *Sampler) Sample(ctx context.Context) error {
-	s.sink.SetErasureJobDeadlineSeconds(s.defaultDeadline.Seconds())
-	jobs, err := s.jobs.List(ctx)
+	jobs, err := s.jobs.ListActive(ctx)
 	if err != nil {
 		return err
 	}
-	now := s.clock()
-	for _, j := range jobs {
-		if j.Phase.Terminal() {
-			s.sink.ClearErasureJobAge(j.TenantID, j.ID)
-			continue
+	if s.crossTenantRead != nil {
+		if err := s.crossTenantRead(ctx, CrossTenantReadEndpointSampler, "", len(jobs)); err != nil {
+			return err
 		}
-		age := now.Sub(j.StartedAt).Seconds()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.clock()
+	current := make(map[jobKey]struct{}, len(jobs))
+	for _, j := range jobs {
+		age := now.Sub(j.StartedAt)
 		if age < 0 {
 			age = 0
 		}
-		s.sink.SetErasureJobAge(j.TenantID, j.ID, age)
+		deadline := j.Deadline
+		if deadline == 0 {
+			deadline = s.defaultDeadline
+		}
+		s.sink.SetErasureJobAge(j.TenantID, j.ID, age.Seconds())
+		s.sink.SetErasureJobOverdue(j.TenantID, j.ID, (age - deadline).Seconds())
+		current[jobKey{j.TenantID, j.ID}] = struct{}{}
 	}
+	s.sink.SetErasureJobsActive(len(jobs))
+	for k := range s.published {
+		if _, ok := current[k]; !ok {
+			s.sink.ClearErasureJobAge(k.tenantID, k.jobID)
+		}
+	}
+	s.published = current
 	return nil
 }
 
-// Run drives Sample on the given interval until ctx is cancelled. The
-// gateway runs it in a background goroutine for the process lifetime.
+// clearAll deletes every series the sampler published and sets the
+// in-progress count to 0.
+func (s *Sampler) clearAll() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k := range s.published {
+		s.sink.ClearErasureJobAge(k.tenantID, k.jobID)
+	}
+	s.published = map[jobKey]struct{}{}
+	s.sink.SetErasureJobsActive(0)
+}
+
+// Run drives Sample on the given interval until ctx ends. When ctx ends,
+// which on the leader gate is a lease loss or shutdown, Run clears every
+// series it published and sets the in-progress count to 0, so a former
+// leader leaves no stale series behind.
 func (s *Sampler) Run(ctx context.Context, interval time.Duration) {
+	defer s.clearAll()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	_ = s.Sample(ctx)

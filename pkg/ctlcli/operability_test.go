@@ -36,10 +36,9 @@ func TestMeToolsTargetsGateway_spec_24_15_1(t *testing.T) {
 }
 
 // TestMeOperationsTargetsOps_spec_15_1_909 pins `me operations` to
-// lenny-ops: the operations inventory is assigned to lenny-ops (§15.1
-// line 909), so the per-caller in-flight view resolves the ops endpoint
+// lenny-ops: the operations inventory is assigned to lenny-ops (§15.1), so the per-caller in-flight view resolves the ops endpoint
 // (here via --ops-server) rather than the gateway, which no longer serves
-// the route. spec: §24.15 line 180; §15.1 line 909.
+// the route. spec: §24.15; §15.1.
 func TestMeOperationsTargetsOps_spec_15_1_909(t *testing.T) {
 	code, got := runAgainstOps(t, http.StatusOK, `{"operations":[]}`, "me", "operations")
 	if code != 0 {

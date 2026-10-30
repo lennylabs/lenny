@@ -38,6 +38,7 @@ import (
 // a tenant's recorded token usage had no effect on session creation
 // and the per-tenant token budget was unenforceable end to end.
 func TestQuotaEnforcement(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	rd := containers.StartRedis(t, containers.RedisOptions{})
@@ -118,6 +119,7 @@ func TestQuotaEnforcement(t *testing.T) {
 // that prevents the regression; this test drives the reconciled
 // counter through the live gateway and asserts the budget still holds.
 func TestQuotaRecovery(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	rd := containers.StartRedis(t, containers.RedisOptions{})

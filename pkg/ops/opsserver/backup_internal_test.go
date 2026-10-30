@@ -12,7 +12,7 @@ import (
 )
 
 // TestBackupRegionUnresolvableMapsTo422Permanent_spec_25_11_4336 asserts
-// the §25.11 line 4336 mapping: BACKUP_REGION_UNRESOLVABLE is a PERMANENT
+// the §25.11 mapping: BACKUP_REGION_UNRESOLVABLE is a PERMANENT
 // HTTP 422, so an agent treats a residency abort as a configuration fault
 // to fix rather than a transient failure to retry.
 func TestBackupRegionUnresolvableMapsTo422Permanent_spec_25_11_4336(t *testing.T) {

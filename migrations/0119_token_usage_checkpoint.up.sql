@@ -2,10 +2,10 @@
 -- path lives in Redis under the §12.4 key
 -- t:{tenant_id}:quota:tokens:{user_id}:{window} (pkg/gateway/quotastore);
 -- those counters are volatile and a Redis restart empties them. This
--- table is the periodic Postgres checkpoint §11.2 line 44 mandates:
+-- table is the periodic Postgres checkpoint §11.2 mandates:
 -- "Postgres is updated periodically at a configurable sync interval
 -- (quotaSyncIntervalSeconds) as a durable checkpoint, and on session
--- completion as final reconciliation." On Redis recovery the §11.2 line 48
+-- completion as final reconciliation." On Redis recovery the §11.2
 -- two-source reconstruction restores each counter via the MAX rule
 -- (restored = MAX(in_memory_counter, postgres_checkpoint)) rather than
 -- resuming against a stale-zero value that would silently un-enforce a
@@ -27,7 +27,7 @@
 --
 -- token_total is the recorded window total at checkpoint time. The
 -- platform-wide global rollup is deliberately not checkpointed here: the
--- §11.2 line 48 MAX rule is scoped to "each active session and tenant
+-- §11.2 MAX rule is scoped to "each active session and tenant
 -- scope", and the global rollup lives under a synthetic tenant slot that
 -- has no tenants(id) row to satisfy the foreign key.
 --
@@ -35,7 +35,7 @@
 -- staleness or retention sweep measures the row's age against the
 -- database clock rather than a replica's local Go clock.
 --
--- spec: §11.2 lines 42-48; §12.4 (Redis key layout).
+-- spec: §11.2; §12.4 (Redis key layout).
 
 CREATE TABLE token_usage_checkpoint (
     tenant_id     TEXT        NOT NULL REFERENCES tenants(id),

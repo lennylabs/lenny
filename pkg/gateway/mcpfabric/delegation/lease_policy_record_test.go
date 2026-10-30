@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
-// spec: §8.10 lines 1044-1049 — the gateway persists the lease-scoped
+// spec: §8.10 — the gateway persists the lease-scoped
 // policy reference (delegationPolicyRef, effective maxDelegationPolicy,
 // contentPolicy interceptorRef, min isolation profile) at original
 // `delegate_task` approval time so tree recovery resumes a node against
@@ -104,7 +104,7 @@ func TestDelegatePersistsLeasePolicyRecord_spec_8_10_1044(t *testing.T) {
 	}
 }
 
-// spec: §8.10 lines 1044-1049 — a node with no resource lease slice but
+// spec: §8.10 — a node with no resource lease slice but
 // a resolved policy reference still persists a lease record so recovery
 // has the policy fields. The record must not be dropped to NULL.
 func TestDelegateLeaseRecordPersistsWithoutResourceSlice_spec_8_10_1044(t *testing.T) {
@@ -141,7 +141,7 @@ func TestDelegateLeaseRecordPersistsWithoutResourceSlice_spec_8_10_1044(t *testi
 	}
 }
 
-// spec: §8.10 lines 1044-1049 / §8.2 lines 38-48 — a target runtime that
+// spec: §8.10 / §8.2 — a target runtime that
 // names no DelegationPolicy and a delegation with no resource slice
 // leaves the lease record nil; there is nothing policy-scoped to persist
 // beyond the session's own IsolationProfile column. F-8.10.5 must not

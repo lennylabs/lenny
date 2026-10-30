@@ -23,13 +23,13 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 )
 
-// spec: §7.1 (spec/07_session-lifecycle.md:45) "18. Client ↔ Gateway:
-// Full interactive session (prompts, responses, tool use, interrupts,
-// elicitation, credential rotation on RATE_LIMITED)"; §7.2 path 6
-// (lines 326-330), in particular line 327: a `delivery:"immediate"`
-// message whose target session is `suspended` and whose pod is still
-// held atomically resumes the session (`suspended → running`) and
-// delivers the message to the runtime, returning a `delivered` receipt.
+// spec: §7.1 "18. Client ↔ Gateway: Full interactive session (prompts,
+// responses, tool use, interrupts, elicitation, credential rotation on
+// RATE_LIMITED)"; §7.2 path 6, pod-still-held branch: a
+// `delivery:"immediate"` message whose target session is `suspended` and
+// whose pod is still held atomically resumes the session
+// (`suspended → running`) and delivers the message to the runtime,
+// returning a `delivered` receipt.
 // On the single coordinating replica the in-process echo executor is
 // always ready, so the fourth prompt resumes-and-delivers, produces a
 // fourth echo exchange, and returns the session to `running`.
@@ -41,6 +41,7 @@ import (
 // `delivery:"immediate"` message sent to a suspended, pod-held session
 // (returning `delivered` and returning the session to `running`).
 func TestInteractiveIterationInterruptThenResumeAndDeliver(t *testing.T) {
+	t.Parallel()
 	// A real Redis backs the §7.2 inbox/DLQ coordinator (see
 	// pkg/gateway/sessionserver/messages.go and
 	// cmd/lenny-gateway/stores.go buildSessionMessaging): without it,
@@ -50,7 +51,7 @@ func TestInteractiveIterationInterruptThenResumeAndDeliver(t *testing.T) {
 	// and policy_test.go pattern of wiring a real Redis via --redis-url.
 	gateway.SkipUnlessAvailable(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
-	gw := gateway.StartWith(t, "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
 	base := gw.BaseURL()
 	client := http.DefaultClient
 
@@ -162,7 +163,7 @@ func TestInteractiveIterationInterruptThenResumeAndDeliver(t *testing.T) {
 	// ---- a fourth prompt with delivery:"immediate" sent to the now
 	// suspended, pod-held session atomically resumes the session
 	// (suspended → running) and delivers the message to the runtime:
-	// §7.2 path 6 line 327. The receipt is delivered with a non-empty
+	// §7.2 path 6. The receipt is delivered with a non-empty
 	// deliveredAt, the echo executor produces a fourth exchange, and
 	// the session returns to running. ----
 	code, delivered := sendMessage("fourth prompt", "immediate")

@@ -72,7 +72,7 @@ func TestEncodeDecodeSDKWarmConfig_spec_6_1(t *testing.T) {
 		}
 	})
 
-	// spec: §6.1 line 48 — the deployer-configurable demotionRateThreshold
+	// spec: §6.1 — the deployer-configurable demotionRateThreshold
 	// round-trips and a threshold alone encodes non-NULL.
 	t.Run("demotionRateThreshold round-trips", func(t *testing.T) {
 		threshold := 0.75

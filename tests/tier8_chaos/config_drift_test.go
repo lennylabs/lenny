@@ -37,6 +37,16 @@ const poolConfigValidatorDeployment = "lenny-pool-config-validator"
 // SandboxClaim, Sandbox) live in on the e2e cluster.
 const agentNamespace = "lenny-agents"
 
+// poolScalingControllerSA is the only principal whose writes to a
+// SandboxWarmPool or SandboxTemplate spec the pool-config validator
+// admits. Every other principal, the kubeconfig's cluster-admin
+// included, is rejected with UNAUTHORIZED_POOL_CONFIG_WRITE before the
+// budget invariants are reached, so a test whose subject is those
+// invariants writes as this principal.
+//
+// spec: §4.6.3
+const poolScalingControllerSA = "system:serviceaccount:lenny-system:lenny-pool-scaling-controller"
+
 // spec: 12.8
 // diagnosis: §12.8 / §4.6.2 pool-config drift was not rejected at
 // admission. The lenny-pool-config-validator webhook gates the §4.6.2
@@ -68,7 +78,7 @@ func TestPoolConfigDrift(t *testing.T) {
 	const poolName = "chaos-drift-pool"
 	validPool := warmPoolManifest(poolName, agentNamespace, 1, 3)
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, validPool) })
-	if out, err := c.ApplyStdin(t, validPool); err != nil {
+	if out, err := c.ApplyStdinAs(t, validPool, poolScalingControllerSA); err != nil {
 		t.Fatalf("failed to create the valid baseline SandboxWarmPool: %v\n%s", err, out)
 	}
 	t.Logf("precondition: valid SandboxWarmPool %s/%s created (minWarm=1, maxWarm=3)",
@@ -76,9 +86,13 @@ func TestPoolConfigDrift(t *testing.T) {
 
 	// Inject the drift: UPDATE the pool to minWarm=9, maxWarm=3 — a
 	// floor above the ceiling, which §4.6.2 makes unsatisfiable. The
-	// validator must reject this UPDATE.
+	// validator must reject this UPDATE. The write carries the
+	// PoolScalingController identity so the rejection under test is the
+	// budget invariant rather than the authorization rule that gates
+	// every manual write, and goes through replace because that
+	// principal holds update without patch.
 	driftedPool := warmPoolManifest(poolName, agentNamespace, 9, 3)
-	out, err := c.ApplyStdin(t, driftedPool)
+	out, err := c.ReplaceStdinAs(t, driftedPool, poolScalingControllerSA)
 	if err == nil {
 		t.Errorf("§4.6.2 violation: the pool-config validator admitted a SandboxWarmPool UPDATE with "+
 			"minWarm=9 > maxWarm=3; the minWarm <= maxWarm invariant must be rejected.\noutput:\n%s", out)
@@ -107,7 +121,7 @@ func TestPoolConfigDrift(t *testing.T) {
 	// Assert recovery: a valid UPDATE (still minWarm <= maxWarm) is
 	// admitted, proving the validator is not blanket-rejecting writes.
 	recovered := warmPoolManifest(poolName, agentNamespace, 2, 5)
-	if out, err := c.ApplyStdin(t, recovered); err != nil {
+	if out, err := c.ReplaceStdinAs(t, recovered, poolScalingControllerSA); err != nil {
 		t.Fatalf("a valid SandboxWarmPool UPDATE (minWarm=2, maxWarm=5) was rejected after the drift test: "+
 			"%v\n%s", err, out)
 	}
@@ -548,19 +562,35 @@ func runMigrate(t *testing.T, c *kind.Cluster, pgIP, subcommand string) string {
 // failing the test. The dirty-flag test uses it for the `up` call it
 // expects to fail. The pod runs the image ENTRYPOINT
 // (/usr/local/bin/lenny) with the subcommand args.
+//
+// `kubectl run --attach` can lose a fast-exiting pod's output, so a run
+// whose output is incomplete under migrateOutputComplete is rerun
+// (TEST-GAPS T-17.4.45). Both subcommands the tests run are safe to
+// rerun: `version` only reads, and `up` is idempotent.
 func runMigrateExpectErr(t *testing.T, c *kind.Cluster, pgIP, subcommand string) (string, error) {
 	t.Helper()
-	podName := "chaos-migrate-" + subcommand
-	_, _ = c.KubectlOut(t, "-n", lennySystemNamespace, "delete", "pod", podName,
-		"--ignore-not-found", "--wait=true")
-	return c.KubectlOut(
-		t,
-		"-n", lennySystemNamespace, "run", podName,
+	return c.RunAttachedUntil(
+		t, lennySystemNamespace, "chaos-migrate-"+subcommand, 3,
+		func(out string, err error) bool { return migrateOutputComplete(subcommand, out, err) },
 		"--image="+migrateImage, "--image-pull-policy=Never",
 		"--restart=Never", "--attach", "--rm", "--quiet",
 		"--command", "--",
 		"/usr/local/bin/lenny", "--postgres-dsn", migrateDSN(pgIP), subcommand,
 	)
+}
+
+// migrateOutputComplete reports whether a `lenny-migrate <subcommand>`
+// run's output is whole. A failed run must carry the error text the
+// dirty-flag assertion reads, and a `version` run must carry the parsed
+// version. A successful run of any other subcommand needs no output.
+func migrateOutputComplete(subcommand, out string, err error) bool {
+	if err != nil {
+		return strings.TrimSpace(out) != ""
+	}
+	if subcommand == "version" {
+		return parseMigrateVersion(out) != ""
+	}
+	return true
 }
 
 // parseMigrateVersion extracts the integer version from `lenny-migrate

@@ -76,7 +76,7 @@ func (g *recordingGate) AwaitApproval(_ context.Context, tenantID, sessionID str
 	return g.decision, g.err
 }
 
-// TestPodExecutorToolUseApprove_spec_7_2 covers the §7.2 line 124 approve
+// TestPodExecutorToolUseApprove_spec_7_2 covers the §7.2 approve
 // path: an approval-required tool_call drives the gate, and on approval
 // the executor forwards the call so the runtime executes it. F-7.2.9,
 // F-7.2.18.
@@ -110,7 +110,7 @@ func TestPodExecutorToolUseApprove_spec_7_2(t *testing.T) {
 	}
 }
 
-// TestPodExecutorToolUseDeny_spec_7_2 covers the §7.2 line 125 deny path:
+// TestPodExecutorToolUseDeny_spec_7_2 covers the §7.2 deny path:
 // the executor writes a tool_result(isError) carrying the deny reason
 // back to the runtime instead of forwarding the call. F-7.2.18.
 func TestPodExecutorToolUseDeny_spec_7_2(t *testing.T) {

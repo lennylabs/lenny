@@ -12,7 +12,7 @@
 // a tenant-scoped transaction; the table has no RLS policy and no tenant
 // column.
 //
-// spec: §25.4 lines 2376-2455.
+// spec: §25.4.
 package pgstore
 
 import (
@@ -65,8 +65,7 @@ func (s *Store) Tier() string { return escalation.PersistenceDurablePostgres }
 // and the connection-exception class (08) as store-unavailable rather than
 // surfacing them.
 //
-// spec: §25.4 lines 2422-2434 (Storage Tiers, Query Path degraded
-// fall-through when Postgres is down).
+// spec: §25.4.
 func classifyErr(err error) error {
 	if err == nil {
 		return nil
@@ -92,7 +91,7 @@ func classifyErr(err error) error {
 
 // Put upserts esc by id. The conditional update overwrites every column,
 // so a reconciliation flush of a record the destination already holds is
-// an idempotent no-op (§25.4 line 2413).
+// an idempotent no-op (§25.4).
 func (s *Store) Put(ctx context.Context, esc escalation.Escalation) error {
 	diag, failed := marshalPayloads(esc)
 	_, err := s.pool.Exec(ctx, `
@@ -130,9 +129,9 @@ func (s *Store) Get(ctx context.Context, id string) (*escalation.Escalation, err
 // paginates over the (created_at, id) ordering. A non-empty cursor
 // continues after the row it encodes; the page reports HasMore and a
 // NextCursor when more matching rows follow, so a caller can advance page
-// by page (§25.4 line 2427, "full query with pagination").
+// by page (§25.4, "full query with pagination").
 //
-// spec: §25.4 lines 2425-2429.
+// spec: §25.4.
 func (s *Store) List(ctx context.Context, f escalation.Filter, cursor string, limit int) (escalation.ListPage, error) {
 	query := `SELECT ` + columns + ` FROM ops_escalations`
 	var conds []string

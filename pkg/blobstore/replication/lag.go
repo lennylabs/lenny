@@ -46,7 +46,7 @@ type LagObserver interface {
 // zero lag. A non-empty queue with no observed throughput is a stalled
 // replication path: the estimate floors throughput at 1 KiB/s so the lag
 // surfaces as a large positive value that trips MinIOArtifactReplicationLag*
-// rather than reading as zero. spec: §17.3 line 130; §25.11 line 4085.
+// rather than reading as zero. spec: §17.3; §25.11.
 func deriveLagSeconds(queuedBytes, bandwidthBytesPerSec float64) float64 {
 	if queuedBytes <= 0 {
 		return 0

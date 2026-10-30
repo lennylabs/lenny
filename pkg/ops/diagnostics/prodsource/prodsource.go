@@ -13,7 +13,7 @@
 // is not wired in a given deployment (no Kubernetes connection, no
 // metrics source) degrades gracefully: the §25.6 Degradation envelope
 // records which fields could not be served and the handler returns 207
-// rather than failing the whole diagnosis. spec: §25.6 lines 2885-2920.
+// rather than failing the whole diagnosis. spec: §25.6.
 // F-25.6.1.
 package prodsource
 
@@ -207,7 +207,7 @@ func (s *Source) Pool(ctx context.Context, poolName string) (diagnostics.PoolRec
 	// The demand bottleneck (claim rate vs replenishment rate) needs a
 	// metrics source lenny-ops does not query in v1; the diagnosis still
 	// classifies the infrastructure and CRD-lag bottlenecks, so the
-	// result is partial rather than absent. spec: §25.6 lines 2861-2867.
+	// result is partial rather than absent. spec: §25.6.
 	rec.Degradation = &conventions.Degradation{
 		Level:             conventions.DegradationDegraded,
 		PrimarySource:     "prometheus",

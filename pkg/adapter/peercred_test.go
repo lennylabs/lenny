@@ -73,3 +73,56 @@ func TestPeerCheckedListenerSkipsRejected(t *testing.T) {
 		t.Errorf("check ran %d times, want 2 (one rejected, one accepted)", calls)
 	}
 }
+
+// spec: 4.7.11 (Separate UIDs and connection authentication)
+func TestPeerCheckedListenerReportsEachRefusal_spec_4_7_11(t *testing.T) {
+	inner := bufconn.Listen(1 << 20)
+	refusal := &PeerUIDMismatchError{Peer: 4242, Expected: 1001}
+	calls := 0
+	var reported []error
+	lis := &peerCheckedListener{
+		Listener: inner,
+		check: func(net.Conn) error {
+			calls++
+			if calls == 1 {
+				return refusal
+			}
+			return nil
+		},
+		onReject: func(err error) { reported = append(reported, err) },
+	}
+
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		if c, err := lis.Accept(); err == nil {
+			accepted <- c
+		}
+	}()
+	refused, err := inner.Dial()
+	if err != nil {
+		t.Fatalf("dial refused peer: %v", err)
+	}
+	defer refused.Close()
+	admitted, err := inner.Dial()
+	if err != nil {
+		t.Fatalf("dial admitted peer: %v", err)
+	}
+	defer admitted.Close()
+
+	select {
+	case c := <-accepted:
+		_ = c.Close()
+	case <-time.After(2 * time.Second):
+		t.Fatal("Accept did not return the admitted connection after the refusal")
+	}
+	if len(reported) != 1 || reported[0] != refusal {
+		t.Fatalf("onReject saw %v, want exactly the one refusal", reported)
+	}
+	var mismatch *PeerUIDMismatchError
+	if !errors.As(reported[0], &mismatch) || mismatch.Peer != 4242 || mismatch.Expected != 1001 {
+		t.Fatalf("refusal %v does not carry the peer and expected UIDs", reported[0])
+	}
+	if got := mismatch.Error(); got != "adapter: peer uid 4242 does not match the runtime uid 1001" {
+		t.Errorf("Error() = %q", got)
+	}
+}

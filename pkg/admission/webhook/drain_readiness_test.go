@@ -22,7 +22,7 @@ import (
 )
 
 // recordingMetricsSink records every IncDrainReadinessCheck call so
-// tests can assert §12.5 line 291 outcomes.
+// tests can assert §12.5 outcomes.
 type recordingMetricsSink struct{ outcomes []string }
 
 func (r *recordingMetricsSink) IncDrainReadinessCheck(outcome string) {
@@ -147,7 +147,7 @@ func TestDrainReadinessForceOverrideAdmitsAndSignals(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 291 — when the audit chain rejects the
+// spec: §12.5 — when the audit chain rejects the
 // node.drain.forced write, the webhook fails the eviction closed so
 // the override never escapes the trail.
 func TestDrainReadinessDeniesWhenForcedAuditFails(t *testing.T) {

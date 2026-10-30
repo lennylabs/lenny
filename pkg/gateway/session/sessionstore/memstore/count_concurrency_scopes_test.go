@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §11.1 line 8/9 — the global, per-user, per-runtime, and per-user
+// spec: §11.1 — the global, per-user, per-runtime, and per-user
 // active-delegated-children concurrent-session admission counts.
 
 func seedFull(t *testing.T, s *memstore.Store, sess sessionstore.Session) {
@@ -140,5 +140,50 @@ func TestCountActiveDelegatedChildrenByUser_spec_11_1(t *testing.T) {
 	}
 	if got, err := s.CountActiveDelegatedChildrenByUser(context.Background(), "acme", ""); err != nil || got != 0 {
 		t.Fatalf("empty user = (%d, %v), want (0, nil)", got, err)
+	}
+}
+
+// TestConcurrencyCountsExcludeSuspended_spec_11_1 seeds one row in every
+// state, held-pod and podless suspended included, for one tenant, user,
+// and runtime, and asserts that each of the four admission counts equals
+// the number of states session.CountsTowardConcurrencyCaps admits. It
+// pins that a suspended session holds no cap slot whether or not it
+// still holds its pod, and that resuming, resume_pending, and
+// awaiting_client_action rows still count.
+//
+// spec: §11.1 (Concurrent-session count)
+func TestConcurrencyCountsExcludeSuspended_spec_11_1(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	want := 0
+	states := append(session.AllStates(), session.StateResuming)
+	for _, st := range states {
+		seedFull(t, s, sessionstore.Session{
+			ID: "row-" + string(st), TenantID: "acme", UserID: "alice",
+			RuntimeRef: "echo", State: st, PodAssignment: "pod-" + string(st),
+		})
+		if session.CountsTowardConcurrencyCaps(st) {
+			want++
+		}
+	}
+	// A podless suspended row next to the held-pod one above.
+	seedFull(t, s, sessionstore.Session{
+		ID: "row-podless", TenantID: "acme", UserID: "alice",
+		RuntimeRef: "echo", State: session.StateSuspended,
+	})
+	counts := map[string]func() (int, error){
+		"tenant":  func() (int, error) { return s.CountActiveSessions(ctx, "acme") },
+		"user":    func() (int, error) { return s.CountActiveSessionsByUser(ctx, "acme", "alice") },
+		"runtime": func() (int, error) { return s.CountActiveSessionsByRuntime(ctx, "acme", "echo") },
+		"global":  func() (int, error) { return s.CountActiveSessionsGlobal(ctx) },
+	}
+	for scope, count := range counts {
+		got, err := count()
+		if err != nil {
+			t.Fatalf("%s count: %v", scope, err)
+		}
+		if got != want {
+			t.Errorf("%s count = %d, want %d (every non-terminal state except suspended)", scope, got, want)
+		}
 	}
 }

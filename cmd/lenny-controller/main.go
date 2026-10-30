@@ -49,7 +49,7 @@ import (
 // Kubernetes built-in types plus the lenny.dev/v1alpha1 CRDs the controllers
 // reconcile.
 //
-// apiextensions.k8s.io/v1 is also registered so the §10 line 437
+// apiextensions.k8s.io/v1 is also registered so the §10
 // startup self-check can fetch each installed CRD and read its
 // `lenny.dev/schema-version` annotation. F-15.5.12.
 func buildScheme() *runtime.Scheme {
@@ -91,7 +91,7 @@ func envInt64(key string, def int64) int64 {
 
 // repeatableFlag accumulates the value of a flag passed multiple times. It
 // backs --resource-class so an operator can retune several §5.2 classes on
-// one command line. spec: §6.4 line 413.
+// one command line. spec: §6.4.
 type repeatableFlag []string
 
 func (f *repeatableFlag) String() string     { return strings.Join(*f, ",") }
@@ -100,7 +100,7 @@ func (f *repeatableFlag) Set(v string) error { *f = append(*f, v); return nil }
 // buildResourceClasses starts from the built-in §5.2 small/medium/large
 // defaults and applies the operator's --resource-class overrides, then
 // validates that every class's memory limit clears the §6.4 tmpfs
-// reservation. spec: §5.2 line 369, §6.4 line 413.
+// reservation. spec: §5.2, §6.4.
 func buildResourceClasses(overrides []string) (resourceclass.Registry, error) {
 	reg := resourceclass.DefaultRegistry()
 	for _, raw := range overrides {
@@ -131,13 +131,13 @@ const (
 // the composition root in wiring.go runs the ordered per-subsystem build
 // sequence (proposal 0020 §4 Part A R8).
 //
-// spec: §16.4 lines 370-372 — structured JSON logs from the pool controller;
+// spec: §16.4 — structured JSON logs from the pool controller;
 // routes the stdlib log package through the §16.4 handler (component=controller)
 // before any subsystem logs. F-16.4.1. §4.1 — the composition root parses its
 // inputs once and threads them to each subsystem builder; §4.6.1 — the
 // lenny-controller service body.
 func main() {
-	// spec: §16.4 lines 370-372 — structured JSON logs from the pool
+	// spec: §16.4 — structured JSON logs from the pool
 	// controller; routes the stdlib log package through the §16.4 handler
 	// (component=controller). F-16.4.1. This runs before flag parsing so the
 	// flag-parse and wiring log lines also surface in the §16.4 format.
@@ -145,7 +145,7 @@ func main() {
 	runController(parseFlags())
 }
 
-// assertCRDSchemaVersion is the §10 line 437 startup self-check: it
+// assertCRDSchemaVersion is the §10 startup self-check: it
 // builds a read-only controller-runtime client and runs the shared
 // preflight CRD schema-version comparison. On mismatch (or a missing
 // CRD, or a missing annotation) it returns an error whose text matches
@@ -167,20 +167,27 @@ func assertCRDSchemaVersion(restCfg *rest.Config) error {
 
 // sessionActiveLookup adapts the session store to the §4.6.1 orphan-claim
 // GC's warmpool.SessionLookup contract: a claim is reclaimable when no
-// non-terminal session backs it. The per-pod claim (§4.6.3) carries no
-// session identifier, so the check keys on the pod through the Postgres
-// `pod_assignment` binding: GetActiveSlotsByPod counts the live
-// (non-terminal) sessions bound to the Sandbox, and a pod with none has
-// no live session. A pod whose sessions all reached a terminal state (or
-// whose gateway crashed before persisting any session) reports inactive.
+// session holds its pod. The per-pod claim (§4.6.3) carries no session
+// identifier, so the check keys on the pod through the Postgres
+// `pod_assignment` binding: GetActiveSlotsByPod returns the pod's holders
+// (the sessions whose row names the Sandbox and is non-terminal or in its
+// §7.1 post-terminal window), and a pod with none has no session using it.
+// The controller's store is built with claimOrphanTimeout as its
+// post-terminal cap (stores.go), so a terminal session whose gateway has not
+// recorded the release keeps its pod for at most that long, and the drain
+// never cuts a seal mid-export. The failure funnel clears a recovering
+// session's pod_assignment, so such a session does not hold its earlier pod.
+// A pod whose sessions all released or passed the cap (or whose gateway
+// crashed before persisting any session) reports inactive.
+// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.1 (Post-terminal window).
 type sessionActiveLookup struct {
 	store sessionstore.Store
 }
 
 func (l *sessionActiveLookup) PodHasActiveSession(ctx context.Context, sandboxRef string) (bool, error) {
-	n, err := l.store.GetActiveSlotsByPod(ctx, sandboxRef)
+	ids, err := l.store.GetActiveSlotsByPod(ctx, sandboxRef)
 	if err != nil {
 		return false, err
 	}
-	return n > 0, nil
+	return len(ids) > 0, nil
 }

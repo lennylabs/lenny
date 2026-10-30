@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
-// spec: §18 line 234 — POST /v1/sessions/{id}/upload-archive accepts the
+// spec: §18 — POST /v1/sessions/{id}/upload-archive accepts the
 // archive body with the same authentication, precondition, and breaker
 // pipeline as /upload, and tags the response with isArchive: true so the
 // §7.4 in-gateway extraction pipeline can pick it up. Closes F-7.1.9 /
@@ -71,7 +71,7 @@ func TestHandleUpload_DoesNotTagResponse_spec_15_1(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 58 — /upload-archive shares the §7.1 uploadToken
+// spec: §7.1 — /upload-archive shares the §7.1 uploadToken
 // authentication contract. A missing token is rejected before any body
 // is read.
 func TestHandleUploadArchive_RequiresUploadToken_spec_7_1_58(t *testing.T) {

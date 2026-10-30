@@ -25,6 +25,7 @@ import (
 //	middleware stack does not preserve the store across the
 //	first/second request, or the subprocess restarts state.
 func TestIdempotencyReplayThroughBinary(t *testing.T) {
+	t.Parallel()
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all")
 	body := map[string]any{"runtimeRef": "claude-code"}
 
@@ -45,6 +46,7 @@ func TestIdempotencyReplayThroughBinary(t *testing.T) {
 //	end. The body-hash branch is not invoked in the binary
 //	build, or the envelope mapping was lost.
 func TestIdempotencyDifferentBodyReusedThroughBinary(t *testing.T) {
+	t.Parallel()
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all")
 	postWithKey(t, gw.BaseURL(), "key-B", map[string]any{"runtimeRef": "claude-code"}, "acme")
 
@@ -68,6 +70,7 @@ func TestIdempotencyDifferentBodyReusedThroughBinary(t *testing.T) {
 //	validator is missing from the binary's middleware
 //	configuration.
 func TestIdempotencyOversizeKeyThroughBinary(t *testing.T) {
+	t.Parallel()
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all")
 	resp := postRaw(t, gw.BaseURL(), strings.Repeat("a", 129),
 		map[string]any{"runtimeRef": "claude-code"}, "acme")
@@ -83,6 +86,7 @@ func TestIdempotencyOversizeKeyThroughBinary(t *testing.T) {
 //	end. The store key in the running binary did not include
 //	the resolved tenant id from the auth middleware.
 func TestIdempotencyTenantScopedThroughBinary(t *testing.T) {
+	t.Parallel()
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all")
 	body := map[string]any{"runtimeRef": "claude-code"}
 

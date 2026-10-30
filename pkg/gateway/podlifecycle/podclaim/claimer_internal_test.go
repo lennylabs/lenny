@@ -19,7 +19,7 @@ import (
 const claimerInternalNS = "lenny-agents"
 
 // internalScheme registers lenny.dev/v1alpha1 so the fake client reads the
-// SandboxClaim the §3.2 rebind eligibility check inspects.
+// SandboxClaim the rebind eligibility check inspects.
 func internalScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
@@ -30,7 +30,7 @@ func internalScheme(t *testing.T) *runtime.Scheme {
 }
 
 // reservedClaim builds a per-pod claim seeded with a binding state, tenant pin,
-// and hold deadline, the inputs the §3.2 reserved-hold eligibility check reads.
+// and hold deadline, the inputs the reserved-hold eligibility check reads.
 func reservedClaim(pod, tenant string, phase claimstate.State, holdExpiresAt *time.Time) *lennyv1.SandboxClaim {
 	cl := &lennyv1.SandboxClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: ClaimName(pod), Namespace: claimerInternalNS},
@@ -43,7 +43,7 @@ func reservedClaim(pod, tenant string, phase claimstate.State, holdExpiresAt *ti
 	return cl
 }
 
-// TestReservedClaimForTenantEligibility pins the §3.2 acquisition-path rebind
+// TestReservedClaimForTenantEligibility pins the acquisition-path rebind
 // eligibility check: a reserved claim pinned to the request tenant with a live
 // hold is eligible, while a missing claim, a non-reserved binding state, a
 // different tenant pin, and an expired or absent hold deadline are all
@@ -91,7 +91,7 @@ func TestReservedClaimForTenantEligibility_spec_3_2(t *testing.T) {
 	}
 }
 
-// TestReservedClaimForTenantMissingClaimIsNotFound pins the §3.2 gone-claim
+// TestReservedClaimForTenantMissingClaimIsNotFound pins the gone-claim
 // race: when the per-pod claim no longer exists (a concurrent hold-expiry
 // DELETE or the orphan GC reclaimed it) the eligibility check reports
 // not-found rather than erroring, so acquisition falls through cleanly.
@@ -111,7 +111,7 @@ func TestReservedClaimForTenantMissingClaimIsNotFound_spec_3_2(t *testing.T) {
 	}
 }
 
-// TestClaimByNameReReadsCurrentObject pins the §3.2 post-rebind re-read: after
+// TestClaimByNameReReadsCurrentObject pins the post-rebind re-read: after
 // the rebind patch the caller re-reads the claim so it dispatches against the
 // current object, and a re-read of a vanished claim returns a NotFound the
 // caller maps to the fall-through path.

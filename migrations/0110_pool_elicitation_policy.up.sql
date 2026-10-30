@@ -1,5 +1,4 @@
--- §9.2 per-pool elicitation policy. The admin pool API accepts the
--- per-pool `elicitationDepthPolicy` (lines 90-98) and `urlModeElicitation`
+-- §9.2 per-pool elicitation policy. The admin pool API accepts the per-pool `elicitationDepthPolicy` and `urlModeElicitation`
 -- (line 86) blocks on a pool definition; the gateway resolves them at
 -- lenny/request_elicitation dispatch time so depth suppression and the
 -- agent-initiated url-mode domain allowlist apply per the raising
@@ -10,6 +9,6 @@
 -- A NULL row means the pool carries no explicit elicitation policy: the
 -- dispatcher falls back to the §9.2 platform defaults (suppress_at_depth
 -- at depth 3, agent-initiated url-mode blocked). See spec/09_mcp-
--- integration.md §9.2 lines 86, 90-98.
+-- integration.md §9.2.
 ALTER TABLE sandbox_warm_pools
     ADD COLUMN IF NOT EXISTS elicitation_policy JSONB;

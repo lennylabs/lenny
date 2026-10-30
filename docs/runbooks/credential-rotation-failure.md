@@ -8,7 +8,7 @@ triggers:
 components:
   - platform
 symptoms:
-  - "the §4.7 credential rotation handshake failed for an active session"
+  - "the §28.5.3 CH-RUNTIMEOPS credential rotation handshake failed for an active session"
 tags:
   - chaos
 related: []
@@ -16,7 +16,7 @@ related: []
 
 # credential-rotation-failure
 
-the §4.7 credential rotation handshake failed for an active session.
+the §28.5.3 `CH-RUNTIMEOPS` credential rotation handshake failed for an active session.
 
 ## Trigger
 

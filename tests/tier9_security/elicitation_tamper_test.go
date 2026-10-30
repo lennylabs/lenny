@@ -2,7 +2,7 @@
 
 //go:build security
 
-// Tier-9 §12.9.9 elicitation tamper-detect probes. The §9.2 chain
+// Tier-9 TESTING.md §12.9.9 elicitation tamper-detect probes. The §9.2 chain
 // walker, the dispatcher, and the metric/alert wiring are covered
 // by pkg/elicitation and pkg/gateway/mcptools unit tests. This
 // suite drives the gateway-side admin API against a live cluster
@@ -50,7 +50,7 @@ func startElicitationProbe(t *testing.T, c *kind.Cluster) *elicitationProbe {
 	cmd := c.Kubectl("-n", "lenny-system", "port-forward", "svc/lenny-gateway",
 		fmt.Sprintf("%d:8080", port))
 	if err := cmd.Start(); err != nil {
-		t.Skipf("§12.9.9: kubectl port-forward did not start: %v", err)
+		t.Skipf("TESTING.md §12.9.9: kubectl port-forward did not start: %v", err)
 	}
 	cancel := func() {
 		if cmd.Process != nil {
@@ -74,7 +74,7 @@ func startElicitationProbe(t *testing.T, c *kind.Cluster) *elicitationProbe {
 	}
 	if !ready {
 		cancel()
-		t.Skipf("§12.9.9: gateway not reachable through port-forward on /healthz; run tests/testinfra/kind/install.sh")
+		t.Skipf("TESTING.md §12.9.9: gateway not reachable through port-forward on /healthz; run tests/testinfra/kind/install.sh")
 	}
 	probe := &elicitationProbe{baseURL: baseURL, client: client, cancel: cancel}
 	t.Cleanup(probe.cancel)
@@ -92,12 +92,19 @@ func freeLocalPort(t *testing.T) int {
 	return lis.Addr().(*net.TCPAddr).Port
 }
 
-// put drives a PUT against the admin API. Returns status and body.
+// put drives a conditional PUT against the admin API and returns status
+// and body. §15.1 requires every admin PUT to carry If-Match and answers a
+// PUT without one with 428 ETAG_REQUIRED, so put first reads the
+// resource's current ETag with a GET on the same path and sends it back.
+// A GET that does not answer 200 with an ETag fails the test, because
+// the §15.1 contract requires the sub-resource GET to carry one.
 func (p *elicitationProbe) put(t *testing.T, path string, body any) (int, string) {
 	t.Helper()
+	etag := p.etag(t, path)
 	raw, _ := json.Marshal(body)
 	req, _ := http.NewRequest(http.MethodPut, p.baseURL+path, bytes.NewReader(raw))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("If-Match", etag)
 	req.Header.Set("X-Lenny-Tenant-ID", "platform")
 	req.Header.Set("X-Lenny-User-ID", "tier9-admin")
 	req.Header.Set("X-Lenny-Roles", "platform-admin")
@@ -113,6 +120,29 @@ func (p *elicitationProbe) put(t *testing.T, path string, body any) (int, string
 // get drives a GET against the admin API. Returns status and body.
 func (p *elicitationProbe) get(t *testing.T, path string) (int, string) {
 	t.Helper()
+	status, body, _ := p.getWithETag(t, path)
+	return status, body
+}
+
+// etag returns the ETag a GET on path answers with, failing the test when
+// the GET does not answer 200 or carries no ETag. spec: §15.1 (REST API,
+// ETag-based optimistic concurrency).
+func (p *elicitationProbe) etag(t *testing.T, path string) string {
+	t.Helper()
+	status, body, etag := p.getWithETag(t, path)
+	if status != http.StatusOK {
+		t.Fatalf("§15.1: GET %s before the conditional PUT returned %d body %s", path, status, body)
+	}
+	if etag == "" {
+		t.Fatalf("§15.1: GET %s carried no ETag header, so the conditional PUT cannot supply If-Match", path)
+	}
+	return etag
+}
+
+// getWithETag drives a GET against the admin API and returns the status,
+// the body, and the ETag response header.
+func (p *elicitationProbe) getWithETag(t *testing.T, path string) (int, string, string) {
+	t.Helper()
 	req, _ := http.NewRequest(http.MethodGet, p.baseURL+path, nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "platform")
 	req.Header.Set("X-Lenny-User-ID", "tier9-admin")
@@ -123,7 +153,7 @@ func (p *elicitationProbe) get(t *testing.T, path string) (int, string) {
 	}
 	defer resp.Body.Close()
 	bodyBytes, _ := io.ReadAll(resp.Body)
-	return resp.StatusCode, string(bodyBytes)
+	return resp.StatusCode, string(bodyBytes), resp.Header.Get("ETag")
 }
 
 // requireTenantAcme returns whether a tenant 'acme' is seeded in the
@@ -145,7 +175,7 @@ func requireTenantAcme(t *testing.T, p *elicitationProbe) {
 		"complianceProfile": "standard",
 	})
 	if status != http.StatusOK && status != http.StatusCreated {
-		t.Skipf("§12.9.9: tenant 'acme' missing and POST to create returned %d body %s", status, body)
+		t.Skipf("TESTING.md §12.9.9: tenant 'acme' missing and POST to create returned %d body %s", status, body)
 	}
 }
 
@@ -181,7 +211,7 @@ func TestElicitationTamperEnforceMode(t *testing.T) {
 	status, body := p.put(t, "/v1/admin/tenants/acme/elicitation-content-integrity",
 		map[string]string{"mode": "enforce"})
 	if status != http.StatusOK {
-		t.Skipf("§12.9.9 enforce PUT returned %d body %s", status, body)
+		t.Skipf("TESTING.md §12.9.9 enforce PUT returned %d body %s", status, body)
 	}
 
 	status, body = p.get(t, "/v1/admin/tenants/acme/elicitation-content-integrity")
@@ -213,9 +243,9 @@ func TestElicitationTamperDetectOnlyMode(t *testing.T) {
 	requireTenantAcme(t, p)
 
 	status, body := p.put(t, "/v1/admin/tenants/acme/elicitation-content-integrity",
-		map[string]any{"mode": "detect-only", "justification": "tier-9 §12.9.9 detect-only probe"})
+		map[string]any{"mode": "detect-only", "justification": "tier-9 TESTING.md §12.9.9 detect-only probe"})
 	if status != http.StatusOK {
-		t.Skipf("§12.9.9 detect-only PUT returned %d body %s (the cluster may have a stricter floor wired)",
+		t.Skipf("TESTING.md §12.9.9 detect-only PUT returned %d body %s (the cluster may have a stricter floor wired)",
 			status, body)
 	}
 

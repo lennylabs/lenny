@@ -11,7 +11,7 @@ import (
 
 var fixed = time.Date(2026, 6, 9, 10, 30, 0, 0, time.UTC)
 
-// spec: §12.4 source (2); §11.2 line 48 — Record folds proxy-extracted
+// spec: §12.4 source (2); §11.2 — Record folds proxy-extracted
 // tokens into a cumulative per-(tenant, user) window counter and the per-
 // tenant rollup counter; reads return the accumulated value for the current
 // window.
@@ -33,7 +33,7 @@ func TestRecordAccumulatesUserAndTenantRollup_spec_12_4(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 48 — a counter resets when its fixed window rolls; reads
+// spec: §11.2 — a counter resets when its fixed window rolls; reads
 // for a window other than the recorded one return 0.
 func TestWindowRollResetsCounter_spec_11_2(t *testing.T) {
 	a := New()
@@ -80,7 +80,7 @@ func TestNonPositiveTokensIgnored(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 48 — Snapshot lists every still-current window so the
+// spec: §11.2 — Snapshot lists every still-current window so the
 // recovery reconcile can restore fail-open-only windows. It includes the
 // per-user windows and the per-tenant rollup.
 func TestSnapshotListsCurrentWindows_spec_11_2(t *testing.T) {

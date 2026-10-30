@@ -17,13 +17,11 @@
 // cool-off window, and the extension-denied flag.
 //
 // The per-tree budget state lives behind the BudgetSource interface.
-// MemoryBudgetSource is the in-memory implementation used by tests and
-// the minimal gateway. The §8.6 durability requirement — persisting the
-// extension-denied flag and cool-off expiry to the delegation_tree_budget
-// Postgres table, and reading them inside the budget-increment
-// transaction so a coordinator handoff cannot bypass a user rejection —
-// is satisfied by a Postgres-backed BudgetSource that ships with the
-// Wave 1 store-persistence work. The interface is the seam for it.
+// StoreBudgetSource reads it per request: the requesting, root, and
+// parent rows from the SessionStore, and the denial, cool-off, and
+// cumulative grants from a DenialStore (denialpg over the
+// delegation_tree_budget row when Postgres is configured, and
+// MemoryDenialStore otherwise), so any replica serves any session.
 package leasecontrol
 
 import (
@@ -32,7 +30,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"strings"
 	"time"
@@ -50,7 +47,7 @@ import (
 // requests are auto-rejected for this long. The spec default is 300
 // seconds. Deployment, tenant, and runtime configuration override it
 // through the same layering as the other lease-extension fields.
-// spec: §8.6 line 734
+// spec: §8.6
 const DefaultRejectionCoolOff = 300 * time.Second
 
 // DefaultSuccessCoolOff is the §8.6 default coolOffSeconds for the
@@ -61,20 +58,20 @@ const DefaultRejectionCoolOff = 300 * time.Second
 // override it through the same layering as the other lease-extension
 // fields.
 //
-// The elicitation-mode dispatcher itself is the §8.6 line 714 stateful
+// The elicitation-mode dispatcher itself is the §8.6 stateful
 // surface that lands separately; this constant is the value the
 // dispatcher consumes when no override is present, so the spec default
 // is fixed in code now and the dispatcher does not need to re-derive
 // it.
-// spec: §8.6 line 675
+// spec: §8.6
 const DefaultSuccessCoolOff = 5 * time.Second
 
 // ApprovalMode is the §8.6 extensionApproval mode resolved through the
 // deployment→tenant→runtime layering. The dispatcher that selects auto
-// vs. elicitation behaviour lands with the §8.6 line 714 elicitation
+// vs. elicitation behaviour lands with the §8.6 elicitation
 // flow; this type and its default constant are the plumbing the
 // dispatcher will read.
-// spec: §8.6 line 654, line 674
+// spec: §8.6
 type ApprovalMode string
 
 const (
@@ -83,26 +80,26 @@ const (
 	ApprovalModeUnspecified ApprovalMode = ""
 	// ApprovalModeAuto — every extension is auto-approved up to the
 	// effective max. No elicitation, no queuing, no success cool-off.
-	// spec: §8.6 line 712
+	// spec: §8.6
 	ApprovalModeAuto ApprovalMode = "auto"
 	// ApprovalModeElicitation — requests are serialized per task tree
 	// with a generic elicitation and a success cool-off window.
-	// spec: §8.6 line 714
+	// spec: §8.6
 	ApprovalModeElicitation ApprovalMode = "elicitation"
 )
 
-// DefaultApprovalMode is the §8.6 line 674 deployment-default
+// DefaultApprovalMode is the §8.6 deployment-default
 // extensionApproval mode. The spec calls for elicitation (the
 // human-in-the-loop budget gate) so a deployment with no override
 // receives the safer mode.
-// spec: §8.6 line 674
+// spec: §8.6
 const DefaultApprovalMode = ApprovalModeElicitation
 
 // ResolveApprovalMode returns the effective approval mode for the
 // deployment→tenant→runtime layering. A later layer overrides an
 // earlier one when it carries a non-unspecified value. A fully empty
 // stack falls back to DefaultApprovalMode.
-// spec: §8.6 line 654
+// spec: §8.6
 func ResolveApprovalMode(deployment, tenant, runtime ApprovalMode) ApprovalMode {
 	v := deployment
 	if tenant != ApprovalModeUnspecified {
@@ -121,7 +118,7 @@ func ResolveApprovalMode(deployment, tenant, runtime ApprovalMode) ApprovalMode 
 // duration for the deployment→tenant→runtime layering. A later layer
 // overrides an earlier one when it carries a positive duration. A
 // fully zero stack falls back to DefaultSuccessCoolOff.
-// spec: §8.6 line 654, line 675
+// spec: §8.6
 func ResolveSuccessCoolOff(deployment, tenant, runtime time.Duration) time.Duration {
 	v := deployment
 	if tenant > 0 {
@@ -136,7 +133,7 @@ func ResolveSuccessCoolOff(deployment, tenant, runtime time.Duration) time.Durat
 	return v
 }
 
-// Dimensions carries the §8.6 line 643 extendable budget dimensions as
+// Dimensions carries the §8.6 extendable budget dimensions as
 // a fixed-shape value so the handler runs one Grant pass per dimension
 // without duplicating the logic six times. The same struct plays every
 // role in the extension flow: a request's requested amounts, a tree's
@@ -151,7 +148,7 @@ func ResolveSuccessCoolOff(deployment, tenant, runtime time.Duration) time.Durat
 // components). maxDepth, minIsolationProfile, delegationPolicyRef,
 // perChildRetryBudget, treeVisibility, and allowSelfRecursion are
 // security or reliability boundaries and are deliberately absent.
-// spec: §8.6 line 643; F-8.6.1
+// spec: §8.6; F-8.6.1
 type Dimensions struct {
 	// Tokens is the maxTokenBudget dimension (additionalTokenBudget).
 	Tokens int64
@@ -201,7 +198,7 @@ type dimLens struct {
 	set  func(*Dimensions, int64)
 }
 
-// allDims is the §8.6 line 643 extendable dimension set in a fixed
+// allDims is the §8.6 extendable dimension set in a fixed
 // order. Iterating it is the single place that enumerates the
 // dimensions; adding one is a single append here. F-8.6.1.
 var allDims = []dimLens{
@@ -236,14 +233,14 @@ type TreeBudget struct {
 	// dimension while the others proceed independently. F-8.6.1.
 	EffectiveMax Dimensions
 
-	// ParentCeiling holds the §8.6 line 648 second hard ceiling per
+	// ParentCeiling holds the §8.6 second hard ceiling per
 	// dimension: "a child requesting an extension cannot exceed what the
 	// parent was granted". Zero on a dimension means no parent ceiling
 	// applies (the requesting session is the tree root, or the
 	// BudgetSource has not resolved a parent lease). When positive, the
 	// dimension's effective ceiling is further capped at this value
 	// before Grant runs. F-8.6.15.
-	// spec: §8.6 line 648
+	// spec: §8.6
 	ParentCeiling Dimensions
 
 	// ExtensionDenied is the §8.6 extension-denied flag for the
@@ -260,47 +257,50 @@ type TreeBudget struct {
 	CoolOffExpiry time.Time
 }
 
-// NewLimits is the §8.6 line 743 "resulting new limits" the audit
+// NewLimits is the §8.6 "resulting new limits" the audit
 // record carries after a grant lands. Every dimension is an absolute
 // post-grant value (pre-grant + granted, subject to the §8.6 ceilings)
 // for the requesting session, so the audit reader does not add a delta
 // to a prior snapshot to reconstruct a limit. The extension scope is
-// per requesting session (§8.6 line 737-741), so the values reflect
+// per requesting session (§8.6), so the values reflect
 // what the requesting session sees — sibling and existing-child views
 // are unaffected. F-8.6.10; F-8.6.12.
-// spec: §8.6 line 743
+// spec: §8.6
 type NewLimits = Dimensions
 
+// AppliedGrant is what BudgetSource.ApplyGrant committed: the
+// per-dimension amount actually added after the in-transaction clamp, and
+// the resulting limits the audit record carries.
+// spec: §8.6 (Extension state)
+type AppliedGrant struct {
+	// Granted is the clamped per-dimension amount the grant added. It can
+	// be less than requested, and zero on every dimension, when grants
+	// served elsewhere used the headroom since the TreeBudget read.
+	Granted Dimensions
+	// NewLimits is the root's base limits plus the tree's cumulative
+	// grants after this grant.
+	NewLimits NewLimits
+}
+
 // BudgetSource resolves and mutates the §8.6 per-tree budget state.
-//
-// The minimal gateway wires MemoryBudgetSource. The handoff-safe
-// Postgres implementation reads the extension-denied flag and
-// cool-off expiry, and commits the budget increment, inside one
-// transaction under the delegation_tree_budget row lock, so the §8.6
-// in-flight-request race and coordinator-handoff bypass are both
-// closed. The Service depends only on this interface.
+// StoreBudgetSource is the gateway's implementation. The Service depends
+// only on this interface.
 type BudgetSource interface {
 	// TreeBudget returns the extension state for the tree that
 	// contains sessionID. It returns ErrSessionNotFound when the
-	// session is unknown.
+	// session is unknown and ErrSessionTerminal when it is terminal.
 	TreeBudget(ctx context.Context, tenantID, sessionID string) (TreeBudget, error)
 
-	// ApplyGrant atomically raises the requesting session's view of
-	// the tree budget by the per-dimension grant in granted. §8.6 lines
-	// 737-741 scope an extension to the requesting session only:
-	// existing children's leases are unaffected, only new children
-	// spawned after the extension benefit from the expanded parent
-	// budget. The source therefore records the bump against
-	// requestingSessionID rather than the root, and TreeBudget keyed
-	// by another session in the same tree returns the unchanged
-	// base. A Postgres implementation re-checks the extension-denied
-	// flag inside the same transaction and returns ErrExtensionDenied
-	// when a rejection was persisted between the TreeBudget read and
-	// the commit (§8.6 in-flight atomic check). A zero on a dimension
-	// is a no-op for that dimension; the returned NewLimits reflect
-	// whichever dimensions did land. F-8.6.1; F-8.6.10; F-8.6.11;
-	// F-8.6.12.
-	ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, granted Dimensions) (NewLimits, error)
+	// ApplyGrant adds granted to the tree's cumulative extension grants.
+	// The implementation re-reads the requesting session, returns
+	// ErrSessionTerminal for a terminal one, and, inside the transaction
+	// that re-checks the extension-denied flag, clamps the grant so the
+	// cumulative grant stays within the effective max less the root's base
+	// limit. It returns ErrExtensionDenied when a rejection was persisted
+	// since the TreeBudget read. The returned AppliedGrant carries the
+	// clamped amount.
+	// spec: §8.6 (Extension state), §8.6 (In-flight requests)
+	ApplyGrant(ctx context.Context, tenantID, rootSessionID, requestingSessionID string, granted Dimensions) (AppliedGrant, error)
 
 	// RejectionCoolOff returns the §8.6 rejectionCoolOffSeconds for the
 	// tree, resolved through the deployment, tenant, and runtime
@@ -309,40 +309,30 @@ type BudgetSource interface {
 	RejectionCoolOff(ctx context.Context, tenantID, rootSessionID string) time.Duration
 
 	// Deny marks the requesting subtree extension-denied and starts the
-	// §8.6 line 734 rejection cool-off, the durable record of a user's
+	// §8.6 rejection cool-off, the durable record of a user's
 	// rejection of a budget elicitation. The elicitation coordinator
-	// calls it on the §8.6 line 729 reject path so subsequent requests
+	// calls it on the §8.6 reject path so subsequent requests
 	// from the subtree are auto-rejected during the cool-off. A Postgres
 	// implementation keys the flag with a per-row subtree id and persists
 	// it to delegation_tree_budget so a coordinator handoff cannot bypass
-	// the denial (§8.6 line 730); the in-memory source applies it
-	// tree-wide. spec: §8.6 line 729, line 734.
+	// the denial (§8.6). spec: §8.6.
 	Deny(ctx context.Context, tenantID, rootSessionID, requestingSessionID string) error
 }
 
-// DenialStore is the durable backing for the §8.6 extension-denied flag,
-// the rejection cool-off expiry, and the lease-extension grant counters.
-// MemoryBudgetSource delegates to it when one is injected via
-// WithDenialStore so a user rejection survives a coordinator handoff or
-// gateway restart, which §8.6 line 730 forbids bypassing. The Postgres
-// implementation (pkg/gateway/leasecontrol/denialpg) persists the flag to
-// the delegation_tree_budget table, reads it back compared against the
-// database clock (§8.6 line 733), and re-checks it inside the
-// budget-increment transaction (§8.6 line 732). A nil store leaves the
-// in-memory behavior unchanged — the development and test path.
-//
-// The store keys its rows by (tenantID, rootSessionID): the denial is
-// recorded tree-wide, matching both the delegation_tree_budget primary
-// key and the in-memory source's tree-wide denial. The requestingSessionID
-// the BudgetSource methods carry is the per-subtree scoping the in-memory
-// per-session extension deltas already enforce (F-8.6.12); the durable
-// denial state stays tree-keyed.
-// spec: §8.6 lines 730-733.
+// DenialStore is the backing for the §8.6 extension-denied flag, the
+// rejection cool-off expiry, and the tree's cumulative extension grants,
+// which are the authoritative record of what extensions have raised. The
+// Postgres implementation (denialpg) persists them to the
+// delegation_tree_budget row, reads the flag compared against the
+// database clock, and re-checks it inside the grant transaction.
+// MemoryDenialStore is the replica-local backing for a gateway run
+// without Postgres. Rows are keyed by (tenantID, rootSessionID).
+// spec: §8.6 (Extension state), §8.6 (Durability)
 type DenialStore interface {
 	// Deny persists the tree's extension-denied flag and a cool-off
 	// expiry coolOff into the future, keyed by (tenantID, rootSessionID).
 	// The expiry MUST be computed from the database clock (NOW()), not a
-	// caller-supplied wall-clock, per §8.6 line 733.
+	// caller-supplied wall-clock, per §8.6.
 	Deny(ctx context.Context, tenantID, rootSessionID string, coolOff time.Duration) error
 
 	// Denied reports whether the tree is currently extension-denied,
@@ -352,18 +342,30 @@ type DenialStore interface {
 	// A tree with no persisted row is reported not denied.
 	Denied(ctx context.Context, tenantID, rootSessionID string) (denied bool, expiry time.Time, err error)
 
-	// Grant runs the §8.6 line 732 in-flight atomic re-check: inside one
-	// transaction it locks the tree's delegation_tree_budget row,
-	// re-evaluates the denial against the database clock, and — only when
-	// the tree is not denied — increments the durable per-tree extension
-	// counters by granted and commits. It returns ErrExtensionDenied when
-	// the flag was set (the grant must roll back) and nil when the grant
-	// committed.
-	Grant(ctx context.Context, tenantID, rootSessionID string, granted Dimensions) error
+	// Grant runs the §8.6 in-flight atomic re-check: under the tree row's
+	// lock, in one transaction, it re-evaluates the denial and, only when
+	// the tree is not denied, clamps requested so the cumulative grant
+	// does not exceed limit on any dimension (ClampGrant), adds the
+	// clamped amount, and commits. It returns ErrExtensionDenied when the
+	// flag was set, and otherwise the applied amount and the new
+	// cumulative grant.
+	Grant(ctx context.Context, tenantID, rootSessionID string, requested, limit Dimensions) (GrantResult, error)
+
+	// Grants returns the tree's cumulative extension grants, zero for a
+	// tree with no row.
+	Grants(ctx context.Context, tenantID, rootSessionID string) (Dimensions, error)
 
 	// Clear clears the tree's extension-denied flag and cool-off, backing
-	// the §15.1 line 868 admin extension-denial clear endpoint.
+	// the §15.1 admin extension-denial clear endpoint.
 	Clear(ctx context.Context, tenantID, rootSessionID string) error
+}
+
+// GrantResult is what DenialStore.Grant committed.
+type GrantResult struct {
+	// Applied is the clamped per-dimension amount added.
+	Applied Dimensions
+	// Total is the tree's cumulative grant after the add.
+	Total Dimensions
 }
 
 // Sentinel errors a BudgetSource returns.
@@ -372,20 +374,16 @@ var (
 	// budget source.
 	ErrSessionNotFound = errors.New("leasecontrol: session not found")
 
+	// ErrSessionTerminal — the requesting session is terminal. The gateway
+	// applies no grant to, and presents no elicitation for, a terminal
+	// session. spec: §8.6 (Extension state).
+	ErrSessionTerminal = errors.New("leasecontrol: session is terminal")
+
 	// ErrExtensionDenied — the subtree's extension-denied flag was set
 	// (found by ApplyGrant inside the commit transaction, closing the
 	// §8.6 in-flight race).
 	ErrExtensionDenied = errors.New("leasecontrol: subtree extension denied")
 )
-
-// TenantResolver maps a session id to its owning tenant. The gateway
-// session store satisfies it. ExtendLease needs the tenant because the
-// budget state is tenant-scoped per §4.2.
-type TenantResolver interface {
-	// TenantOf returns the tenant that owns sessionID, or
-	// ErrSessionNotFound when the session is unknown.
-	TenantOf(ctx context.Context, sessionID string) (string, error)
-}
 
 // Service implements adapterv1.GatewayControlServer for the surviving
 // §9.1/§9.3 tool-bridge and §5.2 scrub-report RPCs, and hosts the §8.6
@@ -395,7 +393,6 @@ type Service struct {
 	adapterv1.UnimplementedGatewayControlServer
 
 	budgets           BudgetSource
-	tenants           TenantResolver
 	auditing          Auditor
 	metrics           MetricEmitter
 	clock             func() time.Time
@@ -403,7 +400,7 @@ type Service struct {
 	batchIDGen        func() string
 	peerIPFn          func(context.Context) string
 
-	// coordinator drives the §8.6 line 714 elicitation-mode approval flow.
+	// coordinator drives the §8.6 elicitation-mode approval flow.
 	// It is nil when no Elicitor is wired, in which case an
 	// elicitation-mode request fails closed rather than auto-granting.
 	// F-8.6.2.
@@ -413,17 +410,17 @@ type Service struct {
 	// gateway LLM Proxy drives through ExtendForBudget: one per-tree
 	// episode that concurrent exhausting sessions join, each on its own
 	// ExtendLease worker so a joiner batches onto the one live elicitation
-	// prompt (§8.6 line 719), decoupling the elicitation lifecycle from the
-	// proxy's in-path wait. spec: §8.6 line 629, line 719.
+	// prompt (§8.6), decoupling the elicitation lifecycle from the
+	// proxy's in-path wait. spec: §8.6.
 	episodes *episodeManager
 
-	// autoLimiter enforces the §8.6 line 712 auto-mode rate limit. It is
+	// autoLimiter enforces the §8.6 auto-mode rate limit. It is
 	// always present (in-memory counter when none is supplied) but inert
 	// unless a tree or the deployment default sets a positive
 	// maxAutoExtensionsPerMinute. F-8.6.7.
 	autoLimiter *autoExtensionLimiter
 
-	// defaultAutoMaxPerMinute is the §8.6 line 712 deployment-default
+	// defaultAutoMaxPerMinute is the §8.6 deployment-default
 	// maxAutoExtensionsPerMinute applied when a tree carries no more
 	// specific value. Zero means no limit. F-8.6.7.
 	defaultAutoMaxPerMinute int
@@ -443,43 +440,22 @@ type Service struct {
 
 	// scrubReports handles the §4.7 ReportSessionScrub / ReportPodScrub
 	// side effects: the sessionsServed and scrubFailureCount recycle-counter
-	// writes, the unhealthy-threshold drain ledger, and the §3.4 / §6.39
+	// writes, the unhealthy-threshold drain ledger, and the §6.2
 	// recycle disposition that drives the claim binding-state patches. Nil
 	// leaves both scrub-report RPCs returning codes.Unimplemented (the
-	// §8.6-only GatewayControl deployment). spec: §4.7; §3.4; §6.39.
+	// §8.6-only GatewayControl deployment). spec: §4.7; §6.2.
 	scrubReports ScrubReportService
-
-	// treeGranter bridges a §8.6 GRANTED token-budget extension onto the
-	// §8.2 per-tree delegation budget counter so the next
-	// `lenny/delegate_task` admission is gated against the expanded token
-	// pool, not the parent lease's pre-extension MaxTokenBudget. Nil leaves
-	// the extension affecting only the leasecontrol view (the Postgres-only
-	// dev posture with no Redis treebudget); a wired granter closes the
-	// F-8.6.3 budget-side-effect gap. spec: §8.6 line 643.
-	treeGranter TreeBudgetGranter
-}
-
-// TreeBudgetGranter raises the §8.2 per-tree delegation token-budget
-// ceiling when a §8.6 lease extension grants additional tokens.
-// *treebudget.Reserver satisfies it. The seam keeps leasecontrol free of
-// a direct treebudget dependency and lets the Postgres-only dev path run
-// without a Redis budget counter. spec: §8.6 line 643; §8.2 line 57.
-type TreeBudgetGranter interface {
-	// GrantTokenBudget raises the tree rooted at rootSessionID by delta
-	// tokens. Implementations record it cumulatively so repeated grants
-	// stack. A non-positive delta is a no-op.
-	GrantTokenBudget(ctx context.Context, rootSessionID string, delta int64) error
 }
 
 // MetricEmitter is the §16 counter callback the Service drives on
 // every ExtendLease decision. *gatewaymetrics.Metrics satisfies it.
 // The interface keeps the leasecontrol package free of a direct
 // gatewaymetrics dependency (which would create an import cycle once
-// gatewaymetrics consumes leasecontrol types). spec: §16 line 66;
+// gatewaymetrics consumes leasecontrol types). spec: §16;
 // F-8.6.13.
 type MetricEmitter interface {
 	// IncDelegationLeaseExtension bumps lenny_delegation_lease_extension_total
-	// with the §8.6 line 743 (`approved`/`capped`/`denied`) outcome the
+	// with the §8.6 outcome the
 	// audit recorded for the same request.
 	IncDelegationLeaseExtension(tenantID, outcome string)
 }
@@ -490,7 +466,7 @@ type Auditor interface {
 	// RecordExtension logs one §8.6 extension decision.
 	RecordExtension(ctx context.Context, e ExtensionAudit)
 
-	// RecordAutoRateLimitExceeded logs the §8.6 line 712
+	// RecordAutoRateLimitExceeded logs the §8.6
 	// `lease_extension_auto_rate_limit_exceeded` event: an auto-mode
 	// extension request tripped the tree's maxAutoExtensionsPerMinute, so
 	// the gateway paused auto-approval and fell back to elicitation for
@@ -498,7 +474,7 @@ type Auditor interface {
 	RecordAutoRateLimitExceeded(ctx context.Context, e AutoRateLimitAudit)
 }
 
-// AutoRateLimitAudit is the §8.6 line 712 audit record for an auto-mode
+// AutoRateLimitAudit is the §8.6 audit record for an auto-mode
 // rate-limit fallback. It carries the tree, the requesting session, and
 // the issuing replica so an operator can correlate the safety-valve
 // trip with the surrounding extension activity. F-8.6.7.
@@ -517,7 +493,7 @@ type AutoRateLimitAudit struct {
 	ClientIP string
 }
 
-// AuditOutcome is the §8.6 line 743 "outcome (approved/denied/capped)"
+// AuditOutcome is the §8.6 "outcome (approved/denied/capped)"
 // classification recorded on every extension audit. It groups the
 // proto-level statuses (GRANTED/PARTIALLY_GRANTED/CEILING_REACHED/
 // REJECTED) into the three audit-facing categories the spec calls out:
@@ -530,28 +506,28 @@ type AuditOutcome string
 const (
 	// AuditOutcomeApproved — the full requested amount was granted under
 	// the §8.6 ceiling (proto STATUS_GRANTED).
-	// spec: §8.6 line 743
+	// spec: §8.6
 	AuditOutcomeApproved AuditOutcome = "approved"
 	// AuditOutcomeCapped — the ceiling reduced the grant. Either the
 	// grant was non-zero but capped (STATUS_PARTIALLY_GRANTED) or the
 	// ceiling was already reached and the grant is zero
 	// (STATUS_CEILING_REACHED). The audit class merges both because the
-	// spec frames the §8.6 line 743 distinction as approved/denied/capped
+	// spec frames the §8.6 distinction as approved/denied/capped
 	// rather than approved/denied/ceiling.
-	// spec: §8.6 line 743
+	// spec: §8.6
 	AuditOutcomeCapped AuditOutcome = "capped"
 	// AuditOutcomeDenied — the §8.6 extension-denied flag was set, either
 	// when the TreeBudget read returned it or when ApplyGrant detected an
-	// in-flight denial (the §8.6 line 732 atomic re-check). The proto
+	// in-flight denial (the §8.6 atomic re-check). The proto
 	// status is STATUS_REJECTED in both paths.
-	// spec: §8.6 line 743
+	// spec: §8.6
 	AuditOutcomeDenied AuditOutcome = "denied"
 )
 
 // auditOutcomeFor maps a §8.6 grant outcome to the audit category. The
 // REJECTED path does not go through leaseextension.Grant, so the
 // handler picks AuditOutcomeDenied directly.
-// spec: §8.6 line 743
+// spec: §8.6
 func auditOutcomeFor(o leaseextension.Outcome) AuditOutcome {
 	switch o {
 	case leaseextension.Granted:
@@ -563,8 +539,9 @@ func auditOutcomeFor(o leaseextension.Outcome) AuditOutcome {
 	}
 }
 
-// ExtensionAudit is the §8.6 line 743 audit record for one extension
-// request. Every field the spec line 743 enumerates rides on this
+// ExtensionAudit is the §8.6 ("Lease Extension Approval Modes") audit
+// record for one extension request. Every field the spec's Audit
+// paragraph enumerates rides on this
 // struct: requesting session, requested amounts, approval mode,
 // outcome, approver, granted amount, effective max at time of request,
 // resulting new limits, batch id, service_instance_id, client_ip.
@@ -573,7 +550,7 @@ type ExtensionAudit struct {
 	TenantID         string
 	RootSessionID    string
 	RequestSessionID string
-	// Requested and Granted carry every §8.6 line 643 extendable
+	// Requested and Granted carry every §8.6 extendable
 	// dimension (tokens, seconds, children, parallel-children,
 	// tree-size, and the two fileExportLimits components) so the audit
 	// reflects all budget dimensions, not just tokens. A zero on a
@@ -581,32 +558,31 @@ type ExtensionAudit struct {
 	// F-8.6.1; F-8.6.11.
 	Requested Dimensions
 	Granted   Dimensions
-	// EffectiveMax is the §8.6 line 743 "effective max at time of
-	// request" for the tokens dimension — the primary maxExtendableBudget
+	// EffectiveMax is the §8.6 for the tokens dimension — the primary maxExtendableBudget
 	// ceiling the spec's configuration layering resolves.
 	EffectiveMax int64
-	// Outcome is the §8.6 line 743 approved/denied/capped classification.
+	// Outcome is the §8.6 approved/denied/capped classification.
 	Outcome AuditOutcome
-	// ApprovalMode is the §8.6 line 743 resolved approval mode the
+	// ApprovalMode is the §8.6 resolved approval mode the
 	// audit reader uses to correlate auto-grants vs elicitation
 	// outcomes. The resolved mode is the deployment→tenant→runtime
-	// layered value the dispatcher consumes; the §8.6 line 714
+	// layered value the dispatcher consumes; the §8.6
 	// elicitation flow lands separately, so v1 always records the
 	// tree's registered mode (defaulting to elicitation per spec line
 	// 674) without yet driving the dispatcher. F-8.6.10.
 	ApprovalMode ApprovalMode
-	// Approver is the §8.6 line 743 "approver (gateway-auto or client)"
+	// Approver is the §8.6 "approver (gateway-auto or client)"
 	// classification: `gateway-auto` when the grant did not surface an
 	// elicitation (auto-mode, or a fallthrough during cool-off), and
 	// `client` on the rejection path because the cool-off itself is
-	// the user's denial echoed back. The §8.6 line 714 elicitation
+	// the user's denial echoed back. The §8.6 elicitation
 	// path will tag approved/denied client outcomes with the same
 	// `client` value when it lands; the spec value space is closed
 	// at these two strings. F-8.6.10.
 	Approver string
-	// BatchID is the §8.6 line 743 batch identifier that groups
+	// BatchID is the §8.6 batch identifier that groups
 	// requests tied to the same elicitation + cool-off period. Until
-	// the §8.6 line 714 dispatcher lands, every request is its own
+	// the §8.6 dispatcher lands, every request is its own
 	// elicitation episode and the BatchID is generated fresh per
 	// request — a deterministic ULID-shaped string carrying the
 	// request's clock instant so a batch id sorts chronologically.
@@ -621,12 +597,12 @@ type ExtensionAudit struct {
 	// F-8.6.10.
 	// spec: §16.1.1
 	ServiceInstanceID string
-	// ClientIP is the §8.6 line 743 originator IP, sourced from the
+	// ClientIP is the §8.6 originator IP, sourced from the
 	// gRPC peer.FromContext on the inbound ExtendLease call. Empty
 	// when no peer is available (unit tests; in-process callers).
 	// F-8.6.10.
 	ClientIP string
-	// NewLimits is the §8.6 line 743 "resulting new limits" — the
+	// NewLimits is the §8.6 "resulting new limits" — the
 	// post-grant per-session view of currentTokenBudget and
 	// currentMaxAgeSeconds. F-8.6.10; F-8.6.12.
 	NewLimits NewLimits
@@ -636,9 +612,6 @@ type ExtensionAudit struct {
 type Options struct {
 	// Budgets resolves the §8.6 per-tree budget state. Required.
 	Budgets BudgetSource
-
-	// Tenants maps a session id to its tenant. Required.
-	Tenants TenantResolver
 
 	// Auditing records the §8.6 audit entry per request. Optional;
 	// nil skips auditing.
@@ -660,20 +633,20 @@ type Options struct {
 	// spec: §16.1.1
 	ServiceInstanceID string
 
-	// BatchIDGen produces the §8.6 line 743 batch identifier the audit
+	// BatchIDGen produces the §8.6 batch identifier the audit
 	// carries. Nil selects a built-in generator that returns a
 	// chronologically-sortable random string per invocation — until the
-	// §8.6 line 714 elicitation dispatcher lands, every request is its
+	// §8.6 elicitation dispatcher lands, every request is its
 	// own batch. F-8.6.10.
 	BatchIDGen func() string
 
-	// PeerIPFn extracts the §8.6 line 743 client_ip from the request
+	// PeerIPFn extracts the §8.6 client_ip from the request
 	// context. Nil selects defaultPeerIP, which reads
 	// google.golang.org/grpc/peer; tests can substitute a deterministic
 	// fake. F-8.6.10.
 	PeerIPFn func(context.Context) string
 
-	// Elicitor presents the §8.6 line 718 generic budget elicitation and
+	// Elicitor presents the §8.6 generic budget elicitation and
 	// blocks for the user's decision. When set, ExtendLease enforces
 	// elicitation-mode consent: an elicitation-mode tree no longer
 	// auto-grants. When nil, an elicitation-mode request fails closed
@@ -682,7 +655,7 @@ type Options struct {
 	// store and client event stream. F-8.6.2.
 	Elicitor Elicitor
 
-	// AutoExtensionCounter backs the §8.6 line 712 auto-mode rate limit.
+	// AutoExtensionCounter backs the §8.6 auto-mode rate limit.
 	// ExtendLease tracks auto-mode extension requests per tree per minute
 	// and falls back to elicitation once a tree exceeds its resolved
 	// maxAutoExtensionsPerMinute. Nil selects an in-memory per-replica
@@ -690,12 +663,12 @@ type Options struct {
 	// F-8.6.7.
 	AutoExtensionCounter ratelimit.Counter
 
-	// DefaultAutoMaxPerMinute is the §8.6 line 712 deployment-default
+	// DefaultAutoMaxPerMinute is the §8.6 deployment-default
 	// maxAutoExtensionsPerMinute. It applies to a tree that does not carry
 	// a more specific (tenant/runtime) value, so the safety valve is
 	// operable from a single deployment knob even before per-tree config
 	// is registered. Zero is the spec default (no limit). F-8.6.7.
-	// spec: §8.6 line 712
+	// spec: §8.6
 	DefaultAutoMaxPerMinute int
 
 	// PlatformTools backs the §9.1 platform tool forwarding RPCs
@@ -716,18 +689,10 @@ type Options struct {
 	// ScrubReports backs the §4.7 ReportSessionScrub / ReportPodScrub RPCs:
 	// the adapter's per-slot and whole-pod scrub reports reach the gateway
 	// recycle-counter writes, the unhealthy-threshold drain ledger, and the
-	// §3.4 / §6.39 recycle disposition through it. Nil leaves both RPCs
+	// recycle disposition through it. Nil leaves both RPCs
 	// returning codes.Unimplemented (the §8.6-only GatewayControl
-	// deployment). spec: §4.7; §3.4; §6.39.
+	// deployment). spec: §4.7; §6.2.
 	ScrubReports ScrubReportService
-
-	// TreeBudget bridges a §8.6 GRANTED token-budget extension onto the
-	// §8.2 per-tree delegation budget counter (*treebudget.Reserver) so a
-	// post-grant `lenny/delegate_task` admission observes the raised token
-	// pool. Nil leaves the extension affecting only the leasecontrol view —
-	// the Postgres-only dev posture that runs no Redis budget counter.
-	// F-8.6.3. spec: §8.6 line 643.
-	TreeBudget TreeBudgetGranter
 
 	// EpisodeContext supplies the session-scoped context an ExtendForBudget
 	// extension episode dispatches its ExtendLease elicitation on. §8.6
@@ -739,7 +704,7 @@ type Options struct {
 	// still-pending elicitation. Nil selects context.Background (the
 	// elicitor bounds its own lifetime), which is the production default;
 	// tests can inject a bounded context to assert episode cleanup.
-	// spec: §8.6 line 629.
+	// spec: §8.6.
 	EpisodeContext func() context.Context
 }
 
@@ -747,9 +712,6 @@ type Options struct {
 func NewService(opts Options) (*Service, error) {
 	if opts.Budgets == nil {
 		return nil, errors.New("leasecontrol: Budgets is required")
-	}
-	if opts.Tenants == nil {
-		return nil, errors.New("leasecontrol: Tenants is required")
 	}
 	clock := opts.Clock
 	if clock == nil {
@@ -765,7 +727,6 @@ func NewService(opts Options) (*Service, error) {
 	}
 	svc := &Service{
 		budgets:           opts.Budgets,
-		tenants:           opts.Tenants,
 		auditing:          opts.Auditing,
 		metrics:           opts.Metrics,
 		clock:             clock,
@@ -781,7 +742,6 @@ func NewService(opts Options) (*Service, error) {
 	svc.platformTools = opts.PlatformTools
 	svc.connectorTools = opts.ConnectorTools
 	svc.scrubReports = opts.ScrubReports
-	svc.treeGranter = opts.TreeBudget
 	svc.episodes = newEpisodeManager(svc, opts.EpisodeContext)
 	return svc, nil
 }
@@ -810,19 +770,15 @@ func (s *Service) ExtendLease(ctx context.Context, req ExtendRequest) (ExtendRes
 		return ExtendResponse{}, fmt.Errorf("leasecontrol: ExtendLease request carries no session id")
 	}
 
-	tenantID, err := s.tenants.TenantOf(ctx, sessionID)
-	if err != nil {
-		if errors.Is(err, ErrSessionNotFound) {
-			return ExtendResponse{}, fmt.Errorf("leasecontrol: ExtendLease for unknown session %s: %w", sessionID, err)
-		}
-		return ExtendResponse{}, fmt.Errorf("leasecontrol: resolve tenant for session %s: %w", sessionID, err)
+	// spec: §8.6 (Extension state) — the rows are read under the tenant
+	// the request carries, so a request without one is refused.
+	tenantID := req.TenantID
+	if tenantID == "" {
+		return ExtendResponse{}, fmt.Errorf("leasecontrol: ExtendLease request for session %s carries no tenant", sessionID)
 	}
 
 	budget, err := s.budgets.TreeBudget(ctx, tenantID, sessionID)
 	if err != nil {
-		if errors.Is(err, ErrSessionNotFound) {
-			return ExtendResponse{}, fmt.Errorf("leasecontrol: no tree budget for session %s: %w", sessionID, err)
-		}
 		return ExtendResponse{}, fmt.Errorf("leasecontrol: load tree budget for session %s: %w", sessionID, err)
 	}
 
@@ -836,7 +792,7 @@ func (s *Service) ExtendLease(ctx context.Context, req ExtendRequest) (ExtendRes
 	// the flag set is treated as still in effect.
 	if budget.ExtensionDenied && (budget.CoolOffExpiry.IsZero() || s.clock().Before(budget.CoolOffExpiry)) {
 		s.audit(ctx, tenantID, budget, sessionID, requested, AuditOutcomeDenied, mode)
-		// spec: §15.1 line 1080 — REJECTED carries details.subtreeId and
+		// spec: §15.1 — REJECTED carries details.subtreeId and
 		// details.coolOffExpiresAt (UTC RFC 3339) plus the typed
 		// EXTENSION_COOL_OFF_ACTIVE error so admin tooling can distinguish
 		// "in an existing cool-off window" from other REJECTED outcomes.
@@ -850,7 +806,7 @@ func (s *Service) ExtendLease(ctx context.Context, req ExtendRequest) (ExtendRes
 	// elicitation. In elicitation mode the gate solicits the user's
 	// consent before any budget moves; a rejection returns a terminal
 	// REJECTED response and persists the subtree denial. The resolved
-	// approver attribution flows into the §8.6 line 743 audit.
+	// approver attribution flows into the §8.6 audit.
 	g := s.gate(ctx, mode, tenantID, budget, sessionID, requested)
 	if g.err != nil {
 		return ExtendResponse{}, g.err
@@ -859,19 +815,17 @@ func (s *Service) ExtendLease(ctx context.Context, req ExtendRequest) (ExtendRes
 		return g.resp, nil
 	}
 
-	// spec: §8.6 line 643/648 — run the same Grant math over every
+	// spec: §8.6 — run the same Grant math over every
 	// extendable dimension against the smaller of its layered effective
-	// ceiling and its parent-lease cap (§8.6 line 648). Dimensions are
+	// ceiling and its parent-lease cap (§8.6). Dimensions are
 	// independent: a request that exhausts one of them still applies the
 	// others. allDims is the single enumeration of the extendable set.
 	// F-8.6.1; F-8.6.11; F-8.6.15.
 	var granted Dimensions
-	outcomes := make([]dimOutcome, 0, len(allDims))
 	for _, d := range allDims {
 		ceiling := dimCeiling(d.get(budget.EffectiveMax), d.get(budget.ParentCeiling))
-		g, o := leaseextension.Grant(d.get(budget.Current), d.get(requested), ceiling)
+		g, _ := leaseextension.Grant(d.get(budget.Current), d.get(requested), ceiling)
 		d.set(&granted, g)
-		outcomes = append(outcomes, dimOutcome{requested: d.get(requested), granted: g, outcome: o})
 	}
 
 	newLimits := budget.Current
@@ -890,31 +844,15 @@ func (s *Service) ExtendLease(ctx context.Context, req ExtendRequest) (ExtendRes
 			}
 			return ExtendResponse{}, fmt.Errorf("leasecontrol: apply grant for tree %s: %w", budget.RootSessionID, err)
 		}
-		newLimits = applied
-
-		// §8.6 line 643: a granted token-budget extension must also raise
-		// the §8.2 per-tree delegation budget counter so the next
-		// `lenny/delegate_task` admission is gated against the expanded
-		// token pool rather than the parent lease's pre-extension cap. The
-		// leasecontrol ApplyGrant above only moves the in-memory/Postgres
-		// extension view; without this bridge the budget side effect §8.6
-		// promises never reaches admission (F-8.6.3). Best-effort: the
-		// control-plane grant already committed, so a transient treebudget
-		// fault is logged on the span by the reserver rather than failing
-		// the GRANTED response (the next admission falls back to the
-		// pre-extension cap, fail-safe). A nil granter is the Postgres-only
-		// dev posture with no Redis counter.
-		if s.treeGranter != nil && granted.Tokens > 0 {
-			if gerr := s.treeGranter.GrantTokenBudget(ctx, budget.RootSessionID, granted.Tokens); gerr != nil {
-				slog.WarnContext(ctx, "leasecontrol: tree token-budget grant bridge failed",
-					"root_session_id", budget.RootSessionID,
-					"granted_tokens", granted.Tokens,
-					"error", gerr)
-			}
-		}
+		// spec: §8.6 (Extension state) — the grant the store committed is
+		// the grant: the in-transaction clamp can lower it below the amount
+		// computed from the TreeBudget read when another replica's grant
+		// used the headroom since, and a clamp to zero is CEILING_REACHED.
+		granted = applied.Granted
+		newLimits = applied.NewLimits
 	}
 
-	combined := combineOutcomes(outcomes)
+	combined := combineOutcomes(appliedOutcomes(requested, granted))
 	status := statusFor(combined)
 	s.auditFull(ctx, tenantID, budget, sessionID, requested, granted,
 		auditOutcomeFor(combined),
@@ -925,11 +863,33 @@ func (s *Service) ExtendLease(ctx context.Context, req ExtendRequest) (ExtendRes
 	}, nil
 }
 
+// appliedOutcomes derives each dimension's §8.6 outcome from the amount
+// that was applied: the full request is Granted, a positive part of it is
+// PartiallyGranted, and nothing is CeilingReached. A dimension the caller
+// did not request is Granted.
+// spec: §8.6 (In-flight requests)
+func appliedOutcomes(requested, applied Dimensions) []dimOutcome {
+	out := make([]dimOutcome, 0, len(allDims))
+	for _, d := range allDims {
+		req, got := d.get(requested), d.get(applied)
+		o := leaseextension.Granted
+		switch {
+		case req <= 0 || got >= req:
+		case got > 0:
+			o = leaseextension.PartiallyGranted
+		default:
+			o = leaseextension.CeilingReached
+		}
+		out = append(out, dimOutcome{requested: req, granted: got, outcome: o})
+	}
+	return out
+}
+
 // rejectedResponse builds the §8.6 / §15.1 REJECTED ExtendLease response
 // for an extension auto-rejected because the subtree is in a rejection
 // cool-off window. Both the pre-grant check and the in-flight atomic
 // re-check return it. F-8.6.9.
-// spec: §15.1 line 1080
+// spec: §15.1
 func rejectedResponse(subtreeID string, expiry time.Time) ExtendResponse {
 	return ExtendResponse{
 		Status:              StatusRejected,
@@ -942,7 +902,7 @@ func rejectedResponse(subtreeID string, expiry time.Time) ExtendResponse {
 
 // dimCeiling returns the §8.6 effective ceiling for one dimension: its
 // layered effective max, further capped by the parent-lease ceiling
-// when that is positive and smaller (§8.6 line 648). F-8.6.1; F-8.6.15.
+// when that is positive and smaller (§8.6). F-8.6.1; F-8.6.15.
 func dimCeiling(effMax, parentCap int64) int64 {
 	if parentCap > 0 && parentCap < effMax {
 		return parentCap
@@ -965,7 +925,7 @@ type dimOutcome struct {
 // the response is Granted; when no requested dimension was granted any
 // amount, the response is CeilingReached; otherwise PartiallyGranted. A
 // request with no requested dimension at all is Granted.
-// spec: §8.6 line 643; F-8.6.1; F-8.6.11
+// spec: §8.6; F-8.6.1; F-8.6.11
 func combineOutcomes(dims []dimOutcome) leaseextension.Outcome {
 	anyRequested := false
 	allGranted := true
@@ -1009,10 +969,10 @@ func statusFor(o leaseextension.Outcome) ExtendStatus {
 	}
 }
 
-// formatCoolOffExpiry renders the §15.1 line 1080 details.coolOffExpiresAt
+// formatCoolOffExpiry renders the §15.1 details.coolOffExpiresAt
 // field as a UTC RFC 3339 string. A zero time renders empty so clients
 // can distinguish "no cool-off recorded" from a valid expiry.
-// spec: §15.1 line 1080
+// spec: §15.1
 func formatCoolOffExpiry(t time.Time) string {
 	if t.IsZero() {
 		return ""
@@ -1020,16 +980,16 @@ func formatCoolOffExpiry(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-// coolOffActiveError returns the §15.1 line 1080 typed error envelope
+// coolOffActiveError returns the §15.1 typed error envelope
 // embedded on every REJECTED ExtendLease response whose rejection
 // reason is "the requesting subtree is in an extension cool-off
-// window" — both the pre-grant rejection check and the §8.6 line 731
+// window" — both the pre-grant rejection check and the §8.6
 // in-flight atomic re-check. The category is POLICY because the
 // rejection is a deployment policy decision the caller cannot retry
 // around; retryable is false because the adapter MUST NOT loop on the
 // extension request inside the window (re-issuing trips the same
-// cool-off, see §8.6 line 629 retry contract).
-// spec: §15.1 line 1080; F-8.6.9
+// cool-off, see §8.6 retry contract).
+// spec: §15.1; F-8.6.9
 func coolOffActiveError() *adapterv1.Error {
 	return &adapterv1.Error{
 		Code:      adapterv1.Error_ERROR_CODE_EXTENSION_COOL_OFF_ACTIVE,
@@ -1051,12 +1011,11 @@ func (s *Service) resolveCoolOff(ctx context.Context, tenantID, rootSessionID st
 }
 
 // approvalModeProvider is the optional BudgetSource extension that
-// reports the tree's resolved §8.6 approval mode. MemoryBudgetSource
-// implements it; the Postgres-backed source will satisfy it once the
-// dispatcher (F-8.6.2) lands. The handler falls back to
+// reports the tree's resolved §8.6 approval mode. StoreBudgetSource
+// implements it. The handler falls back to
 // DefaultApprovalMode when a source does not provide the mode.
 // F-8.6.10.
-// spec: §8.6 line 674
+// spec: §8.6
 type approvalModeProvider interface {
 	ApprovalMode(ctx context.Context, tenantID, rootSessionID string) ApprovalMode
 }
@@ -1065,7 +1024,7 @@ type approvalModeProvider interface {
 // requesting session belongs to. Sources that satisfy
 // approvalModeProvider report the registered mode; others fall back
 // to DefaultApprovalMode. F-8.6.10.
-// spec: §8.6 line 674
+// spec: §8.6
 func (s *Service) approvalModeFor(ctx context.Context, tenantID, rootSessionID string) ApprovalMode {
 	if p, ok := s.budgets.(approvalModeProvider); ok {
 		return p.ApprovalMode(ctx, tenantID, rootSessionID)
@@ -1080,7 +1039,7 @@ func (s *Service) approvalModeFor(ctx context.Context, tenantID, rootSessionID s
 type gateResult struct {
 	// proceed reports that the request may run the grant math.
 	proceed bool
-	// approver is the §8.6 line 743 approver attribution for the grant
+	// approver is the §8.6 approver attribution for the grant
 	// audit ("gateway-auto" or "client").
 	approver string
 	// resp is the terminal response when the gate rejects without an
@@ -1093,7 +1052,7 @@ type gateResult struct {
 
 // gate applies the §8.6 approval decision before any budget moves. In
 // auto mode it grants independently unless the tree has tripped its
-// maxAutoExtensionsPerMinute, in which case it records the §8.6 line 712
+// maxAutoExtensionsPerMinute, in which case it records the §8.6
 // fallback and proceeds through the elicitation path. In elicitation
 // mode it solicits the user's consent via the coordinator; a rejection
 // persists the subtree denial and returns a terminal REJECTED response.
@@ -1107,7 +1066,7 @@ func (s *Service) gate(ctx context.Context, mode ApprovalMode, tenantID string, 
 		if !over {
 			return gateResult{proceed: true, approver: "gateway-auto"}
 		}
-		// §8.6 line 712 — the tree exceeded maxAutoExtensionsPerMinute;
+		// §8.6 — the tree exceeded maxAutoExtensionsPerMinute;
 		// pause auto-approval, log the fallback, and require elicitation
 		// for the remainder of the window.
 		s.recordAutoRateLimited(ctx, tenantID, budget.RootSessionID, sessionID, maxPerMin)
@@ -1115,7 +1074,7 @@ func (s *Service) gate(ctx context.Context, mode ApprovalMode, tenantID string, 
 
 	// Elicitation mode, or an auto-mode request that fell back to it.
 	if s.coordinator == nil {
-		// §8.6 line 714 — elicitation requires the user's consent. With no
+		// §8.6 — elicitation requires the user's consent. With no
 		// Elicitor wired the gateway cannot obtain it, so it fails closed
 		// rather than silently auto-granting, which is the bug F-8.6.2
 		// fixes. Production always wires an Elicitor.
@@ -1126,7 +1085,7 @@ func (s *Service) gate(ctx context.Context, mode ApprovalMode, tenantID string, 
 		return gateResult{err: fmt.Errorf("leasecontrol: elicitation for session %s: %w", sessionID, err)}
 	}
 	if !c.approved {
-		// §8.6 lines 727-734 — the user rejected; the coordinator persisted
+		// §8.6 — the user rejected; the coordinator persisted
 		// the subtree denial. Audit the denial and return the cool-off
 		// expiry so the adapter surfaces BUDGET_EXHAUSTED.
 		s.audit(ctx, tenantID, budget, sessionID, requested, AuditOutcomeDenied, mode)
@@ -1137,17 +1096,17 @@ func (s *Service) gate(ctx context.Context, mode ApprovalMode, tenantID string, 
 }
 
 // autoRateLimitProvider is the optional BudgetSource extension that
-// reports the tree's resolved §8.6 line 712 maxAutoExtensionsPerMinute.
-// MemoryBudgetSource implements it; a source that does not yields zero,
+// reports the tree's resolved §8.6 maxAutoExtensionsPerMinute.
+// StoreBudgetSource implements it; a source that does not yields zero,
 // which disables the auto-mode rate limit for the tree. The pattern
 // mirrors approvalModeProvider so the core BudgetSource interface stays
 // minimal. F-8.6.7.
-// spec: §8.6 line 712
+// spec: §8.6
 type autoRateLimitProvider interface {
 	AutoExtensionsPerMinute(ctx context.Context, tenantID, rootSessionID string) int
 }
 
-// autoOverLimit reports whether the tree has exceeded its §8.6 line 712
+// autoOverLimit reports whether the tree has exceeded its §8.6
 // auto-mode rate limit on this request, returning the resolved limit so
 // the audit can record it. It is a no-op (never over) when no counter is
 // wired or the tree sets no limit. F-8.6.7.
@@ -1163,11 +1122,11 @@ func (s *Service) autoOverLimit(ctx context.Context, tenantID, rootSessionID str
 	return over, maxPerMin, err
 }
 
-// autoMaxPerMinute resolves the tree's §8.6 line 712
+// autoMaxPerMinute resolves the tree's §8.6
 // maxAutoExtensionsPerMinute. A tree-specific (tenant/runtime) value wins;
-// otherwise the deployment default applies, following the §8.6 line 654
+// otherwise the deployment default applies, following the §8.6
 // "more specific overrides" resolution. Zero means no limit. F-8.6.7.
-// spec: §8.6 line 712
+// spec: §8.6
 func (s *Service) autoMaxPerMinute(ctx context.Context, tenantID, rootSessionID string) int {
 	if p, ok := s.budgets.(autoRateLimitProvider); ok {
 		if v := p.AutoExtensionsPerMinute(ctx, tenantID, rootSessionID); v > 0 {
@@ -1177,7 +1136,7 @@ func (s *Service) autoMaxPerMinute(ctx context.Context, tenantID, rootSessionID 
 	return s.defaultAutoMaxPerMinute
 }
 
-// recordAutoRateLimited logs the §8.6 line 712
+// recordAutoRateLimited logs the §8.6
 // lease_extension_auto_rate_limit_exceeded fallback when an Auditor is
 // wired. F-8.6.7.
 func (s *Service) recordAutoRateLimited(ctx context.Context, tenantID, rootSessionID, sessionID string, maxPerMin int) {
@@ -1200,8 +1159,8 @@ func (s *Service) recordAutoRateLimited(ctx context.Context, tenantID, rootSessi
 // limits (the tree's current values), and the resolved approval mode
 // for the tree. The cool-off rejection is always attributed to the user
 // via the Approver override, since the rejection itself is the user's
-// prior denial echoed back per §8.6 line 743. F-8.6.1; F-8.6.10.
-// spec: §8.6 line 743
+// prior denial echoed back per §8.6. F-8.6.1; F-8.6.10.
+// spec: §8.6
 func (s *Service) audit(ctx context.Context, tenantID string, b TreeBudget, sessionID string, requested Dimensions, outcome AuditOutcome, mode ApprovalMode) {
 	s.auditFull(ctx, tenantID, b, sessionID, requested, Dimensions{}, outcome, auditExtras{
 		approvalMode:     mode,
@@ -1219,7 +1178,7 @@ func (s *Service) audit(ctx context.Context, tenantID string, b TreeBudget, sess
 // TreeBudget snapshot: ApprovalMode (resolved), the post-grant
 // NewLimits, and (for the cool-off helper) a forced Approver override.
 // F-8.6.10; F-8.6.11; F-8.6.13.
-// spec: §8.6 line 743
+// spec: §8.6
 type auditExtras struct {
 	approvalMode     ApprovalMode
 	newLimits        NewLimits
@@ -1258,13 +1217,13 @@ func (s *Service) auditFull(ctx context.Context, tenantID string, b TreeBudget, 
 	})
 }
 
-// approverFor maps the §8.6 line 743 outcome + resolved approval mode
+// approverFor maps the §8.6 outcome + resolved approval mode
 // to the closed-string Approver vocabulary. The spec lists two
 // values: `gateway-auto` for grants the gateway issued without
 // soliciting client input, and `client` for outcomes where a user (or
 // the user's denial via the cool-off window) drove the decision.
 // F-8.6.10.
-// spec: §8.6 line 743
+// spec: §8.6
 func approverFor(outcome AuditOutcome, mode ApprovalMode) string {
 	switch {
 	case outcome == AuditOutcomeDenied:
@@ -1274,7 +1233,7 @@ func approverFor(outcome AuditOutcome, mode ApprovalMode) string {
 		return "gateway-auto"
 	default:
 		// Elicitation mode where the gateway auto-grants up to the
-		// ceiling without the dispatcher (§8.6 line 714) yet wired
+		// ceiling without the dispatcher (§8.6) yet wired
 		// remains `gateway-auto` until that dispatcher lands and a
 		// client decision is observed.
 		return "gateway-auto"
@@ -1285,10 +1244,10 @@ func approverFor(outcome AuditOutcome, mode ApprovalMode) string {
 // identifier: 13 hex chars of the current millis followed by 11 hex
 // chars of crypto/rand entropy. The clock prefix means a batch id
 // sorts in approximate temporal order without requiring the audit
-// reader to load every prior record. Until the §8.6 line 714
+// reader to load every prior record. Until the §8.6
 // elicitation dispatcher lands and groups multiple requests under one
 // batch, every request is its own batch. F-8.6.10.
-// spec: §8.6 line 743
+// spec: §8.6
 func defaultBatchID() string {
 	now := time.Now().UTC().UnixMilli()
 	var b [6]byte
@@ -1303,11 +1262,11 @@ func defaultBatchID() string {
 	return fmt.Sprintf("ext_%013x_%s", now, hex.EncodeToString(b[:]))
 }
 
-// defaultPeerIP extracts the §8.6 line 743 client_ip from the gRPC
+// defaultPeerIP extracts the §8.6 client_ip from the gRPC
 // peer attached to the context. Returns an empty string when no peer
 // is present (in-process callers, unit tests) or when the address
 // cannot be parsed. F-8.6.10.
-// spec: §8.6 line 743
+// spec: §8.6
 func defaultPeerIP(ctx context.Context) string {
 	p, ok := peer.FromContext(ctx)
 	if !ok || p == nil || p.Addr == nil {

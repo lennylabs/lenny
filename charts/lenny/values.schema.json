@@ -29,6 +29,14 @@
       "type": "object"
     },
     "auth": {
+      "properties": {
+        "capabilityTokenTtlSeconds": {
+          "description": "§10.2 default lifetime of the Lenny-issued JWTs whose holder refreshes them: playground bearers and POST /v1/oauth/token JWTs requested without expires_in. Bounded 120..3600.",
+          "maximum": 3600,
+          "minimum": 120,
+          "type": "integer"
+        }
+      },
       "type": "object"
     },
     "autoscaling": {
@@ -53,7 +61,7 @@
       "type": "object"
     },
     "cluster": {
-      "description": "Cluster-type composition dimension (laptop, eks, gke, aks, openshift, or vanilla). §17.9.1 line 1351.",
+      "description": "Cluster-type composition dimension (laptop, eks, gke, aks, openshift, or vanilla).",
       "type": "string"
     },
     "complianceProfile": {
@@ -78,7 +86,7 @@
       "type": "object"
     },
     "environment": {
-      "description": "Target environment (local, dev, or prod): drives alert thresholds, warm-pool sizes, and log verbosity (§17.6 question phase, §17.9.1).",
+      "description": "Target environment (local, dev, staging, or prod): prod is production mode, which turns on every production gate in every Lenny binary; staging is not production mode. Also sets alert thresholds, warm-pool sizes, and log verbosity (§17.6 question phase, §17.9.1).",
       "type": "string"
     },
     "etcdEncryption": {
@@ -100,7 +108,12 @@
       "additionalProperties": false,
       "properties": {
         "deploymentTier": {
-          "description": "Static metric tier label (tier1/tier2/tier3, or empty to omit the deployment_tier relabel). §16.1.1.",
+          "description": "Static metric tier label and lenny-ops platform tier: tier1, tier2, or tier3. §16.1.1, §25.4.",
+          "enum": [
+            "tier1",
+            "tier2",
+            "tier3"
+          ],
           "type": "string"
         },
         "devMode": {
@@ -108,11 +121,11 @@
           "type": "boolean"
         },
         "maintenanceMode": {
-          "description": "When true, the §25.6 doctor --fix auto-remediation surface skips every remediation. §25.6 line 2974.",
+          "description": "When true, the §25.6 doctor --fix auto-remediation surface skips every remediation.",
           "type": "boolean"
         },
         "noEnvironmentPolicy": {
-          "description": "Platform-wide default access policy for a session that names no environment. §10.6 / §17.6 line 365.",
+          "description": "Platform-wide default access policy for a session that names no environment. §10.6.",
           "enum": [
             "deny-all",
             "allow-all"
@@ -120,15 +133,15 @@
           "type": "string"
         },
         "saTokenAudience": {
-          "description": "Projected SA-token audience the gateway validates on every pod→gateway request. §10.3 line 334.",
+          "description": "Projected SA-token audience the gateway validates on every pod→gateway request. §10.3.",
           "type": "string"
         },
         "spiffeTrustDomain": {
-          "description": "SPIFFE trust domain anchoring agent-pod and interceptor identities. Required (no default); helm templating fails when unset. §10.3 line 316.",
+          "description": "SPIFFE trust domain anchoring agent-pod and interceptor identities. Required (no default); helm templating fails when unset. §10.3.",
           "type": "string"
         },
         "traceSamplingRate": {
-          "description": "Default probabilistic tail-sampling rate the OpenTelemetry Collector applies to normal traces. §16.3 line 359.",
+          "description": "Default probabilistic tail-sampling rate the OpenTelemetry Collector applies to normal traces. §16.3.",
           "maximum": 1,
           "minimum": 0,
           "type": "number"
@@ -149,10 +162,17 @@
       "type": "object"
     },
     "isolationProfile": {
-      "description": "Isolation-profile composition dimension (baseline, sandboxed, or hypervisor): sets the default RuntimeClass for seeded runtimes. §17.9.1 line 1354.",
+      "description": "Isolation-profile composition dimension (baseline, sandboxed, or hypervisor): sets the default RuntimeClass for seeded runtimes.",
       "type": "string"
     },
     "kms": {
+      "properties": {
+        "signQuotaPerSecond": {
+          "description": "§17.8.2 provider asymmetric KMS Sign quota per second. No default; required when kms.provider is not local.",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
       "type": "object"
     },
     "kubeApiServerCIDR": {
@@ -174,24 +194,25 @@
       "type": "object"
     },
     "monitoring": {
-      "type": "object",
       "properties": {
         "openslo": {
-          "type": "object",
           "properties": {
             "notificationTarget": {
-              "type": "object",
               "properties": {
                 "name": {
-                  "type": "string",
+                  "description": "Shared OpenSLO AlertNotificationTarget name; renders into pattern-constrained metadata.name and targetRef fields.",
+                  "maxLength": 63,
                   "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
-                  "maxLength": 63
+                  "type": "string"
                 }
-              }
+              },
+              "type": "object"
             }
-          }
+          },
+          "type": "object"
         }
-      }
+      },
+      "type": "object"
     },
     "mtls": {
       "type": "object"
@@ -231,12 +252,6 @@
           ],
           "type": "string"
         },
-        "bearerTtlSeconds": {
-          "description": "TTL of an MCP bearer token minted by POST /v1/playground/token. The gateway bounds it to 60..3600.",
-          "maximum": 3600,
-          "minimum": 60,
-          "type": "integer"
-        },
         "devTenantId": {
           "description": "Tenant bound to every dev-mode playground token; applies only when authMode is dev. §27.3.",
           "maxLength": 128,
@@ -257,7 +272,7 @@
           "type": "integer"
         },
         "maxSessionMinutes": {
-          "description": "§27.6 hard cap on a playground-initiated session's duration.",
+          "description": "§27.6 hard cap on a playground-initiated session's active time, which pauses while the session is suspended.",
           "minimum": 1,
           "type": "integer"
         },

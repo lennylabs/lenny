@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §25.10 lines 3811-3820. Migration 0117 creates the
+// spec: §25.10. Migration 0117 creates the
 // bootstrap_seed_snapshot table — the §25.10 durable desired-state store
 // the configuration-drift detector compares running state against. The
 // id column is CHECK-constrained to 'live'/'target' so no third

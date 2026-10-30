@@ -4,7 +4,6 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
-    # spec: §10 line 437 / §10 line 443 — F-15.5.12.
     lenny.dev/schema-version: "1"
   name: sandboxwarmpools.lenny.dev
 spec:
@@ -65,7 +64,6 @@ spec:
               §5.2 warm-count management for one pool. Per §4.6.3 the
               PoolScalingController owns spec.*, deriving the scaling parameters
               from the Postgres pool definitions.
-            x-kubernetes-preserve-unknown-fields: true
             properties:
               maxWarm:
                 description: |-
@@ -169,7 +167,7 @@ spec:
                     x-kubernetes-list-type: atomic
                   sdkConnectTimeoutSeconds:
                     description: |-
-                      SDKConnectTimeoutSeconds is the §6.1 line 69 per-pod watchdog
+                      SDKConnectTimeoutSeconds is the §6.1 per-pod watchdog
                       budget for the sdk_connecting phase: a pod that has not completed
                       its SDK pre-connection and reached idle within this window is
                       retired to failed and the WarmPoolController increments
@@ -203,13 +201,13 @@ spec:
             - minWarm
             - templateRef
             type: object
+            x-kubernetes-preserve-unknown-fields: true
           status:
             description: |-
               SandboxWarmPoolStatus is the observed state of a SandboxWarmPool.
               Per §4.6.3 the WarmPoolController owns status.* except the
               SDKWarmCircuitBreaker carve-out, which the PoolScalingController
               owns.
-            x-kubernetes-preserve-unknown-fields: true
             properties:
               bootstrapHoursOfData:
                 description: |-
@@ -292,7 +290,8 @@ spec:
               readyCount:
                 description: |-
                   ReadyCount is the number of idle pods that have reached a
-                  claimable ready state.
+                  claimable ready state and are not pinned to a tenant (§5.2 pinned
+                  idle inventory).
                 format: int32
                 type: integer
               scalingMode:
@@ -335,11 +334,15 @@ spec:
                     type: string
                 type: object
               warmCount:
-                description: WarmCount is the current number of idle pods held in
-                  the pool.
+                description: |-
+                  WarmCount is the current number of unclaimed pods that are warming or
+                  idle, counting only pods that are not pinned to a tenant. An idle pod
+                  whose tenant pin is set and that no SandboxClaim holds is claimable
+                  only by its tenant and is not counted (§5.2 pinned idle inventory).
                 format: int32
                 type: integer
             type: object
+            x-kubernetes-preserve-unknown-fields: true
         type: object
     served: true
     storage: true

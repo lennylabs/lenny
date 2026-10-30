@@ -1,4 +1,4 @@
--- §12.3 line 97 SIEM outbox forwarder checkpoint. The forwarder tails
+-- §12.3 SIEM outbox forwarder checkpoint. The forwarder tails
 -- the committed audit_log rows and delivers each to the external SIEM
 -- after Postgres has durably committed it. siem_delivery_state records
 -- the per-tenant-chain delivery high-water mark so a forwarder restart
@@ -18,7 +18,7 @@
 -- audit chain selector ('platform' for the platform-admin chain), the
 -- same key space as audit_log.tenant_id.
 --
--- §16 (Observability) line 378 — the audit partition GC reads
+-- §16 (Observability) — the audit partition GC reads
 -- last_acked_sequence here as the SIEM delivery guard: it must not drop
 -- an audit partition whose most recent event sequence exceeds the
 -- forwarder's acknowledged high-water mark.

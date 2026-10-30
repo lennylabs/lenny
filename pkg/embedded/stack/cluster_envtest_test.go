@@ -15,16 +15,15 @@ import (
 
 	lennyv1alpha1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // controlPlaneDeploymentFixture builds a minimal control-plane Deployment in
 // the default namespace for the envtest, so the cluster-backed status read and
 // the rollout-restart have a real Deployment object to act on.
-func controlPlaneDeploymentFixture(name, component string) *appsv1.Deployment {
+func controlPlaneDeploymentFixture(ns, name, component string) *appsv1.Deployment {
 	replicas := int32(1)
 	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"lenny.dev/component": component}},
@@ -43,11 +42,11 @@ func controlPlaneDeploymentFixture(name, component string) *appsv1.Deployment {
 // NET-051 pod-label exception), so the envtest can assert the logs selector
 // matches the real ops label scheme rather than a fabricated
 // lenny.dev/component=ops label.
-func opsPodFixture(name, opsDeployment string) *corev1.Pod {
+func opsPodFixture(ns, name, opsDeployment string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: "default",
+			Namespace: ns,
 			Labels:    map[string]string{"app": opsDeployment},
 		},
 		Spec: corev1.PodSpec{
@@ -68,24 +67,27 @@ func opsPodFixture(name, opsDeployment string) *corev1.Pod {
 // ops Deployment label scheme and prints "no running pods for ops" even when the
 // mandatory lenny-ops Deployment is running, so an operator cannot read ops logs.
 //
-// spec: §17.4 line 179 (ops streams from the in-cluster pods), §13.2 (the
+// spec: §17.4, §13.2 (the
 // lenny-ops pod-label exception).
 func TestLogsOpsSelectorMatchesRealOpsLabel_spec_17_4(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 	cs, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		t.Fatalf("build core client: %v", err)
 	}
+	// The selector and the pods it lists are namespace-independent, so the ops
+	// pod lives in the test's own namespace on the shared control plane.
+	ns := createTestNamespace(t, cfg)
 	_, _, ops := stack.ControlPlaneDeploymentNamesForTest()
-	if _, err := cs.CoreV1().Pods("default").Create(ctx, opsPodFixture("lenny-ops-xyz", ops), metav1.CreateOptions{}); err != nil {
+	if _, err := cs.CoreV1().Pods(ns).Create(ctx, opsPodFixture(ns, "lenny-ops-xyz", ops), metav1.CreateOptions{}); err != nil {
 		t.Fatalf("create ops pod: %v", err)
 	}
 
 	// The logs selector for ops must list the app: lenny-ops pod.
 	opsSelector := stack.DeploymentPodSelectorForTest("ops")
-	matched, err := cs.CoreV1().Pods("default").List(ctx, metav1.ListOptions{LabelSelector: opsSelector})
+	matched, err := cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: opsSelector})
 	if err != nil {
 		t.Fatalf("list ops pods by logs selector %q: %v", opsSelector, err)
 	}
@@ -97,7 +99,7 @@ func TestLogsOpsSelectorMatchesRealOpsLabel_spec_17_4(t *testing.T) {
 	// A uniform lenny.dev/component=ops selector (the divergence the fix
 	// corrects) would list zero pods, since the ops Deployment carries no such
 	// label. This guards against a regression back to the uniform selector.
-	uniform, err := cs.CoreV1().Pods("default").List(ctx, metav1.ListOptions{LabelSelector: "lenny.dev/component=ops"})
+	uniform, err := cs.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: "lenny.dev/component=ops"})
 	if err != nil {
 		t.Fatalf("list ops pods by uniform selector: %v", err)
 	}
@@ -118,7 +120,7 @@ func TestLogsOpsSelectorMatchesRealOpsLabel_spec_17_4(t *testing.T) {
 //
 // spec: §17.4 (status reads the in-cluster control-plane Deployment readiness).
 func TestStatusReadsDeploymentReadiness_spec_17_4(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 	cs, err := kubernetes.NewForConfig(cfg)
@@ -126,20 +128,30 @@ func TestStatusReadsDeploymentReadiness_spec_17_4(t *testing.T) {
 		t.Fatalf("build core client: %v", err)
 	}
 	gw, ctl, ops := stack.ControlPlaneDeploymentNamesForTest()
+	// The status collector reads these Deployment names in the control-plane
+	// namespace the product code fixes, so this test owns them on the
+	// package's shared control plane.
+	ns := stack.ControlPlaneNamespaceForTest()
+	claimFixedObjects(
+		t, cfg,
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: gw}},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: ctl}},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: ops}},
+	)
 
-	if _, err := cs.AppsV1().Deployments("default").Create(ctx, controlPlaneDeploymentFixture(gw, "gateway"), metav1.CreateOptions{}); err != nil {
+	if _, err := cs.AppsV1().Deployments(ns).Create(ctx, controlPlaneDeploymentFixture(ns, gw, "gateway"), metav1.CreateOptions{}); err != nil {
 		t.Fatalf("create gateway deployment: %v", err)
 	}
-	if _, err := cs.AppsV1().Deployments("default").Create(ctx, controlPlaneDeploymentFixture(ctl, "controller"), metav1.CreateOptions{}); err != nil {
+	if _, err := cs.AppsV1().Deployments(ns).Create(ctx, controlPlaneDeploymentFixture(ns, ctl, "controller"), metav1.CreateOptions{}); err != nil {
 		t.Fatalf("create controller deployment: %v", err)
 	}
-	if _, err := cs.AppsV1().Deployments("default").Create(ctx, controlPlaneDeploymentFixture(ops, "ops"), metav1.CreateOptions{}); err != nil {
+	if _, err := cs.AppsV1().Deployments(ns).Create(ctx, controlPlaneDeploymentFixture(ns, ops, "ops"), metav1.CreateOptions{}); err != nil {
 		t.Fatalf("create ops deployment: %v", err)
 	}
 
 	// Drive gateway and controller to ready; leave ops not ready.
-	markDeploymentReady(t, cs, gw)
-	markDeploymentReady(t, cs, ctl)
+	markDeploymentReady(t, cs, ns, gw)
+	markDeploymentReady(t, cs, ns, ctl)
 
 	rows := stack.CollectClusterComponentsFromClientForTest(ctx, cs)
 	byName := map[string]stack.ComponentStatus{}
@@ -159,17 +171,17 @@ func TestStatusReadsDeploymentReadiness_spec_17_4(t *testing.T) {
 
 // markDeploymentReady advances the named Deployment's status to one ready
 // replica caught up to its generation, so deploymentReady reads it healthy.
-func markDeploymentReady(t *testing.T, cs kubernetes.Interface, name string) {
+func markDeploymentReady(t *testing.T, cs kubernetes.Interface, ns, name string) {
 	t.Helper()
 	ctx := context.Background()
-	live, err := cs.AppsV1().Deployments("default").Get(ctx, name, metav1.GetOptions{})
+	live, err := cs.AppsV1().Deployments(ns).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get deployment %s: %v", name, err)
 	}
 	live.Status.ObservedGeneration = live.Generation
 	live.Status.Replicas = 1
 	live.Status.ReadyReplicas = 1
-	if _, err := cs.AppsV1().Deployments("default").UpdateStatus(ctx, live, metav1.UpdateOptions{}); err != nil {
+	if _, err := cs.AppsV1().Deployments(ns).UpdateStatus(ctx, live, metav1.UpdateOptions{}); err != nil {
 		t.Fatalf("update %s status: %v", name, err)
 	}
 }
@@ -186,28 +198,31 @@ func markDeploymentReady(t *testing.T, cs kubernetes.Interface, name string) {
 // Deployment's desired spec changed, so a restart either does nothing or
 // mutates the component.
 //
-// spec: §24.19 line 264 (the restart is a Deployment rollout-restart), §17.4.
+// spec: §24.19, §17.4.
 func TestRolloutRestartBumpsDeploymentTemplate_spec_24_19(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 	cs, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		t.Fatalf("build core client: %v", err)
 	}
+	// rolloutRestartDeployment takes the namespace, so the Deployment lives in
+	// the test's own namespace on the shared control plane.
+	ns := createTestNamespace(t, cfg)
 	gw, _, _ := stack.ControlPlaneDeploymentNamesForTest()
-	created, err := cs.AppsV1().Deployments("default").Create(ctx, controlPlaneDeploymentFixture(gw, "gateway"), metav1.CreateOptions{})
+	created, err := cs.AppsV1().Deployments(ns).Create(ctx, controlPlaneDeploymentFixture(ns, gw, "gateway"), metav1.CreateOptions{})
 	if err != nil {
 		t.Fatalf("create gateway deployment: %v", err)
 	}
 	beforeGen := created.Generation
 	beforeReplicas := *created.Spec.Replicas
 
-	if err := stack.RolloutRestartDeploymentForTest(ctx, cs, "default", gw); err != nil {
+	if err := stack.RolloutRestartDeploymentForTest(ctx, cs, ns, gw); err != nil {
 		t.Fatalf("rollout restart: %v", err)
 	}
 
-	rolled, err := cs.AppsV1().Deployments("default").Get(ctx, gw, metav1.GetOptions{})
+	rolled, err := cs.AppsV1().Deployments(ns).Get(ctx, gw, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get rolled deployment: %v", err)
 	}
@@ -237,11 +252,20 @@ func TestRolloutRestartBumpsDeploymentTemplate_spec_24_19(t *testing.T) {
 // spec: §5.2 (readyCount is the claimable-idle count), §17.4 (status
 // distinguishes gateway-up from pool-ready).
 func TestEchoPoolReadyReflectsReadyCount_spec_17_4(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 
+	// echoPoolReady reads the echo pool in the agent namespace the product
+	// code fixes, so this test owns the echo pool pair there on the
+	// package's shared control plane, and the claim deletes a copy whose
+	// readyCount an earlier iteration set.
 	const ns = "lenny-agents"
+	claimFixedObjects(
+		t, cfg,
+		&lennyv1alpha1.SandboxTemplate{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: stack.EchoPoolName}},
+		&lennyv1alpha1.SandboxWarmPool{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: stack.EchoPoolName}},
+	)
 	if err := stack.EnsureAgentNamespaceFromConfigForTest(ctx, cfg, ns); err != nil {
 		t.Fatalf("ensure agent namespace: %v", err)
 	}

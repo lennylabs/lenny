@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/quota"
 )
 
-// spec: §12.4 source (2); §11.2 line 48 — when a checkpoint row exists and
+// spec: §12.4 source (2); §11.2 — when a checkpoint row exists and
 // the in-memory fail-open accumulator also carries usage for that window,
 // the reconcile restores MAX(redis_current, postgres_checkpoint,
 // in_memory_failopen). Here the accumulator's value is the highest of the

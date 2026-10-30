@@ -26,7 +26,7 @@ import (
 // signable Content-Length and bounds the worst-case unreconciled overage
 // against a non-enforcing object store to `grantWindow × ChunkSizeBytes`.
 //
-// spec: §10.1 line 139 (fixed-size chunked-object model); §13.2 (the
+// spec: §10.1; §13.2 (the
 // residual-exposure bound).
 const DefaultChunkSizeBytes = 16 << 20
 
@@ -75,8 +75,7 @@ type ObjectStat interface {
 // size, because a presigned PUT bypasses blobstore.Store.Put's own
 // cataloging path. cataloging.Store satisfies it.
 //
-// spec: §12.5 line 309 (every artifact_store row is inserted alongside
-// the bucket object).
+// spec: §12.5.
 type ChunkRecorder interface {
 	RecordPut(u blobstore.URI, size int64, mimeType string) error
 }
@@ -86,7 +85,7 @@ type ChunkRecorder interface {
 // object-store call moved off the adapter. gatewaymetrics.Metrics
 // satisfies it. A nil DriverMetrics disables the emissions.
 //
-// spec: §4.4 lines 254, 262; §10.1 supersede-on-write; §12.5 line 303.
+// spec: §4.4; §10.1 supersede-on-write; §12.5.
 type DriverMetrics interface {
 	// IncCheckpointSizeExceeded stamps lenny_checkpoint_size_exceeded_total
 	// when the adapter's workspace-size probe rejects the run.
@@ -102,7 +101,7 @@ type DriverMetrics interface {
 	// IncCheckpointPartial stamps lenny_checkpoint_partial_total once per
 	// partial-manifest row finalised on a terminal abort arm, with
 	// recovered = false, the manifest_reason that named the arm, and the
-	// trigger the attempt was started with (§16.1 line 195).
+	// trigger the attempt was started with (§16.1).
 	IncCheckpointPartial(pool string, recovered bool, manifestReason string, trigger checkpoint.Trigger)
 	// IncCheckpointKMSUnavailable stamps
 	// lenny_checkpoint_storage_failure_total{reason="kms_unavailable"} on a
@@ -118,24 +117,34 @@ type DriverMetrics interface {
 	// its fail-safe direction: it leaves the manifest row active so the §12.5
 	// backstop retries the delete, and the counter marks that the object is
 	// transiently unreclaimed until that retry lands.
-	// spec: §4.4 line 248; §4.4 "Checkpoint abort cleanup".
+	// spec: §4.4; §4.4 "Checkpoint abort cleanup".
 	IncCheckpointOrphanedObjects(pool, trigger string)
 }
 
-// lockFlight acquires the per-(session, slot) single-flight lock so a
+// lockFlight acquires the per-session single-flight lock so a
 // periodic checkpoint and a concurrent seal of the same workspace cannot
 // interleave their supersede / finalise manifest writes. The returned
-// func releases the lock. The lock map is lazily populated so a
-// zero-value Checkpointer needs no constructor.
+// func releases the lock. The lock is a capacity-one channel per session,
+// so a wait honors ctx: when ctx ends first, lockFlight returns ctx.Err()
+// and holds nothing. A suspension release bounds its checkpoint by the
+// §4.4.3 60 s timeout, and a wait behind a concurrent checkpoint that
+// outlives it fails the checkpoint rather than blocking the release. The
+// lock map is lazily populated so a zero-value Checkpointer needs no
+// constructor.
 //
 // spec: §10.1 supersede-on-write (the supersede set must be stable for
-// the duration of one attempt).
-func (c *Checkpointer) lockFlight(sessionID, slotID string) func() {
-	key := sessionID + "\x00" + slotID
-	actual, _ := c.flights.LoadOrStore(key, &sync.Mutex{})
-	mu := actual.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
+// the duration of one attempt); §4.4.3 (Checkpoint Quiescence, Timeout,
+// and Abort Handling).
+func (c *Checkpointer) lockFlight(ctx context.Context, sessionID string) (func(), error) {
+	actual, _ := c.flights.LoadOrStore(sessionID, make(chan struct{}, 1))
+	sem := actual.(chan struct{})
+	select {
+	case sem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	var once sync.Once
+	return func() { once.Do(func() { <-sem }) }, nil
 }
 
 // chunkSize returns the gateway-chosen fixed chunk size, applying
@@ -148,12 +157,19 @@ func (c *Checkpointer) chunkSize() int64 {
 }
 
 // chunkEncoding returns the wire encoding the gateway declares in Start,
-// defaulting to tar.
+// records in the manifest's chunk_encoding column, and names each chunk
+// object with. It is always tar.gz, because the only checkpoint producer,
+// the adapter's workspace.ArchiveTree, writes a gzip-compressed tar.
+// Declaring tar for those bytes would make the manifest misstate the
+// payload, and §4.4 manual recovery selects the decode pipeline from the
+// declared encoding rather than from the bytes.
+//
+// spec: §10.1 (Chunked-object storage model) — "The suffix therefore
+// reflects the actual on-disk payload"; §4.4 (MinIO object key logging for
+// manual recovery) — "The decompression step MUST be selected from the
+// logged chunk_encoding field".
 func (c *Checkpointer) chunkEncoding() partialmanifeststore.ChunkEncoding {
-	if c.ChunkEncoding != "" {
-		return partialmanifeststore.ChunkEncoding(c.ChunkEncoding)
-	}
-	return partialmanifeststore.ChunkEncodingTar
+	return partialmanifeststore.ChunkEncodingTarGz
 }
 
 // levelLabel returns the level-label value stamped onto the driver's
@@ -173,8 +189,7 @@ var errSizeLimit = errors.New("checkpointer: workspace size limit exceeded")
 
 // pendingChunk is a ChunkReady declaration the driver has validated but
 // deferred: minting its grant would exceed the outstanding-grant window, so
-// it waits in FIFO order for an ack to free a window slot (spec: §10.1 line
-// 131 — the gateway keeps at most `window` grants outstanding by pacing new
+// it waits in FIFO order for an ack to free a window slot (spec: §10.1 — the gateway keeps at most `window` grants outstanding by pacing new
 // grants against acks rather than aborting a producer that pipelines its
 // declarations ahead).
 type pendingChunk struct {
@@ -197,7 +212,6 @@ type uploadDriver struct {
 	stream       adapterv1.Adapter_CheckpointClient
 	tenantID     string
 	sessionID    string
-	slotID       string
 	checkpointID string
 	prefix       string
 	trigger      checkpoint.Trigger
@@ -216,7 +230,7 @@ type uploadDriver struct {
 	// baselineBytes is the session's last_checkpoint_workspace_bytes frozen
 	// as this attempt's resume-threshold denominator; nil denotes a session
 	// with no prior successful full checkpoint.
-	// spec: §10.1 lines 137, 155 (generation fence, resume selector, baseline).
+	// spec: §10.1.
 	coordinationGen int64
 	recoveryGen     int64
 	baselineBytes   *int64
@@ -297,7 +311,9 @@ func (d *uploadDriver) run() (string, int64, error) {
 // onProbe reserves the probed workspace size against the tenant's storage
 // quota and writes the §10.1 intent row (partial = true,
 // manifest_reason = in_progress), superseding any prior aborted attempt
-// for the same (session, slot) first.
+// for the same session first. The supersede fence is keyed on session_id
+// alone, which is the whole scoping key the §10.1 tables carry.
+// spec: §10.1.7 — supersede is scoped to (session_id).
 func (d *uploadDriver) onProbe(p *adapterv1.CheckpointProbe) error {
 	c := d.c
 	if c.Manifests == nil {
@@ -319,8 +335,7 @@ func (d *uploadDriver) onProbe(p *adapterv1.CheckpointProbe) error {
 		TenantID:     d.tenantID,
 		CheckpointID: d.checkpointID,
 		SessionID:    d.sessionID,
-		SlotID:       d.slotID,
-		// spec: §10.1 lines 137, 155 — the intent row carries the session's
+		// spec: §10.1 — the intent row carries the session's
 		// coordinator generation and recovery counter so the supersede fence
 		// rejects a stale coordinator (an active row at a strictly higher
 		// generation) and the resume path selects the highest-generation row.
@@ -337,19 +352,37 @@ func (d *uploadDriver) onProbe(p *adapterv1.CheckpointProbe) error {
 		ChunkEncoding:               c.chunkEncoding(),
 		ReservedBytes:               probed,
 		CheckpointStartedAt:         now,
-		CheckpointTimeoutAt:         now.Add(c.Deadline),
+		CheckpointTimeoutAt:         d.timeoutAt(now),
 	}
 	if err := c.Manifests.Put(d.ctx, rec); err != nil {
 		d.releaseReservation()
 		return fmt.Errorf("checkpointer: write intent row: %w", err)
 	}
-	// spec: §10.1 line 130 — only after the intent-row INSERT commits may the
+	// spec: §10.1.7 — only after the intent-row INSERT commits may the
 	// gateway mint a chunk-upload capability, so no chunk object can be
 	// orphaned under a checkpoint_id whose manifest row was never written.
 	// onChunkReady fences on this flag rather than trusting adapter frame
 	// order.
 	d.intentWritten = true
 	return nil
+}
+
+// timeoutAt is the intent row's checkpoint_timeout_at: the deadline the
+// attempt's context runs under, which attemptContext guarantees is set. The
+// deadline is carried onto the Checkpointer's clock as now plus the time
+// remaining, so a row's start and deadline are read on one clock; on the
+// production clock the two are the same instant. A context with no deadline,
+// reachable only from a driver built outside driveCheckpoint, yields now, so
+// the row is reclaimable at once rather than never.
+//
+// spec: §10.1.7 (preStop Hook Drain), §7.1 (Terminal pipeline context),
+// §4.4.3 (Checkpoint timeout and recovery)
+func (d *uploadDriver) timeoutAt(now time.Time) time.Time {
+	dl, ok := d.ctx.Deadline()
+	if !ok {
+		return now
+	}
+	return now.Add(time.Until(dl))
 }
 
 // reserve increments the tenant storage counter by the probed size,
@@ -388,7 +421,7 @@ func (d *uploadDriver) reserve(probed int64) error {
 	// Record the reserved size only on the path that actually incremented the
 	// tenant counter, so a later release arm (reconcile, releaseReservation)
 	// decrements exactly what this attempt reserved and never a size it never
-	// took (spec: §11.2 line 35 — reservation release is exactly-once and
+	// took (spec: §11.2 — reservation release is exactly-once and
 	// guarded).
 	d.reservedBytes = probed
 	return nil
@@ -401,12 +434,11 @@ func (d *uploadDriver) reserve(probed int64) error {
 // superseded attempt runs through the shared abort/backstop path.
 func (d *uploadDriver) supersedePriorAttempts() error {
 	c := d.c
-	// Scope the lookup to this attempt's exact (session, slot). A session-wide
-	// selector returns an arbitrary slot's row on tied generations, so in a
-	// concurrent-workspace session it can miss the row Put will supersede for
-	// this slot, leaking its reservation and orphaning its chunks.
-	// spec: §10.1 line 137 — supersede is scoped to (session_id, slot_id).
-	prior, err := c.Manifests.LatestActiveForSlot(d.ctx, d.tenantID, d.sessionID, d.slotID)
+	// Scope the lookup to this attempt's session, which is exactly the set
+	// Put supersedes: every session is bound to a slot whose identifier is the
+	// session's own, so the session identifier is the whole scoping key.
+	// spec: §10.1.7 — supersede is scoped to (session_id).
+	prior, err := c.Manifests.LatestActive(d.ctx, d.tenantID, d.sessionID)
 	if err != nil {
 		if errors.Is(err, partialmanifeststore.ErrNotFound) {
 			return nil
@@ -421,7 +453,7 @@ func (d *uploadDriver) supersedePriorAttempts() error {
 	// with ErrStaleGeneration rather than supersede it. Skip the destructive
 	// release so a stale coordinator never orphans the live newer writer's
 	// reservation and chunk objects, mirroring the store's own fence.
-	// spec: §10.1 lines 137, 155 — the supersede predicate fences on
+	// spec: §10.1 — the supersede predicate fences on
 	// coordination_generation and rejects a write below a higher active row.
 	if prior.CoordinationGeneration > d.coordinationGen {
 		return nil
@@ -432,7 +464,7 @@ func (d *uploadDriver) supersedePriorAttempts() error {
 	// applied only when the guarded UPDATE reports rows_affected == 1, so a
 	// row whose reservation was already released (a retained 'timeout' resume
 	// aid this attempt supersedes) reports rows_affected == 0 and is not
-	// decremented a second time (spec: §11.2 line 35 — reservation release is
+	// decremented a second time (spec: §11.2 — reservation release is
 	// exactly-once and guarded).
 	if rows, rerr := c.Manifests.ReleaseReservation(d.ctx, prior.TenantID, prior.CheckpointID); rerr == nil && rows == 1 && c.Quota != nil {
 		_ = c.Quota.Adjust(d.ctx, prior.TenantID,
@@ -445,14 +477,14 @@ func (d *uploadDriver) supersedePriorAttempts() error {
 	// delete, so a superseded attempt's confirmed bytes return to the tenant
 	// rather than staying charged forever. Best-effort; a failure leaves the
 	// objects for the §12.5 backstop.
-	// spec: §12.5 GC rule 4; §10.1 line 157.
+	// spec: §12.5 GC rule 4; §10.1.
 	if c.ChunkCatalog != nil && c.ChunkObjects != nil && prior.ChunkObjectKeyPrefix != "" {
 		_ = releaseChunkObjectsUnderPrefix(d.ctx, c.ChunkCatalog, c.ChunkObjects,
 			chunkPrefixURI(prior), prior.ChunkObjectKeyPrefix, c.tombstoneRetention(), nil)
 	}
 	if c.DriverMetrics != nil {
 		c.DriverMetrics.IncCheckpointPartialManifestsSuperseded(d.pool)
-		// spec: §16.1 line 195 — the prior row Put soft-deletes is finalised
+		// spec: §16.1 — the prior row Put soft-deletes is finalised
 		// manifest_reason = 'superseded', so count it on the partial counter's
 		// superseded arm (recovered = false, this attempt's trigger), distinct
 		// from the supersede-specific counter above. The partial counter
@@ -480,19 +512,19 @@ func (d *uploadDriver) supersedePriorAttempts() error {
 // length outside (0, chunk_size_bytes] aborts the attempt with
 // stream_truncated before any capability is signed, so the bytes a
 // capability can carry are a gateway constant rather than a pod
-// self-report (spec: §10.1 line 139, §13.2 residual-exposure bound).
+// self-report (spec: §10.1.7, §13.2 residual-exposure bound).
 //
 // The window is enforced by backpressure, not by aborting: when a fresh
 // declaration would exceed the resolved window the driver queues it and
 // mints its grant once onChunkCommitted frees a slot, so a producer that
 // pipelines its declarations ahead of acks is paced rather than failed
-// (spec: §10.1 line 131 — the gateway keeps at most `window` grants
+// (spec: §10.1.7 — the gateway keeps at most `window` grants
 // outstanding at a time).
 func (d *uploadDriver) onChunkReady(cr *adapterv1.ChunkReady) {
 	c := d.c
 	index := cr.GetIndex()
 	length := cr.GetLength()
-	// spec: §10.1 line 130 — the gateway mints a chunk capability only after
+	// spec: §10.1.7 — the gateway mints a chunk capability only after
 	// the intent-row INSERT commits. The gate is unconditional: a ChunkReady
 	// seen before the Probe wrote the row, or on a manifest-disabled dev-mode
 	// path where onProbe returns before writing any row, gets no capability, so
@@ -617,7 +649,7 @@ func (d *uploadDriver) popPendingLocked() (pendingChunk, bool) {
 // onChunkCommitted confirms a committed chunk off the grant's critical
 // path: it Stats the object for the bytes actually written, records the
 // artifact_store catalog row, and advances the monotonic manifest
-// counter. Confirmation never gates the next grant (spec: §10.1 line 131 —
+// counter. Confirmation never gates the next grant (spec: §10.1.7 —
 // the grant window is paced against acks, so a lagging confirm does not
 // stall the next capability). A bytes-actually-written
 // count larger than the signed Content-Length aborts the attempt and
@@ -765,7 +797,7 @@ func (d *uploadDriver) onStreamError(err error) (string, int64, error) {
 		return "", 0, fmt.Errorf("%w: %v", errSizeLimit, err)
 	}
 	d.confirmWG.Wait()
-	// spec: §10.1 line 132 / §4.4 line 235 — a deadline fire is the recovery
+	// spec: §10.1 / §4.4 — a deadline fire is the recovery
 	// aid: finalise 'timeout' so finaliseAbort retains the row and chunks the
 	// resume path reassembles rather than sweeping them. A latched abort (a
 	// protocol violation or an over-size confirm) cancels the stream with
@@ -854,10 +886,10 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	// deadline-expired d.ctx. Against a store that honours ctx these writes
 	// would otherwise fail on the dead context, leaving the row
 	// manifest_reason='in_progress' with a leaked reservation and unswept
-	// chunks (spec: §10.1 line 132 — every abort arm finalises partial=true
+	// chunks (spec: §10.1.7 — every abort arm finalises partial=true
 	// and releases the reservation the attempt did not keep).
 	//
-	// spec: §10.1 line 132 — an abort that latched before the first chunk
+	// spec: §10.1.7 — an abort that latched before the first chunk
 	// confirmed finalises with chunk_count == 0; Finalise soft-deletes such
 	// a row in the same transaction so an empty partial manifest is never
 	// left active for the resume path or a downstream reclaimer.
@@ -866,7 +898,7 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	if err := c.Manifests.Finalise(ctx, d.tenantID, d.checkpointID, true, reason); err != nil {
 		return fmt.Errorf("checkpointer: finalise partial (%s): %w", reason, err)
 	}
-	// spec: §16.1 line 195 — count the partial-manifest row this abort arm
+	// spec: §16.1 — count the partial-manifest row this abort arm
 	// finalised: recovered = false (the write path never recovers), the
 	// manifest_reason that named the arm, and the trigger the attempt was
 	// started with. The success arm (onSummary, partial = false) emits
@@ -884,7 +916,7 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	d.reconcile(ctx, confirmed)
 	// A deadline-fire (timeout) row is retained for the resume path; every
 	// other abort arm's chunks are released because no resume will consume
-	// them (spec: §10.1 line 157). The release runs each confirmed chunk
+	// them (spec: §10.1.7). The release runs each confirmed chunk
 	// through the cataloging decorator — soft-delete its artifact_store row
 	// (the §12.5 rule 4 decrement, exactly once) before the per-key object
 	// delete — so an aborted checkpoint's confirmed bytes return to the tenant
@@ -899,8 +931,7 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	// same finaliseReclaimedManifest step the resume and backstop paths run, so
 	// a stream_truncated / superseded / quota_exceeded abort does not leave an
 	// emptied active partial row for the resume selector to pick.
-	// spec: §4.4 "Checkpoint abort cleanup"; §4.4 line 248 (orphaned-object
-	// counter).
+	// spec: §4.4 "Checkpoint abort cleanup"; §4.4.
 	if reason != partialmanifeststore.ReasonTimeout && c.ChunkCatalog != nil && c.ChunkObjects != nil && d.prefix != "" {
 		if err := releaseChunkObjectsUnderPrefix(ctx, c.ChunkCatalog, c.ChunkObjects,
 			d.chunkPrefixURI(), d.prefix, c.tombstoneRetention(), d.onOrphanedObject); err == nil {
@@ -916,14 +947,14 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	return nil
 }
 
-// onOrphanedObject stamps the §4.4 line 248
+// onOrphanedObject stamps the §4.4
 // lenny_checkpoint_orphaned_objects_total counter for one chunk object the
 // abort sweep could not delete, labeling it with the attempt's pool and
 // trigger. The abort sweep leaves the manifest row active on such a failure so
 // the §12.5 backstop re-selects the prefix and retries the delete, but the
 // object is counted so the leak window is observable rather than silent. A nil
 // DriverMetrics skips the emission.
-// spec: §4.4 "Checkpoint abort cleanup"; §4.4 line 248.
+// spec: §4.4 "Checkpoint abort cleanup"; §4.4.
 func (d *uploadDriver) onOrphanedObject() {
 	if d.c.DriverMetrics == nil {
 		return
@@ -935,7 +966,7 @@ func (d *uploadDriver) onOrphanedObject() {
 // once, so an aborted checkpoint charges the tenant only for the chunks
 // it confirmed and a complete one for its confirmed total. The counter
 // decrement is applied only when the guarded UPDATE reports
-// rows_affected == 1 (spec: §11.2 line 35 — reservation release is
+// rows_affected == 1 (spec: §11.2 — reservation release is
 // exactly-once and guarded). The caller passes the context the durable
 // write runs on: the live attempt context on the complete path, a detached
 // cleanup context on an abort arm whose d.ctx is already cancelled.
@@ -961,7 +992,7 @@ func (d *uploadDriver) reconcile(ctx context.Context, confirmed int64) {
 // established. It decrements only when this attempt actually took a
 // reservation, matching the reserve() predicate: a config with Quota wired
 // but QuotaLimitFor nil disables reservation by contract, so no Reserve ran
-// and there is nothing to release (spec: §11.2 line 35 — reservation release
+// and there is nothing to release (spec: §11.2 — reservation release
 // is exactly-once and guarded).
 func (d *uploadDriver) releaseReservation() {
 	if !d.quotaCapSet {
@@ -975,7 +1006,7 @@ func (d *uploadDriver) releaseReservation() {
 // {n} is a zero-padded 5-digit monotonic index starting at `00000`, so the
 // signed key matches the §10.1 chunk-object layout the resume/reassembly
 // path enumerates and lexicographic list order tracks index order.
-// spec: §10.1 line 139 (zero-padded 5-digit chunk index).
+// spec: §10.1.
 func (d *uploadDriver) chunkURI(index uint32) blobstore.URI {
 	return blobstore.URI{
 		TenantID:   d.tenantID,
@@ -1002,7 +1033,7 @@ func (d *uploadDriver) chunkPrefixURI() blobstore.URI {
 
 // isSizeLimitReject reports whether err is the adapter's gRPC
 // FailedPrecondition workspace-size-probe rejection, which the adapter
-// returns before any grant is minted (spec: §4.4 line 255).
+// returns before any grant is minted (spec: §4.4).
 func isSizeLimitReject(err error) bool {
 	return status.Code(err) == codes.FailedPrecondition
 }

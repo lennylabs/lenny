@@ -62,12 +62,12 @@ var (
 	ErrRollbackNotAllowed = errors.New("runtimeupgrade: rollback is not allowed from the current phase")
 )
 
-// defaultStabilizationWindowSeconds is the §10.5 line 481 default dwell.
+// defaultStabilizationWindowSeconds is the §10.5 default dwell.
 const defaultStabilizationWindowSeconds = 120
 
 // PoolReader resolves the current configuration of a pool so Start can
 // confirm the pool exists and capture its spec as previousPoolSpec for
-// rollback (§10.5 line 507).
+// rollback (§10.5).
 type PoolReader interface {
 	// PoolSpec returns the JSON-serialized current configuration of pool
 	// and whether the pool exists.
@@ -247,7 +247,7 @@ func (m *Manager) Proceed(ctx context.Context, pool string) (Snapshot, error) {
 }
 
 // Pause halts the upgrade, capturing the current phase so Resume restores
-// it. The reason and timestamp are stored on the record (§10.5 line 494).
+// it. The reason and timestamp are stored on the record (§10.5).
 func (m *Manager) Pause(ctx context.Context, pool, reason string) (Snapshot, error) {
 	return m.mutate(ctx, pool, func(rec *runtimeupgradestore.Record) error {
 		return m.pause(rec, reason)
@@ -272,7 +272,7 @@ func (m *Manager) Resume(ctx context.Context, pool string) (Snapshot, error) {
 // Rollback halts a broken upgrade. From Expanding it always succeeds. From
 // Draining or Contracting it requires restoreOldPool and a preserved
 // previousPoolSpec. The upgrade transitions to Paused with a rollback
-// reason (§10.5 lines 506-507); the operator then re-runs Start with a
+// reason (§10.5); the operator then re-runs Start with a
 // corrected image. The pool side effects (minWarm reset, routing
 // restoration, recreate from previousPoolSpec) are the controller's job.
 func (m *Manager) Rollback(ctx context.Context, pool string, restoreOldPool bool) (Snapshot, error) {

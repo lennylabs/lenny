@@ -19,7 +19,7 @@ func mustCreate(t *testing.T, store sessionstore.Store, s sessionstore.Session) 
 	}
 }
 
-// spec: §11.2 line 48 (live pod enumeration) — SessionEnumerator counts
+// spec: §11.2 — SessionEnumerator counts
 // the non-terminal nodes of a tree (including the root) and sums their
 // granted token budgets; terminal nodes are excluded.
 func TestSessionEnumeratorCountsAliveNodes_spec_11_2_48(t *testing.T) {
@@ -53,7 +53,7 @@ func TestSessionEnumeratorCountsAliveNodes_spec_11_2_48(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 48 — a tree with no rows cannot be enumerated;
+// spec: §11.2 — a tree with no rows cannot be enumerated;
 // RootExists is false (the "coordinating replica lost" half of the
 // irrecoverability test).
 func TestSessionEnumeratorMissingTreeRootExistsFalse_spec_11_2_48(t *testing.T) {
@@ -68,7 +68,7 @@ func TestSessionEnumeratorMissingTreeRootExistsFalse_spec_11_2_48(t *testing.T) 
 	}
 }
 
-// spec: §11.2 line 44 — SessionTreeLister returns one TreeRef per
+// spec: §11.2 — SessionTreeLister returns one TreeRef per
 // distinct root of non-terminal sessions; terminal sessions do not
 // contribute a tree.
 func TestSessionTreeListerDistinctActiveRoots_spec_11_2_44(t *testing.T) {
@@ -91,7 +91,7 @@ func TestSessionTreeListerDistinctActiveRoots_spec_11_2_44(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 48 — MarkBudgetUnrecoverable moves a non-terminal
+// spec: §11.2 — MarkBudgetUnrecoverable moves a non-terminal
 // root to awaiting_client_action with the reason; a terminal root and a
 // missing root are left as no-ops.
 func TestSessionMarkerTransitionsAndNoOps_spec_11_2_48(t *testing.T) {

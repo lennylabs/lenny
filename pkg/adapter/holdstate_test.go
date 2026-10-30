@@ -3,11 +3,20 @@
 package adapter
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +25,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -40,7 +50,7 @@ func (r *holdRuntime) Close(_ context.Context, sessionID string) error {
 
 func holdGauge() float64 { return testutil.ToFloat64(coordinatorHold.WithLabelValues()) }
 
-// spec: §10.1 lines 47-52 — a closed gateway control stream with a live
+// spec: §10.1 — a closed gateway control stream with a live
 // session is the coordinator-loss signal; the adapter enters hold state,
 // raises the gauge, and arms the coordinatorHoldTimeoutSeconds timer.
 func TestHoldStateEntersOnControlChannelLoss_spec_10_1(t *testing.T) {
@@ -49,21 +59,21 @@ func TestHoldStateEntersOnControlChannelLoss_spec_10_1(t *testing.T) {
 	s := New("hold-test")
 	s.HoldAfterFunc = clk.After
 	s.CoordinatorHoldTimeout = 90 * time.Second
-	if err := s.claimSession("s1"); err != nil {
+	if err := s.claimSessionForTest("s1"); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	stream := newFakeControlStream(ctx)
 	done := make(chan error, 1)
-	go func() { done <- s.LifecycleChannel(stream) }()
+	go func() { done <- s.AdapterEvents(stream) }()
 	awaitRegistration(t, s)
 
 	cancel()
 	<-done
 
 	if !s.inHoldState() {
-		t.Fatal("expected hold state after control-channel loss with a live session")
+		t.Fatal("expected hold state after CH-ADAPTEREVENTS loss with a live session")
 	}
 	if holdGauge() != 1 {
 		t.Errorf("coordinator-hold gauge = %v, want 1", holdGauge())
@@ -73,7 +83,7 @@ func TestHoldStateEntersOnControlChannelLoss_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 47 — a closed control stream on an idle pod (no live
+// spec: §10.1.4 — a closed control stream on an idle pod (no live
 // session) is not a coordinator loss, so no hold is entered.
 func TestHoldStateNotEnteredWhenIdle_spec_10_1(t *testing.T) {
 	setCoordinatorHold(false)
@@ -84,7 +94,7 @@ func TestHoldStateNotEnteredWhenIdle_spec_10_1(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	stream := newFakeControlStream(ctx)
 	done := make(chan error, 1)
-	go func() { done <- s.LifecycleChannel(stream) }()
+	go func() { done <- s.AdapterEvents(stream) }()
 	awaitRegistration(t, s)
 	cancel()
 	<-done
@@ -97,7 +107,7 @@ func TestHoldStateNotEnteredWhenIdle_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 49 — a successful CoordinatorFence from a new
+// spec: §10.1.4 — a successful CoordinatorFence from a new
 // coordinator is the only way to exit hold state; it stops the timer and
 // lowers the gauge.
 func TestHoldStateExitedByCoordinatorFence_spec_10_1(t *testing.T) {
@@ -105,10 +115,10 @@ func TestHoldStateExitedByCoordinatorFence_spec_10_1(t *testing.T) {
 	clk := &fakeExpiryClock{}
 	s := New("hold-test")
 	s.HoldAfterFunc = clk.After
-	if err := s.claimSession("s1"); err != nil {
+	if err := s.claimSessionForTest("s1"); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	s.enterHoldState("s1")
+	s.enterHoldState()
 	if !s.inHoldState() {
 		t.Fatal("precondition: expected hold state")
 	}
@@ -130,70 +140,7 @@ func TestHoldStateExitedByCoordinatorFence_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 50 — when no coordinator fences within the timeout the
-// adapter notifies the gateway (AdapterTerminating), writes a disk
-// post-mortem, lowers the gauge, and closes the runtime.
-func TestHoldStateTimeoutTerminates_spec_10_1(t *testing.T) {
-	setCoordinatorHold(false)
-	clk := &fakeExpiryClock{}
-	rt := &holdRuntime{}
-	dir := t.TempDir()
-	s := New("hold-test")
-	s.HoldAfterFunc = clk.After
-	s.Runtime = rt
-	s.PostMortemDir = dir
-	if err := s.claimSession("sess-42"); err != nil {
-		t.Fatalf("claim: %v", err)
-	}
-	// Record a fenced generation so the post-mortem carries it.
-	if _, err := s.CoordinatorFence(context.Background(), &adapterv1.CoordinatorFenceRequest{
-		SessionId:              &adapterv1.SessionId{Value: "sess-42"},
-		CoordinationGeneration: 7,
-	}); err != nil {
-		t.Fatalf("fence: %v", err)
-	}
-
-	dropBefore := testutil.ToFloat64(controlEventsDropped.WithLabelValues(eventAdapterTerminating, "no_stream"))
-	s.enterHoldState("sess-42")
-	armed := clk.last()
-	if armed == nil {
-		t.Fatal("hold timer not armed")
-	}
-	armed.fire()
-
-	if s.inHoldState() {
-		t.Fatal("hold must clear after timeout")
-	}
-	if holdGauge() != 0 {
-		t.Errorf("gauge = %v, want 0 after timeout", holdGauge())
-	}
-	if len(rt.closed) != 1 || rt.closed[0] != "sess-42" {
-		t.Errorf("runtime Close calls = %v, want [sess-42]", rt.closed)
-	}
-	dropAfter := testutil.ToFloat64(controlEventsDropped.WithLabelValues(eventAdapterTerminating, "no_stream"))
-	if dropAfter-dropBefore != 1 {
-		t.Errorf("AdapterTerminating drop delta = %v, want 1 (no coordinator stream)", dropAfter-dropBefore)
-	}
-
-	pm := filepath.Join(dir, "coordinator_lost-sess-42.json")
-	data, err := os.ReadFile(pm)
-	if err != nil {
-		t.Fatalf("post-mortem not written: %v", err)
-	}
-	var rec struct {
-		SessionID      string `json:"sessionId"`
-		Reason         string `json:"reason"`
-		LastGeneration int64  `json:"lastGeneration"`
-	}
-	if err := json.Unmarshal(data, &rec); err != nil {
-		t.Fatalf("decode post-mortem: %v", err)
-	}
-	if rec.SessionID != "sess-42" || rec.Reason != reasonCoordinatorLost || rec.LastGeneration != 7 {
-		t.Errorf("post-mortem = %+v", rec)
-	}
-}
-
-// spec: §10.1 line 49 — a fence that races in before the timeout fires
+// spec: §10.1.4 — a fence that races in before the timeout fires
 // disarms the termination; a stale timer callback is a no-op.
 func TestHoldStateTimeoutNoOpAfterFence_spec_10_1(t *testing.T) {
 	setCoordinatorHold(false)
@@ -202,10 +149,10 @@ func TestHoldStateTimeoutNoOpAfterFence_spec_10_1(t *testing.T) {
 	s := New("hold-test")
 	s.HoldAfterFunc = clk.After
 	s.Runtime = rt
-	if err := s.claimSession("s1"); err != nil {
+	if err := s.claimSessionForTest("s1"); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
-	s.enterHoldState("s1")
+	s.enterHoldState()
 	armed := clk.last()
 
 	if _, err := s.CoordinatorFence(context.Background(), &adapterv1.CoordinatorFenceRequest{
@@ -222,28 +169,28 @@ func TestHoldStateTimeoutNoOpAfterFence_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 lines 47-52 — entering hold twice arms only one timer.
+// spec: §10.1 — entering hold twice arms only one timer.
 func TestHoldStateEnterIdempotent_spec_10_1(t *testing.T) {
 	setCoordinatorHold(false)
 	clk := &fakeExpiryClock{}
 	s := New("hold-test")
 	s.HoldAfterFunc = clk.After
-	_ = s.claimSession("s1")
-	s.enterHoldState("s1")
-	s.enterHoldState("s1")
+	_ = s.claimSessionForTest("s1")
+	s.enterHoldState()
+	s.enterHoldState()
 	if got := len(clk.armed()); got != 1 {
 		t.Errorf("armed timers = %d, want 1 (idempotent entry)", got)
 	}
 }
 
-// spec: §10.1 line 49 — the unary interceptor rejects every
+// spec: §10.1.4 — the unary interceptor rejects every
 // non-allowlisted RPC with UNAVAILABLE + coordinator_hold while held, and
 // passes CoordinatorFence through.
 func TestHoldStateUnaryInterceptor_spec_10_1(t *testing.T) {
 	setCoordinatorHold(false)
 	s := New("hold-test")
-	_ = s.claimSession("s1")
-	s.enterHoldState("s1")
+	_ = s.claimSessionForTest("s1")
+	s.enterHoldState()
 
 	handlerCalled := false
 	handler := func(context.Context, any) (any, error) {
@@ -270,13 +217,13 @@ func TestHoldStateUnaryInterceptor_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 49 — the stream interceptor rejects Attach while held
-// but admits the LifecycleChannel so a new coordinator can re-attach.
+// spec: §10.1.4 — the stream interceptor rejects Attach while held
+// but admits the AdapterEvents so a new coordinator can re-attach.
 func TestHoldStateStreamInterceptor_spec_10_1(t *testing.T) {
 	setCoordinatorHold(false)
 	s := New("hold-test")
-	_ = s.claimSession("s1")
-	s.enterHoldState("s1")
+	_ = s.claimSessionForTest("s1")
+	s.enterHoldState()
 
 	handlerCalled := false
 	handler := func(any, grpc.ServerStream) error { handlerCalled = true; return nil }
@@ -289,12 +236,12 @@ func TestHoldStateStreamInterceptor_spec_10_1(t *testing.T) {
 
 	handlerCalled = false
 	if err := s.holdStateStreamInterceptor(nil, nil,
-		&grpc.StreamServerInfo{FullMethod: "/lenny.adapter.v1.Adapter/LifecycleChannel"}, handler); err != nil || !handlerCalled {
-		t.Fatalf("LifecycleChannel must pass through hold: err=%v called=%v", err, handlerCalled)
+		&grpc.StreamServerInfo{FullMethod: "/lenny.adapter.v1.Adapter/AdapterEvents"}, handler); err != nil || !handlerCalled {
+		t.Fatalf("AdapterEvents must pass through hold: err=%v called=%v", err, handlerCalled)
 	}
 }
 
-// spec: §10.1 line 49 — the interceptors are inert when no hold is
+// spec: §10.1.4 — the interceptors are inert when no hold is
 // active, so steady-state RPCs run unimpeded.
 func TestHoldStateInterceptorInertWhenNotHeld_spec_10_1(t *testing.T) {
 	s := New("hold-test")
@@ -309,7 +256,7 @@ func TestHoldStateInterceptorInertWhenNotHeld_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 50 — the hold timeout defaults to 120s and honours an
+// spec: §10.1.4 — the hold timeout defaults to 120s and honours an
 // operator override.
 func TestCoordinatorHoldTimeoutDefault_spec_10_1(t *testing.T) {
 	s := New("hold-test")
@@ -320,4 +267,1049 @@ func TestCoordinatorHoldTimeoutDefault_spec_10_1(t *testing.T) {
 	if got := s.coordinatorHoldTimeout(); got != 45*time.Second {
 		t.Errorf("override timeout = %v, want 45s", got)
 	}
+}
+
+// spec: 10.1 (coordinator-loss hold), 4.7 (the four states a registry
+// entry holds), 5.2 (every session is bound to a slot on every pod)
+//
+// The hold arms from the slot registry's started entries. Every session is
+// bound to a slot on every pod, so a pod-global session field named no
+// session on a pod whose sessions took the slot path and the hold never
+// armed there: the coordinating gateway could crash and the agent kept
+// running, unsupervised and unfenced, until the orphan reconciler noticed.
+//
+// diagnosis: a failure means the hold arms from something other than the
+// started entries again. Either it no longer arms for a session the
+// adapter started, which leaves the agent running unsupervised after the
+// coordinating gateway is lost, or it arms for an entry no session has
+// started on, which rejects every RPC on a pod that is serving nobody.
+func TestCoordinatorHoldArmsFromStartedSlotRegistry_spec_10_1(t *testing.T) {
+	setCoordinatorHold(false)
+	clk := &fakeExpiryClock{}
+	s := New("hold-arming")
+	s.WorkspaceBase = t.TempDir()
+	s.HoldAfterFunc = clk.After
+	if err := s.claimSessionForTest("s1"); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+
+	s.onCoordinatorChannelClosed()
+
+	if !s.inHoldState() {
+		t.Fatal("the hold did not arm on a pod holding a started session")
+	}
+	if holdGauge() != 1 {
+		t.Errorf("coordinator-hold gauge = %v, want 1", holdGauge())
+	}
+
+	// The hold's unit is the pod: every inbound RPC outside the allowlist
+	// is rejected while it is held, and CoordinatorFence is admitted.
+	_, err := s.holdStateUnaryInterceptor(context.Background(), nil,
+		&grpc.UnaryServerInfo{FullMethod: "/lenny.adapter.v1.Adapter/SendMessage"},
+		func(context.Context, any) (any, error) { return nil, nil })
+	if status.Code(err) != codes.Unavailable {
+		t.Errorf("SendMessage under the hold = %v, want Unavailable", status.Code(err))
+	}
+	if _, err := s.holdStateUnaryInterceptor(context.Background(), nil,
+		&grpc.UnaryServerInfo{FullMethod: "/lenny.adapter.v1.Adapter/CoordinatorFence"},
+		func(context.Context, any) (any, error) { return nil, nil }); err != nil {
+		t.Errorf("CoordinatorFence under the hold = %v, want admitted", err)
+	}
+
+	// A fence exits the hold, so a later RPC is admitted again.
+	if _, err := s.CoordinatorFence(context.Background(), &adapterv1.CoordinatorFenceRequest{
+		SessionId:              &adapterv1.SessionId{Value: "s1"},
+		CoordinationGeneration: 1,
+	}); err != nil {
+		t.Fatalf("CoordinatorFence: %v", err)
+	}
+	if s.inHoldState() {
+		t.Fatal("the fence did not exit the hold")
+	}
+	if _, err := s.holdStateUnaryInterceptor(context.Background(), nil,
+		&grpc.UnaryServerInfo{FullMethod: "/lenny.adapter.v1.Adapter/SendMessage"},
+		func(context.Context, any) (any, error) { return nil, nil }); err != nil {
+		t.Errorf("SendMessage after the fence = %v, want admitted", err)
+	}
+}
+
+// spec: 10.1, 4.7 (registered and bound-not-started are not started)
+//
+// A pod whose only entry has not been started is serving no agent process,
+// so a closed control stream there is not a coordinator loss. Arming on it
+// would reject every RPC on a pod mid-bind, failing the bind that is still
+// in flight.
+//
+// diagnosis: a failure means the arming predicate reads the entry's
+// existence or its bound state rather than the started flag, so a pod that
+// has only had its workspace prepared, or has only had credentials
+// assigned, enters a hold and rejects the rest of its own bind.
+func TestCoordinatorHoldDoesNotArmOnAnUnstartedEntry_spec_10_1(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		seed func(t *testing.T, s *Server)
+	}{
+		{
+			name: "registered by a workspace-prep RPC and not yet bound",
+			seed: func(t *testing.T, s *Server) {
+				t.Helper()
+				s.mu.Lock()
+				defer s.mu.Unlock()
+				if _, err := s.ensureSlotStateLocked("s1", slotResolve{allowCreate: true}); err != nil {
+					t.Fatalf("ensure slot state: %v", err)
+				}
+			},
+		},
+		{
+			name: "bound by the credentials-first bind order and not yet started",
+			seed: func(t *testing.T, s *Server) {
+				t.Helper()
+				s.mu.Lock()
+				defer s.mu.Unlock()
+				st, err := s.ensureSlotStateLocked("s1", slotResolve{allowCreate: true})
+				if err != nil {
+					t.Fatalf("ensure slot state: %v", err)
+				}
+				st.sessionID = "s1"
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setCoordinatorHold(false)
+			clk := &fakeExpiryClock{}
+			s := New("hold-arming")
+			s.WorkspaceBase = t.TempDir()
+			s.HoldAfterFunc = clk.After
+			tc.seed(t, s)
+
+			s.onCoordinatorChannelClosed()
+
+			if s.inHoldState() {
+				t.Error("the hold armed on a pod that has started no session")
+			}
+			if len(clk.armed()) != 0 {
+				t.Errorf("armed %d hold timers, want 0", len(clk.armed()))
+			}
+		})
+	}
+}
+
+// spec: 10.1 (coordinator-lost self-termination), 9.1 (platform tool
+// surface), 15.4.3 (intra-pod MCP), 11.2 (direct-mode usage)
+//
+// The hold timeout closes the session on the pod's one shared runtime
+// process, so that session leaves the runtime generation with the close.
+// A termination that left it in the generation kept naming a terminated
+// session as the process's sole occupant: the intra-pod MCP surface went
+// on forwarding tool calls under its principal, direct-mode token counts
+// went on folding into its budget, and the pod surface could never be
+// cancelled because the process never read as idle.
+//
+// diagnosis: a failure means the coordinator-lost close and the runtime
+// generation have come apart again. The pod keeps acting as a terminated
+// session after its coordinator was lost, which is a fail-open in the
+// gate that exists to fail closed.
+func TestCoordinatorHoldTerminationLeavesTheRuntimeGeneration_spec_10_1(t *testing.T) {
+	setCoordinatorHold(false)
+	clk := &fakeExpiryClock{}
+	rt := &holdRuntime{}
+	s := New("hold-generation")
+	s.WorkspaceBase = t.TempDir()
+	s.HoldAfterFunc = clk.After
+	s.Runtime = rt
+	if err := s.claimSessionForTest("sess-42"); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if got := s.soleSession(); got != "sess-42" {
+		t.Fatalf("sole session before the hold = %q, want sess-42", got)
+	}
+
+	s.enterHoldState()
+	armed := clk.last()
+	if armed == nil {
+		t.Fatal("hold timer not armed")
+	}
+	armed.fire()
+
+	if len(rt.closed) != 1 || rt.closed[0] != "sess-42" {
+		t.Fatalf("runtime Close calls = %v, want [sess-42]", rt.closed)
+	}
+	if got := s.soleSession(); got != "" {
+		t.Errorf("sole session after the coordinator-lost close = %q, want empty", got)
+	}
+	if _, err := s.callingSession(); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("intra-pod MCP calling session after the termination = %v, want FailedPrecondition; "+
+			"the surface must not forward under a terminated session's principal", status.Code(err))
+	}
+	s.mu.Lock()
+	idle := s.runtimeIdleLocked()
+	s.mu.Unlock()
+	if !idle {
+		t.Error("the shared runtime process still reads as occupied after the terminated session's close, so the pod surface can never be cancelled")
+	}
+}
+
+// sharedHoldRuntime models the pod's one shared runtime process. Close
+// records the closing member and ends nothing, as SocketRuntimeProcess.Close
+// does: no per-session close ends the runtime process. It has no pod-scope
+// teardown, so on its own it models a transport the hold timeout does not
+// end, such as InProcessRuntime. onClose runs with the closing member's
+// identifier, so a case can observe adapter state at the instant a member's
+// runtime is closed.
+type sharedHoldRuntime struct {
+	mu       sync.Mutex
+	closedIn []string
+	onClose  func(sessionID string)
+}
+
+func newSharedHoldRuntime() *sharedHoldRuntime {
+	return &sharedHoldRuntime{}
+}
+
+func (r *sharedHoldRuntime) Start(context.Context, string) error { return nil }
+func (r *sharedHoldRuntime) WriteEnvelope(string, []byte) error  { return nil }
+func (r *sharedHoldRuntime) Output(context.Context, string) (<-chan []byte, error) {
+	ch := make(chan []byte)
+	close(ch)
+	return ch, nil
+}
+func (r *sharedHoldRuntime) Interrupt(context.Context, string, bool) error { return nil }
+
+func (r *sharedHoldRuntime) Close(_ context.Context, sessionID string) error {
+	if r.onClose != nil {
+		r.onClose(sessionID)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closedIn = append(r.closedIn, sessionID)
+	return nil
+}
+
+func (r *sharedHoldRuntime) closes() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.closedIn...)
+}
+
+// podScopedHoldRuntime is sharedHoldRuntime with a counting pod-scope
+// teardown, the shape of the sidecar SocketRuntimeProcess. onTeardown runs
+// inside CloseListener at call time, so a case can record adapter state at
+// the instant the hold timeout ends the runtime.
+type podScopedHoldRuntime struct {
+	*sharedHoldRuntime
+	teardownMu sync.Mutex
+	nTeardowns int
+	onTeardown func()
+}
+
+func newPodScopedHoldRuntime() *podScopedHoldRuntime {
+	return &podScopedHoldRuntime{sharedHoldRuntime: newSharedHoldRuntime()}
+}
+
+func (r *podScopedHoldRuntime) CloseListener() error {
+	if r.onTeardown != nil {
+		r.onTeardown()
+	}
+	r.teardownMu.Lock()
+	defer r.teardownMu.Unlock()
+	r.nTeardowns++
+	return nil
+}
+
+func (r *podScopedHoldRuntime) teardowns() int {
+	r.teardownMu.Lock()
+	defer r.teardownMu.Unlock()
+	return r.nTeardowns
+}
+
+// recordingScrubReporter counts the §5.2 cleanup-outcome reports the
+// adapter sends, so a case can assert the hold-termination loop sends none.
+type recordingScrubReporter struct {
+	mu       sync.Mutex
+	sessions []string
+}
+
+func (r *recordingScrubReporter) ReportSessionScrub(_ context.Context, _, sessionID string, _ gatewaycontrol.SessionScrubOutcome) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sessions = append(r.sessions, sessionID)
+	return nil
+}
+
+func (r *recordingScrubReporter) reported() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.sessions...)
+}
+
+// holdTerminationServer builds an adapter holding one started session per
+// identifier, with the per-slot trees rooted under a temp directory and
+// the hold timer driven through the injected seam.
+func holdTerminationServer(t *testing.T, rt RuntimeProcess, sessions ...string) (*Server, *fakeExpiryClock) {
+	t.Helper()
+	base := t.TempDir()
+	clk := &fakeExpiryClock{}
+	s := New("hold-termination")
+	s.WorkspaceBase = filepath.Join(base, "workspace")
+	s.SessionsRoot = filepath.Join(base, "sessions")
+	s.ArtifactsRoot = filepath.Join(base, "artifacts")
+	s.CredentialsDir = filepath.Join(base, "run", "lenny")
+	s.PostMortemDir = t.TempDir()
+	s.HoldAfterFunc = clk.After
+	s.Runtime = rt
+	for _, id := range sessions {
+		if err := s.claimSessionForTest(id); err != nil {
+			t.Fatalf("claim %s: %v", id, err)
+		}
+		if rt != nil {
+			if err := rt.Start(context.Background(), id); err != nil {
+				t.Fatalf("runtime start %s: %v", id, err)
+			}
+		}
+	}
+	return s, clk
+}
+
+// fireHoldTimeout arms the hold and fires its timer.
+func fireHoldTimeout(t *testing.T, s *Server, clk *fakeExpiryClock) {
+	t.Helper()
+	s.enterHoldState()
+	armed := clk.last()
+	if armed == nil {
+		t.Fatal("hold timer not armed")
+	}
+	armed.fire()
+}
+
+// drainControlEvents reads want events off the stream and reports that no
+// further event follows them.
+func drainControlEvents(t *testing.T, stream *fakeControlStream, want int) []controlEvent {
+	t.Helper()
+	evs := make([]controlEvent, 0, want)
+	for i := 0; i < want; i++ {
+		evs = append(evs, recvEvent(t, stream))
+	}
+	select {
+	case extra := <-stream.sent:
+		t.Errorf("an unexpected extra control event followed: %s", extra.GetEnvelopeJson())
+	case <-time.After(50 * time.Millisecond):
+	}
+	return evs
+}
+
+// spec: 10.1 (coordinator-lost self-termination), 10.1.4 (the hold
+// timeout), 4.7 (the started entries the timeout terminates)
+//
+// The timeout terminates every session the adapter started on the pod,
+// once per member, and ends the runtime through the pod-scope teardown
+// once. Closing each member ends nothing, because no session's close ends
+// the runtime process, so without the teardown both sessions' code goes on
+// running with live provider credentials and no coordinator. The teardown
+// runs before the deregistration pass, so it records the two started
+// entries still in the registry.
+//
+// diagnosis: a failure means the coordinator-lost termination has gone
+// back to acting on one session. Either a co-tenant's agent process
+// survives its own pod's self-termination unsupervised, or the gateway
+// loses a terminated session's final usage report and its §8.3
+// budget_return input with it, or a terminal event goes out unattributed.
+func TestCoordinatorHoldTimeoutTerminatesEveryStartedSession_spec_10_1(t *testing.T) {
+	setCoordinatorHold(false)
+	rt := newPodScopedHoldRuntime()
+	s, clk := holdTerminationServer(t, rt, "sess-a", "sess-b")
+	slotsAtTeardown := -1
+	rt.onTeardown = func() { slotsAtTeardown = s.slotCount() }
+	meter := NewSessionUsageMeter(time.Now)
+	meter.Add("sess-a", 11, 1)
+	meter.Add("sess-b", 22, 2)
+	s.Usage = meter
+	scrub := &recordingScrubReporter{}
+	s.SessionScrubReporter = scrub
+	stream, cancelStream := attachControlStream(t, s)
+	defer cancelStream()
+
+	fireHoldTimeout(t, s, clk)
+
+	if got := rt.closes(); len(got) != 2 || got[0] != "sess-a" || got[1] != "sess-b" {
+		t.Fatalf("runtime Close calls = %v, want [sess-a sess-b]", got)
+	}
+	if got := rt.teardowns(); got != 1 {
+		t.Errorf("the pod-scope teardown ran %d time(s), want 1", got)
+	}
+	if slotsAtTeardown != 2 {
+		t.Errorf("the slot registry held %d entries when the teardown ran, want 2; the teardown "+
+			"must run before the deregistration pass", slotsAtTeardown)
+	}
+	for _, id := range []string{"sess-a", "sess-b"} {
+		if _, err := os.ReadFile(filepath.Join(s.PostMortemDir, "coordinator_lost-"+id+".json")); err != nil {
+			t.Errorf("post-mortem for %s: %v", id, err)
+		}
+	}
+
+	terminating := map[string]int{}
+	usage := map[string]controlUsage{}
+	for _, ev := range drainControlEvents(t, stream, 4) {
+		switch ev.Type {
+		case eventAdapterTerminating:
+			if ev.Reason != reasonCoordinatorLost {
+				t.Errorf("AdapterTerminating reason = %q, want %q", ev.Reason, reasonCoordinatorLost)
+			}
+			terminating[ev.SessionID]++
+		case eventFinalUsageReport:
+			if ev.Usage == nil {
+				t.Fatalf("FINAL_USAGE_REPORT for %q carries no usage", ev.SessionID)
+			}
+			usage[ev.SessionID] = *ev.Usage
+		default:
+			t.Errorf("unexpected control event on the hold-termination path: %+v", ev)
+		}
+	}
+	for _, id := range []string{"sess-a", "sess-b"} {
+		if terminating[id] != 1 {
+			t.Errorf("AdapterTerminating envelopes naming %s = %d, want 1", id, terminating[id])
+		}
+	}
+	if got := usage["sess-a"]; got.InputTokens != 11 || got.OutputTokens != 1 {
+		t.Errorf("final usage for sess-a = %+v, want its own totals (11/1)", got)
+	}
+	if got := usage["sess-b"]; got.InputTokens != 22 || got.OutputTokens != 2 {
+		t.Errorf("final usage for sess-b = %+v, want its own totals (22/2)", got)
+	}
+	if got := scrub.reported(); len(got) != 0 {
+		t.Errorf("the hold-termination loop reported %v session scrubs, want none; it performs no scrub", got)
+	}
+}
+
+// spec: 10.1.4 (the coordinator-lost termination), 4.7 (the started
+// entries the timeout terminates)
+//
+// The production interleaving has no control sink: AdapterEvents clears
+// the pod's sink in the same defer that arms the hold, so every envelope
+// the timeout emits is dropped. The drop is one AdapterTerminating per
+// terminated session, which is the arity the loop is responsible for. A
+// termination that emitted once for the pod records one drop however many
+// sessions it ended, and every case that watches an attached sink stays
+// green.
+//
+// diagnosis: a failure means the coordinator-lost termination has gone
+// back to a single pod-scoped emission, so a co-tenant's session ends with
+// no terminal notification and the gateway waits out the 60s
+// orphan-session reconciler for it. A wrong lastGeneration means the
+// records stamp one session's coordination generation on every session the
+// pod-scoped hold terminates.
+func TestCoordinatorHoldTimeoutDropsItsEmissionsWithNoSink_spec_10_1(t *testing.T) {
+	setCoordinatorHold(false)
+	logBuf := &bytes.Buffer{}
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	rt := newSharedHoldRuntime()
+	s, clk := holdTerminationServer(t, rt, "sess-a", "sess-b")
+	// Only sess-a is fenced. sess-b is a co-tenant no coordinator fenced on
+	// this pod, so its records report zero.
+	if _, err := s.CoordinatorFence(context.Background(), &adapterv1.CoordinatorFenceRequest{
+		SessionId:              &adapterv1.SessionId{Value: "sess-a"},
+		CoordinationGeneration: 7,
+	}); err != nil {
+		t.Fatalf("fence: %v", err)
+	}
+
+	dropBefore := testutil.ToFloat64(controlEventsDropped.WithLabelValues(eventAdapterTerminating, "no_stream"))
+	fireHoldTimeout(t, s, clk)
+
+	if s.inHoldState() {
+		t.Fatal("hold must clear after timeout")
+	}
+	if holdGauge() != 0 {
+		t.Errorf("gauge = %v, want 0 after timeout", holdGauge())
+	}
+	dropAfter := testutil.ToFloat64(controlEventsDropped.WithLabelValues(eventAdapterTerminating, "no_stream"))
+	if got := dropAfter - dropBefore; got != 2 {
+		t.Errorf("AdapterTerminating drop delta = %v, want 2 (one per terminated session, no coordinator stream)", got)
+	}
+
+	// Each terminated session's records carry its own last fenced
+	// generation: sess-a the 7 its coordinator fenced, sess-b zero because
+	// no coordinator fenced it on this pod. The pre-fix hold stamped the
+	// single pod-wide value on both.
+	for _, tc := range []struct {
+		session string
+		gen     int64
+	}{
+		{"sess-a", 7},
+		{"sess-b", 0},
+	} {
+		data, err := os.ReadFile(filepath.Join(s.PostMortemDir, "coordinator_lost-"+tc.session+".json"))
+		if err != nil {
+			t.Fatalf("post-mortem for %s not written: %v", tc.session, err)
+		}
+		var rec struct {
+			SessionID      string `json:"sessionId"`
+			Reason         string `json:"reason"`
+			LastGeneration int64  `json:"lastGeneration"`
+		}
+		if err := json.Unmarshal(data, &rec); err != nil {
+			t.Fatalf("decode post-mortem for %s: %v", tc.session, err)
+		}
+		if rec.SessionID != tc.session || rec.Reason != reasonCoordinatorLost || rec.LastGeneration != tc.gen {
+			t.Errorf("post-mortem for %s = %+v, want lastGeneration %d", tc.session, rec, tc.gen)
+		}
+		if !hasLogLine(logBuf.String(), reasonCoordinatorLost, tc.session, tc.gen) {
+			t.Errorf("no %s log line for %s carrying last_generation %d; got %s",
+				reasonCoordinatorLost, tc.session, tc.gen, logBuf.String())
+		}
+	}
+	// The pod-level arming line carries the started-session count and no
+	// generation: the pod records one per bound session, so no single value
+	// describes a pod-scoped event.
+	for _, line := range strings.Split(strings.TrimSpace(logBuf.String()), "\n") {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		if rec["msg"] != "coordinator_connection_lost" {
+			continue
+		}
+		if _, ok := rec["last_generation"]; ok {
+			t.Errorf("coordinator_connection_lost carries last_generation %v; the pod-level arming line carries none", rec["last_generation"])
+		}
+		if _, ok := rec["started_sessions"]; !ok {
+			t.Errorf("coordinator_connection_lost carries no started_sessions: %v", rec)
+		}
+	}
+	if got := rt.closes(); len(got) != 2 || got[0] != "sess-a" || got[1] != "sess-b" {
+		t.Errorf("runtime Close calls = %v, want [sess-a sess-b]", got)
+	}
+}
+
+// spec: 10.1.4 (the hold timeout's deregistration pass), 4.7 (the
+// registry entry a termination removes), 5.2 (per-session teardown)
+//
+// The timeout deregisters every started entry in one critical section
+// before it terminates any of them. Emptying the registry first is what
+// makes the loop and a concurrent gateway Shutdown mutually exclusive, and
+// it is what keeps the terminated sessions' entries from surviving for the
+// life of a pod that goes on serving.
+//
+// diagnosis: a failure means the loop deregisters per member around each
+// close, which reopens the window in which a Shutdown admitted during the
+// loop runs the merged per-session teardown for a session the loop is
+// already terminating.
+func TestCoordinatorHoldTimeoutEmptiesTheSlotRegistry_spec_10_1(t *testing.T) {
+	setCoordinatorHold(false)
+	rt := newSharedHoldRuntime()
+	s, clk := holdTerminationServer(t, rt, "sess-a", "sess-b")
+	var heldAtClose []int
+	rt.onClose = func(string) {
+		s.mu.Lock()
+		heldAtClose = append(heldAtClose, len(s.slots))
+		s.mu.Unlock()
+	}
+
+	fireHoldTimeout(t, s, clk)
+
+	if len(heldAtClose) != 2 {
+		t.Fatalf("observed %d runtime closes, want 2", len(heldAtClose))
+	}
+	for i, held := range heldAtClose {
+		if held != 0 {
+			t.Errorf("the registry held %d entr(ies) at close %d, want 0; "+
+				"the deregistration pass must empty the registry before any termination work", held, i)
+		}
+	}
+	s.mu.Lock()
+	remaining := len(s.slots)
+	s.mu.Unlock()
+	if remaining != 0 {
+		t.Errorf("the registry holds %d entr(ies) after the timeout, want 0", remaining)
+	}
+}
+
+// spec: 10.1.4 (the coordinator-lost termination), 6.4 (the per-slot
+// tree), 4.7 (a bound-not-started entry is not terminated)
+//
+// Pass 2 removes each terminated member's per-slot tree, which carries
+// that session's §6.1 credential file. A termination that left it behind
+// leaves a hold-terminated session's credential lease readable by every
+// later slot's agent process on the pod. The removal follows that member's
+// runtime close, so the agent is not reading a credential file the
+// teardown has already unlinked.
+//
+// diagnosis: a failure means the hold-termination loop skips the
+// filesystem half of the teardown, or removes a tree before the runtime
+// that reads it is closed, or reaches a co-tenant whose session never
+// started on this pod and is live on another.
+func TestCoordinatorHoldTimeoutRemovesEveryTerminatedSessionsSlotTree_spec_10_1(t *testing.T) {
+	setCoordinatorHold(false)
+	rt := newSharedHoldRuntime()
+	s, clk := holdTerminationServer(t, rt, "sess-a", "sess-b")
+
+	// A co-tenant the §4.7 bind sequence bound at credential assignment and
+	// that never started here: the gateway has re-placed it on another pod.
+	s.mu.Lock()
+	cotenant, err := s.ensureSlotStateLocked("sess-c", slotResolve{allowCreate: true})
+	if err != nil {
+		s.mu.Unlock()
+		t.Fatalf("seed the bound-not-started co-tenant: %v", err)
+	}
+	cotenant.sessionID = "sess-c"
+	trees := map[string]struct{ current, creds string }{}
+	for id, st := range s.slots {
+		trees[id] = struct{ current, creds string }{st.paths.Current, st.paths.CredentialsFile}
+	}
+	s.mu.Unlock()
+
+	for id, p := range trees {
+		if err := os.WriteFile(filepath.Join(p.current, "agent.txt"), []byte(id), 0o600); err != nil {
+			t.Fatalf("seed workspace for %s: %v", id, err)
+		}
+		if err := os.WriteFile(p.creds, []byte(`{"lease":"`+id+`"}`), 0o600); err != nil {
+			t.Fatalf("seed credential file for %s: %v", id, err)
+		}
+	}
+
+	// Each member's tree must still be readable while its own runtime close
+	// is running, and only then removed.
+	rt.onClose = func(sessionID string) {
+		p := trees[sessionID]
+		if _, err := os.Stat(p.creds); err != nil {
+			t.Errorf("%s's credential file was already unlinked when its runtime close ran: %v", sessionID, err)
+		}
+	}
+
+	fireHoldTimeout(t, s, clk)
+
+	for _, id := range []string{"sess-a", "sess-b"} {
+		p := trees[id]
+		if _, err := os.Stat(p.current); !os.IsNotExist(err) {
+			t.Errorf("terminated session %s still has a workspace tree at %s (err=%v)", id, p.current, err)
+		}
+		if _, err := os.Stat(p.creds); !os.IsNotExist(err) {
+			t.Errorf("terminated session %s still has a credential file at %s (err=%v)", id, p.creds, err)
+		}
+	}
+	p := trees["sess-c"]
+	if _, err := os.Stat(p.current); err != nil {
+		t.Errorf("the bound-not-started co-tenant's workspace tree was removed: %v", err)
+	}
+	if _, err := os.Stat(p.creds); err != nil {
+		t.Errorf("the bound-not-started co-tenant's credential file was removed: %v", err)
+	}
+	if got := rt.closes(); len(got) != 2 {
+		t.Errorf("runtime Close calls = %v, want the two started members alone", got)
+	}
+}
+
+// spec: 10.1.4 (the hold timeout's deregistration pass), 4.7.10 (Runtime
+// process lifetime), 28 (CH-MCP-PLATFORM exclusivity)
+//
+// The deregistration pass is what lets the pod serve a next session at
+// all. Without it the terminated sessions' entries survive in the slot
+// registry beside the next session's. The runtime here has no pod-scope
+// teardown, the way InProcessRuntime has none, so the timeout leaves it to
+// its per-session Close. The process has been given three sessions, so no
+// session is sole, and the next session's teardown writes no CH-RUNTIMEOPS
+// frame.
+//
+// diagnosis: a failure means the hold timeout left the registry populated,
+// so the pod is permanently degraded for every session placed on it after
+// a coordinator loss, or a session teardown sent the kept runtime a
+// terminate frame.
+func TestCoordinatorHoldTimeoutRecoversTheNextSession_spec_10_1(t *testing.T) {
+	setCoordinatorHold(false)
+	lc, fr := startRuntimeOps(t)
+	fr.handshake()
+	rt := newSharedHoldRuntime()
+	s, clk := holdTerminationServer(t, rt, "sess-a", "sess-b")
+	s.Lifecycle = lc
+
+	fireHoldTimeout(t, s, clk)
+
+	if err := s.claimSessionForTest("sess-next"); err != nil {
+		t.Fatalf("claim the next session: %v", err)
+	}
+	if err := rt.Start(context.Background(), "sess-next"); err != nil {
+		t.Fatalf("start the next session: %v", err)
+	}
+	s.mu.Lock()
+	ids := make([]string, 0, len(s.slots))
+	for id := range s.slots {
+		ids = append(ids, id)
+	}
+	s.mu.Unlock()
+	if len(ids) != 1 || ids[0] != "sess-next" {
+		t.Errorf("slot registry after the timeout = %v, want [sess-next] alone", ids)
+	}
+	// The process has been given sess-a, sess-b, and sess-next, so no
+	// session is sole on it.
+	if got := s.soleSession(); got != "" {
+		t.Errorf("sole session after the timeout = %q, want empty", got)
+	}
+
+	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-next"},
+		Reason:                "session_complete",
+	}); err != nil {
+		t.Fatalf("Shutdown the next session: %v", err)
+	}
+	if frame, ok := fr.readWithin(500 * time.Millisecond); ok {
+		t.Errorf("the next session's teardown sent a %q frame on CH-RUNTIMEOPS, want none", frame.Type)
+	}
+}
+
+// spec: 10.1.4 (Hold state timeout)
+//
+// The coordinator hold timeout runs the pod-scope teardown and terminates
+// every started session, and it writes no CH-RUNTIMEOPS frame on the way.
+//
+// diagnosis: the coordinator hold timeout wrote a CH-RUNTIMEOPS frame; the
+// channel carries no message that ends a session or the runtime process,
+// and no drain coordination exists on this path.
+func TestCoordinatorHoldTimeoutSendsNoTerminateFrame_spec_10_1_4(t *testing.T) {
+	setCoordinatorHold(false)
+	rt := newPodScopedHoldRuntime()
+	s, clk := holdTerminationServer(t, rt, "sess-a", "sess-b")
+	lc, fr := startRuntimeOps(t)
+	fr.handshake()
+	s.Lifecycle = lc
+
+	fireHoldTimeout(t, s, clk)
+
+	if got := rt.closes(); len(got) != 2 || got[0] != "sess-a" || got[1] != "sess-b" {
+		t.Fatalf("runtime Close calls = %v, want [sess-a sess-b]", got)
+	}
+	if got := rt.teardowns(); got != 1 {
+		t.Fatalf("the pod-scope teardown ran %d time(s), want 1", got)
+	}
+	if frame, ok := fr.readWithin(500 * time.Millisecond); ok {
+		t.Errorf("the coordinator hold timeout wrote a %q frame on CH-RUNTIMEOPS, want none", frame.Type)
+	}
+}
+
+// holdSocketSeq numbers the abstract addresses holdSocketAddr hands out.
+var holdSocketSeq atomic.Int64
+
+// holdSocketAddr returns a test-unique abstract socket address for a
+// hold-timeout case driven over a real SocketRuntimeProcess. It is numbered
+// rather than named for the test, because a subtest name overruns the
+// sun_path limit.
+func holdSocketAddr(t *testing.T) string {
+	t.Helper()
+	return fmt.Sprintf("@lenny-hold-%d-%d", os.Getpid(), holdSocketSeq.Add(1))
+}
+
+// heldSocketPod builds an adapter holding one started session, sess-a, over
+// a real SocketRuntimeProcess whose peer dials once. It returns the server,
+// the hold clock, the transport, and the peer's end of the connection.
+func heldSocketPod(t *testing.T) (*Server, *fakeExpiryClock, *SocketRuntimeProcess, net.Conn) {
+	t.Helper()
+	sp, err := newTestSocketRuntime(t, holdSocketAddr(t), SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("NewSocketRuntimeProcess: %v", err)
+	}
+	t.Cleanup(func() { _ = sp.CloseListener() })
+	sp.AcceptTimeout = 30 * time.Second
+	dialed := make(chan net.Conn, 1)
+	go func() {
+		var d net.Dialer
+		c, err := d.DialContext(context.Background(), "unix", "\x00"+sp.SocketPath()[1:])
+		if err != nil {
+			t.Errorf("runtime dial: %v", err)
+		} else if err := writeTestListenerNonce(c, sp.SocketPath()); err != nil {
+			t.Errorf("runtime nonce line: %v", err)
+		}
+		dialed <- c
+	}()
+	s, clk := holdTerminationServer(t, sp, "sess-a")
+	peer := <-dialed
+	if peer == nil {
+		t.FailNow()
+	}
+	t.Cleanup(func() { _ = peer.Close() })
+	return s, clk, sp, peer
+}
+
+// requirePeerEOF fails the test unless the runtime's end reads io.EOF within
+// 2 seconds.
+func requirePeerEOF(t *testing.T, peer net.Conn) {
+	t.Helper()
+	_ = peer.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := bufio.NewReader(peer).ReadString('\n'); !errors.Is(err, io.EOF) {
+		t.Fatalf("runtime read after the hold timeout = %v, want io.EOF", err)
+	}
+}
+
+// spec: 10.1.4 (Hold state timeout), 4.7.10 (Runtime process lifetime)
+//
+// The coordinator hold timeout ends the sidecar runtime through the
+// pod-scope teardown: the runtime reads EOF, the transport reports that it
+// cannot serve the next session, and a later Start fails at once. A hold a
+// coordinator fenced ends nothing, and the teardown runs even when every
+// started session was released before the timer fired.
+//
+// diagnosis: a kept sidecar runtime survives the coordinator hold timeout
+// with a terminated session's credentials and no coordinator, or a fenced
+// pod loses its runtime.
+func TestCoordinatorHoldTimeoutEndsTheSidecarRuntime_spec_10_1_4(t *testing.T) {
+	t.Run("timeout ends the runtime", func(t *testing.T) {
+		setCoordinatorHold(false)
+		s, clk, sp, peer := heldSocketPod(t)
+		fireHoldTimeout(t, s, clk)
+		requirePeerEOF(t, peer)
+		if sp.ServesNextSession() {
+			t.Error("ServesNextSession() = true after the hold timeout, want false")
+		}
+		began := time.Now()
+		if err := sp.Start(context.Background(), "sess-next"); !errors.Is(err, errRuntimeConnectionEnded) {
+			t.Errorf("Start(sess-next) after the hold timeout = %v, want errRuntimeConnectionEnded", err)
+		}
+		if elapsed := time.Since(began); elapsed > time.Second {
+			t.Errorf("Start(sess-next) took %s, want under 1s", elapsed)
+		}
+	})
+	t.Run("fenced hold keeps the runtime", func(t *testing.T) {
+		setCoordinatorHold(false)
+		s, clk, sp, peer := heldSocketPod(t)
+		s.enterHoldState()
+		armed := clk.last()
+		if armed == nil {
+			t.Fatal("hold timer not armed")
+		}
+		s.exitHoldState()
+		armed.fire()
+		_ = peer.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+		_, err := bufio.NewReader(peer).ReadString('\n')
+		var ne net.Error
+		if !errors.As(err, &ne) || !ne.Timeout() {
+			t.Errorf("runtime read after a fenced hold = %v, want a read-deadline timeout (no EOF)", err)
+		}
+		if !sp.ServesNextSession() {
+			t.Error("ServesNextSession() = false after a fenced hold, want true")
+		}
+	})
+	t.Run("timeout after every session was released", func(t *testing.T) {
+		setCoordinatorHold(false)
+		s, clk, _, peer := heldSocketPod(t)
+		s.enterHoldState()
+		armed := clk.last()
+		if armed == nil {
+			t.Fatal("hold timer not armed")
+		}
+		_ = s.deregisterStartedSessions()
+		armed.fire()
+		requirePeerEOF(t, peer)
+	})
+}
+
+// failingTeardownRuntime is a pod-scoped runtime whose teardown fails, so a
+// case can assert the hold timeout logs the failure and still terminates.
+type failingTeardownRuntime struct {
+	*sharedHoldRuntime
+}
+
+func (failingTeardownRuntime) CloseListener() error { return errors.New("teardown boom") }
+
+// spec: 10.1.4 (Hold state timeout)
+//
+// A pod-scope teardown that fails is logged at Warn as
+// runtime_teardown_failed, and the termination of every started session
+// still runs.
+//
+// diagnosis: a failed teardown at the hold timeout went unlogged, or it
+// stopped the coordinator-lost termination of the pod's sessions.
+func TestCoordinatorHoldTimeoutLogsAFailedRuntimeTeardown_spec_10_1_4(t *testing.T) {
+	setCoordinatorHold(false)
+	logBuf := &bytes.Buffer{}
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	rt := failingTeardownRuntime{sharedHoldRuntime: newSharedHoldRuntime()}
+	s, clk := holdTerminationServer(t, rt, "sess-a")
+	fireHoldTimeout(t, s, clk)
+
+	if got := rt.closes(); len(got) != 1 || got[0] != "sess-a" {
+		t.Errorf("runtime Close calls = %v, want [sess-a]", got)
+	}
+	out := logBuf.String()
+	if !strings.Contains(out, `"msg":"runtime_teardown_failed"`) || !strings.Contains(out, `"level":"WARN"`) ||
+		!strings.Contains(out, "teardown boom") {
+		t.Errorf("log output lacks a WARN runtime_teardown_failed record carrying the error:\n%s", out)
+	}
+}
+
+// spec: §10.1.4 — the hold-resolved line names no session and carries no
+// structured fields. The hold's unit is the pod, and the generation it
+// armed under is already on the coordinator_connection_lost line that
+// opened the hold, so repeating it on the resolved line records nothing
+// the operator does not already have. A build that emits any attribute on
+// this line fails here.
+func TestCoordinatorHoldResolvedLineCarriesNoFields_spec_10_1(t *testing.T) {
+	setCoordinatorHold(false)
+	logBuf := &bytes.Buffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	clk := &fakeExpiryClock{}
+	s := New("hold-test")
+	s.HoldAfterFunc = clk.After
+	if err := s.claimSessionForTest("s1"); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	s.enterHoldState()
+	s.exitHoldState()
+
+	var resolved map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logBuf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("decode log line %q: %v", line, err)
+		}
+		if rec["msg"] == "coordinator_hold_resolved" {
+			resolved = rec
+		}
+	}
+	if resolved == nil {
+		t.Fatalf("no coordinator_hold_resolved line in %q", logBuf.String())
+	}
+	for k := range resolved {
+		switch k {
+		case slog.TimeKey, slog.LevelKey, slog.MessageKey:
+		default:
+			t.Errorf("coordinator_hold_resolved carries structured field %q = %v; the line takes none", k, resolved[k])
+		}
+	}
+}
+
+// hasLogLine reports whether the captured JSON log carries a line whose
+// message is msg and which names the session with the given
+// last_generation value.
+func hasLogLine(out, msg, sessionID string, gen int64) bool {
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		if rec["msg"] != msg || rec["session_id"] != sessionID {
+			continue
+		}
+		g, ok := rec["last_generation"].(float64)
+		if ok && int64(g) == gen {
+			return true
+		}
+	}
+	return false
+}
+
+// closeContextRecord is what a closeBudgetRuntime saw on one Close: the
+// session, the Err() of the context the close was handed, and its deadline.
+type closeContextRecord struct {
+	sessionID   string
+	err         error
+	deadline    time.Time
+	hasDeadline bool
+}
+
+// closeBudgetRuntime is a RuntimeProcess recording the context each Close
+// is handed, so a case can read each §10.1.4 member's close budget without
+// waiting on a clock.
+type closeBudgetRuntime struct {
+	holdRuntime
+	mu      sync.Mutex
+	records []closeContextRecord
+}
+
+func (r *closeBudgetRuntime) Close(ctx context.Context, sessionID string) error {
+	dl, ok := ctx.Deadline()
+	r.mu.Lock()
+	r.records = append(r.records, closeContextRecord{sessionID: sessionID, err: ctx.Err(), deadline: dl, hasDeadline: ok})
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *closeBudgetRuntime) closes() []closeContextRecord {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]closeContextRecord(nil), r.records...)
+}
+
+// assertPerMemberCloseBudgets checks that every member's close context is
+// live and carries a deadline, and that each deadline is strictly later
+// than floor and than the previous member's, which a context minted per
+// member after its guard acquisition produces and a context shared across
+// the acquisitions and every close cannot.
+func assertPerMemberCloseBudgets(t *testing.T, recs []closeContextRecord, want int, floor time.Time) {
+	t.Helper()
+	if len(recs) != want {
+		t.Fatalf("runtime closes = %d, want %d", len(recs), want)
+	}
+	prev := floor
+	for _, rec := range recs {
+		if rec.err != nil {
+			t.Errorf("member %s was closed on a context whose Err() = %v, want nil", rec.sessionID, rec.err)
+		}
+		if !rec.hasDeadline {
+			t.Errorf("member %s was closed on a context with no deadline", rec.sessionID)
+			continue
+		}
+		if !rec.deadline.After(prev) {
+			t.Errorf("member %s close deadline %v is not strictly later than %v", rec.sessionID, rec.deadline, prev)
+		}
+		prev = rec.deadline
+	}
+}
+
+// spec: §4.7.1 (role and gateway RPC contract); §5.2 (pool configuration and execution modes); §10.1.4 (coordinator-loss detection and hold state)
+//
+// The §10.1.4 hold termination gives each member its own close budget,
+// minted after that member's guard acquisition returns: the pass's single
+// context bounds the guard acquisitions alone, so no member's close is spent
+// on another member's guard wait or inherits a pass context that has
+// already expired.
+func TestHoldTerminationGivesEachMemberItsOwnCloseBudget_spec_10_1_4(t *testing.T) {
+	t.Run("the hold timeout closes each member on its own context", func(t *testing.T) {
+		setCoordinatorHold(false)
+		rt := &closeBudgetRuntime{}
+		s, clk := holdTerminationServer(t, rt, "alice", "bob")
+		before := time.Now()
+		fireHoldTimeout(t, s, clk)
+		assertPerMemberCloseBudgets(t, rt.closes(), 2, before)
+	})
+
+	t.Run("each close deadline is later than the pass's guard deadline", func(t *testing.T) {
+		rt := &closeBudgetRuntime{}
+		s, _ := holdTerminationServer(t, rt, "alice", "bob")
+		guardCtx, cancel := context.WithTimeout(context.Background(), heldSessionCloseWindow)
+		defer cancel()
+		passDeadline, _ := guardCtx.Deadline()
+		for _, m := range s.deregisterStartedSessions() {
+			s.terminateHeldSession(guardCtx, m)
+		}
+		assertPerMemberCloseBudgets(t, rt.closes(), 2, passDeadline)
+	})
+
+	t.Run("a spent pass context does not reach an uncontended member's close", func(t *testing.T) {
+		rt := &closeBudgetRuntime{}
+		s, _ := holdTerminationServer(t, rt, "alice", "bob")
+		spent, cancel := context.WithCancel(context.Background())
+		cancel()
+		members := s.deregisterStartedSessions()
+		for _, m := range members {
+			s.terminateHeldSession(spent, m)
+		}
+		assertPerMemberCloseBudgets(t, rt.closes(), 2, time.Time{})
+		// Each member's guard was free, so each acquisition held it and each
+		// cleanup completed: the identifiers are released.
+		for _, m := range members {
+			if _, err := s.ensureSlotPaths(m.sessionID, slotResolve{bindAttempt: "attempt-a", allowCreate: true}); err != nil {
+				t.Errorf("a bind naming %s after its completed termination = %v, want admitted", m.sessionID, err)
+			}
+		}
+	})
 }

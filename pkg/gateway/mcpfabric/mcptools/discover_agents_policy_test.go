@@ -22,7 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §8.3 line 244 — `lenny/discover_agents` returns only targets
+// spec: §8.3 — `lenny/discover_agents` returns only targets
 // authorized by the calling session's effective DelegationPolicy. The
 // effective policy is the one named by the caller session's resolved
 // runtime via DelegationPolicyRef; its tag-based allow/deny rule set
@@ -58,15 +58,16 @@ func policyFilterHarness(t *testing.T, parentRuntimeRef string) (*mcp.Server, ru
 	})
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        store,
-		Executor:     executor.NewEchoExecutor(),
-		Runtimes:     runtimes,
-		Delegation:   svc,
-		Environments: envs,
-		Tenants:      tenants,
-		Clock:        func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:       func() string { return "sess_mcp" },
-		TenantID:     "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		Delegation:        svc,
+		Environments:      envs,
+		Tenants:           tenants,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
 	return srv, runtimes, policies
 }

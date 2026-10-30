@@ -28,12 +28,12 @@ const DefaultMaxEvalsPerSession = 10000
 // IdempotencyWindow is the §10.7 eval-submission dedup horizon: a
 // repeat submission carrying the same idempotency key for the same
 // session within this window returns the originally-stored record
-// rather than inserting a duplicate. spec: §10.7 line 940.
+// rather than inserting a duplicate. spec: §10.7.
 const IdempotencyWindow = 24 * time.Hour
 
 // MaxIdempotencyKeyBytes bounds the §10.7 optional idempotency key. A
 // longer key is rejected at the handler before any store call.
-// spec: §10.7 line 939.
+// spec: §10.7.
 const MaxIdempotencyKeyBytes = 128
 
 // EvalResult is one §10.7 eval score stored against a session.
@@ -67,7 +67,7 @@ type EvalResult struct {
 	// IdempotencyKey is the optional §10.7 caller-supplied dedup key.
 	// Empty when the submission carried none. A non-empty value is
 	// persisted so a repeat submission within IdempotencyWindow resolves
-	// to the original record. spec: §10.7 lines 939-940.
+	// to the original record. spec: §10.7.
 	IdempotencyKey string
 	// CreatedAt is the server-generated UTC ingestion timestamp.
 	CreatedAt time.Time
@@ -81,7 +81,7 @@ var ErrQuotaExceeded = errors.New("evalstore: per-session eval quota exceeded")
 // Store is the §10.7 eval-result registry contract. Every method is
 // goroutine-safe and tenant-scoped.
 //
-// spec: §12.1 line 5 — DeleteByUser and DeleteByTenant are the
+// spec: §12.1 — DeleteByUser and DeleteByTenant are the
 // mandatory erasure primitives every storage role exposes at the
 // interface level. Eval results are session-scoped; the §12.8
 // orchestrator walks the user's sessions and calls DeleteBySession.
@@ -99,7 +99,7 @@ type Store interface {
 	// for (tenantID, sessionID, key) created at or after notBefore — the
 	// §10.7 dedup lookup. ok is false when no matching in-window record
 	// exists, so the caller proceeds to Put. An empty key always returns
-	// ok=false (keyless submissions never dedup). spec: §10.7 line 940.
+	// ok=false (keyless submissions never dedup). spec: §10.7.
 	FindByIdempotencyKey(ctx context.Context, tenantID, sessionID, key string, notBefore time.Time) (EvalResult, bool, error)
 	// ListBySession returns the session's eval results, oldest first.
 	ListBySession(ctx context.Context, tenantID, sessionID string) ([]EvalResult, error)
@@ -142,7 +142,7 @@ func NewMemory(maxPerSession int, clock func() time.Time) *Memory {
 	return &Memory{results: map[string]EvalResult{}, maxPerSession: maxPerSession, clock: clock}
 }
 
-// spec: §12.1 line 5 — compile-time satisfaction of the mandatory
+// spec: §12.1 — compile-time satisfaction of the mandatory
 // erasure-bearing Store interface.
 var _ Store = (*Memory)(nil)
 

@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/sdks/runtime/go/runtime"
 )
 
-// canonicalSamples returns one MessagePart per canonical type in §15.4.1
+// canonicalSamples returns one MessagePart per canonical type in §28.5.3
 // "Canonical Type Registry (v1)". Each sample has every field the
 // fidelity matrix tracks populated with a distinctive value so the
 // per-field assertions can observe what survives translation.
@@ -260,7 +260,7 @@ func TestOpenResponsesInlineExact(t *testing.T) {
 	}
 }
 
-// TestMatrixDrivenRoundTrip is the §12.10 conformance check at the
+// TestMatrixDrivenRoundTrip is the conformance check at the
 // per-MessagePart level. For every (adapter, field) cell, the test:
 //
 //  1. Builds a sample MessagePart that exercises the field.

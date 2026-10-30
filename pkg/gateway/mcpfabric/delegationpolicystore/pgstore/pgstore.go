@@ -5,7 +5,7 @@
 // delegation_policies table. It is a drop-in alternative to
 // delegationpolicystore.Memory.
 //
-// spec: §4.2 line 172 — delegation policies are tenant-scoped. Each
+// spec: §4.2 — delegation policies are tenant-scoped. Each
 // row carries a `tenant_id` column under the standard
 // lenny_tenant_guard trigger and lenny_tenant_isolation RLS policy.
 // Every operation runs inside a pgtenant transaction that sets
@@ -57,7 +57,7 @@ type policyBody struct {
 	Rules              []delegationpolicystore.Rule        `json:"rules,omitempty"`
 	ContentPolicy      delegationpolicystore.ContentPolicy `json:"contentPolicy"`
 	AllowSelfRecursion bool                                `json:"allowSelfRecursion,omitempty"`
-	// ScanExportedFilesWeakenedAt is the §8.3 line 181 server-minted
+	// ScanExportedFilesWeakenedAt is the §8.3 server-minted
 	// transition timestamp persisted on the policy row. The admin
 	// Update handler stamps it on `scanExportedFiles: true → false`;
 	// the delegation Service reads it at `delegate_task` time to
@@ -81,7 +81,7 @@ func (s *Store) Create(ctx context.Context, p delegationpolicystore.DelegationPo
 	if p.UpdatedAt.IsZero() {
 		p.UpdatedAt = p.CreatedAt
 	}
-	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	// spec: §15.1 — every admin resource version starts at 1.
 	if p.Version == 0 {
 		p.Version = 1
 	}
@@ -161,7 +161,7 @@ func (s *Store) Update(ctx context.Context, tenantID, name string, mutate func(*
 			return err
 		}
 		p.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
-		// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+		// spec: §15.1 — bump the optimistic-concurrency version on
 		// every successful Update so the next If-Match precondition compares
 		// against the new value.
 		p.Version++

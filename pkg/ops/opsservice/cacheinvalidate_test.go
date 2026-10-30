@@ -15,7 +15,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-// TestInvalidateTokenDeterministicAndVerifiable is the §25.5 line 2751
+// TestInvalidateTokenDeterministicAndVerifiable is the §25.5
 // contract: peers that mount the same shared key derive the same
 // invalidate token, and VerifyInvalidateToken accepts it while rejecting
 // a mismatch and an empty want.
@@ -43,7 +43,7 @@ func TestInvalidateTokenDeterministic_spec_25_5_2751(t *testing.T) {
 	}
 }
 
-// TestEndpointsPeerListerExcludesSelf is the §25.5 line 2751 peer
+// TestEndpointsPeerListerExcludesSelf is the §25.5 peer
 // discovery: the lister returns every ready replica address except this
 // pod's own, as scheme://ip:port URLs.
 func TestEndpointsPeerListerExcludesSelf_spec_25_5_2751(t *testing.T) {
@@ -102,7 +102,7 @@ type staticPeers []string
 
 func (p staticPeers) Peers(context.Context) ([]string, error) { return p, nil }
 
-// TestCacheInvalidateBroadcastPostsToEachPeer is the §25.5 line 2751 RPC
+// TestCacheInvalidateBroadcastPostsToEachPeer is the §25.5 RPC
 // fan-out: the broadcaster POSTs the invalidate route to every peer with
 // the shared token header.
 func TestCacheInvalidateBroadcastPostsToEachPeer_spec_25_5_2751(t *testing.T) {
@@ -133,7 +133,7 @@ func TestCacheInvalidateBroadcastPostsToEachPeer_spec_25_5_2751(t *testing.T) {
 }
 
 // TestCacheInvalidateBroadcastToleratesPeerError confirms one unreachable
-// peer does not abort the fan-out to the others. spec: §25.5 line 2751
+// peer does not abort the fan-out to the others. spec: §25.5
 // (best-effort propagation; periodic refresh is the backstop).
 func TestCacheInvalidateBroadcastToleratesPeerError(t *testing.T) {
 	doer := &fakeDoer{err: io.ErrUnexpectedEOF}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ecdsa"
 	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
@@ -13,10 +14,10 @@ import (
 	"sync"
 )
 
-// Local is the in-process KEK Provider for the §4 no-cloud
-// development path and for tests. It is the fully implemented
-// Provider this package ships; cloud KEK providers (see
-// CloudProviderSeam) implement the same interface.
+// Local is the in-process Provider for the §4 no-cloud development
+// path and for tests. The cloud providers in pkg/kms/aws, pkg/kms/gcp,
+// and pkg/kms/azure implement the same interface. Local also derives
+// the §10.2 ES256 JWT signing key from the same seed (see Sign).
 //
 // Local derives KEK material deterministically from a single root
 // seed plus the alias and KEK version, so a given (seed, alias,
@@ -39,6 +40,17 @@ type Local struct {
 
 	mu       sync.RWMutex
 	versions map[string]int // alias -> current (highest) KEK version
+
+	// signingMu guards signingRefs and signingKeys.
+	signingMu sync.RWMutex
+	// signingRefs maps a §10.2 JWT alias to the key reference the
+	// deployment mapped it to. An alias absent here derives from its
+	// own name.
+	signingRefs map[string]string
+	// signingKeys caches the derived ES256 key per reference. A
+	// reference always derives the same key, so the cache is never
+	// invalidated.
+	signingKeys map[string]*ecdsa.PrivateKey
 }
 
 var _ Provider = (*Local)(nil)
@@ -56,8 +68,10 @@ func NewLocal(seed []byte) (*Local, error) {
 		return nil, fmt.Errorf("kms: local KEK seed must be at least %d bytes, got %d", DEKSize, len(seed))
 	}
 	return &Local{
-		seed:     append([]byte(nil), seed...),
-		versions: make(map[string]int),
+		seed:        append([]byte(nil), seed...),
+		versions:    make(map[string]int),
+		signingRefs: make(map[string]string),
+		signingKeys: make(map[string]*ecdsa.PrivateKey),
 	}, nil
 }
 

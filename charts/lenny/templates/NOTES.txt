@@ -9,7 +9,7 @@ Composition (§17.9.1): cluster={{ $cluster | default "n/a" }}, backends={{ .Val
 Run the lenny-preflight Job output (kubectl logs job/lenny-preflight -n {{ .Release.Namespace }}) to review the §17.9 install-and-upgrade checks.
 {{- if .Values.preflight.skipNetworkProbes }}
 
-NOTE: preflight.skipNetworkProbes is true — the backend-reachability probes (MinIO encryption, Redis maxmemory-policy, OTLP and ops-admin TLS handshakes) were skipped. This is the §17.9.2 airgap posture; the cluster-API checks still ran (§17.9.11).
+NOTE: preflight.skipNetworkProbes is true — the backend-reachability probes (MinIO encryption, Redis maxmemory-policy, OTLP and ops-admin TLS handshakes) were skipped. This is the §17.9.2 airgap posture; the cluster-API checks still ran (§17.9).
 {{- end }}
 {{- if not .Values.preflight.enabled }}
 

@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 )
 
-// requestDuration is the §25.6 line 2926 per-endpoint diagnostic
+// requestDuration is the §25.6 per-endpoint diagnostic
 // latency histogram. The label values are the four §25.6 endpoint
 // short names: "session", "pool", "credential-pool", "connectivity".
 // Registered on the default registry at package init so the §16.9
@@ -35,7 +35,7 @@ func init() {
 // ObserveRequestDuration records the elapsed time for a §25.6
 // diagnostic endpoint call. endpoint is the short name
 // ("session", "pool", "credential-pool", "connectivity").
-// spec: §25.6 line 2926.
+// spec: §25.6.
 func ObserveRequestDuration(endpoint string, elapsed time.Duration) {
 	requestDuration.WithLabelValues(endpoint).Observe(elapsed.Seconds())
 }

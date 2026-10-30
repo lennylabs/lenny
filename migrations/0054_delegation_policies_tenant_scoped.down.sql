@@ -1,4 +1,4 @@
--- Revert the §4.2 line 172 tenant scoping of delegation_policies.
+-- Revert the §4.2 tenant scoping of delegation_policies.
 
 DROP POLICY IF EXISTS lenny_tenant_isolation ON delegation_policies;
 ALTER TABLE delegation_policies DISABLE ROW LEVEL SECURITY;

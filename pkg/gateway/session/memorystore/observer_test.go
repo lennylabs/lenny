@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 )
 
-// fakeObserver captures the §9.4 / §16.1 lines 151-154 instrumentation
+// fakeObserver captures the §9.4 / §16.1 instrumentation
 // calls so tests can assert observation counts and labels without
 // pulling in Prometheus.
 type fakeObserver struct {
@@ -68,8 +68,7 @@ func (o *fakeObserver) opCount(op string) int {
 	return n
 }
 
-// TestObserverFiresOnAllSixOperations_spec_9_4_F_9_4_1 pins the §9.4
-// line 200 "all six operation labels emitted" contract: every public
+// TestObserverFiresOnAllSixOperations_spec_9_4_F_9_4_1 pins the §9.4 contract: every public
 // Store method calls ObserveOperation with the catalog-cited label.
 func TestObserverFiresOnAllSixOperations_spec_9_4_F_9_4_1(t *testing.T) {
 	obs := newFake()
@@ -134,7 +133,7 @@ func TestObserverIncErrorOnEmptyScope_spec_9_4_F_9_4_1(t *testing.T) {
 }
 
 // TestThresholdCountRoundsToEightyPercent_spec_9_4_F_9_4_6 pins the
-// §9.4 line 202 "leaves the user at >= 80%" rounding rule across the
+// §9.4 rounding rule across the
 // boundary values the in-memory eviction can produce.
 func TestThresholdCountRoundsToEightyPercent_spec_9_4_F_9_4_6(t *testing.T) {
 	cases := []struct {
@@ -155,8 +154,7 @@ func TestThresholdCountRoundsToEightyPercent_spec_9_4_F_9_4_6(t *testing.T) {
 	}
 }
 
-// TestWriteIncrementsOverThreshold_spec_9_4_F_9_4_6 pins the §9.4
-// line 202 contract: a Write that leaves the user at >= 80% of the
+// TestWriteIncrementsOverThreshold_spec_9_4_F_9_4_6 pins the §9.4 contract: a Write that leaves the user at >= 80% of the
 // per-user cap increments the threshold counter and emits the
 // structured log line; a Write that stays under the threshold does
 // not.
@@ -199,8 +197,8 @@ func TestWriteIncrementsOverThreshold_spec_9_4_F_9_4_6(t *testing.T) {
 	}
 }
 
-// TestWriteEmitsRecordCount_spec_9_4_F_9_4_1 pins the §9.4 line 202 /
-// §16.1 line 153 record-count gauge update on the Write path. The
+// TestWriteEmitsRecordCount_spec_9_4_F_9_4_1 pins the §9.4 /
+// §16.1 record-count gauge update on the Write path. The
 // gauge reflects the per-tenant total, not the per-user count.
 func TestWriteEmitsRecordCount_spec_9_4_F_9_4_1(t *testing.T) {
 	obs := newFake()
@@ -246,8 +244,7 @@ func TestDeleteByTenantEmitsZero_spec_9_4_F_9_4_1(t *testing.T) {
 	}
 }
 
-// TestTenantRecordCountsAggregates_spec_9_4_F_9_4_1 pins the §9.4
-// line 202 record-count sampler signature: TenantRecordCounts walks
+// TestTenantRecordCountsAggregates_spec_9_4_F_9_4_1 pins the §9.4 record-count sampler signature: TenantRecordCounts walks
 // the in-memory state and emits one entry per tenant with the count
 // aggregated across users.
 func TestTenantRecordCountsAggregates_spec_9_4_F_9_4_1(t *testing.T) {
@@ -322,7 +319,7 @@ func TestOperationLabelsAreStable_spec_9_4_F_9_4_1(t *testing.T) {
 		}
 	}
 	// ThresholdFraction is referenced by the structured log line.
-	// A drift away from 0.8 breaks the §9.4 line 202 contract.
+	// A drift away from 0.8 breaks the §9.4 contract.
 	if memorystore.ThresholdFraction != 0.8 {
 		t.Errorf("ThresholdFraction = %v, want 0.8", memorystore.ThresholdFraction)
 	}

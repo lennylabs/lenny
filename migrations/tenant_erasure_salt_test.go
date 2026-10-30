@@ -7,11 +7,11 @@ import (
 	"testing"
 )
 
-// spec: §12.8 lines 843-850 — the per-tenant billing-pseudonymization
+// spec: §12.8 — the per-tenant billing-pseudonymization
 // `erasure_salt` is stored in the tenant configuration record in
 // Postgres, KMS-envelope-encrypted at rest and never in plaintext.
 // Migration 0133 adds the BYTEA column that holds the §4 envelope blob;
-// a NULL value is the §12.8 line 850 destroyed state. F-12.8.5.
+// a NULL value is the §12.8 destroyed state. F-12.8.5.
 func TestTenantErasureSaltMigration_spec_12_8_845(t *testing.T) {
 	b, err := FS.ReadFile("0133_tenant_erasure_salt.up.sql")
 	if err != nil {

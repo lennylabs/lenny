@@ -181,8 +181,8 @@ type Variant struct {
 	// ID is the variant identifier. Cannot equal ControlVariantID.
 	ID string
 	// Weight is the traffic fraction routed to this variant; in [0, 1).
-	// spec: §10.7 line 694 / line 743 — fraction in [0.0, 1.0]; the
-	// cross-Σ < 1.0 rule (line 743) bars 1.0 in a single-variant
+	// spec: §10.7 — each variant weight is a fraction in [0.0, 1.0], and
+	// the cross-variant Σ < 1.0 rule bars 1.0 in a single-variant
 	// experiment. A weight of 0.0 is operationally a no-op (no traffic
 	// to the variant) and is admitted so deployers can stage a variant
 	// before turning on traffic.
@@ -203,9 +203,8 @@ type Definition struct {
 
 // Validate reports the §10.7 admission errors for an
 // ExperimentDefinition at admin POST/PUT time. Violations are tagged
-// with a §15.1 error code so the admin handler can surface
-// `RESERVED_IDENTIFIER` (line 1005) or `INVALID_VARIANT_WEIGHTS`
-// (§4.6.2 line 545) distinctly from the generic `VALIDATION_ERROR`.
+// with a §15.1 error code so the admin handler can surface `RESERVED_IDENTIFIER` or `INVALID_VARIANT_WEIGHTS`
+// (§4.6.2) distinctly from the generic `VALIDATION_ERROR`.
 func (d Definition) Validate() error {
 	var v []Violation
 	if d.ID == "" {
@@ -247,7 +246,7 @@ func (d Definition) Validate() error {
 			continue
 		}
 		if vt.ID == ControlVariantID {
-			// spec: §10.7 line 703 / §15.1 line 1005 — variant id
+			// spec: §10.7 / §15.1 — variant id
 			// "control" is reserved; admin must surface
 			// RESERVED_IDENTIFIER with details.field + details.value.
 			v = append(v, Violation{
@@ -263,9 +262,9 @@ func (d Definition) Validate() error {
 		}
 		seen[vt.ID] = true
 		if vt.Weight < 0 || vt.Weight >= 1 {
-			// spec: §10.7 line 694 / line 743 — weight in [0.0, 1.0);
-			// 1.0 always violates the cross-Σ < 1.0 rule (line 743);
-			// 0.0 is admitted (staged variant with no traffic).
+			// spec: §10.7 — weight in [0.0, 1.0); 1.0 always violates
+			// the cross-variant Σ < 1.0 rule; 0.0 is admitted (staged
+			// variant with no traffic).
 			v = append(v, Violation{
 				Code: CodeInvalidVariantWeights, Field: fmt.Sprintf("variants[%d].weight", i), Value: vt.Weight,
 				Message: fmt.Sprintf("variants[%d].weight %g must be in [0, 1)", i, vt.Weight),
@@ -274,7 +273,7 @@ func (d Definition) Validate() error {
 		totalWeight += vt.Weight
 	}
 	if totalWeight >= 1 {
-		// spec: §4.6.2 line 545 — Σ variant_weights ≥ 1 returns
+		// spec: §4.6.2 — Σ variant_weights ≥ 1 returns
 		// INVALID_VARIANT_WEIGHTS at admission.
 		v = append(v, Violation{
 			Code: CodeInvalidVariantWeights, Field: "variants", Value: totalWeight,

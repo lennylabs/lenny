@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.lenny.dev/adapter-jsonl/v1.json",
   "title": "Lenny Adapter Binary Protocol (JSONL)",
-  "description": "Newline-delimited JSON exchanged on stdin/stdout between the adapter sidecar and the agent binary inside a Lenny pod. The adapter receives lines on stdin (inbound) and reads lines from stdout (outbound). Each line is a single JSON object discriminated by `type`. The gateway↔adapter lifecycle channel (checkpoint, interrupt, credentials_rotated, deadline_approaching) uses the gRPC LifecycleChannel stream in lenny-adapter.proto and is out of scope here. See spec/15_external-api-surface.md §15.4.",
+  "description": "Newline-delimited JSON exchanged on stdin/stdout between the adapter sidecar and the agent binary inside a Lenny pod. The adapter receives lines on stdin (inbound) and reads lines from stdout (outbound). Each line is a single JSON object discriminated by `type`. The adapter↔runtime CH-RUNTIMEOPS frames (checkpoint_request, interrupt_request, credentials_rotated, deadline_approaching, and their runtime replies) travel on the intra-pod runtime-ops Unix socket, are schematized in schemas/runtime-ops-events.schema.json, and are out of scope here. The stdin/stdout message schemas are stated by spec/28_communication-channels.md §28.5.3, the CH-MSGSOCK card; the messageEnvelope definition is stated by the MessageEnvelope unified message format heading in spec/15_external-api-surface.md §15.4.",
   "type": "object",
   "required": ["type"],
   "discriminator": { "propertyName": "type" },
@@ -10,6 +10,9 @@
     { "$ref": "#/$defs/messageEnvelope" },
     { "$ref": "#/$defs/heartbeat" },
     { "$ref": "#/$defs/heartbeat_ack" },
+    { "$ref": "#/$defs/session_start" },
+    { "$ref": "#/$defs/session_started" },
+    { "$ref": "#/$defs/session_end" },
     { "$ref": "#/$defs/shutdown" },
     { "$ref": "#/$defs/tool_call" },
     { "$ref": "#/$defs/tool_result" },
@@ -20,9 +23,9 @@
   "$defs": {
     "messageEnvelope": {
       "title": "message",
-      "description": "Inbound content delivery from gateway → adapter → agent. The unified envelope used for client prompts, inter-session messages, and platform-injected control text. See spec/15_external-api-surface.md §15.4.1.",
+      "description": "Inbound content delivery from gateway → adapter → agent. The unified envelope used for client prompts, inter-session messages, and platform-injected control text. See spec/15_external-api-surface.md §15.4.",
       "type": "object",
-      "required": ["schemaVersion", "type", "id", "from", "input"],
+      "required": ["schemaVersion", "type", "id", "from", "sessionId", "input"],
       "properties": {
         "schemaVersion": {
           "type": "integer",
@@ -55,9 +58,10 @@
           "default": 0,
           "description": "Gateway-injected hop count in the delegation tree. Informational."
         },
-        "slotId": {
+        "sessionId": {
           "type": "string",
-          "description": "Slot identifier. Present only on pods whose pool sets `maxConcurrentSessions > 1`."
+          "minLength": 1,
+          "description": "The session this frame is addressed to. The adapter populates it on every session-scoped frame on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`, so an empty address is as non-conforming as an absent one on this leg. `from.id` separately names the sending session, which may be a different session; delivery follows `sessionId`."
         },
         "input": {
           "type": "array",
@@ -79,40 +83,168 @@
         },
         "id": {
           "type": "string",
-          "description": "Identifier whose shape depends on kind. client: `client_{opaque}`. agent: `sess_{session_id}`. system: literal `lenny-gateway`. external: `conn_{connector_id}`."
+          "description": "Identifier whose shape depends on kind. client: `client_{opaque}`. agent: `sess_{session_id}`. system: literal `lenny-gateway`. external: `conn_{connector_id}`. When kind is `agent` this names the sending session, which may differ from the `sessionId` the frame is addressed to."
         }
       }
     },
 
     "heartbeat": {
       "title": "heartbeat",
-      "description": "Inbound liveness ping from adapter. Agent must respond with heartbeat_ack within 10s or the adapter sends SIGTERM.",
+      "description": "Inbound liveness ping from adapter. The adapter writes one heartbeat per interval for each session, from the write of the session's session_start until it writes the session's session_end or removes the session's registry entry, whether or not an Attach stream for the session is open, and names that session in sessionId. Agent must respond with heartbeat_ack within 10s or the runtime is treated as hung for the session the heartbeat names: the adapter ends the session's Attach stream when one is open and refuses each later Attach for the session until its registry entry is removed, and the runtime process receives no signal. A protocol-level frame outside the session addressing rule stated by spec/28_communication-channels.md §28.5.3; its sessionId attributes a busy report as the Outbound: heartbeat_ack block of that section states.",
       "type": "object",
       "required": ["type", "ts"],
       "properties": {
         "type": { "const": "heartbeat" },
-        "ts": { "type": "integer", "minimum": 0, "description": "Unix epoch seconds." }
+        "ts": { "type": "integer", "minimum": 0, "description": "Unix epoch seconds." },
+        "sessionId": {
+          "type": "string",
+          "description": "The session whose liveness the heartbeat probes. The runtime answers with a heartbeat_ack that carries this sessionId when it reports busy for the session."
+        }
       }
     },
 
     "heartbeat_ack": {
       "title": "heartbeat_ack",
-      "description": "Outbound acknowledgement of an inbound heartbeat.",
+      "description": "Outbound acknowledgement of an inbound heartbeat. A runtime MUST report busy: true for a session while it does any work for that session: while it handles a message for the session, from reading the frame until it finishes handling it, and while it runs a tool call, does background work outside a turn, or waits on children for the session. A heartbeat_ack that names a session answers that session's liveness probe, and one that names no session answers the probe of every session on the pod. A protocol-level frame outside the session addressing rule stated by spec/28_communication-channels.md §28.5.3; its sessionId attributes a busy report as the Outbound: heartbeat_ack block of that section states.",
       "type": "object",
       "required": ["type"],
       "properties": {
-        "type": { "const": "heartbeat_ack" }
+        "type": { "const": "heartbeat_ack" },
+        "sessionId": {
+          "type": "string",
+          "description": "The sessionId of the heartbeat the frame answers. Required when busy is true."
+        },
+        "busy": {
+          "type": "boolean",
+          "description": "True while the runtime does work for the named session. False or absent otherwise."
+        }
+      },
+      "if": {
+        "properties": { "busy": { "const": true } },
+        "required": ["busy"]
+      },
+      "then": { "required": ["sessionId"] }
+    },
+
+    "session_start": {
+      "title": "session_start",
+      "description": "Inbound frame that opens a session on the runtime and carries the session's own context. The adapter writes it once for each start and each resume of the session, and on the connection or loop that carries the session it precedes every other frame addressed to the session. A runtime that keeps per-session context creates the session's context from it and answers with session_started; a runtime that has opened CH-RUNTIMEOPS answers every session_start with session_started. A runtime that keeps no per-session context and opens no CH-RUNTIMEOPS connection may ignore it. A runtime ignores a session_start for a session it already holds, except that it answers it with session_started again. See spec/28_communication-channels.md §28.5.3, the CH-MSGSOCK card.",
+      "type": "object",
+      "required": ["type", "sessionId", "startId"],
+      "properties": {
+        "type": { "const": "session_start" },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The session the frame opens. The adapter populates it on every pod."
+        },
+        "startId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifies this write of the frame. The adapter gives each session_start it writes on the pod a value distinct from every other it has written there, so the acknowledgement of an earlier start of the same session is not read as this start's."
+        },
+        "credentialsPath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Absolute path to this session's credential file, /run/lenny/slots/{sessionId}/credentials.json. The adapter writes the file before it writes this frame and rewrites it in place on a rotation for this session. Present whenever the adapter provisioned a credential file for the session and absent otherwise; the adapter never writes an empty path, and a runtime given no path loads no credential bundle for the session."
+        },
+        "experimentContext": {
+          "description": "Experiment enrollment context for this session. Absent or null when the session is not enrolled in any experiment.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["experimentId", "variantId", "inherited"],
+              "properties": {
+                "experimentId": { "type": "string" },
+                "variantId": { "type": "string" },
+                "inherited": { "type": "boolean", "description": "True when the enrollment was propagated from a parent session through delegation." }
+              }
+            },
+            { "type": "null" }
+          ]
+        },
+        "tracingContext": {
+          "description": "Opaque map of non-sensitive tracing identifiers propagated from the parent runtime through delegation. Absent or null for a top-level session.",
+          "oneOf": [
+            { "type": "object", "additionalProperties": { "type": "string" } },
+            { "type": "null" }
+          ]
+        },
+        "llm": {
+          "description": "LLM provider configuration for the session. Absent or null when the session has no active LLM credential lease.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["deliveryMode"],
+              "properties": {
+                "deliveryMode": { "enum": ["direct", "proxy"], "description": "The credential delivery mode active for this session's LLM provider pool." },
+                "dialect": { "type": "string", "description": "The dialect the runtime's LLM SDK speaks to the LLM Proxy, openai or anthropic. Present in proxy mode and omitted in direct mode." },
+                "apiKeyEnv": { "type": "string", "description": "Canonical environment variable name the runtime's LLM SDK reads for its API key. The runtime supplies the session's lease token as that session's key rather than setting the variable in its own process environment." },
+                "headers": {
+                  "type": "object",
+                  "additionalProperties": { "type": "string" },
+                  "description": "Header names and string values the runtime's LLM SDK sends to the LLM Proxy in proxy mode. Omitted when no header is advertised."
+                }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+
+    "session_started": {
+      "title": "session_started",
+      "description": "Outbound acknowledgement of a session_start. A runtime that keeps per-session context writes it after it has created the session's context, and a runtime that has opened CH-RUNTIMEOPS writes it for every session_start it reads. The adapter consumes it and relays it to no Attach stream, and it drops one whose startId is not that of the start waiting for the session. See spec/28_communication-channels.md §28.5.3, the CH-MSGSOCK card.",
+      "type": "object",
+      "required": ["type", "sessionId", "startId"],
+      "properties": {
+        "type": { "const": "session_started" },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The session whose session_start the frame answers. The runtime echoes the identifier of the session_start it answers."
+        },
+        "startId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The runtime echoes the startId of the session_start it answers, including a repeated one."
+        },
+        "error": {
+          "type": "object",
+          "description": "Present when the runtime failed to create the session's context, and absent otherwise. The object a response error carries.",
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "type": "string" },
+            "message": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "session_end": {
+      "title": "session_end",
+      "description": "Inbound frame that releases a session on the runtime. It ends the start of the latest session_start the runtime read for the session, and the runtime releases the context that start creates and keeps serving the pod's other sessions. It is not acknowledged and carries no deadline. A runtime ignores a session_end for a session it does not hold. When the connection or loop that carries a session ends, no session_end follows. See spec/28_communication-channels.md §28.5.3, the CH-MSGSOCK card.",
+      "type": "object",
+      "required": ["type", "sessionId"],
+      "properties": {
+        "type": { "const": "session_end" },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The session the frame releases. The adapter populates it on every pod."
+        }
       }
     },
 
     "shutdown": {
       "title": "shutdown",
-      "description": "Inbound graceful-shutdown signal. The agent must exit cleanly within deadline_ms or receive SIGTERM.",
+      "description": "Inbound process-scoped graceful-shutdown signal. The adapter never writes it at a session boundary; a session's end is session_end. The agent must finish its current work and exit within deadline_ms or receive SIGTERM.",
       "type": "object",
       "required": ["type", "reason", "deadline_ms"],
       "properties": {
         "type": { "const": "shutdown" },
-        "reason": { "type": "string", "minLength": 1, "description": "Reason code (for example: drain, runtime_upgrade, session_complete)." },
+        "reason": { "type": "string", "minLength": 1, "description": "Reason code (for example: drain, runtime_upgrade)." },
         "deadline_ms": { "type": "integer", "minimum": 0, "description": "Milliseconds the agent has to exit before SIGTERM." }
       }
     },
@@ -136,7 +268,10 @@
           "default": false,
           "description": "When true, the adapter records a §7.2 KindToolUse interaction, publishes a `tool_use_requested(tool_call_id, tool, args)` SSE event on the session's event stream, and blocks the tool invocation until the user resolves via POST /v1/sessions/{id}/tool-use/{tool_call_id}/approve|deny. A denial returns the tool a structured `tool_result` carrying `isError: true` and the deny reason; an approval forwards the call. Absent or false means the call executes immediately (no approval gate)."
         },
-        "slotId": { "type": "string" }
+        "sessionId": {
+          "type": "string",
+          "description": "The session this frame is addressed to. The runtime echoes the identifier it was handed, on every pod. An absent identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream."
+        }
       }
     },
 
@@ -144,7 +279,7 @@
       "title": "tool_result",
       "description": "Inbound result for a prior tool_call. The id matches the originating tool_call.id. Results with no matching call are dropped and logged.",
       "type": "object",
-      "required": ["type", "id", "content"],
+      "required": ["type", "id", "content", "sessionId"],
       "properties": {
         "type": { "const": "tool_result" },
         "id": {
@@ -158,7 +293,11 @@
           "description": "Result content as a list of MessagePart objects."
         },
         "isError": { "type": "boolean", "default": false },
-        "slotId": { "type": "string" }
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The session this frame is addressed to. The adapter populates it on every pod, whatever the pool's `sessionPolicy.maxConcurrentSessions`, so an empty address is as non-conforming as an absent one on this leg."
+        }
       }
     },
 
@@ -187,7 +326,10 @@
             "message": { "type": "string" }
           }
         },
-        "slotId": { "type": "string" }
+        "sessionId": {
+          "type": "string",
+          "description": "The session this frame is addressed to. The runtime echoes the identifier it was handed, on every pod. An absent identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream."
+        }
       },
       "oneOf": [
         { "required": ["output"] },
@@ -197,13 +339,17 @@
 
     "status": {
       "title": "status",
-      "description": "Outbound optional status update, surfaced to the client as a low-priority signal.",
+      "description": "Outbound optional status update, surfaced to the client as a low-priority signal. A session-scoped frame: it is addressed to the session named by `sessionId` and relayed to that session's stream alone.",
       "type": "object",
       "required": ["type", "state"],
       "properties": {
         "type": { "const": "status" },
         "state": { "type": "string", "minLength": 1, "description": "Status label (for example: thinking, analyzing, calling_tool)." },
-        "message": { "type": "string", "description": "Human-readable status message." }
+        "message": { "type": "string", "description": "Human-readable status message." },
+        "sessionId": {
+          "type": "string",
+          "description": "The session this frame is addressed to. The runtime echoes the identifier it was handed, on every pod. An absent identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream."
+        }
       }
     },
 
@@ -218,6 +364,10 @@
           "type": "object",
           "description": "Opaque tracing context. Typical keys: langsmith_run_id, otel_trace_id, otel_span_id, tracestate.",
           "additionalProperties": true
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "The session this frame is addressed to. The runtime echoes the identifier it was handed, on every pod. An absent identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected and relayed to no stream."
         }
       }
     }

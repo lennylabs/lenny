@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 
-// Package partitionmaint implements the §16.4 line 378 EventStore
+// Package partitionmaint implements the §16.4 EventStore
 // partition lifecycle: a background maintainer that, per natively
 // range-partitioned table, creates the current and a few future time
 // partitions ahead of the write path and drops partitions whose entire
 // range has aged past the retention window. Dropping a whole partition
 // (DROP TABLE on the child) reclaims storage without the row-by-row
-// vacuum cost of a DELETE sweep, which is the property §16.4 line 378
-// and §12.2 line 131 call for.
+// vacuum cost of a DELETE sweep, which is the property §16.4
+// and §12.2 call for.
 //
 // The package separates the date arithmetic (Plan, pure and exhaustively
 // testable) from the DDL execution (Driver, a thin pgx wrapper). The
@@ -15,15 +15,14 @@
 // fixed naming scheme this package owns, so the Driver never has to parse
 // Postgres partition-bound expressions.
 //
-// audit_log is deliberately out of scope: §12.8 line 815 requires a
+// audit_log is deliberately out of scope: §12.8 requires a
 // single-column foreign key onto audit_log.id, which Postgres forbids on
 // a table range-partitioned by created_at, so the audit chain stays on
 // the §16.4 DELETE-based pruner (see auditretention). The DropGuard seam
 // exists so an audit table could later plug the §16.4 SIEM delivery
 // guard into the drop decision if that spec tension is resolved.
 //
-// spec: §16.4 line 378 (EventStore partitioning, retention windows, the
-// partition-dropping background job); §12.2 line 131 (declarative
+// spec: §16.4; §12.2 (declarative
 // PARTITION BY RANGE (created_at) for parallel writes and fast
 // detach/drop of old partitions).
 package partitionmaint
@@ -36,7 +35,7 @@ import (
 	"time"
 )
 
-// Retention windows from §16.4 line 378 (mirrored in §17.8 line 877 for
+// Retention windows from §16.4 (mirrored in §17.8 for
 // session logs). audit_log's 365-day window is included for completeness;
 // this maintainer does not manage audit_log (see the package comment).
 const (
@@ -297,7 +296,7 @@ func (m *Maintainer) Interval() time.Duration { return m.interval }
 // stops that spec and is returned with the results gathered so far; the
 // caller decides whether a transient DDL error should abort the sweep.
 //
-// spec: §16.4 line 378.
+// spec: §16.4.
 func (m *Maintainer) Tick(ctx context.Context, now time.Time) ([]Result, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

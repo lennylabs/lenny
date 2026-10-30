@@ -3,8 +3,7 @@
 // In-package unit tests for the §13.2 agent-pod egress and DNS labels the
 // WarmPoolController stamps onto every Sandbox it warms. The labels
 // propagate to the agent pod, where the chart-rendered NetworkPolicies
-// select them; the controller never creates NetworkPolicies (spec: §13.2
-// line 424). Covers F-13.2.1 (delivery-mode), F-13.2.11 (egress-profile),
+// select them; the controller never creates NetworkPolicies (spec: §13.2). Covers F-13.2.1 (delivery-mode), F-13.2.11 (egress-profile),
 // and F-13.2.4 (dns-policy opt-out).
 package warmpool
 
@@ -29,7 +28,7 @@ func labelsTestTemplate(spec lennyv1.SandboxTemplateSpec) *lennyv1.SandboxTempla
 	}
 }
 
-// spec: §13.2 lines 118, 130 — the delivery-mode label is set with value
+// spec: §13.2 — the delivery-mode label is set with value
 // `proxy` only on proxy-mode pools so the allow-pod-egress-llm-proxy
 // policy admits the LLM proxy port. F-13.2.1.
 func TestSandboxLabelsDeliveryModeProxyOnly(t *testing.T) {
@@ -49,7 +48,7 @@ func TestSandboxLabelsDeliveryModeProxyOnly(t *testing.T) {
 	}
 }
 
-// spec: §13.2 lines 424-432 — every managed pod carries the resolved
+// spec: §13.2 — every managed pod carries the resolved
 // egress profile; an empty SandboxTemplate.spec.egressProfile resolves to
 // the default `restricted`. F-13.2.11.
 func TestSandboxLabelsEgressProfileResolved(t *testing.T) {
@@ -69,7 +68,7 @@ func TestSandboxLabelsEgressProfileResolved(t *testing.T) {
 	}
 }
 
-// spec: §13.2 lines 470-490 — the dns-policy label is set with value
+// spec: §13.2 — the dns-policy label is set with value
 // `cluster-default` only on pools that opt out of the dedicated CoreDNS
 // instance; pods in all other pools do not receive it. F-13.2.4.
 func TestSandboxLabelsDNSPolicyOptOutOnly(t *testing.T) {

@@ -8,7 +8,7 @@
 // partially applied migration through the supported admin interface
 // without direct database access.
 //
-// spec: §10.5 line 417; §15.1 lines 891-892; §24.13 lines 150-151.
+// spec: §10.5; §15.1; §24.13.
 package schemamigrate
 
 import (
@@ -38,7 +38,7 @@ var (
 	// is nothing to roll back.
 	ErrNoVersion = errors.New("schemamigrate: no migration applied")
 	// ErrVersionMismatch reports that the requested down-migration
-	// version is not the most recently applied version. §24.13 line 151
+	// version is not the most recently applied version. §24.13
 	// scopes `migrate down` to reversing the current (most-recent)
 	// migration only.
 	ErrVersionMismatch = errors.New("schemamigrate: version is not the most recently applied migration")
@@ -50,7 +50,7 @@ var (
 // `complete`; the richer phase values (`phase1_applied`, `phase2_deployed`,
 // `phase3_applied`) are recorded by the migration Job for the phased-
 // migration build (F-10.5.2) and share this wire shape so that work needs
-// no API change. spec: §24.13 line 150.
+// no API change. spec: §24.13.
 type Phase string
 
 const (
@@ -67,7 +67,7 @@ const (
 	PhaseComplete Phase = "complete"
 )
 
-// GateCheckResult is the §10.5 line 417 Phase 3 enforcement-gate outcome.
+// GateCheckResult is the §10.5 Phase 3 enforcement-gate outcome.
 // A v1 single-file migration has no Phase 3 gate, so it reports `not_run`;
 // a phased migration's Job records `pass` or `fail:<N>_rows`.
 type GateCheckResult string
@@ -104,8 +104,7 @@ type StatusReport struct {
 // Job-recorded expand-contract state for one migration version. The
 // migration Job UPSERTs a row at end-of-run; the status surface overlays
 // it onto the synthesized projection so the operator sees the real
-// applied-at timestamp, Phase 3 gate result, and Job name. spec: §24.13
-// line 150.
+// applied-at timestamp, Phase 3 gate result, and Job name. spec: §24.13.
 type PhaseRow struct {
 	Version          uint
 	Phase            string
@@ -176,7 +175,7 @@ func (m *Manager) Status(ctx context.Context) (StatusReport, error) {
 // applied before this run), in which case every version up to current is
 // recorded. v1 migrations are single-file, so the recorded phase is
 // `complete` with a `not_run` gate; the phased-migration build records
-// the richer values. spec: §24.13 line 150.
+// the richer values. spec: §24.13.
 func (m *Manager) RecordRun(ctx context.Context, previous uint, hadPrevious bool, current uint, jobName string, now time.Time) error {
 	db, err := sql.Open("pgx", m.dsn)
 	if err != nil {
@@ -209,7 +208,7 @@ func (m *Manager) RecordRun(ctx context.Context, previous uint, hadPrevious bool
 // readPhases reads the recorded phase rows keyed by version. A missing
 // schema_migration_phase table (a database migrated to a version below
 // 0134) is tolerated and yields an empty map so Status still reports the
-// synthesized projection. spec: §24.13 line 150.
+// synthesized projection. spec: §24.13.
 func (m *Manager) readPhases(ctx context.Context) (map[uint]PhaseRow, error) {
 	db, err := sql.Open("pgx", m.dsn)
 	if err != nil {
@@ -219,11 +218,10 @@ func (m *Manager) readPhases(ctx context.Context) (map[uint]PhaseRow, error) {
 	return listPhases(ctx, db)
 }
 
-// Down reverses the most recently applied migration at version. §24.13
-// line 151 scopes the operation to the current version; a request for
+// Down reverses the most recently applied migration at version. §24.13 scopes the operation to the current version; a request for
 // any other version returns ErrVersionMismatch. A dirty version is
 // first forced clean (clearing the dirty flag) and then its down.sql is
-// applied, matching the §15.1 line 892 contract. golang-migrate manages
+// applied, matching the §15.1 contract. golang-migrate manages
 // its own session-scoped advisory lock for the run, so a stale lock
 // from a crashed migration on a now-dead connection is already
 // released; AdvisoryLocksReleased records that the run completed without
@@ -249,8 +247,7 @@ func (m *Manager) Down(_ context.Context, version uint) (DownResult, error) {
 	cleared := false
 	if dirty {
 		// Force sets the version clean without running SQL so the
-		// subsequent Steps(-1) can run the down migration. spec: §15.1
-		// line 892 ("clears the dirty flag on success").
+		// subsequent Steps(-1) can run the down migration. spec: §15.1.
 		if err := mig.Force(int(version)); err != nil {
 			return DownResult{}, fmt.Errorf("clear dirty flag: %w", err)
 		}
@@ -285,8 +282,7 @@ func buildStatus(versions []uint, current uint, hasCurrent, dirty bool, phases m
 		// A Job-recorded phase row is authoritative for the applied-at
 		// timestamp, the resolved expand-contract phase, the Phase 3 gate
 		// result, and the Job name. A version with no row keeps the
-		// synthesized `complete` / `not_run` projection. spec: §24.13
-		// line 150.
+		// synthesized `complete` / `not_run` projection. spec: §24.13.
 		if p, ok := phases[v]; ok {
 			if p.Phase != "" {
 				entry.Phase = p.Phase

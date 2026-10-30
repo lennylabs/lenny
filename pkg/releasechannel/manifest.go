@@ -124,7 +124,7 @@ func ParseChannel(s string) (Channel, error) {
 // filter is opt-in on both sides. Otherwise the release is advertised
 // only when currentVersion is at or above MinUpgradeFrom.
 //
-// spec: §25.8 line 3410 ("?currentVersion=1.4.3 (for personalized
+// spec: §25.8 ("?currentVersion=1.4.3 (for personalized
 // minUpgradeFrom — the service may refuse to advertise a newer release
 // if the current version is below a hard prerequisite)").
 func (m Manifest) MeetsMinUpgradeFrom(currentVersion string) bool {
@@ -143,7 +143,7 @@ func (m Manifest) MeetsMinUpgradeFrom(currentVersion string) bool {
 // upgradeservice (that package imports this one), so the minimal
 // "is this version at least that one" predicate is duplicated here.
 //
-// spec: §25.8 line 3410 (minUpgradeFrom prerequisite compare).
+// spec: §25.8.
 func compareSemver(a, b string) int {
 	pa := parseSemver(a)
 	pb := parseSemver(b)

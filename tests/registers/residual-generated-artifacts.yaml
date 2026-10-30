@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: MIT
+#
+# Residual register for the generated-artifacts class.
+#
+# Each entry is a member of the class that the enumeration the migration
+# works from does not carry. An in-class entry belongs to the class, and
+# its route out is the class's own pass or remediation. An excluded entry
+# never belonged to the class, and it is permanent.
+#
+# The residual gate in tests/tier0_static fails tier 0 on a member that
+# matches the class's broad predicate and appears in neither the
+# enumeration nor this file, so a member no enumeration anticipated is
+# triaged here rather than absorbed. The gate removes an in-class entry
+# whose member has left the class in the same run, and it never adds an
+# entry.
+kind: residual-register
+version: 1
+class: generated-artifacts
+entries:
+  - member: |-
+      charts/lenny/crds/lenny.dev_runtimes.yaml
+    class: generated-artifacts
+    disposition: in-class
+    reason: |-
+      a custom resource definition rendered by the chart generator, which writes no generation marker into the manifest
+  - member: |-
+      charts/lenny/crds/lenny.dev_sandboxclaims.yaml
+    class: generated-artifacts
+    disposition: in-class
+    reason: |-
+      a custom resource definition rendered by the chart generator, which writes no generation marker into the manifest
+  - member: |-
+      charts/lenny/crds/lenny.dev_sandboxes.yaml
+    class: generated-artifacts
+    disposition: in-class
+    reason: |-
+      a custom resource definition rendered by the chart generator, which writes no generation marker into the manifest
+  - member: |-
+      charts/lenny/crds/lenny.dev_sandboxtemplates.yaml
+    class: generated-artifacts
+    disposition: in-class
+    reason: |-
+      a custom resource definition rendered by the chart generator, which writes no generation marker into the manifest
+  - member: |-
+      charts/lenny/crds/lenny.dev_sandboxwarmpools.yaml
+    class: generated-artifacts
+    disposition: in-class
+    reason: |-
+      a custom resource definition rendered by the chart generator, which writes no generation marker into the manifest
+  - member: |-
+      pkg/embedded/crds/lenny.dev_runtimes.yaml
+    class: generated-artifacts
+    disposition: in-class
+    reason: |-
+      a copy of a chart custom resource definition, which the copying producer writes without a generation marker
+  - member: |-
+      pkg/embedded/crds/lenny.dev_sandboxclaims.yaml
+    class: generated-artifacts
+    disposition: in-class
+    reason: |-
+      a copy of a chart custom resource definition, which the copying producer writes without a generation marker
+  - member: |-
+      pkg/embedded/crds/lenny.dev_sandboxes.yaml
+    class: generated-artifacts
+    disposition: in-class
+    reason: |-
+      a copy of a chart custom resource definition, which the copying producer writes without a generation marker
+  - member: |-
+      pkg/embedded/crds/lenny.dev_sandboxtemplates.yaml
+    class: generated-artifacts
+    disposition: in-class
+    reason: |-
+      a copy of a chart custom resource definition, which the copying producer writes without a generation marker
+  - member: |-
+      pkg/embedded/crds/lenny.dev_sandboxwarmpools.yaml
+    class: generated-artifacts
+    disposition: in-class
+    reason: |-
+      a copy of a chart custom resource definition, which the copying producer writes without a generation marker

@@ -44,7 +44,7 @@ func rekeyRouter(rk admin.CredentialRekeyer) *admin.Router {
 	return admin.NewRouter(tenantstore.NewMemory(), admin.Options{}).WithCredentialRekey(rk)
 }
 
-// spec: §4.9.1 lines 1718-1724 — POST runs the re-encryption loop for the
+// spec: §4.9.1 — POST runs the re-encryption loop for the
 // path tenant and returns the per-store counts plus the verification
 // result.
 func TestCredentialRekey_RunReturnsSummary(t *testing.T) {
@@ -77,7 +77,7 @@ func TestCredentialRekey_RunReturnsSummary(t *testing.T) {
 	}
 }
 
-// spec: §4.9.1 lines 1723-1724 — GET runs the verification query; a
+// spec: §4.9.1 — GET runs the verification query; a
 // non-zero stale count is the expected "incomplete" signal and returns
 // 200 with verified:false, not a 5xx.
 func TestCredentialRekey_StatusIncompleteIsNotError(t *testing.T) {
@@ -94,7 +94,7 @@ func TestCredentialRekey_StatusIncompleteIsNotError(t *testing.T) {
 	}
 }
 
-// spec: §4.9.1 line 1723 — GET reports verified once no row remains
+// spec: §4.9.1 — GET reports verified once no row remains
 // below the current KEK version.
 func TestCredentialRekey_StatusVerified(t *testing.T) {
 	rk := &fakeRekeyer{verifyN: 0}

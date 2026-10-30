@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 
-// Command lenny-egress-capture is the §12.9.8 tier-9 egress-capture
+// Command lenny-egress-capture is the tier-9 egress-capture
 // sidecar. It runs alongside an agent pod and forwards outbound
 // HTTPS traffic from a known port (--listen) to the upstream the
 // agent dialed (--upstream), logging every connection's destination
 // host, TLS SNI, and request-body byte hash to a capture file. The
-// §12.9.8 credential-leakage probe reads the capture file and
+// The tier-9 credential-leakage probe reads the capture file and
 // asserts no credential string appears in the recorded bytes.
 //
 // The capture file is a JSONL stream — one record per connection.
@@ -27,7 +27,7 @@
 //
 // The sidecar is TEST-ONLY: forwarding cleartext on the cluster
 // network weakens the §13.2 NetworkPolicy default-deny posture; the
-// tier-9 overlay deploys it explicitly for the §12.9.8 probes and
+// tier-9 overlay deploys it explicitly for the sidecar-forwarding probes and
 // the production install rejects it via the lenny-pod-security
 // admission webhook.
 //
@@ -50,6 +50,21 @@ import (
 	"time"
 )
 
+// captureFileMode is the permission set of the JSONL capture file. The
+// capture container runs at its own UID, distinct from the agent UID the
+// runtime container holds, so an owner-only mode would hide the file from
+// the runtime-side probe. The capture emptyDir is fsGroup-managed and its
+// directory is setgid, so the file's group is lenny-cred-readers, which the
+// runtime container holds as a supplementary group and reads through. The
+// group bit is read-only; other users get nothing.
+const captureFileMode os.FileMode = 0o640
+
+// openCaptureFile opens the capture file for appending, creating it with
+// captureFileMode when absent.
+func openCaptureFile(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, captureFileMode)
+}
+
 func main() {
 	listen := flag.String("listen", ":8443", "address the sidecar listens on (the agent pod dials this).")
 	upstream := flag.String("upstream", "", "address the sidecar forwards every accepted connection to (e.g., api.openai.com:443).")
@@ -61,7 +76,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	out, err := os.OpenFile(*capture, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	out, err := openCaptureFile(*capture)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lenny-egress-capture: open capture file %s: %v\n", *capture, err)
 		os.Exit(1)

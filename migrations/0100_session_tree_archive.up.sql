@@ -1,4 +1,4 @@
--- §8.10 lines 129, 1062 / §7.1 lines 426-433 / §12.7 lines 783, 807.
+-- §8.10 / §7.1 / §12.7.
 -- session_tree_archive is the durable record of a delegation tree's
 -- settled child results. When a child session reaches a terminal state
 -- the gateway offloads its §8.8 TaskResult payload here, keyed by
@@ -11,8 +11,7 @@
 -- failure.
 --
 -- The FK on root_session_id -> sessions(id) has no ON DELETE action
--- (RESTRICT), which is what the §12.7 erasure ordering requires: the
--- archive MUST be deleted before its tree's sessions (line 807). A
+-- (RESTRICT), which is what the §12.7 erasure ordering requires: the archive MUST be deleted before its tree's sessions. A
 -- CASCADE would let a sessions delete silently drop archive rows out of
 -- the prescribed order. node_session_id and parent_session_id are bare
 -- UUID columns without an FK because a node or its parent may be
@@ -61,14 +60,14 @@ CREATE POLICY session_tree_archive_tenant_isolation
     ON session_tree_archive
     USING (tenant_id = current_setting('app.current_tenant', false));
 
--- §4.4 line 293 / §12.3 — the lenny_tenant_guard trigger rejects any
+-- §4.4 / §12.3 — the lenny_tenant_guard trigger rejects any
 -- write whose transaction has not set app.current_tenant, so a bare
 -- connection cannot bypass the RLS policy.
 CREATE TRIGGER lenny_tenant_guard
     BEFORE INSERT OR UPDATE OR DELETE ON session_tree_archive
     FOR EACH ROW EXECUTE FUNCTION lenny_tenant_guard();
 
--- §4.2 line 163 / §12.8 step 11 — the gateway connects as lenny_app and
+-- §4.2 / §12.8 step 11 — the gateway connects as lenny_app and
 -- archives, replays, and (for §12.8 erasure) deletes archive rows inside
 -- a SET LOCAL app.current_tenant transaction. lenny_app therefore needs
 -- full DML on the table; RLS plus the tenant guard keep each transaction

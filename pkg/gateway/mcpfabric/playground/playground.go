@@ -24,6 +24,7 @@
 package playground
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -31,6 +32,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 )
 
 // AuthMode is the §27.2 playground.authMode enum. It selects how a
@@ -65,10 +67,6 @@ var tenantIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
 
 // Bound constants from §27.2.
 const (
-	// minBearerTTL and maxBearerTTL bound playground.bearerTtlSeconds.
-	minBearerTTL = 60 * time.Second
-	maxBearerTTL = 3600 * time.Second
-
 	// minIdleTime bounds the lower end of playground.maxIdleTimeSeconds;
 	// the upper bound is the runtime's own maxIdleTimeSeconds, applied
 	// per-session in §27.6.
@@ -106,7 +104,8 @@ type Config struct {
 	AllowedRuntimes []string
 
 	// MaxSessionMinutes mirrors playground.maxSessionMinutes: the hard
-	// cap on playground-initiated session duration (§27.6).
+	// cap on a playground-initiated session's active time, which pauses
+	// while the session is suspended (§27.6).
 	MaxSessionMinutes int
 
 	// MaxIdleTimeSeconds mirrors playground.maxIdleTimeSeconds: the
@@ -118,9 +117,10 @@ type Config struct {
 	// lenny_playground_session cookie.
 	OIDCSessionTTL time.Duration
 
-	// BearerTTL mirrors playground.bearerTtlSeconds: the TTL of MCP
-	// bearer tokens minted by POST /v1/playground/token.
-	BearerTTL time.Duration
+	// CapabilityTokenTTL mirrors auth.capabilityTokenTtlSeconds: the
+	// default lifetime of the MCP bearer tokens minted by
+	// POST /v1/playground/token. The §10.2 bound is 120s..3600s.
+	CapabilityTokenTTL time.Duration
 
 	// MultiTenant mirrors auth.multiTenant. When true and AuthMode is
 	// dev, DevTenantID must be set explicitly (§27.2 layer 3).
@@ -131,7 +131,7 @@ type Config struct {
 	// connect-src CSP directive.
 	GatewayHost string
 
-	// SessionLabels mirrors playground.sessionLabels (§27.2 line 41):
+	// SessionLabels mirrors playground.sessionLabels (§27.2):
 	// the operator-tunable label map stamped on every playground
 	// session record and every playground audit event for audit /
 	// accounting consumers. The map defaults to {"origin":
@@ -162,14 +162,14 @@ func (c Config) withDefaults() Config {
 	if c.OIDCSessionTTL == 0 {
 		c.OIDCSessionTTL = 3600 * time.Second
 	}
-	if c.BearerTTL == 0 {
-		c.BearerTTL = 900 * time.Second
+	if c.CapabilityTokenTTL == 0 {
+		c.CapabilityTokenTTL = jwt.DefaultCapabilityTokenTTL
 	}
 	c.SessionLabels = c.EffectiveLabels()
 	return c
 }
 
-// EffectiveLabels returns the §27.2 line 41 sessionLabels map with the
+// EffectiveLabels returns the §27.2 sessionLabels map with the
 // §27.3 mode-agnostic origin=playground guarantee enforced. The
 // returned map is a copy: callers may mutate it without affecting the
 // stored Config. A nil or empty SessionLabels yields {"origin":
@@ -199,8 +199,10 @@ func (c Config) Validate() error {
 	if !c.AuthMode.IsValid() {
 		return fmt.Errorf("LENNY_PLAYGROUND_CONFIG_INVALID: playground.authMode %q is not one of oidc, apiKey, dev", c.AuthMode)
 	}
-	if c.BearerTTL < minBearerTTL || c.BearerTTL > maxBearerTTL {
-		return fmt.Errorf("LENNY_PLAYGROUND_CONFIG_INVALID: playground.bearerTtlSeconds %s is outside the bound 60s..3600s", c.BearerTTL)
+	// spec: §10.2 (Authentication) "JWT claims" expiry — the
+	// auth.capabilityTokenTtlSeconds bound is 120s..3600s.
+	if err := jwt.ValidateCapabilityTokenTTL(c.CapabilityTokenTTL); err != nil {
+		return fmt.Errorf("LENNY_PLAYGROUND_CONFIG_INVALID: %w", err)
 	}
 	if time.Duration(c.MaxIdleTimeSeconds)*time.Second < minIdleTime {
 		return fmt.Errorf("LENNY_PLAYGROUND_CONFIG_INVALID: playground.maxIdleTimeSeconds %d is below the lower bound of 60", c.MaxIdleTimeSeconds)
@@ -230,7 +232,7 @@ func (c Config) Validate() error {
 // The gateway applies this as an authorization boundary on the shared §9.1
 // GET /v1/runtimes discovery surface and at session create, but only for
 // origin=playground requests — a non-playground caller is never narrowed by
-// the playground value. spec: §27.4 line 176; §27.5 line 190; §27.9 line 250.
+// the playground value. spec: §27.4; §27.5; §27.9.
 // F-27.4.1.
 func (c Config) RuntimeVisible(name string) bool {
 	if len(c.AllowedRuntimes) == 0 {
@@ -249,7 +251,7 @@ func (c Config) RuntimeVisible(name string) bool {
 // pattern with no `*` is an exact, case-sensitive comparison. The semantics
 // mirror the §14 allowlist matcher (pkg/gateway/envblock) so the playground
 // allowedRuntimes globs behave the same as the env-block globs operators
-// already know. spec: §27.5 line 190.
+// already know. spec: §27.5.
 func runtimeGlobMatch(pattern, s string) bool {
 	if !strings.Contains(pattern, "*") {
 		return pattern == s
@@ -282,7 +284,7 @@ func runtimeGlobMatch(pattern, s string) bool {
 // (no idle bound resolved) yields the configured playground cap unchanged.
 // The gateway session server invokes this through its PlaygroundCapResolver
 // seam to stamp the cap onto a §27.3 origin=playground session at create time
-// (F-27.6.1). spec: §27.6 line 201.
+// (F-27.6.1). spec: §27.6.
 func (c Config) EffectiveIdleSeconds(maxClientIdleSeconds int) int {
 	pg := c.MaxIdleTimeSeconds
 	if maxClientIdleSeconds > 0 && maxClientIdleSeconds < pg {
@@ -297,7 +299,7 @@ func (c Config) EffectiveIdleSeconds(maxClientIdleSeconds int) int {
 // a zero runtimeMinutes yields the configured playground cap. The
 // gateway session server invokes this through its PlaygroundCapResolver
 // seam to stamp the cap onto a §27.3 origin=playground session at create
-// time (F-27.6.2). spec: §27.6 line 200.
+// time (F-27.6.2). spec: §27.6.
 func (c Config) EffectiveSessionMinutes(runtimeMinutes int) int {
 	pg := c.MaxSessionMinutes
 	if runtimeMinutes > 0 && runtimeMinutes < pg {
@@ -331,21 +333,33 @@ type Handler struct {
 	tenants  TenantRegistry
 	sessions SessionStore
 	oidc     OIDCExchanger
+	issued   IssuedTokenReader
 	metrics  *Metrics
 	audit    AuditEmitter
 	now      func() time.Time
 }
 
+// IssuedTokenReader reads one issued_tokens row so the apiKey mint can
+// apply §13.3 "Write-before-issue ordering" step (1a) to the pasted
+// subject. *issuedtokenstore.Store satisfies it.
+// spec: §10.2 (Playground mint invariants, invariant 1).
+type IssuedTokenReader interface {
+	// Get returns the row for jti in tenantID, or
+	// issuedtokenstore.ErrNotFound when the token has no row.
+	Get(ctx context.Context, tenantID, jti string) (issuedtokenstore.IssuedToken, error)
+}
+
 // Options configures New.
 type Options struct {
-	// Signer mints the playground session-capability JWTs. In
-	// production this is the KMS-backed gateway signer; the dev HMAC
-	// signer satisfies the same interface for the no-cloud path.
+	// Signer mints the playground session-capability JWTs. The gateway
+	// passes its breaker-wrapped remote signer over the §10.2
+	// platform:jwt-signing key.
 	Signer jwt.Signer
 
-	// Verifier validates pasted bearer tokens in apiKey mode. When nil
-	// and Signer also verifies (the HMAC and KMS signers both do), New
-	// uses the signer itself.
+	// Verifier validates pasted bearer tokens in apiKey mode. The gateway
+	// passes the §10.2 key set. When nil and Signer also verifies, New
+	// uses the signer itself; the remote signer does not verify, so the
+	// gateway always sets it.
 	Verifier jwt.Verifier
 
 	// Tenants resolves tenant existence for the §27.2 layer-4
@@ -362,6 +376,14 @@ type Options struct {
 	// OIDC performs the authorization-code exchange with the
 	// configured provider. Required in oidc mode; ignored otherwise.
 	OIDC OIDCExchanger
+
+	// IssuedTokens reads the pasted subject's issued_tokens row so the
+	// apiKey mint refuses a subject that §13.3 step (1a) rejects: a
+	// revoked token or a platform-admin impersonation bearer. The gateway
+	// sets it whenever it has a Postgres pool. A nil reader skips the
+	// read; without the pool the gateway also registers no impersonation
+	// route, so no impersonation bearer exists to paste.
+	IssuedTokens IssuedTokenReader
 
 	// Metrics is the §27.8 metric set. A nil Metrics disables metric
 	// emission (the handler still serves).
@@ -393,6 +415,7 @@ func New(cfg Config, opts Options) *Handler {
 		tenants:  opts.Tenants,
 		sessions: opts.Sessions,
 		oidc:     opts.OIDC,
+		issued:   opts.IssuedTokens,
 		metrics:  opts.Metrics,
 		now:      now,
 	}

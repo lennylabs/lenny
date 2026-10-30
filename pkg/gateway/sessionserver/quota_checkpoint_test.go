@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
-// recCheckpointer records the §11.2 line 44 final-checkpoint calls.
+// recCheckpointer records the §11.2 final-checkpoint calls.
 type recCheckpointer struct{ calls [][2]string }
 
 func (r *recCheckpointer) CheckpointSubject(_ context.Context, tenantID, userID string) error {
@@ -20,11 +20,11 @@ func (r *recCheckpointer) CheckpointSubject(_ context.Context, tenantID, userID 
 	return nil
 }
 
-// spec: §11.2 line 44 — a session reaching a terminal state writes the
+// spec: §11.2 — a session reaching a terminal state writes the
 // final cumulative token-usage checkpoint for its (tenant, user). F-11.2.4.
 func TestSessionCompletionWritesFinalQuotaCheckpoint_spec_11_2(t *testing.T) {
 	cp := &recCheckpointer{}
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{QuotaCheckpointer: cp})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, QuotaCheckpointer: cp})
 	h := srv.Handler()
 
 	rr := createRequest(t, h,
@@ -52,7 +52,7 @@ func TestSessionCompletionWritesFinalQuotaCheckpoint_spec_11_2(t *testing.T) {
 // terminal transition.
 func TestSessionCompletionNoCheckpointWithoutUser_spec_11_2(t *testing.T) {
 	cp := &recCheckpointer{}
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{QuotaCheckpointer: cp})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, QuotaCheckpointer: cp})
 	h := srv.Handler()
 
 	id := createSessionID(t, h) // no principal → empty user id

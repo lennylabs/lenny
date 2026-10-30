@@ -35,7 +35,7 @@ func (f *fakeManifests) Get(_ context.Context, tenantID, checkpointID string) (p
 	return r, nil
 }
 
-// spec: §12.8 line 739 — the reconciler scans for legal-hold sessions
+// spec: §12.8 — the reconciler scans for legal-hold sessions
 // whose artifact_store rows record a rotated checkpoint and emits a
 // `legal_hold.checkpoint_gap_detected` audit event.
 
@@ -120,7 +120,7 @@ func (m *fakeMetrics) IncLegalHoldCheckpointGap(tenantID string) {
 // §16.7 audit event when a held session carries a soft_deleted chunk row
 // of a complete (partial = false) checkpoint alongside a live one.
 //
-// spec: §12.8 line 739.
+// spec: §12.8.
 func TestTickEmitsOnRotatedCheckpoint(t *testing.T) {
 	cat := &fakeCatalog{
 		candidates: []artifactcatalog.SessionRef{{TenantID: "acme", SessionID: "sess-1"}},
@@ -180,7 +180,7 @@ func TestTickEmitsOnRotatedCheckpoint(t *testing.T) {
 // reconciler incremented per chunk row and would have reported
 // rotated_checkpoints=3 / live_checkpoints=2.
 //
-// spec: §12.8 line 739; §10.1 line 141.
+// spec: §12.8; §10.1.
 func TestTickCountsChunkedCheckpointOnce(t *testing.T) {
 	cat := &fakeCatalog{
 		candidates: []artifactcatalog.SessionRef{{TenantID: "acme", SessionID: "sess-chunked"}},
@@ -320,7 +320,7 @@ func TestTickPropagatesCatalogError(t *testing.T) {
 	}
 }
 
-// TestTickExcludesRotatedPartialManifestChunk pins the §12.8 line 739
+// TestTickExcludesRotatedPartialManifestChunk pins the §12.8
 // scoping: a soft_deleted chunk row that belongs to a manifest finalised
 // `partial = true` (here a superseded drain attempt) is not a gap. The
 // partial attempt was cleaned up without destroying anything under hold,
@@ -328,7 +328,7 @@ func TestTickPropagatesCatalogError(t *testing.T) {
 // Before the scoping fix the reconciler counted every rotated
 // checkpoint-typed row and would have emitted a false-positive gap here.
 //
-// spec: §12.8 line 739; §10.1 line 141.
+// spec: §12.8; §10.1.
 func TestTickExcludesRotatedPartialManifestChunk(t *testing.T) {
 	cat := &fakeCatalog{
 		candidates: []artifactcatalog.SessionRef{{TenantID: "acme", SessionID: "sess-partial"}},
@@ -367,7 +367,7 @@ func TestTickExcludesRotatedPartialManifestChunk(t *testing.T) {
 // audit payload reflects the genuine gap alone, so compliance sizing is
 // not inflated by cleaned-up partial attempts.
 //
-// spec: §12.8 line 739; §10.1 line 141.
+// spec: §12.8; §10.1.
 func TestTickMixedPartialAndCompleteRotation(t *testing.T) {
 	cat := &fakeCatalog{
 		candidates: []artifactcatalog.SessionRef{{TenantID: "acme", SessionID: "sess-mix"}},
@@ -411,7 +411,7 @@ func TestTickMixedPartialAndCompleteRotation(t *testing.T) {
 // excluding a possibly-genuine rotation even when a manifest store is
 // wired.
 //
-// spec: §12.8 line 739.
+// spec: §12.8.
 func TestTickCountsRowWithoutCheckpointSegment(t *testing.T) {
 	cat := &fakeCatalog{
 		candidates: []artifactcatalog.SessionRef{{TenantID: "acme", SessionID: "sess-nolink"}},
@@ -442,7 +442,7 @@ func TestTickCountsRowWithoutCheckpointSegment(t *testing.T) {
 // rotated chunk out of the gap assessment. The sweep returns the error
 // rather than counting or excluding the row on a guess.
 //
-// spec: §12.8 line 739.
+// spec: §12.8.
 func TestTickPropagatesManifestLookupError(t *testing.T) {
 	cat := &fakeCatalog{
 		candidates: []artifactcatalog.SessionRef{{TenantID: "acme", SessionID: "sess-err"}},
@@ -471,7 +471,7 @@ func TestTickPropagatesManifestLookupError(t *testing.T) {
 // manifest returns ErrNotFound, which is distinct from the read-error path and
 // must not abort the sweep.
 //
-// spec: §12.8 line 739; §10.1 line 141.
+// spec: §12.8; §10.1.
 func TestTickCountsRotatedCheckpointWithAbsentManifest(t *testing.T) {
 	cat := &fakeCatalog{
 		candidates: []artifactcatalog.SessionRef{{TenantID: "acme", SessionID: "sess-orphan"}},
@@ -505,14 +505,14 @@ func TestTickCountsRotatedCheckpointWithAbsentManifest(t *testing.T) {
 	}
 }
 
-// TestDefaultSweepIntervalMatchesSpec11_3_231 pins the §11.3 line 231
+// TestDefaultSweepIntervalMatchesSpec11_3_231 pins the §11.3
 // `legalHoldCheckpointReconcilerInterval` value (900s, hard-coded in
-// v1). The reconciler is co-located with the §12.8 line 739 GC sweep
+// v1). The reconciler is co-located with the §12.8 GC sweep
 // at the same cadence; both lines name the 15-minute value. A change
 // here is a spec edit and should not slip in silently. F-11.3.21.
 func TestDefaultSweepIntervalMatchesSpec11_3_231(t *testing.T) {
 	if legalholdreconciler.DefaultSweepInterval != 900*time.Second {
-		t.Errorf("DefaultSweepInterval = %s, want 900s per §11.3 line 231 / §12.8 line 739",
+		t.Errorf("DefaultSweepInterval = %s, want 900s per §11.3 / §12.8",
 			legalholdreconciler.DefaultSweepInterval)
 	}
 }

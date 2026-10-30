@@ -307,7 +307,7 @@ func violationEvents(calls []appendCall) int {
 	return n
 }
 
-// spec: §17.3 line 130 / §25.11 line 4085 — the lag adapter turns the
+// spec: §17.3 / §25.11 — the lag adapter turns the
 // source cluster's cumulative replication-failure total into monotonic
 // counter increments and sets the lag gauge from the latest sample.
 // F-17.3.7.
@@ -337,7 +337,7 @@ func TestReplicationLagAdapterDeltaTracking(t *testing.T) {
 }
 
 // MeasureAll runs in the controller loop: a wired adapter sees the
-// FakeDriver's measurement reflected on /metrics. spec: §25.11 line 4085.
+// FakeDriver's measurement reflected on /metrics. spec: §25.11.
 func TestRunReplicationControllerMeasuresLag(t *testing.T) {
 	fd := replication.NewFakeDriver()
 	fd.SetJurisdictionTag("lenny-artifacts-eu-backup", "eu-west-1")

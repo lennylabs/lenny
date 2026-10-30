@@ -9,7 +9,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// spec: §17.6 lines 688-689 — the reference-runtime multi-select narrows
+// spec: §17.6 — the reference-runtime multi-select narrows
 // the §26 catalog to a deployer-chosen subset, composed into
 // referenceRuntimes.include. F-17.6.10.
 func TestComposeValuesEmitsReferenceRuntimeInclude_spec_17_6_688(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// spec: §6.2 lines 171-175 — the registry drives a slot through the legal
+// spec: §6.2 — the registry drives a slot through the legal
 // lifecycle and drops it on Released (reclaimed, no longer occupies a
 // slot).
 func TestRegistryLifecycleToReleased_spec_6_2(t *testing.T) {
@@ -30,7 +30,7 @@ func TestRegistryLifecycleToReleased_spec_6_2(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 176 — an illegal edge is rejected and an untracked slot
+// spec: §6.2 — an illegal edge is rejected and an untracked slot
 // transition errors.
 func TestRegistryRejectsIllegalAndUnknown_spec_6_2(t *testing.T) {
 	r := NewRegistry()
@@ -44,7 +44,7 @@ func TestRegistryRejectsIllegalAndUnknown_spec_6_2(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 176, line 179 — a slot whose cleanup times out is leaked,
+// spec: §6.2 — a slot whose cleanup times out is leaked,
 // stays counted in active_slots, and feeds the per-pod leaked count; a
 // tracked slot reaching slot_cleanup can then be marked leaked.
 func TestRegistryLeak_spec_6_2(t *testing.T) {
@@ -61,7 +61,7 @@ func TestRegistryLeak_spec_6_2(t *testing.T) {
 		t.Fatalf("slot-1 state=%q ok=%v, want leaked/true", s, ok)
 	}
 	// A leaked slot remains counted in the pod's persistent leaked count
-	// until pod termination (§6.2 line 179); the Redis slot counter is the
+	// until pod termination (§6.2); the Redis slot counter is the
 	// separate occupancy authority that gates further assignment.
 	if r.LeakedCount("pod-a") != 1 {
 		t.Errorf("leaked slot must stay counted, leaked=%d", r.LeakedCount("pod-a"))
@@ -79,7 +79,7 @@ func TestRegistryLeak_spec_6_2(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 179 — leaked slots are reclaimed when the pod terminates,
+// spec: §6.2 — leaked slots are reclaimed when the pod terminates,
 // so ForgetPod clears the pod's leaked/active counts.
 func TestRegistryForgetPod_spec_6_2(t *testing.T) {
 	r := NewRegistry()

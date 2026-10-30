@@ -209,8 +209,6 @@ func writeManifest(t *testing.T, mcpSocket, nonce string, connectorSockets []str
 	}
 	m := map[string]any{
 		"version":           1,
-		"sessionId":         "sess_test",
-		"taskId":            "task_test",
 		"platformMcpServer": map[string]any{"socket": mcpSocket},
 		"connectorServers":  connectors,
 		"runtimeMcpServers": []any{},

@@ -64,7 +64,7 @@ func TestLennyMigrateRoundTrip(t *testing.T) {
 		t.Fatalf("version: %v\n%s", err, out)
 	}
 	// down is break-glass-fenced (F-24.13.5): the guard flags precede the
-	// command. spec: §24.13 lines 150-151.
+	// command. spec: §24.13.
 	if out, err := run("--break-glass", "--confirm", "down"); err != nil {
 		t.Fatalf("down: %v\n%s", err, out)
 	}

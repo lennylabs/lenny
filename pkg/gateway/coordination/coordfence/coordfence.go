@@ -5,9 +5,9 @@
 // coordination of a session on a pod — the coordinator-handoff / resume
 // path — it announces the session's current coordination_generation to
 // the pod so the pod rejects any straggler RPC from a prior coordinator
-// (§10.1 lines 33-37, §4.7 line 632).
+// (§10.1, §4.7).
 //
-// The Fencer wraps the §11.3 line 209 retry/relinquish policy around the
+// The Fencer wraps the §11.3 retry/relinquish policy around the
 // adapterclient.Client.CoordinatorFence wrapper (which carries the 5s
 // hard-coded per-call timeout):
 //
@@ -24,15 +24,14 @@
 //
 // Each stale rejection increments `lenny_coordinator_handoff_stale_total`,
 // each retry `lenny_coordinator_fence_retry_total`, and each relinquish
-// `lenny_coordinator_fence_relinquished_total` (§10.1 line 61, §11.3
-// line 209).
+// `lenny_coordinator_fence_relinquished_total` (§10.1, §11.3).
 //
 // The collaborators are injected as interfaces so the policy is
 // unit-testable without a cluster: production wires the live pod adapter
 // behind FenceClient, the SessionStore generation read behind
 // GenerationReader, and the LeaseStore release behind LeaseReleaser.
 //
-// spec: §10.1 lines 33-37, 61; §4.2 line 158; §11.3 line 209.
+// spec: §10.1; §4.2; §11.3.
 package coordfence
 
 import (
@@ -46,7 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 )
 
-// DefaultMaxAttempts is the §11.3 line 209 fence attempt budget before
+// DefaultMaxAttempts is the §11.3 fence attempt budget before
 // the coordinator relinquishes leadership. One initial attempt plus two
 // retries balances tolerating a transient fault against not stalling the
 // resume path; the 5s per-attempt timeout bounds the total wall-clock.
@@ -133,9 +132,23 @@ func New(generations GenerationReader, leases LeaseReleaser, replicaID string, m
 // could not be read); the caller may log it and proceed, because the
 // coordination lease still guards exclusive ownership.
 //
-// spec: §10.1 lines 33-37, §11.3 line 209.
+// spec: §10.1, §11.3.
 func (f *Fencer) Fence(ctx context.Context, adapter *adapterclient.Client, tenantID, sessionID string) (relinquished bool, err error) {
 	return f.fence(ctx, adapter, tenantID, sessionID)
+}
+
+// FenceAt announces generation, the coordination_generation the caller
+// committed at, to the pod's adapter. It runs the Fence policy loop at that
+// generation, and on a stale rejection it relinquishes without retrying at a
+// re-read value: the pod accepted a higher generation, so a takeover raced
+// the caller's commit and owns the pod. A pod that accepts the generation
+// therefore records exactly the generation the caller stamps on its binding.
+// The resume driver calls it after its commit to running.
+//
+// spec: §10.1.2 (Coordinator Handoff Protocol), §10.1.5 (Stale Replica
+// Behavior), §11.3.
+func (f *Fencer) FenceAt(ctx context.Context, adapter *adapterclient.Client, tenantID, sessionID string, generation int64) (relinquished bool, err error) {
+	return f.loop(ctx, adapter, tenantID, sessionID, generation, false)
 }
 
 // fence is the policy loop, parameterized over the FenceClient interface
@@ -145,6 +158,13 @@ func (f *Fencer) fence(ctx context.Context, fc FenceClient, tenantID, sessionID 
 	if err != nil {
 		return false, fmt.Errorf("coordfence: read coordination_generation for %s/%s: %w", tenantID, sessionID, err)
 	}
+	return f.loop(ctx, fc, tenantID, sessionID, gen, true)
+}
+
+// loop issues the fence at gen within the attempt budget. On a stale
+// rejection it re-reads the authoritative generation and retries at an
+// advanced value when rereadOnStale is set, and relinquishes otherwise.
+func (f *Fencer) loop(ctx context.Context, fc FenceClient, tenantID, sessionID string, gen int64, rereadOnStale bool) (bool, error) {
 	if gen <= 0 {
 		// The adapter requires a positive generation; the first
 		// coordination_generation a session row carries is 1. A
@@ -160,23 +180,25 @@ func (f *Fencer) fence(ctx context.Context, fc FenceClient, tenantID, sessionID 
 		res, ferr := fc.CoordinatorFence(ctx, sessionID, gen)
 		switch {
 		case ferr == nil && res.Accepted:
-			// spec: §10.1 lines 33-37 — the pod recorded the generation.
+			// spec: §10.1 — the pod recorded the generation.
 			return false, nil
 		case ferr != nil && status.Code(ferr) == codes.FailedPrecondition,
 			ferr == nil && !res.Accepted:
-			// spec: §10.1 line 165 — generation-stale rejection. Re-read
+			// spec: §10.1.8 — generation-stale rejection. Re-read
 			// the authoritative generation; if a handoff bump advanced it
 			// mid-flight, retry with the new value, otherwise the pod is
 			// genuinely ahead and this replica must relinquish.
 			f.incStale()
-			newGen, rerr := f.generations.CoordinationGeneration(ctx, tenantID, sessionID)
-			if rerr == nil && newGen > gen {
-				gen = newGen
-				f.incRetry()
-				f.log("coordfence: %s/%s stale fence, retrying at generation %d", tenantID, sessionID, gen)
-				continue
+			if rereadOnStale {
+				newGen, rerr := f.generations.CoordinationGeneration(ctx, tenantID, sessionID)
+				if rerr == nil && newGen > gen {
+					gen = newGen
+					f.incRetry()
+					f.log("coordfence: %s/%s stale fence, retrying at generation %d", tenantID, sessionID, gen)
+					continue
+				}
 			}
-			f.log("coordfence: %s/%s stale fence with no generation advance; relinquishing", tenantID, sessionID)
+			f.log("coordfence: %s/%s stale fence at generation %d; relinquishing", tenantID, sessionID, gen)
 			return f.relinquish(ctx, tenantID, sessionID)
 		default:
 			// Transient transport / deadline fault. Retry within budget.
@@ -184,7 +206,7 @@ func (f *Fencer) fence(ctx context.Context, fc FenceClient, tenantID, sessionID 
 			f.log("coordfence: %s/%s transient fence fault (attempt %d/%d): %v", tenantID, sessionID, attempt, f.maxAttempts, ferr)
 		}
 	}
-	// spec: §11.3 line 209 — attempt budget exhausted; relinquish.
+	// spec: §11.3 — attempt budget exhausted; relinquish.
 	f.log("coordfence: %s/%s fence attempt budget exhausted; relinquishing", tenantID, sessionID)
 	return f.relinquish(ctx, tenantID, sessionID)
 }

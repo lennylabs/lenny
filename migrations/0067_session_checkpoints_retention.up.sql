@@ -1,4 +1,4 @@
--- §4.4 line 234 references §12.5 "latest 2 checkpoints" retention.
+-- §4.4 references §12.5 "latest 2 checkpoints" retention.
 -- The Checkpointer previously persisted only the latest
 -- workspace_snapshot_ref on the sessions row, so prior checkpoint
 -- blobs in MinIO accumulated without bound until manual cleanup. The
@@ -12,10 +12,10 @@
 -- guard (lenny_tenant_guard trigger + lenny_tenant_isolation policy).
 -- A composite key (tenant_id, session_id, ref) makes a checkpoint
 -- ref unique per session; created_at orders the rotation, and
--- retained flags the latest two. deleted_at is the §4.4 line 236
+-- retained flags the latest two. deleted_at is the §4.4
 -- soft-delete tombstone.
 --
--- spec: §4.4 line 234, §12.5 latest-2-checkpoints retention.
+-- spec: §4.4, §12.5 latest-2-checkpoints retention.
 
 CREATE TABLE session_checkpoints (
     tenant_id   TEXT        NOT NULL REFERENCES tenants(id),
@@ -34,7 +34,7 @@ CREATE TABLE session_checkpoints (
     -- and issue the soft-delete sweep without re-reading the full
     -- table.
     retained    BOOLEAN     NOT NULL DEFAULT TRUE,
-    -- deleted_at is the §4.4 line 236 soft-delete tombstone. The
+    -- deleted_at is the §4.4 soft-delete tombstone. The
     -- rotation worker stamps it when retained drops to false (so
     -- stale-leader retries see rows_affected = 0 on the second
     -- writer), and the §12.5 backstop sweep prunes rows older than

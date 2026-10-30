@@ -28,9 +28,10 @@
 #   pkg/gateway/middleware    -> already an intermediate group directory; it
 #                                stays at the gateway root. breakerstore nests
 #                                under its existing middleware/circuitbreaker
-#                                package (the §1.3 gateway-core re-anchor).
+#                                package (the proposal's §1.3 gateway-core
+#                                re-anchor).
 #
-# §1.3 exclusions encoded below:
+# The proposal's §1.3 exclusions encoded below:
 #   breakerstore     -> middleware/circuitbreaker/breakerstore (anchors into
 #                       gateway-core, not the persistence cluster).
 #   interceptorstore -> policy/interceptor/interceptorstore (anchors onto its
@@ -76,7 +77,6 @@ github.com/lennylabs/lenny/pkg/gateway/coordfence	github.com/lennylabs/lenny/pkg
 github.com/lennylabs/lenny/pkg/gateway/coordination	github.com/lennylabs/lenny/pkg/gateway/coordination/coordination
 github.com/lennylabs/lenny/pkg/gateway/coordlease	github.com/lennylabs/lenny/pkg/gateway/coordination/coordlease
 github.com/lennylabs/lenny/pkg/gateway/correctionstore	github.com/lennylabs/lenny/pkg/gateway/billing/correctionstore
-github.com/lennylabs/lenny/pkg/gateway/createdsweeper	github.com/lennylabs/lenny/pkg/gateway/session/createdsweeper
 github.com/lennylabs/lenny/pkg/gateway/credassign	github.com/lennylabs/lenny/pkg/gateway/credentials/credassign
 github.com/lennylabs/lenny/pkg/gateway/credcache	github.com/lennylabs/lenny/pkg/gateway/credentials/credcache
 github.com/lennylabs/lenny/pkg/gateway/credentialpoolstore	github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore
@@ -153,7 +153,7 @@ github.com/lennylabs/lenny/pkg/gateway/platformtools	github.com/lennylabs/lenny/
 github.com/lennylabs/lenny/pkg/gateway/playground	github.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground
 github.com/lennylabs/lenny/pkg/gateway/podclaim	github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim
 github.com/lennylabs/lenny/pkg/gateway/podsession	github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession
-github.com/lennylabs/lenny/pkg/gateway/podterminate	github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podterminate
+github.com/lennylabs/lenny/pkg/gateway/podterminate	github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease
 github.com/lennylabs/lenny/pkg/gateway/policy	github.com/lennylabs/lenny/pkg/gateway/policy/policy
 github.com/lennylabs/lenny/pkg/gateway/poolstore	github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore
 github.com/lennylabs/lenny/pkg/gateway/prestop	github.com/lennylabs/lenny/pkg/gateway/podlifecycle/prestop

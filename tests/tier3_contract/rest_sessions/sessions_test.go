@@ -32,7 +32,7 @@ import (
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts
@@ -262,11 +262,13 @@ func TestFinalizeRejectsFromReady(t *testing.T) {
 	assertInvalidStateTransition(t, body, "ready", []string{"created"})
 }
 
-// spec: 15.1 (resume requires state=awaiting_client_action)
-// diagnosis: Resume from running returned non-409. The transition
+// spec: 15.1 (resume admits awaiting_client_action and suspended), 7.3
+// (Retry and Resume)
+// diagnosis: Resume from running returned non-409, or the refusal's
 //
-//	table is wrong, or the resume endpoint is dispatching
-//	without checking state.
+//	allowedStates does not name both admitted states. The transition
+//	table is wrong, or the resume endpoint is dispatching without
+//	checking state.
 func TestResumeRejectsFromRunning(t *testing.T) {
 	ts := newTestServer(t)
 	id := createSession(t, ts)
@@ -276,7 +278,7 @@ func TestResumeRejectsFromRunning(t *testing.T) {
 	if resp.StatusCode != http.StatusConflict {
 		t.Errorf("resume-from-running: want 409, got %d", resp.StatusCode)
 	}
-	assertInvalidStateTransition(t, body, "running", []string{"awaiting_client_action"})
+	assertInvalidStateTransition(t, body, "running", []string{"awaiting_client_action", "suspended"})
 }
 
 // spec: 15.1 (terminate is admitted from every non-terminal state)
@@ -415,7 +417,7 @@ func assertInvalidStateTransition(t *testing.T, body map[string]any, wantCurrent
 	}
 }
 
-// spec: §4.2 line 156 — the session envelope carries the §4.2 record
+// spec: §4.2 — the session envelope carries the §4.2 record
 // fields the spec lists for client visibility: recoveryGeneration
 // (counter visible per spec line 156), schemaVersion, and the optional
 // cwd and podAssignment when present. The counter and the schema
@@ -439,7 +441,7 @@ func TestSessionEnvelopeCarriesSpec42Fields(t *testing.T) {
 	// tag omits the empty-flag so a fresh session reports zero).
 	got, ok := body["recoveryGeneration"]
 	if !ok {
-		t.Errorf("envelope missing 'recoveryGeneration' field (§4.2 line 156)")
+		t.Errorf("envelope missing 'recoveryGeneration' field (§4.2)")
 	}
 	// JSON numbers round-trip as float64 in map[string]any.
 	if f, _ := got.(float64); f != 0 {
@@ -449,7 +451,7 @@ func TestSessionEnvelopeCarriesSpec42Fields(t *testing.T) {
 	// schemaVersion: v1 sessions report schema_version=1.
 	gotSV, ok := body["schemaVersion"]
 	if !ok {
-		t.Errorf("envelope missing 'schemaVersion' field (§4.2 line 156)")
+		t.Errorf("envelope missing 'schemaVersion' field (§4.2)")
 	}
 	if f, _ := gotSV.(float64); f != 1 {
 		t.Errorf("schemaVersion: want 1 on a v1 session, got %v", gotSV)

@@ -32,7 +32,7 @@ func startDiagPG(t *testing.T) *containers.Postgres {
 // TestProdSourceSessionJoin seeds a tenant, a failed session, and its
 // agent_pod_state row, then reads them back through the §25.6 reader.
 //
-// spec: §25.6 line 2885.
+// spec: §25.6.
 // diagnosis: a failure means the prod-source diagnostics reader joins
 // the session and its agent_pod_state row incorrectly, so operator
 // diagnostics would show wrong pod state for a failed session.
@@ -46,7 +46,7 @@ func TestProdSourceSessionJoin_spec_25_6_2885(t *testing.T) {
 		`INSERT INTO tenants (id, genesis_nonce) VALUES ($1, '\x00')`, "acme"); err != nil {
 		t.Fatalf("seed tenant: %v", err)
 	}
-	// §4.2 line 163 / §12.3 — sessions and agent_pod_state carry the
+	// §4.2 / §12.3 — sessions and agent_pod_state carry the
 	// lenny_tenant_guard trigger, which rejects any write whose
 	// transaction has not set app.current_tenant. Seed them inside a
 	// tenant-scoped transaction so the guard admits the rows.
@@ -86,7 +86,7 @@ func TestProdSourceSessionJoin_spec_25_6_2885(t *testing.T) {
 // TestProdSourceSessionNotFound covers the unknown-id and invalid-UUID
 // paths: both report Found=false without an error.
 //
-// spec: §25.6 line 2885.
+// spec: §25.6.
 // diagnosis: a failure means the reader errors or reports Found=true for
 // an unknown or malformed session id, so a missing session would surface
 // as an error rather than a clean not-found.
@@ -106,7 +106,7 @@ func TestProdSourceSessionNotFound_spec_25_6_2885(t *testing.T) {
 // TestProdSourcePoolPodCounts seeds pods in several states and reads the
 // §25.6 pod-count breakdown.
 //
-// spec: §25.6 line 2861.
+// spec: §25.6.
 // diagnosis: a failure means the pod-count breakdown miscounts pods by
 // state, so the operator pool diagnostics would misreport capacity.
 func TestProdSourcePoolPodCounts_spec_25_6_2861(t *testing.T) {

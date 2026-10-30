@@ -14,7 +14,7 @@ import (
 
 // blockingSDKWarmRuntime is an SDK-warm runtime whose DemoteSDK blocks
 // indefinitely until ForceTerminate releases it, so a test can drive the
-// §6.1 line 67 bounded-teardown timeout path deterministically.
+// §6.1 bounded-teardown timeout path deterministically.
 type blockingSDKWarmRuntime struct {
 	fakeRuntime
 	release chan struct{}
@@ -45,7 +45,7 @@ func (b *blockingSDKWarmRuntime) ForceTerminate() {
 
 var _ adapter.ForceTerminator = (*blockingSDKWarmRuntime)(nil)
 
-// spec: §6.1 line 67 — on SIGTERM the adapter runs a bounded DemoteSDK to
+// spec: §6.1 — on SIGTERM the adapter runs a bounded DemoteSDK to
 // tear the pre-connected SDK down; within the timeout it completes cleanly
 // and the pod returns to pod-warm.
 func TestShutdownDemoteSDKDemotesPreConnected_spec_6_1_67(t *testing.T) {
@@ -69,13 +69,13 @@ func TestShutdownDemoteSDKDemotesPreConnected_spec_6_1_67(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 67 step 2 — when the bounded DemoteSDK overruns its
+// spec: §6.1 step 2 — when the bounded DemoteSDK overruns its
 // timeout, the adapter force-terminates the SDK process so it is not
 // abandoned mid-connection.
 func TestShutdownDemoteSDKForceTerminatesOnTimeout_spec_6_1_67(t *testing.T) {
 	rt := newBlockingSDKWarmRuntime()
 	s := adapter.New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.Runtime = rt
 	if err := s.PreConnect(context.Background()); err != nil {
 		t.Fatalf("PreConnect: %v", err)
@@ -89,7 +89,7 @@ func TestShutdownDemoteSDKForceTerminatesOnTimeout_spec_6_1_67(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 67 — ShutdownDemoteSDK is a no-op for a pod-warm pod
+// spec: §6.1 — ShutdownDemoteSDK is a no-op for a pod-warm pod
 // (there is no pre-connected SDK to tear down), so a SIGTERM handler may
 // call it unconditionally.
 func TestShutdownDemoteSDKPodWarmNoop_spec_6_1_67(t *testing.T) {
@@ -101,7 +101,7 @@ func TestShutdownDemoteSDKPodWarmNoop_spec_6_1_67(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 67 — an SDK-warm pod that never pre-connected has no SDK
+// spec: §6.1 — an SDK-warm pod that never pre-connected has no SDK
 // to tear down, so ShutdownDemoteSDK does not call the runtime's DemoteSDK.
 func TestShutdownDemoteSDKNotConnectedNoop_spec_6_1_67(t *testing.T) {
 	s, rt := sdkWarmServer(t)
@@ -112,7 +112,7 @@ func TestShutdownDemoteSDKNotConnectedNoop_spec_6_1_67(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 67 — the bounded-teardown timeout is read from
+// spec: §6.1 — the bounded-teardown timeout is read from
 // LENNY_DEMOTE_TIMEOUT_SECONDS, defaulting to 5s when unset or invalid.
 func TestDemoteTimeoutFromEnv_spec_6_1_67(t *testing.T) {
 	cases := []struct {
@@ -141,7 +141,7 @@ func TestDemoteTimeoutFromEnv_spec_6_1_67(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 67 — the SDK-warm in-process runtime's force-terminate
+// spec: §6.1 — the SDK-warm in-process runtime's force-terminate
 // hook hard-stops a loop blocked on its input pipe without waiting for it to
 // drain, the substitute for SIGKILLing a real SDK subprocess.
 func TestSDKWarmInProcessForceTerminate_spec_6_1_67(t *testing.T) {
@@ -149,7 +149,7 @@ func TestSDKWarmInProcessForceTerminate_spec_6_1_67(t *testing.T) {
 	// closes the pipes so ForceTerminate returns promptly.
 	rt := adapter.NewSDKWarmInProcessRuntime(sdkWarmEchoLoop)
 	s := adapter.New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.ManifestDir = t.TempDir()
 	s.Runtime = rt
 	if err := s.PreConnect(context.Background()); err != nil {
@@ -157,7 +157,7 @@ func TestSDKWarmInProcessForceTerminate_spec_6_1_67(t *testing.T) {
 	}
 	if _, err := s.ConfigureWorkspace(context.Background(), &adapterv1.ConfigureWorkspaceRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		Cwd:       s.WorkspaceRoot,
+		Cwd:       s.WorkspaceBase,
 	}); err != nil {
 		t.Fatalf("ConfigureWorkspace: %v", err)
 	}
@@ -174,7 +174,34 @@ func TestSDKWarmInProcessForceTerminate_spec_6_1_67(t *testing.T) {
 	// The runtime's session binding was force-cleared, so a fresh session can
 	// rebind the loop. (The Server-level SDKWarmReady flag is cleared by
 	// ShutdownDemoteSDK's timeout path, covered separately above.)
-	if err := rt.ConfigureWorkspace(context.Background(), "sess-2", s.WorkspaceRoot); err != nil {
+	if err := rt.ConfigureWorkspace(context.Background(), "sess-2", s.WorkspaceBase); err != nil {
 		t.Errorf("ConfigureWorkspace after ForceTerminate: %v", err)
+	}
+}
+
+// spec: §6.1 (Adapter SIGTERM behavior during sdk_connecting), §4.6.1 — while
+// a session is registered on an embedded preConnect pod, the SIGTERM path
+// does not demote: the session's runtime and its registry entry survive the
+// start of the drain, which the preStop eviction checkpoint reads. Before
+// the correction the SIGTERM path demoted the registered session.
+func TestShutdownDemoteSDKKeepsARegisteredSessionOnTheEmbeddedModel_spec_6_1(t *testing.T) {
+	s, rt := sdkWarmServer(t)
+	if err := s.PreConnect(context.Background()); err != nil {
+		t.Fatalf("PreConnect: %v", err)
+	}
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); err != nil {
+		t.Fatalf("ConfigureWorkspace: %v", err)
+	}
+	s.ShutdownDemoteSDK(time.Second)
+	if rt.demoted != 0 {
+		t.Fatalf("runtime demoted %d times with a session registered, want 0", rt.demoted)
+	}
+	if !s.SDKWarmReady() {
+		t.Fatal("the SDK-warm process was torn down with a session registered")
+	}
+	// The entry stands: an idempotent repeat of the start for the same
+	// session still resolves it.
+	if _, err := s.ConfigureWorkspace(context.Background(), configureReq("sess-1", "/workspace/slots/sess-1/current")); err != nil {
+		t.Fatalf("the registered session's entry was removed: %v", err)
 	}
 }

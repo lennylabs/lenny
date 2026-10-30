@@ -15,18 +15,18 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 )
 
-// AttachToolName is the §15.2 line 1289 `attach_session` MCP tool. The
+// AttachToolName is the §15.2 MCP tool. The
 // gateway registers it under the `lenny/` namespace like every other
 // platform tool; the transport intercepts a `tools/call` for this name
 // when the client requests `text/event-stream` and upgrades the
-// response to the Streamable HTTP SSE channel. spec: §15.2 line 1289.
+// response to the Streamable HTTP SSE channel. spec: §15.2.
 const AttachToolName = "lenny/attach_session"
 
-// attachKeepAliveInterval is the §15.2 line 1333 fixed keepalive cadence:
+// attachKeepAliveInterval is the §15.2 fixed keepalive cadence:
 // the adapter writes an SSE comment line whenever no SessionEvent frame
 // has been written for 20 seconds. The interval is fixed by the protocol
 // contract (not tunable per connection); it is a package var only so the
-// streaming test can shorten it. spec: §15.2 line 1333.
+// streaming test can shorten it. spec: §15.2.
 var attachKeepAliveInterval = 20 * time.Second
 
 // attachSendTimeout is the §15 OutboundChannel bounded-error-policy
@@ -50,7 +50,7 @@ type SessionEventSource interface {
 	// binding returns an error so a foreign caller cannot attach.
 	SubscribeForTenant(tenantID, sessionID string, afterSeq uint64, bufferSize int) (*sessionevents.Subscription, error)
 	// OldestRetainedSeq reports the smallest Seq still in the replay
-	// buffer, used to detect the §15.2 line 1331 eviction case.
+	// buffer, used to detect the §15.2 eviction case.
 	OldestRetainedSeq(sessionID string) (uint64, bool)
 }
 
@@ -88,8 +88,7 @@ func (c AttachConfig) now() time.Time {
 // `tools/call` for AttachToolName carrying `Accept: text/event-stream` is
 // intercepted by the transport (Server.handleToolCall) and upgraded to
 // the SSE stream; a non-SSE caller (a WebSocket frame or a plain JSON
-// POST) falls through to the registered snapshot handler. spec: §15.2
-// lines 1331-1333. F-15.2.2, F-9.1.7.
+// POST) falls through to the registered snapshot handler. spec: §15.2. F-15.2.2, F-9.1.7.
 func (s *Server) SetAttach(cfg AttachConfig) {
 	s.attach = cfg
 }
@@ -101,7 +100,7 @@ func wantsEventStream(r *http.Request) bool {
 }
 
 // lastEventID extracts the SSE-standard Last-Event-ID reconnect cursor —
-// the §15.2 line 1331 "implicit resumeFromSeq on plain reconnects".
+// the §15.2.
 func lastEventID(r *http.Request) uint64 {
 	if v := r.Header.Get("Last-Event-ID"); v != "" {
 		if n, err := strconv.ParseUint(v, 10, 64); err == nil {
@@ -111,7 +110,7 @@ func lastEventID(r *http.Request) uint64 {
 	return 0
 }
 
-// attachArgs is the §15.2 line 1289 `attach_session` argument object.
+// attachArgs is the §15.2 argument object.
 type attachArgs struct {
 	SessionID     string `json:"sessionId"`
 	ResumeFromSeq uint64 `json:"resumeFromSeq"`
@@ -120,7 +119,7 @@ type attachArgs struct {
 // handleAttachStream serves the §15.2 Streamable HTTP SSE channel for an
 // `attach_session` tools/call. It mirrors the REST
 // GET /v1/sessions/{id}/events transport (the two share the §15.1 event
-// bus and the §15.2 line 1331 resume contract) and projects each
+// bus and the §15.2 resume contract) and projects each
 // SessionEvent onto the MCP wire as a `notifications/lenny/sessionEvent`
 // JSON-RPC notification carrying the event's SeqNum as the SSE `id:`
 // line. The per-kind MCP method projection (notifications/tasks/
@@ -128,7 +127,7 @@ type attachArgs struct {
 // follow-on tracked under F-15.2.13; this method delivers the transport
 // the finding flags as absent: the SSE channel itself, resumeFromSeq /
 // Last-Event-ID replay, the gap_detected stream-control frame, and the
-// 20s keepalive. spec: §15.2 lines 1331-1333. F-15.2.2, F-9.1.7.
+// 20s keepalive. spec: §15.2. F-15.2.2, F-9.1.7.
 func (s *Server) handleAttachStream(w http.ResponseWriter, r *http.Request, req jsonRPCRequest, arguments json.RawMessage) {
 	var in attachArgs
 	if err := json.Unmarshal(arguments, &in); err != nil {
@@ -192,7 +191,7 @@ func (s *Server) handleAttachStream(w http.ResponseWriter, r *http.Request, req 
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	// spec: §15.2 line 1331 — when the requested cursor falls below the
+	// spec: §15.2 — when the requested cursor falls below the
 	// oldest retained sequence the client missed evicted events; emit a
 	// single protocol-level gap_detected frame ahead of the backlog. The
 	// frame is a stream-control signal, not a SessionEvent, so it carries
@@ -243,10 +242,10 @@ func (s *Server) handleAttachStream(w http.ResponseWriter, r *http.Request, req 
 				return
 			}
 			// Reset the idle timer: keepalive fires only after 20s with
-			// no SessionEvent frame written. spec: §15.2 line 1333.
+			// no SessionEvent frame written. spec: §15.2.
 			keepalive.Reset(attachKeepAliveInterval)
 		case <-keepalive.C:
-			// spec: §15.2 line 1333 — `:keepalive\n\n` SSE comment line.
+			// spec: §15.2 — `:keepalive\n\n` SSE comment line.
 			// Carries no id:, so it does not affect SeqNum / Last-Event-ID
 			// tracking or the gap_detected contract.
 			if err := writeBoundedSSEFrame(w, []byte(":keepalive\n\n")); err != nil {
@@ -265,8 +264,7 @@ func (s *Server) handleAttachStream(w http.ResponseWriter, r *http.Request, req 
 // notifications/lenny/sessionEvent frame for bus event types outside the
 // closed SessionEventKind enum. The write is bounded by attachSendTimeout
 // (see writeBoundedSSEFrame); a non-nil return means the subscriber's read
-// loop is behind and the caller must close the connection. spec: §15.2
-// lines 1331, 1356-1374; §15 OutboundChannel bounded-error policy.
+// loop is behind and the caller must close the connection. spec: §15.2; §15 OutboundChannel bounded-error policy.
 func writeMCPSessionEvent(w http.ResponseWriter, ev sessionevents.Event) error {
 	b := marshalMCPSessionEvent(ev)
 	if b == nil {
@@ -280,18 +278,17 @@ func writeMCPSessionEvent(w http.ResponseWriter, ev sessionevents.Event) error {
 // (writeMCPSessionEvent) and the §4.1 WebSocket push (startWSAttach) so a
 // client classifies an event the same way regardless of transport. The
 // per-kind projection itself lives in projection.go. A marshal failure
-// returns nil and the caller drops the frame. spec: §15.2 lines 1331,
-// 1356-1374. F-15.2.13, F-15.2.14.
+// returns nil and the caller drops the frame. spec: §15.2. F-15.2.13, F-15.2.14.
 func marshalMCPSessionEvent(ev sessionevents.Event) []byte {
 	return projectMCPSessionEvent(ev)
 }
 
-// writeMCPGapDetected writes the §15.2 line 1331 gap_detected
+// writeMCPGapDetected writes the §15.2 gap_detected
 // stream-control frame: a `notifications/lenny/gapDetected` JSON-RPC
 // notification carrying {lastSeenSeq, nextSeq}. It carries no `id:` line
 // because it is not a SessionEvent and not part of the SessionEventKind
 // closed enum. The write is bounded by attachSendTimeout (see
-// writeBoundedSSEFrame). spec: §15.2 line 1331; §15 OutboundChannel
+// writeBoundedSSEFrame). spec: §15.2; §15 OutboundChannel
 // bounded-error policy.
 func writeMCPGapDetected(w http.ResponseWriter, lastSeen, next uint64) error {
 	b := marshalMCPGapDetected(lastSeen, next)
@@ -341,7 +338,7 @@ func flushBoundedSSE(w http.ResponseWriter) error {
 	return rc.Flush()
 }
 
-// marshalMCPGapDetected renders the §15.2 line 1331 gap_detected
+// marshalMCPGapDetected renders the §15.2 gap_detected
 // stream-control notification bytes shared by the SSE and WebSocket legs.
 func marshalMCPGapDetected(lastSeen, next uint64) []byte {
 	b, err := json.Marshal(jsonRPCNotification{

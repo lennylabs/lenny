@@ -8,7 +8,7 @@
 // marshal/unmarshal round-trip that asserts every field survives the
 // binary encoding, and an end-to-end gRPC call through the real client
 // and server stubs that asserts the request the adapter sends is the
-// request the gateway receives. spec: §4.7; §5.2; §3.4.
+// request the gateway receives. spec: §4.7; §5.2.
 package gatewaycontrol_scrub_test
 
 import (
@@ -133,28 +133,27 @@ func slotShutdownServer(t *testing.T, closeErr error) (*adapter.Server, *scrubSe
 // startAndShutdownSlot starts one concurrent-workspace slot then shuts it down,
 // returning the ShutdownResponse so the caller can correlate the wire outcome
 // with the ExitedCleanly flag the same closeErr sets.
-func startAndShutdownSlot(t *testing.T, s *adapter.Server, sessionID, slotID string) *adapterv1.ShutdownResponse {
+func startAndShutdownSlot(t *testing.T, s *adapter.Server, sessionID string) *adapterv1.ShutdownResponse {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := s.StartSession(ctx, &adapterv1.StartSessionRequest{
 		SessionId: &adapterv1.SessionId{Value: sessionID},
 		Runtime:   "echo",
-		SlotId:    &adapterv1.SlotId{Value: slotID},
 	}); err != nil {
-		t.Fatalf("StartSession(slot %s): %v", slotID, err)
+		t.Fatalf("StartSession(%s): %v", sessionID, err)
 	}
 	resp, err := s.Shutdown(ctx, &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: sessionID},
-		SlotId:    &adapterv1.SlotId{Value: slotID},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: sessionID},
 	})
 	if err != nil {
-		t.Fatalf("Shutdown(slot %s): %v", slotID, err)
+		t.Fatalf("Shutdown(%s): %v", sessionID, err)
 	}
 	return resp
 }
 
 // TestReportSessionScrubRequestRoundTrip pins that every field of the
-// ReportSessionScrubRequest (pod id, session id, slot id, outcome)
+// ReportSessionScrubRequest (pod id, session id, outcome)
 // survives a proto binary marshal/unmarshal, so a sender and a receiver
 // built from the same schema agree on the wire.
 // spec: 4.7 (Adapter → Gateway RPCs), 5.2 (scrub model)
@@ -168,7 +167,6 @@ func TestReportSessionScrubRequestRoundTrip_spec_5_2(t *testing.T) {
 	in := &adapterv1.ReportSessionScrubRequest{
 		PodId:     "pod-7",
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		SlotId:    &adapterv1.SlotId{Value: "slot-3"},
 		Outcome:   adapterv1.SessionScrubOutcome_SESSION_SCRUB_OUTCOME_LEAKED,
 	}
 	raw, err := proto.Marshal(in)
@@ -185,8 +183,10 @@ func TestReportSessionScrubRequestRoundTrip_spec_5_2(t *testing.T) {
 }
 
 // TestReportPodScrubRequestRoundTrip pins that the ReportPodScrubRequest
-// fields (pod id, outcome, detail) survive a proto binary round-trip.
-// spec: 4.7 (Adapter → Gateway RPCs), 3.4 (recycle disposition)
+// fields (pod id, outcome, detail, runtime_live) survive a proto binary
+// round-trip.
+// spec: 4.7 (Adapter → Gateway RPCs), 3.4 (recycle disposition), 5.2 (Pod
+// retirement policy)
 //
 // diagnosis: a failure means a field of ReportPodScrubRequest was
 // renumbered, retyped, or dropped in schemas/lenny-adapter.proto without
@@ -195,9 +195,10 @@ func TestReportSessionScrubRequestRoundTrip_spec_5_2(t *testing.T) {
 // computed from the report.
 func TestReportPodScrubRequestRoundTrip_spec_3_4(t *testing.T) {
 	in := &adapterv1.ReportPodScrubRequest{
-		PodId:   "pod-7",
-		Outcome: adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_FAILED,
-		Detail:  "shred timed out on /tmp",
+		PodId:       "pod-7",
+		Outcome:     adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_FAILED,
+		Detail:      "shred timed out on /tmp",
+		RuntimeLive: true,
 	}
 	raw, err := proto.Marshal(in)
 	if err != nil {
@@ -209,6 +210,41 @@ func TestReportPodScrubRequestRoundTrip_spec_3_4(t *testing.T) {
 	}
 	if !proto.Equal(in, &out) {
 		t.Errorf("round-trip mismatch:\n got %v\nwant %v", &out, in)
+	}
+	if !out.GetRuntimeLive() {
+		t.Error("runtime_live = false after the round-trip, want true")
+	}
+}
+
+// TestReportPodScrubOmittedRuntimeLiveDecodesNotLive_spec_5_2 pins that bytes
+// encoded without field 4, as an adapter that never samples the runtime
+// sends them, decode to runtime_live false, which the gateway reads as a
+// runtime that cannot serve the next session.
+// spec: 5.2 (Pod retirement policy), 4.7 (ReportPodScrub)
+//
+// diagnosis: the liveness fact is lost on the wire, so the gateway retires
+// every recycled pod or reuses one whose runtime is gone.
+func TestReportPodScrubOmittedRuntimeLiveDecodesNotLive_spec_5_2(t *testing.T) {
+	// Field 1 (pod_id, length-delimited) "pod-7" and field 2 (outcome,
+	// varint) SUCCEEDED, with no field 4.
+	raw := []byte{0x0a, 0x05, 'p', 'o', 'd', '-', '7', 0x10, 0x01}
+	var out adapterv1.ReportPodScrubRequest
+	if err := proto.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out.GetPodId() != "pod-7" || out.GetOutcome() != adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_SUCCEEDED {
+		t.Fatalf("decoded %v, want pod-7 SUCCEEDED", &out)
+	}
+	if out.GetRuntimeLive() {
+		t.Error("runtime_live = true for bytes without field 4, want false")
+	}
+	// Field 4 is a varint bool: a live report encodes as tag 0x20 value 1.
+	live, err := proto.Marshal(&adapterv1.ReportPodScrubRequest{RuntimeLive: true})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if want := []byte{0x20, 0x01}; string(live) != string(want) {
+		t.Errorf("runtime_live=true encodes as %x, want %x (field 4, varint)", live, want)
 	}
 }
 
@@ -252,14 +288,18 @@ func TestReportPodScrubGRPCContract_spec_3_4(t *testing.T) {
 	client := dialScrub(t, srv)
 
 	sent := &adapterv1.ReportPodScrubRequest{
-		PodId:   "pod-7",
-		Outcome: adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_SUCCEEDED,
+		PodId:       "pod-7",
+		Outcome:     adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_SUCCEEDED,
+		RuntimeLive: true,
 	}
 	if _, err := client.ReportPodScrub(context.Background(), sent); err != nil {
 		t.Fatalf("ReportPodScrub: %v", err)
 	}
 	if !proto.Equal(sent, srv.gotPod) {
 		t.Errorf("server received %v, want %v", srv.gotPod, sent)
+	}
+	if !srv.gotPod.GetRuntimeLive() {
+		t.Error("server received runtime_live = false, want the sent true")
 	}
 }
 
@@ -281,7 +321,7 @@ func TestReportPodScrubGRPCContract_spec_3_4(t *testing.T) {
 func TestAdapterSlotShutdownEmitsLeakedOnFailedClose_spec_5_2(t *testing.T) {
 	s, srv := slotShutdownServer(t, errors.New("runtime close timed out reclaiming slot resources"))
 
-	resp := startAndShutdownSlot(t, s, "sess-a", "slot-a")
+	resp := startAndShutdownSlot(t, s, "sess-a")
 
 	// The wire outcome derives from the same closeErr that sets ExitedCleanly:
 	// a failed close is an unclean exit and a leaked cleanup.
@@ -301,9 +341,6 @@ func TestAdapterSlotShutdownEmitsLeakedOnFailedClose_spec_5_2(t *testing.T) {
 	if got.GetSessionId().GetValue() != "sess-a" {
 		t.Errorf("session id = %q, want sess-a", got.GetSessionId().GetValue())
 	}
-	if got.GetSlotId().GetValue() != "slot-a" {
-		t.Errorf("slot id = %q, want slot-a", got.GetSlotId().GetValue())
-	}
 }
 
 // TestAdapterSlotShutdownEmitsReleasedOnCleanClose is the released-outcome
@@ -319,7 +356,7 @@ func TestAdapterSlotShutdownEmitsLeakedOnFailedClose_spec_5_2(t *testing.T) {
 func TestAdapterSlotShutdownEmitsReleasedOnCleanClose_spec_5_2(t *testing.T) {
 	s, srv := slotShutdownServer(t, nil)
 
-	resp := startAndShutdownSlot(t, s, "sess-a", "slot-a")
+	resp := startAndShutdownSlot(t, s, "sess-a")
 
 	if !resp.GetExitedCleanly() {
 		t.Error("ExitedCleanly = false for a clean runtime close")
@@ -330,8 +367,8 @@ func TestAdapterSlotShutdownEmitsReleasedOnCleanClose_spec_5_2(t *testing.T) {
 	if got := srv.sessionReports[0].GetOutcome(); got != adapterv1.SessionScrubOutcome_SESSION_SCRUB_OUTCOME_RELEASED {
 		t.Errorf("outcome = %v, want RELEASED for a clean slot cleanup", got)
 	}
-	if got := srv.sessionReports[0].GetSlotId().GetValue(); got != "slot-a" {
-		t.Errorf("slot id = %q, want slot-a", got)
+	if got := srv.sessionReports[0].GetSessionId().GetValue(); got != "sess-a" {
+		t.Errorf("session id = %q, want sess-a", got)
 	}
 }
 

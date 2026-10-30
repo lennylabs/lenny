@@ -16,7 +16,7 @@
 // redis.UniversalClient at construction. The gateway resolves each
 // store's client through Clients.For at wiring time.
 //
-// spec: §12.4 lines 237-245 (logical separation of Redis concerns).
+// spec: §12.4.
 package redistopology
 
 import (

@@ -9,6 +9,14 @@ import (
 // RuntimeSpec is the desired state of a registered agent Runtime
 // (§5.1). The gateway mirrors the registered runtimes into its
 // runtime_definitions registry; the CRD is the declarative source.
+//
+// The CEL rules enforce the §5.1 `command` and `env` placement rules at the
+// API server: `command` is required on a `type: agent` runtime whose
+// deploymentModel is sidecar (an empty deploymentModel defaults to sidecar)
+// and forbidden on every other runtime, and `env` is forbidden wherever
+// `command` is. spec: §5.1 (command), §5.1 (env).
+// +kubebuilder:validation:XValidation:rule="(self.type == 'agent' && (!has(self.deploymentModel) || self.deploymentModel == 'sidecar')) == has(self.command)",message="command is required on a type: agent runtime whose deploymentModel is sidecar and forbidden on every other runtime"
+// +kubebuilder:validation:XValidation:rule="!has(self.env) || (self.type == 'agent' && (!has(self.deploymentModel) || self.deploymentModel == 'sidecar'))",message="env is forbidden on a runtime that is not a type: agent sidecar runtime"
 type RuntimeSpec struct {
 	// Type is the runtime kind: `agent` runs an interactive agent,
 	// `mcp` exposes an MCP server.
@@ -55,6 +63,35 @@ type RuntimeSpec struct {
 	// +optional
 	DeploymentModel string `json:"deploymentModel,omitempty"`
 
+	// Command is the §5.1 argv of the runtime process. The runtime
+	// supervisor launches it as the runtime process (§4.7.10 Runtime
+	// supervisor), ignoring the image's ENTRYPOINT and CMD. Required on a
+	// `type: agent` sidecar runtime and forbidden on every other runtime
+	// (the RuntimeSpec CEL rules); its first element is an absolute path in
+	// the runtime image. It is settable only on the Runtime CRD: the
+	// RuntimeReconciler mirrors only the derived restartable flag into the
+	// gateway registry, and the pod builder reads the argv from the live
+	// CRD. spec: §5.1 (command).
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:XValidation:rule="self[0].startsWith('/')",message="the first element of command must be an absolute path"
+	// +optional
+	Command []string `json:"command,omitempty"`
+
+	// Env is the §5.1 list of variables the runtime supervisor gives the
+	// runtime process, which starts from an empty environment rather than
+	// the image's ENV (§4.7.10 Runtime supervisor). Forbidden wherever
+	// Command is (the RuntimeSpec CEL rules). Names are unique (the map
+	// list key), match the POSIX variable-name pattern, and never begin
+	// with the platform-reserved LENNY_ prefix. Values are readable by the
+	// runtime, so the field carries no Secret or ConfigMap reference;
+	// secrets reach the runtime through its credential file. The field is
+	// not mirrored into the gateway registry. spec: §5.1 (env).
+	// +listType=map
+	// +listMapKey=name
+	// +optional
+	Env []RuntimeEnvVar `json:"env,omitempty"`
+
 	// RequireSoPeercred gates the §4.7 SO_PEERCRED adapter-agent boundary
 	// self-test. A nil or true value (the default) requires SO_PEERCRED to
 	// be functional; a failed self-test crashes the pod. Set false only
@@ -91,7 +128,7 @@ type RuntimeSpec struct {
 	// runtime processes. The default workspace classification is `T3`
 	// (Confidential); runtimes that handle Restricted data (PHI, regulated
 	// credentials) declare `T4`. A `T4` Runtime forbids cross-tenant pod
-	// reuse (§5.2 line 396) and triggers the §6.4 dedicated-node controls:
+	// reuse (§5.2) and triggers the §6.4 dedicated-node controls:
 	// the sandbox reconciler injects the `lenny.dev/workspace-tier: t4`
 	// pod label, the T4 nodeSelector, and the T4 NoSchedule toleration so
 	// the lenny-t4-node-isolation admission webhook admits the pod onto a
@@ -108,23 +145,23 @@ type RuntimeSpec struct {
 	// mounted (empty, read-only) even when this list is empty, denying the
 	// runtime writable scratch space there. Artifact-reference assets
 	// (§4.5) are delivered by the gateway during pod initialization and are
-	// not expressed inline here. spec: §6.4 line 409 — F-6.4.3.
+	// not expressed inline here. spec: §6.4 — F-6.4.3.
 	// +optional
 	SharedAssets []SharedAsset `json:"sharedAssets,omitempty"`
 
 	// SetupCommandPolicy is the §5.1 / §7.5 setupCommandPolicy block: the
 	// per-runtime command allow/block list, shell-execution flag, and
 	// per-session command cap the gateway enforces at session create-time
-	// (§7.5 line 488). An empty block declares no policy (the legacy
+	// (§7.5). An empty block declares no policy (the legacy
 	// admit-everything path). F-7.5.10.
 	// +optional
 	SetupCommandPolicy *SetupCommandPolicy `json:"setupCommandPolicy,omitempty"`
 
 	// ArchivePolicy is the §13.4 per-Runtime archive-extraction opt-in
-	// block: AllowSymlinks lifts the §7.4 line 458 default-deny on symlink
+	// block: AllowSymlinks lifts the §7.4 default-deny on symlink
 	// entries inside uploadArchive sources. An empty block leaves the
-	// platform default (symlinks rejected). spec: §7.4 lines 458, 462;
-	// §13.4 lines 663-672 — F-7.4.4.
+	// platform default (symlinks rejected). spec: §7.4;
+	// §13.4 — F-7.4.4.
 	// +optional
 	ArchivePolicy *ArchivePolicy `json:"archivePolicy,omitempty"`
 
@@ -136,8 +173,7 @@ type RuntimeSpec struct {
 	// runtime controller mirrors them into the gateway registry's
 	// RuntimeCapabilities at reconciliation time so §7.2 path-4 (queued
 	// injection) is gated on the runtime's declared injection.modes.
-	// spec: §5.1 lines 60-64; §26.9 line 407; §26.10 line 432; §26.11
-	// line 466 — F-26.9.2 / F-26.10.2 / F-26.11.2.
+	// spec: §5.1; §26.9; §26.10; §26.11 — F-26.9.2 / F-26.10.2 / F-26.11.2.
 	// +optional
 	Capabilities *RuntimeCapabilitiesCRD `json:"capabilities,omitempty"`
 
@@ -148,8 +184,7 @@ type RuntimeSpec struct {
 	// declaratively register schemas hosted at
 	// `https://schemas.lenny.dev/runtime-options/<name>/v1.json` per §26.
 	// The runtime controller stamps it into the gateway registry as a
-	// JSON `{"$ref": "<url>"}` schema fragment. spec: §5.1 line 92; §26.9
-	// line 408; §26.10 line 434; §26.11 line 465 — F-26.9.2 / F-26.10.2 /
+	// JSON `{"$ref": "<url>"}` schema fragment. spec: §5.1; §26.9; §26.10; §26.11 — F-26.9.2 / F-26.10.2 /
 	// F-26.11.2.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^https?://`
@@ -159,7 +194,7 @@ type RuntimeSpec struct {
 	// DelegationPolicy this runtime is bound to. §26.11 (crewai) declares
 	// the field as required on a runtime that delegates. The runtime
 	// controller propagates it through the gateway registry.
-	// spec: §5.1 line 68; §26.11 line 467 — F-26.11.2.
+	// spec: §5.1; §26.11 — F-26.11.2.
 	// +optional
 	DelegationPolicyRef string `json:"delegationPolicyRef,omitempty"`
 
@@ -171,8 +206,7 @@ type RuntimeSpec struct {
 	// §11.3 / §6.2 session-age watchdog, the upload-handler cap, and the
 	// inter-agent request_input timeout read the values the deployer
 	// declared on the Runtime resource. An empty block leaves the platform
-	// defaults. spec: §5.1 lines 76-79; §26.2 lines 81-86; §26.3 lines
-	// 166-169 — F-26.2.1 / F-26.3.2.
+	// defaults. spec: §5.1; §26.2; §26.3 — F-26.2.1 / F-26.3.2.
 	// +optional
 	Limits *RuntimeLimits `json:"limits,omitempty"`
 
@@ -182,7 +216,7 @@ type RuntimeSpec struct {
 	// fail). The runtime controller mirrors it into the gateway registry
 	// so the §6.2 finalizing-state watchdog enforces the runtime-declared
 	// setup timeout. An empty block leaves the runtime with no aggregate
-	// setup cap. spec: §5.1 lines 90-92; §26.3 lines 174-176 — F-26.2.1 /
+	// setup cap. spec: §5.1; §26.3 — F-26.2.1 /
 	// F-26.3.4.
 	// +optional
 	SetupPolicy *SetupPolicy `json:"setupPolicy,omitempty"`
@@ -192,8 +226,7 @@ type RuntimeSpec struct {
 	// before falling back to platform defaults. The §26 coding-agent
 	// catalog declares it (warmCount 2, resourceClass medium, egressProfile
 	// restricted). The runtime controller mirrors it into the gateway
-	// registry. An empty block leaves the platform defaults. spec: §5.1
-	// lines 97-100; §26.3 lines 181-184 — F-26.2.1 / F-26.3.5.
+	// registry. An empty block leaves the platform defaults. spec: §5.1; §26.3 — F-26.2.1 / F-26.3.5.
 	// +optional
 	DefaultPoolConfig *DefaultPoolConfig `json:"defaultPoolConfig,omitempty"`
 
@@ -205,17 +238,34 @@ type RuntimeSpec struct {
 	// generation has a source. The runtime controller mirrors it into the
 	// gateway registry; the admin path regenerates the agent card from it.
 	// It is nil for type:mcp runtimes and for type:agent runtimes that omit
-	// the block. spec: §5.1 lines 102-130; §26.3 lines 185-199 — F-26.2.1 /
+	// the block. spec: §5.1; §26.3 — F-26.2.1 /
 	// F-26.3.5.
 	// +optional
 	AgentInterface *AgentInterface `json:"agentInterface,omitempty"`
+}
+
+// RuntimeEnvVar is one §5.1 `env` pair the runtime supervisor sets in the
+// runtime process's environment. spec: §5.1 (env).
+type RuntimeEnvVar struct {
+	// Name is the variable name: a non-empty POSIX variable name that does
+	// not begin with LENNY_, which the platform reserves for its own
+	// variables.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[A-Za-z_][A-Za-z0-9_]*$`
+	// +kubebuilder:validation:XValidation:rule="!self.startsWith('LENNY_')",message="env names beginning with LENNY_ are reserved for the platform"
+	Name string `json:"name"`
+
+	// Value is the variable value. An empty value sets the variable to the
+	// empty string.
+	// +optional
+	Value string `json:"value"`
 }
 
 // RuntimeCapabilitiesCRD mirrors the §5.1 capabilities block onto the
 // Runtime CRD so the registered Runtime advertises the runtime's
 // interaction model and mid-session injection support declaratively.
 // The runtime controller plumbs every field into the gateway registry's
-// runtimestore.RuntimeCapabilities. spec: §5.1 lines 60-64 — F-26.9.2.
+// runtimestore.RuntimeCapabilities. spec: §5.1 — F-26.9.2.
 type RuntimeCapabilitiesCRD struct {
 	// Interaction is the runtime's §5.1 capabilities.interaction model:
 	// one_shot (one message, one response) or multi_turn (repeated message
@@ -232,8 +282,10 @@ type RuntimeCapabilitiesCRD struct {
 	Injection *InjectionCapabilityCRD `json:"injection,omitempty"`
 
 	// PreConnect is the §5.1 capabilities.preConnect flag: when true the
-	// §6.1 warm-pool controller pre-connects the agent SDK process during
-	// the warm phase. Default false.
+	// pod's adapter starts the agent SDK process during warm-up, before the
+	// pod becomes idle, so the pool's pods are SDK-warm. In the sidecar
+	// model the adapter does so through the runtime supervisor. Default
+	// false. spec: §6.1.
 	// +optional
 	PreConnect bool `json:"preConnect,omitempty"`
 }
@@ -243,7 +295,7 @@ type RuntimeCapabilitiesCRD struct {
 // modes it supports.
 type InjectionCapabilityCRD struct {
 	// Supported is the §5.1 capabilities.injection.supported flag. False
-	// (the default) rejects injection per §7.2 line 222.
+	// (the default) rejects injection per §7.2.
 	// +optional
 	Supported bool `json:"supported,omitempty"`
 
@@ -259,10 +311,10 @@ type InjectionCapabilityCRD struct {
 // declaratively. The runtime controller plumbs it into the gateway
 // registry; the gateway then forwards it to the adapter on
 // FinalizeWorkspace so uploadArchive symlink entries are admitted (and
-// target-validated) per §7.4 line 458 and §13.4. spec: §7.4 lines 458, 462
+// target-validated) per §7.4 and §13.4. spec: §7.4
 // — F-7.4.4.
 type ArchivePolicy struct {
-	// AllowSymlinks lifts the §7.4 line 458 default-deny on symlink
+	// AllowSymlinks lifts the §7.4 default-deny on symlink
 	// entries inside uploadArchive sources. When false (the default),
 	// extraction aborts on any symlink with details.reason = "symlink".
 	// +optional
@@ -272,8 +324,7 @@ type ArchivePolicy struct {
 // SharedAsset is one §6.4 read-only shared-asset entry the platform
 // materializes into the pod's `/workspace/shared/` directory at warm
 // time. The directory is mounted read-only on the runtime container, so
-// the agent reads these files but a write returns EROFS. spec: §6.4 line
-// 409 — F-6.4.3.
+// the agent reads these files but a write returns EROFS. spec: §6.4 — F-6.4.3.
 type SharedAsset struct {
 	// Path is the destination path relative to `/workspace/shared/`. It
 	// must be a relative path with no parent-directory (`..`) segment; the
@@ -301,8 +352,7 @@ type SharedAsset struct {
 // SetupCommandPolicy mirrors the §5.1 / §7.5 setupCommandPolicy block onto
 // the Runtime CRD so an operator can declare the policy declaratively. The
 // runtime controller plumbs every field into the gateway registry's
-// runtimestore.SetupCommandPolicy at reconciliation time. spec: §7.5 lines
-// 481-490 — F-7.5.10.
+// runtimestore.SetupCommandPolicy at reconciliation time. spec: §7.5 — F-7.5.10.
 type SetupCommandPolicy struct {
 	// Mode selects allowlist (deny-by-default) or blocklist
 	// (allow-by-default) §7.5 prefix matching. An empty value disables the
@@ -314,7 +364,7 @@ type SetupCommandPolicy struct {
 
 	// Shell selects shell-vs-argv setup-command execution. False splits on
 	// whitespace and execs the argv directly, neutering shell
-	// metacharacters per §7.5 line 490.
+	// metacharacters per §7.5.
 	// +optional
 	Shell bool `json:"shell,omitempty"`
 
@@ -355,7 +405,7 @@ type CredentialCapabilities struct {
 // controller plumbs every field into the gateway registry's
 // runtimestore.Limits at reconciliation time. Fields carry explicit units
 // (seconds, bytes) to match the registry's typed representation. spec:
-// §5.1 lines 76-79; §11.3 lines 198-204 — F-26.2.1 / F-26.3.2.
+// §5.1; §11.3 — F-26.2.1 / F-26.3.2.
 type RuntimeLimits struct {
 	// MaxSessionAgeSeconds caps a session's lifetime in seconds. Zero
 	// declares no per-runtime session-age cap. The §26 coding-agent
@@ -378,14 +428,14 @@ type RuntimeLimits struct {
 	// +kubebuilder:validation:Minimum=0
 	MaxRequestInputWaitSeconds int `json:"maxRequestInputWaitSeconds,omitempty"`
 
-	// MaxElicitationWaitSeconds is the §11.3 line 202 human-facing
+	// MaxElicitationWaitSeconds is the §11.3 human-facing
 	// lenny/request_elicitation wait timeout in seconds. Zero selects the
 	// platform default (600s).
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	MaxElicitationWaitSeconds int `json:"maxElicitationWaitSeconds,omitempty"`
 
-	// MaxElicitationsPerSession is the §11.3 line 203 per-session lifetime
+	// MaxElicitationsPerSession is the §11.3 per-session lifetime
 	// elicitation budget. Zero selects the platform default (50).
 	// +optional
 	// +kubebuilder:validation:Minimum=0
@@ -400,11 +450,11 @@ type SetupTimeoutDisposition string
 // SetupPolicy mirrors the §5.1 setupPolicy block onto the Runtime CRD: the
 // aggregate cap on the pod setup phase and the disposition when the cap is
 // hit. The runtime controller plumbs it into the gateway registry's
-// runtimestore.SetupPolicy at reconciliation time. spec: §5.1 lines 90-92;
-// §26.3 lines 174-176 — F-26.2.1 / F-26.3.4.
+// runtimestore.SetupPolicy at reconciliation time. spec: §5.1;
+// §26.3 — F-26.2.1 / F-26.3.4.
 type SetupPolicy struct {
 	// TimeoutSeconds is the aggregate cap on the setup phase in seconds.
-	// Zero declares no aggregate cap (§5.1 line 260). The §26 coding-agent
+	// Zero declares no aggregate cap (§5.1). The §26 coding-agent
 	// catalog declares 600.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
@@ -420,7 +470,7 @@ type SetupPolicy struct {
 // Runtime CRD: the default pool sizing the §5.2 pool resolver consults
 // before falling back to platform defaults. The runtime controller plumbs
 // it into the gateway registry's runtimestore.DefaultPoolConfig at
-// reconciliation time. spec: §5.1 lines 97-100; §26.3 lines 181-184 —
+// reconciliation time. spec: §5.1; §26.3 —
 // F-26.2.1 / F-26.3.5.
 type DefaultPoolConfig struct {
 	// WarmCount is the default number of warm pods the pool keeps.
@@ -444,7 +494,7 @@ type DefaultPoolConfig struct {
 // The runtime controller plumbs it into the gateway registry's
 // runtimestore.AgentInterface at reconciliation time; the admin path then
 // regenerates the §15 A2A agent card from it. type:mcp runtimes do not
-// carry an agentInterface. spec: §5.1 lines 102-130; §26.3 lines 185-199 —
+// carry an agentInterface. spec: §5.1; §26.3 —
 // F-26.2.1 / F-26.3.5.
 type AgentInterface struct {
 	// Description is the human-readable summary of the runtime's role.
@@ -515,6 +565,14 @@ type RuntimeStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// The lenny.dev/schema-version annotation is read at controller startup and
+// by lenny-preflight, and a mismatch with preflight.CurrentCRDSchemaVersion
+// is fatal, so a stale CRD never silently strips new fields. Bump the value
+// here and in that constant together. The top-level spec and status fields
+// carry +kubebuilder:pruning:PreserveUnknownFields for the same reason: a CRD
+// older than the controller does not prune fields a newer controller writes.
+// spec: §10.5 (Upgrade and Rollback Strategy). F-15.5.12.
+// +kubebuilder:metadata:annotations="lenny.dev/schema-version=1"
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=rt
 // +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.type`
@@ -528,7 +586,9 @@ type Runtime struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   RuntimeSpec   `json:"spec,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Spec RuntimeSpec `json:"spec,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
 	Status RuntimeStatus `json:"status,omitempty"`
 }
 

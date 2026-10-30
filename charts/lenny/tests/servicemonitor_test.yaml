@@ -29,7 +29,7 @@ tests:
       - isKind:
           of: PodMonitor
 
-  # spec: §10.1 line 88 — the gateway is rendered as its own ServiceMonitor
+  # spec: §10.1.6 — the gateway is rendered as its own ServiceMonitor
   # (lenny-gateway) so it can scrape at 10s while the controller and Token
   # Service share lenny-control-plane on the slower interval.
   - it: renders both ServiceMonitors when the gate is enabled
@@ -112,7 +112,7 @@ tests:
           path: spec.selector.matchExpressions[0].values
           content: gateway
 
-  # spec: §10.1 line 88 — the gateway scrapes at 10s by default; the rest
+  # spec: §10.1.6 — the gateway scrapes at 10s by default; the rest
   # of the control plane stays on monitoring.serviceMonitor.interval.
   - it: scrapes the gateway at 10s by default
     template: servicemonitor.yaml
@@ -430,14 +430,18 @@ tests:
           path: spec.endpoints[0].metricRelabelings[0].replacement
           value: tier3
 
-  - it: omits the deployment_tier relabel when global.deploymentTier is empty
+  # spec: §16.1.1 (Attribute Naming) — deployment_tier "always carries one
+  # of tier1, tier2, or tier3", so the values schema refuses an empty or
+  # off-set global.deploymentTier rather than omitting the relabel.
+  # F-25.4.38.
+  - it: refuses an empty global.deploymentTier at schema validation
     template: podmonitor.yaml
     set:
       monitoring.serviceMonitor.enabled: true
       global.deploymentTier: ""
     asserts:
-      - notExists:
-          path: spec.podMetricsEndpoints[0].metricRelabelings
+      - failedTemplate:
+          errorPattern: "deploymentTier.: value must be one of 'tier1', 'tier2', 'tier3'"
 
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment

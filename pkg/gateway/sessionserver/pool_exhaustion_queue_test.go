@@ -70,7 +70,7 @@ func queueExhaustionServer(t *testing.T, pool poolstore.Pool, poll time.Duration
 ) {
 	t.Helper()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	objs := []client.Object{
@@ -91,6 +91,7 @@ func queueExhaustionServer(t *testing.T, pool poolstore.Pool, poll time.Duration
 	var idCounter atomic.Int64
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return fmt.Sprintf("sess-q-%d", idCounter.Add(1)) },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
@@ -176,6 +177,7 @@ func claimExists(t *testing.T, c client.Client, podName string) bool {
 // the claim succeeded, breaking the §7.1 "session_id only on success"
 // atomicity contract.
 func TestQueueDispositionDrainsAsPodsFreeOnRealPool(t *testing.T) {
+	t.Parallel()
 	srv, cluster, store, probe := queueExhaustionServer(t, queueExhaustionPool(30), 10*time.Millisecond, "sbx-1")
 	h := srv.Handler()
 	ctx := context.Background()
@@ -228,7 +230,7 @@ func TestQueueDispositionDrainsAsPodsFreeOnRealPool(t *testing.T) {
 }
 
 // spec: §4.6.1 ("On queue-wait timeout the gateway returns WARM_POOL_EXHAUSTED
-// with a Retry-After header"), §5.2 (maxQueueWaitSeconds bound), §7.1 line 23
+// with a Retry-After header"), §5.2 (maxQueueWaitSeconds bound), §7.1
 // (a create-time pod-claim exhaustion is part of the atomic creation unit).
 // diagnosis: a failure means a create-time queue-wait timeout on an exhausted
 // pool does not surface the retryable exhaustion envelope. If the response is
@@ -241,6 +243,7 @@ func TestQueueDispositionDrainsAsPodsFreeOnRealPool(t *testing.T) {
 // exhaustion is the §7.1 atomicity envelope; the raw §4.6.1 WARM_POOL_EXHAUSTED
 // code is the two-step /start claim's, not the eager create-time claim's.
 func TestQueueWaitTimeoutReturnsRetryableExhaustionOnRealPool(t *testing.T) {
+	t.Parallel()
 	srv, cluster, store, probe := queueExhaustionServer(t, queueExhaustionPool(1), 10*time.Millisecond, "sbx-1")
 	h := srv.Handler()
 

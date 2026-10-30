@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Tier-3 contract test for the §4.4 line 232 / §25.9 admin
+// Tier-3 contract test for the §4.4 / §25.9 admin
 // audit-egress envelope. The list and single-event endpoints under
 // /v1/admin/audit-events MUST translate each canonical row through the
 // §11.7 OCSF translator and return the records inside an envelope
@@ -11,7 +11,7 @@
 // OCSF translator → JSON encoder) so a schema regression in any layer
 // surfaces as a contract violation, not as a downstream-only failure.
 //
-// spec: §4.4 line 232 — "the audit-egress path includes an OCSF
+// spec: §4.4 — "the audit-egress path includes an OCSF
 // translator ... the translator version and OCSF wire version are
 // surfaced on every response envelope."
 // spec: §25.9 — "all endpoints in this subsection return audit records
@@ -59,12 +59,12 @@ func newRouter(t *testing.T) *admin.Router {
 	}).WithAuditChains(chains)
 }
 
-// TestAdminAuditEventsListReturnsOCSFEnvelope is the §4.4 line 232
+// TestAdminAuditEventsListReturnsOCSFEnvelope is the §4.4
 // contract on the list endpoint: the response is the OCSF envelope
 // (ocsfVersion, translatorVersion, items[]) with each item satisfying
 // the §11.7 OCSF v1.1.0 structural contract.
 //
-// spec: §4.4 line 232, §11.7.
+// spec: §4.4, §11.7.
 // diagnosis: a failure means the admin audit-events list endpoint does
 // not return a well-formed OCSF envelope, so SIEM consumers would
 // receive a non-conformant audit payload.
@@ -137,7 +137,7 @@ func TestAdminAuditEventsListReturnsOCSFEnvelope(t *testing.T) {
 // TestAdminAuditEventsGetReturnsOCSFEnvelope is the same contract on
 // the single-row endpoint /v1/admin/audit-events/{seq}.
 //
-// spec: §4.4 line 232, §11.7.
+// spec: §4.4, §11.7.
 // diagnosis: a failure means the single-row admin audit-events endpoint
 // does not return a well-formed OCSF envelope, diverging from the list
 // endpoint's contract.
@@ -176,7 +176,7 @@ func TestAdminAuditEventsGetReturnsOCSFEnvelope(t *testing.T) {
 // legacy `auditEvents` field (the pre-translation canonical Postgres
 // tuple). A regression that re-introduces it would fail this assertion.
 //
-// spec: §4.4 line 232, §11.7.
+// spec: §4.4, §11.7.
 // diagnosis: a failure means the list response re-introduces the legacy
 // auditEvents canonical-tuple field, leaking the pre-translation
 // Postgres tuple alongside the OCSF envelope.
@@ -203,7 +203,7 @@ func TestAdminAuditEventsListIsOCSFNotCanonicalTuple(t *testing.T) {
 		t.Fatalf("decode raw: %v", err)
 	}
 	if _, regressed := raw["auditEvents"]; regressed {
-		t.Errorf("response carries the legacy `auditEvents` field — this is the §4.4 line 232 OCSF-translation gap")
+		t.Errorf("response carries the legacy `auditEvents` field — this is the §4.4 OCSF-translation gap")
 	}
 }
 
@@ -252,15 +252,14 @@ func gapRouter(t *testing.T, rows []audit.Row) *admin.Router {
 		WithAuditLog(&craftedGapAuditLog{rows: rows})
 }
 
-// TestAdminAuditEventsGapWindowReasonNextvalRollback pins the §25.9 line
-// 3669 wire contract: a gap_suspected window whose prev_hash links across
+// TestAdminAuditEventsGapWindowReasonNextvalRollback pins the §25.9 wire contract: a gap_suspected window whose prev_hash links across
 // the gap is reported in auditMetadata.suspectedGaps with
 // reason "nextval_rollback", the value the reconciled §25.9 and the
 // audit-chain-gap runbook direct operators to look for in the API
 // response. Against the pre-fix handler (which emitted "sequence_gap" for
 // every window) this contract assertion fails.
 //
-// spec: §25.9 line 3668-3669 (nextval-rollback gap reason), §11.7
+// spec: §25.9, §11.7
 // (prev_hash tamper authority).
 // diagnosis: a failure means the audit-events API does not emit the
 // nextval_rollback gap reason the spec and runbook promise, so an
@@ -291,15 +290,13 @@ func TestAdminAuditEventsGapWindowReasonNextvalRollback(t *testing.T) {
 		t.Fatalf("expected one suspected gap window, got %+v", env.AuditMetadata)
 	}
 	if got := env.AuditMetadata.SuspectedGaps[0].Reason; got != "nextval_rollback" {
-		t.Errorf("suspectedGaps[0].reason = %q, want %q (the §25.9 line 3669 wire value)", got, "nextval_rollback")
+		t.Errorf("suspectedGaps[0].reason = %q, want %q (the §25.9 wire value)", got, "nextval_rollback")
 	}
 }
 
-// TestAdminAuditEventsGapWindowNonLinkingNotOutage pins the §25.9 line
-// 3668-3669 wire contract for a non-linking sequence gap: a gap whose
+// TestAdminAuditEventsGapWindowNonLinkingNotOutage pins the §25.9 wire contract for a non-linking sequence gap: a gap whose
 // prev_hash does not link across it is the tamper case, not a Postgres
-// outage, so the handler must not emit an outage window for it. §25.9 line
-// 3669 reserves the reason "postgres_unreachable" for a window computed
+// outage, so the handler must not emit an outage window for it. §25.9 reserves the reason "postgres_unreachable" for a window computed
 // from ops_postgres_outage_log, a subsystem the gateway does not operate,
 // so the handler never emits that reason and lists no benign window for a
 // non-linking gap. The tamper is carried by the per-row chainIntegrity
@@ -307,8 +304,7 @@ func TestAdminAuditEventsGapWindowReasonNextvalRollback(t *testing.T) {
 // non-linking gap "postgres_unreachable", mislabeling a tamper as an
 // outage) this contract assertion fails.
 //
-// spec: §25.9 line 3668 (a non-linking prev_hash gap is tampering, not an
-// outage), §25.9 line 3669 (postgres_unreachable is outage-log-covered).
+// spec: §25.9, §25.9.
 // F-11.2.10.
 // diagnosis: a failure means the audit-events API attributes a non-linking
 // (tamper) sequence gap to a Postgres outage window on the wire, so an

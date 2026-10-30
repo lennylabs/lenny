@@ -67,7 +67,7 @@ type RestoreFilter struct {
 	Status string
 }
 
-// PendingReconciler is the optional §25.11 lines 3976-3977 reconcile
+// PendingReconciler is the optional §25.11 reconcile
 // capability a durable Store implements: failing ops_backups rows stuck
 // in status:pending past the cutoff (their Kubernetes Job creation never
 // happened). A Postgres-backed store runs the sweep as one server-side

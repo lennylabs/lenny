@@ -10,10 +10,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
-// TestSessionRecordCarriesLabelsThroughJSON exercises the §27.2
-// line 41 SessionRecord.Labels round-trip: an operator-supplied
+// TestSessionRecordCarriesLabelsThroughJSON exercises the §27.2 SessionRecord.Labels round-trip: an operator-supplied
 // label survives Marshal+Unmarshal so a Redis-stored record carries
 // the audit/accounting labels back on every reread. F-27.2.1.
 func TestSessionRecordCarriesLabelsThroughJSON_spec_27_2_41(t *testing.T) {
@@ -112,8 +113,9 @@ func TestLogoutRevokesSessionBearer(t *testing.T) {
 		TenantID: "acme",
 		Scope:    "tools:sessions:read",
 	}}
-	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, BearerTTL: 900 * time.Second}, Options{
-		Signer:   signer,
+	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, CapabilityTokenTTL: 900 * time.Second}, Options{
+		Signer:   jwtsign.HMAC(signer),
+		Verifier: signer,
 		Sessions: store,
 		OIDC:     oidc,
 		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
@@ -170,7 +172,7 @@ func TestLogoutRevokesSessionBearer(t *testing.T) {
 		if ev.Type == "playground.bearer_revoked" {
 			sawRevoke = true
 		}
-		// spec: §27.2 line 41 — every playground audit event carries
+		// spec: §27.2 — every playground audit event carries
 		// the EffectiveLabels map (origin: "playground" plus any
 		// operator-configured entries). F-27.2.1.
 		if ev.Labels["origin"] != PlaygroundOrigin {
@@ -192,12 +194,13 @@ func TestRevokedBearerCheckSurvivesAcrossHandlers(t *testing.T) {
 	oidc := &fakeOIDC{subject: OIDCSubject{UserID: "eve", TenantID: "acme", Scope: "tools:sessions:read"}}
 
 	opts := Options{
-		Signer:   signer,
+		Signer:   jwtsign.HMAC(signer),
+		Verifier: signer,
 		Sessions: store,
 		OIDC:     oidc,
 		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 	}
-	cfg := Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, BearerTTL: 900 * time.Second}
+	cfg := Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, CapabilityTokenTTL: 900 * time.Second}
 	replicaA := New(cfg, opts)
 	replicaB := New(cfg, opts)
 
@@ -305,7 +308,7 @@ func mintWithCookie(t *testing.T, tokenSrv *httptest.Server, cookie string) stri
 }
 
 // idTenantForCookie returns the opaque session id (the whole cookie
-// value per §27.3.1 line 81) together with the tenant the store indexed
+// value per §27.3.1) together with the tenant the store indexed
 // for it. The cookie no longer embeds the tenant, so the tenant is
 // recovered through SessionStore.TenantForSession. F-27.3.8.
 func idTenantForCookie(t *testing.T, store SessionStore, cookie string) (id, tenant string) {

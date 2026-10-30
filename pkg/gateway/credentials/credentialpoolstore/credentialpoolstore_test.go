@@ -50,7 +50,7 @@ func TestValidateCacheScope(t *testing.T) {
 // deliveryMode and proxyDialect are closed enums (empty accepted), and
 // proxyEndpoint must use the https:// scheme.
 //
-// spec: §4.9 lines 1481 (dialects), 1503-1511 (pool example), 1513
+// spec: §4.9
 // (InvalidProxyEndpointScheme).
 func TestValidateProxyFields(t *testing.T) {
 	for _, m := range []string{"", "proxy", "direct"} {
@@ -60,8 +60,8 @@ func TestValidateProxyFields(t *testing.T) {
 			t.Errorf("Validate deliveryMode %q: %v, want nil", m, err)
 		}
 	}
-	// spec: §4.9 lines 1473-1476 launch dialects (anthropic, openai);
-	// §26.5 / §26.8 / §26.9 add `google`; §26.6 line 297 adds `cursor`.
+	// spec: §4.9 launch dialects (anthropic, openai);
+	// §26.5 / §26.8 / §26.9 add `google`; §26.6 adds `cursor`.
 	for _, d := range []string{"", "openai", "anthropic", "google", "cursor"} {
 		p := samplePool("acme", "pool-pd")
 		p.ProxyDialect = d
@@ -81,7 +81,7 @@ func TestValidateProxyFields(t *testing.T) {
 	}
 }
 
-// TestValidateProxyEndpointScheme covers the §4.9 line 1513 rule: a
+// TestValidateProxyEndpointScheme covers the §4.9 rule: a
 // proxyEndpoint must use https://; http:// and other schemes are
 // rejected with ErrInvalidProxyEndpointScheme. Empty inherits the
 // gateway default.
@@ -142,8 +142,7 @@ func TestCacheScopeRoundTrips(t *testing.T) {
 	}
 }
 
-// TestValidateCachePolicy covers the §4.9 CachePolicy structural
-// invariants (spec lines 1542-1556): a nil policy is valid (caching
+// TestValidateCachePolicy covers the §4.9 CachePolicy structural invariants: a nil policy is valid (caching
 // off); strategy and backend are closed enums (empty accepted); ttl is
 // non-negative; similarityThreshold is in [0, 1].
 func TestValidateCachePolicy(t *testing.T) {

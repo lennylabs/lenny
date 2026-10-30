@@ -420,8 +420,7 @@ func assertStoreOutageDegrades(t *testing.T, c *kind.Cluster, s storeOutageScena
 
 // expectedDegradationLevel maps a §25.3 aggregate health status to the
 // §25.2 degradation-envelope level the report must carry alongside it:
-// healthy→healthy, degraded→degraded, unhealthy→failed. spec: §25.2
-// lines 210, 233.
+// healthy→healthy, degraded→degraded, unhealthy→failed. spec: §25.2.
 func expectedDegradationLevel(status string) string {
 	switch status {
 	case "degraded":
@@ -442,9 +441,7 @@ func expectedDegradationLevel(status string) string {
 // rules), and its level is the §25.2 mapping of the report's overall
 // status. This pins the response-level envelope an agent reads against
 // the live JSON during a real store outage, which unit tests exercise
-// only in process. spec: §25.2 line 224 (thresholdSource is used for
-// health responses); §25.3 line 529 (health Degradation); §25.13 line
-// 4851 (compiled-in-defaults on the in-process fallback view).
+// only in process. spec: §25.2; §25.3; §25.13.
 func assertDegradationEnvelope(t *testing.T, report healthReport, when string) {
 	t.Helper()
 	if report.Degradation == nil {
@@ -494,29 +491,27 @@ func assertNoCrashLoop(t *testing.T, c *kind.Cluster, deployment, selector strin
 // the `mc mb` step in tests/testinfra/kind/install.sh: a one-shot mc
 // pod connecting straight to the MinIO pod IP (the lenny-system
 // default-deny NetworkPolicy denies a throwaway pod's egress to
-// CoreDNS, so the Service DNS name would not resolve).
+// CoreDNS, so the Service DNS name would not resolve). MinIO serves
+// https on :9000, and the pod IP never matches the serving cert's DNS
+// SAN, so this throwaway bootstrap pod runs mc with --insecure. The
+// gateway and the chart's bucket-lifecycle Job verify the cert against
+// the mounted CA; only this pod skips verification.
 func ensureMinIOBucket(t *testing.T, c *kind.Cluster) {
 	t.Helper()
-	podIP, err := c.KubectlOut(
-		t,
-		"-n", lennySystemNamespace, "get", "pod",
-		"-l", "lenny.dev/e2e-datastore=minio",
-		"-o", "jsonpath={.items[0].status.podIP}",
-	)
-	podIP = strings.TrimSpace(podIP)
-	if err != nil || podIP == "" {
-		t.Errorf("could not resolve the lenny-minio pod IP to recreate the artifact bucket: %v", err)
+	podIP := dataStorePodIP(t, c, "minio")
+	if podIP == "" {
+		t.Errorf("could not resolve a live lenny-minio pod IP to recreate the artifact bucket")
 		return
 	}
 	_, _ = c.KubectlOut(t, "-n", lennySystemNamespace, "delete", "pod",
 		"chaos-minio-mb", "--ignore-not-found", "--wait=true")
 	script := "set -e; " +
-		"mc alias set e2e http://" + podIP + ":9000 lennyminio lennyminio123 >/dev/null 2>&1; " +
-		"mc mb --ignore-existing e2e/lenny-artifacts"
+		"mc --insecure alias set e2e https://" + podIP + ":9000 lennyminio lennyminio123 >/dev/null 2>&1; " +
+		"mc --insecure mb --ignore-existing e2e/lenny-artifacts"
 	if out, err := c.KubectlOut(
 		t,
 		"-n", lennySystemNamespace, "run", "chaos-minio-mb",
-		"--image=minio/mc:RELEASE.2024-09-16T17-43-14Z",
+		"--image="+kind.MinIOClientImage,
 		"--image-pull-policy=IfNotPresent", "--restart=Never",
 		"--attach", "--rm", "--quiet", "--command", "--",
 		"/bin/sh", "-c", script,

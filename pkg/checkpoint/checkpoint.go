@@ -172,7 +172,7 @@ func RetryBudgetFor(t Trigger) RetryBudget {
 	}
 }
 
-// RetryBudgetForFallback returns the §4.4 line 277 retry parameters for
+// RetryBudgetForFallback returns the §4.4 retry parameters for
 // the eviction Postgres minimal-state fallback write. The budget covers
 // the managed Postgres failover window (RDS Multi-AZ, Cloud SQL HA:
 // typically 15–30 s) that can prevent the first write attempt from
@@ -183,7 +183,7 @@ func RetryBudgetFor(t Trigger) RetryBudget {
 // delay is 500 ms; growth factor is 2x (encoded by the caller's
 // backoff helper).
 //
-// spec: §4.4 line 277 — "The Postgres write is retried with exponential
+// spec: §4.4 — "The Postgres write is retried with exponential
 // backoff (initial 500ms, factor 2x, capped at 5s per attempt) for up
 // to 60 seconds total."
 func RetryBudgetForFallback() RetryBudget {

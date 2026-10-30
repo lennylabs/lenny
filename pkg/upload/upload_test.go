@@ -43,7 +43,7 @@ func TestForbiddenEntryKinds(t *testing.T) {
 }
 
 func TestValidateEntryAcceptsRegularInWorkspace(t *testing.T) {
-	allow := RuntimeAllow{WorkspaceRoot: "/workspace/current"}
+	allow := RuntimeAllow{WorkspaceRoot: "/workspace/slots/sess-1/current"}
 	cases := []Entry{
 		{Path: "src/main.go", Kind: KindRegular, Size: 1024},
 		{Path: "docs/README.md", Kind: KindRegular, Size: 4096},
@@ -67,7 +67,7 @@ func TestValidateEntryRejectsForbiddenKinds(t *testing.T) {
 	}
 }
 
-// spec: §7.4 zip-slip / §15.1 line 1093 — an absolute entry path is a
+// spec: §7.4 zip-slip / §15.1 — an absolute entry path is a
 // path_escapes_root rejection (the §15.1 client-visible sub-code), not
 // the source-compat-only path_traversal label. F-13.4.9.
 func TestValidateEntryRejectsAbsolutePath(t *testing.T) {
@@ -78,7 +78,7 @@ func TestValidateEntryRejectsAbsolutePath(t *testing.T) {
 	}
 }
 
-// spec: §7.4 zip-slip / §15.1 line 1093 — `..`-bearing paths surface the
+// spec: §7.4 zip-slip / §15.1 — `..`-bearing paths surface the
 // path_escapes_root sub-code. F-13.4.9.
 func TestValidateEntryRejectsTraversal(t *testing.T) {
 	cases := []string{
@@ -128,7 +128,7 @@ func TestValidateEntryRejectsOversizedEntry(t *testing.T) {
 }
 
 func TestValidateEntryRejectsSymlinkByDefault(t *testing.T) {
-	err := ValidateEntry(Entry{Path: "link", Kind: KindSymlink, LinkTarget: "target"}, RuntimeAllow{WorkspaceRoot: "/workspace/current"})
+	err := ValidateEntry(Entry{Path: "link", Kind: KindSymlink, LinkTarget: "target"}, RuntimeAllow{WorkspaceRoot: "/workspace/slots/sess-1/current"})
 	var ve *ValidationError
 	if !errors.As(err, &ve) || ve.Reason != ReasonSymlink {
 		t.Errorf("symlink default reject: want symlink, got %v", err)
@@ -136,7 +136,7 @@ func TestValidateEntryRejectsSymlinkByDefault(t *testing.T) {
 }
 
 func TestValidateEntrySymlinkOptInWorkspaceLocalTarget(t *testing.T) {
-	allow := RuntimeAllow{AllowSymlinks: true, WorkspaceRoot: "/workspace/current"}
+	allow := RuntimeAllow{AllowSymlinks: true, WorkspaceRoot: "/workspace/slots/sess-1/current"}
 	err := ValidateEntry(Entry{Path: "src/link", Kind: KindSymlink, LinkTarget: "../docs/README.md"}, allow)
 	if err != nil {
 		t.Errorf("workspace-local symlink with opt-in: want nil, got %v", err)
@@ -144,14 +144,14 @@ func TestValidateEntrySymlinkOptInWorkspaceLocalTarget(t *testing.T) {
 }
 
 func TestValidateEntrySymlinkRejectsEscape(t *testing.T) {
-	allow := RuntimeAllow{AllowSymlinks: true, WorkspaceRoot: "/workspace/current"}
+	allow := RuntimeAllow{AllowSymlinks: true, WorkspaceRoot: "/workspace/slots/sess-1/current"}
 	cases := []string{
 		"/etc/passwd",
 		"../../etc/passwd",
 		"/proc/self/environ",
 		"/sys/kernel/debug",
 		"/dev/null",
-		"/run/lenny/credentials.json",
+		"/run/lenny/slots/sess-1/credentials.json",
 	}
 	for _, target := range cases {
 		err := ValidateEntry(Entry{Path: "link", Kind: KindSymlink, LinkTarget: target}, allow)
@@ -167,7 +167,7 @@ func TestValidateEntrySymlinkRejectsEscape(t *testing.T) {
 }
 
 func TestValidateSymlinkTargetRejectsEmpty(t *testing.T) {
-	err := ValidateSymlinkTarget("link", "", "/workspace/current")
+	err := ValidateSymlinkTarget("link", "", "/workspace/slots/sess-1/current")
 	var ve *ValidationError
 	if !errors.As(err, &ve) || ve.Reason != ReasonSymlink {
 		t.Errorf("empty target: want symlink, got %v", err)
@@ -217,7 +217,7 @@ func TestValidateArchiveAcceptsBoundaryRatio(t *testing.T) {
 	}
 }
 
-// spec: §13.4 line 659 — a ratio just above the integer boundary must be
+// spec: §13.4 — a ratio just above the integer boundary must be
 // rejected; integer division previously truncated it to the boundary and
 // admitted it (F-13.4.14).
 func TestValidateArchiveRejectsRatioJustOverBoundary_spec_13_4(t *testing.T) {
@@ -247,7 +247,7 @@ func TestValidateArchiveRejectsRatioJustOverBoundary_spec_13_4(t *testing.T) {
 	}
 }
 
-// spec: §13.4 line 665 — ValidateSymlinkTarget must reject a workspace root
+// spec: §13.4 — ValidateSymlinkTarget must reject a workspace root
 // that is not a clean absolute slash path so the containment check cannot
 // silently misbehave on a relative or OS-native root (F-13.4.13).
 func TestValidateSymlinkTargetRejectsMalformedRoot_spec_13_4(t *testing.T) {
@@ -258,7 +258,7 @@ func TestValidateSymlinkTargetRejectsMalformedRoot_spec_13_4(t *testing.T) {
 		{name: "relative root", root: "workspace/current"},
 		{name: "windows root", root: `C:\workspace\current`},
 		{name: "empty root", root: ""},
-		{name: "trailing slash", root: "/workspace/current/"},
+		{name: "trailing slash", root: "/workspace/slots/sess-1/current/"},
 		{name: "dotdot in root", root: "/workspace/../current"},
 		{name: "dot in root", root: "/workspace/./current"},
 	}
@@ -272,7 +272,7 @@ func TestValidateSymlinkTargetRejectsMalformedRoot_spec_13_4(t *testing.T) {
 		})
 	}
 	// The canonical §13.4 root must remain valid.
-	if err := ValidateSymlinkTarget("link", "sub/file.txt", "/workspace/current"); err != nil {
+	if err := ValidateSymlinkTarget("link", "sub/file.txt", "/workspace/slots/sess-1/current"); err != nil {
 		t.Fatalf("canonical root must be accepted, got %v", err)
 	}
 }

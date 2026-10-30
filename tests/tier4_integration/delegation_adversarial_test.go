@@ -73,7 +73,8 @@ func lennyErrorEnvelope(t *testing.T, rpc map[string]any) map[string]any {
 // spec default (false) because this harness registers no Runtime or
 // DelegationPolicy resource for "echo", so neither layer can opt in.
 func TestDelegationCycleDetectedRejectsSelfRecursion(t *testing.T) {
-	gw := gateway.StartWith(t, "--dev-mode", "--gateway-allow-self-recursion=true")
+	t.Parallel()
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--gateway-allow-self-recursion=true")
 	c := mcpClient{t: t, base: gw.BaseURL()}
 
 	root := c.runningSession()
@@ -139,7 +140,8 @@ func TestDelegationCycleDetectedRejectsSelfRecursion(t *testing.T) {
 // gateway actually serves, not just pkg/gateway/mcpfabric/delegation's
 // direct Service.Delegate unit tests.
 func TestDelegationDepthExceededRejectsChainBeyondCeiling(t *testing.T) {
-	gw := gateway.StartWith(t, "--dev-mode", "--delegation-default-max-depth=2")
+	t.Parallel()
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--delegation-default-max-depth=2")
 	c := mcpClient{t: t, base: gw.BaseURL()}
 
 	// root is depth 0. Two successful hops reach depth 2, the
@@ -179,7 +181,8 @@ func TestDelegationDepthExceededRejectsChainBeyondCeiling(t *testing.T) {
 // pkg/delegation/lease unit tests that call ValidateChildSlice
 // directly.
 func TestDelegationBudgetExhaustedRejectsWidenedFanOutSlice(t *testing.T) {
-	gw := gateway.StartWith(t, "--dev-mode")
+	t.Parallel()
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	c := mcpClient{t: t, base: gw.BaseURL()}
 
 	root := c.runningSession()

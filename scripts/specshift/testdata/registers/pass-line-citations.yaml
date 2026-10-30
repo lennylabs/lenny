@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT
+#
+# Pass-register fixture in the form a driving register takes: keyed for
+# the rewrite it drives rather than by the residual entry schema. A
+# residual register records a triage decision and is a separate family,
+# so this document must load through the pass that owns its keying.
+kind: line-citations
+version: 1
+files:
+  pkg/carrier/carrier.go: 2

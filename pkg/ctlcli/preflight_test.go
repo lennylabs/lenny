@@ -40,7 +40,7 @@ func crd(name, version string) *apiextensionsv1.CustomResourceDefinition {
 	return c
 }
 
-// spec: §10.5 line 443 — `lenny-ctl preflight` exits 0 when every
+// spec: §10.5 — `lenny-ctl preflight` exits 0 when every
 // installed CRD is current and non-zero with the verbatim stale-CRD
 // message otherwise. F-10.5.4.
 func TestRunPreflightCRDCheck_spec_10_5_443(t *testing.T) {
@@ -74,7 +74,7 @@ func TestRunPreflightCRDCheck_spec_10_5_443(t *testing.T) {
 			t.Fatalf("exit = %d, want 1", code)
 		}
 		if !strings.Contains(errb.String(), "schema version is") {
-			t.Errorf("stderr %q should carry the §10.5 line 443 stale-CRD message", errb.String())
+			t.Errorf("stderr %q should carry the §10.5 stale-CRD message", errb.String())
 		}
 	})
 
@@ -110,7 +110,7 @@ func (f fakeMIO) ProbeMinIO(context.Context, string, string, string, string, boo
 	return f.err
 }
 
-// spec: §24.2 line 47 — the values file supplies the connection fallback;
+// spec: §24.2 — the values file supplies the connection fallback;
 // the spec-named key (postgres.connectionString) wins over the chart key
 // (postgres.dsn), and minio.useSSL is honoured.
 func TestLoadPreflightValues_spec_24_2_47(t *testing.T) {
@@ -163,7 +163,7 @@ func TestLoadPreflightValues_EmptyPathDefaultsSSLTrue(t *testing.T) {
 	}
 }
 
-// spec: §24.2 line 39 — standalone mode probes locally; all-pass exits 0.
+// spec: §24.2 — standalone mode probes locally; all-pass exits 0.
 func TestRunStandalonePreflight_AllPass(t *testing.T) {
 	var out, errb bytes.Buffer
 	cfg := infra.Config{PostgresDSN: "postgres://x", RedisDSN: "redis://x"}
@@ -181,7 +181,7 @@ func TestRunStandalonePreflight_AllPass(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 890 — an unreachable backend fails the standalone run.
+// spec: §15.1 — an unreachable backend fails the standalone run.
 func TestRunStandalonePreflight_BackendFailureExits1(t *testing.T) {
 	var out, errb bytes.Buffer
 	cfg := infra.Config{PostgresDSN: "postgres://x"}
@@ -195,7 +195,7 @@ func TestRunStandalonePreflight_BackendFailureExits1(t *testing.T) {
 	}
 }
 
-// spec: §10.5 line 443 — when Lenny CRDs are installed (upgrade), the
+// spec: §10.5 — when Lenny CRDs are installed (upgrade), the
 // CRD-currency check runs and a stale CRD fails the preflight.
 func TestRunStandalonePreflight_CRDCheckRunsWhenInstalled(t *testing.T) {
 	var objs []client.Object
@@ -231,7 +231,7 @@ func TestRunStandalonePreflight_FreshInstallSkipsCRD(t *testing.T) {
 	}
 }
 
-// spec: §24.2 line 43 — API-backed mode renders the gateway's report and
+// spec: §24.2 — API-backed mode renders the gateway's report and
 // exits non-zero on a failed check.
 func TestRunAPIPreflight_spec_24_2_43(t *testing.T) {
 	t.Run("pass", func(t *testing.T) {
@@ -259,7 +259,7 @@ func TestRunAPIPreflight_spec_24_2_43(t *testing.T) {
 	})
 }
 
-// spec: §24.2 line 39 — reachability decides the mode; a live /healthz is
+// spec: §24.2 — reachability decides the mode; a live /healthz is
 // reachable, a dead URL is not.
 func TestPreflightGatewayReachable(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

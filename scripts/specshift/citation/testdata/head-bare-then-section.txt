@@ -1,0 +1,2 @@
+// spec: 11.3 line 199 (max client idle row), 6.2 (maxClientIdleSeconds
+// field)

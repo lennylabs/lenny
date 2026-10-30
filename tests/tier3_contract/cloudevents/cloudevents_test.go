@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Contract test for the §12.3.7 CloudEvents envelope. The EventBus
+// Contract test for the TESTING.md §12.3.7 CloudEvents envelope. The EventBus
 // publishes CloudEvents v1.0.2 messages; this suite asserts every
 // published event carries the required context attributes, the
 // lenny-prefixed extension attributes (lennytenantid,
@@ -31,7 +31,7 @@ import (
 )
 
 // spec: 12.3.7
-// diagnosis: §12.3.7 mandates that every published Event sets the
+// diagnosis: TESTING.md §12.3.7 mandates that every published Event sets the
 // CloudEvents v1.0.2 context attributes — specversion "1.0", a unique
 // id, a //lenny.dev/ source, a dev.lenny.<short_name> type, an RFC 3339
 // time, a datacontenttype, and an opaque subject. A produced envelope
@@ -49,9 +49,9 @@ func TestCloudEventsEnvelopeShape(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewEvent %s: %v", short, err)
 		}
-		// Validate enforces the §12.3.7 envelope contract.
+		// Validate enforces the TESTING.md §12.3.7 envelope contract.
 		if err := ev.Validate(); err != nil {
-			t.Errorf("%s: envelope fails the §12.3.7 contract: %v", short, err)
+			t.Errorf("%s: envelope fails the TESTING.md §12.3.7 contract: %v", short, err)
 		}
 		if ev.SpecVersion != "1.0" {
 			t.Errorf("%s: specversion = %q, want 1.0", short, ev.SpecVersion)
@@ -82,7 +82,7 @@ func TestCloudEventsEnvelopeShape(t *testing.T) {
 }
 
 // spec: 12.3.7
-// diagnosis: §12.3.7 says lennytenantid is always present and mirrors
+// diagnosis: TESTING.md §12.3.7 says lennytenantid is always present and mirrors
 // the tenantID; lennyrootsessionid is present for delegation-tree
 // events; lennyoperationid is present where applicable. A publisher
 // that omits a mandated extension breaks cross-cutting SIEM filters.
@@ -133,7 +133,7 @@ func TestCloudEventsLennyExtensions(t *testing.T) {
 }
 
 // spec: 12.3.7
-// diagnosis: §12.3.7 says EventBus events are published on
+// diagnosis: TESTING.md §12.3.7 says EventBus events are published on
 // tenant-prefixed channels (t:{tenant_id}:evt:{topic}) and a
 // subscriber on tenant A never receives tenant B events. The channel
 // name must be derived solely from the tenant id and topic so two
@@ -145,19 +145,19 @@ func TestCloudEventsTenantPrefixedChannels(t *testing.T) {
 		if a == b {
 			t.Errorf("topic %q: tenants acme and globex share channel %q", topic, a)
 		}
-		if !strings.HasPrefix(a, "t:acme:evt:") {
+		if !strings.HasPrefix(a, "t:{acme}:evt:") {
 			t.Errorf("topic %q: channel %q lacks the t:{tenant}:evt: prefix", topic, a)
 		}
 	}
-	// The two §12.3.7 topics produce distinct channels for one tenant.
+	// The two TESTING.md §12.3.7 topics produce distinct channels for one tenant.
 	if eventbus.ChannelName("acme", eventbus.TopicDelegationTree) ==
 		eventbus.ChannelName("acme", eventbus.TopicSessionLifecycle) {
-		t.Error("the two §12.3.7 topics must map to distinct channels")
+		t.Error("the two TESTING.md §12.3.7 topics must map to distinct channels")
 	}
 }
 
 // spec: 12.3.7
-// diagnosis: §12.3.7 says an audit-bearing event carrying an OCSF
+// diagnosis: TESTING.md §12.3.7 says an audit-bearing event carrying an OCSF
 // record sets datacontenttype application/ocsf+json; a plain control
 // event uses application/json. The single-envelope model — nothing is
 // double-wrapped — depends on the content-type discriminator.
@@ -344,8 +344,7 @@ func TestCloudEventsAlertFiredPayloadFields(t *testing.T) {
 // concrete minWarm value depends on the pool's live claim rate, which
 // the static rule catalog compiled at build time has no way to know;
 // only the runtime §25.6 pool diagnostic can compute it). The §25.7
-// Path B canonical alert_fired example (spec/25_agent-operability.md
-// around line 3238) goes further and omits suggestedAction from the
+// Path B canonical alert_fired example (§25.7 around) goes further and omits suggestedAction from the
 // payload entirely, conflicting with §25.17's fuller illustration.
 // Reconciling whether §25.17's example should drop `body` (matching
 // the deliberate rule-level design) or whether the catalog should grow

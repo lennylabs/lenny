@@ -22,8 +22,7 @@ func (s fixedCertSource) CertStatuses(context.Context) ([]opsservice.CertStatus,
 	return s.certs, s.err
 }
 
-// TestCertManagerCheck_spec_25_8 exercises the §25.8 cert-manager health
-// thresholds (spec lines 3457-3459): >30d healthy, within 30d + renewal
+// TestCertManagerCheck_spec_25_8 exercises the §25.8 cert-manager health thresholds: >30d healthy, within 30d + renewal
 // failed degraded, within 7d or expired unhealthy, plus the
 // nil-source/empty/source-error/unissued edge cases.
 func TestCertManagerCheck_spec_25_8(t *testing.T) {

@@ -44,16 +44,14 @@ type ContainerSecurity struct {
 // CheckPodSecurityBaseline verifies the §13.1 pod-security baseline on
 // every Lenny-managed workload's pod template: each container MUST run
 // as non-root, drop all capabilities, and mount a read-only root
-// filesystem (§13.1 lines 6-8). The chart authors these settings into
+// filesystem (§13.1). The chart authors these settings into
 // every rendered Deployment, DaemonSet, and Job, so a passing check is
 // the steady state; a failure means a value override, a patched Job, or
 // an injected sidecar weakened the baseline. The first non-conformant
 // container fails the check fail-closed with
 // POD_SPEC_SECURITY_BASELINE_VIOLATION.
 //
-// spec: §13.1 lines 6-8 (User: Non-root; Capabilities: All dropped;
-// Root filesystem: Read-only); §13.1 line 16 (the controls apply to
-// every pod template Lenny generates). F-13.1.12.
+// spec: §13.1; §13.1. F-13.1.12.
 func CheckPodSecurityBaseline(workloads []WorkloadPodSecurity) Decision {
 	for _, w := range workloads {
 		for _, c := range w.Containers {

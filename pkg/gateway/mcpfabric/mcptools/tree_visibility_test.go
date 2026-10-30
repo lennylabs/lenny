@@ -113,8 +113,9 @@ func newMCPForDelegateVis(t *testing.T) (*mcp.Server, sessionstore.Store) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Executor: executor.NewEchoExecutor(),
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
 		Delegation: delegation.NewService(store, delegation.Options{
 			Clock:  func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 			IDFunc: func() string { return "sess_child" },

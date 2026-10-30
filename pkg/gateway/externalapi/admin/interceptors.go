@@ -171,14 +171,14 @@ func (r *Router) handleCreateInterceptor(w http.ResponseWriter, req *http.Reques
 		writeInterceptorValidationError(w, err)
 		return
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting.
+	// spec: §15.1 — ?dryRun=true validates without persisting.
 	if req.URL.Query().Get("dryRun") == "true" {
 		writeDryRun(w, http.StatusCreated, fromInterceptor(ic))
 		return
 	}
 	if err := r.interceptors.Create(req.Context(), ic); err != nil {
 		if errors.Is(err, interceptorstore.ErrAlreadyExists) {
-			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			// spec: §15.1 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
 			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"interceptor with this name already exists", nil)
 			return
@@ -265,7 +265,7 @@ func (r *Router) handleUpdateInterceptor(w http.ResponseWriter, req *http.Reques
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
 		return
 	}
-	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match.
+	// spec: §15.1 — every admin PUT requires If-Match.
 	if !enforceIfMatch(w, req, current.Version) {
 		return
 	}
@@ -337,8 +337,7 @@ func (r *Router) applyInterceptorUpdate(ic *interceptorstore.Interceptor, body I
 	}
 }
 
-// emitInterceptorFailPolicyTransition emits the §4.8 line 1034 / §8.3
-// line 218 audit events for a failPolicy change. A weakening
+// emitInterceptorFailPolicyTransition emits the §4.8 / §8.3 audit events for a failPolicy change. A weakening
 // (fail-closed → fail-open) emits interceptor.fail_policy_weakened plus a
 // single interceptor.weakening_cooldown_active for the window entry; a
 // strengthening (fail-open → fail-closed) emits
@@ -368,7 +367,7 @@ func (r *Router) emitInterceptorFailPolicyTransition(ctx context.Context, p auth
 			billingstore.EventInterceptorFailPolicyWeakened, p.TenantID, name,
 			string(oldFailPolicy), string(updated.FailPolicy), uint32(count), names, transitionTs, uint32(cooldown),
 		))
-		// spec: §8.3 line 218 — one weakening_cooldown_active per window
+		// spec: §8.3 — one weakening_cooldown_active per window
 		// entry (not per rejected request).
 		r.emit(ctx, p, string(audit.EventInterceptorWeakeningCooldownActive), name, map[string]any{
 			"interceptor_ref":       name,
@@ -393,7 +392,7 @@ func (r *Router) emitInterceptorFailPolicyTransition(ctx context.Context, p auth
 // interceptorAffectedPolicies counts the active DelegationPolicy
 // resources (across all tenants) whose contentPolicy.interceptorRef
 // names the interceptor, returning the count and the policy names (the
-// §4.8 line 1034 affected_policy_count / affected_policy_names). It is a
+// §4.8 affected_policy_count / affected_policy_names). It is a
 // no-op returning (0, nil) when the delegation-policy registry is not
 // wired.
 func (r *Router) interceptorAffectedPolicies(ctx context.Context, name string) (int, []string) {
@@ -450,7 +449,7 @@ func (r *Router) handleDeleteInterceptor(w http.ResponseWriter, req *http.Reques
 			map[string]any{"dependents": []map[string]any{entry}})
 		return
 	}
-	// spec: §15.1 line 1213 — DELETE honours If-Match only when present.
+	// spec: §15.1 — DELETE honours If-Match only when present.
 	if !enforceIfMatchIfPresent(w, req, current.Version) {
 		return
 	}

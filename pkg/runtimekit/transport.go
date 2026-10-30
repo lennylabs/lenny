@@ -3,7 +3,7 @@
 // Package runtimekit provides the transport selection a §4.7 reference
 // runtime uses to run under either deployment model.
 //
-// A §15.4.1 runtime exchanges newline-delimited JSON frames with the
+// A §28.5.3 runtime exchanges newline-delimited JSON frames with the
 // adapter. The framing is identical in both deployment models; only the
 // byte transport differs:
 //
@@ -20,7 +20,8 @@
 //     the LENNY_ADAPTER_SOCKET environment variable.
 //
 // Open resolves the transport from the environment: when
-// LENNY_ADAPTER_SOCKET is set it dials that socket, otherwise it
+// LENNY_ADAPTER_SOCKET is set it dials that socket and performs the runtime
+// connection handshake (DialAuthenticated), otherwise it
 // returns os.Stdin/os.Stdout. A reference runtime calls Open once at
 // startup and runs its existing JSONL loop against the returned
 // io.Reader and io.Writer unchanged.
@@ -45,12 +46,13 @@ import (
 const SocketEnvVar = "LENNY_ADAPTER_SOCKET"
 
 // dialTimeout bounds how long DialSocket waits for the adapter's
-// listener to accept. The adapter spawns the runtime container after it
-// has already bound the socket (§4.7 startup sequence), but the runtime
-// process may still race the listener; a bounded retry absorbs that.
+// listener to accept. The adapter asks the runtime supervisor to launch
+// the runtime only after every listener the runtime dials is bound (§4.7.10,
+// Runtime supervisor, Launch); a runtime started outside that sequence may
+// race the listener, and a bounded retry absorbs that.
 const dialTimeout = 5 * time.Second
 
-// Transport is a resolved §15.4.1 byte transport: an io.Reader for
+// Transport is a resolved §28.5.3 byte transport: an io.Reader for
 // inbound frames, an io.Writer for outbound frames, and a Close that
 // releases the underlying connection. For the stdin/stdout transport
 // Close is a no-op; for the socket transport it closes the connection.
@@ -76,16 +78,18 @@ func (t *Transport) Close() error {
 	return t.closer.Close()
 }
 
-// Open resolves the §15.4.1 transport from the process environment. When
-// SocketEnvVar names an adapter socket it dials that socket and returns
-// a socket-backed Transport; otherwise it returns a Transport over
+// Open resolves the §28.5.3 transport from the process environment. When
+// SocketEnvVar names an adapter socket it dials that socket through
+// DialAuthenticated, with the manifest path ManifestPath resolves, and
+// returns a socket-backed Transport; otherwise it returns a Transport over
 // os.Stdin and os.Stdout. ctx bounds the socket dial.
+// spec: §4.7.11 (Runtime connection handshake).
 func Open(ctx context.Context) (*Transport, error) {
 	socket := strings.TrimSpace(os.Getenv(SocketEnvVar))
 	if socket == "" {
 		return &Transport{Reader: os.Stdin, Writer: os.Stdout}, nil
 	}
-	conn, err := DialSocket(ctx, socket)
+	conn, err := DialAuthenticated(ctx, socket, ManifestPath())
 	if err != nil {
 		return nil, fmt.Errorf("runtimekit: dial adapter socket %q: %w", socket, err)
 	}

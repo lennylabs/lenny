@@ -211,6 +211,58 @@ func endpointCount(t *testing.T, c *kind.Cluster, service string) int {
 	return len(strings.Fields(out))
 }
 
+// servingEndpointCount returns the number of EndpointSlice endpoints
+// backing the named Service in lenny-system that kube-proxy still routes
+// traffic to. It differs from endpointCount for a terminating pod: the
+// Endpoints addresses list drops a pod the moment it starts terminating,
+// but kube-proxy falls back to terminating endpoints whose serving
+// condition is still true when no ready endpoint remains. A gateway pod in
+// its preStop drain keeps serving=true until the next readiness probe
+// observes the drain flip, and the drain lasts as long as the sessions
+// bound to the replica take to checkpoint, so a Service whose Endpoints
+// list is empty can still answer requests. An outage test waits for this
+// count to reach zero before asserting the component is unreachable.
+// A serving condition the API server leaves unset is read as the ready
+// condition, which is how the discovery API defines it.
+func servingEndpointCount(t *testing.T, c *kind.Cluster, service string) int {
+	t.Helper()
+	out, err := c.KubectlOut(
+		t,
+		"-n", lennySystemNamespace, "get", "endpointslices",
+		"-l", "kubernetes.io/service-name="+service,
+		"-o", "jsonpath={range .items[*].endpoints[*]}{.conditions.ready}/{.conditions.serving}{\"\\n\"}{end}",
+	)
+	if err != nil {
+		return -1
+	}
+	return countServing(out)
+}
+
+// countServing counts the "ready/serving" lines servingEndpointCount reads
+// whose endpoint still receives traffic: serving is true, or serving is
+// unset and ready is true.
+func countServing(out string) int {
+	n := 0
+	for _, line := range strings.Fields(out) {
+		ready, serving, _ := strings.Cut(line, "/")
+		if serving == "true" || (serving == "" && ready == "true") {
+			n++
+		}
+	}
+	return n
+}
+
+// waitServiceUnreachable polls until the named Service has neither a
+// ready Endpoints address nor a serving EndpointSlice endpoint, so no
+// request through the Service can reach a pod, including a draining one.
+// It reports whether that held within the bound.
+func waitServiceUnreachable(t *testing.T, c *kind.Cluster, service string, timeout time.Duration) bool {
+	t.Helper()
+	return pollUntil(timeout, 2*time.Second, func() bool {
+		return endpointCount(t, c, service) == 0 && servingEndpointCount(t, c, service) == 0
+	})
+}
+
 // --- Store-outage injection -------------------------------------------
 
 // storeRecoveryBound is the time a store-outage chaos test allows for a
@@ -365,6 +417,10 @@ const probeNode = "lenny-e2e-worker"
 
 // probeRunAsUser is the numeric UID curlimages/curl runs as; the image
 // declares a non-numeric user, so runAsNonRoot needs an explicit UID.
+// The probe also uses it as its runAsGroup, so the container states its
+// whole identity at container level and stays outside the reserved
+// adapter and agent UIDs. That keeps the manifest admissible under
+// §13.1 (Container identity) if it is ever pointed at an agent namespace.
 const probeRunAsUser = 100
 
 // probeManifest renders a long-sleeping probe-pod manifest. The pod
@@ -395,9 +451,10 @@ spec:
         readOnlyRootFilesystem: true
         runAsNonRoot: true
         runAsUser: %d
+        runAsGroup: %d
         capabilities:
           drop: ["ALL"]
-`, name, lennySystemNamespace, probeNode, probeImage, probeRunAsUser)
+`, name, lennySystemNamespace, probeNode, probeImage, probeRunAsUser, probeRunAsUser)
 }
 
 // startGatewayProbePod creates a probe pod, registers a t.Cleanup to
@@ -504,8 +561,7 @@ type healthReport struct {
 	// §25.3 aggregate health report carries. The chaos tests decode it so
 	// a store outage is asserted against the top-level envelope the agent
 	// reads (its level and thresholdSource), not only the per-component
-	// status. spec: §25.2 line 224 (thresholdSource is used for health
-	// responses); §25.3 line 529 (health Degradation); §25.13 line 4851.
+	// status. spec: §25.2; §25.3; §25.13.
 	Degradation *degradationEnvelope `json:"degradation"`
 }
 
@@ -514,7 +570,7 @@ type healthReport struct {
 // aggregate view always evaluates the compiled-in thresholds, so the
 // §25.3 health report stamps thresholdSource=compiled-in-defaults; the
 // level tracks the worst component (healthy→healthy, degraded→degraded,
-// unhealthy→failed). spec: §25.2 line 224; §25.3 line 529; §25.13 line 4851.
+// unhealthy→failed). spec: §25.2; §25.3; §25.13.
 type degradationEnvelope struct {
 	Level           string `json:"level"`
 	ThresholdSource string `json:"thresholdSource"`
@@ -539,7 +595,7 @@ type suggestedActionJSON struct {
 
 // runbook returns the §25.7 Path B runbook the component points at, from
 // either the singular suggestedAction or the primary (highest-confidence)
-// ranked alternative. spec: §25.3 lines 459-501; §25.7 line 3234.
+// ranked alternative. spec: §25.3; §25.7.
 func (c healthComponent) runbook() string {
 	if c.SuggestedAction != nil {
 		return c.SuggestedAction.Runbook

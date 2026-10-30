@@ -197,7 +197,7 @@ func countEscalationCreated(t *testing.T, client redis.UniversalClient) int {
 // 2, durable-redis), then the in-memory buffer (Tier 3, buffered-memory),
 // stamping the accepting tier onto the record's persistence. §25.4
 // Emission Exactly-Once: "The event stream receives exactly one
-// escalation_created event per escalation." §25.4 line 2402: with
+// escalation_created event per escalation." §25.4: with
 // requireDurable set, a create with both Postgres and Redis unavailable
 // fails with ESCALATION_NO_DURABLE_STORE instead of a memory-only record.
 // Any deviation leaves an operator either without the durability tier the

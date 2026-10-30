@@ -81,3 +81,31 @@ func TestRevocationPropagationMetricNilSafe(t *testing.T) {
 	var m *gatewaymetrics.Metrics
 	m.ObserveRevocationPropagation("postgres_only", time.Second)
 }
+
+// TestDelegationBudgetKeysExpiredMetricExposes_spec_16_1 asserts that one
+// BUDGET_KEYS_EXPIRED detection is exposed on the registry's handler under
+// the root's pool and the tenant.
+// spec: §16.1
+func TestDelegationBudgetKeysExpiredMetricExposes_spec_16_1(t *testing.T) {
+	m, err := gatewaymetrics.New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m.IncDelegationBudgetKeysExpired("p", "acme")
+
+	rr := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("/metrics status %d", rr.Code)
+	}
+	if want := `lenny_delegation_budget_keys_expired_total{pool="p",tenant_id="acme"} 1`; !strings.Contains(rr.Body.String(), want) {
+		t.Errorf("/metrics missing %q\n---\n%s", want, rr.Body.String())
+	}
+}
+
+// TestDelegationBudgetKeysExpiredMetricNilSafe asserts the increment is a
+// no-op on a nil emitter. spec: §16.1
+func TestDelegationBudgetKeysExpiredMetricNilSafe(t *testing.T) {
+	var m *gatewaymetrics.Metrics
+	m.IncDelegationBudgetKeysExpired("p", "acme")
+}

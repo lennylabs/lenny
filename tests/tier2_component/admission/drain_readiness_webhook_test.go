@@ -71,7 +71,7 @@ const (
 	drainForceKey = "lenny.dev/drain-force"
 )
 
-// recordingDrainMetrics records every §12.5 line 291 outcome the
+// recordingDrainMetrics records every §12.5 outcome the
 // webhook reports so the test can assert allowed | blocked | forced.
 type recordingDrainMetrics struct{ outcomes []string }
 
@@ -294,7 +294,7 @@ func TestDrainReadinessWebhookEvictionDecision(t *testing.T) {
 			t.Errorf("eviction rejection = %q, want it to carry the §12.5 STR-006 code", err.Error())
 		}
 		if !metrics.has("blocked") {
-			t.Errorf("webhook did not record a §12.5 line 291 blocked outcome; outcomes=%v", metrics.outcomes)
+			t.Errorf("webhook did not record a §12.5 blocked outcome; outcomes=%v", metrics.outcomes)
 		}
 		// The denied pod must still exist: the whole point is that the
 		// eviction did not proceed.
@@ -337,7 +337,7 @@ func TestDrainReadinessWebhookEvictionDecision(t *testing.T) {
 				evt.PodNamespace, evt.PodName, drainNS, target)
 		}
 		if !metrics.has("forced") {
-			t.Errorf("webhook did not record a §12.5 line 291 forced outcome; outcomes=%v", metrics.outcomes)
+			t.Errorf("webhook did not record a §12.5 forced outcome; outcomes=%v", metrics.outcomes)
 		}
 	})
 }

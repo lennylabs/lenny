@@ -244,7 +244,7 @@ groups:
           labels:
             severity: critical
           annotations:
-            description: A Lua script returned BUDGET_KEYS_EXPIRED, indicating the delegation budget keys for a root session have expired while the tree was still active. The gateway initiates tree cleanup (cascade cancel + root to failed).
+            description: 'A BUDGET_KEYS_EXPIRED detection: a delegate_task reservation found the tree-wide sentinel key absent on its retry, indicating the delegation budget keys for a root session have expired while the tree was still active. TTL may be configured too short or the explicit compliance purge ran prematurely.'
             runbook_url: https://docs.lenny.dev/runbooks/delegation-budget-recovery
             summary: Delegation budget keys expired while tree active
         - alert: BillingStreamEntryAgeHigh
@@ -303,7 +303,7 @@ groups:
           labels:
             severity: critical
           annotations:
-            description: /v1/oauth/token has been returning 503 token_store_unavailable for more than 30s. Postgres primary is unreachable for token issuance; session creation, delegation minting, and credential leasing are all failing.
+            description: /v1/oauth/token has been returning 503 token_store_unavailable for more than 30s. Postgres primary is unreachable for token issuance; session creation and credential leasing are both failing.
             runbook_url: https://docs.lenny.dev/runbooks/token-store-unavailable
             summary: Token store unavailable
         - alert: BackupReconcileBlocked
@@ -445,7 +445,7 @@ groups:
           labels:
             severity: warning
           annotations:
-            description: The 300-second in-flight gate ceiling was hit for a rotation whose trigger is not proactive_renewal and the adapter had to force credentials_rotated regardless of outstanding in-flight LLM requests. Indicates a compromised or buggy runtime.
+            description: The 300-second in-flight gate ceiling was hit for a rotation whose trigger is not proactive_renewal and the adapter had to force credentials_rotated regardless of outstanding in-flight LLM requests. The gate polls the pod-wide per-provider in-flight counter, so on a pod holding more than one bound session a co-tenant's outstanding request for the same provider can drive the ceiling on its own. It indicates a compromised or buggy runtime that failed to emit llm_request_completed only once that cause is excluded.
             summary: Credential rotation hit the in-flight ceiling
         - alert: GatewayActiveStreamsHigh
           expr: lenny_gateway_active_streams / scalar(lenny_gateway_stream_ceiling) > 0.80
@@ -578,7 +578,7 @@ groups:
           labels:
             severity: warning
           annotations:
-            description: LENNY_ENV=production and audit.siem.endpoint is not set. Fires at startup and persists until an endpoint is configured. When any active tenant has a regulated complianceProfile the gateway refuses to start instead.
+            description: The deployment runs in production mode (environment prod) and audit.siem.endpoint is not set. Fires at startup and persists until an endpoint is configured. When any active tenant has a regulated complianceProfile the gateway refuses to start instead.
             summary: Audit SIEM endpoint not configured in production
         - alert: AuditChainGap
           expr: increase(lenny_audit_chain_integrity_total{state="broken"}[15m]) > 0
@@ -638,8 +638,17 @@ groups:
           labels:
             severity: warning
           annotations:
-            description: The gateway JWTSigner circuit breaker has tripped open — new session creation is failing with KMS_SIGNING_UNAVAILABLE. Existing sessions are unaffected until JWT expiry.
-            summary: Gateway KMS signing circuit breaker tripped
+            description: A JWTSigner circuit breaker on the gateway or the Token Service has tripped open, and new mints on that process fail with KMS_SIGNING_UNAVAILABLE. Verify KMS reachability and the KMS IAM binding of the ServiceAccount for the component the alert's job label names.
+            summary: A JWTSigner circuit breaker on the gateway or the Token Service tripped open
+        - alert: KMSSignQuotaApproaching
+          expr: sum(rate(lenny_jwt_sign_requests_total{outcome!="circuit_open"}[5m])) > 0.8 * scalar(max(lenny_kms_sign_quota_per_second) > 0)
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            description: The fleet-wide rate of JWT sign requests that reach the KMS has exceeded 80% of kms.signQuotaPerSecond for more than 10 minutes. Raise the provider's asymmetric Sign quota and kms.signQuotaPerSecond together.
+            runbook_url: https://docs.lenny.dev/runbooks/jwt-key-rotation#kms-sign-quota
+            summary: Fleet-wide KMS sign request rate exceeds 80% of the configured quota
         - alert: GatewaySubsystemCircuitOpen
           expr: max by (subsystem) (lenny_gateway_subsystem_circuit_state) == 2
           for: 1m
@@ -789,7 +798,7 @@ groups:
           labels:
             severity: warning
           annotations:
-            description: lenny_warmpool_warmup_failure_total rate exceeds 1 failure/min for any pool for more than 5 min; pods are failing to reach idle state during warm-up. WarmPoolLow / WarmPoolExhausted may follow.
+            description: lenny_warmpool_warmup_failure_total rate exceeds 1 failure/min for any pool for more than 5 min. The error_type label classifies each failure. WarmPoolLow / WarmPoolExhausted may follow.
             summary: Warm pool warm-up failures sustained
         - alert: PoolScaleoutBlockedByQuota
           expr: increase(lenny_warmpool_warmup_failure_total{error_type="resource_quota_exceeded"}[5m]) > 0
@@ -815,7 +824,7 @@ groups:
             description: A user-level erasure job has failed. The user's processing_restricted flag remains set, blocking all new sessions for that user. The failure_phase label distinguishes failure modes.
             summary: A user-level erasure job has failed
         - alert: ErasureJobOverdue
-          expr: lenny_erasure_job_age_seconds > scalar(lenny_erasure_job_deadline_seconds)
+          expr: max by (tenant_id, job_id) (lenny_erasure_job_overdue_seconds) > 0
           labels:
             severity: warning
           annotations:
@@ -915,7 +924,7 @@ groups:
           labels:
             severity: warning
           annotations:
-            description: LENNY_ENV=production and audit.retentionDays is below 365 days without a configured SIEM. Fires at startup. Suppressed when a SIEM is configured.
+            description: The deployment runs in production mode (environment prod) and audit.retentionDays is below 365 days without a configured SIEM. Fires at startup. Suppressed when a SIEM is configured.
             summary: Audit retention below 365 days without a SIEM
         - alert: PostgresWriteSaturation
           expr: lenny_postgres_write_iops / scalar(lenny_postgres_write_ceiling_iops) > 0.80
@@ -1012,14 +1021,14 @@ groups:
           labels:
             severity: warning
           annotations:
-            description: A session's seal-and-export operation has been retrying for longer than maxWorkspaceSealDurationSeconds without success. Indicates sustained MinIO unavailability; pods held in draining beyond this deadline are forcibly terminated.
+            description: A session's seal-and-export operation has been retrying for longer than maxWorkspaceSealDurationSeconds without success. Indicates sustained MinIO unavailability.
             summary: Workspace seal-and-export stuck
         - alert: InboxDrainFailure
           expr: increase(lenny_inbox_drain_failure_total[5m]) > 0
           labels:
             severity: warning
           annotations:
-            description: The atomic inbox-to-DLQ drain failed during a resume_pending state transition and the in-memory inbox messages for that session were permanently lost. This is the only acknowledged silent-data-loss path for inter-session messages.
+            description: The atomic inbox-to-DLQ drain failed, typically because Redis was unavailable, and the in-memory inbox messages for that session were permanently lost. This is the only acknowledged silent-data-loss path for inter-session messages.
             summary: Inbox-to-DLQ drain failed
         - alert: DurableInboxRedisUnavailable
           expr: rate(lenny_inbox_redis_unavailable_total[5m]) > 0

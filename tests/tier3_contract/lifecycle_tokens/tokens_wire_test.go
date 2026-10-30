@@ -9,7 +9,7 @@
 // token counts (§11.2); it carries those counts to the adapter on the
 // existing llm_request_completed lifecycle frame as the optional
 // inputTokens/outputTokens pair. These tests pin the wire contract of
-// that enriched frame against schemas/lifecycle-events.schema.json: the
+// that enriched frame against schemas/runtime-ops-events.schema.json: the
 // token pair is accepted at its boundary, and the {"type":"integer",
 // "minimum":0} constraint rejects a negative or non-integer count.
 package lifecycle_tokens_test
@@ -20,12 +20,12 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// validateFrame compiles the lifecycle-events schema and validates a
+// validateFrame compiles the runtime-ops-events schema and validates a
 // decoded frame against it, returning the validation error (nil when
 // the frame conforms).
 func validateFrame(t *testing.T, frame any) error {
 	t.Helper()
-	validator := schematest.Compile(t, "schemas/lifecycle-events.schema.json")
+	validator := schematest.Compile(t, "schemas/runtime-ops-events.schema.json")
 	return validator.Validate(frame)
 }
 
@@ -39,13 +39,14 @@ func validateFrame(t *testing.T, frame any) error {
 //	Without it the adapter has no spec-grounded direct-mode token
 //	source, so ReportUsage stays Unimplemented and the §11.2
 //	anomaly metric is dead config. Check that
-//	schemas/lifecycle-events.schema.json declares inputTokens and
+//	schemas/runtime-ops-events.schema.json declares inputTokens and
 //	outputTokens as {"type":"integer","minimum":0} properties.
 func TestLLMRequestCompletedAcceptsTokenCounts(t *testing.T) {
 	t.Parallel()
 
 	frame := map[string]any{
 		"type":         "llm_request_completed",
+		"sessionId":    "sess_01HX9F0YWXKK0V7QZ7G6P3R5JN",
 		"requestId":    "req_01HX9F0YWXKK0V7QZ7G6P3R5JN",
 		"provider":     "anthropic",
 		"status":       "ok",
@@ -69,6 +70,7 @@ func TestLLMRequestCompletedTokenCountsAreOptional(t *testing.T) {
 
 	frame := map[string]any{
 		"type":      "llm_request_completed",
+		"sessionId": "sess_01HX9F0YWXKK0V7QZ7G6P3R5JN",
 		"requestId": "req_01HX9F0YWXKK0V7QZ7G6P3R5JM",
 		"provider":  "anthropic",
 		"status":    "ok",
@@ -98,7 +100,7 @@ func TestLLMRequestCompletedRejectsNegativeTokenCounts(t *testing.T) {
 		{
 			name: "negative inputTokens",
 			frame: map[string]any{
-				"type": "llm_request_completed", "requestId": "req_neg_in",
+				"type": "llm_request_completed", "sessionId": "sess_01HX9F0YWXKK0V7QZ7G6P3R5JN", "requestId": "req_neg_in",
 				"provider": "anthropic", "status": "ok",
 				"inputTokens": -1, "outputTokens": 10,
 			},
@@ -106,7 +108,7 @@ func TestLLMRequestCompletedRejectsNegativeTokenCounts(t *testing.T) {
 		{
 			name: "negative outputTokens",
 			frame: map[string]any{
-				"type": "llm_request_completed", "requestId": "req_neg_out",
+				"type": "llm_request_completed", "sessionId": "sess_01HX9F0YWXKK0V7QZ7G6P3R5JN", "requestId": "req_neg_out",
 				"provider": "anthropic", "status": "ok",
 				"inputTokens": 10, "outputTokens": -5,
 			},
@@ -131,7 +133,7 @@ func TestLLMRequestCompletedRejectsFractionalTokenCounts(t *testing.T) {
 	t.Parallel()
 
 	frame := map[string]any{
-		"type": "llm_request_completed", "requestId": "req_frac",
+		"type": "llm_request_completed", "sessionId": "sess_01HX9F0YWXKK0V7QZ7G6P3R5JN", "requestId": "req_frac",
 		"provider": "anthropic", "status": "ok",
 		"inputTokens": 1.5, "outputTokens": 10,
 	}

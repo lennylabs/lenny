@@ -11,15 +11,15 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// The §14 line 338 last-writer-wins path-collision warning is raised by
+// The §14 last-writer-wins path-collision warning is raised by
 // the adapter's materializer across the sources it receives. Archive
 // entries reach the adapter as the uploadFile/mkdir/symlink sources the
-// gateway rewrote them into (§7.4 line 448 — the pod no longer
+// gateway rewrote them into (§7.4 — the pod no longer
 // decompresses), so these tests exercise collisions across inlineFile,
 // uploadFile, and mkdir sources. Intra-archive dedup is the gateway
 // extractor's concern (pkg/upload/archive). F-14.1.9, F-7.4.1.
 
-// collisionWarnings filters a warning slice to the §14 line 338
+// collisionWarnings filters a warning slice to the §14
 // path-collision advisories.
 func collisionWarnings(ws []workspace.Warning) []workspace.Warning {
 	var out []workspace.Warning
@@ -39,7 +39,7 @@ func uploadFileSource(path, ref, mode string) *adapterv1.WorkspaceSource {
 
 // TestMaterializeCollisionInlineOverInline asserts that two sources
 // resolving to the same workspace path raise a path-collision warning
-// with the later source winning. spec: §14 line 338. F-14.1.9.
+// with the later source winning. spec: §14. F-14.1.9.
 func TestMaterializeCollisionInlineOverInline_spec_14_338(t *testing.T) {
 	root := t.TempDir()
 	warnings, err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
@@ -63,7 +63,7 @@ func TestMaterializeCollisionInlineOverInline_spec_14_338(t *testing.T) {
 	if w.SourceIndex != w.WinningSourceIndex {
 		t.Errorf("SourceIndex = %d, want = WinningSourceIndex %d", w.SourceIndex, w.WinningSourceIndex)
 	}
-	// spec: §14 line 338 — last-writer-wins: the second source's content
+	// spec: §14 — last-writer-wins: the second source's content
 	// survives on disk.
 	got, _ := os.ReadFile(filepath.Join(root, "config", "app.yaml"))
 	if string(got) != "second" {
@@ -74,7 +74,7 @@ func TestMaterializeCollisionInlineOverInline_spec_14_338(t *testing.T) {
 // TestMaterializeCollisionInlineOverUploadFile is the spec's named
 // example expressed at the adapter's input: a gateway-extracted archive
 // entry (now a uploadFile) writes foo/bar.txt, then an inlineFile writes
-// foo/bar.txt. The later inlineFile wins. spec: §14 line 338. F-14.1.9.
+// foo/bar.txt. The later inlineFile wins. spec: §14. F-14.1.9.
 func TestMaterializeCollisionInlineOverUploadFile_spec_14_338(t *testing.T) {
 	root := t.TempDir()
 	staging := t.TempDir()
@@ -106,7 +106,7 @@ func TestMaterializeCollisionInlineOverUploadFile_spec_14_338(t *testing.T) {
 
 // TestMaterializeCollisionUploadFileOverInline reverses the order: the
 // later uploadFile (a gateway-extracted archive entry) wins, and the
-// losing index points at the earlier inlineFile. spec: §14 line 338.
+// losing index points at the earlier inlineFile. spec: §14.
 // F-14.1.9.
 func TestMaterializeCollisionUploadFileOverInline_spec_14_338(t *testing.T) {
 	root := t.TempDir()
@@ -133,7 +133,7 @@ func TestMaterializeCollisionUploadFileOverInline_spec_14_338(t *testing.T) {
 }
 
 // TestMaterializeNoCollisionDistinctPaths confirms non-overlapping
-// sources raise no collision warning. spec: §14 line 338. F-14.1.9.
+// sources raise no collision warning. spec: §14. F-14.1.9.
 func TestMaterializeNoCollisionDistinctPaths_spec_14_338(t *testing.T) {
 	root := t.TempDir()
 	staging := t.TempDir()
@@ -153,7 +153,7 @@ func TestMaterializeNoCollisionDistinctPaths_spec_14_338(t *testing.T) {
 
 // TestMaterializeCollisionAcrossUploadFiles covers two gateway-extracted
 // archives whose entry sets overlap: each entry arrives as a uploadFile,
-// and the later one wins. spec: §14 line 338. F-14.1.9.
+// and the later one wins. spec: §14. F-14.1.9.
 func TestMaterializeCollisionAcrossUploadFiles_spec_14_338(t *testing.T) {
 	root := t.TempDir()
 	staging := t.TempDir()
@@ -181,7 +181,7 @@ func TestMaterializeCollisionAcrossUploadFiles_spec_14_338(t *testing.T) {
 // TestMaterializeNoCollisionSharedDirectory confirms that two sources
 // creating files under a common directory (the directory itself is
 // shared, the files differ) do not raise a collision: directory merging
-// is normal, not an overwrite. spec: §14 line 338. F-14.1.9.
+// is normal, not an overwrite. spec: §14. F-14.1.9.
 func TestMaterializeNoCollisionSharedDirectory_spec_14_338(t *testing.T) {
 	root := t.TempDir()
 	warnings, err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{

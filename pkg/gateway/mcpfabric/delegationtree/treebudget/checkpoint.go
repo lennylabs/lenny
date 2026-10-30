@@ -9,14 +9,14 @@ import (
 )
 
 // TreeCounters is the tree-wide subset of the delegation budget counters
-// that the §11.2 line 29 Postgres checkpoint persists: the active node
+// that the §11.2 Postgres checkpoint persists: the active node
 // count (maxTreeSize), the consumed token pool (maxTokenBudget), and the
 // aggregate in-memory footprint (maxTreeMemoryBytes). The per-parent
 // counters (parallel_children, children_total) are scoped to a single
 // delegating parent and are not checkpointed — they are reconstructed
 // implicitly when each live parent re-enters the tree on resume.
 //
-// spec: §11.2 line 29 (counters included in the checkpoint).
+// spec: §11.2.
 type TreeCounters struct {
 	TreeSize   int64
 	Tokens     int64
@@ -38,7 +38,7 @@ func treeWideKeys(rootSessionID string) []string {
 // axis). A Redis error is returned to the caller; the checkpoint loop
 // skips a tree it cannot read rather than persisting a wrong value.
 //
-// spec: §11.2 line 29, line 44 (durable checkpoint).
+// spec: §11.2.
 func (s *Reserver) Snapshot(ctx context.Context, rootSessionID string) (TreeCounters, error) {
 	if rootSessionID == "" {
 		return TreeCounters{}, fmt.Errorf("treebudget: empty root session id")
@@ -57,7 +57,7 @@ func (s *Reserver) Snapshot(ctx context.Context, rootSessionID string) (TreeCoun
 	}, nil
 }
 
-// Restore writes the §11.2 line 48 reconstructed counter values back to
+// Restore writes the §11.2 reconstructed counter values back to
 // Redis on a recovery edge, so the fast-path reserve script resumes
 // enforcement against the MAX-reconstructed value rather than a
 // stale-zero counter left by a Redis restart. It refreshes the GC TTL on
@@ -65,8 +65,7 @@ func (s *Reserver) Snapshot(ctx context.Context, rootSessionID string) (TreeCoun
 // lapse. The three axes are set in one round trip; the per-parent
 // counters are deliberately untouched.
 //
-// spec: §11.2 line 48; §12.4 line 218 (counters reconstructed before new
-// delegations are accepted).
+// spec: §11.2; §12.4.
 func (s *Reserver) Restore(ctx context.Context, rootSessionID string, c TreeCounters) error {
 	if rootSessionID == "" {
 		return fmt.Errorf("treebudget: empty root session id")

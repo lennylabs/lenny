@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §12.8 lines 810-827 — the step-14 in-place dead-letter redaction
+// spec: §12.8 — the step-14 in-place dead-letter redaction
 // rewrites the payload and payload_canonical_json of a dead_lettered
 // audit_log row. Migration 0165 grants the lenny_erasure role the
 // column-scoped UPDATE it needs for that rewrite, and nothing wider: the

@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Contract test for the §8.6 lines 730-733 Postgres-backed
+// Contract test for the §8.6 Postgres-backed
 // leasecontrol.DenialStore (pkg/gateway/leasecontrol/denialpg) against a
 // real container with the production migrations applied. Covers the
 // durable Deny/Denied round-trip, the database-clock cool-off comparison
@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"sync"
 	"testing"
 	"time"
 
@@ -57,7 +58,7 @@ func freshTenant(t *testing.T, ctx context.Context, pg *containers.Postgres) str
 	return id
 }
 
-// extTokens reads the §8.6 line 643 token grant counter for a tree under
+// extTokens reads the §8.6 token grant counter for a tree under
 // its tenant's RLS context, so the test can prove a Grant did or did not
 // increment it.
 func extTokens(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant, root string) int64 {
@@ -82,7 +83,10 @@ func extTokens(t *testing.T, ctx context.Context, pg *containers.Postgres, tenan
 	return tokens
 }
 
-// spec: §8.6 lines 730-733 — the delegation-tree denial store records a
+// noLimit is a clamp limit no test grant reaches.
+var noLimit = leasecontrol.Dimensions{Tokens: 1 << 40, Seconds: 1 << 40}
+
+// spec: §8.6 — the delegation-tree denial store records a
 // Deny with a cool-off expiry, round-trips Denied, reports not-denied
 // for an untouched tree, and isolates denials per tenant and root.
 // diagnosis: a failure means the lease-denial store mis-records the
@@ -121,7 +125,7 @@ func TestLeaseDenialStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §8.6 line 733 — the cool-off comparison uses the database
+	// spec: §8.6 — the cool-off comparison uses the database
 	// clock, so an already-expired cool-off reports not denied even
 	// though extension_denied is still set on the row.
 	t.Run("expired cool-off reports not denied via db clock", func(t *testing.T) {
@@ -138,18 +142,18 @@ func TestLeaseDenialStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §8.6 line 732 — Grant on a not-denied tree increments the
+	// spec: §8.6 — Grant on a not-denied tree increments the
 	// durable counters and commits.
 	t.Run("grant increments counters on not-denied tree", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
-		if err := store.Grant(ctx, tenant, "root-g", leasecontrol.Dimensions{Tokens: 50_000, Seconds: 60}); err != nil {
+		if _, err := store.Grant(ctx, tenant, "root-g", leasecontrol.Dimensions{Tokens: 50_000, Seconds: 60}, noLimit); err != nil {
 			t.Fatalf("Grant: %v", err)
 		}
 		if got := extTokens(t, ctx, pg, tenant, "root-g"); got != 50_000 {
 			t.Fatalf("ext_tokens = %d, want 50000", got)
 		}
 		// A second grant accumulates.
-		if err := store.Grant(ctx, tenant, "root-g", leasecontrol.Dimensions{Tokens: 25_000}); err != nil {
+		if _, err := store.Grant(ctx, tenant, "root-g", leasecontrol.Dimensions{Tokens: 25_000}, noLimit); err != nil {
 			t.Fatalf("Grant 2: %v", err)
 		}
 		if got := extTokens(t, ctx, pg, tenant, "root-g"); got != 75_000 {
@@ -157,7 +161,7 @@ func TestLeaseDenialStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §8.6 line 732 — the in-flight atomic re-check: a Grant against
+	// spec: §8.6 — the in-flight atomic re-check: a Grant against
 	// a denied-and-in-cool-off tree returns ErrExtensionDenied and does
 	// NOT increment the counters.
 	t.Run("grant on denied tree returns ErrExtensionDenied and does not increment", func(t *testing.T) {
@@ -165,7 +169,7 @@ func TestLeaseDenialStoreContract(t *testing.T) {
 		if err := store.Deny(ctx, tenant, "root-d", 300*time.Second); err != nil {
 			t.Fatalf("Deny: %v", err)
 		}
-		err := store.Grant(ctx, tenant, "root-d", leasecontrol.Dimensions{Tokens: 10_000})
+		_, err := store.Grant(ctx, tenant, "root-d", leasecontrol.Dimensions{Tokens: 10_000}, noLimit)
 		if err != leasecontrol.ErrExtensionDenied {
 			t.Fatalf("Grant on denied tree err = %v, want ErrExtensionDenied", err)
 		}
@@ -174,7 +178,7 @@ func TestLeaseDenialStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §8.6 line 735 — Clear lifts the denial so a subsequent Grant
+	// spec: §8.6 — Clear lifts the denial so a subsequent Grant
 	// proceeds.
 	t.Run("clear lifts the denial", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
@@ -191,8 +195,89 @@ func TestLeaseDenialStoreContract(t *testing.T) {
 		if denied {
 			t.Fatalf("tree should not be denied after Clear")
 		}
-		if err := store.Grant(ctx, tenant, "root-c", leasecontrol.Dimensions{Tokens: 1_000}); err != nil {
+		if _, err := store.Grant(ctx, tenant, "root-c", leasecontrol.Dimensions{Tokens: 1_000}, noLimit); err != nil {
 			t.Fatalf("Grant after Clear: %v", err)
+		}
+	})
+
+	// spec: §8.6 (Extension state) — Grant clamps the request at the
+	// remaining headroom under the row lock and returns the applied grant
+	// and the new cumulative, and a grant at no headroom applies zero.
+	t.Run("grant clamps at the remaining headroom", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		limit := leasecontrol.Dimensions{Tokens: 100_000}
+		res, err := store.Grant(ctx, tenant, "root-h", leasecontrol.Dimensions{Tokens: 70_000}, limit)
+		if err != nil {
+			t.Fatalf("Grant 1: %v", err)
+		}
+		if res.Applied.Tokens != 70_000 || res.Total.Tokens != 70_000 {
+			t.Fatalf("grant 1 = %+v, want 70000 applied and total", res)
+		}
+		res, err = store.Grant(ctx, tenant, "root-h", leasecontrol.Dimensions{Tokens: 70_000}, limit)
+		if err != nil {
+			t.Fatalf("Grant 2: %v", err)
+		}
+		if res.Applied.Tokens != 30_000 || res.Total.Tokens != 100_000 {
+			t.Fatalf("grant 2 = %+v, want 30000 applied and a 100000 total", res)
+		}
+		res, err = store.Grant(ctx, tenant, "root-h", leasecontrol.Dimensions{Tokens: 1}, limit)
+		if err != nil {
+			t.Fatalf("Grant 3: %v", err)
+		}
+		if res.Applied.Tokens != 0 {
+			t.Fatalf("grant at no headroom applied %d, want 0", res.Applied.Tokens)
+		}
+		if got := extTokens(t, ctx, pg, tenant, "root-h"); got != 100_000 {
+			t.Fatalf("ext_tokens = %d, want the 100000 limit", got)
+		}
+	})
+
+	// spec: §8.6 (Extension state) — concurrent grants serialize on the
+	// row lock, so together they never take the cumulative grant past the
+	// limit and their applied amounts sum to it.
+	t.Run("concurrent grants stay within the limit", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		limit := leasecontrol.Dimensions{Tokens: 50_000}
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		var sum int64
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				res, err := store.Grant(ctx, tenant, "root-cc", leasecontrol.Dimensions{Tokens: 20_000}, limit)
+				if err != nil {
+					t.Errorf("Grant: %v", err)
+					return
+				}
+				mu.Lock()
+				sum += res.Applied.Tokens
+				mu.Unlock()
+			}()
+		}
+		wg.Wait()
+		if got := extTokens(t, ctx, pg, tenant, "root-cc"); got != 50_000 || sum != 50_000 {
+			t.Fatalf("ext_tokens = %d, applied sum = %d, want both 50000", got, sum)
+		}
+	})
+
+	// spec: §8.6 (Extension state) — Grants reads the cumulative ext_*
+	// columns, and zero for a tree with no row.
+	t.Run("grants reads the cumulative and zero for a missing row", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		got, err := store.Grants(ctx, tenant, "root-none")
+		if err != nil || got != (leasecontrol.Dimensions{}) {
+			t.Fatalf("Grants(missing) = %+v, %v, want zero", got, err)
+		}
+		if _, err := store.Grant(ctx, tenant, "root-gr", leasecontrol.Dimensions{Tokens: 5, Seconds: 7}, noLimit); err != nil {
+			t.Fatalf("Grant: %v", err)
+		}
+		if _, err := store.Grant(ctx, tenant, "root-gr", leasecontrol.Dimensions{Tokens: 3}, noLimit); err != nil {
+			t.Fatalf("Grant: %v", err)
+		}
+		got, err = store.Grants(ctx, tenant, "root-gr")
+		if err != nil || got.Tokens != 8 || got.Seconds != 7 {
+			t.Fatalf("Grants = %+v, %v, want 8 tokens and 7 seconds", got, err)
 		}
 	})
 

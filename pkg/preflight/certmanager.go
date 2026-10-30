@@ -9,12 +9,12 @@ import (
 	"strings"
 )
 
-// CertManagerMinVersion is the §10.3 line 304 minimum supported
+// CertManagerMinVersion is the §10.3 minimum supported
 // cert-manager version. Below it, CertificateRequest approval and the
 // Certificate admission webhook behave unstably, so the mTLS PKI the
 // chart renders cannot be trusted to issue leaf certificates reliably.
 //
-// spec: §10.3 line 304. F-10.3.12.
+// spec: §10.3. F-10.3.12.
 const CertManagerMinVersion = "v1.12.0"
 
 // CertManagerProber reports the cert-manager version installed in the
@@ -34,7 +34,7 @@ func (f CertManagerProbeFunc) ProbeCertManager(ctx context.Context) (string, boo
 	return f(ctx)
 }
 
-// CertManagerVersionCheck runs the §10.3 line 304 cert-manager version
+// CertManagerVersionCheck runs the §10.3 cert-manager version
 // preflight. When the cert-manager-backed PKI is enabled
 // (certmanager.enabled, default true), the check fails the install
 // fail-closed if cert-manager is absent or older than MinVersion, so a
@@ -42,7 +42,7 @@ func (f CertManagerProbeFunc) ProbeCertManager(ctx context.Context) (string, boo
 // than at the first Certificate-resource creation. When the PKI is
 // disabled (mesh-managed mTLS) the check is a no-op.
 //
-// spec: §10.3 line 304. F-10.3.12.
+// spec: §10.3. F-10.3.12.
 type CertManagerVersionCheck struct {
 	// Required is the certmanager.enabled chart value. False means the
 	// operator manages mTLS through a service mesh, so the check skips.
@@ -58,7 +58,7 @@ type CertManagerVersionCheck struct {
 
 // Decide evaluates the cert-manager version posture.
 //
-// spec: §10.3 line 304. F-10.3.12.
+// spec: §10.3. F-10.3.12.
 func (c CertManagerVersionCheck) Decide(ctx context.Context) Decision {
 	min := strings.TrimSpace(c.MinVersion)
 	if min == "" {
@@ -67,13 +67,13 @@ func (c CertManagerVersionCheck) Decide(ctx context.Context) Decision {
 	if !c.Required {
 		return Decision{
 			Passed: true,
-			Reason: "§10.3 line 304: cert-manager version check skipped (certmanager.enabled=false; mTLS is mesh-managed)",
+			Reason: "§10.3: cert-manager version check skipped (certmanager.enabled=false; mTLS is mesh-managed)",
 		}
 	}
 	if c.Prober == nil {
 		return Decision{
 			Passed: true,
-			Reason: "WARNING: §10.3 line 304 cannot verify the cert-manager version (no prober wired); ensure cert-manager >= " +
+			Reason: "WARNING: §10.3 cannot verify the cert-manager version (no prober wired); ensure cert-manager >= " +
 				min + " is installed before relying on the rendered PKI",
 		}
 	}
@@ -81,13 +81,13 @@ func (c CertManagerVersionCheck) Decide(ctx context.Context) Decision {
 	if err != nil {
 		return Decision{
 			Passed: false,
-			Reason: fmt.Sprintf("§10.3 line 304: cert-manager version probe failed: %v", err),
+			Reason: fmt.Sprintf("§10.3: cert-manager version probe failed: %v", err),
 		}
 	}
 	if !found {
 		return Decision{
 			Passed: false,
-			Reason: "§10.3 line 304: cert-manager is required (certmanager.enabled=true) but is not installed; install cert-manager >= " +
+			Reason: "§10.3: cert-manager is required (certmanager.enabled=true) but is not installed; install cert-manager >= " +
 				min + " or set certmanager.enabled=false for mesh-managed mTLS",
 		}
 	}
@@ -95,26 +95,26 @@ func (c CertManagerVersionCheck) Decide(ctx context.Context) Decision {
 	if version == "" {
 		return Decision{
 			Passed: true,
-			Reason: "WARNING: §10.3 line 304 cert-manager is installed but its version could not be determined; ensure it is >= " + min,
+			Reason: "WARNING: §10.3 cert-manager is installed but its version could not be determined; ensure it is >= " + min,
 		}
 	}
 	atLeast, err := versionAtLeast(version, min)
 	if err != nil {
 		return Decision{
 			Passed: true,
-			Reason: fmt.Sprintf("WARNING: §10.3 line 304 cert-manager version %q is unparseable (%v); ensure it is >= %s", version, err, min),
+			Reason: fmt.Sprintf("WARNING: §10.3 cert-manager version %q is unparseable (%v); ensure it is >= %s", version, err, min),
 		}
 	}
 	if !atLeast {
 		return Decision{
 			Passed: false,
-			Reason: fmt.Sprintf("§10.3 line 304: cert-manager version %s is below the minimum supported %s; upgrade cert-manager before installing Lenny",
+			Reason: fmt.Sprintf("§10.3: cert-manager version %s is below the minimum supported %s; upgrade cert-manager before installing Lenny",
 				version, min),
 		}
 	}
 	return Decision{
 		Passed: true,
-		Reason: fmt.Sprintf("§10.3 line 304: cert-manager %s satisfies the minimum %s", version, min),
+		Reason: fmt.Sprintf("§10.3: cert-manager %s satisfies the minimum %s", version, min),
 	}
 }
 

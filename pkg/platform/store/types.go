@@ -14,12 +14,11 @@
 // packages can all depend on it without an import cycle and without
 // pulling each other's heavy dependencies in transitively.
 //
-// spec: §12.6 lines 363-415 (shared type definitions block).
+// spec: §12.6 (shared type definitions block).
 package store
 
 // ID types are typed strings, so a tenant id cannot be transposed with
-// a pool, session, pod, or cluster id at a call site. spec: §12.6
-// lines 369-373.
+// a pool, session, pod, or cluster id at a call site. spec: §12.6.
 type (
 	// PodID identifies an agent pod. The CRD-backed registry maps it to
 	// the Sandbox metadata.name; the Postgres-backed registry maps it to
@@ -47,7 +46,7 @@ type (
 // load-bearing only when an operator splits concerns onto separate
 // instances at Tier 3+ for isolation and independent scaling.
 //
-// spec: §12.6 lines 375-389.
+// spec: §12.6.
 type RedisConcern string
 
 const (
@@ -71,7 +70,7 @@ const (
 // billing and audit share the same DSN in v1 but have separate routing
 // methods to allow independent sharding later.
 //
-// spec: §12.6 lines 391-400.
+// spec: §12.6.
 type StoreType string
 
 const (
@@ -93,7 +92,7 @@ const (
 // Kafka) can surface an unsubscribe failure without a caller-side
 // rewrite.
 //
-// spec: §12.6 lines 411-414.
+// spec: §12.6.
 type Subscription interface {
 	Unsubscribe() error
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken"
 	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgrade"
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
 	"github.com/lennylabs/lenny/pkg/mtls"
@@ -42,8 +43,9 @@ func (saltRotatorStub) RotateErasureSalt(context.Context, string) error { return
 // erasureRunnerStub satisfies admin.ErasureRunner.
 type erasureRunnerStub struct{}
 
-func (erasureRunnerStub) Start(context.Context, string, string) (string, error) { return "", nil }
-func (erasureRunnerStub) Run(context.Context, string) error                     { return nil }
+func (erasureRunnerStub) Start(context.Context, string, string, string, map[string]any) (erasurejob.Job, error) {
+	return erasurejob.Job{}, nil
+}
 
 // impersonationStub satisfies admin.ImpersonationService.
 type impersonationStub struct{}
@@ -52,11 +54,13 @@ func (impersonationStub) Issue(context.Context, impersonation.IssueRequest) (imp
 	return impersonation.Ticket{}, "", nil
 }
 
-func (impersonationStub) End(context.Context, string, string) (impersonation.Ticket, error) {
-	return impersonation.Ticket{}, nil
+func (impersonationStub) End(context.Context, string, string) (impersonation.EndResult, error) {
+	return impersonation.EndResult{}, nil
 }
 
-func (impersonationStub) ListActive(context.Context) ([]impersonation.Ticket, error) { return nil, nil }
+func (impersonationStub) ListActive(context.Context, string) ([]impersonation.Session, error) {
+	return nil, nil
+}
 
 // migrationStub satisfies admin.MigrationManager.
 type migrationStub struct{}
@@ -83,7 +87,7 @@ func (sessionAdminStub) GetByID(context.Context, string) (sessionstore.Session, 
 	return sessionstore.Session{}, nil
 }
 
-func (sessionAdminStub) ForceTerminate(context.Context, string) (sessionstore.Session, session.State, bool, error) {
+func (sessionAdminStub) ForceTerminate(context.Context, string, string) (sessionstore.Session, session.State, bool, error) {
 	return sessionstore.Session{}, "", false, nil
 }
 
@@ -165,8 +169,8 @@ func (reconciliationResumerStub) ResumePoolReconciliation(context.Context, strin
 // leaseDenialStub satisfies admin.LeaseDenialClearer.
 type leaseDenialStub struct{}
 
-func (leaseDenialStub) ClearSubtreeDenial(context.Context, string, string) (bool, error) {
-	return false, nil
+func (leaseDenialStub) ClearSubtreeDenial(context.Context, string, string, string) error {
+	return nil
 }
 
 // quotaReconcilerStub satisfies admin.QuotaReconciler.

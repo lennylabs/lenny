@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §16.4 line 378 — the EventStore session-log and stream-cursor
+// spec: §16.4 — the EventStore session-log and stream-cursor
 // tables are partitioned by time using native Postgres range
 // partitioning so a background job can drop whole partitions beyond the
 // retention window. Migration 0149 creates both as range-partitioned

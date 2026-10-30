@@ -34,8 +34,9 @@ import (
 // state and the SandboxClaim status subresource registered.
 func fakeWith(t *testing.T, phase claimstate.State) client.WithWatch {
 	t.Helper()
+	ns := testNamespace(t)
 	claim := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "claim-sbx-1", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-sbx-1", Namespace: ns},
 		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "sbx-1", TenantID: "acme"},
 		Status:     lennyv1.SandboxClaimStatus{Phase: string(phase)},
 	}
@@ -73,6 +74,7 @@ func injectStatusPatchErr(c client.WithWatch, err error) client.Client {
 //
 // spec: §4.6.3 (gateway-owned binding-state writes).
 func TestBindingStateWritersWrapGetErrors_spec_4_6_3(t *testing.T) {
+	ns := testNamespace(t)
 	ctx := context.Background()
 	notFound := apierrors.NewNotFound(schema.GroupResource{Resource: "sandboxclaims"}, "claim-sbx-1")
 	cases := []struct {
@@ -80,13 +82,13 @@ func TestBindingStateWritersWrapGetErrors_spec_4_6_3(t *testing.T) {
 		call func(client.Client) error
 	}{
 		{"WriteBoundStatus", func(c client.Client) error {
-			return podclaim.WriteBoundStatus(ctx, c, testNS, "claim-sbx-1")
+			return podclaim.WriteBoundStatus(ctx, c, ns, "claim-sbx-1")
 		}},
 		{"WriteRecyclingStatus", func(c client.Client) error {
-			return podclaim.WriteRecyclingStatus(ctx, c, testNS, "claim-sbx-1", nil)
+			return podclaim.WriteRecyclingStatus(ctx, c, ns, "claim-sbx-1", nil)
 		}},
 		{"WriteRewarmStartedStatus", func(c client.Client) error {
-			return podclaim.WriteRewarmStartedStatus(ctx, c, testNS, "claim-sbx-1", nil)
+			return podclaim.WriteRewarmStartedStatus(ctx, c, ns, "claim-sbx-1", nil)
 		}},
 	}
 	for _, tc := range cases {
@@ -118,33 +120,34 @@ func TestBindingStateWritersWrapPatchErrors_spec_4_6_3(t *testing.T) {
 	cases := []struct {
 		name  string
 		phase claimstate.State
-		call  func(client.Client) error
+		call  func(c client.Client, ns string) error
 	}{
-		{"WriteBoundStatus", claimstate.State(""), func(c client.Client) error {
-			return podclaim.WriteBoundStatus(ctx, c, testNS, "claim-sbx-1")
+		{"WriteBoundStatus", claimstate.State(""), func(c client.Client, ns string) error {
+			return podclaim.WriteBoundStatus(ctx, c, ns, "claim-sbx-1")
 		}},
-		{"WriteRecyclingStatus", claimstate.Bound, func(c client.Client) error {
-			return podclaim.WriteRecyclingStatus(ctx, c, testNS, "claim-sbx-1", nil)
+		{"WriteRecyclingStatus", claimstate.Bound, func(c client.Client, ns string) error {
+			return podclaim.WriteRecyclingStatus(ctx, c, ns, "claim-sbx-1", nil)
 		}},
-		{"WriteRewarmStartedStatus", claimstate.Recycling, func(c client.Client) error {
-			return podclaim.WriteRewarmStartedStatus(ctx, c, testNS, "claim-sbx-1", nil)
+		{"WriteRewarmStartedStatus", claimstate.Recycling, func(c client.Client, ns string) error {
+			return podclaim.WriteRewarmStartedStatus(ctx, c, ns, "claim-sbx-1", nil)
 		}},
-		{"WriteReservedStatus", claimstate.Recycling, func(c client.Client) error {
-			_, err := podclaim.WriteReservedStatus(ctx, c, testNS, "claim-sbx-1", 10*time.Second, nil)
+		{"WriteReservedStatus", claimstate.Recycling, func(c client.Client, ns string) error {
+			_, err := podclaim.WriteReservedStatus(ctx, c, ns, "claim-sbx-1", 10*time.Second, nil)
 			return err
 		}},
-		{"WriteRebindStatus", claimstate.Reserved, func(c client.Client) error {
-			return podclaim.WriteRebindStatus(ctx, c, testNS, "claim-sbx-1", nil)
+		{"WriteRebindStatus", claimstate.Reserved, func(c client.Client, ns string) error {
+			return podclaim.WriteRebindStatus(ctx, c, ns, "claim-sbx-1", nil)
 		}},
-		{"WriteDispositionStatus", claimstate.Bound, func(c client.Client) error {
-			return podclaim.WriteDispositionStatus(ctx, c, testNS, "claim-sbx-1", claimstate.Released, nil)
+		{"WriteDispositionStatus", claimstate.Bound, func(c client.Client, ns string) error {
+			return podclaim.WriteDispositionStatus(ctx, c, ns, "claim-sbx-1", claimstate.Released, nil)
 		}},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
+			ns := testNamespace(t)
 			c := injectStatusPatchErr(fakeWith(t, tc.phase), boom)
-			err := tc.call(c)
+			err := tc.call(c, ns)
 			if err == nil {
 				t.Fatalf("%s returned nil on a status PATCH failure, want wrapped error", tc.name)
 			}
@@ -166,6 +169,7 @@ func TestBindingStateWritersWrapPatchErrors_spec_4_6_3(t *testing.T) {
 //
 // spec: §4.6.1 (precondition-guarded hold-expiry DELETE).
 func TestDeleteOnHoldExpiryWrapsUnexpectedError_spec_4_6_1(t *testing.T) {
+	ns := testNamespace(t)
 	ctx := context.Background()
 	boom := errors.New("apiserver unavailable")
 	c := interceptor.NewClient(fakeWith(t, claimstate.Reserved), interceptor.Funcs{
@@ -173,7 +177,7 @@ func TestDeleteOnHoldExpiryWrapsUnexpectedError_spec_4_6_1(t *testing.T) {
 			return boom
 		},
 	})
-	aborted, err := podclaim.DeleteOnHoldExpiry(ctx, c, testNS, "claim-sbx-1", podclaim.ReservedHold{
+	aborted, err := podclaim.DeleteOnHoldExpiry(ctx, c, ns, "claim-sbx-1", podclaim.ReservedHold{
 		UID: "uid-1", ResourceVersion: "42",
 	})
 	if err == nil {
@@ -196,8 +200,9 @@ func TestDeleteOnHoldExpiryWrapsUnexpectedError_spec_4_6_1(t *testing.T) {
 // Conflict as a hard error or as a successful delete, breaking the
 // rebind-wins-the-race contract.
 //
-// spec: §4.6.1 (precondition DELETE), §3.2 (rebind-vs-hold-expiry race).
+// spec: §4.6.1 (precondition DELETE).
 func TestDeleteOnHoldExpiryAbortsOnConflict_spec_3_2(t *testing.T) {
+	ns := testNamespace(t)
 	ctx := context.Background()
 	conflict := apierrors.NewConflict(
 		schema.GroupResource{Resource: "sandboxclaims"}, "claim-sbx-1",
@@ -208,7 +213,7 @@ func TestDeleteOnHoldExpiryAbortsOnConflict_spec_3_2(t *testing.T) {
 			return conflict
 		},
 	})
-	aborted, err := podclaim.DeleteOnHoldExpiry(ctx, c, testNS, "claim-sbx-1", podclaim.ReservedHold{
+	aborted, err := podclaim.DeleteOnHoldExpiry(ctx, c, ns, "claim-sbx-1", podclaim.ReservedHold{
 		UID: "uid-1", ResourceVersion: "42",
 	})
 	if err != nil {

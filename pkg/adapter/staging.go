@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"sync"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,8 +21,8 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// PrepareWorkspace accepts streamed upload-file content into the pod's
-// staging area. It is the first RPC of the §4.7 session assignment
+// PrepareWorkspace accepts streamed upload-file content into the
+// session's own staging tree. It is the first RPC of the §4.7 session assignment
 // sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
 // StartSession). Frames sharing an upload_ref are concatenated in
 // arrival order into one staged file; FinalizeWorkspace materializes
@@ -29,7 +30,7 @@ import (
 // content. Like the rest of the staging sequence it runs before the
 // session is claimed, so it does not touch pod-assignment state.
 func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServer) error {
-	// spec: §16.3 line 338 — `session.upload` is a Gateway + Pod span. This
+	// spec: §16.3 — `session.upload` is a Gateway + Pod span. This
 	// is the Pod half: the adapter streams uploaded files into the staging
 	// area. The gateway half (the client→gateway upload) is emitted there.
 	// F-16.3.6 / pod half of F-16.3.1.
@@ -40,11 +41,18 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 		span.End()
 	}()
 
-	// spec: §6.4 lines 401-405 — a slot-qualified upload stages into the
-	// slot's /workspace/slots/{slotId}/staging area. The staging directory
-	// is resolved from the first frame (every frame carries the same slot
-	// id); the single-session layout uses the pod-global StagingDir.
+	// spec: §6.4 — the uploads stage into the named session's
+	// /workspace/slots/{sessionId}/staging area, whose tree is created on
+	// first reference. The staging directory is resolved once, from the
+	// first frame's session id, and an unresolvable (empty) staging path is
+	// refused with FailedPrecondition.
 	var stagingDir string
+	// spec: §5.2 (slot-identifier reclaim hold) — the slot's per-slot guard
+	// is taken once per call, at the frame that resolves the slot
+	// identifier, and held to the end of the call, because the staging
+	// writes run outside s.mu and the tree can be removed between frames.
+	releaseGuard := noGuardRelease
+	defer func() { releaseGuard() }()
 	open := map[string]*os.File{}
 	closeAll := func() {
 		for _, f := range open {
@@ -74,10 +82,31 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 				"PrepareWorkspace frame requires a session id")
 		}
 		if stagingDir == "" {
-			dir, derr := s.resolvePrepareStagingDir(req.GetSlotId().GetValue())
+			// spec: §4.7.1 rule 9 (the first-frame rule). The frame that
+			// resolves the slot identifier is the one whose bind_attempt and
+			// mid_session decide the call's admission, rule 1 included; no
+			// later frame's fields are read.
+			midSession := req.GetMidSession()
+			if verr := validateBindFields(req.GetBindAttempt(), midSession); verr != nil {
+				closeAll()
+				spanErr = tracing.CategorizeError(verr, tracing.CategoryPermanent)
+				return verr
+			}
+			release, gerr := s.acquireSlotGuardForResolve(stream.Context(), req.GetSessionId().GetValue())
+			if gerr != nil {
+				closeAll()
+				spanErr = tracing.CategorizeError(gerr, slotGuardCategory(gerr))
+				return gerr
+			}
+			releaseGuard = release
+			dir, derr := s.resolvePrepareStagingDir(req.GetSessionId().GetValue(), slotResolve{
+				bindAttempt:  req.GetBindAttempt(),
+				allowCreate:  !midSession,
+				allowStarted: midSession,
+			})
 			if derr != nil {
 				closeAll()
-				spanErr = tracing.CategorizeError(derr, tracing.CategoryPermanent)
+				spanErr = tracing.CategorizeError(derr, slotResolveCategory(derr))
 				return derr
 			}
 			stagingDir = dir
@@ -119,27 +148,27 @@ func (s *Server) PrepareWorkspace(stream adapterv1.Adapter_PrepareWorkspaceServe
 }
 
 // resolvePrepareStagingDir returns the staging directory PrepareWorkspace
-// streams uploads into. For a §6.4 concurrent slot it ensures the slot
-// tree exists and returns the slot's /workspace/slots/{slotId}/staging.
-// For the single-session base path it returns the pod-global StagingDir,
-// returning FailedPrecondition when unconfigured and creating it if
-// absent (mirroring the prior behavior).
-func (s *Server) resolvePrepareStagingDir(slotID string) (string, error) {
-	if s.useSlot(slotID) {
-		paths, err := s.ensureSlotPaths(slotID)
-		if err != nil {
-			return "", status.Errorf(codes.InvalidArgument, "resolve slot %s staging: %v", slotID, err)
-		}
-		return paths.Staging, nil
+// streams the named session's uploads into: its
+// /workspace/slots/{sessionId}/staging, whose tree it creates on first
+// reference. The per-slot tree is the only layout.
+//
+// An empty resolved path is refused with FailedPrecondition rather than
+// returned. slotlayout.Resolve leaves Staging empty when the workspace
+// base is unset, and workspace.StagingPath joins the upload's hashed name
+// onto whatever directory it is given, so an adapter started without a
+// workspace base would otherwise write every upload into the adapter
+// process's working directory. spec: §6.4; §4.7.1 (role and gateway RPC
+// contract).
+func (s *Server) resolvePrepareStagingDir(sessionID string, r slotResolve) (string, error) {
+	paths, err := s.ensureSlotPaths(sessionID, r)
+	if err != nil {
+		return "", slotResolveError(err, fmt.Sprintf("resolve staging for session %s", sessionID))
 	}
-	if s.StagingDir == "" {
+	if paths.Staging == "" {
 		return "", status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a staging directory")
 	}
-	if err := os.MkdirAll(s.StagingDir, 0o700); err != nil {
-		return "", status.Errorf(codes.Internal, "create staging directory: %v", err)
-	}
-	return s.StagingDir, nil
+	return paths.Staging, nil
 }
 
 // FinalizeWorkspace materializes the §14 WorkspacePlan into the
@@ -151,11 +180,18 @@ func (s *Server) resolvePrepareStagingDir(slotID string) (string, error) {
 // Validation of the streamed PrepareWorkspace content against the plan
 // arrives with the PrepareWorkspace RPC; this RPC materializes the
 // filesystem-native plan sources via workspace.Materialize, which builds
-// the resolved tree in /workspace/staging and atomically promotes it onto
-// /workspace/current so the runtime never observes a partial workspace.
-// spec: §7.4 line 433 — F-7.4.12.
+// the resolved tree in the session's /workspace/slots/{sessionId}/staging
+// and atomically promotes it onto that slot's current tree so the runtime
+// never observes a partial workspace.
+// spec: §7.4 — F-7.4.12.
+//
+// A request carrying restore_chunks seeds the build tree with the
+// workspace tree of the derived or replayed session's starting snapshot
+// before the sources are materialized over it. A restore failure answers
+// UNAVAILABLE, discards the build tree, and leaves the current tree
+// untouched. spec: §7.1 (Derive restore semantics); §4.7.1.
 func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeWorkspaceRequest) (*adapterv1.FinalizeWorkspaceResponse, error) {
-	// spec: §16.3 line 339 — `session.finalize_workspace` is emitted by the
+	// spec: §16.3 — `session.finalize_workspace` is emitted by the
 	// Pod. The span covers the workspace-plan materialization the adapter
 	// runs before the session is claimed. F-16.3.6.
 	_, span := tracing.NewTracer(nil).Start(ctx, tracing.SpanSessionFinalizeWorkspace)
@@ -165,26 +201,56 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 		span.End()
 	}()
 
-	if req.GetSessionId().GetValue() == "" {
+	sessionID := req.GetSessionId().GetValue()
+	if sessionID == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.InvalidArgument, "FinalizeWorkspace requires a session id"),
 			tracing.CategoryPermanent,
 		)
 		return nil, status.Error(codes.InvalidArgument, "FinalizeWorkspace requires a session id")
 	}
-	// spec: §6.4 lines 401-405 — a slot-qualified finalize materializes
-	// into the slot's per-slot tree (/workspace/slots/{slotId}/staging
-	// promoted to /current) and creates that tree on first reference.
-	// The single-session layout uses the pod-global WorkspaceRoot/StagingDir.
-	workspaceRoot, stagingDir := s.WorkspaceRoot, s.StagingDir
-	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
-		paths, perr := s.ensureSlotPaths(slotID)
-		if perr != nil {
-			spanErr = tracing.CategorizeError(perr, tracing.CategoryPermanent)
-			return nil, status.Errorf(codes.InvalidArgument, "resolve slot %s workspace: %v", slotID, perr)
-		}
-		workspaceRoot, stagingDir = paths.Current, paths.Staging
+	// spec: §4.7.1 rules 1 and 3 — mid_session is read before the resolve,
+	// because a mid-session finalize for a session the pod holds no entry
+	// for must create nothing, and the pairing rule is decided on the
+	// request's fields before the registry is read.
+	midSession := req.GetMidSession()
+	if verr := validateBindFields(req.GetBindAttempt(), midSession); verr != nil {
+		spanErr = tracing.CategorizeError(verr, tracing.CategoryPermanent)
+		return nil, verr
 	}
+	if verr := validateRestorePairing(req.GetRestoreChunks(), midSession); verr != nil {
+		spanErr = tracing.CategorizeError(verr, tracing.CategoryPermanent)
+		return nil, verr
+	}
+	// spec: §5.2 (slot-identifier reclaim hold) — the materialization writes the slot's
+	// tree outside s.mu, so the slot's per-slot guard is held across the
+	// resolve and that work.
+	// A held identifier is refused without waiting, and an acquisition that
+	// outlives ctx is refused with the context's own error.
+	// The guard is released ahead of the function's return on the
+	// mid-session path, before the files_updated signal waits for the
+	// session's session_started, so the release is idempotent.
+	acquired, gerr := s.acquireSlotGuardForResolve(ctx, sessionID)
+	if gerr != nil {
+		spanErr = tracing.CategorizeError(gerr, slotGuardCategory(gerr))
+		return nil, gerr
+	}
+	releaseGuard := sync.OnceFunc(acquired)
+	defer releaseGuard()
+	// spec: §6.4 — the finalize materializes into the session's own tree
+	// (/workspace/slots/{sessionId}/staging promoted to /current) and
+	// creates that tree on first reference.
+	entry, perr := s.ensureSlotEntry(sessionID, slotResolve{
+		bindAttempt:  req.GetBindAttempt(),
+		allowCreate:  !midSession,
+		allowStarted: midSession,
+	})
+	if perr != nil {
+		rerr := slotResolveError(perr, fmt.Sprintf("resolve workspace for session %s", sessionID))
+		spanErr = tracing.CategorizeError(rerr, slotResolveCategory(perr))
+		return nil, rerr
+	}
+	workspaceRoot, stagingDir := entry.paths.Current, entry.paths.Staging
 	if workspaceRoot == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.FailedPrecondition, "adapter is not configured with a workspace root"),
@@ -193,7 +259,7 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a workspace root")
 	}
-	// spec: §14.1 line 326 — the adapter is a live consumer at
+	// spec: §14.1 — the adapter is a live consumer at
 	// materialization time and MUST reject a plan whose schemaVersion it
 	// does not understand before touching the filesystem; a stale adapter
 	// could otherwise misinterpret fields a newer gateway wrote during a
@@ -216,7 +282,7 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 		}
 		return nil, st.Err()
 	}
-	// spec: §7.4 lines 458, 462 — F-7.4.4. The gateway delivers the
+	// spec: §7.4 — F-7.4.4. The gateway delivers the
 	// per-Runtime allowSymlinks opt-in plus the absolute workspace root
 	// (slot-scoped paths in §6.4 concurrent runtimes) on FinalizeWorkspace.
 	// An unset workspace_root falls back to the adapter's configured root
@@ -231,12 +297,11 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 	}
 	sources := req.GetWorkspacePlan().GetSources()
 	span.SetAttributes(attribute.Int("workspace.source_count", len(sources)))
-	// spec: §7.4 line 433 — a mid-session upload overlays the sources onto
-	// the running session's existing /workspace/current rather than
+	// spec: §7.4 — a mid-session upload overlays the sources onto
+	// the running session's existing current tree rather than
 	// replacing the whole tree, then signals the runtime once promotion
 	// completes. The pre-start path (mid_session false) keeps the §4.7
 	// whole-tree promotion the assignment sequence relies on. F-7.4.6.
-	midSession := req.GetMidSession()
 	span.SetAttributes(attribute.Bool("workspace.mid_session", midSession))
 	var (
 		warnings []workspace.Warning
@@ -247,32 +312,41 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 			sources, archive)
 	} else {
 		warnings, err = workspace.MaterializeWithPolicy(workspaceRoot, stagingDir,
-			sources, archive)
+			sources, archive, s.restoreSeed(ctx, req.GetRestoreChunks()))
 	}
-	if err != nil {
+	switch {
+	case errors.Is(err, errRestore):
+		// spec: §7.1 (Derive restore semantics) — every restore failure is
+		// an ordinary failed bind, answered with one transient status the
+		// gateway's bind path retries on fresh capabilities.
+		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
+		return nil, status.Errorf(codes.Unavailable, "restore workspace snapshot: %v", err)
+	case err != nil:
 		// §16.3: a plan the adapter cannot materialize (invalid source,
 		// containment violation) is PERMANENT.
 		spanErr = tracing.CategorizeError(err, tracing.CategoryPermanent)
 		return nil, status.Errorf(codes.InvalidArgument, "materialize workspace: %v", err)
 	}
-	// spec: §7.4 line 433 — "The runtime adapter receives a FilesUpdated
+	// spec: §7.4 — "The runtime adapter receives a FilesUpdated
 	// notification only after promotion, so the agent never sees
 	// partially-written files." The overlay above is already promoted, so
 	// the signal is safe to emit now. It is best-effort: a not-connected
 	// channel (no Full-level runtime, or the pre-start path) is benign,
 	// and the promoted files are already on disk regardless. F-7.4.6.
+	// The frame names the session whose workspace was promoted, and it is
+	// written after the guard is released, once the session's
+	// session_started has been read.
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
 	if midSession && s.Lifecycle != nil {
-		if sigErr := s.Lifecycle.SignalFilesUpdated(); sigErr != nil {
-			log.Printf("lenny-adapter: files_updated signal for session %s not delivered: %v",
-				req.GetSessionId().GetValue(), sigErr)
-		}
+		releaseGuard()
+		s.signalFilesUpdated(ctx, entry, sessionID)
 	}
 	// F-7.4.15 / F-14.1.18: transcribe the §14 advisory warnings onto
 	// the FinalizeWorkspaceResponse so the gateway can republish the
-	// §7.4 line 459 `workspace_plan_strip_components_skip` per-entry
+	// §7.4 per-entry
 	// warning event without redoing the archive walk in two places. The
 	// per-warning structured fields (`entryPath`, `segmentCount`,
-	// `stripComponents`) ride per §14 line 100.
+	// `stripComponents`) ride per §14.
 	resp := &adapterv1.FinalizeWorkspaceResponse{}
 	for _, w := range warnings {
 		pw := &adapterv1.WorkspacePlanWarning{
@@ -283,7 +357,7 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 			StripComponents: int32(w.StripComponents),
 			Message:         w.Message,
 		}
-		// spec: §14 line 334 — the unknown-source-type warning carries
+		// spec: §14 — the unknown-source-type warning carries
 		// `unknownType` and the plan's `schemaVersion`. The materializer
 		// fills UnknownType; the plan version is stamped here, where the
 		// request (and thus the plan) is in scope. F-14.1.2.
@@ -291,7 +365,7 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 			pw.UnknownType = w.UnknownType
 			pw.SchemaVersion = int32(schemaVersion)
 		}
-		// spec: §14 line 338 — the path-collision warning carries `path`,
+		// spec: §14 — the path-collision warning carries `path`,
 		// `winningSourceIndex`, and `losingSourceIndex` so a consumer can
 		// audit which source overwrote which. F-14.1.9.
 		if w.Code == "workspace_plan_path_collision" {
@@ -304,18 +378,81 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 	return resp, nil
 }
 
+// errRestore marks a failure to seed the build tree from the starting
+// snapshot's chunks: a chunk fetch or body-read error, gzip or tar
+// corruption, an escaping entry path or symlink target, an unsupported
+// entry type, or the extraction size cap. FinalizeWorkspace answers it
+// UNAVAILABLE. spec: §7.1 (Derive restore semantics).
+var errRestore = errors.New("snapshot restore failed")
+
+// validateRestorePairing refuses a mid-session request that carries
+// restore_chunks with INVALID_ARGUMENT, before any slot entry is created,
+// resolved, or stamped. Only a derived or replayed session's first bind
+// restores a snapshot. spec: §4.7.1 rule 1.
+func validateRestorePairing(restore []*adapterv1.ChunkGrant, midSession bool) error {
+	if midSession && len(restore) > 0 {
+		return status.Error(codes.InvalidArgument,
+			"a mid_session request must not carry restore_chunks")
+	}
+	return nil
+}
+
+// restoreSeed returns the build-tree seed that extracts the starting
+// snapshot's workspace tree from restore, or nil when restore is empty.
+// Only the workspace root is named, so the bundle's /sessions tree is
+// skipped. Every error the seed returns wraps errRestore.
+// spec: §7.1 (Derive restore semantics).
+func (s *Server) restoreSeed(ctx context.Context, restore []*adapterv1.ChunkGrant) workspace.Seed {
+	if len(restore) == 0 {
+		return nil
+	}
+	return func(buildDir string) error {
+		if s.CheckpointTransport == nil {
+			return fmt.Errorf("%w: adapter is not configured with a checkpoint transport", errRestore)
+		}
+		roots := []workspace.NamedRoot{{Prefix: workspace.WorkspacePrefix, Root: buildDir}}
+		stream := s.chunkStream(ctx, restore)
+		_, err := workspace.ExtractTree(roots, stream)
+		_ = stream.Close()
+		if err != nil {
+			return fmt.Errorf("%w: %w", errRestore, err)
+		}
+		return nil
+	}
+}
+
+// signalFilesUpdated tells the runtime that a mid-session upload promoted
+// new files into the session's workspace. It holds no per-slot guard: it
+// waits on the acknowledgement gate of entry, the entry the finalize
+// resolved, bounded by SessionStartAckTimeout, so a wait does not block
+// Shutdown, DemoteSDK, or Resume from releasing the gate. The signal is
+// best-effort: a gate that does not admit the frame, or a channel no
+// runtime is connected to, delivers nothing, and the promoted files are on
+// disk regardless. spec: §7.4; §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (s *Server) signalFilesUpdated(ctx context.Context, entry *slotState, sessionID string) {
+	wctx, cancel := s.gateBound(ctx, 0)
+	defer cancel()
+	if err := s.awaitSessionStarted(wctx, entry); err != nil {
+		log.Printf("lenny-adapter: files_updated signal for session %s not delivered: %v", sessionID, err)
+		return
+	}
+	if err := s.Lifecycle.SignalFilesUpdated(sessionID); err != nil {
+		log.Printf("lenny-adapter: files_updated signal for session %s not delivered: %v", sessionID, err)
+	}
+}
+
 // RunSetup executes the §14 WorkspacePlan setup commands against the
 // materialized workspace. It is the third RPC of the §4.7 session
 // assignment sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
-// StartSession): the workspace has already been materialized into
-// WorkspaceRoot by the time RunSetup runs, so this RPC neither claims
+// StartSession): the workspace has already been materialized into the
+// session's §6.4 slot cwd by the time RunSetup runs, so this RPC neither claims
 // the session nor touches pod assignment state. The §5.1 setupPolicy in
 // the request bounds the aggregate setup phase. The response carries
-// the per-command setup output the §7.5 line 475 "Fully logged" contract
+// the per-command setup output the §7.5 contract
 // requires; the gateway persists this on the session row so a client can
 // see it via §15.1 GET /v1/sessions/{id}. F-7.5.4.
 func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (*adapterv1.RunSetupResponse, error) {
-	// spec: §16.3 line 340 — `session.run_setup` is emitted by the Pod. The
+	// spec: §16.3 — `session.run_setup` is emitted by the Pod. The
 	// span covers the §14 setup-command execution phase. F-16.3.6.
 	ctx, span := tracing.NewTracer(nil).Start(ctx, tracing.SpanSessionRunSetup)
 	var spanErr error
@@ -324,25 +461,43 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 		span.End()
 	}()
 
-	if req.GetSessionId().GetValue() == "" {
+	sessionID := req.GetSessionId().GetValue()
+	if sessionID == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.InvalidArgument, "RunSetup requires a session id"),
 			tracing.CategoryPermanent,
 		)
 		return nil, status.Error(codes.InvalidArgument, "RunSetup requires a session id")
 	}
-	// spec: §6.4 line 404 — a slot-qualified setup runs against the slot's
-	// own /workspace/slots/{slotId}/current cwd. The single-session layout
-	// uses the pod-global WorkspaceRoot.
-	workspaceRoot := s.WorkspaceRoot
-	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
-		paths, perr := s.ensureSlotPaths(slotID)
-		if perr != nil {
-			spanErr = tracing.CategorizeError(perr, tracing.CategoryPermanent)
-			return nil, status.Errorf(codes.InvalidArgument, "resolve slot %s workspace: %v", slotID, perr)
-		}
-		workspaceRoot = paths.Current
+	// spec: §4.7.1 rule 1 — RunSetup is never mid-session, so it carries a
+	// bind attempt token.
+	if verr := validateBindFields(req.GetBindAttempt(), false); verr != nil {
+		spanErr = tracing.CategorizeError(verr, tracing.CategoryPermanent)
+		return nil, verr
 	}
+	// spec: §5.2 (slot-identifier reclaim hold) — the setup commands write the slot's
+	// tree outside s.mu, so the slot's per-slot guard is held across the
+	// resolve and that work.
+	// A held identifier is refused without waiting, and an acquisition that
+	// outlives ctx is refused with the context's own error.
+	releaseGuard, gerr := s.acquireSlotGuardForResolve(ctx, sessionID)
+	if gerr != nil {
+		spanErr = tracing.CategorizeError(gerr, slotGuardCategory(gerr))
+		return nil, gerr
+	}
+	defer releaseGuard()
+	// spec: §6.4 — the setup runs against the session's own
+	// /workspace/slots/{sessionId}/current cwd.
+	paths, perr := s.ensureSlotPaths(sessionID, slotResolve{
+		bindAttempt: req.GetBindAttempt(),
+		allowCreate: true,
+	})
+	if perr != nil {
+		rerr := slotResolveError(perr, fmt.Sprintf("resolve workspace for session %s", sessionID))
+		spanErr = tracing.CategorizeError(rerr, slotResolveCategory(perr))
+		return nil, rerr
+	}
+	workspaceRoot := paths.Current
 	if workspaceRoot == "" {
 		spanErr = tracing.CategorizeError(
 			status.Error(codes.FailedPrecondition, "adapter is not configured with a workspace root"),
@@ -356,7 +511,7 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 		setupOptionsFromProto(req.GetSetupPolicy(), workspaceRoot))
 	resp := &adapterv1.RunSetupResponse{Outputs: setupOutputsToProto(outputs)}
 	if err != nil {
-		// spec: §5.1 lines 89-91 — setupPolicy.onTimeout = warn proceeds
+		// spec: §5.1 — setupPolicy.onTimeout = warn proceeds
 		// to runtime start past the aggregate cap. workspace.RunSetup
 		// returns ErrSetupAggregateTimeoutWarn (wrapped with cap +
 		// command-index) so the warn case is operationally observable
@@ -389,7 +544,7 @@ func (s *Server) RunSetup(ctx context.Context, req *adapterv1.RunSetupRequest) (
 
 // setupOutputsToProto converts the workspace-layer SetupCommandOutput
 // slice to the wire form the §15.1 session-envelope plumbing consumes.
-// spec: §7.5 line 475 — F-7.5.4.
+// spec: §7.5 — F-7.5.4.
 func setupOutputsToProto(outs []workspace.SetupCommandOutput) []*adapterv1.SetupCommandOutput {
 	if len(outs) == 0 {
 		return nil

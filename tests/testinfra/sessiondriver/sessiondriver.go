@@ -112,6 +112,12 @@ type Session struct {
 	// this session to (the SandboxClaim/Sandbox name). Empty on a
 	// service-mode session, which is claimless (§5.2).
 	PodAssignment string `json:"podAssignment,omitempty"`
+
+	// RetryCount and RecoveryGeneration are the §4.2 retry counter and
+	// pod-recovery counter, so a test observes a failure edge that spent a
+	// retry and a restore that committed after the row left the edge.
+	RetryCount         int64 `json:"retryCount"`
+	RecoveryGeneration int64 `json:"recoveryGeneration"`
 }
 
 // MessageResponse is the parsed §15.1 POST /v1/sessions/{id}/messages
@@ -123,7 +129,7 @@ type MessageResponse struct {
 	Output          json.RawMessage `json:"output,omitempty"`
 }
 
-// DeliveryReceipt mirrors the §15.4 lines 1725-1737 schema returned by
+// DeliveryReceipt mirrors the §15.4 schema returned by
 // every send_message call (the MCP tool and the REST endpoint).
 type DeliveryReceipt struct {
 	MessageID   string `json:"messageId"`
@@ -294,6 +300,130 @@ func (d *Driver) BootstrapTenant(ctx context.Context, tenantID string) error {
 	return nil
 }
 
+// AllowSessionsWithNoEnvironment sets the tenant's noEnvironmentPolicy
+// to allow-all through the admin rbac-config surface, preserving every
+// other field the configuration carries. A tenant carries the stricter
+// deny-all policy unless it is relaxed: a freshly bootstrapped tenant
+// starts there, and on a long-lived, reused Kind install an earlier run
+// can leave the built-in "default" tenant pinned there too. The session
+// server's environment admission gate then answers every
+// session-creation request that names no environment with 403 FORBIDDEN
+// and reason no_environment_policy_deny_all. A test whose assertions sit
+// on another axis pins the precondition through this documented admin
+// path rather than depending on the tenant's default policy or on the
+// state an earlier, unrelated run left behind.
+//
+// The call is idempotent: a tenant already on allow-all is left alone.
+//
+// spec: §10.6, §11.1
+func (d *Driver) AllowSessionsWithNoEnvironment(ctx context.Context, tenantID string) error {
+	path := "/v1/admin/tenants/" + tenantID + "/rbac-config"
+	getRes, err := d.doRequest(ctx, http.MethodGet, path, tenantAdmin(tenantID), nil)
+	if err != nil {
+		return fmt.Errorf("get rbac-config for tenant %q: %w", tenantID, err)
+	}
+	defer getRes.Body.Close()
+	raw, _ := io.ReadAll(getRes.Body)
+	if getRes.StatusCode != http.StatusOK {
+		return fmt.Errorf("get rbac-config for tenant %q: status %d, body %s",
+			tenantID, getRes.StatusCode, string(raw))
+	}
+	etag := getRes.Header.Get("ETag")
+	if etag == "" {
+		return fmt.Errorf("get rbac-config for tenant %q: response carried no ETag", tenantID)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return fmt.Errorf("decode rbac-config for tenant %q: %w; body %s", tenantID, err, string(raw))
+	}
+	if payload["noEnvironmentPolicy"] == "allow-all" {
+		return nil
+	}
+	payload["noEnvironmentPolicy"] = "allow-all"
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encode rbac-config for tenant %q: %w", tenantID, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, d.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build rbac-config put for tenant %q: %w", tenantID, err)
+	}
+	addDevHeaders(req, tenantAdmin(tenantID))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("If-Match", etag)
+	putRes, err := d.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("put rbac-config for tenant %q: %w", tenantID, err)
+	}
+	defer putRes.Body.Close()
+	putRaw, _ := io.ReadAll(putRes.Body)
+	if putRes.StatusCode != http.StatusOK {
+		return fmt.Errorf("put rbac-config for tenant %q: status %d, body %s",
+			tenantID, putRes.StatusCode, string(putRaw))
+	}
+	return nil
+}
+
+// SetPoolSessionPolicy sets one key of a pool's sessionPolicy through the
+// admin pools surface, preserving every other field, and returns the value
+// the key held before (nil when absent) so the caller can restore it. A nil
+// value removes the key. The pool's idle bound and other gateway-enforced
+// policy fields are read from the pool row on each use, so the change takes
+// effect without a pod restart.
+//
+// spec: §5.2 (Pool Configuration and Execution Modes), §15.1 (REST API)
+func (d *Driver) SetPoolSessionPolicy(ctx context.Context, pool, key string, value any) (any, error) {
+	path := "/v1/admin/pools/" + pool
+	getRes, err := d.doRequest(ctx, http.MethodGet, path, platformAdmin(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("get pool %q: %w", pool, err)
+	}
+	defer getRes.Body.Close()
+	raw, _ := io.ReadAll(getRes.Body)
+	if getRes.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get pool %q: status %d, body %s", pool, getRes.StatusCode, string(raw))
+	}
+	etag := getRes.Header.Get("ETag")
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, fmt.Errorf("decode pool %q: %w; body %s", pool, err, string(raw))
+	}
+	policy, _ := payload["sessionPolicy"].(map[string]any)
+	if policy == nil {
+		policy = map[string]any{}
+	}
+	prev := policy[key]
+	if value == nil {
+		delete(policy, key)
+	} else {
+		policy[key] = value
+	}
+	payload["sessionPolicy"] = policy
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode pool %q: %w", pool, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, d.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build pool put for %q: %w", pool, err)
+	}
+	addDevHeaders(req, platformAdmin())
+	req.Header.Set("Content-Type", "application/json")
+	if etag != "" {
+		req.Header.Set("If-Match", etag)
+	}
+	putRes, err := d.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("put pool %q: %w", pool, err)
+	}
+	defer putRes.Body.Close()
+	putRaw, _ := io.ReadAll(putRes.Body)
+	if putRes.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("put pool %q: status %d, body %s", pool, putRes.StatusCode, string(putRaw))
+	}
+	return prev, nil
+}
+
 // CreateSession issues POST /v1/sessions for the tenant with the
 // runtimeRef, returning the §15.1 session row. The session lands in
 // state running (the minimal gateway skips the ready intermediate).
@@ -303,6 +433,14 @@ func (d *Driver) BootstrapTenant(ctx context.Context, tenantID string) error {
 // Use CreateAndStart for the convenience POST /v1/sessions/start path
 // when a test does not need the explicit two-step lifecycle.
 func (d *Driver) CreateSession(ctx context.Context, tenantID, runtimeRef string) (*Session, error) {
+	return d.CreateSessionWithOptions(ctx, tenantID, runtimeRef, StartOptions{})
+}
+
+// CreateSessionWithOptions behaves like CreateSession with the optional body
+// fields opts sets. A test that needs a field POST /v1/sessions/start does
+// not carry, such as retryPolicy, creates the session here and starts it
+// with Start.
+func (d *Driver) CreateSessionWithOptions(ctx context.Context, tenantID, runtimeRef string, opts StartOptions) (*Session, error) {
 	if runtimeRef == "" {
 		runtimeRef = defaultRuntime
 	}
@@ -312,9 +450,12 @@ func (d *Driver) CreateSession(ctx context.Context, tenantID, runtimeRef string)
 	// match needs the same profile on the session record. Without
 	// this override the gateway falls back to its default
 	// (`sandboxed`) and the lookup misses every pool.
-	body := fmt.Sprintf(`{"runtimeRef":%q,"isolationProfile":"standard"}`, runtimeRef)
+	body, err := json.Marshal(startBody(runtimeRef, opts))
+	if err != nil {
+		return nil, fmt.Errorf("encode create body: %w", err)
+	}
 	res, err := d.doSessionRequest(ctx, http.MethodPost, "/v1/sessions",
-		tenantAdmin(tenantID), strings.NewReader(body))
+		tenantAdmin(tenantID), strings.NewReader(string(body)))
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
 	}
@@ -337,9 +478,8 @@ func (d *Driver) CreateSession(ctx context.Context, tenantID, runtimeRef string)
 // the gateway's sessionstore.
 //
 // Retries up to 6 times with linear backoff while the gateway returns a
-// transient 503 pool-not-ready envelope: POD_CLAIM_FAILED, the §5.2
-// line 519 WARM_POOL_EXHAUSTED (no idle pods or no free concurrent
-// slot), or the §5.2 lines 602-625 RUNTIME_UNAVAILABLE (the pool is
+// transient 503 pool-not-ready envelope: POD_CLAIM_FAILED, the §5.2 WARM_POOL_EXHAUSTED (no idle pods or no free concurrent
+// slot), or the §5.2 RUNTIME_UNAVAILABLE (the pool is
 // still bootstrapping). The §4.6 WarmPoolController scales the pool
 // asynchronously after a claim drains it, so a follow-up test that
 // arrives before the next warm pod settles sees one of these envelopes.
@@ -353,12 +493,53 @@ func (d *Driver) CreateAndStart(ctx context.Context, tenantID, runtimeRef string
 // materializes the given §14 WorkspacePlan (raw JSON, e.g.
 // `{"schemaVersion":1,"sources":[{"type":"inlineFile","path":"marker.txt",
 // "content":"...","mode":"0644"}]}`) into the claimed pod's
-// /workspace/current at session start. A nil plan omits the field
+// own slot cwd, /workspace/slots/{sessionId}/current, at session start.
+// A nil plan omits the field
 // entirely, identical to CreateAndStart. Used by a test that needs to
 // place content into a real pod's workspace without shelling into a
 // distroless runtime image (the adapter, not the caller, owns
-// /workspace/current, so this is the only write path a client has).
+// the slot tree, so this is the only write path a client has).
 func (d *Driver) CreateAndStartWithPlan(ctx context.Context, tenantID, runtimeRef string, workspacePlan json.RawMessage) (*Session, error) {
+	return d.CreateAndStartWithOptions(ctx, tenantID, runtimeRef, StartOptions{WorkspacePlan: workspacePlan})
+}
+
+// StartOptions carries the optional session-creation body fields a test
+// sets. A nil field is omitted from the body.
+type StartOptions struct {
+	// WorkspacePlan is the §14 WorkspacePlan, as raw JSON.
+	WorkspacePlan json.RawMessage
+	// RetryPolicy is the §7.3 per-session retryPolicy, as raw JSON, for
+	// example `{"maxResumeWindowSeconds":5}`.
+	RetryPolicy json.RawMessage
+	// UserID is the body's userId, the user who owns the new session row.
+	// The §12.8 creation fence and a user erasure act on this owner, so a
+	// test that erases a user starts the user's session with it set.
+	UserID string
+}
+
+// sessionBody is the session-creation body the driver sends.
+type sessionBody struct {
+	RuntimeRef       string          `json:"runtimeRef"`
+	IsolationProfile string          `json:"isolationProfile"`
+	WorkspacePlan    json.RawMessage `json:"workspacePlan,omitempty"`
+	RetryPolicy      json.RawMessage `json:"retryPolicy,omitempty"`
+	UserID           string          `json:"userId,omitempty"`
+}
+
+// startBody builds the creation body for runtimeRef under the standard
+// isolation profile the e2e SandboxTemplates carry.
+func startBody(runtimeRef string, opts StartOptions) sessionBody {
+	return sessionBody{
+		RuntimeRef: runtimeRef, IsolationProfile: "standard",
+		WorkspacePlan: opts.WorkspacePlan, RetryPolicy: opts.RetryPolicy,
+		UserID: opts.UserID,
+	}
+}
+
+// CreateAndStartWithOptions behaves like CreateAndStart with the optional
+// body fields opts sets, and retries a transient pool-not-ready 503 the same
+// way.
+func (d *Driver) CreateAndStartWithOptions(ctx context.Context, tenantID, runtimeRef string, opts StartOptions) (*Session, error) {
 	if runtimeRef == "" {
 		runtimeRef = defaultRuntime
 	}
@@ -368,12 +549,7 @@ func (d *Driver) CreateAndStartWithPlan(ctx context.Context, tenantID, runtimeRe
 	// match needs the same profile on the session record. Without
 	// this override the gateway falls back to its default
 	// (`sandboxed`) and the lookup misses every pool.
-	req := struct {
-		RuntimeRef       string          `json:"runtimeRef"`
-		IsolationProfile string          `json:"isolationProfile"`
-		WorkspacePlan    json.RawMessage `json:"workspacePlan,omitempty"`
-	}{RuntimeRef: runtimeRef, IsolationProfile: "standard", WorkspacePlan: workspacePlan}
-	bodyBytes, err := json.Marshal(req)
+	bodyBytes, err := json.Marshal(startBody(runtimeRef, opts))
 	if err != nil {
 		return nil, fmt.Errorf("encode create-and-start body: %w", err)
 	}
@@ -403,8 +579,8 @@ func (d *Driver) CreateAndStartWithPlan(ctx context.Context, tenantID, runtimeRe
 		if res.StatusCode != http.StatusServiceUnavailable || !isRetryableCreateFailure(rb) {
 			break
 		}
-		// A retryable 503 (a §5.2 pool-not-ready envelope or a §7.1 line 28
-		// SESSION_CREATION_FAILED atomic-unit failure) carries a §15.1 line 1138
+		// A retryable 503 (a §5.2 pool-not-ready envelope or a §7.1
+		// SESSION_CREATION_FAILED atomic-unit failure) carries a §15.1
 		// Retry-After header; honor it as the backoff floor so the wait matches
 		// the platform's own budget, otherwise fall back to the linear schedule.
 		backoff := time.Duration(attempt+1) * 500 * time.Millisecond
@@ -448,9 +624,9 @@ func isPoolNotReady(body []byte) bool {
 // isRetryableCreateFailure reports whether a 503 body carries a transient
 // session-create envelope the platform marks retryable, so the driver should
 // keep trying within its window rather than fail on the first hit. It covers
-// the pool-not-ready codes and the §7.1 line 28 SESSION_CREATION_FAILED
+// the pool-not-ready codes and the §7.1 SESSION_CREATION_FAILED
 // atomic-unit fallback: the gateway returns SESSION_CREATION_FAILED (with a
-// §15.1 line 1138 Retry-After header) for a generic step 2-8 failure such as
+// §15.1 Retry-After header) for a generic step 2-8 failure such as
 // the gateway failing to dial a freshly-claimed pod's adapter on :50051 while
 // the pod's network is still settling on a loaded cluster. That is the same
 // transient class as a pool-not-ready churn, so a client is expected to back
@@ -487,17 +663,35 @@ func retryAfterBackoff(header string) time.Duration {
 // explicitly stage the create → start two-step lifecycle (a derive +
 // start sequence, for example).
 func (d *Driver) Start(ctx context.Context, tenantID, sessionID string) (*Session, error) {
-	path := "/v1/sessions/" + sessionID + "/start"
+	return d.sessionStep(ctx, tenantID, sessionID, "start")
+}
+
+// Interrupt issues POST /v1/sessions/{id}/interrupt, which suspends a
+// running session on its pod.
+func (d *Driver) Interrupt(ctx context.Context, tenantID, sessionID string) (*Session, error) {
+	return d.sessionStep(ctx, tenantID, sessionID, "interrupt")
+}
+
+// Finalize issues POST /v1/sessions/{id}/finalize, the §15.1 preparation
+// barrier that moves a created session to ready, and returns the session.
+func (d *Driver) Finalize(ctx context.Context, tenantID, sessionID string) (*Session, error) {
+	return d.sessionStep(ctx, tenantID, sessionID, "finalize")
+}
+
+// sessionStep posts an empty body to /v1/sessions/{id}/{step} and decodes
+// the 200 session response.
+func (d *Driver) sessionStep(ctx context.Context, tenantID, sessionID, step string) (*Session, error) {
+	path := "/v1/sessions/" + sessionID + "/" + step
 	res, err := d.doSessionRequest(ctx, http.MethodPost, path,
 		tenantAdmin(tenantID), nil)
 	if err != nil {
-		return nil, fmt.Errorf("start session %q: %w", sessionID, err)
+		return nil, fmt.Errorf("%s session %q: %w", step, sessionID, err)
 	}
 	defer res.Body.Close()
 	rb, _ := io.ReadAll(res.Body)
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("start session %q: status %d, body %s",
-			sessionID, res.StatusCode, string(rb))
+		return nil, fmt.Errorf("%s session %q: status %d, body %s",
+			step, sessionID, res.StatusCode, string(rb))
 	}
 	var s Session
 	if err := json.Unmarshal(rb, &s); err != nil {

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §12.3 line 97 — the SIEM outbox forwarder must checkpoint its
+// spec: §12.3 — the SIEM outbox forwarder must checkpoint its
 // delivery position durably in a siem_delivery_state table so a restart
 // replays from the last confirmed delivery point without duplication or
 // gap. Migration 0107 creates that table keyed by tenant chain with the

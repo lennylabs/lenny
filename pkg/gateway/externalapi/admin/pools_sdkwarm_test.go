@@ -12,8 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// TestCreatePoolRejectsPreConnectIncompatible_spec_5_2_6_1 covers the §5.2
-// line 430 / §6.1 lines 77-78 admission guard on pool creation: an SDK-warm
+// TestCreatePoolRejectsPreConnectIncompatible_spec_5_2_6_1 covers the §5.2 / §6.1 admission guard on pool creation: an SDK-warm
 // runtime (capabilities.preConnect: true) bound to a service-mode pool or a
 // session pool with maxConcurrentSessions > 1 is rejected, while the same
 // runtime on a one-session-per-pod pool and a non-preConnect runtime on a
@@ -72,8 +71,7 @@ func TestCreatePoolRejectsPreConnectIncompatible_spec_5_2_6_1(t *testing.T) {
 	}
 }
 
-// TestUpdatePoolRejectsPreConnectIncompatible_spec_5_2_6_1 covers the §5.2
-// line 430 / §6.1 lines 77-78 guard on the PUT path: switching a session
+// TestUpdatePoolRejectsPreConnectIncompatible_spec_5_2_6_1 covers the §5.2 / §6.1 guard on the PUT path: switching a session
 // pool that references a preConnect runtime into service mode is rejected on
 // the effective post-update mode.
 func TestUpdatePoolRejectsPreConnectIncompatible_spec_5_2_6_1(t *testing.T) {

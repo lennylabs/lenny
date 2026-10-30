@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/quota"
 )
 
-// spec: §12.4 line 268 — the adapter reports the in-memory tenant usage on
+// spec: §12.4 — the adapter reports the in-memory tenant usage on
 // the tenant scope only; the per-user and platform-global scopes report
 // zero so QuotaEvaluator gates solely on the tenant budget in this mode.
 func TestUsageReader_TenantScopeOnly_spec_12_4_268(t *testing.T) {

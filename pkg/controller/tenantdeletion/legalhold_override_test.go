@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
 )
 
-// spec: §12.8 lines 880-889 — the Phase 3.5 force-delete override path:
+// spec: §12.8 — the Phase 3.5 force-delete override path:
 // once an operator force-deletes a held tenant, Phase 3.5 segregates the
 // held evidence into the region-scoped escrow and the deletion proceeds
 // instead of blocking. F-12.8.2, F-24.10.2, F-24.10.5.
@@ -146,7 +146,7 @@ func TestPhase35OverrideUnresolvableRegionPauses_spec_12_8_883(t *testing.T) {
 		}
 	}
 	j, _ := jobs.Get(ctx, "acme")
-	// §12.8 line 883: an unresolvable escrow region pauses at Phase 3.5
+	// §12.8: an unresolvable escrow region pauses at Phase 3.5
 	// (not failed), pending operator remediation. The override is NOT
 	// emitted (no escrow happened).
 	if j.Phase != tenantdeletion.PhaseLegalHoldSegregation {

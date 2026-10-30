@@ -10,11 +10,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
 )
 
-// adminListDefaultSort pins the §15.1 line 1236 default ordering shared
+// adminListDefaultSort pins the §15.1 default ordering shared
 // by the admin resource collections: created_at descending.
 var adminListDefaultSort = pagination.Sort{Field: "created_at", Direction: pagination.DirectionDesc}
 
-// adminTimestampSortFields is the §15.1 line 1236 sortable-field set for
+// adminTimestampSortFields is the §15.1 sortable-field set for
 // admin collections keyed by a timestamp plus a name/id tiebreaker. The
 // `name` field is included because every admin resource exposes a stable
 // name or id the caller can order by.
@@ -28,11 +28,11 @@ var adminTimestampSortFields = []string{"created_at", "updated_at", "name"}
 // cursor/limit/sort writes a 400 VALIDATION_ERROR and returns.
 //
 // The collection is paginated in memory: the store returns the full
-// post-filter set, len() is the cheaply-computable §15.1 line 1252
+// post-filter set, len() is the cheaply-computable §15.1
 // total, and the comparison-based cursor in pagination.Page survives
 // inserts and deletes between page requests.
 //
-// spec: §15.1 lines 1228-1253. F-15.1.6.
+// spec: §15.1. F-15.1.6.
 func writePaginatedList[T any](
 	w http.ResponseWriter,
 	req *http.Request,

@@ -24,7 +24,7 @@ import (
 // Callers MUST issue SIGCONT before returning to avoid leaving the
 // runtime indefinitely frozen — typically via `defer h.Resume(ctx)`.
 //
-// spec: §4.4 line 242, 244 — "the adapter MUST issue SIGCONT in a
+// spec: §4.4 — "the adapter MUST issue SIGCONT in a
 // deferred cleanup handler so that SIGCONT is sent on all exit paths".
 func (h *Helper) Pause(_ context.Context) error {
 	if err := h.validate(); err != nil {
@@ -61,7 +61,7 @@ func (h *Helper) Pause(_ context.Context) error {
 // returns ErrCheckpointStuck. A non-Linux host returns
 // ErrNotSupported.
 //
-// spec: §4.4 line 246 — "After sending SIGCONT, the adapter MUST
+// spec: §4.4 — "After sending SIGCONT, the adapter MUST
 // confirm that the agent process has actually left the stopped state
 // ... up to 5 times with 100 ms intervals".
 func (h *Helper) Resume(_ context.Context) error {
@@ -100,7 +100,7 @@ func (h *Helper) Resume(_ context.Context) error {
 // inside `work` is recovered, SIGCONT is delivered, the panic is
 // re-raised after the flag is set.
 //
-// spec: §4.4 lines 244, 246, 248 — watchdog, SIGCONT confirmation,
+// spec: §4.4 — watchdog, SIGCONT confirmation,
 // abort cleanup. Any recover() inside the helper sets `checkpointStuck`
 // and re-panics.
 func (h *Helper) Checkpoint(ctx context.Context, work CheckpointWork) (err error) {
@@ -118,10 +118,10 @@ func (h *Helper) Checkpoint(ctx context.Context, work CheckpointWork) (err error
 		return pauseErr
 	}
 
-	// The defer chain is the §4.4 line 248 abort cleanup: SIGCONT is
+	// The defer chain is the §4.4 abort cleanup: SIGCONT is
 	// sent on every exit path. A panic from `work` re-raises after the
 	// stuck flag is set so the gateway observes the failure rather than
-	// silently recovering — spec §4.4 line 248 explicitly forbids
+	// silently recovering — spec §4.4 explicitly forbids
 	// recover() swallowing a checkpoint panic.
 	var workErr error
 	var watchdogFired bool

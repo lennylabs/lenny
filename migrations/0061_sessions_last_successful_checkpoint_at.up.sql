@@ -1,4 +1,4 @@
--- §4.4 line 258 requires the gateway to track
+-- §4.4 requires the gateway to track
 -- `last_successful_checkpoint_at` on the session record in Postgres,
 -- updated on every successful checkpoint regardless of trigger
 -- (periodic, eviction, pre-drain). The freshness gauge

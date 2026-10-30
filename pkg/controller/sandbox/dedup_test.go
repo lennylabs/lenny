@@ -24,7 +24,7 @@ func applySandboxStatus(t *testing.T, c client.Client, name string, status lenny
 	t.Helper()
 	patch := &lennyv1.Sandbox{
 		TypeMeta:   metav1.TypeMeta{APIVersion: lennyv1.GroupVersion.String(), Kind: "Sandbox"},
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace(t)},
 	}
 	patch.Status = status
 	if err := c.Status().Patch(context.Background(), patch, client.Apply,
@@ -36,7 +36,7 @@ func applySandboxStatus(t *testing.T, c client.Client, name string, status lenny
 func reconcileResult(t *testing.T, r *sandbox.Reconciler) ctrl.Result {
 	t.Helper()
 	res, err := r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName},
+		NamespacedName: client.ObjectKey{Namespace: testNamespace(t), Name: testName},
 	})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -50,13 +50,14 @@ func reconcileResult(t *testing.T, r *sandbox.Reconciler) ctrl.Result {
 // unchanged until the window expires.
 func TestReconcileDefersStatusWriteWithinDedupWindow(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, runtimeCR(), sandboxCR("warming"), podCR("Running", true))
+	c := newClient(t, s, runtimeCR(t), sandboxCR(t, "warming"), podCR(t, "Running", true))
 
 	r := &sandbox.Reconciler{
-		Client:       c,
-		Scheme:       s,
-		AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1",
-		StatusDedup:  statusdedup.New(time.Hour),
+		Client:          c,
+		Scheme:          s,
+		AdapterImage:    "ghcr.io/lennylabs/lenny-adapter:v1",
+		SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1",
+		StatusDedup:     statusdedup.New(time.Hour),
 	}
 
 	// First reconcile: warming + ready pod → idle, status written. The
@@ -87,9 +88,9 @@ func TestReconcileDefersStatusWriteWithinDedupWindow(t *testing.T) {
 // for the test above).
 func TestReconcileWithoutDedupWritesImmediately(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, runtimeCR(), sandboxCR("warming"), podCR("Running", true))
+	c := newClient(t, s, runtimeCR(t), sandboxCR(t, "warming"), podCR(t, "Running", true))
 
-	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1"}
+	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1"}
 	reconcileResult(t, r)
 	applySandboxStatus(t, c, testName, lennyv1.SandboxStatus{Phase: "warming"})
 	if res := reconcileResult(t, r); res.RequeueAfter != 0 {

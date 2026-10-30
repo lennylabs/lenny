@@ -121,7 +121,7 @@ func TestLeaseValidateRejectsZeroExpiry(t *testing.T) {
 // TestAllProxyDialectsIsExhaustive pins the §4.9 + §26 closed enum of
 // proxy dialects. The §4.9 launch dialects are anthropic and openai; §26
 // extends with google (codex / langgraph / mastra) and cursor (cursor-cli).
-// spec: §4.9 lines 1473-1476; §26.6 line 297; §26.5 / §26.8 / §26.9.
+// spec: §4.9; §26.6; §26.5 / §26.8 / §26.9.
 func TestAllProxyDialectsIsExhaustive_spec_4_9_1473(t *testing.T) {
 	got := AllProxyDialects()
 	if len(got) != 4 {
@@ -132,7 +132,7 @@ func TestAllProxyDialectsIsExhaustive_spec_4_9_1473(t *testing.T) {
 			t.Errorf("AllProxyDialects() returned invalid value %q", d)
 		}
 	}
-	// Negative: an unknown dialect is rejected (§4.9 line 1475 admission
+	// Negative: an unknown dialect is rejected (§4.9 admission
 	// returns INVALID_POOL_PROXY_DIALECT against the runtime declaration).
 	if ProxyDialect("grpc").IsValid() {
 		t.Errorf("unknown dialect must not be IsValid for the §4.9 admission gate")
@@ -145,7 +145,7 @@ func TestAllProxyDialectsIsExhaustive_spec_4_9_1473(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1145 — a lease records issuedAt so expiresAt and the
+// spec: §4.9 — a lease records issuedAt so expiresAt and the
 // wall-clock duration are auditable.
 func TestLeaseValidateRejectsZeroIssuedAt(t *testing.T) {
 	l := validProxyLease()
@@ -169,7 +169,7 @@ func TestLeaseValidateRejectsZeroIssuedAt(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1145 — Duration measures the lease lifetime from
+// spec: §4.9 — Duration measures the lease lifetime from
 // issuedAt, backing the §16.1 lenny_credential_lease_duration_seconds
 // observation.
 func TestLeaseDuration(t *testing.T) {

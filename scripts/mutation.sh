@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # scripts/mutation.sh — wraps go-mutesting (or an equivalent Go
-# mutation tool) for the §19.3 mutation-testing gate.
+# mutation tool) for the TESTING.md §19.3 mutation-testing gate.
 #
 # Usage:
 #   scripts/mutation.sh <package-pattern>
@@ -13,7 +13,7 @@
 # mutation kill rate. When the tool is absent the script reports a
 # precise "install" diagnosis and exits 0 so CI does not break.
 #
-# §19.3 sets a kill-rate threshold per critical package; that table
+# TESTING.md §19.3 sets a kill-rate threshold per critical package; that table
 # lives in lenny-test internals (cmd/lenny-test/cmd_mutation.go).
 
 set -euo pipefail
@@ -22,7 +22,7 @@ PATTERN="${1:-pkg/...}"
 
 if ! command -v go-mutesting >/dev/null 2>&1; then
     cat >&2 <<EOF
-mutation: go-mutesting not on PATH; skipping (the §19.3 mutation gate is informational today).
+mutation: go-mutesting not on PATH; skipping (the TESTING.md §19.3 mutation gate is informational today).
 
 To install:
   go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@48d0401f00fbfb9502adc2c5138497ad8ccfafb9
@@ -30,7 +30,7 @@ To install:
 When installed, this script invokes:
   go-mutesting --debug=false --do-not-remove-tmp-folder=false ${PATTERN}
 
-And reports the mutation kill rate vs the §19.3 per-package threshold.
+And reports the mutation kill rate vs the TESTING.md §19.3 per-package threshold.
 EOF
     exit 0
 fi

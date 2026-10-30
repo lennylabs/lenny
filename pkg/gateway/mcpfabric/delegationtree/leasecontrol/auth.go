@@ -14,7 +14,7 @@ import (
 
 // RequireVerifiedPeerInterceptor returns a unary server interceptor that
 // rejects any GatewayControl call whose peer did not present an
-// mTLS-verified client certificate. §4.7 line 616 declares the
+// mTLS-verified client certificate. §4.7 declares the
 // adapter↔gateway channel as "internal gRPC/HTTP+mTLS API" and §15.3
 // requires "gRPC + mTLS" for gateway↔pod traffic; the GatewayControl
 // listener that the pod adapter dials for the surviving platform-tool,
@@ -35,7 +35,7 @@ import (
 // When enabled is false — the local-development plaintext path where no
 // mTLS material is configured — the interceptor passes every call
 // through unchanged, so in-process tests and dev runs are unaffected.
-// spec: §4.7 line 616; §15.3
+// spec: §4.7; §15.3
 func RequireVerifiedPeerInterceptor(enabled bool) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if !enabled {

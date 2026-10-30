@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// spec: §25.5 line 2556 — an audit-bearing operational event sets
+// spec: §25.5 — an audit-bearing operational event sets
 // datacontenttype application/ocsf+json; a non-audit event sets
 // application/json.
 func TestOperationalEventIsAuditBearing_spec_25_5(t *testing.T) {
@@ -32,7 +32,7 @@ func TestOperationalEventIsAuditBearing_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2556 — the OCSF content type string is the canonical
+// spec: §25.5 — the OCSF content type string is the canonical
 // application/ocsf+json the §11.7 wire format mandates; the audit-bearing
 // data field survives the CloudEvents structured-content round trip.
 func TestAuditBearingEventRoundTrips_spec_25_5(t *testing.T) {

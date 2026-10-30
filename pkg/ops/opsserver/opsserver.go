@@ -205,7 +205,7 @@ type Options struct {
 	// shared-secret-derived token to force an immediate cache refresh.
 	// The route is exempt from the §25.4 OIDC gate (it carries no bearer)
 	// and authenticated by the token header instead, gated at the network
-	// layer by the intra-Service NetworkPolicy. spec: §25.5 line 2751.
+	// layer by the intra-Service NetworkPolicy. spec: §25.5.
 	CacheInvalidator     CacheInvalidator
 	CacheInvalidateToken string
 	// ReleaseChannel is the §25.8 release-channel manifest publisher.
@@ -258,18 +258,21 @@ type Options struct {
 	// Kubernetes pod-log API. A nil reader (no cluster connection) leaves
 	// the endpoint reporting the log proxy unavailable.
 	PodLogs PodLogReader
-	// Production reports whether this deployment is production, which
-	// gates the §25.11 confirm requirement for a full backup.
+	// Production reports §17.9.1 production mode, which gates the §25.11
+	// confirm requirement for a full backup.
 	Production bool
+	// IdempotencyKeyRequired reports the §25.4 Tier 2/3 posture: a
+	// required endpoint rejects a request without Idempotency-Key and
+	// fails closed on an idempotency-store outage.
+	IdempotencyKeyRequired bool
 	// DiagnosticsAudit, when non-nil, enables §25.9 diagnostics-audit
 	// emission with per-resource coalescing and a per-service-account
 	// rate cap on the §25.6 diagnostic endpoints. A nil value leaves the
 	// diagnostic endpoints emitting no audit event (they still serve).
 	DiagnosticsAudit *DiagnosticsAuditConfig
 	// Auth, when non-nil, wraps every operability route (all paths except
-	// the Kubernetes probes /healthz and /readyz) in the §25.4 lines
-	// 1562-1564 OIDC authentication + platform-admin/tenant-admin role
-	// gate, and applies the §25.4 line 2001 per-service-account rate limit
+	// the Kubernetes probes /healthz and /readyz) in the §25.4 OIDC authentication + platform-admin/tenant-admin role
+	// gate, and applies the §25.4 per-service-account rate limit
 	// when a RateLimiter is set. A nil value leaves the surface
 	// unauthenticated (dev / embedded single-node only); the production
 	// binary always supplies it.
@@ -385,13 +388,13 @@ func New(opts Options) *Server {
 		s.rateLimiter = opts.Auth.RateLimiter
 	}
 	// §25.4 idempotency: caller_id is the verified principal's OIDC sub
-	// (callerIdentity), and Production reports the Tier 2/3 required-key
-	// posture so required endpoints reject a missing key and fail closed
-	// on a store outage.
+	// (callerIdentity), and IdempotencyKeyRequired carries the Tier 2/3
+	// required-key posture so required endpoints reject a missing key and
+	// fail closed on a store outage.
 	if opts.Idempotency != nil {
 		s.idem = opsidem.New(opts.Idempotency, opsidem.Config{
 			CallerID:   callerIdentity,
-			Production: opts.Production,
+			Production: opts.IdempotencyKeyRequired,
 			// §25.4 ops.idempotency.{keyTTLSeconds,longRunningKeyTTLSeconds}:
 			// a zero value lets opsidem.New apply the built-in 24h/7d. F-25.4.9.
 			StandardTTL:    opts.IdempotencyStandardTTL,
@@ -409,7 +412,7 @@ func New(opts Options) *Server {
 	}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /readyz", s.handleReadyz)
-	// spec: §16.8 / §16.9 line 720 — the Prometheus scrape surface. §16.9
+	// spec: §16.8 / §16.9 — the Prometheus scrape surface. §16.9
 	// names lenny-ops (TCP 9090) a mandatory scrape target in every tier;
 	// the §16.8 self-monitoring, backup, drift, and rate-limit series are
 	// registered on the process default registry and exposed here. The
@@ -423,7 +426,7 @@ func New(opts Options) *Server {
 	s.mux.HandleFunc("GET /v1/admin/diagnostics/connectivity", s.handleConnectivity)
 	s.mux.HandleFunc("GET /v1/admin/runbooks", s.handleListRunbooks)
 	s.mux.HandleFunc("GET /v1/admin/runbooks/{name}/steps", s.handleRunbookSteps)
-	// spec: §25.7 lines 3055-3057, §17.7 line 741 — the full markdown
+	// spec: §25.7, §17.7 — the full markdown
 	// hop for an agent that already holds the runbook name.
 	s.mux.HandleFunc("GET /v1/admin/runbooks/{name}", s.handleRunbookMarkdown)
 	s.mux.HandleFunc("GET /v1/admin/ops/health", s.handleOpsHealth)
@@ -475,7 +478,7 @@ func New(opts Options) *Server {
 	// overwrites this with the post-authentication chain when an
 	// AuthConfig is wired.
 	s.mcpReplay = inner
-	// §25.4 lines 1562-1564: when an AuthConfig is supplied, every
+	// §25.4: when an AuthConfig is supplied, every
 	// operability route runs through the OIDC authentication + role gate
 	// (the Kubernetes probes are exempt). The auth wrapper sits inside the
 	// correlation/access-log middleware so a rejected request is still
@@ -484,7 +487,7 @@ func New(opts Options) *Server {
 	if opts.Auth != nil {
 		routes = s.withOpsAuth(inner, opts.Auth)
 	}
-	// §25.4 lines 2499-2526: every request runs through the correlation
+	// §25.4: every request runs through the correlation
 	// middleware (stamps operation_id / agent_name / trace_id from inbound
 	// headers onto the request context) and the access-log middleware
 	// (one structured log line per request, projected through the §25.4
@@ -498,47 +501,55 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }
 
-// strictHealthDeps are the dependencies the §25.4 strict readiness
-// gate requires reachable before a replica accepts traffic: the
-// Postgres connection and the Kubernetes API (spec: §25.4 line 1055 —
-// "200 only when both Postgres connection AND K8s API are reachable").
+// strictHealthDeps are the dependencies both §25.4 /healthz modes
+// evaluate: the Postgres connection and the Kubernetes API. The
+// permissive mode, which liveness, startup, and readiness probe, passes
+// when at least one of them is reachable. The strict mode
+// (?strict=true) is the diagnostic check no probe uses, and it passes
+// only when both are reachable (spec: §25.4 "Probes").
 var strictHealthDeps = []string{ProbePostgresName, ProbeK8sAPIName}
 
-// Probe names the strict readiness gate keys on. They mirror the
-// opsservice.Probe* constants the binary registers; redeclared here so
-// the opsserver package does not import the wiring package.
+// Probe names of the dependencies the §25.4 /healthz modes evaluate.
+// They mirror the opsservice.Probe* constants the binary registers;
+// redeclared here so the opsserver package does not import the wiring
+// package.
 const (
 	ProbePostgresName = "postgres"
 	ProbeK8sAPIName   = "kubernetes"
 )
 
 // handleHealthz serves both §25.4 probe modes on the same path (spec:
-// §25.4 lines 1033-1057):
+// §25.4 "Probes"):
 //
-//   - permissive (the default, used by liveness and startup): it reports
-//     that the process is running. It does not fail on a downstream
-//     dependency outage, so a transient Postgres or Kubernetes API blip
-//     does not cause Kubernetes to restart an otherwise-healthy pod.
-//   - strict (?strict=true, used by readiness): 200 only when both the
-//     Postgres connection and the Kubernetes API are reachable; otherwise
-//     503 with a body naming the degraded dependencies so traffic is not
-//     routed to a replica that cannot serve the full §25 API.
+//   - permissive (the default, used by liveness, startup, and
+//     readiness): it probes only Postgres and the Kubernetes API, and
+//     returns 200 when at least one is reachable. When neither is, it
+//     returns 503 naming both, so liveness restarts a pod that can reach
+//     no dependency while a Postgres outage alone keeps every replica in
+//     the Service and the §25.15 degraded mode reachable.
+//   - strict (?strict=true): the diagnostic check an operator or agent
+//     runs against a replica, which no probe uses. It returns 200 only
+//     when both the Postgres connection and the Kubernetes API are
+//     reachable, and otherwise 503 with a body naming the degraded
+//     dependencies.
+//
+// In both modes a dependency whose probe is absent from the probe map
+// cannot be confirmed reachable, so it counts as degraded.
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("strict") != "true" {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-		return
+	strict := r.URL.Query().Get("strict") == "true"
+	probes := s.probes
+	if !strict {
+		// spec: §25.4 — the permissive check never runs the Redis,
+		// MinIO, or gateway probes.
+		probes = healthDepProbes(s.probes)
 	}
-	// spec: §25.4 line 1055 — strict gate. A required probe that is
-	// absent from the map (e.g. no Kubernetes client wired) cannot be
-	// confirmed reachable, so it counts as degraded.
-	results := probe.Run(r.Context(), s.probes, probeTimeout)
-	var degraded []string
-	for _, dep := range strictHealthDeps {
-		if res, ok := results[dep]; !ok || !res.OK {
-			degraded = append(degraded, dep)
-		}
+	results := probe.Run(r.Context(), probes, probeTimeout)
+	degraded := degradedHealthDeps(results)
+	failed := len(degraded) > 0
+	if !strict {
+		failed = len(degraded) == len(strictHealthDeps)
 	}
-	if len(degraded) > 0 {
+	if failed {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 			"status":       "degraded",
 			"degraded":     degraded,
@@ -552,12 +563,36 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleReadyz is the readiness probe. §25 has lenny-ops degrade
-// gracefully when a downstream dependency is transiently unavailable,
-// so the process reports ready (HTTP 200) as long as it is serving;
-// the per-dependency probe results are reported in the body so an
-// operator or agent reading the endpoint sees which dependency is
-// down.
+// healthDepProbes returns the subset of probes naming a /healthz
+// dependency (spec: §25.4 "Probes").
+func healthDepProbes(probes map[string]probe.Func) map[string]probe.Func {
+	subset := make(map[string]probe.Func, len(strictHealthDeps))
+	for _, dep := range strictHealthDeps {
+		if fn, ok := probes[dep]; ok {
+			subset[dep] = fn
+		}
+	}
+	return subset
+}
+
+// degradedHealthDeps lists the /healthz dependencies that results do
+// not report reachable, including any whose probe is absent.
+func degradedHealthDeps(results map[string]probe.Result) []string {
+	var degraded []string
+	for _, dep := range strictHealthDeps {
+		if res, ok := results[dep]; !ok || !res.OK {
+			degraded = append(degraded, dep)
+		}
+	}
+	return degraded
+}
+
+// handleReadyz serves the §25.4 /readyz dependency report. It returns
+// 200 while the process is serving and reports each dependency probe
+// result in the body, so an operator or agent reading the endpoint sees
+// which dependency is down. It is a diagnostic report that no probe
+// uses: the chart's readiness, startup, and liveness probes use the
+// permissive /healthz in every environment (spec: §25.4 "Probes").
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	results := probe.Run(r.Context(), s.probes, probeTimeout)
 	body := map[string]any{
@@ -606,7 +641,7 @@ func (s *Server) handleConnectivity(w http.ResponseWriter, r *http.Request) {
 			writeDiagnosticsError(w, err)
 			return
 		}
-		// spec: §25.9 line 3697 — connectivity is a platform-wide check,
+		// spec: §25.9 — connectivity is a platform-wide check,
 		// so its coalescing window keys on a fixed resource.
 		s.recordDiagnosticAudit(r, eventConnectivityChecked, "connectivity", "platform")
 		writeJSON(w, http.StatusOK, report)

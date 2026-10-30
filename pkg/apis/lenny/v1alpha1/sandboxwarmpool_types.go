@@ -43,7 +43,7 @@ type ScalePolicy struct {
 	// +optional
 	SDKWarmCircuitBreakerMinOpenSeconds *int64 `json:"sdkWarmCircuitBreakerMinOpenSeconds,omitempty"`
 
-	// SDKConnectTimeoutSeconds is the §6.1 line 69 per-pod watchdog
+	// SDKConnectTimeoutSeconds is the §6.1 per-pod watchdog
 	// budget for the sdk_connecting phase: a pod that has not completed
 	// its SDK pre-connection and reached idle within this window is
 	// retired to failed and the WarmPoolController increments
@@ -164,12 +164,16 @@ type SandboxWarmPoolSpec struct {
 // SDKWarmCircuitBreaker carve-out, which the PoolScalingController
 // owns.
 type SandboxWarmPoolStatus struct {
-	// WarmCount is the current number of idle pods held in the pool.
+	// WarmCount is the current number of unclaimed pods that are warming or
+	// idle, counting only pods that are not pinned to a tenant. An idle pod
+	// whose tenant pin is set and that no SandboxClaim holds is claimable
+	// only by its tenant and is not counted (§5.2 pinned idle inventory).
 	// +optional
 	WarmCount int32 `json:"warmCount,omitempty"`
 
 	// ReadyCount is the number of idle pods that have reached a
-	// claimable ready state.
+	// claimable ready state and are not pinned to a tenant (§5.2 pinned
+	// idle inventory).
 	// +optional
 	ReadyCount int32 `json:"readyCount,omitempty"`
 
@@ -214,6 +218,14 @@ type SandboxWarmPoolStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// The lenny.dev/schema-version annotation is read at controller startup and
+// by lenny-preflight, and a mismatch with preflight.CurrentCRDSchemaVersion
+// is fatal, so a stale CRD never silently strips new fields. Bump the value
+// here and in that constant together. The top-level spec and status fields
+// carry +kubebuilder:pruning:PreserveUnknownFields for the same reason: a CRD
+// older than the controller does not prune fields a newer controller writes.
+// spec: §10.5 (Upgrade and Rollback Strategy). F-15.5.12.
+// +kubebuilder:metadata:annotations="lenny.dev/schema-version=1"
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=sbxwp
 // +kubebuilder:printcolumn:name="Template",type=string,JSONPath=`.spec.templateRef`
@@ -229,7 +241,9 @@ type SandboxWarmPool struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   SandboxWarmPoolSpec   `json:"spec,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Spec SandboxWarmPoolSpec `json:"spec,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
 	Status SandboxWarmPoolStatus `json:"status,omitempty"`
 }
 

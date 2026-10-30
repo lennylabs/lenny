@@ -2,7 +2,7 @@
 
 //go:build e2e_kind
 
-// Tier-5 e2e Kind tests for the §13.7 admission plane. Each test
+// Tier-5 e2e Kind tests for the TESTING.md §13.7 admission plane. Each test
 // installs the Lenny control plane on a Kind cluster (via the
 // install.sh-backed kind.InstallLenny harness) and asserts the named
 // §13.x admission behaviour against the live API server.
@@ -18,6 +18,9 @@
 package tier5_e2e_kind_test
 
 import (
+	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -44,7 +47,7 @@ var expectedAgentWebhooks = []string{
 }
 
 // spec: 13.7
-// diagnosis: §13.7 admission policy is not enforced. The test applies
+// diagnosis: TESTING.md §13.7 admission policy is not enforced. The test applies
 // a SandboxWarmPool whose spec.minWarm exceeds spec.maxWarm — a §4.6.3
 // semantic budget violation — and expects the API server to reject it
 // via the lenny-pool-config-validator webhook with the
@@ -95,8 +98,9 @@ func TestAdmissionPodSecurity(t *testing.T) {
 	c := kind.InstallLenny(t)
 
 	// A pod missing every §13.1 securityContext field. The
-	// lenny-pod-security webhook is scoped to Pod CREATE in agent
-	// namespaces, so this is in scope.
+	// lenny-pod-security webhook covers every Pod CREATE and UPDATE
+	// and every pods/ephemeralcontainers UPDATE in agent namespaces,
+	// so this Pod CREATE is in scope.
 	const badPod = `apiVersion: v1
 kind: Pod
 metadata:
@@ -128,28 +132,78 @@ spec:
 	t.Logf("pod-security rejected the unhardened pod: %s", strings.TrimSpace(out))
 }
 
-// spec: 13.1
+// spec: 13.1 (Pod Security)
 // diagnosis: the §13.1 pod-security webhook is over-broad and rejects
 // a compliant pod. The test applies a pod that sets every §13.1
 // securityContext field correctly (runAsNonRoot, the lenny-cred-readers
 // fsGroup 65534, RuntimeDefault seccomp, a container that drops ALL
-// capabilities and sets a read-only root filesystem) and expects the
+// capabilities, sets a read-only root filesystem, and sets an explicit
+// non-reserved container-level runAsUser and runAsGroup) and expects the
 // API server to admit it. This is the positive control for
 // TestAdmissionPodSecurity: a failure means the webhook rejects a
 // spec that satisfies §13.1.
 func TestAdmissionPodSecurityAdmitsCompliantPod(t *testing.T) {
 	c := kind.InstallLenny(t)
 
-	// A pod that satisfies every §13.1 invariant. fsGroup 65534 is the
-	// lenny-cred-readers GID from pkg/controller/sandbox/podspec.
-	// supplementalGroups carries the same GID: §13.1 requires the webhook
-	// to validate the presence of both the fsGroup and the
-	// supplementalGroups settings, so a pod that sets only the fsGroup is
-	// rejected with POD_SPEC_CRED_FSGROUP_MISSING.
-	const goodPod = `apiVersion: v1
+	// A pod that satisfies every §13.1 invariant (see compliantAgentPod).
+	// §13.1 (Container identity) requires each container to set its own
+	// nonzero runAsUser and runAsGroup; 1000 is outside the default
+	// adapter and agent UIDs, so no reservation applies.
+	out, err := dryRunApply(t, c, compliantAgentPod("e2e-admission-goodpod", 1000))
+	if err != nil {
+		t.Fatalf("API server rejected a §13.1-compliant agent pod; "+
+			"the lenny-pod-security webhook is over-broad.\noutput:\n%s", out)
+	}
+	t.Logf("pod-security admitted the compliant pod: %s", strings.TrimSpace(out))
+}
+
+// spec: 13.1 (Pod Security)
+// diagnosis: the §13.1 container identity clause is not enforced. The
+// test applies the compliant pod of
+// TestAdmissionPodSecurityAdmitsCompliantPod with its one container,
+// which is not named runtime, moved to the default agent UID that §13.1
+// reserves for the runtime container, and expects the lenny-pod-security
+// webhook to reject it with the reservation message. An admitted pod
+// means a non-runtime container can run at the agent UID and pass the
+// adapter's SO_PEERCRED check as the agent, or the loaded webhook image
+// predates the container identity clause.
+func TestAdmissionPodSecurityRejectsReservedUID(t *testing.T) {
+	c := kind.InstallLenny(t)
+
+	out, err := dryRunApply(t, c, compliantAgentPod("e2e-admission-reserveduid", defaultAgentUID))
+	if err == nil {
+		t.Fatalf("API server admitted an agent pod whose non-runtime container runs at the reserved "+
+			"agent UID %d; the lenny-pod-security webhook did not enforce §13.1 container identity.\noutput:\n%s",
+			defaultAgentUID, out)
+	}
+	if !strings.Contains(out, "pod-security.lenny.dev") {
+		t.Fatalf("rejection did not come from the pod-security webhook.\noutput:\n%s", out)
+	}
+	want := fmt.Sprintf("runAsUser %d is reserved for the", defaultAgentUID)
+	if !strings.Contains(out, want) {
+		t.Errorf("pod-security rejection lacks the §13.1 container identity reason %q.\noutput:\n%s", want, out)
+	}
+	t.Logf("pod-security rejected the reserved-UID pod: %s", strings.TrimSpace(out))
+}
+
+// defaultAgentUID is the chart default of security.podUIDs.agent, the
+// UID §13.1 (Container identity) reserves for the runtime container. It
+// mirrors podspec.AgentUID.
+const defaultAgentUID = 65533
+
+// compliantAgentPod renders an agent-namespace pod that satisfies every
+// §13.1 pod-level and container-level control, with its single
+// container, named agent, running at uid with runAsGroup equal to uid.
+// fsGroup 65534 is the lenny-cred-readers GID from
+// pkg/controller/sandbox/podspec. supplementalGroups carries the same
+// GID: §13.1 requires the webhook to validate the presence of both the
+// fsGroup and the supplementalGroups settings, so a pod that sets only
+// the fsGroup is rejected with POD_SPEC_CRED_FSGROUP_MISSING.
+func compliantAgentPod(name string, uid int64) string {
+	return fmt.Sprintf(`apiVersion: v1
 kind: Pod
 metadata:
-  name: e2e-admission-goodpod
+  name: %s
   namespace: lenny-agents
 spec:
   securityContext:
@@ -164,19 +218,15 @@ spec:
       securityContext:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
+        runAsUser: %d
+        runAsGroup: %d
         capabilities:
           drop: ["ALL"]
-`
-	out, err := dryRunApply(t, c, goodPod)
-	if err != nil {
-		t.Fatalf("API server rejected a §13.1-compliant agent pod; "+
-			"the lenny-pod-security webhook is over-broad.\noutput:\n%s", out)
-	}
-	t.Logf("pod-security admitted the compliant pod: %s", strings.TrimSpace(out))
+`, name, uid, uid)
 }
 
 // spec: 13.7
-// diagnosis: the §13.7 admission inventory is incomplete. The test
+// diagnosis: the TESTING.md §13.7 admission inventory is incomplete. The test
 // lists every ValidatingWebhookConfiguration on the cluster and
 // asserts that each Phase 3.5 baseline webhook is present and
 // configured fail-closed (failurePolicy: Fail). A missing webhook
@@ -206,14 +256,131 @@ func TestAdmissionInventory(t *testing.T) {
 	for _, name := range expectedAgentWebhooks {
 		fp, present := policy[name]
 		if !present {
-			t.Errorf("ValidatingWebhookConfiguration %q is not installed; a §13.7 admission gate is missing", name)
+			t.Errorf("ValidatingWebhookConfiguration %q is not installed; a TESTING.md §13.7 admission gate is missing", name)
 			continue
 		}
 		if fp != "Fail" {
-			t.Errorf("webhook %q has failurePolicy %q; §13.7 requires fail-closed (Fail)", name, fp)
+			t.Errorf("webhook %q has failurePolicy %q; TESTING.md §13.7 requires fail-closed (Fail)", name, fp)
 		}
 	}
 	t.Logf("admission inventory: %d ValidatingWebhookConfigurations present", len(policy))
+}
+
+// spec: 4.6.1, 13.7
+// diagnosis: an admission webhook that gates a Lenny CRD is installed
+// but never called. A ValidatingWebhookConfiguration rule matches a
+// request only when the request's API version is one the rule names, so
+// a rule naming a version the CRD does not serve silently admits every
+// write it was installed to judge. The failure is invisible from the
+// cluster: the webhook Deployment is Ready, the configuration is
+// fail-closed, and the inventory check above passes, while the guarded
+// invariant does not hold. matchPolicy: Equivalent does not rescue it,
+// because it converts between versions the CRD serves and a
+// single-version CRD has none to convert to. A failure here means at
+// least one guard is inert; the fail-open the sandboxclaim-guard rule
+// produced admitted a second SandboxClaim for a Sandbox that already
+// carried one.
+func TestLennyCRDWebhookRulesNameAServedVersion(t *testing.T) {
+	c := kind.InstallLenny(t)
+
+	served := servedCRDVersions(t, c)
+	if len(served) == 0 {
+		t.Fatalf("no lenny.dev CustomResourceDefinition reports a served version; the CRDs are not installed")
+	}
+
+	raw, err := c.KubectlOut(t, "get", "validatingwebhookconfigurations", "-o", "json")
+	if err != nil {
+		t.Fatalf("list ValidatingWebhookConfigurations: %v\n%s", err, raw)
+	}
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Webhooks []struct {
+				Rules []struct {
+					APIGroups   []string `json:"apiGroups"`
+					APIVersions []string `json:"apiVersions"`
+					Resources   []string `json:"resources"`
+				} `json:"rules"`
+			} `json:"webhooks"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		t.Fatalf("decode ValidatingWebhookConfiguration list: %v", err)
+	}
+
+	checked := 0
+	for _, item := range list.Items {
+		for _, wh := range item.Webhooks {
+			for _, rule := range wh.Rules {
+				if !slices.Contains(rule.APIGroups, "lenny.dev") {
+					continue
+				}
+				for _, resource := range rule.Resources {
+					// A subresource rule (sandboxes/status) is keyed on
+					// its parent resource's served versions.
+					parent, _, _ := strings.Cut(resource, "/")
+					servedForResource, known := served[parent]
+					if !known {
+						t.Errorf("webhook %q rules on lenny.dev resource %q, which no installed "+
+							"CustomResourceDefinition serves; the rule matches nothing",
+							item.Metadata.Name, resource)
+						continue
+					}
+					checked++
+					if !ruleVersionIsServed(rule.APIVersions, servedForResource) {
+						t.Errorf("webhook %q rules on lenny.dev/%s with apiVersions %v, none of which the "+
+							"CRD serves (served: %v); the rule matches no request and the guard never runs",
+							item.Metadata.Name, resource, rule.APIVersions, servedForResource)
+					}
+				}
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatalf("no ValidatingWebhookConfiguration rule targets a lenny.dev resource; the admission gates " +
+			"on the Lenny CRDs are absent")
+	}
+	t.Logf("TESTING.md §13.7: checked %d webhook rules on lenny.dev resources against the served CRD versions", checked)
+}
+
+// servedCRDVersions maps each lenny.dev CRD's plural resource name to
+// the API versions it serves.
+func servedCRDVersions(t *testing.T, c *kind.Cluster) map[string][]string {
+	t.Helper()
+	out, err := c.KubectlOut(
+		t, "get", "crd", "-o",
+		"jsonpath={range .items[?(@.spec.group==\"lenny.dev\")]}{.spec.names.plural}{\"\\t\"}"+
+			"{range .spec.versions[?(@.served==true)]}{.name}{\",\"}{end}{\"\\n\"}{end}",
+	)
+	if err != nil {
+		t.Fatalf("list lenny.dev CustomResourceDefinitions: %v\n%s", err, out)
+	}
+	served := map[string][]string{}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		plural, versions, ok := strings.Cut(line, "\t")
+		if !ok || plural == "" {
+			continue
+		}
+		for _, v := range strings.Split(strings.Trim(versions, ","), ",") {
+			if v != "" {
+				served[plural] = append(served[plural], v)
+			}
+		}
+	}
+	return served
+}
+
+// ruleVersionIsServed reports whether a rule's apiVersions name a
+// version the CRD serves. The wildcard "*" matches every version.
+func ruleVersionIsServed(ruleVersions, served []string) bool {
+	for _, v := range ruleVersions {
+		if v == "*" || slices.Contains(served, v) {
+			return true
+		}
+	}
+	return false
 }
 
 // spec: 13.7

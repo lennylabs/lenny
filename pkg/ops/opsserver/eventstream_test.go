@@ -21,7 +21,7 @@ type flushRecorder struct{ *httptest.ResponseRecorder }
 
 func (flushRecorder) Flush() {}
 
-// spec: §25.5 lines 2562-2563, §25.17 Step 1 — the lenny-ops mux serves
+// spec: §25.5, §25.17 Step 1 — the lenny-ops mux serves
 // GET /v1/admin/events/stream (SSE) and GET /v1/admin/events (polling)
 // when an EventStream service is wired. Closes F-25.5.2 / F-25.5.3 /
 // F-25.17.1 at the route-registration boundary.

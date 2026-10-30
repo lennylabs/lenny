@@ -211,7 +211,7 @@ func TestStoredRoleIsolatedFromCallerMutation(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByUser is mandatory but custom roles are
+// spec: §12.1 — DeleteByUser is mandatory but custom roles are
 // tenant-scoped, so the call returns 0 erased rows; the role
 // definition itself is not removed when a user inside the tenant is
 // erased.
@@ -231,7 +231,7 @@ func TestDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant removes every
+// spec: §12.1 / §12.8 Phase 4 — DeleteByTenant removes every
 // custom role belonging to the tenant.
 func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 	ctx := context.Background()

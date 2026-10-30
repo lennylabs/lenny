@@ -19,7 +19,7 @@ type QueueFactory func(controllerName string, rateLimiter workqueue.TypedRateLim
 // gauge is set so the §16.5 ControllerWorkQueueDepthHigh alert threshold
 // resolves.
 //
-// spec: §4.6.1 line 425 — "The work queue max depth is configurable
+// spec: §4.6.1 — "The work queue max depth is configurable
 // (default: 500); if the queue exceeds this depth, new reconciliation
 // events are dropped and a lenny_controller_queue_overflow_total metric
 // is incremented."

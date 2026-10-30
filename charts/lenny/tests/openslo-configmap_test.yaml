@@ -5,7 +5,7 @@ release:
 templates:
   - openslo-configmap.yaml
 tests:
-  # spec: §16.10 line 733 — the OpenSLO export is opt-in
+  # spec: §16.10 — the OpenSLO export is opt-in
   # (monitoring.openslo.enabled default false), so a default install
   # renders no OpenSLO ConfigMap.
   - it: renders nothing by default
@@ -30,7 +30,7 @@ tests:
           path: metadata.labels["lenny.dev/component"]
           value: openslo
 
-  # spec: §16.10 line 733 — the export defaults into monitoring.namespace
+  # spec: §16.10 — the export defaults into monitoring.namespace
   # so external SLO tooling discovers it alongside the alerting rules.
   - it: defaults the OpenSLO ConfigMap into the monitoring namespace
     set:
@@ -53,7 +53,7 @@ tests:
           path: metadata.namespace
           value: observability
 
-  # spec: §16.10 line 733 — the rendered documents are OpenSLO v1
+  # spec: §16.10 — the rendered documents are OpenSLO v1
   # SLO/SLI/AlertPolicy objects.
   - it: carries OpenSLO v1 SLO, SLI, and AlertPolicy documents
     set:
@@ -138,7 +138,7 @@ tests:
       - failedTemplate:
           errorPattern: "does not match pattern"
 
-  # spec: §16.10 line 733 — the documents reference the canonical §16.5
+  # spec: §16.10 — the documents reference the canonical §16.5
   # metric names so external tooling resolves the same series the bundled
   # alerts evaluate.
   - it: references the canonical §16.5 metric names
@@ -159,7 +159,7 @@ tests:
           path: data["openslo.yaml"]
           pattern: "lenny_session_time_to_first_token_seconds_count"
 
-  # spec: §16.10 line 734 / §16.1.1 — the deployment_tier label resolves
+  # spec: §16.10 / §16.1.1 — the deployment_tier label resolves
   # to global.deploymentTier, not the chart-fragment substitution token.
   - it: substitutes global.deploymentTier for the placeholder
     set:

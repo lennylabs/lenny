@@ -27,15 +27,18 @@ func TestValidateKey_spec_12_4(t *testing.T) {
 		key   string
 		want  error
 	}{
-		{"own tenant lease", acme, "t:acme:lease:session:s1", nil},
-		{"own tenant inbox", acme, "t:acme:session:s1:inbox", nil},
-		{"cross tenant rejected", acme, "t:globex:session:s1:dlq", rediskeys.ErrCrossTenant},
+		{"own tenant lease", acme, "t:{acme}:lease:session:s1", nil},
+		{"own tenant inbox", acme, "t:{acme}:session:s1:inbox", nil},
+		{"cross tenant rejected", acme, "t:{globex}:session:s1:dlq", rediskeys.ErrCrossTenant},
 		{"cb exception", acme, "cb:pool:default", nil},
-		{"pod exception", acme, "lenny:pod:pod-7:active_slots", nil},
+		{"pod exception", acme, "lenny:pod:{pod-7}:active_slots", nil},
 		{"no prefix rejected", acme, "raw:key", rediskeys.ErrNoPrefix},
-		{"empty tenant segment rejected", acme, "t::oops", rediskeys.ErrNoPrefix},
+		{"empty tenant segment rejected", acme, "t:{}:oops", rediskeys.ErrNoPrefix},
+		{"unbraced tenant rejected", acme, "t:acme:lease:session:s1", rediskeys.ErrNoPrefix},
+		{"unterminated brace rejected", acme, "t:{acme:lease:session:s1", rediskeys.ErrNoPrefix},
+		{"brace without colon rejected", acme, "t:{acme}lease", rediskeys.ErrNoPrefix},
 		{"empty key admitted", acme, "", nil},
-		{"platform scope admits any tenant", rediskeys.TenantScope(""), "t:globex:billing:stream", nil},
+		{"platform scope admits any tenant", rediskeys.TenantScope(""), "t:{globex}:billing:stream", nil},
 		{"dlg owned root", dlgScope, "{root-1}:dlg:tokens", nil},
 		{"dlg owned root no braces", dlgScope, "root-1:dlg:tree_size", nil},
 		{"dlg unowned root rejected", dlgScope, "{root-9}:dlg:tokens", rediskeys.ErrDelegationOwnership},
@@ -76,10 +79,10 @@ func TestGuard_CrossTenantWriteRejected_spec_12_4(t *testing.T) {
 	cl := guardedClient(t)
 	ctx := rediskeys.WithScope(context.Background(), rediskeys.TenantScope("acme"))
 
-	if err := cl.Set(ctx, "t:globex:scache:t:x", "v", 0).Err(); !errors.Is(err, rediskeys.ErrCrossTenant) {
+	if err := cl.Set(ctx, "t:{globex}:scache:t:x", "v", 0).Err(); !errors.Is(err, rediskeys.ErrCrossTenant) {
 		t.Fatalf("cross-tenant SET err = %v, want ErrCrossTenant", err)
 	}
-	if err := cl.Set(ctx, "t:acme:scache:t:x", "v", 0).Err(); err != nil {
+	if err := cl.Set(ctx, "t:{acme}:scache:t:x", "v", 0).Err(); err != nil {
 		t.Fatalf("same-tenant SET err = %v, want nil", err)
 	}
 }
@@ -99,8 +102,8 @@ func TestGuard_PipelineCrossTenantRejected_spec_12_4(t *testing.T) {
 	cl := guardedClient(t)
 	ctx := rediskeys.WithScope(context.Background(), rediskeys.TenantScope("acme"))
 	pipe := cl.Pipeline()
-	pipe.Set(ctx, "t:acme:scache:t:a", "1", 0)
-	pipe.Set(ctx, "t:globex:scache:t:b", "2", 0)
+	pipe.Set(ctx, "t:{acme}:scache:t:a", "1", 0)
+	pipe.Set(ctx, "t:{globex}:scache:t:b", "2", 0)
 	if _, err := pipe.Exec(ctx); !errors.Is(err, rediskeys.ErrCrossTenant) {
 		t.Fatalf("pipeline err = %v, want ErrCrossTenant", err)
 	}
@@ -113,7 +116,34 @@ func TestGuard_EvalKeyExtraction_spec_12_4(t *testing.T) {
 	ctx := rediskeys.WithScope(context.Background(), rediskeys.TenantScope("acme"))
 	// numkeys=1, key=t:globex:..., arg=ignored. Must reject on the key.
 	script := redis.NewScript("return 1")
-	if err := script.Eval(ctx, cl, []string{"t:globex:session:s:inbox"}, "arg").Err(); !errors.Is(err, rediskeys.ErrCrossTenant) {
+	if err := script.Eval(ctx, cl, []string{"t:{globex}:session:s:inbox"}, "arg").Err(); !errors.Is(err, rediskeys.ErrCrossTenant) {
 		t.Fatalf("EVAL cross-tenant err = %v, want ErrCrossTenant", err)
+	}
+}
+
+// spec: §12.4 Redis HA and Failure Modes ("Tenant key isolation"; the Redis
+// Cluster pre-plan: the `t:{tenant_id}:` prefix hashes a tenant's keys to
+// one slot). TenantPrefix writes the braces literally, and TenantOf
+// recovers the tenant only from that braced form.
+func TestTenantPrefixIsHashTagged_spec_12_4(t *testing.T) {
+	if got := rediskeys.TenantPrefix("acme"); got != "t:{acme}:" {
+		t.Fatalf("TenantPrefix(acme) = %q, want %q", got, "t:{acme}:")
+	}
+	cases := []struct {
+		key    string
+		tenant string
+		ok     bool
+	}{
+		{rediskeys.TenantPrefix("acme") + "quota:tokens:alice:daily-20261021", "acme", true},
+		{rediskeys.TenantPrefix("globex") + "evt:session_lifecycle", "globex", true},
+		{"t:acme:quota:tokens:alice", "", false},
+		{"t:{}:x", "", false},
+		{"cb:pool", "", false},
+	}
+	for _, tc := range cases {
+		tenant, ok := rediskeys.TenantOf(tc.key)
+		if tenant != tc.tenant || ok != tc.ok {
+			t.Errorf("TenantOf(%q) = (%q, %v), want (%q, %v)", tc.key, tenant, ok, tc.tenant, tc.ok)
+		}
 	}
 }

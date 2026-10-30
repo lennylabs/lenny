@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 )
 
-// spec: §4.9 lines 1640-1652 — look up all active leases backed by a
+// spec: §4.9 — look up all active leases backed by a
 // revoked credential so the emergency-revocation handler can terminate
 // them and report the count.
 

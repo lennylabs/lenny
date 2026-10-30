@@ -18,7 +18,7 @@ import (
 // satisfies. It is the events.EventEmitter contract narrowed to the one
 // method this package calls, kept local so the auditstore Store does not
 // take a hard dependency on a concrete emitter and tests can substitute
-// a fake. spec: §25.3 lines 660-663.
+// a fake. spec: §25.3.
 type opsStreamEmitter interface {
 	Emit(ctx context.Context, event events.OperationalEvent) error
 }
@@ -50,8 +50,8 @@ func (s *Store) SetOpsStreamEmitter(emitter opsStreamEmitter, publisherID string
 // committed audit row when the row's event type is one §16.7 routes
 // onto the §25.5 operational event stream. The emit is best-effort: the
 // audit row is already durable, so a translation or publish failure is
-// logged and does not affect the Append result. spec: §16.7 line 661;
-// §25.5 line 2556.
+// logged and does not affect the Append result. spec: §16.7;
+// §25.5.
 func (s *Store) escalateToOpsStream(ctx context.Context, row audit.Row) {
 	if s.opsEmitter == nil {
 		return
@@ -81,7 +81,7 @@ func (s *Store) escalateToOpsStream(ctx context.Context, row audit.Row) {
 // the type is dev.lenny.<event_type>; lennytenantid (and, when present,
 // lennyoperationid / lennyrootsessionid) ride as CloudEvents extension
 // attributes. The Time and ID are left zero so the emitter stamps the
-// §25.3 envelope. spec: §25.5 line 2556; §16.7 line 661.
+// §25.3 envelope. spec: §25.5; §16.7.
 func auditBearingEvent(row audit.Row, publisherID string) (events.OperationalEvent, error) {
 	in := ocsf.Input{
 		ID:                 row.TenantID + ":" + fmt.Sprint(row.Seq),

@@ -10,9 +10,12 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
-// spec: §27.3.1 line 94 / §27.6 line 201/204 — the idle-timeout sweep
+// spec: §27.3.1 / §27.6 — the idle-timeout sweep
 // enumerates playground session records idle past the reclamation window
 // and revokes each through the shared revocation primitive with reason
 // idle_timeout. These tests cover the store enumeration and the handler
@@ -74,7 +77,7 @@ func TestMemoryIdleSessionsSelectsIdleRecords_spec_27_6_201(t *testing.T) {
 // user-index keys that share the t: prefix space.
 func TestRedisIdleSessionsScansRecords_spec_27_6_201(t *testing.T) {
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = client.Close() })
 	store := NewRedisSessionStore(client)
 	ctx := context.Background()
@@ -113,7 +116,7 @@ func TestSweepIdleSessionsRevokesIdleThroughPrimitive_spec_27_3_1_94(t *testing.
 	ctx := context.Background()
 	now := h.now()
 
-	// idleReclaimWindow = BearerTTL(15m) + idle grace(300s) = 20m. A record
+	// idleReclaimWindow = CapabilityTokenTTL(15m) + idle grace(300s) = 20m. A record
 	// idle for an hour is well past it.
 	mustPut(t, store, "acme", "idle1", SessionRecord{
 		TenantID: "acme", IssuedAt: now.Add(-2 * time.Hour),
@@ -151,7 +154,7 @@ func TestSweepIdleSessionsRevokesIdleThroughPrimitive_spec_27_3_1_94(t *testing.
 
 // TestSweepIdleSessionsDoesNotReapBetweenMints: a session that minted a
 // bearer more than the idle grace (5m) ago but less than a full bearer
-// lifetime ago is NOT reaped — the window exceeds BearerTTL so an active
+// lifetime ago is NOT reaped — the window exceeds CapabilityTokenTTL so an active
 // user who has not yet re-minted is never disconnected. F-27.3.7.
 func TestSweepIdleSessionsDoesNotReapBetweenMints_spec_27_6_201(t *testing.T) {
 	store := NewMemorySessionStore()
@@ -181,7 +184,7 @@ func TestSweepIdleSessionsDoesNotReapBetweenMints_spec_27_6_201(t *testing.T) {
 // TestSweepIdleSessionsNilStore: a handler with no session store sweeps
 // nothing without error. F-27.3.7.
 func TestSweepIdleSessionsNilStore(t *testing.T) {
-	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{Signer: devSigner()})
+	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{Signer: jwtsign.HMAC(devSigner()), Verifier: devSigner()})
 	n, err := h.SweepIdleSessions(context.Background())
 	if n != 0 || err != nil {
 		t.Fatalf("SweepIdleSessions(nil store) = %d, %v; want 0, nil", n, err)

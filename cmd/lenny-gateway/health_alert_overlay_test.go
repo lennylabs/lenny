@@ -34,7 +34,7 @@ func exprFor(t *testing.T, name string) string {
 	return ""
 }
 
-// spec: §25.3 lines 443-451 — alertHealthSource resolves a component's
+// spec: §25.3 — alertHealthSource resolves a component's
 // verdict from the real §16.5 evaluator + the rules→component mapping: a
 // firing critical alert (SessionStoreUnavailable) reports postgres
 // unhealthy; a firing warning (CertExpiryImminent) reports cert-manager

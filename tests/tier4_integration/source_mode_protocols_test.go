@@ -2,9 +2,9 @@
 
 //go:build integration
 
-// Source Mode protocol-by-runtime coverage (§17.4 line 213: "Gateway,
+// Source Mode protocol-by-runtime coverage (§17.4: "Gateway,
 // controller-sim, and a single agent container run as goroutines in
-// one process"; §17.4 line 218: "Runtime adapter authors testing
+// one process"; §17.4: "Runtime adapter authors testing
 // their adapter against the gateway contract without full pod
 // scheduling"). source_mode_smoke_test.go drives Source Mode's REST
 // surface against the built-in echo runtime only. Because Source
@@ -12,7 +12,7 @@
 // external-protocol adapter the binary registers (REST, MCP, OpenAI
 // Chat Completions, Open Responses) is live in that same process, and
 // a runtime author substitutes a custom binary via --runtime-bin
-// (§17.4 line 323) in place of the built-in echo executor. This file
+// (§17.4) in place of the built-in echo executor. This file
 // extends the protocol-by-runtime matrix with two more cells: the MCP
 // lenny/send_message tool and the OpenAI Chat Completions endpoint,
 // both driven against the streaming-echo Full-level reference runtime
@@ -25,36 +25,23 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/tests/testinfra/binbuild"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// buildStreamingEchoBinary compiles cmd/runtimes/streaming-echo (the
-// §15.4.3 Full-level reference adapter) into a throwaway binary so the
-// gateway's --runtime-bin subprocess executor has a non-echo-builtin
-// runtime to dispatch to.
+// buildStreamingEchoBinary returns a throwaway cmd/runtimes/streaming-echo
+// binary (the §15.4.3 Full-level reference adapter) so the gateway's
+// --runtime-bin subprocess executor has a non-echo-builtin runtime to
+// dispatch to. The command is linked once per test process (binbuild).
 func buildStreamingEchoBinary(t *testing.T) string {
 	t.Helper()
-	root := schematest.RepoRoot(t)
-	out := filepath.Join(t.TempDir(), "streaming-echo")
-	cmd := exec.Command("go", "build", "-o", out, "./cmd/runtimes/streaming-echo")
-	cmd.Dir = root
-	if combined, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build streaming-echo: %v\n%s", err, combined)
-	}
-	return out
+	return binbuild.Build(t, "./cmd/runtimes/streaming-echo", "streaming-echo")
 }
 
-// spec: §17.4 line 208-213 ("Source Mode runs the Lenny source tree
-// directly without Kubernetes ... Gateway, controller-sim, and a
-// single agent container run as goroutines in one process") and line
-// 218 ("Runtime adapter authors testing their adapter against the
-// gateway contract without full pod scheduling"). The existing Source
+// spec: §17.4. The existing Source
 // Mode smoke test only exercises REST against the built-in echo
 // runtime; a regression confined to the MCP or OpenAI Chat
 // Completions wire adapters, or to the --runtime-bin subprocess path
@@ -63,9 +50,10 @@ func buildStreamingEchoBinary(t *testing.T) string {
 // at streaming-echo and drives both the MCP and the OpenAI Chat
 // Completions surfaces against it.
 func TestSourceModeProtocols_StreamingEcho_spec_17_4(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	bin := buildStreamingEchoBinary(t)
-	gw := gateway.StartWith(t, "--dev-mode", "--runtime-bin", bin)
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--runtime-bin", bin)
 	c := mcpClient{t: t, base: gw.BaseURL()}
 
 	t.Run("mcp_send_message", func(t *testing.T) {

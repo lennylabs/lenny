@@ -13,8 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 )
 
-// TestSubscriptionCacheAttachesSecretAndGeneration is the §25.5 lines
-// 2715-2756 contract: the cache attaches each subscription's plaintext
+// TestSubscriptionCacheAttachesSecretAndGeneration is the §25.5 contract: the cache attaches each subscription's plaintext
 // signing secret from the reveal cache and tracks its generation for the
 // per-delivery freshness check.
 func TestSubscriptionCacheAttachesSecretAndGeneration_spec_25_5_2751(t *testing.T) {
@@ -52,7 +51,7 @@ func TestSubscriptionCacheAttachesSecretAndGeneration_spec_25_5_2751(t *testing.
 	}
 }
 
-// TestSubscriptionCacheColdStartSignalsUnavailable is the §25.5 line 2753
+// TestSubscriptionCacheColdStartSignalsUnavailable is the §25.5
 // contract: a cache that cannot reach the store on startup signals
 // subscriptionsUnavailable, and a later successful refresh signals
 // recovery.
@@ -116,7 +115,7 @@ func TestSubscriptionCacheHealthyStartIsQuiet(t *testing.T) {
 
 // TestSubscriptionCachePrunesSecretsOnRefresh confirms the cache asks the
 // reveal cache to retain only the active subscriptions' secrets after a
-// refresh. spec: §25.5 line 2752.
+// refresh. spec: §25.5.
 func TestSubscriptionCachePrunesSecretsOnRefresh(t *testing.T) {
 	store := &stubStore{rows: []eventsubscription.Record{
 		{ID: "keep", CallbackURL: "https://h", Active: true},

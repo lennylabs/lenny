@@ -68,7 +68,7 @@ func postBootstrapAT(t *testing.T, router *admin.Router, query string) admin.Boo
 	return resp
 }
 
-// spec: §17.6 line 473 — a first run reports SecretCreated=true so the
+// spec: §17.6 — a first run reports SecretCreated=true so the
 // CLI prints the first-use prompt. F-17.6.3 / F-24.1.7.
 func TestBootstrapProvisionsAdminTokenOnFirstRun_spec_17_6_473(t *testing.T) {
 	prov := &fakeProvisioner{created: true}
@@ -84,7 +84,7 @@ func TestBootstrapProvisionsAdminTokenOnFirstRun_spec_17_6_473(t *testing.T) {
 	}
 }
 
-// spec: §17.6 line 459 — a re-run reports SecretCreated=false so the CLI
+// spec: §17.6 — a re-run reports SecretCreated=false so the CLI
 // prints the "already exists" message. F-24.1.7.
 func TestBootstrapAdminTokenReRunReportsExisting_spec_17_6_459(t *testing.T) {
 	prov := &fakeProvisioner{created: false}
@@ -94,7 +94,7 @@ func TestBootstrapAdminTokenReRunReportsExisting_spec_17_6_459(t *testing.T) {
 	}
 }
 
-// A dry-run must not provision the credential. spec: §15.1 line 1140.
+// A dry-run must not provision the credential. spec: §15.1.
 func TestBootstrapDryRunSkipsAdminToken(t *testing.T) {
 	prov := &fakeProvisioner{created: true}
 	resp := postBootstrapAT(t, newAdminTokenRouter(t, prov), "dryRun=true")

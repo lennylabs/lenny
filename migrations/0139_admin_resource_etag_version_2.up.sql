@@ -6,7 +6,7 @@
 -- 0138 adopted the first batch (custom roles, delegation policies,
 -- experiments); this migration extends the contract to the users and
 -- environments resources. Existing rows default to version 1.
--- See spec/15_external-api-surface.md §15.1 lines 1207-1224.
+-- See spec/15_external-api-surface.md §15.1.
 ALTER TABLE users
     ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
 

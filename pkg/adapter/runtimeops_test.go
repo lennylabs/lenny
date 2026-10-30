@@ -1,0 +1,666 @@
+// SPDX-License-Identifier: MIT
+
+package adapter
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"net"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+)
+
+// fakeRuntimeReadDeadline bounds a single fakeRuntime read. The frames
+// travel an in-process loopback Unix socket, so a multi-second wait is
+// only ever scheduler starvation under the whole-repo parallel test run,
+// never a genuine protocol stall. The deadline guards against a true
+// hang (the read still fails with a clear message); the generous value
+// keeps the no-op rotation-gate pass-through and the handshake reads from
+// timing out when 28+ packages contend for cores. spec: §4.7.
+const fakeRuntimeReadDeadline = 30 * time.Second
+
+// fakeRuntime plays the agent-runtime end of the §4.7 CH-RUNTIMEOPS: it dials the adapter's Unix socket and exchanges JSONL
+// frames.
+type fakeRuntime struct {
+	t    *testing.T
+	conn net.Conn
+	r    *bufio.Reader
+}
+
+func (fr *fakeRuntime) read() lifecycleFrame {
+	fr.t.Helper()
+	_ = fr.conn.SetReadDeadline(time.Now().Add(fakeRuntimeReadDeadline))
+	frame, err := readLifecycleFrame(fr.r)
+	if err != nil {
+		fr.t.Fatalf("fakeRuntime read: %v", err)
+	}
+	return frame
+}
+
+func (fr *fakeRuntime) write(f lifecycleFrame) {
+	fr.t.Helper()
+	enc := json.NewEncoder(fr.conn)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(f); err != nil {
+		fr.t.Fatalf("fakeRuntime write: %v", err)
+	}
+}
+
+// handshake completes the lifecycle_capabilities exchange from the
+// runtime side, declaring support for every capability the adapter
+// advertised.
+func (fr *fakeRuntime) handshake() {
+	fr.t.Helper()
+	caps := fr.read()
+	if caps.Type != "lifecycle_capabilities" {
+		fr.t.Fatalf("first adapter frame = %q, want lifecycle_capabilities", caps.Type)
+	}
+	fr.write(lifecycleFrame{Type: "lifecycle_support", Capabilities: caps.Capabilities})
+}
+
+// shortSocketName returns a Unix socket path under a short temp directory.
+// t.TempDir() embeds the (often long) test name, so a socket derived from it
+// can overflow the platform sun_path limit (~104 bytes on darwin); binding
+// under os.MkdirTemp's short root keeps the path within that limit.
+func shortSocketName(t *testing.T, name string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "lenny-sock-*")
+	if err != nil {
+		t.Fatalf("temp socket dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, name)
+}
+
+// startRuntimeOps creates a RuntimeOps on a temporary
+// socket, runs it, and dials it as a fake runtime. Run and the
+// connection are torn down on test cleanup.
+func startRuntimeOps(t *testing.T) (*RuntimeOps, *fakeRuntime) {
+	t.Helper()
+	return startRuntimeOpsWithSink(t, nil)
+}
+
+// startRuntimeOpsWithSink is startRuntimeOps with the usage
+// sink wired before Run is launched. This mirrors the production
+// ordering in cmd/lenny-adapter, where the sink is assigned to the
+// lock-free RuntimeOps.usage field before the read-loop goroutine
+// starts (the invariant SetUsageSink documents in place of a lock). A nil
+// sink leaves token folding a no-op.
+func startRuntimeOpsWithSink(t *testing.T, sink tokenSink) (*RuntimeOps, *fakeRuntime) {
+	t.Helper()
+	sock := shortSocketName(t, "lifecycle.sock")
+
+	lc, err := newTestRuntimeOps(t, sock, SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("NewRuntimeOps: %v", err)
+	}
+	if sink != nil {
+		lc.SetUsageSink(sink)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	runErr := make(chan error, 1)
+	go func() { runErr <- lc.Run(ctx) }()
+	t.Cleanup(func() {
+		_ = lc.Close()
+		<-runErr
+	})
+
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatalf("dial lifecycle socket: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	if err := writeTestListenerNonce(conn, sock); err != nil {
+		t.Fatalf("nonce line: %v", err)
+	}
+	return lc, &fakeRuntime{t: t, conn: conn, r: bufio.NewReader(conn)}
+}
+
+func TestRuntimeOpsHandshake(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
+
+	caps := fr.read()
+	if caps.Type != "lifecycle_capabilities" {
+		t.Fatalf("first frame type = %q, want lifecycle_capabilities", caps.Type)
+	}
+	if caps.ProtocolVersion != lifecycleProtocolVersion {
+		t.Errorf("protocolVersion = %q, want %q", caps.ProtocolVersion, lifecycleProtocolVersion)
+	}
+	want := map[string]bool{
+		"checkpoint": true, "interrupt": true,
+		"credential_rotation": true, "deadline_signal": true,
+	}
+	for _, c := range caps.Capabilities {
+		delete(want, c)
+	}
+	if len(want) != 0 {
+		t.Errorf("adapter omitted lifecycle capabilities: %v", want)
+	}
+
+	// The runtime declares support for a subset; the channel records it.
+	fr.write(lifecycleFrame{Type: "lifecycle_support", Capabilities: []string{"checkpoint", "interrupt"}})
+	select {
+	case <-lc.currentReady():
+	case <-time.After(3 * time.Second):
+		t.Fatal("handshake did not complete")
+	}
+	if !lc.Supports("checkpoint") {
+		t.Error("Supports(checkpoint) = false, want true")
+	}
+	if lc.Supports("deadline_signal") {
+		t.Error("Supports(deadline_signal) = true, want false (runtime did not declare it)")
+	}
+}
+
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages), §4.4
+// checkpoint_request and checkpoint_complete carry the sessionId the
+// adapter passed, so a runtime holding several sessions quiesces and
+// resumes only the named one.
+func TestRuntimeOpsCheckpointRoundTripNamesSession_spec_28_5_3(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
+	fr.handshake()
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- lc.RequestCheckpoint(context.Background(), "sess-bob", "ckpt-1", 5000)
+	}()
+
+	req := fr.read()
+	if req.Type != "checkpoint_request" || req.CheckpointID != "ckpt-1" {
+		t.Fatalf("request = %+v, want type checkpoint_request id ckpt-1", req)
+	}
+	if req.SessionID != "sess-bob" {
+		t.Errorf("checkpoint_request sessionId = %q, want sess-bob", req.SessionID)
+	}
+	if req.DeadlineMs != 5000 {
+		t.Errorf("request deadlineMs = %d, want 5000", req.DeadlineMs)
+	}
+	fr.write(lifecycleFrame{Type: "checkpoint_ready", CheckpointID: "ckpt-1"})
+	if err := <-errc; err != nil {
+		t.Fatalf("RequestCheckpoint: %v", err)
+	}
+
+	if err := lc.CompleteCheckpoint("sess-bob", "ckpt-1", "ok", ""); err != nil {
+		t.Fatalf("CompleteCheckpoint: %v", err)
+	}
+	done := fr.read()
+	if done.Type != "checkpoint_complete" || done.CheckpointID != "ckpt-1" || done.Status != "ok" {
+		t.Errorf("checkpoint_complete = %+v, want id ckpt-1 status ok", done)
+	}
+	if done.SessionID != "sess-bob" {
+		t.Errorf("checkpoint_complete sessionId = %q, want sess-bob", done.SessionID)
+	}
+}
+
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages)
+// interrupt_request carries the sessionId the adapter passed.
+func TestRuntimeOpsInterruptRoundTripNamesSession_spec_28_5_3(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
+	fr.handshake()
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- lc.RequestInterrupt(context.Background(), "sess-carol", "int-1", 2000)
+	}()
+
+	req := fr.read()
+	if req.Type != "interrupt_request" || req.InterruptID != "int-1" {
+		t.Fatalf("request = %+v, want type interrupt_request id int-1", req)
+	}
+	if req.SessionID != "sess-carol" {
+		t.Errorf("interrupt_request sessionId = %q, want sess-carol", req.SessionID)
+	}
+	if req.DeadlineMs != 2000 {
+		t.Errorf("interrupt deadlineMs = %d, want 2000", req.DeadlineMs)
+	}
+	fr.write(lifecycleFrame{Type: "interrupt_acknowledged", InterruptID: "int-1"})
+	if err := <-errc; err != nil {
+		t.Fatalf("RequestInterrupt: %v", err)
+	}
+}
+
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages), §4.7.11
+// credentials_rotated carries the sessionId the adapter passed, so the
+// runtime routes the rotation without parsing credentialsPath.
+func TestRuntimeOpsCredentialRotationNamesSession_spec_28_5_3(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
+	fr.handshake()
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- lc.RotateCredentials(context.Background(), "sess_01J9X0ZW1ZF7K8Q1V2T3M4N5P0", "anthropic", "/run/lenny/slots/sess_01J9X0ZW1ZF7K8Q1V2T3M4N5P0/credentials.json", "lease-9")
+	}()
+
+	req := fr.read()
+	if req.Type != "credentials_rotated" || req.LeaseID != "lease-9" {
+		t.Fatalf("request = %+v, want credentials_rotated lease-9", req)
+	}
+	if req.Provider != "anthropic" || req.CredentialsPath != "/run/lenny/slots/sess_01J9X0ZW1ZF7K8Q1V2T3M4N5P0/credentials.json" {
+		t.Errorf("credentials_rotated provider=%q credentialsPath=%q", req.Provider, req.CredentialsPath)
+	}
+	if req.SessionID != "sess_01J9X0ZW1ZF7K8Q1V2T3M4N5P0" {
+		t.Errorf("credentials_rotated sessionId = %q, want sess_01J9X0ZW1ZF7K8Q1V2T3M4N5P0", req.SessionID)
+	}
+	fr.write(lifecycleFrame{Type: "credentials_acknowledged", LeaseID: "lease-9", Provider: "anthropic"})
+	if err := <-errc; err != nil {
+		t.Fatalf("RotateCredentials: %v", err)
+	}
+}
+
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages)
+// deadline_approaching carries the sessionId the adapter passed.
+func TestRuntimeOpsDeadlineApproachingNamesSession_spec_28_5_3(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
+	fr.handshake()
+
+	if err := lc.SignalDeadlineApproaching("sess-dave", 5000, "session_age"); err != nil {
+		t.Fatalf("SignalDeadlineApproaching: %v", err)
+	}
+	got := fr.read()
+	if got.Type != "deadline_approaching" || got.RemainingMs != 5000 || got.Trigger != "session_age" {
+		t.Errorf("frame = %+v, want deadline_approaching remainingMs 5000 trigger session_age", got)
+	}
+	if got.SessionID != "sess-dave" {
+		t.Errorf("deadline_approaching sessionId = %q, want sess-dave", got.SessionID)
+	}
+}
+
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages)
+// deadline_approaching carries only the "session_age" and "budget" triggers:
+// each is written, and any other trigger returns ErrUnknownDeadlineTrigger
+// and writes no frame, so the next frame the runtime reads is the valid one
+// that follows.
+func TestRuntimeOpsDeadlineApproachingTriggers_spec_28_5_3(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
+	fr.handshake()
+
+	for _, trigger := range []string{"idle", "", "SESSION_AGE"} {
+		if err := lc.SignalDeadlineApproaching("sess-dave", 5000, trigger); !errors.Is(err, ErrUnknownDeadlineTrigger) {
+			t.Errorf("trigger %q: err = %v, want ErrUnknownDeadlineTrigger", trigger, err)
+		}
+	}
+	for _, trigger := range []string{"budget", "session_age"} {
+		if err := lc.SignalDeadlineApproaching("sess-dave", 5000, trigger); err != nil {
+			t.Fatalf("trigger %q: %v", trigger, err)
+		}
+		if got := fr.read(); got.Type != "deadline_approaching" || got.Trigger != trigger {
+			t.Errorf("frame = %+v, want deadline_approaching with trigger %q", got, trigger)
+		}
+	}
+}
+
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages)
+// files_updated carries the sessionId the adapter passed, and a
+// process-scoped frame (lifecycle_capabilities) carries none.
+func TestRuntimeOpsFilesUpdatedNamesSession_spec_28_5_3(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
+	caps := fr.read()
+	if caps.SessionID != "" {
+		t.Errorf("lifecycle_capabilities sessionId = %q, want none (process-scoped)", caps.SessionID)
+	}
+	fr.write(lifecycleFrame{Type: "lifecycle_support", Capabilities: caps.Capabilities})
+	<-lc.currentReady()
+
+	if err := lc.SignalFilesUpdated("sess-erin"); err != nil {
+		t.Fatalf("SignalFilesUpdated: %v", err)
+	}
+	if got := fr.read(); got.Type != "files_updated" || got.SessionID != "sess-erin" {
+		t.Errorf("frame = %+v, want files_updated sessionId sess-erin", got)
+	}
+}
+
+func TestRuntimeOpsCheckpointContextCancelled(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
+	fr.handshake()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	// The runtime never acknowledges, so the request unwinds on ctx.
+	err := lc.RequestCheckpoint(ctx, "sess-a", "ckpt-stall", 5000)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("RequestCheckpoint err = %v, want context.DeadlineExceeded", err)
+	}
+	if req := fr.read(); req.Type != "checkpoint_request" {
+		t.Errorf("runtime saw %q, want checkpoint_request", req.Type)
+	}
+}
+
+// TestRuntimeOpsInflightCounter_spec_4_7 verifies llm_request_-
+// started / completed adjust the per-provider in-flight counter and that
+// it never goes below zero (spec line 820).
+func TestRuntimeOpsInflightCounter_spec_4_7(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
+	fr.handshake()
+
+	waitInflight := func(provider string, want int) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if lc.InflightCount(provider) == want {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Fatalf("InflightCount(%q) = %d, want %d", provider, lc.InflightCount(provider), want)
+	}
+
+	fr.write(lifecycleFrame{Type: "llm_request_started", RequestID: "r1", Provider: "anthropic"})
+	fr.write(lifecycleFrame{Type: "llm_request_started", RequestID: "r2", Provider: "anthropic"})
+	waitInflight("anthropic", 2)
+
+	fr.write(lifecycleFrame{Type: "llm_request_completed", SessionID: "sess-a", RequestID: "r1", Provider: "anthropic", Status: "ok"})
+	waitInflight("anthropic", 1)
+
+	// A spurious completion with no matching start floors at zero.
+	fr.write(lifecycleFrame{Type: "llm_request_completed", SessionID: "sess-a", RequestID: "r2", Provider: "anthropic", Status: "ok"})
+	fr.write(lifecycleFrame{Type: "llm_request_completed", SessionID: "sess-a", RequestID: "rx", Provider: "anthropic", Status: "error"})
+	waitInflight("anthropic", 0)
+}
+
+// recordingSink is a tokenSink that sums the folded token counts and
+// records the session each fold named.
+type recordingSink struct {
+	mu       sync.Mutex
+	input    int64
+	output   int64
+	calls    int
+	sessions []string
+}
+
+func (r *recordingSink) AddTokens(sessionID string, input, output int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.input += input
+	r.output += output
+	r.calls++
+	r.sessions = append(r.sessions, sessionID)
+}
+
+func (r *recordingSink) foldedSessions() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.sessions...)
+}
+
+func (r *recordingSink) totals() (int64, int64, int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.input, r.output, r.calls
+}
+
+// spec: §4.7 (llm_request_completed token fields), §11.2 (direct-mode usage)
+// An llm_request_completed frame carrying inputTokens/outputTokens folds
+// those counts into the wired usage sink, and a frame without token fields
+// folds nothing (the runtime that cannot extract counts, a zero delta).
+// This pins the S3 fold that did not exist before this step.
+func TestRuntimeOpsFoldsCompletedTokens_spec_11_2(t *testing.T) {
+	sink := &recordingSink{}
+	// Wire the sink before Run starts, matching the production ordering
+	// (cmd/lenny-adapter): the lock-free usage field must be set before the
+	// read-loop goroutine reads it.
+	_, fr := startRuntimeOpsWithSink(t, sink)
+	fr.handshake()
+
+	waitCalls := func(want int) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, _, calls := sink.totals(); calls == want {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		_, _, calls := sink.totals()
+		t.Fatalf("sink calls = %d, want %d", calls, want)
+	}
+
+	fr.write(lifecycleFrame{
+		Type: "llm_request_completed", SessionID: "sess-alice", RequestID: "r1", Provider: "anthropic",
+		Status: "ok", InputTokens: 40, OutputTokens: 12,
+	})
+	fr.write(lifecycleFrame{
+		Type: "llm_request_completed", SessionID: "sess-bob", RequestID: "r2", Provider: "anthropic",
+		Status: "ok", InputTokens: 10, OutputTokens: 3,
+	})
+	waitCalls(2)
+
+	// A frame with no token fields folds nothing (no extra sink call).
+	fr.write(lifecycleFrame{
+		Type: "llm_request_completed", SessionID: "sess-alice", RequestID: "r3", Provider: "anthropic", Status: "ok",
+	})
+	// Give the read loop a moment; the call count must stay at 2.
+	time.Sleep(20 * time.Millisecond)
+
+	input, output, calls := sink.totals()
+	if input != 50 || output != 15 {
+		t.Fatalf("folded totals = (%d,%d), want (50,15)", input, output)
+	}
+	if calls != 2 {
+		t.Fatalf("sink calls = %d, want 2 (a token-less frame must not fold)", calls)
+	}
+	// Each fold carries the session its frame named.
+	if got := sink.foldedSessions(); len(got) != 2 || got[0] != "sess-alice" || got[1] != "sess-bob" {
+		t.Fatalf("folded sessions = %v, want [sess-alice sess-bob]", got)
+	}
+}
+
+// spec: §4.7 (llm_request_completed token fields), §11.2 (direct-mode usage)
+// The usage sink must be wired before Run starts. The lock-free
+// RuntimeOps.usage field carries no mutex; its safety rests entirely
+// on being assigned before the read-loop goroutine that reads it. Before
+// this step's fix, cmd/lenny-adapter wired the sink after launching the
+// Run goroutine, so a frame arriving between Run's launch and the wiring
+// call would read lc.usage with no happens-before edge to the write, a
+// data race the -race detector flags and that could drop token folding for
+// the first frames. This pins the corrected ordering: with the sink wired
+// before Run (startRuntimeOpsWithSink), a completed-LLM frame that
+// arrives immediately after the handshake folds its tokens with no race.
+// Run under -race (tier 7a) it fails against the pre-fix after-Run wiring.
+func TestRuntimeOpsSinkWiredBeforeRun_spec_11_2(t *testing.T) {
+	sink := &recordingSink{}
+	_, fr := startRuntimeOpsWithSink(t, sink)
+	fr.handshake()
+
+	// The very first post-handshake frame carries tokens. With the sink
+	// wired before Run it folds deterministically; the read loop already
+	// held the sink pointer when it started.
+	fr.write(lifecycleFrame{
+		Type: "llm_request_completed", SessionID: "sess-alice", RequestID: "r1", Provider: "anthropic",
+		Status: "ok", InputTokens: 64, OutputTokens: 21,
+	})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, _, calls := sink.totals(); calls == 1 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	input, output, calls := sink.totals()
+	if calls != 1 {
+		t.Fatalf("sink calls = %d, want 1 (first post-handshake frame must fold)", calls)
+	}
+	if input != 64 || output != 21 {
+		t.Fatalf("folded totals = (%d,%d), want (64,21)", input, output)
+	}
+}
+
+func TestRuntimeOpsCloseFailsPendingRequest(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
+	fr.handshake()
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- lc.RequestInterrupt(context.Background(), "sess-a", "int-x", 2000)
+	}()
+	// Once the runtime has the request, RequestInterrupt is parked on the
+	// acknowledgement; closing the channel must fail it rather than hang.
+	if req := fr.read(); req.Type != "interrupt_request" {
+		t.Fatalf("runtime saw %q, want interrupt_request", req.Type)
+	}
+	_ = lc.Close()
+	if err := <-errc; !errors.Is(err, errLifecycleClosed) {
+		t.Fatalf("RequestInterrupt err = %v, want errLifecycleClosed", err)
+	}
+}
+
+// spec: §4.7 — the startup sequence (runtime connects to
+// the CH-RUNTIMEOPS) applies for both fresh sessions and resumes, so
+// after a runtime disconnects the channel must accept a fresh runtime's
+// connection and re-handshake. Closes F-4.7.14 / F-4.7.19.
+func TestRuntimeOpsAcceptsReconnect_spec_4_7(t *testing.T) {
+	dir, err := os.MkdirTemp("", "lc-reconnect-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "lifecycle.sock")
+
+	lc, err := newTestRuntimeOps(t, sock, SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
+	if err != nil {
+		t.Fatalf("NewRuntimeOps: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	runErr := make(chan error, 1)
+	go func() { runErr <- lc.Run(ctx) }()
+	t.Cleanup(func() {
+		_ = lc.Close()
+		<-runErr
+	})
+
+	// First runtime: handshake, drive one request, then disconnect.
+	dial := func() *fakeRuntime {
+		conn, derr := net.Dial("unix", sock)
+		if derr != nil {
+			t.Fatalf("dial lifecycle socket: %v", derr)
+		}
+		if werr := writeTestListenerNonce(conn, sock); werr != nil {
+			t.Fatalf("nonce line: %v", werr)
+		}
+		return &fakeRuntime{t: t, conn: conn, r: bufio.NewReader(conn)}
+	}
+
+	roundTrip := func(fr *fakeRuntime, id string) {
+		errc := make(chan error, 1)
+		go func() { errc <- lc.RequestInterrupt(context.Background(), "sess-a", id, 2000) }()
+		req := fr.read()
+		if req.Type != "interrupt_request" || req.InterruptID != id {
+			t.Fatalf("runtime saw %q/%q, want interrupt_request/%s", req.Type, req.InterruptID, id)
+		}
+		fr.write(lifecycleFrame{Type: "interrupt_acknowledged", InterruptID: id})
+		if err := <-errc; err != nil {
+			t.Fatalf("RequestInterrupt(%s) = %v", id, err)
+		}
+	}
+
+	fr1 := dial()
+	fr1.handshake()
+	roundTrip(fr1, "int-1")
+	fr1.conn.Close()
+
+	// Second runtime dials the same socket (the Resume restart path) and
+	// must complete a fresh handshake and serve a new request.
+	fr2 := dial()
+	fr2.handshake()
+	select {
+	case <-lc.currentReady():
+	case <-time.After(3 * time.Second):
+		t.Fatal("second handshake did not complete")
+	}
+	roundTrip(fr2, "int-2")
+}
+
+// spec: §15.5 — when the runtime advertises a
+// matching `protocolVersion` in `lifecycle_support`, the handshake
+// completes and the channel exposes the runtime's capability set.
+// F-15.5.9.
+func TestLifecycleVersionNegotiation_AcceptsCompatible_spec_15_5_2431(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
+	caps := fr.read()
+	if caps.Type != "lifecycle_capabilities" {
+		t.Fatalf("first frame = %q, want lifecycle_capabilities", caps.Type)
+	}
+	fr.write(lifecycleFrame{
+		Type:            "lifecycle_support",
+		ProtocolVersion: "1.7",
+		Capabilities:    caps.Capabilities,
+	})
+	select {
+	case <-lc.currentReady():
+	case <-time.After(3 * time.Second):
+		t.Fatal("compatible-version handshake did not complete")
+	}
+}
+
+// spec: §15.5 — an empty `protocolVersion` is
+// accepted for forward compatibility with runtimes that pre-date the
+// field. F-15.5.9.
+func TestLifecycleVersionNegotiation_AcceptsEmpty_spec_15_5_2431(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
+	caps := fr.read()
+	if caps.Type != "lifecycle_capabilities" {
+		t.Fatalf("first frame = %q, want lifecycle_capabilities", caps.Type)
+	}
+	fr.write(lifecycleFrame{
+		Type:         "lifecycle_support",
+		Capabilities: caps.Capabilities,
+	})
+	select {
+	case <-lc.currentReady():
+	case <-time.After(3 * time.Second):
+		t.Fatal("missing-version handshake did not complete")
+	}
+}
+
+// spec: §15.5 — a runtime advertising a different
+// major version is rejected; the handshake never marks the channel
+// ready. F-15.5.9.
+func TestLifecycleVersionNegotiation_RejectsIncompatibleMajor_spec_15_5_2431(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
+	caps := fr.read()
+	if caps.Type != "lifecycle_capabilities" {
+		t.Fatalf("first frame = %q, want lifecycle_capabilities", caps.Type)
+	}
+	fr.write(lifecycleFrame{
+		Type:            "lifecycle_support",
+		ProtocolVersion: "2.0",
+		Capabilities:    caps.Capabilities,
+	})
+	select {
+	case <-lc.currentReady():
+		t.Fatal("incompatible-version handshake unexpectedly completed")
+	case <-time.After(250 * time.Millisecond):
+		// Expected: connection was dropped before ready fires.
+	}
+}
+
+// spec: §15.5 — malformed `protocolVersion` strings
+// (no dot, leading dot, non-numeric prefix) are rejected so a typo
+// surfaces at handshake. F-15.5.9.
+func TestLifecycleVersionsCompatible_MalformedRejected(t *testing.T) {
+	cases := []struct {
+		runtime string
+		want    bool
+	}{
+		{"1.0", true},
+		{"1.7", true},
+		{"2.0", false},
+		{"", false}, // direct compat predicate test; the handshake handles "" separately.
+		{"abc", false},
+		{".5", false},
+		{"1", false},
+		{"1.0.0", true}, // extra trailing segments still parse to major=1 via the first dot.
+	}
+	for _, tc := range cases {
+		if got := lifecycleVersionsCompatible(lifecycleProtocolVersion, tc.runtime); got != tc.want {
+			t.Errorf("lifecycleVersionsCompatible(%q, %q) = %v, want %v", lifecycleProtocolVersion, tc.runtime, got, tc.want)
+		}
+	}
+}

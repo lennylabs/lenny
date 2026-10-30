@@ -9,9 +9,11 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
-// spec: §27.3.1 line 98 — "TestPlaygroundSessionRevocationCrossReplica
+// spec: §27.3.1 — "TestPlaygroundSessionRevocationCrossReplica
 // MUST assert that a logout on replica A invalidates a subsequent
 // request carrying the same cookie or bearer on replica B, both before
 // and after the pub/sub message is delivered (the authoritative Redis
@@ -19,8 +21,8 @@ import (
 // post-delivery case)." F-27.3.10.
 func TestPlaygroundSessionRevocationCrossReplica_spec_27_3_1_98(t *testing.T) {
 	mr := miniredis.RunT(t)
-	clientA := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	clientB := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	clientA := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
+	clientB := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = clientA.Close(); _ = clientB.Close() })
 
 	const tenant = "acme"
@@ -75,14 +77,14 @@ func TestPlaygroundSessionRevocationCrossReplica_spec_27_3_1_98(t *testing.T) {
 	}
 }
 
-// spec: §27.3.1 line 98 / §12.4 — the Redis-backed store extends the
+// spec: §27.3.1 / §12.4 — the Redis-backed store extends the
 // tenant-key-isolation guarantee to the pg:sess:* and pg:revoked:* key
 // prefixes: a record or revocation marker written for tenant A must not
 // be visible to a request scoped to tenant B reusing the same
 // (lexically-equal) session id or jti. F-27.3.10.
 func TestRedisSessionStoreTenantKeyIsolation_spec_27_3_1_98(t *testing.T) {
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = client.Close() })
 	store := NewRedisSessionStore(client)
 	ctx := context.Background()
@@ -119,7 +121,7 @@ func TestRedisSessionStoreTenantKeyIsolation_spec_27_3_1_98(t *testing.T) {
 // RevokeSession deletes it. F-27.3.8.
 func TestRedisTenantForSessionIndexRoundTrip_spec_27_3_1_81(t *testing.T) {
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = client.Close() })
 	store := NewRedisSessionStore(client)
 	ctx := context.Background()

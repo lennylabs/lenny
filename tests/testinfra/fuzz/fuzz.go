@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package fuzz manages the §19.2 fuzz-crash corpus.
+// Package fuzz manages the TESTING.md §19.2 fuzz-crash corpus.
 //
 // Every fuzz target stores its discovered crashes under
 // `tests/testinfra/fuzz/crashes/<package>/<target>/` so subsequent

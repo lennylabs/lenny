@@ -2,7 +2,7 @@
 
 // Package pgstore is the Postgres-backed quotacheckpoint.Store: the §11.2
 // durable checkpoint of the Redis token-usage counters. It persists each
-// window total to the token_usage_checkpoint table so the §11.2 line 48
+// window total to the token_usage_checkpoint table so the §11.2
 // reconstruction and the §24.6 operator reconcile can restore the counters
 // via the MAX rule on Redis recovery.
 //
@@ -10,7 +10,7 @@
 // a client-supplied value so a future staleness sweep compares against the
 // database clock.
 //
-// spec: §11.2 lines 42-48; §24.6 line 99.
+// spec: §11.2; §24.6.
 package pgstore
 
 import (
@@ -74,9 +74,9 @@ func (s *Store) Write(ctx context.Context, rows []quotacheckpoint.Row) error {
 // runs in a single statement so concurrent reconciles from several gateway
 // replicas serialize on the row rather than racing a read-modify-write; no
 // replica's contribution is lost. A zero delta reads the current total
-// (the §12.4 line 268 startup slice draw) while still materialising the
+// (the §12.4 startup slice draw) while still materialising the
 // row. It is the quotabudget.CheckpointAdder used by the
-// in_memory_reconciled enforcement mode. spec: §12.4 line 268; §11.2 line 44.
+// in_memory_reconciled enforcement mode. spec: §12.4; §11.2.
 func (s *Store) AddTenantTotal(ctx context.Context, tenantID, period, windowLabel string, delta int64) (int64, error) {
 	var total int64
 	if err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
@@ -138,7 +138,7 @@ func (s *Store) ListByTenant(ctx context.Context, tenantID string) ([]quotacheck
 // DeleteByUser removes the per-user checkpoint rows for (tenantID, userID).
 // The tenant rollup (scope='tenant') is not a per-user row and survives a
 // single user's erasure. A subject with no rows is a no-op returning
-// (0, nil). spec: §12.1 line 5 (mandatory primitive); §12.8 step 6.
+// (0, nil). spec: §12.1; §12.8 step 6.
 func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	var deleted int
 	if err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
@@ -159,7 +159,7 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 
 // DeleteByTenant removes every checkpoint row for tenantID. RLS scopes the
 // DELETE to the tenant; the returned count is the rows removed. spec:
-// §12.1 line 5 (mandatory primitive); §12.8 Phase 4.
+// §12.1; §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	var deleted int
 	if err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {

@@ -3,7 +3,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,29 +14,64 @@ import (
 )
 
 // resolveChangedPlan walks `git diff --name-only` against the
-// working tree. Equivalent to resolveChangedPlanFor("").
+// working tree with the default selection options. The pr-fast group
+// resolves through it.
 func resolveChangedPlan() []tierPlan {
-	return resolveChangedPlanFor("")
+	plan, _ := resolveChangedPlanFor("", selectOpts{rdepsDepth: defaultRdepsDepth})
+	return plan
 }
 
-// resolveChangedPlanFor diffs against the given git ref. An empty
-// ref reads the working tree (staged + unstaged + untracked); a
-// ref like "main" or "HEAD~5" diffs from that ref to HEAD.
-//
-// Maps each changed path through tests/change-graph.json to a set
-// of tiers; the static tier is always included.
-func resolveChangedPlanFor(ref string) []tierPlan {
+// resolveChangedPlanFor diffs against the given git ref (see
+// changedPathsFor) and maps each changed path through
+// tests/change-graph.json to a set of tiers; the static tier is always
+// included. The unit tier is scoped to the packages the diff reaches
+// (see selectChanged). The second return value carries the
+// operator-facing notes the selection raised.
+func resolveChangedPlanFor(ref string, opts selectOpts) ([]tierPlan, []string) {
 	paths := changedPathsFor(ref)
 	if len(paths) == 0 {
-		return nil
+		return nil, nil
 	}
-	tiers := map[string]bool{"static": true}
-	for _, p := range paths {
-		for _, t := range tiersForChangedPath(p) {
-			tiers[t] = true
+	globs, err := readChangeGraphGlobs()
+	var notes []string
+	if err != nil {
+		notes = append(notes, fmt.Sprintf("change graph unavailable (%v); every changed path is treated as unmapped", err))
+	}
+	g, err := loadPkgGraph(context.Background(), repoRoot())
+	if err != nil {
+		g = nil
+		notes = append(notes, fmt.Sprintf("package graph unavailable (%v); the unit tier runs every package", err))
+	}
+	sel := selectChanged(paths, globs, g, opts)
+	if g == nil {
+		// Without the package graph the selector cannot place an
+		// unmapped path or find importers, so it fails safe to the
+		// whole module rather than to the graph's targets alone.
+		sel.unitPkgs = nil
+	}
+	notes = append(notes, sel.notes(opts)...)
+	plan := planFromTierSet(sel.tiers)
+	for i := range plan {
+		if plan[i].name == tierUnit {
+			plan[i].pkgs = sel.unitPkgs
 		}
 	}
-	return planFromTierSet(tiers)
+	return plan, notes
+}
+
+// readChangeGraphGlobs reads the change graph's globs block.
+func readChangeGraphGlobs() (map[string]map[string][]string, error) {
+	body, err := os.ReadFile(filepath.Join(repoRoot(), changeGraphFile))
+	if err != nil {
+		return nil, fmt.Errorf("read change graph: %w", err)
+	}
+	var doc struct {
+		Globs map[string]map[string][]string `json:"globs"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return nil, fmt.Errorf("parse change graph: %w", err)
+	}
+	return doc.Globs, nil
 }
 
 // resolveSpecsPlan resolves a list of spec section ids through
@@ -73,36 +110,63 @@ func resolveSpecsPlan(specs []string) []tierPlan {
 }
 
 // resolvePkgsPlan resolves package globs through the change graph.
+// The unit tier is scoped to each named package, recursively, plus
+// the unit targets of every change-graph key the package matches.
 func resolvePkgsPlan(pkgs []string) []tierPlan {
-	body, err := os.ReadFile(filepath.Join(repoRoot(), changeGraphFile))
+	globs, err := readChangeGraphGlobs()
 	if err != nil {
 		return nil
 	}
-	var doc struct {
-		Globs map[string]map[string][]string `json:"globs"`
-	}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil
-	}
+	return pkgsPlanIn(globs, pkgs)
+}
+
+// pkgsPlanIn is resolvePkgsPlan over an already-read change graph.
+func pkgsPlanIn(globs map[string]map[string][]string, pkgs []string) []tierPlan {
 	tiers := map[string]bool{}
+	patterns := map[string]bool{}
 	for _, pkg := range pkgs {
-		for key, perTier := range doc.Globs {
+		pkg = strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(pkg, "./"), "/..."), "/")
+		for key, perTier := range globs {
 			if key == pkg || strings.HasPrefix(key, pkg) || strings.HasPrefix(pkg, key) {
 				for t := range perTier {
 					tiers[t] = true
 				}
+				for _, target := range perTier[tierUnit] {
+					patterns[goTestPattern(target)] = true
+				}
 			}
 		}
+		patterns["./"+pkg+"/..."] = true
 	}
 	if len(tiers) == 0 {
 		return nil
 	}
-	return planFromTierSet(tiers)
+	plan := planFromTierSet(tiers)
+	for i := range plan {
+		if plan[i].name == tierUnit {
+			plan[i].pkgs = collapsePatterns(patterns)
+		}
+	}
+	return plan
 }
 
-// changedPathsFor returns the changed paths between `ref` and HEAD.
-// When ref is empty, falls back to the working-tree diff (staged +
-// unstaged + untracked).
+// diffRange returns the git diff range for a --since value. A plain
+// ref diffs from its merge base with HEAD (`ref...HEAD`), so commits
+// that landed on ref after the branch point do not count as this
+// branch's changes; a two-dot diff against an advanced main would
+// select every package main touched since. A value that already spells
+// a range (`A..B` or `A...B`) passes through verbatim, which selects
+// for an arbitrary branch or merge without checking it out.
+func diffRange(ref string) string {
+	if strings.Contains(ref, "..") {
+		return ref
+	}
+	return ref + "...HEAD"
+}
+
+// changedPathsFor returns the changed paths between `ref` and HEAD
+// (see diffRange). When ref is empty, falls back to the working-tree
+// diff (staged + unstaged + untracked).
 func changedPathsFor(ref string) []string {
 	if _, err := exec.LookPath("git"); err != nil {
 		return nil
@@ -118,7 +182,7 @@ func changedPathsFor(ref string) []string {
 		}
 	} else {
 		sets = [][]string{
-			{"diff", "--name-only", ref + "..HEAD"},
+			{"diff", "--name-only", diffRange(ref)},
 		}
 	}
 	for _, args := range sets {
@@ -139,22 +203,18 @@ func changedPathsFor(ref string) []string {
 	return out
 }
 
-// tiersForChangedPath looks the path up in the change graph and
-// returns the set of tier names it implies.
-func tiersForChangedPath(path string) []string {
-	body, err := os.ReadFile(filepath.Join(repoRoot(), changeGraphFile))
-	if err != nil {
-		return nil
-	}
-	var doc struct {
-		Globs map[string]map[string][]string `json:"globs"`
-	}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil
-	}
+// tiersForChangedPathIn resolves a changed path against the change
+// graph's glob keys, reading each key through changeGraphGlobPrefix.
+// That is the same reading the change-graph completeness gate applies
+// when it decides a source path is covered, so a key that certifies
+// coverage there selects tiers here. Without the shared reading a key
+// spelled `pkg/foo/...` would pass the gate while matching no real
+// path in this selector, and a change under pkg/foo/ would run no
+// tests under `--changed`.
+func tiersForChangedPathIn(globs map[string]map[string][]string, path string) []string {
 	tiers := []string{}
-	for key, perTier := range doc.Globs {
-		if strings.HasPrefix(path, key) {
+	for key, perTier := range globs {
+		if strings.HasPrefix(path, changeGraphGlobPrefix(key)) {
 			for t := range perTier {
 				tiers = append(tiers, t)
 			}
@@ -229,4 +289,37 @@ func planFromTierSet(tiers map[string]bool) []tierPlan {
 		plan = append(plan, tierPlan{name: t})
 	}
 	return plan
+}
+
+// mergeDiscoveryPlans unions the plans the discovery selectors
+// (--changed, --spec, --pkg) produced, in canonical tier order. The
+// unit tier's package scope is the union of the contributors' scopes,
+// and an unscoped contributor (nil pkgs, such as --spec) or --all makes
+// the merged unit tier unscoped, so a merge never narrows what any one
+// selector asked to run.
+func mergeDiscoveryPlans(plans [][]tierPlan, all bool) []tierPlan {
+	tiers := map[string]bool{}
+	unitPatterns := map[string]bool{}
+	unitScoped := !all
+	for _, plan := range plans {
+		for _, t := range plan {
+			tiers[t.name] = true
+			if t.name != tierUnit {
+				continue
+			}
+			if t.pkgs == nil {
+				unitScoped = false
+			}
+			for _, p := range t.pkgs {
+				unitPatterns[p] = true
+			}
+		}
+	}
+	merged := planFromTierSet(tiers)
+	for i := range merged {
+		if merged[i].name == tierUnit && unitScoped {
+			merged[i].pkgs = collapsePatterns(unitPatterns)
+		}
+	}
+	return merged
 }

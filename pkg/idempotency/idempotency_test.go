@@ -56,7 +56,7 @@ func TestKeyValidateRejectsMissingFields(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — the 128-character cap is measured in runes,
+// spec: §11.5 — the 128-character cap is measured in runes,
 // so a 128-rune multi-byte key is admissible even though its byte
 // length exceeds 128. Closes F-11.5.11.
 func TestKeyValidateRuneLengthAcceptsMultibyteUpToCap(t *testing.T) {
@@ -73,7 +73,7 @@ func TestKeyValidateRuneLengthAcceptsMultibyteUpToCap(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — 129 runes (one over the cap) must be rejected
+// spec: §11.5 — 129 runes (one over the cap) must be rejected
 // regardless of how many UTF-8 bytes they encode to. Closes F-11.5.11.
 func TestKeyValidateRuneLengthRejectsOverCapMultibyte(t *testing.T) {
 	value := strings.Repeat("я", MaxKeyLength+1)

@@ -31,7 +31,7 @@ func startPG(t *testing.T) *containers.Postgres {
 	})
 }
 
-// spec: §12.8 lines 845-850 — erasure_salt is envelope-encrypted at rest,
+// spec: §12.8 — erasure_salt is envelope-encrypted at rest,
 // round-trips, is stored as ciphertext, and is destroyed to NULL. F-12.8.5.
 // diagnosis: a failure means the tenant erasure_salt is persisted in
 // plaintext rather than envelope-encrypted, or is not destroyed to NULL,
@@ -77,21 +77,21 @@ func TestTenantStoreErasureSaltEnvelope(t *testing.T) {
 		t.Fatal("erasure_salt column is empty after a salt write")
 	}
 	if bytes.Contains(raw, salt) {
-		t.Fatal("§12.8 line 845: the stored erasure_salt must be ciphertext, not the plaintext salt")
+		t.Fatal("§12.8: the stored erasure_salt must be ciphertext, not the plaintext salt")
 	}
 
-	// List does not decrypt the salt (§12.8 line 847).
+	// List does not decrypt the salt (§12.8).
 	rows, err := store.List(ctx, tenantstore.ListFilter{})
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
 	for _, r := range rows {
 		if r.ID == id && r.ErasureSalt != nil {
-			t.Error("§12.8 line 847: List must not decrypt the erasure_salt")
+			t.Error("§12.8: List must not decrypt the erasure_salt")
 		}
 	}
 
-	// §12.8 line 850: destroying the salt nulls the column.
+	// §12.8: destroying the salt nulls the column.
 	if _, err := store.Update(ctx, id, func(tn *tenantstore.Tenant) error {
 		tn.ErasureSalt = nil
 		return nil
@@ -103,7 +103,7 @@ func TestTenantStoreErasureSaltEnvelope(t *testing.T) {
 		t.Fatalf("read raw erasure_salt after destroy: %v", err)
 	}
 	if afterDestroy != nil {
-		t.Fatalf("§12.8 line 850: erasure_salt must be NULL after destroy, got %x", afterDestroy)
+		t.Fatalf("§12.8: erasure_salt must be NULL after destroy, got %x", afterDestroy)
 	}
 	reread, err := store.Get(ctx, id)
 	if err != nil {
@@ -114,7 +114,7 @@ func TestTenantStoreErasureSaltEnvelope(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 845 — a non-empty salt write with no KMS provider is
+// spec: §12.8 — a non-empty salt write with no KMS provider is
 // rejected rather than persisted in plaintext. F-12.8.5.
 // diagnosis: a failure means a salt write with no KMS provider is
 // persisted in plaintext instead of being rejected, so the store does
@@ -133,6 +133,6 @@ func TestTenantStoreErasureSaltFailsClosedWithoutKMS(t *testing.T) {
 		tn.ErasureSalt = bytes.Repeat([]byte{1}, 32)
 		return nil
 	}); err == nil {
-		t.Fatal("§12.8 line 845: a salt write without a KMS provider must fail closed")
+		t.Fatal("§12.8: a salt write without a KMS provider must fail closed")
 	}
 }

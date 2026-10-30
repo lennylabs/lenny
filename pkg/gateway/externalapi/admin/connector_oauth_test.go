@@ -174,7 +174,7 @@ func TestAuthorizeConnectorHappyPath(t *testing.T) {
 	}
 }
 
-// spec: §9.2 line 87 — URL domain validation is a hard enforcement
+// spec: §9.2 — URL domain validation is a hard enforcement
 // boundary. When a connector declares an expected_domain that its
 // authorization URL host satisfies, the §9.3 flow proceeds; when the
 // host falls outside the expected_domain the gateway drops the flow with
@@ -289,7 +289,7 @@ func TestAuthorizeConnectorNotOAuth(t *testing.T) {
 	}
 }
 
-// spec: §9.3 line 140 — audit logging is the prescribed forensic
+// spec: §9.3 — audit logging is the prescribed forensic
 // surface for the connector OAuth flow. F-9.3.11 — the
 // `connector.oauth.credential_stored` audit detail must carry the
 // initiator IP + user agent (captured at authorize time) and the
@@ -355,7 +355,7 @@ func TestConnectorOAuthCredentialStoredAuditCarriesInitiatorAndCompleterIP_spec_
 	}
 }
 
-// spec: §9.3 line 140 — F-9.3.11. When a deployment terminates
+// spec: §9.3 — F-9.3.11. When a deployment terminates
 // TLS at a proxy, the authorize-time / callback-time IP must be
 // taken from the first-hop client in X-Forwarded-For so the audit
 // trail records the user's client IP instead of the proxy's.
@@ -627,4 +627,38 @@ func TestConnectorOAuthRoutesAbsentWithoutWiring(t *testing.T) {
 	if rr.Code == http.StatusOK {
 		t.Fatalf("OAuth route is live without WithConnectorOAuth wiring")
 	}
+}
+
+// TestConnectorOAuthCredentialStoredAttributedToFlowPrincipal_spec_9_3 pins
+// that the deferred connector.oauth.credential_stored event is attributed
+// to the principal the authorize step persisted with the flow, whatever
+// principal the callback request carries: the callback is a browser
+// redirect, so the persisted flow is the only binding to the user.
+// spec: 9.3 (Connector OAuth flow), 16.7 (Section 25 Audit Events)
+func TestConnectorOAuthCredentialStoredAttributedToFlowPrincipal_spec_9_3(t *testing.T) {
+	f := newOAuthFixture(t)
+	f.registerOAuthConnector(t, false)
+	resp := f.initiate(t)
+	state := stateFromAuthURL(t, resp.AuthorizationURL)
+
+	cbReq := httptest.NewRequest(http.MethodGet,
+		"/v1/admin/connectors/oauth/callback?code=code-1&state="+url.QueryEscape(state), nil)
+	cbReq = cbReq.WithContext(authmw.WithPrincipal(cbReq.Context(), authmw.Principal{
+		Subject: "bob@globex.com", TenantID: "globex",
+	}))
+	cbRR := httptest.NewRecorder()
+	f.router.Handler().ServeHTTP(cbRR, cbReq)
+	if cbRR.Code != http.StatusOK {
+		t.Fatalf("callback status: %d, body=%s", cbRR.Code, cbRR.Body.String())
+	}
+	for _, ev := range f.audit.snapshot() {
+		if ev.Type != "connector.oauth.credential_stored" {
+			continue
+		}
+		if ev.ActorSubject != "alice@acme.com" || ev.ActorTenantID != "acme" {
+			t.Errorf("credential_stored actor = %q/%q, want the flow's alice@acme.com/acme", ev.ActorSubject, ev.ActorTenantID)
+		}
+		return
+	}
+	t.Fatalf("expected connector.oauth.credential_stored event, got %+v", f.audit.snapshot())
 }

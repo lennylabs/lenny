@@ -70,8 +70,9 @@ func TestOpenUploadSubsystemBreakerReturns503WhileStreamProxyServes(t *testing.T
 	// always wires one, so this is a test-harness prerequisite rather
 	// than a behavior under test.
 	srv := sessionserver.New(store, sessionserver.Options{
-		Events: bus,
-		Blobs:  blobstore.NewMemoryStore(time.Now),
+		DevTenantHeader: true,
+		Events:          bus,
+		Blobs:           blobstore.NewMemoryStore(time.Now),
 		UploadSubsystem: &subsystem.Subsystem{
 			Name:    "upload_handler",
 			Breaker: openUploadBreaker(t),
@@ -101,7 +102,7 @@ func TestOpenUploadSubsystemBreakerReturns503WhileStreamProxyServes(t *testing.T
 	if envelope["code"] != "SUBSYSTEM_UNAVAILABLE" {
 		t.Errorf("error code: want SUBSYSTEM_UNAVAILABLE, got %v", envelope["code"])
 	}
-	// §4.1 line 115 / §15.2.1: the per-replica breaker is transient — the
+	// §4.1 / §15.2.1: the per-replica breaker is transient — the
 	// client should retry so the load balancer distributes the retry
 	// across replicas. The 503 envelope therefore carries retryable=true.
 	if envelope["retryable"] != true {

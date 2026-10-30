@@ -29,7 +29,7 @@ import (
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 )
 
-// spec: 4.3 (§4.3 / §12.2.4 Token Service gRPC surface — the binary's
+// spec: 4.3 (§4.3 Token Service gRPC surface — the binary's
 // --grpc-addr flag exposes the lenny.tokenservice.v1.TokenService RPCs)
 // diagnosis: a smoke test that builds cmd/lenny-token-service, starts
 // the binary against an ephemeral gRPC port, and dials the
@@ -122,7 +122,7 @@ func TestBinaryServesGRPC(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 195 — tokenServiceCreds returns nil when all three
+// spec: §4.3 — tokenServiceCreds returns nil when all three
 // TLS paths are empty (dev mode), and an error when only some are set.
 // The §4.3 trust boundary requires mTLS in production, but the dev
 // path must still build the binary for local tests.
@@ -136,7 +136,7 @@ func TestTokenServiceCredsPlaintextDevMode(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 195 — tokenServiceCreds rejects a partial TLS
+// spec: §4.3 — tokenServiceCreds rejects a partial TLS
 // configuration (any one of cert/key/ca set requires all three).
 func TestTokenServiceCredsRejectsPartialConfig(t *testing.T) {
 	for i, args := range [][3]string{
@@ -151,7 +151,7 @@ func TestTokenServiceCredsRejectsPartialConfig(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 195 — tokenServiceCreds with a complete TLS config
+// spec: §4.3 — tokenServiceCreds with a complete TLS config
 // returns mTLS server credentials that require and verify the client
 // cert (tls.RequireAndVerifyClientCert).
 func TestTokenServiceCredsBuildsMTLS(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 
 // TestBuildStampsResourcesOnEveryContainer asserts that, given a resolved
 // §5.2 resource class, the builder applies the CPU/memory requests and
-// limits to both the adapter and runtime containers. spec: §6.4 line 413.
+// limits to both the adapter and runtime containers. spec: §6.4.
 func TestBuildStampsResourcesOnEveryContainer_spec_6_4_413(t *testing.T) {
 	req, ok := resourceclass.DefaultRegistry().Resolve("medium")
 	if !ok {
@@ -39,7 +39,7 @@ func TestBuildStampsResourcesOnEveryContainer_spec_6_4_413(t *testing.T) {
 }
 
 // TestBuildEmbeddedStampsResources covers the single-container embedded
-// model path. spec: §6.4 line 413.
+// model path. spec: §6.4.
 func TestBuildEmbeddedStampsResources_spec_6_4_413(t *testing.T) {
 	req, _ := resourceclass.DefaultRegistry().Resolve("large")
 	in := inputs()

@@ -55,8 +55,7 @@ const (
 	CodeRegionConstraintViolated = "REGION_CONSTRAINT_VIOLATED"
 
 	// CodeRegionCrossTransferProhibited rejects a T4 resource that
-	// resolves to a region other than its tenant's pinned region. §12.9
-	// line 1046 (data-residency row) tightens the T3 rule for a
+	// resolves to a region other than its tenant's pinned region. §12.9 tightens the T3 rule for a
 	// Restricted-tier tenant: cross-region transfer is prohibited for
 	// every region-bearing resource, not only environment-scoped ones.
 	CodeRegionCrossTransferProhibited = "REGION_CROSS_TRANSFER_PROHIBITED"
@@ -99,7 +98,7 @@ type Request struct {
 
 	// WorkspaceTier is the §12.9 classification tier of the tenant the
 	// resource belongs to ("T1".."T4"), resolved by the webhook
-	// alongside TenantRegion. When it is TierT4 the §12.9 line 1046
+	// alongside TenantRegion. When it is TierT4 the §12.9
 	// cross-region-transfer-prohibited rule applies. Empty defaults to
 	// the T1–T3 behavior (no extra constraint beyond the §12.8 rule).
 	WorkspaceTier string
@@ -141,7 +140,7 @@ func (r Request) EffectiveRegion() string {
 // unconstrained resource imposes no residency requirement. For a T4
 // tenant it rejects with REGION_CROSS_TRANSFER_PROHIBITED when the
 // resource resolves to a region other than the tenant's pinned region,
-// regardless of scope (§12.9 line 1046). For an Environment-scoped
+// regardless of scope (§12.9). For an Environment-scoped
 // resource that declares a region differing from its tenant's region
 // it rejects with REGION_CONSTRAINT_VIOLATED (§12.8 inheritance).
 // Otherwise it resolves the effective region and rejects with
@@ -154,7 +153,7 @@ func Decide(r Request) Decision {
 	// check runs before the storage.regions lookup so a divergent
 	// environment region is reported as a constraint violation rather
 	// than as an unresolvable region.
-	// §12.9 line 1046 (data-residency row): a T4 tenant prohibits
+	// §12.9: a T4 tenant prohibits
 	// cross-region transfer. The §12.8 inheritance rule below only
 	// constrains environment-scoped resources to their tenant region;
 	// for a Restricted-tier tenant the constraint extends to every

@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -101,6 +102,14 @@ func podBindClient(t *testing.T, objs ...client.Object) client.Client {
 // by §4.6.3 field ownership: WPC seeds phase/podIP, the gateway seeds
 // activeSlots/tenantId. Keeping the seed under the rightful manager
 // avoids cross-manager conflicts on the live reconcile.
+//
+// Each call boots a private kube-apiserver and etcd, which costs about eight
+// seconds under -race and dominates this package's run time. The tests that
+// call it (directly or through a fixture) share no other mutable state, so
+// they, and their per-case subtests, call t.Parallel; run serially the
+// package exceeded go test's default ten-minute timeout. A new test that
+// boots a cluster here should do the same unless it touches process-wide
+// state (t.Setenv, the default slog logger, a global metrics registry).
 func podBindEnvtestClient(t *testing.T, objs ...client.Object) client.Client {
 	t.Helper()
 	env := envtest.Start(t)
@@ -183,11 +192,13 @@ func podBindIdleSandbox(name, pool, podIP string) *lennyv1.Sandbox {
 }
 
 // podBindAdapterDialer serves srv over an in-memory connection and
-// returns a DialAdapter func wired to it.
-func podBindAdapterDialer(t *testing.T, srv *adapter.Server) func(string) (*adapterclient.Client, error) {
+// returns a DialAdapter func wired to it. opts are passed to the adapter's
+// gRPC server, so a test can add an interceptor that fails one RPC; the
+// callers that pass none get the adapter's default server.
+func podBindAdapterDialer(t *testing.T, srv *adapter.Server, opts ...grpc.ServerOption) func(string) (*adapterclient.Client, error) {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
-	gs := adapter.NewGRPCServer(srv)
+	gs := adapter.NewGRPCServer(srv, opts...)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 	return func(string) (*adapterclient.Client, error) {
@@ -210,9 +221,10 @@ func podBindBinder(c client.Client, dial func(string) (*adapterclient.Client, er
 }
 
 func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = rt
 
 	cluster := podBindClient(
@@ -226,6 +238,7 @@ func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-pod-1" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -281,20 +294,20 @@ func (r countingRouter) Resolve(ctx context.Context, in credrouter.Input) (credr
 	return r.inner.Resolve(ctx, in)
 }
 
-// spec: §4.1 (proposal: the §7.1-step-3 credential pre-check is moved into
-// createSession ahead of the step-4 claim and runs once before the claim),
-// §7.1 step 3, §4.9 lines 1216-1218.
+// spec: §7.1 step 3 (the credential pre-check runs inside createSession
+// ahead of the step-4 claim, exactly once per session), §4.9.
 // diagnosis: the combined one-call POST /v1/sessions/start runs claim,
 // prepare, and launch in a single call. The credential availability
 // pre-check must run exactly once (at the create-time claim), not again at
 // the prepare dispatch. A failure here means startOnPod re-ran
 // resolveCredentialPools after claimAtCreate already ran it, so the pre-check
-// executed twice for one combined create-and-start, contradicting the
-// proposal's "pre-check runs once, before the claim" placement.
-func TestCombinedStartRunsCredentialPreCheckOnce_spec_4_1(t *testing.T) {
+// executed twice for one combined create-and-start, contradicting the §7.1
+// step-3 placement of the pre-check ahead of the step-4 claim.
+func TestCombinedStartRunsCredentialPreCheckOnce_spec_7_1(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = rt
 
 	cluster := podBindClient(
@@ -335,6 +348,7 @@ func TestCombinedStartRunsCredentialPreCheckOnce_spec_4_1(t *testing.T) {
 
 	var resolveCount int
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-precheck-once" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -363,9 +377,8 @@ func TestCombinedStartRunsCredentialPreCheckOnce_spec_4_1(t *testing.T) {
 	}
 }
 
-// spec: §6.3 line 348 (end-to-end span is pod claim through ready), §5
-// (proposal: the combined create-and-start reuses the claim/prepare/launch
-// phases and the claim-to-ready span covers claim through ready).
+// spec: §6.3, §5 — the combined create-and-start reuses the claim, prepare,
+// and launch phases, and the claim-to-ready span covers claim through ready.
 // diagnosis: the combined one-call POST /v1/sessions/start performs the
 // claim, prepare, and launch in a single call, so the single end-to-end
 // lenny_session_startup_duration_seconds observation must include the
@@ -376,9 +389,10 @@ func TestCombinedStartRunsCredentialPreCheckOnce_spec_4_1(t *testing.T) {
 // ready SLO envelope. The per-phase pod_claim histogram is still emitted
 // exactly once.
 func TestCombinedStartEndToEndIncludesPodClaim_spec_6_3_348(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = rt
 
 	cluster := podBindClient(
@@ -396,6 +410,7 @@ func TestCombinedStartEndToEndIncludesPodClaim_spec_6_3_348(t *testing.T) {
 	)
 	phaseObs = map[string]float64{}
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-combined-metric" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -428,7 +443,7 @@ func TestCombinedStartEndToEndIncludesPodClaim_spec_6_3_348(t *testing.T) {
 	if !ok || podClaim <= 0 {
 		t.Fatalf("pod_claim phase = %v (present=%v), want a positive sample recorded at create", podClaim, ok)
 	}
-	// spec: §6.3 line 348 — the end-to-end total is pod_claim +
+	// spec: §6.3 — the end-to-end total is pod_claim +
 	// credential_assignment + agent_session_start. The pod-claim component
 	// must be present, so the end-to-end observation is at least the
 	// pod_claim phase plus the agent_session_start phase (both measured).
@@ -446,14 +461,15 @@ func TestCombinedStartEndToEndIncludesPodClaim_spec_6_3_348(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 28 — the §7.1 atomicity contract demands "does NOT
+// spec: §7.1 — the §7.1 atomicity contract demands "does NOT
 // persist the session row" when the create-and-start atomic unit
 // (steps 2-8) fails. A claim failure on the §15.1 `POST
 // /v1/sessions/start` path returns SESSION_CREATION_FAILED with no
 // session row left behind; the registry stays empty too.
 func TestSessionStartLeavesNoRowOnClaimFailure_spec_7_1_4(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	// The cluster serves only the "echo" runtime; the request asks for a
@@ -469,6 +485,7 @@ func TestSessionStartLeavesNoRowOnClaimFailure_spec_7_1_4(t *testing.T) {
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-pod-nomatch" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -492,7 +509,7 @@ func TestSessionStartLeavesNoRowOnClaimFailure_spec_7_1_4(t *testing.T) {
 	if _, err := store.Get(context.Background(), "acme", "sess-pod-nomatch"); err == nil {
 		t.Fatalf("session row was persisted; §7.1 atomicity requires no row when the create-and-start atomic unit fails")
 	}
-	// §15.1 line 1138 — every retryable 503 carries Retry-After so a
+	// §15.1 — every retryable 503 carries Retry-After so a
 	// client retries with a deterministic budget.
 	if ra := rr.Header().Get("Retry-After"); ra == "" {
 		t.Errorf("Retry-After header missing on the SESSION_CREATION_FAILED reply")
@@ -506,7 +523,7 @@ func podBindServer(t *testing.T, id string) (*sessionserver.Server, *podsession.
 	t.Helper()
 	wsRoot := t.TempDir()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = wsRoot
+	adapterSrv.WorkspaceBase = wsRoot
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -519,6 +536,7 @@ func podBindServer(t *testing.T, id string) (*sessionserver.Server, *podsession.
 	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return id },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -550,6 +568,7 @@ func postSessionStep(t *testing.T, h http.Handler, path string, body []byte) *ht
 // stored on the row at create.
 
 func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
+	t.Parallel()
 	srv, registry, cluster, wsRoot := podBindServer(t, "sess-2step-1")
 	h := srv.Handler()
 
@@ -595,7 +614,7 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 
 	// The plan stored at create was re-parsed at start and materialized
 	// onto the pod's adapter workspace.
-	got, err := os.ReadFile(filepath.Join(wsRoot, "CLAUDE.md"))
+	got, err := os.ReadFile(filepath.Join(wsRoot, "slots", "sess-2step-1", "current", "CLAUDE.md"))
 	if err != nil {
 		t.Fatalf("stored workspace plan was not materialized: %v", err)
 	}
@@ -604,21 +623,20 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 	}
 }
 
-// spec: §4.4 (proposal: /start is launch-only and does no credential work),
-// §15.1 (/start precondition), §4.9 lines 1216-1218 (pre-claim credential
-// resolution).
+// spec: §15.1 (/start precondition: launch-only, with no credential work),
+// §4.9.
 // diagnosis: the two-step `POST /v1/sessions/{id}/start` exclusive-pool path
 // must launch only — the §4.9 credential resolution belongs at /create
 // (pre-check) and /finalize (lease assignment), never at /start. The router
 // Resolve count must be unchanged across the /start call. A failure here
 // (the count grows at /start) means handleStart still routed through a path
-// that re-runs resolveCredentialPools (the pre-0007-S4 startOnPod front),
-// re-doing credential work the lease assignment at /finalize already
-// completed.
-func TestTwoStepStartRunsNoCredentialWork_spec_4_4(t *testing.T) {
+// that re-runs resolveCredentialPools, re-doing credential work the lease
+// assignment at /finalize already completed.
+func TestTwoStepStartRunsNoCredentialWork_spec_15_1(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = rt
 
 	cluster := podBindClient(
@@ -659,6 +677,7 @@ func TestTwoStepStartRunsNoCredentialWork_spec_4_4(t *testing.T) {
 
 	var resolveCount int
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-2step-nocred" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -696,19 +715,20 @@ func TestTwoStepStartRunsNoCredentialWork_spec_4_4(t *testing.T) {
 	// router Resolve count is unchanged across the call.
 	if resolveCount != beforeStart {
 		t.Errorf("CredentialRouter.Resolve called %d times across /start (was %d before); "+
-			"/start must be launch-only and run no credential work (proposal §4.4)",
+			"/start must be launch-only and run no §4.9 credential work (the §15.1 /start precondition)",
 			resolveCount-beforeStart, beforeStart)
 	}
 }
 
-// spec: §7.1 steps 11-13, §15.1 (finalize precondition), §4.3 (proposal).
-// diagnosis: /finalize is the §4.3 preparation barrier — it materializes
-// /workspace/current and runs setup before returning, and the session reaches
+// spec: §7.1 steps 11-13, §15.1 (finalize precondition).
+// diagnosis: /finalize is the §7.1 preparation barrier — it materializes
+// the session's workspace and runs setup before returning, and the session reaches
 // `ready` only once prepared. A failure here means /finalize transitioned to
 // `ready` without materializing the workspace, so the workspace plan was not
 // applied until /start (the pre-0007 deferred-claim behavior) or the row
 // reached `ready` while the pod was still bare.
 func TestFinalizeMaterializesWorkspaceBeforeStart_spec_7_1(t *testing.T) {
+	t.Parallel()
 	srv, _, _, wsRoot := podBindServer(t, "sess-fin-mat")
 	h := srv.Handler()
 
@@ -726,7 +746,7 @@ func TestFinalizeMaterializesWorkspaceBeforeStart_spec_7_1(t *testing.T) {
 
 	// The workspace must not be materialized yet: /create only claims the pod
 	// and buffers uploads; materialization is the §4.3 finalize barrier's job.
-	if _, err := os.Stat(filepath.Join(wsRoot, "CLAUDE.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(wsRoot, "slots", "sess-fin-mat", "current", "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Fatalf("CLAUDE.md materialized before finalize (err=%v); materialization must run at /finalize", err)
 	}
 
@@ -742,7 +762,7 @@ func TestFinalizeMaterializesWorkspaceBeforeStart_spec_7_1(t *testing.T) {
 	}
 	// The workspace plan stored at create was materialized onto the pod's
 	// adapter workspace at finalize, before /start ran.
-	got, err := os.ReadFile(filepath.Join(wsRoot, "CLAUDE.md"))
+	got, err := os.ReadFile(filepath.Join(wsRoot, "slots", "sess-fin-mat", "current", "CLAUDE.md"))
 	if err != nil {
 		t.Fatalf("workspace plan was not materialized at finalize: %v", err)
 	}
@@ -761,10 +781,10 @@ func TestFinalizeMaterializesWorkspaceBeforeStart_spec_7_1(t *testing.T) {
 	}
 }
 
-// spec: §7.5 line 475, §7.3 line 387 (setup_command_failed non-retryable),
-// §15.1 (SETUP_COMMAND_FAILED), §4.3 (proposal: finalize-failure reclaim),
+// spec: §7.5, §7.3,
+// §15.1 (SETUP_COMMAND_FAILED), §7.1 steps 11-13 (finalize-failure reclaim),
 // §6.2 (pre-attached disposition).
-// diagnosis: a deterministic non-zero setup-command exit during the §4.3
+// diagnosis: a deterministic non-zero setup-command exit during the §7.1
 // finalize barrier (which the adapter reports as gRPC FailedPrecondition) must
 // surface the non-retryable 422 SETUP_COMMAND_FAILED envelope (retryable:false,
 // no Retry-After, details.reason=setup_command_failed), reclaim the claimed pod
@@ -775,8 +795,9 @@ func TestFinalizeMaterializesWorkspaceBeforeStart_spec_7_1(t *testing.T) {
 // stuck in `finalizing`, or leaked the claimed pod after the prepare phase
 // aborted.
 func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -789,6 +810,7 @@ func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-fin-setupfail" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -901,8 +923,9 @@ func manyEntryTar(t *testing.T, count int) []byte {
 // case and fell to the retryable default, so a conforming client would retry the
 // same non-conformant archive indefinitely (F-CS1).
 func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -933,6 +956,7 @@ func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-fin-archlimit" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -1001,11 +1025,169 @@ func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1220 (check-to-assignment race), §7.3 line 138 / §7.6 line
-// 153 (proposal: USER_CREDENTIAL_NOT_FOUND is not a finalize trigger; a
-// check-to-assignment mismatch surfaces as CREDENTIAL_POOL_EXHAUSTED at
-// /finalize), §4.3 (proposal: a finalize-step failure reclaims the create-time
-// pod), §6.2 (pre-attached disposition).
+// finalizeMaterializationFailureCase names one way the §4.3 finalize barrier's
+// workspace materialization can fail without an archive validator violation.
+type finalizeMaterializationFailureCase struct {
+	name      string
+	sessionID string
+	// finalizePlan returns the workspace plan the finalize request binds. It
+	// receives the upload ref minted under the case's tenant and session
+	// prefix, so a plan naming it passes the finalize ref-ownership check.
+	finalizePlan func(ref blobstore.URI) string
+	// wantMessage is a substring the error message must carry. It confirms the
+	// failure arose where the case intends, so a regression that fails earlier
+	// for another reason cannot pass the case.
+	wantMessage string
+}
+
+// spec: §6.2 (Pod State Machine, Client visibility), §15.1 (REST API,
+// SESSION_CREATION_FAILED and the finalize precondition note), §7.1 (Normal
+// Flow, the finalize preparation barrier reclaims the create-time pod).
+// diagnosis: a workspace-materialization failure at /finalize that is not an
+// archive validator violation must surface the retryable 503
+// SESSION_CREATION_FAILED fallback with Retry-After, transition the row to
+// `failed`, and reclaim the pod claimed at /create. Two causes are exercised:
+// an uploadArchive ref whose blob is absent from the artifact store (as during
+// an object-store outage), and a plan the adapter refuses to materialize with
+// gRPC InvalidArgument (a structurally invalid staging tree). A failure here
+// means the finalize handler surfaced another envelope for a materialization
+// failure, such as a non-retryable code, INTERNAL_ERROR, or
+// CREDENTIAL_POOL_EXHAUSTED, which contradicts the Client visibility bullet a
+// client relies on to retry, or that the failed finalize leaked its pod.
+func TestFinalizeMaterializationFailureIsRetryableSessionCreationFailed_spec_6_2(t *testing.T) {
+	t.Parallel()
+	cases := []finalizeMaterializationFailureCase{
+		{
+			// The ref names this session's upload prefix, so the finalize
+			// ref-ownership check admits it, but no blob is staged: the
+			// binder's materialization read fails with a store error rather
+			// than a §13.4 validator violation.
+			name:      "unstaged upload blob",
+			sessionID: "sess-fin-matfail-blob",
+			finalizePlan: func(ref blobstore.URI) string {
+				return `{"schemaVersion":1,"sources":[{"type":"uploadArchive","pathPrefix":"proj","uploadRef":"` +
+					ref.String() + `","format":"tar"}]}`
+			},
+			wantMessage: "fetch uploadArchive",
+		},
+		{
+			// The second source writes beneath a path the first source made a
+			// regular file, so the adapter's materialization of the staging
+			// tree fails and FinalizeWorkspace answers gRPC InvalidArgument.
+			// The fallback stays retryable for this code as well.
+			name:      "adapter InvalidArgument",
+			sessionID: "sess-fin-matfail-invalid",
+			finalizePlan: func(blobstore.URI) string {
+				return `{"schemaVersion":1,"sources":[` +
+					`{"type":"inlineFile","path":"a","content":"x","mode":"0644"},` +
+					`{"type":"inlineFile","path":"a/b","content":"y","mode":"0644"}]}`
+			},
+			wantMessage: "code = InvalidArgument",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runFinalizeMaterializationFailureCase(t, tc)
+		})
+	}
+}
+
+// runFinalizeMaterializationFailureCase creates a session on a claimed warm
+// pod, finalizes it with the case's plan, and asserts the retryable
+// SESSION_CREATION_FAILED answer, the `failed` row, and the reclaimed pod.
+func runFinalizeMaterializationFailureCase(t *testing.T, tc finalizeMaterializationFailureCase) {
+	t.Helper()
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceBase = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	// An empty store: no case stages a blob.
+	binder.Blobs = blobstore.NewMemoryStore(nil)
+	ref := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeUpload,
+		SessionID:  tc.sessionID,
+		PartID:     "p1",
+		TTL:        time.Hour,
+	}
+
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
+		IDFunc:                  func() string { return tc.sessionID },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+	})
+	h := srv.Handler()
+
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo",
+		UserID:     "alice@acme.com",
+	})
+	if rr := postSessionStep(t, h, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
+		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	// The pod was claimed at /create.
+	var claim lennyv1.SandboxClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+		t.Fatalf("per-pod claim missing after create: %v", err)
+	}
+
+	finalizeBody := `{"workspacePlan":` + tc.finalizePlan(ref) + `}`
+	rr := postSessionStep(t, h, "/v1/sessions/"+tc.sessionID+"/finalize", []byte(finalizeBody))
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("finalize with a failing materialization: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Code      string `json:"code"`
+			Message   string `json:"message"`
+			Category  string `json:"category"`
+			Retryable bool   `json:"retryable"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode finalize error envelope: %v (body=%s)", err, rr.Body.String())
+	}
+	if env.Error.Code != "SESSION_CREATION_FAILED" {
+		t.Errorf("error code = %q, want SESSION_CREATION_FAILED", env.Error.Code)
+	}
+	if env.Error.Category != "TRANSIENT" || !env.Error.Retryable {
+		t.Errorf("category/retryable = %q/%v, want TRANSIENT/true", env.Error.Category, env.Error.Retryable)
+	}
+	if !strings.Contains(env.Error.Message, tc.wantMessage) {
+		t.Errorf("error message = %q, want it to contain %q", env.Error.Message, tc.wantMessage)
+	}
+	if ra := rr.Header().Get("Retry-After"); ra == "" {
+		t.Errorf("Retry-After absent, want set on the retryable SESSION_CREATION_FAILED fallback")
+	}
+
+	// The finalize barrier failed the session and reclaimed the claimed pod.
+	row, err := store.Get(context.Background(), "acme", tc.sessionID)
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if row.State != session.StateFailed {
+		t.Errorf("state = %q, want failed after the materialization failure", row.State)
+	}
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
+		t.Errorf("per-pod claim still present after the failed finalize; the pod was not reclaimed")
+	}
+}
+
+// spec: §4.9, §7.3 / §4.9, §7.1 steps 11-13 (a finalize-step failure reclaims
+// the create-time pod), §6.2 (pre-attached disposition).
 // diagnosis: a credential source present at the create-time §7.1-step-3
 // pre-check but gone by /finalize is the check-to-assignment mismatch. It must
 // (a) surface as CREDENTIAL_POOL_EXHAUSTED rather than the create-only
@@ -1016,9 +1198,10 @@ func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
 // USER_CREDENTIAL_NOT_FOUND (a 404 the proposal forbids at finalize) or the
 // create-time pod was left holding its claim after the pre-Prepare resolution
 // failed.
-func TestFinalizeCredentialMismatchReclaimsPod_spec_7_6(t *testing.T) {
+func TestFinalizeCredentialMismatchReclaimsPod_spec_7_3(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -1059,6 +1242,7 @@ func TestFinalizeCredentialMismatchReclaimsPod_spec_7_6(t *testing.T) {
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-fin-credmiss" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -1154,7 +1338,7 @@ type recordingLeaseAssigner struct {
 	released []string
 }
 
-func (a *recordingLeaseAssigner) AssignProto(pool, sessionID, _, _ string) (*adapterv1.CredentialLease, error) {
+func (a *recordingLeaseAssigner) AssignProto(pool, sessionID, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	a.assigns = append(a.assigns, sessionID)
 	return &adapterv1.CredentialLease{
 		LeaseId:  "cl-" + pool,
@@ -1164,14 +1348,27 @@ func (a *recordingLeaseAssigner) AssignProto(pool, sessionID, _, _ string) (*ada
 	}, nil
 }
 
-func (a *recordingLeaseAssigner) ReleaseSession(sessionID string) {
+func (a *recordingLeaseAssigner) ReleaseSession(sessionID string) error {
 	a.released = append(a.released, sessionID)
+	return nil
 }
 
-// spec: §4.3 (proposal: Gap 2 — a finalize failure AFTER AssignCredentials
-// succeeded reclaims the pod AND revokes the lease), §7.1 step 23 (lease
-// release), §15.1 (finalize precondition).
-// diagnosis: the §4.3 finalize barrier assigns the §4.9 lease during its
+// ReleaseThrough is the generation-scoped pod release. It records the session
+// as ReleaseSession does, because a pod release returns the session's leases
+// through the binding's stamp.
+func (a *recordingLeaseAssigner) ReleaseThrough(sessionID string, _ int64) error {
+	a.released = append(a.released, sessionID)
+	return nil
+}
+
+// Release is the attempt-scoped lease release podsession.CredentialAssigner
+// requires; this fake records nothing for it.
+func (*recordingLeaseAssigner) Release(string) error { return nil }
+
+// spec: §7.1 step 23 (lease release: a finalize failure after
+// AssignCredentials succeeded reclaims the pod and revokes the lease),
+// §15.1 (finalize precondition).
+// diagnosis: the §7.1 finalize barrier assigns the §4.9 lease during its
 // prepare phase, then transitions finalizing → ready. When that final store
 // write fails after the lease was assigned, the gateway must reclaim the
 // create-time pod (delete the per-pod SandboxClaim) AND revoke the lease
@@ -1179,10 +1376,10 @@ func (a *recordingLeaseAssigner) ReleaseSession(sessionID string) {
 // failure leaks the credential's active-session slot for a session that never
 // reaches ready. A failure here means reclaimFinalizedPod did not run on the
 // finalizing → ready write-failure branch, so the lease leaked.
-func TestFinalizePostCredentialWriteFailureRevokesLease_spec_4_3(t *testing.T) {
+func TestFinalizePostCredentialWriteFailureRevokesLease_spec_7_1(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
-	adapterSrv.StagingDir = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.CredentialsDir = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
@@ -1226,6 +1423,7 @@ func TestFinalizePostCredentialWriteFailureRevokesLease_spec_4_3(t *testing.T) {
 
 	store := &readyTransitionFailStore{Store: memstore.New()}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-fin-gap2" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -1275,6 +1473,7 @@ func TestFinalizePostCredentialWriteFailureRevokesLease_spec_4_3(t *testing.T) {
 }
 
 func TestTwoStepStartRejectsNonReadySession(t *testing.T) {
+	t.Parallel()
 	srv, registry, _, _ := podBindServer(t, "sess-2step-early")
 	h := srv.Handler()
 
@@ -1300,15 +1499,14 @@ func TestTwoStepStartRejectsNonReadySession(t *testing.T) {
 
 // podResumeServer builds a sessionserver wired to a warm pool whose
 // §4.7 adapter can restore a session onto a fresh pod. The gateway-driven
-// restore fetches the checkpoint's presigned chunk capabilities (§10.1
-// line 155); a resume that carries no chunks restores an empty workspace,
+// restore fetches the checkpoint's presigned chunk capabilities (§10.1); a resume that carries no chunks restores an empty workspace,
 // which is all these placement tests require. It returns the server, the
 // session store for seeding `awaiting_client_action` rows, the pod
 // registry, and the cluster client.
 func podResumeServer(t *testing.T, id string) (*sessionserver.Server, *memstore.Store, *podsession.Registry, client.Client) {
 	t.Helper()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -1322,6 +1520,7 @@ func podResumeServer(t *testing.T, id string) (*sessionserver.Server, *memstore.
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return id },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -1349,6 +1548,7 @@ func seedAwaitingSession(t *testing.T, store *memstore.Store, row sessionstore.S
 }
 
 func TestResumePlacesAwaitingSessionOnFreshPod(t *testing.T) {
+	t.Parallel()
 	srv, store, registry, cluster := podResumeServer(t, "sess-resume-1")
 	seedAwaitingSession(t, store, sessionstore.Session{
 		ID: "sess-resume-1",
@@ -1358,7 +1558,7 @@ func TestResumePlacesAwaitingSessionOnFreshPod(t *testing.T) {
 		},
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-resume-1/resume", nil)
+	rr := resumeAndDrive(t, srv, "sess-resume-1")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
@@ -1391,6 +1591,7 @@ func TestResumePlacesAwaitingSessionOnFreshPod(t *testing.T) {
 }
 
 func TestResumeRebuildsSessionWithoutSnapshotFromPlan(t *testing.T) {
+	t.Parallel()
 	srv, store, registry, _ := podResumeServer(t, "sess-resume-nockpt")
 	// No WorkspaceSnapshot: the session never checkpointed. The resume
 	// path rebuilds it from the §14 WorkspacePlan recorded at create.
@@ -1402,7 +1603,7 @@ func TestResumeRebuildsSessionWithoutSnapshotFromPlan(t *testing.T) {
 		}`),
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-resume-nockpt/resume", nil)
+	rr := resumeAndDrive(t, srv, "sess-resume-nockpt")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
@@ -1430,6 +1631,7 @@ func TestResumeRebuildsSessionWithoutSnapshotFromPlan(t *testing.T) {
 // A failure means the resume reconnects to the no-longer-existing pod,
 // fails Prepare, and reports the resume as failed instead of recovering it.
 func TestResumeRebuildsWithStalePodAssignmentClaimsFreshPod(t *testing.T) {
+	t.Parallel()
 	srv, store, registry, cluster := podResumeServer(t, "sess-resume-stale")
 	// No WorkspaceSnapshot (snapshotless rebuild), but a non-empty stale
 	// PodAssignment naming the dead pod the session lost. Before the gate
@@ -1445,7 +1647,7 @@ func TestResumeRebuildsWithStalePodAssignmentClaimsFreshPod(t *testing.T) {
 		}`),
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-resume-stale/resume", nil)
+	rr := resumeAndDrive(t, srv, "sess-resume-stale")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
@@ -1478,6 +1680,7 @@ func TestResumeRebuildsWithStalePodAssignmentClaimsFreshPod(t *testing.T) {
 }
 
 func TestResumeRejectsNonResumableState(t *testing.T) {
+	t.Parallel()
 	srv, store, registry, _ := podResumeServer(t, "sess-resume-bad")
 	// A `running` session is not a valid POST /resume precondition —
 	// only `awaiting_client_action` is (§15.1).
@@ -1491,7 +1694,7 @@ func TestResumeRejectsNonResumableState(t *testing.T) {
 		t.Fatalf("seed session: %v", err)
 	}
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-resume-bad/resume", nil)
+	rr := resumeAndDrive(t, srv, "sess-resume-bad")
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("resume of a running session: status %d, want 409; body=%s", rr.Code, rr.Body.String())
 	}
@@ -1508,7 +1711,12 @@ func TestResumeRejectsNonResumableState(t *testing.T) {
 	}
 }
 
-func TestResumeFailsSessionWhenNoPoolMatches(t *testing.T) {
+// spec: §7.3 (Resume driver) — a restore whose pool resolution fails fails
+// before its claim, so the attempt writes nothing: the row stays in
+// resume_pending at its generation with RetryCount unchanged, no binding is
+// published, and the window ends the retries rather than the failure.
+func TestResumeWithNoMatchingPoolWritesNothing_spec_7_3(t *testing.T) {
+	t.Parallel()
 	srv, store, registry, _ := podResumeServer(t, "sess-resume-nopool")
 	// The cluster serves only the "echo" runtime; the session targets a
 	// runtime no warm pool covers, so the pod claim cannot resolve.
@@ -1521,28 +1729,33 @@ func TestResumeFailsSessionWhenNoPoolMatches(t *testing.T) {
 		},
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-resume-nopool/resume", nil)
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("resume with no matching pool: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	rr := resumeAndDrive(t, srv, "sess-resume-nopool")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume with no matching pool: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
-
 	row, err := store.Get(context.Background(), "acme", "sess-resume-nopool")
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	if row.State != session.StateFailed {
-		t.Errorf("state = %q, want failed after the resume claim failure", row.State)
+	// memstore stamps a created row at generation 1; the pre-claim
+	// failure leaves it there.
+	if row.State != session.StateResumePending || row.RetryCount != 0 || row.CoordinationGeneration != 1 {
+		t.Errorf("row = %q retry %d gen %d, want resume_pending retry 0 gen 1: a pre-claim failure writes nothing",
+			row.State, row.RetryCount, row.CoordinationGeneration)
 	}
 	if registry.Len() != 0 {
 		t.Errorf("registry holds %d bindings, want 0 after a failed resume", registry.Len())
 	}
 }
 
-// spec: §8.10 — a child session that the gateway fails on the resume
-// path is archived to the session_tree_archive.
-func TestResumeArchivesFailedChild(t *testing.T) {
+// spec: §7.3 (Resume driver), §8.10 (Delegation Tree Recovery) — a child
+// session whose restore cannot claim a pod is neither failed nor archived: the
+// pre-claim failure writes nothing, so the child stays resume_pending for the
+// next attempt.
+func TestResumeOfChildWithNoPoolNeitherFailsNorArchives_spec_7_3(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -1554,6 +1767,7 @@ func TestResumeArchivesFailedChild(t *testing.T) {
 	store := memstore.New()
 	archive := treearchive.NewMemory()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
@@ -1561,8 +1775,6 @@ func TestResumeArchivesFailedChild(t *testing.T) {
 		TreeArchive:             archive,
 	})
 
-	// A child session targeting a runtime no warm pool covers: resume
-	// cannot claim a pod, so the gateway fails the session.
 	seedAwaitingSession(t, store, sessionstore.Session{
 		ID:              "sess-child",
 		RuntimeRef:      "no-such-runtime",
@@ -1573,31 +1785,27 @@ func TestResumeArchivesFailedChild(t *testing.T) {
 		},
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-child/resume", nil)
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("resume: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	rr := resumeAndDrive(t, srv, "sess-child")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
-
-	got, err := archive.GetByNode(context.Background(), "acme", "sess-child")
-	if err != nil {
-		t.Fatalf("the failed child was not archived: %v", err)
+	if row, _ := store.Get(context.Background(), "acme", "sess-child"); row.State != session.StateResumePending {
+		t.Errorf("state = %q, want resume_pending", row.State)
 	}
-	if got.State != string(session.StateFailed) {
-		t.Errorf("archived state = %q, want failed", got.State)
-	}
-	if got.ParentSessionID != "sess-parent" {
-		t.Errorf("archived ParentSessionID = %q, want sess-parent", got.ParentSessionID)
+	if _, err := archive.GetByNode(context.Background(), "acme", "sess-child"); err == nil {
+		t.Error("a child whose restore failed before its claim was archived")
 	}
 }
 
-// spec: §4.2 line 160 — the §4.2 pod-to-session binding is persisted on
+// spec: §4.2 — the §4.2 pod-to-session binding is persisted on
 // the sessions row so a fresh gateway replica can recover the binding
 // from Postgres after a coordinator handoff. The in-memory Registry is
 // a cache; the row column is the source of truth across replicas.
 func TestSessionStartPersistsPodAssignment(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = rt
 
 	cluster := podBindClient(
@@ -1611,6 +1819,7 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-persist-assign" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -1636,7 +1845,7 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 		t.Fatalf("get session: %v", err)
 	}
 	if row.PodAssignment != "sbx-persist" {
-		t.Errorf("row.PodAssignment = %q, want sbx-persist (§4.2 line 160)", row.PodAssignment)
+		t.Errorf("row.PodAssignment = %q, want sbx-persist (§4.2)", row.PodAssignment)
 	}
 	// The Registry also holds the binding — the in-memory cache is
 	// authoritative for this replica's hot path.
@@ -1645,18 +1854,19 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 	}
 }
 
-// TestResumeKeepsAwaitingOnTransientPoolExhaustion covers F-7.3.23 /
-// §7.3 line 423: a transient warm-pool exhaustion during the client's
-// explicit `POST /resume` retry must leave the row in
-// `awaiting_client_action` so the next retry can succeed once an idle
-// pod is available. The §15.1 envelope still surfaces a retryable 503.
-func TestResumeKeepsAwaitingOnTransientPoolExhaustion(t *testing.T) {
+// TestResumeKeepsPendingOnTransientPoolExhaustion covers F-7.3.23 /
+// §7.3 (Resume driver): a transient warm-pool exhaustion fails the restore
+// before its claim, so the row stays resume_pending with RetryCount
+// unchanged and the next watchdog tick attempts again once an idle pod is
+// available. The POST /resume itself is a store write that answers 200.
+func TestResumeKeepsPendingOnTransientPoolExhaustion(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	// A pool with no idle sandbox triggers podclaim.ErrNoIdlePod and
-	// the gateway maps that to WARM_POOL_EXHAUSTED (a §5.2 line 519
+	// the gateway maps that to WARM_POOL_EXHAUSTED (a §5.2
 	// retryable response).
 	cluster := podBindClient(
 		t,
@@ -1667,6 +1877,7 @@ func TestResumeKeepsAwaitingOnTransientPoolExhaustion(t *testing.T) {
 	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-transient-pool" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -1683,20 +1894,19 @@ func TestResumeKeepsAwaitingOnTransientPoolExhaustion(t *testing.T) {
 		},
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-transient-pool/resume", nil)
-	if rr.Code != http.StatusServiceUnavailable {
-		t.Fatalf("resume on empty pool: status %d, want 503; body=%s", rr.Code, rr.Body.String())
+	rr := resumeAndDrive(t, srv, "sess-transient-pool")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("resume on empty pool: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
 
-	// spec: §7.3 line 423 — the row must stay in awaiting_client_action
-	// so a retry can succeed once an idle pod returns to the pool.
-	// F-7.3.23.
+	// spec: §7.3 — the row stays in resume_pending so the driver's next
+	// attempt can succeed once an idle pod returns to the pool. F-7.3.23.
 	row, err := store.Get(context.Background(), "acme", "sess-transient-pool")
 	if err != nil {
 		t.Fatalf("get session: %v", err)
 	}
-	if row.State != session.StateAwaitingClientAction {
-		t.Errorf("state = %q, want awaiting_client_action (§7.3 line 423; transient pool exhaustion should not demote to failed)", row.State)
+	if row.State != session.StateResumePending || row.RetryCount != 0 {
+		t.Errorf("row = %q retry %d, want resume_pending retry 0 (§7.3; transient pool exhaustion writes nothing)", row.State, row.RetryCount)
 	}
 }
 
@@ -1707,9 +1917,10 @@ func TestResumeKeepsAwaitingOnTransientPoolExhaustion(t *testing.T) {
 // and the symmetric pre-extraction size check have the spec-mandated
 // inputs.
 func TestResumePassesRecoveryGenerationAndSizeHintsToAdapter(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = rt
 
 	// WorkspaceSizeLimitBytes on the template is the §4.4 / §10.1
@@ -1729,6 +1940,7 @@ func TestResumePassesRecoveryGenerationAndSizeHintsToAdapter(t *testing.T) {
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-rg-hints" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -1752,16 +1964,17 @@ func TestResumePassesRecoveryGenerationAndSizeHintsToAdapter(t *testing.T) {
 		},
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-rg-hints/resume", nil)
+	rr := resumeAndDrive(t, srv, "sess-rg-hints")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
 }
 
-// spec: §4.2 line 156 — recovery_generation is incremented on each
+// spec: §4.2 — recovery_generation is incremented on each
 // pod recovery. The resume path bumps it by one and persists the new
 // pod assignment in the same Update.
 func TestResumeBumpsRecoveryGeneration(t *testing.T) {
+	t.Parallel()
 	srv, store, _, _ := podResumeServer(t, "sess-recovery-bump")
 	seedAwaitingSession(t, store, sessionstore.Session{
 		ID: "sess-recovery-bump",
@@ -1778,7 +1991,7 @@ func TestResumeBumpsRecoveryGeneration(t *testing.T) {
 		t.Fatalf("baseline RecoveryGeneration = %d, want 0", row.RecoveryGeneration)
 	}
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/sess-recovery-bump/resume", nil)
+	rr := resumeAndDrive(t, srv, "sess-recovery-bump")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
@@ -1787,7 +2000,7 @@ func TestResumeBumpsRecoveryGeneration(t *testing.T) {
 	// pod assignment reflects the new bound sandbox.
 	row, _ = store.Get(context.Background(), "acme", "sess-recovery-bump")
 	if row.RecoveryGeneration != 1 {
-		t.Errorf("after resume, RecoveryGeneration = %d, want 1 (§4.2 line 156)",
+		t.Errorf("after resume, RecoveryGeneration = %d, want 1 (§4.2)",
 			row.RecoveryGeneration)
 	}
 	if row.PodAssignment != "sbx-1" {
@@ -1823,9 +2036,10 @@ func poolBindQueuePool(t *testing.T, name, runtimeRef string, waitSeconds int) p
 // option would be inert. A failure here means the start path does not consult
 // the per-pool claim queue or the queue does not retry the bind.
 func TestSessionStartQueuesUntilPodFrees(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = rt
 
 	// The pool starts with no idle Sandbox, so the first claim attempt
@@ -1840,6 +2054,7 @@ func TestSessionStartQueuesUntilPodFrees(t *testing.T) {
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-queue-1" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -1899,8 +2114,9 @@ func TestSessionStartQueuesUntilPodFrees(t *testing.T) {
 // dropping the retry hint. A failure here means the wait bound is not enforced
 // or the timeout return value is not the exhaustion envelope.
 func TestSessionStartQueueTimeoutReturnsExhausted(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	// No idle Sandbox is ever added, so the queue exhausts its (tiny) wait
@@ -1916,6 +2132,7 @@ func TestSessionStartQueueTimeoutReturnsExhausted(t *testing.T) {
 	store := memstore.New()
 	var timeouts int32
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-queue-timeout" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -1960,8 +2177,9 @@ func TestSessionStartQueueTimeoutReturnsExhausted(t *testing.T) {
 // hide pool under-sizing behind a long wait. A failure here means the start
 // path queues a reject pool.
 func TestSessionStartRejectFailsImmediately(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	cluster := podBindClient(
@@ -1981,6 +2199,7 @@ func TestSessionStartRejectFailsImmediately(t *testing.T) {
 	var enqueued int32
 	// No Pools store wired: the disposition is empty, which defaults to reject.
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-reject" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -2034,7 +2253,7 @@ func podBindServicePool(t *testing.T, name, runtimeRef string, maxConcurrent int
 }
 
 // spec: §5.2 (service mode is claimless: no SandboxClaim, no workspace
-// materialization), §3.6 (service-mode session contract), §7.1 line 74
+// materialization), (service-mode session contract), §7.1
 // (conversationContinuity).
 // diagnosis: a service-mode start that claims a Sandbox or binds a pod
 // breaks the §5.2 claimless contract — every service-mode session would
@@ -2042,8 +2261,9 @@ func podBindServicePool(t *testing.T, name, runtimeRef string, maxConcurrent int
 // reached. A failure here means the start path did not take the claimless
 // branch for executionMode=service.
 func TestServiceModeStartIsClaimless_spec_5_2(t *testing.T) {
+	t.Parallel()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	// The cluster carries a service-mode pool, its service-mode template, and
@@ -2059,6 +2279,7 @@ func TestServiceModeStartIsClaimless_spec_5_2(t *testing.T) {
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-svc-1" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,

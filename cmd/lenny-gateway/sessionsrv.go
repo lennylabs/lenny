@@ -7,12 +7,10 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
@@ -21,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
@@ -30,10 +29,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionlogstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -55,7 +54,6 @@ import (
 func (w *gatewayWiring) buildSessionServer(
 	gwMetrics *gatewaymetrics.Metrics,
 	activityStamper *sessionidle.Stamper,
-	sessionBudgetEnforcer *sessionbudget.Enforcer,
 	dsMonitor *dualstore.Monitor,
 	environments environmentstore.Store,
 	tenantAccess tenantaccessstore.Store,
@@ -69,8 +67,6 @@ func (w *gatewayWiring) buildSessionServer(
 	experimentProviders *experimentprovider.Cache,
 	usage usagestore.Store,
 	taskUsageBuilder *resultrollup.Builder,
-	sessionLeaseRegistrar sessionserver.LeaseTreeRegistrar,
-	leaseExtDefaults sessionserver.LeaseExtensionDefaults,
 	quotaCheckpointSvc *quotacheckpoint.Service,
 	policyChain *interceptor.Chain,
 	policyAuditSink *policy.AuditSink,
@@ -111,29 +107,23 @@ func (w *gatewayWiring) buildSessionServer(
 	maxResumePendingSeconds := f.maxResumePendingSeconds
 	envVarBlocklistCSV := f.envVarBlocklistCSV
 
-	// spec: §10.1 line 155 — the resume path resolves the checkpoint's
-	// chunk set and mints one presigned GET capability per chunk. It needs
-	// a Presigner-capable and prefix-listing object store; the in-memory
-	// dev backend implements neither, so the resolver stays nil there and
-	// the resume carries no chunks (the §13.2 startup fail-closed already
-	// requires a Presigner-capable backend for pod-based deployments).
-	var resumeChunkResolver sessionserver.ResumeChunkResolver
-	presigner, presignerOK := w.objectStore.(blobstore.Presigner)
-	lister, listerOK := w.objectStore.(resumechunks.ChunkLister)
-	if presignerOK && listerOK {
-		resumeChunkResolver = &resumechunks.Resolver{
-			Manifests:                        w.partialManifests,
-			Presigner:                        presigner,
-			Lister:                           lister,
-			TTL:                              time.Duration(*f.checkpointCapabilityTTLSeconds) * time.Second,
-			PartialRecoveryThresholdFraction: *f.partialRecoveryThresholdFraction,
-		}
-	}
+	// spec: §10.1.7 — the resume path resolves the checkpoint's
+	// chunk set and mints one presigned GET capability per chunk. Every
+	// production backend is a blobstore.CheckpointStore, and startup refuses
+	// a pod-based deployment on any other backend, so the resolver is nil
+	// only on a dev gateway whose in-memory or filesystem store cannot
+	// presign; that gateway runs no pods and has no chunks to restore.
+	resumeChunkResolver := newResumeChunkResolver(
+		w.checkpointStore,
+		w.partialManifests,
+		time.Duration(*f.checkpointCapabilityTTLSeconds)*time.Second,
+		*f.partialRecoveryThresholdFraction,
+	)
 
-	// §4.4 line 236 / §12.5 GC rule 4 — the resume-path cleaner releases each
+	// §4.4 / §12.5 GC rule 4 — the resume-path cleaner releases each
 	// confirmed chunk through the cataloging decorator (blobsCataloged) and
-	// deletes the object (minioStore). Assign only the non-nil concrete stores
-	// so a nil *cataloging.Store / *miniostore.Store is not wrapped in a
+	// deletes the object (checkpointStore). Assign only the non-nil stores
+	// so a nil *cataloging.Store or CheckpointStore is not wrapped in a
 	// non-nil interface, which the cleaner's nil guard then skips (dev-mode).
 	partialCleaner := &checkpointer.PartialCleaner{
 		Store:              w.partialManifests,
@@ -143,45 +133,45 @@ func (w *gatewayWiring) buildSessionServer(
 	if w.blobsCataloged != nil {
 		partialCleaner.Catalog = w.blobsCataloged
 	}
-	if w.minioStore != nil {
-		partialCleaner.Objects = w.minioStore
+	if w.checkpointStore != nil {
+		partialCleaner.Objects = w.checkpointStore
 	}
 
+	// spec: §11.2, §10.1.1 — every replica sweeps the per-session budget
+	// state it holds for sessions that ended on another replica or were
+	// erased; startBackgroundWorkers runs it under the watchdog context.
+	w.budgetStateSweep = w.buildBudgetStateSweep(*w.f.budgetStateSweepInterval)
+
 	return sessionserver.New(w.sessions, sessionserver.Options{
-		// spec: §6.2 lines 273-300 — stamp agent_output / tool_use events
+		// spec: §6.2 — stamp agent_output / tool_use events
 		// published on the session bus as idle-timer activity. F-11.3.7.
 		ActivityStamper: activityStamper,
 		// spec: §11.2 — drop a settled session's mid-session budget
 		// accounting so the enforcer's per-session map does not grow
-		// unbounded. The closure also clears the §8.6 recorder's accumulated
-		// grant delta for the session (proposal 0023 S3/S4); the recorder is
-		// constructed in a later build step, so w.proxyUsageRec is read at
-		// call time rather than captured now.
-		BudgetForget: func(sessionID string) {
-			sessionBudgetEnforcer.Forget(sessionID)
-			w.proxyUsageRec.forget(sessionID)
-		},
-		// spec: §8.10 line 1103 — operator-tunable per-tenant orphan cap.
+		// unbounded. The composed forget also clears the §8.6 recorder's
+		// accumulated grant delta and the anomaly detector's accumulator; the
+		// per-replica budget state sweep calls the same forget.
+		BudgetForget: w.forgetBudgetState,
+		// spec: §8.10 — operator-tunable per-tenant orphan cap.
 		// The default (100) flows through the constructor when the flag
 		// is unset; an override surfaces both on the sessionserver
 		// detach-cascade fallback and on the §16.5
 		// OrphanTasksPerTenantHigh alert (the scalar() denominator below
 		// is re-emitted from the same flag). F-8.10.10.
 		MaxOrphanTasksPerTenant: *delegationMaxOrphanTasksPerTenant,
-		// spec: §8.10 lines 1022-1023 — the bottom-up tree-recovery
-		// driver's per-level and whole-tree budgets, plus the §16.1
-		// line 144-145 telemetry sink. F-8.10.1.
+		// spec: §8.10 — the bottom-up tree-recovery
+		// driver's per-level and whole-tree budgets, plus the §16.1 telemetry sink. F-8.10.1.
 		TreeRecoveryLevelTimeout: time.Duration(*delegationMaxLevelRecoverySeconds) * time.Second,
 		TreeRecoveryTreeTimeout:  time.Duration(*delegationMaxTreeRecoverySeconds) * time.Second,
 		TreeRecoveryMetrics:      gwMetrics,
 		UploadTokenIssuer:        w.uploadIssuer,
 		UploadTokenVerifier:      w.uploadVerifier,
-		// F-7.4.7: §7.1 line 58 TTL = maxCreatedStateTimeoutSeconds.
+		// F-7.4.7: §7.1 TTL = maxCreatedStateTimeoutSeconds.
 		UploadTokenTTL: time.Duration(*maxCreatedStateTimeoutSeconds) * time.Second,
 		Blobs:          w.blobs,
 		Executor:       w.exec,
 		Transcripts:    w.transcripts,
-		// spec: §8.8 lines 888-896 — the §8.10 archive materialization
+		// spec: §8.8 — the §8.10 archive materialization
 		// lists a settled child's catalogued artifacts to populate
 		// TaskResult.output.artifactRefs. Nil in the in-memory posture.
 		// F-8.8.2.
@@ -216,6 +206,7 @@ func (w *gatewayWiring) buildSessionServer(
 		ExternalProviders:  sessionserver.NewExternalProviderResolver(experimentProviders),
 		Usage:              usage,
 		Users:              w.users,
+		CallerCheck:        sessionCallerCheck(w.pgPool, w.auditValidator),
 		Billing:            w.billing,
 		Tenants:            w.tenants,
 		StorageQuota:       w.storageCounter,
@@ -230,11 +221,15 @@ func (w *gatewayWiring) buildSessionServer(
 		// lease store is the same §12.4 store the Sweeper renews against and is
 		// nil in the in-memory/dev posture with no Redis, which makes the
 		// at-bind Acquire a no-op. ReplicaID must match the Sweeper's holder
-		// identity so a self-bind renews rather than conflicts.
+		// identity so a self-bind renews rather than conflicts; both carry the
+		// §10.1.1 Replica address holder value.
 		CoordinationLeaseStore: w.coordLeaseStore,
-		ReplicaID:              w.replica,
-		AgentNamespace:         *agentNamespace,
-		// spec: §11.1 line 7 — per-runtime and per-pool admission rate
+		ReplicaID:              w.coordHolder,
+		// spec: §29.3 Forwarding, §10.3 NET-072 — the shared CH-HOLDERFORWARD
+		// client; nil without the gateway replica certificate material.
+		HolderForwardClient: w.holderForwardClient,
+		AgentNamespace:      *agentNamespace,
+		// spec: §11.1 — per-runtime and per-pool admission rate
 		// limits, enforced at session creation where the runtime/pool are
 		// known. Shares the same per-minute counter the §11.1 HTTP
 		// middleware uses for global/per-user/per-tenant. F-11.1.2.
@@ -242,13 +237,13 @@ func (w *gatewayWiring) buildSessionServer(
 		PerRuntimePerMinute:       *rlPerRuntimePerMin,
 		PerPoolPerMinute:          *rlPerPoolPerMin,
 		RateLimitMetrics:          gwMetrics,
-		// spec: §11.1 line 8 — global, per-user, and per-runtime
+		// spec: §11.1 — global, per-user, and per-runtime
 		// concurrent-session admission caps (live non-terminal session
 		// counts). Zero leaves a scope unlimited. F-11.1.3.
 		MaxConcurrentSessionsGlobal:     *maxConcSessGlobal,
 		MaxConcurrentSessionsPerUser:    *maxConcSessPerUser,
 		MaxConcurrentSessionsPerRuntime: *maxConcSessPerRuntime,
-		// §10.7 line 938 — the eval-submission rate limit shares the same
+		// §10.7 — the eval-submission rate limit shares the same
 		// §11.1 per-minute counter (Redis-backed across replicas) keyed by
 		// session_id and tenant_id. F-10.7.4 / F-11.2.19.
 		EvalRateLimitCounter:    w.rateLimiter,
@@ -256,7 +251,11 @@ func (w *gatewayWiring) buildSessionServer(
 		EvalPerTenantPerMinute:  *evalRLPerTenantPerMin,
 		DefaultIsolationProfile: isolation.Profile(*defaultIsolationProfile),
 		DevMode:                 *devMode,
-		// spec: §10.2 lines 256–264. F-10.2.4. Multi-tenant deployments
+		// spec: §10.2 — only a dev-mode gateway lets a request with no
+		// principal name its tenant through X-Lenny-Tenant-ID; outside dev
+		// mode the tenant comes from the verified bearer alone. F-10.2.21.
+		DevTenantHeader: *devMode,
+		// spec: §10.2. F-10.2.4. Multi-tenant deployments
 		// fail closed on a no-role principal at the session RBAC gate.
 		MultiTenant: *multiTenant,
 		// spec: §4.9 — the platform tenancy.mode the session-start
@@ -267,7 +266,7 @@ func (w *gatewayWiring) buildSessionServer(
 		// layer-2 admission webhook use.
 		TenancyMode: *tenancyMode,
 		Sealer:      w.sessionSealer,
-		// §4.4 line 236 / §12.5 GC rule 4 — the resume path delegates
+		// §4.4 / §12.5 GC rule 4 — the resume path delegates
 		// partial-manifest cleanup to this adapter. It releases each
 		// confirmed chunk through the cataloging decorator (soft-delete
 		// its artifact_store row, the exactly-once Redis decrement) before
@@ -280,18 +279,18 @@ func (w *gatewayWiring) buildSessionServer(
 		// spec: §10.1 partial-manifest path — classify a resume as
 		// partial_workspace when an active partial manifest exists.
 		PartialManifestLookup: w.partialManifests,
-		// spec: §10.1 line 155 — resolve the checkpoint's chunk set from the
+		// spec: §10.1.7 — resolve the checkpoint's chunk set from the
 		// manifest row, verify contiguity, and mint one presigned GET
 		// capability per chunk for the resume path; read the row for the
 		// workspace-download stream; write the derived manifest on derive.
 		ResumeChunkResolver: resumeChunkResolver,
-		// spec: §16.1 line 195 — the resume path stamps
+		// spec: §16.1 — the resume path stamps
 		// lenny_checkpoint_partial_total{recovered=true} on the same concrete
 		// registry the upload driver's recovered=false abort arms write.
 		CheckpointRecoveryMetrics: gwMetrics,
 		CheckpointManifestReader:  w.partialManifests,
 		CheckpointManifestWriter:  w.partialManifests,
-		// §4.4 line 226 session-log close-hook. Wired with the
+		// §4.4 session-log close-hook. Wired with the
 		// per-deployment Store (Noop for in-memory, MinIOStore when
 		// the §4.5 follow-on wiring lands a MinIO uploader). The
 		// close-hook fires from the gateway's session-completion path;
@@ -300,35 +299,43 @@ func (w *gatewayWiring) buildSessionServer(
 		TreeArchive:        w.treeArchive,
 		TaskUsage:          taskUsageBuilder,
 		TreeBudgetReturner: w.treeBudgetReserver,
-		// §8.6: register each root tree's lease-extension budget so a
-		// later in-process budget-exhaustion extension (the gateway LLM
-		// Proxy's ExtendForBudget trigger) resolves it. F-15.3.5.
-		LeaseRegistrar:         sessionLeaseRegistrar,
-		LeaseExtensionDefaults: leaseExtDefaults,
+		// spec: §8.3 (Usage quiescence before budget return), §11.3 — the
+		// wait before a delegated child's budget return.
+		UsageQuiescenceTimeout: time.Duration(*f.delegationUsageQuiescenceTimeoutSeconds) * time.Second,
 		QuotaCheckpointer:      quotaCheckpointSvc,
-		HighWatermarkReader:    w.hwmReader,
-		HighWatermarkObserver:  gwMetrics,
-		Interceptors:           policyChain,
-		PolicyAuditSink:        policyAuditSink,
+		// spec: §6.2 (Pod State Machine) — the suspension release checkpoints
+		// the workspace before it releases a suspended session's pod; with no
+		// checkpoint service the pod stays held.
+		SuspensionCheckpointer: suspensionCheckpointer(w.checkpointSvc),
+		// spec: §8.3 (Delegation Policy and Lease) — re-arm a suspended
+		// tree's delegation budget keys on each transition into or out of
+		// suspended.
+		BudgetKeyRearmer:                      budgetKeyRearmer(w.treeBudgetConcrete),
+		IncSessionPodReleasedDuringSuspension: gwMetrics.IncSessionPodReleasedDuringSuspension,
+		IncSessionSuspensionCheckpointFailed:  gwMetrics.IncSessionSuspensionCheckpointFailed,
+		HighWatermarkReader:                   w.hwmReader,
+		HighWatermarkObserver:                 gwMetrics,
+		Interceptors:                          policyChain,
+		PolicyAuditSink:                       policyAuditSink,
 		// §7.1 / §16.6 — session lifecycle audit events to the §11.7
 		// hash-chained log, written under the session's tenant.
 		LifecycleAuditSink: sessionLifecycleAuditor{appender: auditAppender},
-		// §7.2 lines 124-127 / §11.7 / §16.7 — interaction-resolution
+		// §7.2 / §11.7 / §16.7 — interaction-resolution
 		// audit events (tool-use approve/deny, elicitation
 		// respond/dismiss) to the §11.7 hash-chained log, written under
 		// the session's tenant. F-7.2.8.
 		InteractionAuditSink: interactionResolutionAuditor{appender: auditAppender},
-		// §8.9 line 1003 / §11.7 / §16.1 — tree-walker defensive cycle
+		// §8.9 / §11.7 / §16.1 — tree-walker defensive cycle
 		// observer for REST /v1/sessions/{id}/tree. Emits the
 		// delegation.tree_cycle_detected audit row + increments the
 		// lenny_delegation_tree_cycle_detected_total counter when the
 		// walker hits a repeated node. F-8.9.10.
 		TreeCycleObserver: sessionserverTreeCycleObserver{emitter: treeCycleEmitter{metrics: gwMetrics}},
-		// §7.2 line 317 — shared inputwait registry so REST inReplyTo
+		// §7.2 — shared inputwait registry so REST inReplyTo
 		// resolves the same pending `lenny/request_input` MCP registers.
 		// F-7.2.14.
 		InputWaits: inputWaits,
-		// §7.1 line 92 — per-source-session advisory lock that serializes
+		// §7.1 — per-source-session advisory lock that serializes
 		// concurrent /derive calls across replicas. Wired with Redis when
 		// available (cross-replica serialization); a process-local
 		// derivelock.Memory backs the minimal-gateway and single-replica
@@ -345,30 +352,45 @@ func (w *gatewayWiring) buildSessionServer(
 		// CAS-fenced terminal failed row reachable per §15.1. F-15.1.14.
 		PersistDeriveFailureRows: *persistDeriveFailureRows,
 		IncDeriveFailureAudit:    gwMetrics.IncDeriveFailureAudit,
-		// §7.1 line 77 — default artifact retention window.
+		// §7.1 — default artifact retention window.
 		DefaultRetention: time.Duration(*sessionArtifactRetentionSeconds) * time.Second,
-		// §7.1 line 112 — seal-and-export retry window + outcome histogram.
+		// §7.1 — seal-and-export retry window + outcome histogram.
 		WorkspaceSealMaxDuration:     time.Duration(*workspaceSealMaxDurationSeconds) * time.Second,
 		ObserveWorkspaceSealDuration: gwMetrics.ObserveWorkspaceSealDuration,
-		// §10.7 lines 1120-1132, §16.1 lines 161-164 — variant-labelled
+		// §28.5.1 — the CH-ATTACH stream-failure report's bound beyond the
+		// seal window.
+		StreamFailureReportTimeout: *f.streamFailureReportTimeout,
+		// §12.3 — the bound on every primary session-row read a one-shot
+		// decision makes.
+		PrimaryReadTimeout: *f.sessionPrimaryReadTimeout,
+		// §7.3 (Resume driver) — the resume driver bounds an attempt by the
+		// resume_pending window and the resuming watchdog the watchdog
+		// applies, and refuses an over-cap row against the watchdog's own
+		// maxSessionAge resolver.
+		MaxResumePending: time.Duration(*f.maxResumePendingSeconds) * time.Second,
+		MaxResuming:      time.Duration(*f.maxResumingSeconds) * time.Second,
+		// spec: §5.2 (Slot assignment atomicity) — the launch bound.
+		MaxFinalizing: time.Duration(*f.maxFinalizingTimeoutSeconds) * time.Second,
+		AgeCap:        w.sessionAgeCap,
+		// §10.7, §16.1 — variant-labelled
 		// rollback-trigger metric family emitted at terminal session
 		// transition and at each built-in eval submission.
 		RecordSessionTerminal: gwMetrics.RecordSessionTerminal,
 		ObserveEvalScore:      gwMetrics.ObserveEvalScore,
-		// §10.7 lines 835-844 (SCL-023) — the per-tenant targeting
+		// §10.7 (SCL-023) — the per-tenant targeting
 		// circuit-breaker open/closed gauge.
 		SetExperimentTargetingCircuitOpen: gwMetrics.SetExperimentTargetingCircuitOpen,
 		Clock:                             clockinject.Now,
 		UploadSubsystem:                   uploadSubsystem,
 		UploadMetrics:                     uploadMetrics,
-		// spec: §11.1 lines 10-11 — concurrent-upload + per-session
+		// spec: §11.1 — concurrent-upload + per-session
 		// upload-size admission caps. F-11.1.5, F-11.1.6.
 		MaxConcurrentUploadsPerSession: *uploadMaxConcurrentPerSession,
 		MaxConcurrentUploadsGlobal:     *uploadMaxConcurrentGlobal,
 		MaxUploadBytesPerSession:       *uploadMaxBytesPerSession,
-		// spec: §7.4 line 433 — mid-session upload deployer policy. F-7.4.6.
+		// spec: §7.4 — mid-session upload deployer policy. F-7.4.6.
 		MidSessionUploadEnabled: *midSessionUploadEnabled,
-		// §4.9 line 1220 — the pre-claim availability check race metric.
+		// §4.9 — the pre-claim availability check race metric.
 		PreclaimMismatch: gwMetrics.IncCredentialPreclaimMismatch,
 		// §5.2 — the shared fail/leak tracker so the slot-bind-failure path and
 		// the §4.7 scrub-report drain ledger accumulate in one rolling window.
@@ -377,7 +399,7 @@ func (w *gatewayWiring) buildSessionServer(
 		// concurrent-workspace slot retry policy drains an unhealthy pod
 		// (ceil(maxConcurrent/2) slots failed or leaked in the window).
 		SlotReplacement: gwMetrics.IncSlotPodReplacement,
-		// §6.2 line 179 — per-pod leaked-slot gauge, set when a
+		// §6.2 — per-pod leaked-slot gauge, set when a
 		// concurrent-workspace slot's cleanup does not reclaim it.
 		SlotLeakGauge: func(pod, pool string, leaked int) {
 			gwMetrics.SetAdapterLeakedSlots(pod, pool, float64(leaked))
@@ -388,14 +410,14 @@ func (w *gatewayWiring) buildSessionServer(
 		SetPodClaimQueueDepth:    gwMetrics.SetPodClaimQueueDepth,
 		ObservePodClaimQueueWait: gwMetrics.ObservePodClaimQueueWait,
 		IncPodClaimTimeout:       gwMetrics.IncPodClaimTimeout,
-		// §6.3 lines 348, 372 — startup-latency histograms observed on
+		// §6.3 — startup-latency histograms observed on
 		// each successful pod-warm start.
 		ObserveStartupDuration: gwMetrics.ObserveSessionStartupDuration,
 		ObserveStartupPhase:    gwMetrics.ObserveSessionStartupPhase,
-		// §6.3 line 356, §16.1 line 15 — TTFT histogram observed on
+		// §6.3, §16.1 — TTFT histogram observed on
 		// the first agent-streamed response event per session.
 		ObserveTimeToFirstToken: gwMetrics.ObserveSessionTimeToFirstToken,
-		// §7.3 lines 377-393 — clamp the client-supplied retry policy
+		// §7.3 — clamp the client-supplied retry policy
 		// against the deployer caps so the per-session value can never
 		// exceed the watchdog's platform-wide bounds. F-7.3.1 /
 		// F-7.3.24.
@@ -404,14 +426,14 @@ func (w *gatewayWiring) buildSessionServer(
 			MaxSessionAgeSeconds:   watchdog.DefaultMaxSessionAgeSeconds,
 			MaxResumeWindowSeconds: *maxResumePendingSeconds,
 		},
-		// §14 line 105 — deployer extension to the platform env-var
+		// §14 — deployer extension to the platform env-var
 		// blocklist; the platform default is always merged in first.
 		// F-14.1.12.
 		EnvVarBlocklist: splitCSV(*envVarBlocklistCSV),
-		// §7.3 / §16.1 — retry + resume metric emitters. The
-		// watchdog/coordinator path bumps retryCount on each pod
-		// recovery (the v1 retry path); the explicit /resume endpoint
-		// counts every attempt with its outcome. F-7.3.10.
+		// spec: §16.1 (Metrics), §7.3 (Resume driver) — retry + resume
+		// metric emitters. A retry is counted on each failure edge that
+		// spends one; the resume driver counts each attempt with its outcome
+		// through recordResumeAttempt. F-7.3.10.
 		IncSessionResumeAttempt: gwMetrics.IncSessionResumeAttempt,
 		IncSessionRetry:         gwMetrics.IncSessionRetry,
 		// spec: §16.1 / §16.1.1 — the watchdog's expiry sweeps fire
@@ -420,7 +442,10 @@ func (w *gatewayWiring) buildSessionServer(
 		// reason the watchdog resolved (max_idle_time | max_session_age).
 		// F-11.3.7.
 		IncSessionExpiry: gwMetrics.IncSessionExpiry,
-		// spec: §16.1 line 124, §7.3 line 387 — F-7.5.9. Increment the
+		// spec: §16.1, §8.3 — the BUDGET_KEYS_EXPIRED tree cleanup counts
+		// each reservation detection under the tree root's pool.
+		IncDelegationBudgetKeysExpired: gwMetrics.IncDelegationBudgetKeysExpired,
+		// spec: §16.1, §7.3 — F-7.5.9. Increment the
 		// lenny_warmpool_warmup_failure_total{error_type=setup_command_failed}
 		// counter when a §7.5 setup command fails on the warm-pool side
 		// of a bind.
@@ -431,10 +456,41 @@ func (w *gatewayWiring) buildSessionServer(
 		// §5.1 injection gate fails closed on a transient backing-store
 		// read, labeled runtime_store or override_store.
 		IncInjectionGateFailClosed: gwMetrics.IncInjectionGateFailClosed,
-		// §14 lines 108-150 — the session-completion webhook subsystem.
+		// §14 — the session-completion webhook subsystem.
 		// F-14.1.11 / F-15.1.11.
 		CallbackValidator:  callbackValidator,
 		CallbackSeal:       callbackSeal,
 		CallbackDispatcher: callbackDispatcher,
 	})
+}
+
+// sessionAgeCap resolves a row's effective maxSessionAge cap through the
+// watchdog's own resolver, so the resume driver and the maxSessionAge sweep
+// apply one value. Before the watchdog is built it applies the platform
+// default. spec: §6.2 (maxSessionAge timer behavior across states).
+func (w *gatewayWiring) sessionAgeCap(ctx context.Context, row sessionstore.Session) time.Duration {
+	if w.wd != nil {
+		return w.wd.AgeCap(ctx, row)
+	}
+	return watchdog.EffectiveAgeCap(ctx, nil, time.Duration(*w.f.maxSessionAgeSeconds)*time.Second, row)
+}
+
+// suspensionCheckpointer returns the checkpoint service as the session
+// server's SuspensionCheckpointer, or an untyped nil for a nil service so the
+// server's nil guard holds. spec: §6.2 (Pod State Machine).
+func suspensionCheckpointer(svc *checkpointer.Checkpointer) sessionserver.SuspensionCheckpointer {
+	if svc == nil {
+		return nil
+	}
+	return svc
+}
+
+// budgetKeyRearmer returns the delegation budget Reserver as the session
+// server's BudgetKeyRearmer, or an untyped nil for a nil Reserver.
+// spec: §8.3 (Delegation Policy and Lease).
+func budgetKeyRearmer(r *treebudget.Reserver) sessionserver.BudgetKeyRearmer {
+	if r == nil {
+		return nil
+	}
+	return r
 }

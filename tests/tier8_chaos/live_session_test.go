@@ -17,6 +17,7 @@ package tier8_chaos_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -25,10 +26,14 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 )
 
-// liveSessionTenant is the synthetic tenant the live-session chaos
-// tests bootstrap. Each test reuses the same tenant ID; the driver
-// best-effort deletes it on Close.
-const liveSessionTenant = "chaos-live-session-tenant"
+// liveSessionTenant mints the synthetic tenant a live-session chaos
+// test bootstraps. The driver best-effort deletes the tenants it
+// bootstrapped, a deleted row lingers in state "deleting" on a reused
+// install, and a fixed name then draws 403 TENANT_NOT_ACTIVE from the
+// next run, so each run takes its own identifier.
+func liveSessionTenant() string {
+	return fmt.Sprintf("chaos-live-session-tenant-%d", time.Now().UnixNano())
+}
 
 // warmPoolReplenishBound is the time a live-session chaos test allows
 // for the WarmPoolController to bring the pool back to its minWarm
@@ -59,21 +64,30 @@ func TestPodKillDuringActiveSession(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
-	if err := d.BootstrapTenant(ctx, liveSessionTenant); err != nil {
+	tenant := liveSessionTenant()
+	if err := d.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
+	}
+	// spec: §10.6, §11.1 — a bootstrapped tenant carries
+	// noEnvironmentPolicy deny-all, and this case creates a session that
+	// names no environment. Its assertion sits on the pod-kill recovery
+	// axis, so the environment precondition is pinned through the
+	// documented admin path rather than left to the tenant default.
+	if err := d.AllowSessionsWithNoEnvironment(ctx, tenant); err != nil {
+		t.Fatalf("allow sessions with no environment: %v", err)
 	}
 
 	// Drive the session onto the sidecar pool. The minimal gateway
 	// returns the session in state running with the pod already claimed
 	// by the §4.6 binder.
-	sess, err := d.CreateAndStart(ctx, liveSessionTenant, sessiondriver.EchoRuntimeSidecar)
+	sess, err := d.CreateAndStart(ctx, tenant, sessiondriver.EchoRuntimeSidecar)
 	if err != nil {
 		t.Fatalf("create-and-start session: %v", err)
 	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_ = d.Terminate(ctx, liveSessionTenant, sess.ID)
+		_ = d.Terminate(ctx, tenant, sess.ID)
 	})
 	t.Logf("created session %s in state %q", sess.ID, sess.State)
 
@@ -129,7 +143,7 @@ func TestPodKillDuringActiveSession(t *testing.T) {
 	// gateway. A 404 here would mean the gateway dropped the session on
 	// pod loss, which is not the §4.6 contract (a SandboxClaim survives
 	// pod deletion so the session can be reassigned).
-	if got, err := d.GetSession(ctx, liveSessionTenant, sess.ID); err != nil {
+	if got, err := d.GetSession(ctx, tenant, sess.ID); err != nil {
 		t.Logf("§12.8: GET session after pod kill returned an error: %v", err)
 	} else {
 		t.Logf("§12.8: GET session after pod kill returned state %q", got.State)

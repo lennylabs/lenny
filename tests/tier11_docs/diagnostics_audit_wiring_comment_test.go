@@ -25,9 +25,7 @@ var stalePhrases = []string{
 	"a documented stub until the audit-store client lands",
 }
 
-// spec: §11.7 line 360 ("Hash chaining: Each audit log entry includes a
-// prev_hash column containing the SHA-256 hash of the previous entry's
-// ... tuple.") — the durable hash-chained audit-append path the
+// spec: §11.7 — the durable hash-chained audit-append path the
 // diagnostics-audit Emit destination commits to.
 // diagnosis: cmd/lenny-ops/deps.go's buildDiagnosticsAudit comment and
 // pkg/ops/opsserver/diagnostics_audit.go's DiagnosticsAuditConfig.Emit

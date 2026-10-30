@@ -24,8 +24,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
-// spec: §14 lines 108-150 (session-completion webhook); §15.1 lines 678,
-// 690 (webhook-events list, start callbackUrl). F-14.1.11 / F-15.1.11.
+// spec: §14; §15.1. F-14.1.11 / F-15.1.11.
 
 // fakeResolver maps a hostname to fixed addresses so the §14 SSRF
 // validator runs without real DNS in the sessionserver tests.
@@ -76,7 +75,7 @@ func callbackServer(t *testing.T, store sessionstore.Store, opts sessionserver.O
 
 func TestCreateAcceptsCallback_spec_14_108(t *testing.T) {
 	store := memstore.New()
-	srv := callbackServer(t, store, sessionserver.Options{})
+	srv := callbackServer(t, store, sessionserver.Options{DevTenantHeader: true})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:     "claude-code",
 		CallbackURL:    "https://hooks.example.com/lenny",
@@ -104,7 +103,7 @@ func TestCreateAcceptsCallback_spec_14_108(t *testing.T) {
 }
 
 func TestCreateRejectsNonHTTPSCallback_spec_14_109(t *testing.T) {
-	srv := callbackServer(t, memstore.New(), sessionserver.Options{})
+	srv := callbackServer(t, memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:  "claude-code",
 		CallbackURL: "http://hooks.example.com/lenny",
@@ -122,7 +121,7 @@ func TestCreateRejectsNonHTTPSCallback_spec_14_109(t *testing.T) {
 }
 
 func TestCreateRejectsPrivateCallback_spec_14_110(t *testing.T) {
-	srv := callbackServer(t, memstore.New(), sessionserver.Options{})
+	srv := callbackServer(t, memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:  "claude-code",
 		CallbackURL: "https://internal.example.com/lenny",
@@ -137,7 +136,7 @@ func TestCreateRejectsPrivateCallback_spec_14_110(t *testing.T) {
 }
 
 func TestCreateRejectsSecretWithoutURL_spec_14_139(t *testing.T) {
-	srv := callbackServer(t, memstore.New(), sessionserver.Options{})
+	srv := callbackServer(t, memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef:     "claude-code",
 		CallbackSecret: "whsec_x",
@@ -150,11 +149,11 @@ func TestCreateRejectsSecretWithoutURL_spec_14_139(t *testing.T) {
 	}
 }
 
-// TestCreateAndStartAcceptsCallback covers the §15.1 line 690 start-path
+// TestCreateAndStartAcceptsCallback covers the §15.1 start-path
 // callbackUrl. F-15.1.11.
 func TestCreateAndStartAcceptsCallback_spec_15_690(t *testing.T) {
 	store := memstore.New()
-	srv := callbackServer(t, store, sessionserver.Options{IDFunc: func() string { return "sess_start_cb" }})
+	srv := callbackServer(t, store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_start_cb" }})
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
 		RuntimeRef:  "claude-code",
 		CallbackURL: "https://hooks.example.com/lenny",
@@ -177,7 +176,7 @@ func TestCreateAndStartAcceptsCallback_spec_15_690(t *testing.T) {
 }
 
 func TestCreateAndStartRejectsBadCallback_spec_15_690(t *testing.T) {
-	srv := callbackServer(t, memstore.New(), sessionserver.Options{IDFunc: func() string { return "sess_start_bad" }})
+	srv := callbackServer(t, memstore.New(), sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_start_bad" }})
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
 		RuntimeRef:  "claude-code",
 		CallbackURL: "http://hooks.example.com/lenny",
@@ -195,11 +194,11 @@ func TestCreateAndStartRejectsBadCallback_spec_15_690(t *testing.T) {
 	}
 }
 
-// TestWebhookEventsEndpoint covers the §15.1 line 678 undelivered-events
+// TestWebhookEventsEndpoint covers the §15.1 undelivered-events
 // list. F-14.1.11.
 func TestWebhookEventsEndpoint_spec_15_678(t *testing.T) {
 	store := memstore.New()
-	srv := callbackServer(t, store, sessionserver.Options{})
+	srv := callbackServer(t, store, sessionserver.Options{DevTenantHeader: true})
 	ctx := context.Background()
 	if err := store.Create(ctx, sessionstore.Session{
 		ID: "sess_wh", TenantID: "acme", State: session.StateCompleted,
@@ -270,7 +269,7 @@ func getWebhookEvents(t *testing.T, h http.Handler, id string) webhookEventsResp
 
 // TestTerminalCallbackDelivered drives a completed session through the
 // terminal hook and asserts the §14 webhook is delivered and the sealed
-// secret is cleared. spec: §14 lines 108-150. F-14.1.11.
+// secret is cleared. spec: §14. F-14.1.11.
 func TestTerminalCallbackDelivered_spec_14_108(t *testing.T) {
 	var gotType string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -302,7 +301,7 @@ func TestTerminalCallbackDelivered_spec_14_108(t *testing.T) {
 		Revalidate: func(netip.Addr) bool { return true },
 		NewClient:  func(netip.Addr) *http.Client { return srv.Client() },
 	})
-	gw := callbackServer(t, store, sessionserver.Options{CallbackDispatcher: dispatcher})
+	gw := callbackServer(t, store, sessionserver.Options{DevTenantHeader: true, CallbackDispatcher: dispatcher})
 
 	ctx := context.Background()
 	row := sessionstore.Session{
@@ -315,6 +314,9 @@ func TestTerminalCallbackDelivered_spec_14_108(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	gw.OnSessionTerminal(ctx, session.StateRunning, row)
+	if err := gw.WaitTerminalWork(context.Background()); err != nil {
+		t.Fatalf("WaitTerminalWork: %v", err)
+	}
 
 	select {
 	case rec := <-done:

@@ -1,0 +1,4 @@
+# Testing
+
+Tier 3 exercises the frames the adapter writes on the lifecycle channel against
+the recorded contract.

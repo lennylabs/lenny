@@ -190,7 +190,7 @@ func TestValidateSubject(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByUser is mandatory on Store and the
+// spec: §12.1 — DeleteByUser is mandatory on Store and the
 // user is the primary entity of this store, so DeleteByUser purges
 // the row hard.
 func TestDeleteByUserHardPurges_spec_12_1(t *testing.T) {
@@ -209,7 +209,7 @@ func TestDeleteByUserHardPurges_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByUser is idempotent: a second call on
+// spec: §12.1 — DeleteByUser is idempotent: a second call on
 // the same scope returns 0 and nil per §12.8 erasure semantics.
 func TestDeleteByUserIdempotent_spec_12_1(t *testing.T) {
 	s := userstore.NewMemory()
@@ -219,7 +219,7 @@ func TestDeleteByUserIdempotent_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant hard-deletes
+// spec: §12.1 / §12.8 Phase 4 — DeleteByTenant hard-deletes
 // every user row belonging to the tenant; other tenants are unaffected.
 func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 	s := userstore.NewMemory()
@@ -241,10 +241,10 @@ func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §15.1 lines 826-828 — the platform-managed role assignment carries
+// spec: §15.1 — the platform-managed role assignment carries
 // presence (RoleAssigned) plus operator/timestamp provenance. The Memory
 // store must round-trip all three through Create/Update/Get so the role
-// resolver (§10.2 line 294) and the tenant-users list see consistent
+// resolver (§10.2) and the tenant-users list see consistent
 // values. F-15.1.3.
 func TestRoleAssignmentRoundTrip_spec_15_1_826(t *testing.T) {
 	s := userstore.NewMemory()
@@ -268,7 +268,7 @@ func TestRoleAssignmentRoundTrip_spec_15_1_826(t *testing.T) {
 	}
 
 	// Removing the assignment clears presence and provenance while the row
-	// is retained — the §15.1 line 828 DELETE semantics.
+	// is retained — the §15.1 DELETE semantics.
 	updated, err := s.Update(ctx, "acme", "alice@acme.com", func(u *userstore.User) error {
 		u.Roles = nil
 		u.RoleAssigned = false
@@ -285,5 +285,54 @@ func TestRoleAssignmentRoundTrip_spec_15_1_826(t *testing.T) {
 	// The row must still be readable after assignment removal.
 	if _, err := s.Get(ctx, "acme", "alice@acme.com"); err != nil {
 		t.Fatalf("row must survive assignment removal: %v", err)
+	}
+}
+
+// TestMemoryErasureRestrictionWrites_spec_12_8 pins the in-memory
+// restriction write path the erasure job store calls: a set names the job
+// and bumps the version, a clear guarded by requireJobID writes 0 rows when
+// the flag names another job, the operator clear refuses a flag held by
+// another job, and a missing row is ErrNotFound.
+// spec: 12.8 (Compliance Interfaces: Processing restriction during erasure (GDPR Article 18)), 15.1 (REST API)
+func TestMemoryErasureRestrictionWrites_spec_12_8(t *testing.T) {
+	ctx := context.Background()
+	m := userstore.NewMemory()
+	if err := m.Create(ctx, userstore.User{TenantID: "acme", Subject: "alice"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	get := func() userstore.User {
+		u, err := m.Get(ctx, "acme", "alice")
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		return u
+	}
+	v0 := get().Version
+	if n, err := m.SetErasureRestriction(ctx, "acme", "alice", "erasure_a", true, ""); err != nil || n != 1 {
+		t.Fatalf("set = %d, %v", n, err)
+	}
+	if u := get(); !u.ProcessingRestricted || u.ErasureJobID != "erasure_a" || u.Version != v0+1 {
+		t.Fatalf("after set = %+v", u)
+	}
+	if n, err := m.SetErasureRestriction(ctx, "acme", "alice", "", false, "erasure_b"); err != nil || n != 0 {
+		t.Fatalf("guarded clear for another job = %d, %v, want 0 rows", n, err)
+	}
+	if u := get(); !u.ProcessingRestricted {
+		t.Fatal("guarded clear for another job cleared the flag")
+	}
+	if err := m.ClearProcessingRestrictionForJob(ctx, "acme", "alice", "erasure_b"); !errors.Is(err, userstore.ErrRestrictionHeldByOtherJob) {
+		t.Fatalf("operator clear for another job = %v, want ErrRestrictionHeldByOtherJob", err)
+	}
+	if err := m.ClearProcessingRestrictionForJob(ctx, "acme", "alice", "erasure_a"); err != nil {
+		t.Fatalf("operator clear: %v", err)
+	}
+	if u := get(); u.ProcessingRestricted || u.ErasureJobID != "" || u.Version != v0+2 {
+		t.Fatalf("after operator clear = %+v", u)
+	}
+	if _, err := m.SetErasureRestriction(ctx, "acme", "nobody", "erasure_a", true, ""); !errors.Is(err, userstore.ErrNotFound) {
+		t.Fatalf("set on a missing row = %v, want ErrNotFound", err)
+	}
+	if err := m.ClearProcessingRestrictionForJob(ctx, "globex", "alice", "erasure_a"); !errors.Is(err, userstore.ErrNotFound) {
+		t.Fatalf("clear on another tenant = %v, want ErrNotFound", err)
 	}
 }

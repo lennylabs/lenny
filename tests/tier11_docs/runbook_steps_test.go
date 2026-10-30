@@ -4,11 +4,10 @@
 // step through GET /v1/admin/runbooks/{name}/steps. The step indexer
 // (pkg/ops/runbooks.ParseSteps) extracts a step from each `### ` heading
 // that carries one or more `<!-- access: -->` markers; a runbook without
-// markers returns an empty `{"steps": []}` and defeats the §25.7
-// "machine consumers parse" promise at line 3054. This test fails when a
+// markers returns an empty `{"steps": []}` and defeats the §25.7 "machine consumers parse" promise at. This test fails when a
 // runbook produces no steps so the catalogue stays machine-parseable.
 //
-// spec: §25.7 lines 3032-3074 (access markers, /steps response). F-25.7.6.
+// spec: §25.7. F-25.7.6.
 
 package tier11_docs_test
 
@@ -57,7 +56,7 @@ func TestEveryRunbookProducesSteps_spec_25_7_3054(t *testing.T) {
 		t.Fatalf("walk runbooks: %v", err)
 	}
 	for _, name := range empty {
-		t.Errorf("%s produces no structured steps: add `### ` step headings with `<!-- access: -->` markers (§25.7 line 3054)", name)
+		t.Errorf("%s produces no structured steps: add `### ` step headings with `<!-- access: -->` markers (§25.7)", name)
 	}
 	if count == 0 {
 		t.Errorf("found no runbooks under %s; expected docs/runbooks to be populated", dir)

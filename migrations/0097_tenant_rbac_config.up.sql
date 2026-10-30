@@ -1,6 +1,4 @@
--- The §10.6 tenant RBAC configuration beyond the no_environment_policy
--- column (line 665: identityProvider, tokenPolicy, capabilities taxonomy,
--- mcpAnnotationMapping overrides).
+-- The §10.6 tenant RBAC configuration beyond the no_environment_policy column.
 --
 -- rbac_config holds these fields as a JSON object, modeled on
 -- tenantstore.RBACConfig. The empty object {} is the default: the tenant

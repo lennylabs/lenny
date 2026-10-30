@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §4.9 lines 1310, 1336 — preferredSource SourceOrder per mode.
+// spec: §4.9 — preferredSource SourceOrder per mode.
 func TestPreferredSourceOrder(t *testing.T) {
 	cases := []struct {
 		src  PreferredSource
@@ -26,7 +26,7 @@ func TestPreferredSourceOrder(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1364, 1370 — only user-only mode is terminal on a
+// spec: §4.9 — only user-only mode is terminal on a
 // user-credential miss; the prefer-* modes fall through to pool.
 func TestPreferredSourceUserMissTerminal(t *testing.T) {
 	terminal := map[PreferredSource]bool{
@@ -70,7 +70,7 @@ func TestPreferredSourceIsValid(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1314-1319 — fallback.order wins; defaultPool is the
+// spec: §4.9 — fallback.order wins; defaultPool is the
 // single-pool chain when no order is set.
 func TestProviderPoolOrder(t *testing.T) {
 	if got := (ProviderPool{DefaultPool: "p1"}).PoolOrder(); !reflect.DeepEqual(got, []string{"p1"}) {
@@ -85,7 +85,7 @@ func TestProviderPoolOrder(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1321-1322 — fallback defaults (cooldown 60s, max 3).
+// spec: §4.9 — fallback defaults (cooldown 60s, max 3).
 func TestPolicyFallbackEffectiveDefaults(t *testing.T) {
 	var zero PolicyFallback
 	if got := zero.EffectiveCooldownSeconds(); got != DefaultCooldownOnRateLimitSeconds {

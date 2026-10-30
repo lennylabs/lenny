@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Tier-11 §12.11 #4: ADR catalog continuity. Mirrors
+// Tier-11 TESTING.md §12.11 #4: ADR catalog continuity. Mirrors
 // scripts/check-adr-catalog.sh but exposes the check via Go test so
 // it shows up in the tier verdict.
 

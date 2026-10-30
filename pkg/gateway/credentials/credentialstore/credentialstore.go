@@ -47,8 +47,7 @@ type Credential struct {
 	// credential by.
 	Ref string
 
-	// TenantID + UserID + Environment scope the credential per §4.3
-	// line 202. Environment is the §10.6 environment name; the empty
+	// TenantID + UserID + Environment scope the credential per §4.3. Environment is the §10.6 environment name; the empty
 	// string selects the no-environment scope (the default).
 	TenantID    string
 	UserID      string
@@ -72,7 +71,7 @@ type Credential struct {
 	// lease. It is the zero time until the credential is first used.
 	// The §15.1 GET /v1/credentials response carries it.
 	//
-	// spec: §4.9 line 1349, 1365 — last_used_at is a /v1/credentials
+	// spec: §4.9 — last_used_at is a /v1/credentials
 	// response field.
 	LastUsedAt time.Time
 }
@@ -97,7 +96,7 @@ type RevokedUserCredential struct {
 
 // Store is the §4.9 user-credential registry contract.
 //
-// spec: §4.3 line 202 — credentials are scoped by (tenant, user,
+// spec: §4.3 — credentials are scoped by (tenant, user,
 // provider, environment). Register takes the environment as a
 // distinct argument; the unique constraint widens to (tenant, user,
 // provider, environment) so the same triple can hold one credential
@@ -112,16 +111,15 @@ type Store interface {
 	// Get returns the credential by ref, scoped to the tenant.
 	Get(ctx context.Context, tenantID, ref string) (Credential, error)
 
-	// Lookup resolves the credential for the §4.3 line 202
+	// Lookup resolves the credential for the §4.3
 	// (tenant, user, provider, environment) four-tuple. It backs the §4.9
 	// Pre-Authorized Credential Flow's session-creation resolution: the
 	// gateway resolves a user-scoped credential by provider, not by ref.
 	// Returns ErrNotFound when no credential is registered for the
 	// four-tuple. A revoked credential is returned (Status reports it); the
-	// resolution path treats a revoked credential as not-found per §4.9
-	// line 1379.
+	// resolution path treats a revoked credential as not-found per §4.9.
 	//
-	// spec: §4.9 lines 1347-1351 (resolution at session creation).
+	// spec: §4.9.
 	Lookup(ctx context.Context, tenantID, userID string, provider credential.Provider, environment string) (Credential, error)
 
 	// List returns the user's registered credentials.
@@ -148,7 +146,7 @@ type Store interface {
 	// credential for a lease so the §15.1 GET /v1/credentials response
 	// reports last_used_at. It is a no-op for an unknown ref.
 	//
-	// spec: §4.9 line 1349, 1365.
+	// spec: §4.9.
 	MarkUsed(ctx context.Context, tenantID, ref string, at time.Time) error
 
 	// Delete removes the credential row.
@@ -160,13 +158,13 @@ type Store interface {
 	// the load-bearing path for GDPR erasure of this store. Returns
 	// the number of rows removed.
 	//
-	// spec: §12.1 line 5, §12.8 step `TokenStore`.
+	// spec: §12.1, §12.8 step `TokenStore`.
 	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
 
 	// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
 	// Hard-deletes every credential row owned by tenantID.
 	//
-	// spec: §12.1 line 5, §12.8 Phase 4.
+	// spec: §12.1, §12.8 Phase 4.
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
@@ -193,14 +191,14 @@ func NewMemory(clock func() time.Time) *Memory {
 
 func refKey(tenantID, ref string) string { return tenantID + "/" + ref }
 
-// scopeKey is the in-memory map key for the §4.3 line 202
+// scopeKey is the in-memory map key for the §4.3
 // (tenant, user, provider, environment) scope four-tuple.
 func scopeKey(tenantID, userID string, p credential.Provider, environment string) string {
 	return tenantID + "/" + userID + "/" + string(p) + "/" + environment
 }
 
 // Register implements Store.
-// spec: §4.3 line 202.
+// spec: §4.3.
 func (m *Memory) Register(_ context.Context, tenantID, userID string, provider credential.Provider, environment, secret string) (Credential, error) {
 	if !provider.IsValid() {
 		return Credential{}, errors.New("credentialstore: unknown provider " + string(provider))
@@ -248,7 +246,7 @@ func (m *Memory) Get(_ context.Context, tenantID, ref string) (Credential, error
 
 // Lookup implements Store. It resolves the (tenant, user, provider,
 // environment) four-tuple through the scope index.
-// spec: §4.9 lines 1347-1351.
+// spec: §4.9.
 func (m *Memory) Lookup(_ context.Context, tenantID, userID string, provider credential.Provider, environment string) (Credential, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -332,7 +330,7 @@ func (m *Memory) Revoke(_ context.Context, tenantID, ref string) (Credential, er
 }
 
 // MarkUsed implements Store.
-// spec: §4.9 line 1349, 1365.
+// spec: §4.9.
 func (m *Memory) MarkUsed(_ context.Context, tenantID, ref string, at time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -366,7 +364,7 @@ func (m *Memory) Delete(_ context.Context, tenantID, ref string) error {
 // load-bearing path for GDPR erasure of this store. Returns the
 // number of rows removed; idempotent (a second call returns 0, nil).
 //
-// spec: §12.1 line 5.
+// spec: §12.1.
 func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, errors.New("credentialstore: DeleteByUser requires non-empty tenant_id and user_id")
@@ -387,7 +385,7 @@ func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, 
 // DeleteByTenant implements the §12.1 mandatory-erasure primitive.
 // Hard-deletes every credential row belonging to tenantID.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("credentialstore: DeleteByTenant requires a concrete tenant_id")
@@ -405,7 +403,7 @@ func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error)
 	return deleted, nil
 }
 
-// spec: §12.1 line 5 — compile-time satisfaction of the mandatory
+// spec: §12.1 — compile-time satisfaction of the mandatory
 // erasure-bearing Store interface.
 var _ Store = (*Memory)(nil)
 

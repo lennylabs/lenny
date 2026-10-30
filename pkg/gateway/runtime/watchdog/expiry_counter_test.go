@@ -14,7 +14,7 @@ import (
 )
 
 // spec: §16.1 (lenny_session_expiry_total{reason}); §6.2 (maxClientIdleSeconds
-// clock); §11.3 line 199 (max client idle row). F-11.3.7.
+// clock); §11.3. F-11.3.7.
 //
 // The watchdog must fire the SessionExpiryNotifier on every platform
 // expiry-clock transition it drives, with the §16.1.1 reason it resolved:
@@ -34,6 +34,9 @@ type expiryCall struct {
 	pool   string
 	reason string
 }
+
+// BeginTerminal opens no claim; the fake records only the terminal hook.
+func (*expiryCapture) BeginTerminal(string) func() { return func() {} }
 
 func (c *expiryCapture) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
 	c.terminal = append(c.terminal, sess)
@@ -73,6 +76,7 @@ func TestExpiryCounterIdleReasonMaxIdleTime_spec_16_1_1(t *testing.T) {
 	if _, err := w.Tick(context.Background(), born.Add(10*time.Minute+time.Second)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	w.WaitDispatched()
 	if len(hook.expiries) != 1 {
 		t.Fatalf("expiry notifications: got %d, want 1", len(hook.expiries))
 	}
@@ -87,7 +91,7 @@ func TestExpiryCounterIdleReasonMaxIdleTime_spec_16_1_1(t *testing.T) {
 	}
 }
 
-// spec: §16.1.1 (reason vocabulary) / §11.3 line 198 (maxSessionAge cap) — the
+// spec: §16.1.1 (reason vocabulary) / §11.3 — the
 // age-cap expiry fires the notifier with reason max_session_age. F-11.3.7.
 //
 // diagnosis: a failure means the maxSessionAge expiry no longer emits
@@ -121,8 +125,7 @@ func TestExpiryCounterMaxAgeReason_spec_16_1_1(t *testing.T) {
 	}
 }
 
-// spec: §16.1.1 (reason vocabulary) / §7.3 line 423 (awaiting_client_action
-// wall-clock deadline) — the awaiting-action deadline shares the age-cap series,
+// spec: §16.1.1 (reason vocabulary) / §7.3 — the awaiting-action deadline shares the age-cap series,
 // so the notifier fires with reason max_session_age. F-7.3.25 / F-11.3.7.
 //
 // diagnosis: a failure means an abandoned awaiting_client_action session
@@ -136,7 +139,7 @@ func TestExpiryCounterAwaitingActionReasonMaxAge_spec_16_1_1(t *testing.T) {
 		PoolRef: "pool-c", CreatedAt: born, UpdatedAt: born,
 	})
 	hook := &expiryCapture{}
-	// Disable the idle clock (which also runs in awaiting_client_action) and
+	// Disable the idle clock (which is paused in awaiting_client_action) and
 	// the age cap so the §7.3 awaiting-action deadline is the only edge that
 	// fires. The 900s default awaiting-action deadline applies.
 	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{

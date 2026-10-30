@@ -13,7 +13,7 @@ import (
 // AuthEvaluatorPriority is the §4.8 built-in priority for AuthEvaluator.
 // The §4.8 built-in interceptor table fixes it at 100, the top of the
 // reserved range (priorities 1–100 are built-in only), so AuthEvaluator
-// runs before every other interceptor. spec: §4.8 lines 972, 1021.
+// runs before every other interceptor. spec: §4.8.
 const AuthEvaluatorPriority int32 = 100
 
 // AuthEvaluatorName identifies AuthEvaluator in audit rows and chain
@@ -26,7 +26,7 @@ const AuthEvaluatorName = "AuthEvaluator"
 // defensive fail-closed guard rather than the primary authentication
 // path.
 //
-// spec: §15.1 line 986 — `UNAUTHORIZED` (HTTP 401) is the canonical
+// spec: §15.1 — `UNAUTHORIZED` (HTTP 401) is the canonical
 // catalog code for "Missing or invalid authentication credentials".
 const CodeAuthRequired = "UNAUTHORIZED"
 
@@ -35,7 +35,7 @@ const CodeAuthRequired = "UNAUTHORIZED"
 // and resolves the principal before the PreAuth chain runs;
 // AuthEvaluator then runs as the sole interceptor at that phase
 // (external interceptors are rejected from PreAuth at registration,
-// §4.8 line 1023) as the fail-closed gate confirming an authenticated
+// §4.8) as the fail-closed gate confirming an authenticated
 // identity is present in the metadata every later phase reads.
 //
 // The §4.8 phase table states MODIFY at PreAuth is issued only by
@@ -44,7 +44,7 @@ const CodeAuthRequired = "UNAUTHORIZED"
 // the principal and populates the tenant_id / user_id metadata before
 // running this chain; AuthEvaluator confirms the result and rejects a
 // request that reaches the chain without an authenticated tenant
-// (spec: §4.8 lines 1025–1028, "authenticated identity available at
+// (spec: §4.8, "authenticated identity available at
 // priority > 100"). Realizing PreAuth as a chain keeps the §4.8 SPI
 // uniform across phases.
 type AuthEvaluator struct{}

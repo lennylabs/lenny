@@ -14,7 +14,7 @@ import (
 	rlcounter "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 )
 
-// spec: §27.5 / §27.3.1 line 142 — the rate-limit wrapper (rateLimitRW)
+// spec: §27.5 / §27.3.1 — the rate-limit wrapper (rateLimitRW)
 // is the topmost writer the MCP WebSocket handler receives in production.
 // nhooyr.io/websocket performs a direct http.Hijacker assertion, so the
 // wrapper must re-expose Hijack or the /mcp/v1/ws upgrade fails. A

@@ -13,7 +13,7 @@ import (
 )
 
 // runMutation invokes scripts/mutation.sh against a package pattern
-// and compares the result against the §19.3 per-package threshold
+// and compares the result against the per-package threshold
 // table. Per-package thresholds default to 0.70 (70% kill rate);
 // the documented critical-package list (pkg/audit, pkg/circuitbreaker,
 // pkg/idempotency, pkg/quota) demands 0.85.
@@ -62,7 +62,7 @@ func runMutation(args []string) int {
 	return 0
 }
 
-// defaultMutationThreshold returns the §19.3 per-package default.
+// defaultMutationThreshold returns the per-package default.
 // Critical packages have a higher bar.
 func defaultMutationThreshold(pattern string) float64 {
 	critical := []string{

@@ -53,12 +53,8 @@ func (diagAllFound) Connectivity(context.Context) ([]diagnostics.ConnectivityDep
 	return []diagnostics.ConnectivityDependency{{Name: "postgres", Reachable: true}}, nil
 }
 
-// spec: §25.6 line 2945 ("`diagnostics.session_diagnosed`,
-// `diagnostics.pool_diagnosed`, `diagnostics.connectivity_checked`,
-// `diagnostics.credential_pool_diagnosed`.") — the four diagnostic audit
-// events; §25.9 lines 3699-3700 (coalescing into a single event carrying
-// the invocationCount); §11.7 line 435 (ops_event.* commit to the
-// platform-tenant hash chain).
+// spec: §25.6 — the four diagnostic audit
+// events; §25.9; §11.7.
 //
 // diagnosis: a failure means a §25.6 diagnostic access is not durably
 // committed to the §11.7 platform audit chain, so the audit trail the

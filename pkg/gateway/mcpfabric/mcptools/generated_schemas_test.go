@@ -20,7 +20,16 @@ import (
 // §15.2.1 rule-4 "structural consistency by construction" check.
 func committedSchemas() map[string]json.RawMessage {
 	return map[string]json.RawMessage{
-		"lenny/create_session": mcptools.GeneratedCreateSessionInputSchema,
+		"lenny/create_session":     mcptools.GeneratedCreateSessionInputSchema,
+		"lenny/start_session":      mcptools.GeneratedStartSessionInputSchema,
+		"lenny/finalize_workspace": mcptools.GeneratedFinalizeWorkspaceInputSchema,
+		"lenny/terminate_session":  mcptools.GeneratedTerminateSessionInputSchema,
+		"lenny/resume_session":     mcptools.GeneratedResumeSessionInputSchema,
+		"lenny/interrupt_session":  mcptools.GeneratedInterruptSessionInputSchema,
+		"lenny/get_session_status": mcptools.GeneratedGetSessionStatusInputSchema,
+		"lenny/list_artifacts":     mcptools.GeneratedListArtifactsInputSchema,
+		"lenny/get_token_usage":    mcptools.GeneratedGetTokenUsageInputSchema,
+		"lenny/get_session_logs":   mcptools.GeneratedGetSessionLogsInputSchema,
 	}
 }
 
@@ -28,8 +37,7 @@ func committedSchemas() map[string]json.RawMessage {
 // every overlapping operation and asserts the committed generated schema is
 // byte-identical to a fresh generation from the canonical OpenAPI document.
 // A diff means OpenAPI changed without re-running `go generate
-// ./pkg/gateway/mcptools/...`; regenerate to fix. spec: §15.2.1 rule 4
-// line 1386. F-15.2.7.
+// ./pkg/gateway/mcptools/...`; regenerate to fix. spec: §15.2.1 rule 4. F-15.2.7.
 func TestGeneratedSchemasMatchOpenAPI_spec_15_2_1_1386(t *testing.T) {
 	doc := openapi.Document()
 	committed := committedSchemas()
@@ -57,7 +65,7 @@ func TestGeneratedSchemasMatchOpenAPI_spec_15_2_1_1386(t *testing.T) {
 // TestCreateSessionToolUsesGeneratedSchema asserts the create_session tool
 // advertises the OpenAPI-derived field set (not the prior hand-authored
 // three-field schema), so the MCP and REST surfaces overlap structurally.
-// spec: §15.2.1 rule 4 line 1386. F-15.2.7.
+// spec: §15.2.1 rule 4. F-15.2.7.
 func TestCreateSessionToolUsesGeneratedSchema_spec_15_2_1_1386(t *testing.T) {
 	srv := newMCPWithCreator(t, &fakeSessionCreator{})
 	req := httptest.NewRequest(http.MethodPost, "/mcp",
@@ -92,7 +100,7 @@ func TestCreateSessionToolUsesGeneratedSchema_spec_15_2_1_1386(t *testing.T) {
 // forwards the OpenAPI-derived fields (workspacePlan, isolationProfile,
 // metadata) to the shared service, so an MCP client can drive the same
 // create surface as REST instead of the prior three-field subset.
-// spec: §15.2.1 rule 4 line 1386. F-15.2.7.
+// spec: §15.2.1 rule 4. F-15.2.7.
 func TestCreateSessionForwardsFullRequest_spec_15_2_1_1386(t *testing.T) {
 	creator := &fakeSessionCreator{}
 	creator.resp.ID = "sess_full"
@@ -115,8 +123,7 @@ func TestCreateSessionForwardsFullRequest_spec_15_2_1_1386(t *testing.T) {
 
 // TestEveryOperationHasUniqueOperationID asserts the OpenAPI document is
 // structurally addressable: every operation carries an operationId and no
-// two collide, which the generator needs to key on. spec: §15.2.1 rule 4
-// line 1386 — "the OpenAPI spec is the single authoritative schema".
+// two collide, which the generator needs to key on. spec: §15.2.1 rule 4 — "the OpenAPI spec is the single authoritative schema".
 // F-15.2.7.
 func TestEveryOperationHasUniqueOperationID_spec_15_2_1_1386(t *testing.T) {
 	var doc struct {

@@ -5,7 +5,7 @@
 // Tier-2 component test for the §13.3 write-before-issue Postgres
 // transaction: pkg/gateway/issuedtokenstore.Store.RecordWithAudit must
 // commit the issued_tokens INSERT and the audit_log INSERT atomically
-// under the §11.7 per-tenant advisory lock. spec: §13.3 line 589 /
+// under the §11.7 per-tenant advisory lock. spec: §13.3 /
 // F-4.3.7 / F-4.3.8.
 package auditstore_test
 
@@ -31,7 +31,7 @@ func startPGForWriteBeforeIssue(t *testing.T) *containers.Postgres {
 	})
 }
 
-// spec: §13.3 line 589 / F-4.3.7 — RecordWithAudit binds the
+// spec: §13.3 / F-4.3.7 — RecordWithAudit binds the
 // issued_tokens INSERT and the token.exchanged audit_log INSERT in one
 // Postgres transaction. After a successful call the audit chain
 // contains one new row and the issued_tokens table contains the new
@@ -69,7 +69,7 @@ func TestRecordWithAuditWritesBothRowsAtomically(t *testing.T) {
 		"jti":           tok.JTI,
 		"policy_result": "accepted",
 	})
-	row, err := store.RecordWithAudit(ctx, tok, string(auditcatalog.EventTokenExchanged),
+	row, err := store.RecordWithAudit(ctx, tok, nil, string(auditcatalog.EventTokenExchanged),
 		json.RawMessage(payload), now)
 	if err != nil {
 		t.Fatalf("RecordWithAudit: %v", err)
@@ -106,7 +106,7 @@ func TestRecordWithAuditWritesBothRowsAtomically(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 589 / F-4.3.7 — repeated calls produce a
+// spec: §13.3 / F-4.3.7 — repeated calls produce a
 // sequenced audit chain: each new audit row links to its predecessor
 // and the issued_tokens primary key prevents duplicate jti.
 // diagnosis: a failure means repeated RecordWithAudit calls do not
@@ -133,7 +133,7 @@ func TestRecordWithAuditChainsAcrossExchanges(t *testing.T) {
 			"jti":           jti,
 			"policy_result": "accepted",
 		})
-		row, err := store.RecordWithAudit(ctx, tok,
+		row, err := store.RecordWithAudit(ctx, tok, nil,
 			string(auditcatalog.EventTokenExchanged), json.RawMessage(payload),
 			now.Add(time.Duration(i)*time.Second))
 		if err != nil {
@@ -152,7 +152,7 @@ func TestRecordWithAuditChainsAcrossExchanges(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 589 / F-4.3.7 — a duplicate JTI on a retry rolls
+// spec: §13.3 / F-4.3.7 — a duplicate JTI on a retry rolls
 // the entire transaction back: the audit chain length does not grow.
 // diagnosis: a failure means a duplicate-JTI retry leaks a partial
 // write, growing the audit chain without a corresponding token and
@@ -173,13 +173,13 @@ func TestRecordWithAuditRollsBackOnDuplicateJTI(t *testing.T) {
 		Audience: "lenny-gateway", IssuedAt: now, ExpiresAt: now.Add(time.Hour),
 	}
 	payload := json.RawMessage(`{"policy_result":"accepted"}`)
-	if _, err := store.RecordWithAudit(ctx, tok,
+	if _, err := store.RecordWithAudit(ctx, tok, nil,
 		string(auditcatalog.EventTokenExchanged), payload, now); err != nil {
 		t.Fatalf("first RecordWithAudit: %v", err)
 	}
 	// Second call with same jti must return ErrAlreadyExists and NOT
 	// write a second audit row.
-	_, err := store.RecordWithAudit(ctx, tok,
+	_, err := store.RecordWithAudit(ctx, tok, nil,
 		string(auditcatalog.EventTokenExchanged), payload, now)
 	if err == nil {
 		t.Fatalf("second RecordWithAudit accepted; want ErrAlreadyExists")

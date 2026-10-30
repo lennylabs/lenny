@@ -31,7 +31,7 @@ func ldCfg() experiment.TargetingConfig {
 	}
 }
 
-// spec: §10.7 line 825 — the gateway reads the EvaluationDetails Variant
+// spec: §10.7 — the gateway reads the EvaluationDetails Variant
 // then Value from the configured OpenFeature client. A static enabled
 // flag resolves to its default variant.
 func TestEvaluatorStaticVariant_spec_10_7_825(t *testing.T) {
@@ -58,7 +58,7 @@ func TestEvaluatorStaticVariant_spec_10_7_825(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 825 — the evaluationContext (targetingKey, user_id,
+// spec: §10.7 — the evaluationContext (targetingKey, user_id,
 // tenant_id, runtime) reaches the provider, so a context-driven flag
 // resolves per session. This proves toEvaluationContext lifts the flat
 // map's targetingKey into the OpenFeature context key.
@@ -89,7 +89,7 @@ func TestEvaluatorContextDrivenVariant_spec_10_7_825(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 833 — a provider-returned error (here FLAG_NOT_FOUND)
+// spec: §10.7 — a provider-returned error (here FLAG_NOT_FOUND)
 // is the targeting_failed condition: Evaluate returns a *EvalError
 // carrying the OpenFeature ErrorCode.
 func TestEvaluatorFlagNotFoundIsEvalError_spec_10_7_833(t *testing.T) {
@@ -168,7 +168,7 @@ func TestCacheRejectsNonSDKProvider(t *testing.T) {
 	}
 }
 
-// spec: §10.7 lines 805-822 — defaultProviderFactory dispatches on the
+// spec: §10.7 — defaultProviderFactory dispatches on the
 // provider name and validates the matching sub-block before constructing
 // the vendor provider. Statsig and Unleash construct without network
 // (their Init is deferred); LaunchDarkly's network handshake is not

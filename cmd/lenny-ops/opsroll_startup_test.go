@@ -70,9 +70,9 @@ func driveToOpsRoll(t *testing.T, svc *upgradeservice.Service, version string) {
 	}
 }
 
-// spec: 25.8 line 3508 (self-advance OpsRoll -> CRDUpdate), 25.8 line 3511
-// (ops_healthy heartbeat), 25.10 line 3788 (write
-// bootstrap_seed_snapshot_target on new-pod startup)
+// spec: 25.8 (Platform Lifecycle Management, Upgrade State Machine, Phase Details: self-advance OpsRoll ->
+// CRDUpdate; ops_healthy heartbeat), 25.10 (Configuration Drift Detection, Snapshot Validation:
+// write bootstrap_seed_snapshot_target on new-pod startup)
 //
 // diagnosis: a failure means the production §25.8 OpsRoll startup hook
 // does not drive the heartbeat, the target-snapshot write, and the
@@ -173,7 +173,7 @@ func (f fixedRunningStartup) RunningState(context.Context, string) (map[string]a
 }
 
 // TestOpsRollStartupHookAdvancesWithoutValuesSource_spec_25_10_3788 asserts
-// the §25.10 line 3788 skip path: with no rendered-values ConfigMap
+// the §25.10 skip path: with no rendered-values ConfigMap
 // configured, the hook still self-advances OpsRoll->CRDUpdate but writes no
 // target snapshot, so against=target reports DRIFT_NO_TARGET_SNAPSHOT.
 func TestOpsRollStartupHookAdvancesWithoutValuesSource_spec_25_10_3788(t *testing.T) {
@@ -236,8 +236,8 @@ func TestConfigMapValuesReaderMissingKey(t *testing.T) {
 	}
 }
 
-// spec: 25.10 line 3788 (write bootstrap_seed_snapshot_target from the
-// rendered Helm values)
+// spec: 25.10 (Configuration Drift Detection, Snapshot Validation: write
+// bootstrap_seed_snapshot_target from the rendered Helm values)
 //
 // TestConfigMapValuesReaderParseError asserts RenderedValues surfaces a
 // YAML parse error rather than silently treating an unparseable values
@@ -259,7 +259,8 @@ func TestConfigMapValuesReaderParseError(t *testing.T) {
 	}
 }
 
-// spec: 25.10 line 3788 (read rendered Helm values from the ConfigMap)
+// spec: 25.10 (Configuration Drift Detection, Snapshot Validation: read rendered
+// Helm values from the ConfigMap)
 //
 // TestConfigMapValuesReaderGetError asserts RenderedValues surfaces a
 // non-NotFound ConfigMap Get failure (a transient apiserver error) rather
@@ -315,7 +316,8 @@ func inOpsRoll(version string) upgradeservice.State {
 	return upgradeservice.State{Phase: upgrade.OpsRoll, TargetVersion: version, OperationID: "op-1"}
 }
 
-// spec: 25.8 line 3508 (read upgrade state on startup)
+// spec: 25.8 (Platform Lifecycle Management, Upgrade State Machine, Phase Details: read upgrade state
+// on startup)
 //
 // TestOpsRollStartupHookStatusError asserts run wraps and returns a
 // Status read error rather than proceeding to mutate the upgrade against
@@ -331,7 +333,8 @@ func TestOpsRollStartupHookStatusError(t *testing.T) {
 	}
 }
 
-// spec: 25.8 line 3511 (stamp the ops_healthy heartbeat)
+// spec: 25.8 (Platform Lifecycle Management, Upgrade State Machine, Phase Details: stamp the
+// ops_healthy heartbeat)
 //
 // TestOpsRollStartupHookHeartbeatError asserts run aborts and does not
 // self-advance when the heartbeat write fails, so a self-advance never
@@ -350,7 +353,8 @@ func TestOpsRollStartupHookHeartbeatError(t *testing.T) {
 	}
 }
 
-// spec: 25.8 line 3508 (self-advance OpsRoll->CRDUpdate)
+// spec: 25.8 (Platform Lifecycle Management, Upgrade State Machine, Phase Details: self-advance
+// OpsRoll->CRDUpdate)
 //
 // TestOpsRollStartupHookAdvanceError asserts run wraps and returns a
 // self-advance error after the heartbeat succeeded, so a failed advance
@@ -378,8 +382,8 @@ func (e errValuesReader) RenderedValues(context.Context) (map[string]any, bool, 
 	return nil, false, e.err
 }
 
-// spec: 25.10 line 3788 (write bootstrap_seed_snapshot_target from the
-// rendered Helm values)
+// spec: 25.10 (Configuration Drift Detection, Snapshot Validation: write
+// bootstrap_seed_snapshot_target from the rendered Helm values)
 //
 // TestOpsRollStartupHookWriteTargetValuesError asserts run returns the
 // error from reading the rendered Helm values and does not self-advance:

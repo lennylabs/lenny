@@ -35,7 +35,7 @@ func TestOperationalEventSubjectJSONRoundTrip_spec_25_3_19(t *testing.T) {
 }
 
 func TestOperationalEventExtensionsRoundTrip_spec_25_3_13(t *testing.T) {
-	// spec: §25.3 line 650 / §12.6 — CloudEvents extension attributes
+	// spec: §25.3 / §12.6 — CloudEvents extension attributes
 	// flatten into the top-level object and round-trip back into
 	// Extensions, mirroring pkg/gateway/eventbus.Event.
 	e := OperationalEvent{
@@ -101,7 +101,7 @@ func TestOperationalEventExtensionNeverClobbersKnownAttribute_spec_25_3_13(t *te
 // applies the §25.2 CSV union and intersection rules directly on the
 // value type, independent of the ring buffer.
 func TestEventFilterMatchesDirectly_spec_25_3_15(t *testing.T) {
-	// spec: §25.2 lines 210-211 — eventType and severity accept the CSV
+	// spec: §25.2 — eventType and severity accept the CSV
 	// form; a query matches the union of the comma-separated tokens.
 	critical := OperationalEvent{Type: "dev.lenny.alert_fired", Severity: "critical"}
 	warning := OperationalEvent{Type: "dev.lenny.session_failed", Severity: "warning"}

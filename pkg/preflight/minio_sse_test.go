@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §12.5 line 297 — the SSE preflight check audits the MinIO
+// spec: §12.5 — the SSE preflight check audits the MinIO
 // artifact bucket's server-side-encryption posture and fails the
 // install under a regulated complianceProfile when SSE is absent.
 
@@ -41,8 +41,8 @@ func TestMinIOEncryptionDecideFailsOnRegulatedAbsent(t *testing.T) {
 			if d.Passed {
 				t.Errorf("regulated profile %q with absent SSE must fail: %+v", profile, d)
 			}
-			if !strings.Contains(d.Reason, "§12.5 line 297") {
-				t.Errorf("reason should cite §12.5 line 297: %q", d.Reason)
+			if !strings.Contains(d.Reason, "§12.5") {
+				t.Errorf("reason should cite §12.5: %q", d.Reason)
 			}
 		})
 	}

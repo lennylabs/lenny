@@ -3,7 +3,7 @@
 //go:build load_kind
 
 // Tier-7 Phase 11.5 incremental load test (credential lifecycle). The
-// §13.24 phase gate baselines the §4.9 / §15.1 end-user credential
+// TESTING.md §13.24 phase gate baselines the §4.9 / §15.1 end-user credential
 // lifecycle — register → list → rotate → revoke → delete — under a
 // rate-bounded executor. The PR-cadence smoke form drives the
 // credential_lifecycle k6 scenario through the e2e Kind gateway and
@@ -24,7 +24,7 @@ import (
 )
 
 // spec: 13.24 (Phase 11.5 — incremental load test, credential lifecycle)
-// diagnosis: the §13.24 credential_lifecycle smoke run regressed or
+// diagnosis: the TESTING.md §13.24 credential_lifecycle smoke run regressed or
 // failed. The scenario plays the full §4.9 lifecycle through
 // /v1/credentials against the e2e gateway; a failure means a
 // register, rotate, revoke, or delete errored under load or its

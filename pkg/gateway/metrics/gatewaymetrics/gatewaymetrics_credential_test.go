@@ -52,8 +52,7 @@ func TestSetAlertThresholds_spec_25_13_4737(t *testing.T) {
 // ignores non-positive deltas. The counter is unlabeled per §16.1.1, so a
 // scrape exposes a single cumulative sample with no label set.
 //
-// spec: §4.9 line 1671 (the sweep worker removes expired credential-lease
-// rows; lenny_gateway_credential_leases_swept_total counts them).
+// spec: §4.9.
 // diagnosis: a failure means AddCredentialLeasesSwept did not register or
 // increment lenny_gateway_credential_leases_swept_total, or its
 // non-positive guard let a zero/negative tick move the counter; operators

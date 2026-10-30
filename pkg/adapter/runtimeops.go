@@ -1,0 +1,825 @@
+// SPDX-License-Identifier: MIT
+
+package adapter
+
+import (
+	"bufio"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"log/slog"
+	"net"
+	"sync"
+	"time"
+)
+
+// newLifecycleID returns a short random identifier for correlating a
+// lifecycle request with its acknowledgement.
+func newLifecycleID() string {
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+// lifecycleProtocolVersion is the §4.7 CH-RUNTIMEOPS protocol
+// version the adapter advertises in the lifecycle_capabilities frame.
+const lifecycleProtocolVersion = "1.0"
+
+// errLifecycleVersionIncompatible is returned by the handshake when the
+// runtime advertises a protocolVersion the adapter cannot speak. spec:
+// §15.5 — "The adapter advertises a protocol version
+// at INIT; the gateway selects a compatible version." Today the adapter
+// speaks `1.x`; a runtime that names a different major version is
+// rejected before any signal frames flow so a forward-compat mismatch
+// surfaces at handshake rather than as silent missing capabilities.
+// F-15.5.9.
+var errLifecycleVersionIncompatible = errors.New("lifecycle protocol version incompatible")
+
+// lifecycleCapabilities are the §4.7 lifecycle signals the adapter
+// advertises on every pod. The adapter sends them in the
+// lifecycle_capabilities handshake; the runtime replies with
+// lifecycle_support naming the subset it implements. spec: §4.7 removes
+// the task_lifecycle capability along with the between-task
+// task_complete / task_ready frames, so the advertised set is fixed.
+var lifecycleCapabilities = []string{"checkpoint", "interrupt", "credential_rotation", "deadline_signal"}
+
+var (
+	// errRuntimeConnRefused reports a connection the runtime connection
+	// handshake refused before it was bound. spec: §4.7.11 (Runtime
+	// connection handshake).
+	errRuntimeConnRefused    = errors.New("CH-RUNTIMEOPS connection refused by the runtime connection handshake")
+	errLifecycleClosed       = errors.New("CH-RUNTIMEOPS is closed")
+	errLifecycleNotConnected = errors.New("CH-RUNTIMEOPS has no runtime connection")
+)
+
+// lifecycleFrame is one JSONL frame on the §4.7 runtime↔adapter
+// CH-RUNTIMEOPS. A single struct covers every frame type; fields
+// not set for a given type are omitted on the wire. The field names
+// match the §4.7 message-schema table (camelCase).
+type lifecycleFrame struct {
+	Type string `json:"type"`
+	// SessionID names the session a session-scoped frame concerns. The
+	// adapter sets it on checkpoint_request, checkpoint_complete,
+	// interrupt_request, credentials_rotated, deadline_approaching, and
+	// files_updated, and the runtime sets it on llm_request_completed so
+	// the adapter can attribute direct-mode tokens. The process-scoped
+	// frames (lifecycle_capabilities, lifecycle_support,
+	// llm_request_started) leave it empty, so it is omitted on the wire.
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+	SessionID       string   `json:"sessionId,omitempty"`
+	ProtocolVersion string   `json:"protocolVersion,omitempty"`
+	Capabilities    []string `json:"capabilities,omitempty"`
+	CheckpointID    string   `json:"checkpointId,omitempty"`
+	InterruptID     string   `json:"interruptId,omitempty"`
+	DeadlineMs      int32    `json:"deadlineMs,omitempty"`
+	RemainingMs     int32    `json:"remainingMs,omitempty"`
+	Status          string   `json:"status,omitempty"`
+	Reason          string   `json:"reason,omitempty"`
+	Provider        string   `json:"provider,omitempty"`
+	CredentialsPath string   `json:"credentialsPath,omitempty"`
+	LeaseID         string   `json:"leaseId,omitempty"`
+	Trigger         string   `json:"trigger,omitempty"`
+	RequestID       string   `json:"requestId,omitempty"`
+	// InputTokens and OutputTokens are the §4.7 direct-mode token counts
+	// the runtime optionally carries on an llm_request_completed frame,
+	// extracted from the completed provider response. The adapter folds
+	// them into the session's cumulative usage total (§11.2 direct-mode
+	// usage). A runtime that cannot extract counts omits both, so the
+	// session has no direct-mode token source. Zero-valued so an absent
+	// field reads as a zero delta rather than a decode error.
+	InputTokens  int64 `json:"inputTokens,omitempty"`
+	OutputTokens int64 `json:"outputTokens,omitempty"`
+}
+
+// RuntimeOps is the adapter side of the §4.7 CH-RUNTIMEOPS:
+// a Unix-socket server the Full-level agent runtime dials to receive
+// checkpoint, interrupt, credential-rotation, deadline, and files-updated
+// signals and to acknowledge them. Every session-scoped frame names the
+// session it concerns, so one connection serves every session the pod's
+// shared runtime process holds. The adapter listens; the runtime
+// connects once per pod. The socket address (a file path or, on Linux,
+// an abstract `@`-prefixed name) is published to the runtime through
+// the adapter manifest's runtimeOps.socket field.
+type RuntimeOps struct {
+	listener net.Listener
+
+	// auth is the SO_PEERCRED posture the listener enforces, fixed at
+	// construction. spec: §4.7.11.
+	auth SocketPeerAuth
+	// nonce reports the mcpNonce of the currently published manifest, which
+	// the runtime connection handshake compares each connection's nonce line
+	// with. It is fixed at construction and read at each accept, because the
+	// runtime may connect at any time from boot. spec: §4.7.11 (Runtime
+	// connection handshake).
+	nonce func() string
+	// peerUID, when set, replaces the SO_PEERCRED lookup of a connecting
+	// peer's UID. It is a test seam: a test process cannot dial from a
+	// second UID without root. It is written only before Run.
+	peerUID func(net.Conn) (uint32, error)
+	// logger receives the refusal record for each refused peer. Nil logs
+	// to slog.Default.
+	logger *slog.Logger
+
+	ready chan struct{} // closed once the handshake completes
+	done  chan struct{} // closed once Run returns
+
+	mu        sync.Mutex
+	conn      net.Conn
+	enc       *json.Encoder
+	supported map[string]bool
+	pending   map[string]chan error
+	// inflight is the §4.7 per-provider count of outbound LLM
+	// requests the runtime reported via llm_request_started without a
+	// matching llm_request_completed. The Full-level credential-rotation
+	// gate reads it through InflightCount.
+	inflight map[string]int
+	closed   bool
+	// rebinding is closed when a Rebind in progress has installed the new
+	// listener, or has failed and closed the channel. Run waits on it when
+	// its Accept returns because Rebind closed the old listener. Nil when no
+	// rebind is in progress. Guarded by mu.
+	rebinding chan struct{}
+
+	// usage receives the §4.7 direct-mode token counts an
+	// llm_request_completed frame carries. Nil (the Basic/Standard path
+	// and the dev path with no meter) makes token folding a no-op. Set
+	// once at wiring time via SetUsageSink and read in readLoop; not
+	// mutated per connection, so it needs no lock beyond the pointer
+	// itself being assigned before Run starts.
+	usage tokenSink
+	// activity receives the session each llm_request_completed names, after
+	// the in-flight decrement, as that session's adapter activity (§4.7.1
+	// **Session seal.**). Set once before Run starts through
+	// SetActivityObserver, as usage is; nil observes nothing.
+	activity func(sessionID string)
+}
+
+// tokenSink folds one llm_request_completed frame's direct-mode token
+// counts into the cumulative usage total of the session the frame names.
+// The adapter wires it to the concrete SessionUsageMeter. Defined at the
+// consumer (the CH-RUNTIMEOPS) per the accept-interfaces convention.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages), §11.2.
+type tokenSink interface {
+	// AddTokens folds the counts from one completed direct-mode LLM call
+	// into sessionID's cumulative total. An implementation drops the
+	// counts when sessionID is empty or names no session bound to the pod.
+	AddTokens(sessionID string, inputTokens, outputTokens int64)
+}
+
+// NewRuntimeOps listens on socketPath for the runtime's lifecycle
+// connection. socketPath is a filesystem path or, on Linux, an abstract
+// socket name beginning with `@`. auth is the SO_PEERCRED posture the
+// listener applies to each connecting process, the same decision the
+// CH-MSGSOCK and intra-pod MCP listeners take: outside nonce-only mode only
+// auth.ExpectedUID is admitted, and a refused connection is logged as
+// runtimeops_peer_refused, closed, and skipped inside Accept, so it never
+// becomes the runtime connection Run serves. nonce reports the published
+// manifest's mcpNonce (see PublishedManifestNonce); every admitted
+// connection then runs the runtime connection handshake against it before
+// the lifecycle_capabilities handshake.
+// spec: §4.7.11 (Separate UIDs and connection authentication, Runtime
+// connection handshake), §28.5.3 (CH-RUNTIMEOPS, Endpoint).
+func NewRuntimeOps(socketPath string, auth SocketPeerAuth, nonce func() string) (*RuntimeOps, error) {
+	l, err := net.Listen("unix", socketPath)
+	if err != nil {
+		return nil, fmt.Errorf("CH-RUNTIMEOPS listen %s: %w", socketPath, err)
+	}
+	lc := &RuntimeOps{
+		auth:     auth,
+		nonce:    nonce,
+		ready:    make(chan struct{}),
+		done:     make(chan struct{}),
+		pending:  map[string]chan error{},
+		inflight: map[string]int{},
+	}
+	lc.listener = auth.wrap(l, lc.checkRuntimeOpsPeer, lc.logRefusedPeer)
+	return lc, nil
+}
+
+// checkRuntimeOpsPeer admits conn only when its peer runs as the expected
+// agent UID. It reads the UID through SO_PEERCRED unless a test installed
+// the peerUID seam.
+func (lc *RuntimeOps) checkRuntimeOpsPeer(conn net.Conn) error {
+	if lc.peerUID != nil {
+		return matchPeerUID(conn, lc.auth.ExpectedUID, lc.peerUID)
+	}
+	return lc.auth.check(conn)
+}
+
+// logRefusedPeer records a refused CH-RUNTIMEOPS connection. See
+// logPeerRefusal for the record's fields.
+func (lc *RuntimeOps) logRefusedPeer(err error) {
+	logPeerRefusal(lc.logger, "runtimeops_peer_refused", lc.SocketPath(), lc.auth.ExpectedUID, err)
+}
+
+// SocketPath is the address the runtime dials to reach the channel.
+func (lc *RuntimeOps) SocketPath() string {
+	return lc.currentListener().Addr().String()
+}
+
+// currentListener returns the listener Run accepts on.
+func (lc *RuntimeOps) currentListener() net.Listener {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.listener
+}
+
+// Rebind closes the listener and the runtime connection and binds a new
+// listener at the same address, which discards every connection an ended
+// runtime process opened or left in the backlog. Run continues on the new
+// listener. A bind failure closes the channel and is returned.
+// spec: §4.7.10 (Runtime supervisor, End); §5.2 (Supervised scrub sequence,
+// Listener rebind).
+func (lc *RuntimeOps) Rebind() error {
+	lc.mu.Lock()
+	if lc.closed {
+		lc.mu.Unlock()
+		return errLifecycleClosed
+	}
+	old, conn := lc.listener, lc.conn
+	done := make(chan struct{})
+	lc.rebinding = done
+	lc.mu.Unlock()
+	defer close(done)
+
+	addr := old.Addr().String()
+	_ = old.Close()
+	if conn != nil {
+		_ = conn.Close()
+	}
+	l, err := net.Listen("unix", addr)
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	lc.rebinding = nil
+	if err != nil {
+		lc.closed = true
+		return fmt.Errorf("CH-RUNTIMEOPS rebind %s: %w", addr, err)
+	}
+	if lc.closed {
+		// Close ran during the rebind; the new listener is not served.
+		_ = l.Close()
+		return errLifecycleClosed
+	}
+	lc.listener = lc.auth.wrap(l, lc.checkRuntimeOpsPeer, lc.logRefusedPeerLocked(addr))
+	return nil
+}
+
+// logRefusedPeerLocked returns a refusal logger bound to addr, for a
+// listener installed while mu is held.
+func (lc *RuntimeOps) logRefusedPeerLocked(addr string) func(error) {
+	return func(err error) {
+		logPeerRefusal(lc.logger, "runtimeops_peer_refused", addr, lc.auth.ExpectedUID, err)
+	}
+}
+
+// awaitRebind waits for a rebind in progress and reports whether Run should
+// accept again.
+func (lc *RuntimeOps) awaitRebind() bool {
+	lc.mu.Lock()
+	ch := lc.rebinding
+	lc.mu.Unlock()
+	if ch != nil {
+		<-ch
+	}
+	return !lc.isClosed()
+}
+
+// SetUsageSink wires the token sink readLoop folds each
+// llm_request_completed frame's §4.7 direct-mode token counts into. It
+// is set once before Run starts (the adapter wiring in
+// cmd/lenny-adapter), so it does not race with the read loop. A nil sink
+// leaves token folding a no-op (the Basic/Standard and dev paths).
+func (lc *RuntimeOps) SetUsageSink(sink tokenSink) {
+	lc.usage = sink
+}
+
+// SetActivityObserver wires fn as the observer readLoop calls with the
+// session each llm_request_completed names, whatever its status and token
+// counts. It is set once before Run starts, as SetUsageSink is. A nil fn
+// observes nothing. spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.3
+// (CH-RUNTIMEOPS).
+func (lc *RuntimeOps) SetActivityObserver(fn func(sessionID string)) {
+	lc.activity = fn
+}
+
+// Run serves the CH-RUNTIMEOPS until ctx is cancelled or the channel
+// is closed. It accepts one runtime connection at a time: for each, it
+// performs the lifecycle_capabilities handshake and serves frames until
+// the runtime disconnects, then resets per-connection state and accepts
+// the next connection. A resumed session (§4.7 startup
+// sequence, applied for both fresh sessions and resumes) starts a fresh
+// runtime that dials the same socket and re-handshakes, so the channel
+// must outlive any single runtime process. Run blocks; callers run it in
+// a goroutine. The request methods block until the current connection
+// completes its handshake.
+//
+// spec: §4.7 — the Full-level CH-RUNTIMEOPS is rebound
+// per runtime process rather than torn down after the first disconnect.
+func (lc *RuntimeOps) Run(ctx context.Context) error {
+	defer close(lc.done)
+	stop := context.AfterFunc(ctx, func() { _ = lc.Close() })
+	defer stop()
+
+	for {
+		conn, err := lc.currentListener().Accept()
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) && !lc.isClosed() && lc.awaitRebind() {
+				continue
+			}
+			if lc.isClosed() || errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+			return fmt.Errorf("CH-RUNTIMEOPS accept: %w", err)
+		}
+		err = lc.serveConn(conn)
+		if errors.Is(err, errRuntimeConnRefused) {
+			// A refused connection was never bound, so there is no
+			// per-connection state to reset.
+			continue
+		}
+		if err != nil && !errors.Is(err, errLifecycleClosed) {
+			// A per-connection handshake or read error ends this runtime
+			// connection but not the channel: the next runtime (e.g. after
+			// Resume restarts the binary) dials again and re-handshakes.
+			log.Printf("lenny-adapter: lifecycle connection ended: %v", err)
+		}
+		lc.resetConn()
+		if lc.isClosed() {
+			return nil
+		}
+	}
+}
+
+// serveConn runs the runtime connection handshake on conn, then binds it as
+// the active runtime connection, completes the lifecycle_capabilities
+// handshake, and serves frames until the connection ends. A connection that
+// fails the runtime connection handshake is logged and closed with no
+// protocol response before it is bound, so no request is ever written to it,
+// and serveConn returns errRuntimeConnRefused so Run accepts the next
+// connection. spec: §4.7.11 (Runtime connection handshake), §28.5.3
+// (CH-RUNTIMEOPS).
+func (lc *RuntimeOps) serveConn(conn net.Conn) error {
+	r := bufio.NewReader(conn)
+	if err := authenticateRuntimeConn(conn, r, lc.nonce, lc.auth.NonceOnly); err != nil {
+		lc.logRefusedPeer(err)
+		_ = conn.Close()
+		return errRuntimeConnRefused
+	}
+	ready := make(chan struct{})
+	lc.mu.Lock()
+	if lc.closed {
+		lc.mu.Unlock()
+		conn.Close()
+		return errLifecycleClosed
+	}
+	lc.conn = conn
+	enc := json.NewEncoder(conn)
+	enc.SetEscapeHTML(false)
+	lc.enc = enc
+	lc.ready = ready
+	lc.mu.Unlock()
+
+	if err := lc.handshake(r); err != nil {
+		return err
+	}
+	close(ready)
+	return lc.readLoop(r)
+}
+
+// resetConn clears the state bound to a single runtime connection so the
+// channel can accept the next one. It drops the connection, re-arms a
+// fresh (unclosed) ready channel so requests block until the next
+// handshake, zeroes the per-provider in-flight counters, and fails every
+// request still waiting on the connection that just ended.
+func (lc *RuntimeOps) resetConn() {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if lc.conn != nil {
+		lc.conn.Close()
+		lc.conn = nil
+	}
+	lc.enc = nil
+	lc.supported = nil
+	lc.ready = make(chan struct{})
+	for provider, n := range lc.inflight {
+		if n != 0 {
+			SetLLMInflight(provider, 0)
+		}
+		delete(lc.inflight, provider)
+	}
+	for key, ch := range lc.pending {
+		ch <- errLifecycleClosed
+		delete(lc.pending, key)
+	}
+}
+
+// isClosed reports whether Close has been called.
+func (lc *RuntimeOps) isClosed() bool {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.closed
+}
+
+// currentReady returns the channel that closes when the active
+// connection's handshake completes. It is recreated per connection, so
+// callers capture it under the lock before waiting.
+func (lc *RuntimeOps) currentReady() chan struct{} {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.ready
+}
+
+// handshake sends the adapter's lifecycle_capabilities and reads the
+// runtime's lifecycle_support reply, recording the capabilities the
+// runtime declared.
+func (lc *RuntimeOps) handshake(r *bufio.Reader) error {
+	if err := lc.writeFrame(lifecycleFrame{
+		Type:            "lifecycle_capabilities",
+		ProtocolVersion: lifecycleProtocolVersion,
+		Capabilities:    lifecycleCapabilities,
+	}); err != nil {
+		return fmt.Errorf("lifecycle handshake send: %w", err)
+	}
+	frame, err := readLifecycleFrame(r)
+	if err != nil {
+		return fmt.Errorf("lifecycle handshake read: %w", err)
+	}
+	if frame.Type != "lifecycle_support" {
+		return fmt.Errorf("lifecycle handshake: expected lifecycle_support, got %q", frame.Type)
+	}
+	// spec: §15.5 — the runtime advertises a
+	// `protocolVersion` at INIT and the gateway selects a compatible
+	// version. The adapter speaks `1.x`; a runtime that names a
+	// different major version is rejected before any signal frames
+	// flow. An empty `protocolVersion` is accepted for forward
+	// compatibility with runtimes that pre-date this field. F-15.5.9.
+	if frame.ProtocolVersion != "" {
+		if !lifecycleVersionsCompatible(lifecycleProtocolVersion, frame.ProtocolVersion) {
+			return fmt.Errorf("%w: runtime advertised %q, adapter speaks %q",
+				errLifecycleVersionIncompatible, frame.ProtocolVersion, lifecycleProtocolVersion)
+		}
+	}
+	supported := make(map[string]bool, len(frame.Capabilities))
+	for _, c := range frame.Capabilities {
+		supported[c] = true
+	}
+	lc.mu.Lock()
+	lc.supported = supported
+	lc.mu.Unlock()
+	return nil
+}
+
+// lifecycleVersionsCompatible reports whether the adapter version and
+// the runtime version share a major number. v1 only ships `1.x`, so the
+// compat rule is "same major"; minor differences are forward-readable.
+//
+// spec: §15.5 — "Major version changes are breaking."
+// F-15.5.9.
+func lifecycleVersionsCompatible(adapter, runtime string) bool {
+	return lifecycleMajor(adapter) == lifecycleMajor(runtime)
+}
+
+// lifecycleMajor extracts the major number from a `M.m` version string;
+// it returns -1 for malformed input so a typo on the runtime side
+// surfaces as a compat rejection rather than silently matching "0".
+func lifecycleMajor(v string) int {
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if c == '.' {
+			if i == 0 {
+				return -1
+			}
+			n := 0
+			for j := 0; j < i; j++ {
+				if v[j] < '0' || v[j] > '9' {
+					return -1
+				}
+				n = n*10 + int(v[j]-'0')
+			}
+			return n
+		}
+	}
+	// No dot at all is malformed for a `M.m` version.
+	return -1
+}
+
+// readLoop dispatches inbound frames until the connection closes. The
+// runtime's acknowledgements (checkpoint_ready, interrupt_acknowledged,
+// credentials_acknowledged) wake the matching request;
+// llm_request_started / llm_request_completed adjust the per-provider
+// in-flight counter (§4.7). Unknown frame types are ignored for
+// forward compatibility.
+func (lc *RuntimeOps) readLoop(r *bufio.Reader) error {
+	for {
+		frame, err := readLifecycleFrame(r)
+		if err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+			return err
+		}
+		switch frame.Type {
+		case "checkpoint_ready":
+			lc.deliver("ckpt:" + frame.CheckpointID)
+		case "interrupt_acknowledged":
+			lc.deliver("int:" + frame.InterruptID)
+		case "credentials_acknowledged":
+			lc.deliver("cred:" + frame.LeaseID)
+		case "llm_request_started":
+			lc.adjustInflight(frame.Provider, 1)
+		case "llm_request_completed":
+			// The in-flight decrement runs first and whatever session the
+			// frame names, so a frame whose tokens are dropped below still
+			// releases the §4.7 credential-rotation gate.
+			lc.adjustInflight(frame.Provider, -1)
+			// spec: §28.5.3 (CH-RUNTIMEOPS, Messages), §11.2 (direct-mode
+			// usage) — a direct-mode runtime carries the prompt and
+			// completion token counts extracted from the completed
+			// provider response; fold them into the cumulative total of
+			// the session the frame names, for the gateway ReportUsage
+			// pull. The sink drops the counts for an empty or unbound
+			// session. A runtime that cannot extract counts omits both
+			// fields (a zero delta), which the §11.2 anomaly detector
+			// observes.
+			if lc.usage != nil && (frame.InputTokens != 0 || frame.OutputTokens != 0) {
+				lc.usage.AddTokens(frame.SessionID, frame.InputTokens, frame.OutputTokens)
+			}
+			// spec: §4.7.1 (Session seal) — a completion naming a session
+			// is that session's activity, read after the decrement.
+			if lc.activity != nil {
+				lc.activity(frame.SessionID)
+			}
+		}
+	}
+}
+
+// adjustInflight changes the per-provider in-flight LLM-request counter
+// by delta and mirrors the value to the lenny_llm_inflight_requests
+// gauge. The count never goes below zero, so a spurious
+// llm_request_completed (no matching start) is a no-op (§4.7).
+func (lc *RuntimeOps) adjustInflight(provider string, delta int) {
+	if provider == "" {
+		return
+	}
+	lc.mu.Lock()
+	n := lc.inflight[provider] + delta
+	if n < 0 {
+		n = 0
+	}
+	lc.inflight[provider] = n
+	lc.mu.Unlock()
+	SetLLMInflight(provider, n)
+}
+
+// InflightCount reports the number of outbound LLM requests the runtime
+// has reported started without a matching completion for provider. The
+// Full-level credential-rotation gate (§4.7) waits for it to reach zero.
+func (lc *RuntimeOps) InflightCount(provider string) int {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.inflight[provider]
+}
+
+// deliver wakes the request waiting on key with a successful result.
+// The pending channel is buffered, so the send never blocks even when
+// the request has already abandoned the wait.
+func (lc *RuntimeOps) deliver(key string) {
+	lc.mu.Lock()
+	ch, ok := lc.pending[key]
+	if ok {
+		delete(lc.pending, key)
+		ch <- nil
+	}
+	lc.mu.Unlock()
+}
+
+// RequestCheckpoint sends a checkpoint_request for sessionID and blocks
+// until the runtime replies checkpoint_ready for the same id, ctx is
+// cancelled, or the channel closes. deadlineMs is the runtime's quiesce
+// budget (§4.4); the caller bounds the wait with ctx.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (lc *RuntimeOps) RequestCheckpoint(ctx context.Context, sessionID, checkpointID string, deadlineMs int32) error {
+	return lc.request(ctx, "ckpt:"+checkpointID, lifecycleFrame{
+		Type:         "checkpoint_request",
+		SessionID:    sessionID,
+		CheckpointID: checkpointID,
+		DeadlineMs:   deadlineMs,
+	})
+}
+
+// CompleteCheckpoint tells the runtime the checkpoint the adapter
+// requested has been stored, so the runtime resumes. status is "ok" or
+// "failed"; reason carries the failure detail when status is "failed".
+// The frame names sessionID, the session whose work resumes.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (lc *RuntimeOps) CompleteCheckpoint(sessionID, checkpointID, status, reason string) error {
+	return lc.writeFrame(lifecycleFrame{
+		Type:         "checkpoint_complete",
+		SessionID:    sessionID,
+		CheckpointID: checkpointID,
+		Status:       status,
+		Reason:       reason,
+	})
+}
+
+// RequestInterrupt sends an interrupt_request for sessionID and blocks
+// until the runtime replies interrupt_acknowledged for the same id, ctx
+// is cancelled, or the channel closes.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (lc *RuntimeOps) RequestInterrupt(ctx context.Context, sessionID, interruptID string, deadlineMs int32) error {
+	return lc.request(ctx, "int:"+interruptID, lifecycleFrame{
+		Type:        "interrupt_request",
+		SessionID:   sessionID,
+		InterruptID: interruptID,
+		DeadlineMs:  deadlineMs,
+	})
+}
+
+// RotateCredentials sends a credentials_rotated frame naming sessionID
+// and the rewritten credential file, and blocks until the runtime replies
+// credentials_acknowledged for the same lease, ctx is cancelled, or the
+// channel closes (§4.7 credential rotation). The runtime routes the
+// rotation by sessionID rather than by parsing credentialsPath, whose
+// root is operator-configurable.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (lc *RuntimeOps) RotateCredentials(ctx context.Context, sessionID, provider, credentialsPath, leaseID string) error {
+	return lc.request(ctx, "cred:"+leaseID, lifecycleFrame{
+		Type:            "credentials_rotated",
+		SessionID:       sessionID,
+		Provider:        provider,
+		CredentialsPath: credentialsPath,
+		LeaseID:         leaseID,
+	})
+}
+
+// ErrUnknownDeadlineTrigger is returned by SignalDeadlineApproaching for a
+// trigger outside the CH-RUNTIMEOPS contract, which names only
+// "session_age" and "budget". No frame is written, so a runtime never reads
+// a deadline_approaching frame the published schema rejects.
+var ErrUnknownDeadlineTrigger = errors.New("deadline_approaching trigger is neither session_age nor budget")
+
+// SignalDeadlineApproaching warns the runtime that sessionID is nearing
+// expiry or budget exhaustion so it wraps up that session's work.
+// remainingMs is the time left; trigger is "session_age" or "budget", and
+// any other trigger returns ErrUnknownDeadlineTrigger without writing.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (lc *RuntimeOps) SignalDeadlineApproaching(sessionID string, remainingMs int32, trigger string) error {
+	if trigger != "session_age" && trigger != "budget" {
+		return fmt.Errorf("%w: %q", ErrUnknownDeadlineTrigger, trigger)
+	}
+	return lc.writeFrame(lifecycleFrame{
+		Type:        "deadline_approaching",
+		SessionID:   sessionID,
+		RemainingMs: remainingMs,
+		Trigger:     trigger,
+	})
+}
+
+// SignalFilesUpdated tells the runtime that a §7.4 mid-session upload
+// promoted new files into sessionID's workspace root, so the agent
+// re-reads that session's workspace. The adapter sends it only after the atomic overlay completes,
+// so the runtime never observes partially written files. One-way: the
+// runtime is not required to acknowledge. When no runtime is connected
+// (the pre-start path, before the agent dials the channel) writeFrame
+// returns errLifecycleNotConnected, which the caller treats as a no-op.
+// spec: §7.4 — F-7.4.6; §28.5.3 (CH-RUNTIMEOPS, Messages).
+func (lc *RuntimeOps) SignalFilesUpdated(sessionID string) error {
+	return lc.writeFrame(lifecycleFrame{Type: "files_updated", SessionID: sessionID})
+}
+
+// Supports reports whether the runtime declared a capability in the
+// handshake. It returns false before the handshake completes.
+func (lc *RuntimeOps) Supports(capability string) bool {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	return lc.supported[capability]
+}
+
+// WaitHandshake blocks until the current runtime connection completes its
+// lifecycle_capabilities / lifecycle_support handshake, up to wait or
+// until ctx is cancelled or the channel closes, and reports whether the
+// handshake completed. It returns immediately when the handshake is
+// already done. A non-positive wait checks the current state without
+// blocking. The §5.1 observed-integration-level probe uses it to decide
+// whether the runtime opened the CH-RUNTIMEOPS (Full level).
+func (lc *RuntimeOps) WaitHandshake(ctx context.Context, wait time.Duration) bool {
+	ready := lc.currentReady()
+	select {
+	case <-ready:
+		return true
+	default:
+	}
+	if wait <= 0 {
+		return false
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ready:
+		return true
+	case <-lc.done:
+		return false
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return false
+	}
+}
+
+// request registers a pending acknowledgement under key, sends frame,
+// and waits for the runtime's reply.
+func (lc *RuntimeOps) request(ctx context.Context, key string, frame lifecycleFrame) error {
+	select {
+	case <-lc.currentReady():
+	case <-lc.done:
+		return errLifecycleClosed
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	ack := make(chan error, 1)
+	lc.mu.Lock()
+	if lc.closed {
+		lc.mu.Unlock()
+		return errLifecycleClosed
+	}
+	lc.pending[key] = ack
+	lc.mu.Unlock()
+
+	if err := lc.writeFrame(frame); err != nil {
+		lc.cancelPending(key)
+		return err
+	}
+
+	select {
+	case err := <-ack:
+		return err
+	case <-lc.done:
+		return errLifecycleClosed
+	case <-ctx.Done():
+		lc.cancelPending(key)
+		return ctx.Err()
+	}
+}
+
+// cancelPending drops a pending acknowledgement that will not arrive.
+func (lc *RuntimeOps) cancelPending(key string) {
+	lc.mu.Lock()
+	delete(lc.pending, key)
+	lc.mu.Unlock()
+}
+
+// writeFrame encodes one JSONL frame to the runtime.
+func (lc *RuntimeOps) writeFrame(f lifecycleFrame) error {
+	lc.mu.Lock()
+	defer lc.mu.Unlock()
+	if lc.closed {
+		return errLifecycleClosed
+	}
+	if lc.enc == nil {
+		return errLifecycleNotConnected
+	}
+	return lc.enc.Encode(f)
+}
+
+// Close stops the listener, drops the runtime connection, and fails
+// every pending request. It is safe to call more than once.
+func (lc *RuntimeOps) Close() error {
+	lc.mu.Lock()
+	if lc.closed {
+		lc.mu.Unlock()
+		return nil
+	}
+	lc.closed = true
+	conn := lc.conn
+	for key, ch := range lc.pending {
+		ch <- errLifecycleClosed
+		delete(lc.pending, key)
+	}
+	l := lc.listener
+	lc.mu.Unlock()
+
+	err := l.Close()
+	if conn != nil {
+		conn.Close()
+	}
+	return err
+}
+
+// readLifecycleFrame reads one newline-terminated JSON frame.
+func readLifecycleFrame(r *bufio.Reader) (lifecycleFrame, error) {
+	line, err := r.ReadBytes('\n')
+	if err != nil && len(line) == 0 {
+		return lifecycleFrame{}, err
+	}
+	var f lifecycleFrame
+	if err := json.Unmarshal(line, &f); err != nil {
+		return lifecycleFrame{}, fmt.Errorf("decode lifecycle frame: %w", err)
+	}
+	return f, nil
+}

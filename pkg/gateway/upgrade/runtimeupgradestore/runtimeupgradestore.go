@@ -3,13 +3,13 @@
 // Package runtimeupgradestore persists the §10.5 RuntimeUpgrade state
 // machine so an operator-driven runtime image rollout survives a gateway
 // restart and resumes from the recorded phase (spec/10_gateway-internals.md
-// §10.5 lines 466-540). One row per pool: the upgrade targets a single
+// §10.5). One row per pool: the upgrade targets a single
 // SandboxWarmPool, so the table is keyed by pool name. The
 // pkg/gateway/runtimeupgrade Manager loads the row, drives the
 // pkg/runtime/upgrade/state linear state machine, and writes the new
 // phase back here under an optimistic version guard. The durable
 // previous_pool_spec column preserves the old pool configuration for
-// rollback (§10.5 line 507) until the upgrade reaches Complete.
+// rollback (§10.5) until the upgrade reaches Complete.
 package runtimeupgradestore
 
 import (
@@ -23,11 +23,11 @@ import (
 // match the expected version, signalling a concurrent upgrade mutation
 // (a second gateway replica or operator advanced the phase in between).
 // The admin handler maps it to HTTP 409 so the operator retries against
-// the fresh phase. spec: §10.5 line 468.
+// the fresh phase. spec: §10.5.
 var ErrConflict = errors.New("runtimeupgradestore: version conflict")
 
 // Record is the persisted §10.5 RuntimeUpgrade state for one pool. The
-// fields mirror the RuntimeUpgrade CRD spec block (§10.5 lines 480-508):
+// fields mirror the RuntimeUpgrade CRD spec block (§10.5):
 // the current phase, the captured previous pool spec for rollback, and
 // the per-upgrade knobs (canary, drain-first, schema-version, timeouts,
 // auto-advance).
@@ -44,43 +44,42 @@ type Record struct {
 	PriorPhase string
 
 	// NewImage is the digest-pinned runtime image the upgrade rolls out
-	// (§10.5 line 480 `--new-image <digest>`).
+	// (§10.5).
 	NewImage string
 
 	// PreviousPoolSpec is the JSON-serialized old pool configuration,
-	// preserved so a rollback can recreate the old pool (§10.5 line 507).
+	// preserved so a rollback can recreate the old pool (§10.5).
 	// It is retained until the upgrade reaches Complete.
 	PreviousPoolSpec []byte
 
 	// SchemaVersion gates Phase 3 schema migration: while it is set and
-	// the upgrade is not Complete, the gateway blocks Phase 3 (§10.5
-	// line 502). Empty when the image needs no schema migration.
+	// the upgrade is not Complete, the gateway blocks Phase 3 (§10.5). Empty when the image needs no schema migration.
 	SchemaVersion string
 
 	// DrainFirst forces Draining to fully complete (old pool
-	// activePodCount == 0) before Contracting (§10.5 line 499).
+	// activePodCount == 0) before Contracting (§10.5).
 	DrainFirst bool
 
 	// CanaryPercent splits new-session routing to the new pool during
-	// Expanding (§10.5 line 481). Zero routes all new sessions to the
+	// Expanding (§10.5). Zero routes all new sessions to the
 	// new pool.
 	CanaryPercent int
 
 	// StabilizationWindowSeconds is the dwell the new pool must hold
-	// idlePodCount >= minWarm before Expanding may exit (§10.5 line 481,
+	// idlePodCount >= minWarm before Expanding may exit (§10.5,
 	// default 120).
 	StabilizationWindowSeconds int64
 
 	// DrainTimeoutSeconds bounds Draining; on expiry remaining sessions
-	// are force-terminated with checkpoint (§10.5 line 482, default
+	// are force-terminated with checkpoint (§10.5, default
 	// maxSessionAge).
 	DrainTimeoutSeconds int64
 
 	// AutoAdvance auto-proceeds through phases without an operator
-	// proceed call (§10.5 line 480).
+	// proceed call (§10.5).
 	AutoAdvance bool
 
-	// PauseReason and PausedAt capture the §10.5 line 494 pause
+	// PauseReason and PausedAt capture the §10.5 pause
 	// provenance. Both zero unless Phase == paused.
 	PauseReason string
 	PausedAt    time.Time

@@ -1,9 +1,9 @@
--- §4.2 line 173 tenant-scope the connector registry.
+-- §4.2 tenant-scope the connector registry.
 --
 -- The original 0004_connectors migration carried no tenant_id column
 -- because the chart-author's earlier interpretation of §9.3 treated
 -- connectors as platform-global records (the `visibility` field
--- discriminated tenant vs platform exposure). The §4.2 line 173
+-- discriminated tenant vs platform exposure). The §4.2
 -- classification table is authoritative and explicitly classifies
 -- connectors as Tenant-scoped: "tenant_id column + RLS. Connector
 -- definitions (endpoint URL, auth config) are per-tenant."

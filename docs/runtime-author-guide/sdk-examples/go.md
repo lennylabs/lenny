@@ -21,7 +21,8 @@ This page presents a complete file summarizer runtime in Go. It implements the B
 //   - Reads JSON Lines from stdin
 //   - Handles "message" by reading workspace files and summarizing them
 //   - Uses adapter-local tools (read_file, list_dir) via tool_call/tool_result
-//   - Handles "heartbeat" by responding with "heartbeat_ack"
+//   - Handles "heartbeat" by responding with "heartbeat_ack", reporting
+//     busy for the session whose message is in progress
 //   - Handles "shutdown" by exiting cleanly
 //   - Ignores unknown message types for forward compatibility
 //
@@ -44,16 +45,20 @@ import (
 // InboundMessage is the envelope for all messages received on stdin.
 // Unknown fields are silently ignored by encoding/json (forward-compatibility rule).
 type InboundMessage struct {
-	Type       string       `json:"type"`
-	ID         string       `json:"id,omitempty"`
-	Input      []MessagePart `json:"input,omitempty"`
-	TS         int64        `json:"ts,omitempty"`
-	Reason     string       `json:"reason,omitempty"`
-	DeadlineMs int          `json:"deadline_ms,omitempty"`
+	Type  string        `json:"type"`
+	ID    string        `json:"id,omitempty"`
+	Input []MessagePart `json:"input,omitempty"`
+	// SessionID names the session this frame is addressed to. The adapter
+	// populates it on every pod, and the runtime echoes it on the
+	// session-scoped frames it emits in response.
+	SessionID  string `json:"sessionId,omitempty"`
+	TS         int64  `json:"ts,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	DeadlineMs int    `json:"deadline_ms,omitempty"`
 
 	// tool_result fields
 	Content []MessagePart `json:"content,omitempty"`
-	IsError bool         `json:"isError,omitempty"`
+	IsError bool          `json:"isError,omitempty"`
 }
 
 // MessagePart is Lenny's internal content model.
@@ -67,19 +72,24 @@ type MessagePart struct {
 type ToolCall struct {
 	Type      string            `json:"type"`
 	ID        string            `json:"id"`
+	SessionID string            `json:"sessionId,omitempty"`
 	Name      string            `json:"name"`
 	Arguments map[string]string `json:"arguments"`
 }
 
 // Response signals task completion.
 type Response struct {
-	Type   string       `json:"type"`
-	Output []MessagePart `json:"output"`
+	Type      string        `json:"type"`
+	SessionID string        `json:"sessionId,omitempty"`
+	Output    []MessagePart `json:"output"`
 }
 
-// HeartbeatAck acknowledges a heartbeat ping.
+// HeartbeatAck acknowledges a heartbeat ping. SessionID and Busy report
+// that the runtime is doing work for the session the heartbeat names.
 type HeartbeatAck struct {
-	Type string `json:"type"`
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId,omitempty"`
+	Busy      bool   `json:"busy,omitempty"`
 }
 
 // ---- State ----
@@ -97,14 +107,19 @@ var fileContents []string
 var fileList []string
 
 // phase tracks the current processing phase:
-//   0 = waiting for message
-//   1 = listing directory
-//   2 = reading files
-//   3 = producing summary
+//
+//	0 = waiting for message
+//	1 = listing directory
+//	2 = reading files
+//	3 = producing summary
 var phase int
 
 // currentFileIndex tracks which file we are reading next.
 var currentFileIndex int
+
+// busySessions holds each session whose message is in progress, from
+// handleMessage until writeResponse answers it.
+var busySessions = map[string]bool{}
 
 // ---- Main loop ----
 
@@ -132,8 +147,13 @@ func main() {
 			handleToolResult(msg)
 
 		case "heartbeat":
-			// Respond immediately. Failure to ack within 10 seconds causes SIGTERM.
-			writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
+			// Respond immediately, within 10 seconds. While a message for the
+			// session the heartbeat names is in progress, report busy.
+			if busySessions[msg.SessionID] {
+				writeJSON(HeartbeatAck{Type: "heartbeat_ack", SessionID: msg.SessionID, Busy: true})
+			} else {
+				writeJSON(HeartbeatAck{Type: "heartbeat_ack"})
+			}
 
 		case "shutdown":
 			fmt.Fprintf(os.Stderr, "file-summarizer: shutdown (reason=%s)\n", msg.Reason)
@@ -159,6 +179,7 @@ func handleMessage(msg InboundMessage) {
 	fileList = nil
 	currentFileIndex = 0
 	phase = 1
+	busySessions[msg.SessionID] = true
 
 	// Extract the user's request text.
 	requestText := ""
@@ -167,8 +188,9 @@ func handleMessage(msg InboundMessage) {
 	}
 	fmt.Fprintf(os.Stderr, "file-summarizer: received request: %s\n", requestText)
 
-	// Step 1: List files in the workspace.
-	listDir("/workspace/current")
+	// Step 1: List files in the workspace. The frame this message triggers is
+	// addressed to the session the message itself was addressed to.
+	listDir(msg.SessionID, "/workspace/slots/"+msg.SessionID+"/current")
 }
 
 // handleToolResult processes the result of a tool call.
@@ -185,7 +207,7 @@ func handleToolResult(msg InboundMessage) {
 			errorText = msg.Content[0].Inline
 		}
 		fmt.Fprintf(os.Stderr, "file-summarizer: tool error: %s\n", errorText)
-		writeResponse(fmt.Sprintf("Error reading workspace: %s", errorText))
+		writeResponse(msg.SessionID, fmt.Sprintf("Error reading workspace: %s", errorText))
 		return
 	}
 
@@ -204,14 +226,14 @@ func handleToolResult(msg InboundMessage) {
 		}
 
 		if len(fileList) == 0 {
-			writeResponse("No files found in the workspace.")
+			writeResponse(msg.SessionID, "No files found in the workspace.")
 			return
 		}
 
 		// Step 2: Start reading files one by one.
 		phase = 2
 		currentFileIndex = 0
-		readNextFile()
+		readNextFile(msg.SessionID)
 
 	case 2:
 		// Phase 2: We received a file's contents.
@@ -225,45 +247,50 @@ func handleToolResult(msg InboundMessage) {
 		currentFileIndex++
 		if currentFileIndex < len(fileList) && currentFileIndex < 10 {
 			// Read the next file (cap at 10 files to avoid excessive reads).
-			readNextFile()
+			readNextFile(msg.SessionID)
 		} else {
 			// All files read. Produce the summary.
 			phase = 3
-			produceSummary()
+			produceSummary(msg.SessionID)
 		}
 	}
 }
 
-// listDir sends a list_dir tool call for the given path.
-func listDir(path string) {
+// listDir sends a list_dir tool call for the given path, addressed to the
+// session the inbound frame that triggered it was addressed to.
+func listDir(sessionID, path string) {
 	id := nextToolCallID()
 	pendingToolCallID = id
 	writeJSON(ToolCall{
 		Type:      "tool_call",
 		ID:        id,
+		SessionID: sessionID,
 		Name:      "list_dir",
 		Arguments: map[string]string{"path": path},
 	})
 }
 
-// readNextFile sends a read_file tool call for the next file in the list.
-func readNextFile() {
+// readNextFile sends a read_file tool call for the next file in the list,
+// addressed to the session the tool_result that triggered it was addressed to.
+func readNextFile(sessionID string) {
 	if currentFileIndex >= len(fileList) {
 		return
 	}
 	id := nextToolCallID()
 	pendingToolCallID = id
-	filePath := "/workspace/current/" + fileList[currentFileIndex]
+	filePath := "/workspace/slots/" + sessionID + "/current/" + fileList[currentFileIndex]
 	writeJSON(ToolCall{
 		Type:      "tool_call",
 		ID:        id,
+		SessionID: sessionID,
 		Name:      "read_file",
 		Arguments: map[string]string{"path": filePath},
 	})
 }
 
-// produceSummary generates the final summary response.
-func produceSummary() {
+// produceSummary generates the final summary response, addressed to the
+// session the tool_result that completed the read run was addressed to.
+func produceSummary(sessionID string) {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Workspace Summary (%d files)\n\n", len(fileContents)))
 	for _, fc := range fileContents {
@@ -271,20 +298,25 @@ func produceSummary() {
 		sb.WriteString("\n\n")
 	}
 	sb.WriteString(fmt.Sprintf("Total files examined: %d", len(fileContents)))
-	writeResponse(sb.String())
+	writeResponse(sessionID, sb.String())
 }
 
 // ---- Helpers ----
 
-// writeResponse sends a response message to stdout.
-func writeResponse(text string) {
+// writeResponse sends a response message to stdout, addressed to the session
+// the inbound frame it answers was addressed to. Stamping the address read
+// from that frame, rather than one held in a variable between frames, is what
+// keeps the answer on the right session when the pod holds more than one.
+func writeResponse(sessionID, text string) {
 	resp := Response{
-		Type: "response",
+		Type:      "response",
+		SessionID: sessionID,
 		Output: []MessagePart{
 			{Type: "text", Inline: text},
 		},
 	}
 	writeJSON(resp)
+	delete(busySessions, sessionID)
 	phase = 0
 }
 
@@ -322,14 +354,14 @@ func truncate(s string, n int) string {
 ### Message Flow
 
 ```
-1. Adapter sends:    {"type":"message","id":"msg_001","input":[{"type":"text","inline":"Summarize files"}]}
-2. Runtime sends:    {"type":"tool_call","id":"tc_001","name":"list_dir","arguments":{"path":"/workspace/current"}}
-3. Adapter sends:    {"type":"tool_result","id":"tc_001","content":[{"type":"text","inline":"main.go\nutil.go"}]}
-4. Runtime sends:    {"type":"tool_call","id":"tc_002","name":"read_file","arguments":{"path":"/workspace/current/main.go"}}
-5. Adapter sends:    {"type":"tool_result","id":"tc_002","content":[{"type":"text","inline":"package main..."}]}
-6. Runtime sends:    {"type":"tool_call","id":"tc_003","name":"read_file","arguments":{"path":"/workspace/current/util.go"}}
-7. Adapter sends:    {"type":"tool_result","id":"tc_003","content":[{"type":"text","inline":"package util..."}]}
-8. Runtime sends:    {"type":"response","output":[{"type":"text","inline":"Workspace Summary (2 files)..."}]}
+1. Adapter sends:    {"type":"message","id":"msg_001","sessionId":"sess_abc","input":[{"type":"text","inline":"Summarize files"}]}
+2. Runtime sends:    {"type":"tool_call","id":"tc_001","sessionId":"sess_abc","name":"list_dir","arguments":{"path":"/workspace/slots/sess_abc/current"}}
+3. Adapter sends:    {"type":"tool_result","id":"tc_001","sessionId":"sess_abc","content":[{"type":"text","inline":"main.go\nutil.go"}]}
+4. Runtime sends:    {"type":"tool_call","id":"tc_002","sessionId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/slots/sess_abc/current/main.go"}}
+5. Adapter sends:    {"type":"tool_result","id":"tc_002","sessionId":"sess_abc","content":[{"type":"text","inline":"package main..."}]}
+6. Runtime sends:    {"type":"tool_call","id":"tc_003","sessionId":"sess_abc","name":"read_file","arguments":{"path":"/workspace/slots/sess_abc/current/util.go"}}
+7. Adapter sends:    {"type":"tool_result","id":"tc_003","sessionId":"sess_abc","content":[{"type":"text","inline":"package util..."}]}
+8. Runtime sends:    {"type":"response","sessionId":"sess_abc","output":[{"type":"text","inline":"Workspace Summary (2 files)..."}]}
 ```
 
 ### Key Design Choices
@@ -337,7 +369,7 @@ func truncate(s string, n int) string {
 - **Sequential file reading:** Files are read one at a time via `tool_call`/`tool_result` to keep the state machine simple. A production runtime could use multiple outstanding tool calls for parallel reads.
 - **Atomic tool call IDs:** The `toolCallCounter` uses `atomic.Int64` for thread-safe ID generation, even though the main loop is single-threaded (future-proofing).
 - **Truncation:** File contents are truncated to 500 characters per file. A production summarizer would pass the full content to an LLM.
-- **Heartbeat interleaving:** Heartbeats may arrive between tool calls. The main loop handles them regardless of the current `phase`.
+- **Heartbeat interleaving:** Heartbeats may arrive between tool calls. The main loop handles them regardless of the current `phase`, and while a message is in progress it acknowledges a heartbeat that names that message's session with `busy: true`. If no acknowledgment arrives within 10 seconds, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy. A runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for the session the heartbeat names, as in `{"type":"heartbeat_ack","sessionId":"sess_abc","busy":true}`. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../../reference/glossary#slot); each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. See [Idle suspension](../lifecycle.md#idle-suspension).
 
 ---
 
@@ -422,27 +454,27 @@ require github.com/mark3labs/mcp-go v0.x.x
 
 ### 2. Read the Adapter Manifest
 
+The manifest carries only pod-scoped fields. A session's own context, such as its credential file path, arrives in that session's `session_start` frame on stdin (see the [Adapter Contract](../../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin)). This example keeps no per-session context, so it takes the session identifier from each `message`'s `sessionId` and ignores `session_start` and `session_end` under the unknown-type rule.
+
 ```go
 import "encoding/json"
 import "os"
 
 type AdapterManifest struct {
-    SessionID          string `json:"sessionId"`
-    TaskID             string `json:"taskId"`
-    PlatformMcpServer  struct {
-        Socket string `json:"socket"`
-    } `json:"platformMcpServer"`
-    McpNonce string `json:"mcpNonce"`
+	PlatformMcpServer struct {
+		Socket string `json:"socket"`
+	} `json:"platformMcpServer"`
+	McpNonce string `json:"mcpNonce"`
 }
 
 func readManifest() (*AdapterManifest, error) {
-    data, err := os.ReadFile("/run/lenny/adapter-manifest.json")
-    if err != nil {
-        return nil, err
-    }
-    var m AdapterManifest
-    err = json.Unmarshal(data, &m)
-    return &m, err
+	data, err := os.ReadFile("/run/lenny/adapter-manifest.json")
+	if err != nil {
+		return nil, err
+	}
+	var m AdapterManifest
+	err = json.Unmarshal(data, &m)
+	return &m, err
 }
 ```
 
@@ -452,19 +484,19 @@ func readManifest() (*AdapterManifest, error) {
 import "github.com/mark3labs/mcp-go/client"
 
 func connectMCP(manifest *AdapterManifest) (*client.Client, error) {
-    c, err := client.NewUnixSocketClient(manifest.PlatformMcpServer.Socket)
-    if err != nil {
-        return nil, err
-    }
+	c, err := client.NewUnixSocketClient(manifest.PlatformMcpServer.Socket)
+	if err != nil {
+		return nil, err
+	}
 
-    // Initialize with nonce
-    err = c.Initialize(client.InitOptions{
-        Nonce:           manifest.McpNonce,
-        ClientName:      "file-summarizer",
-        ClientVersion:   "1.0.0",
-        ProtocolVersion: "2025-03-26",
-    })
-    return c, err
+	// Initialize with nonce
+	err = c.Initialize(client.InitOptions{
+		Nonce:           manifest.McpNonce,
+		ClientName:      "file-summarizer",
+		ClientVersion:   "1.0.0",
+		ProtocolVersion: "2025-03-26",
+	})
+	return c, err
 }
 ```
 
@@ -473,24 +505,24 @@ func connectMCP(manifest *AdapterManifest) (*client.Client, error) {
 ```go
 // Emit incremental output
 func emitOutput(c *client.Client, text string) error {
-    return c.CallTool("lenny/output", map[string]interface{}{
-        "output": []map[string]string{
-            {"type": "text", "inline": text},
-        },
-    })
+	return c.CallTool("lenny/output", map[string]interface{}{
+		"output": []map[string]string{
+			{"type": "text", "inline": text},
+		},
+	})
 }
 
 // Delegate a subtask
 func delegateReview(c *client.Client, code string) (string, error) {
-    result, err := c.CallTool("lenny/delegate_task", map[string]interface{}{
-        "target": "code-reviewer",
-        "task": map[string]interface{}{
-            "input": []map[string]string{
-                {"type": "text", "inline": "Review this code:\n" + code},
-            },
-        },
-    })
-    return result.SessionId, err
+	result, err := c.CallTool("lenny/delegate_task", map[string]interface{}{
+		"target": "code-reviewer",
+		"task": map[string]interface{}{
+			"input": []map[string]string{
+				{"type": "text", "inline": "Review this code:\n" + code},
+			},
+		},
+	})
+	return result.SessionId, err
 }
 ```
 

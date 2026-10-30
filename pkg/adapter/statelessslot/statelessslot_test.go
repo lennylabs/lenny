@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §5.2 line 500 — the gate admits up to maxConcurrent slots and
+// spec: §5.2 — the gate admits up to maxConcurrent slots and
 // reports Ready while a slot is free.
 func TestGateAdmitsUpToMaxThenNotReady(t *testing.T) {
 	g := NewGate(2)
@@ -34,7 +34,7 @@ func TestGateAdmitsUpToMaxThenNotReady(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 500 — the readiness probe returns 503 at slot capacity
+// spec: §5.2 — the readiness probe returns 503 at slot capacity
 // so the pod drops out of the EndpointSlice.
 func TestReadyHandlerReflectsCapacity(t *testing.T) {
 	g := NewGate(1)

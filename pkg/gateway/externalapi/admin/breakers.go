@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
-// scopeDetail returns the §16.7 line 673 tier-specific scope object the
+// scopeDetail returns the §16.7 tier-specific scope object the
 // `circuit_breaker.state_changed` audit row carries. The shape mirrors
 // the admin API body and the persisted `cb:{name}` value: a single
 // key keyed by `limit_tier` (`runtime`, `pool`, `connector`, or
@@ -118,7 +118,7 @@ func (r *Router) handleListBreakers(w http.ResponseWriter, req *http.Request) {
 
 // BreakerSimulation is the §15.1 dry-run simulation block the
 // circuit-breaker open/close endpoints return under ?dryRun=true.
-// spec: §15.1 line 1140 (circuit-breaker dryRun).
+// spec: §15.1.
 type BreakerSimulation struct {
 	CurrentState     string `json:"currentState"`
 	PredictedState   string `json:"predictedState"`
@@ -128,7 +128,7 @@ type BreakerSimulation struct {
 // OpenBreakerDryRun is the reduced §15.1 dry-run response for POST
 // /open — exactly name, state, reason, limit_tier, scope, plus the
 // simulation block. No audit-like fields are populated because no state
-// mutation occurs. spec: §15.1 line 1140.
+// mutation occurs. spec: §15.1.
 type OpenBreakerDryRun struct {
 	Name       string            `json:"name"`
 	State      string            `json:"state"`
@@ -141,7 +141,7 @@ type OpenBreakerDryRun struct {
 // CloseBreakerDryRun is the reduced §15.1 dry-run response for POST
 // /close — exactly name, state, limit_tier, scope (the latter two read
 // from the persisted breaker), plus the simulation block.
-// spec: §15.1 line 1140.
+// spec: §15.1.
 type CloseBreakerDryRun struct {
 	Name       string            `json:"name"`
 	State      string            `json:"state"`
@@ -153,7 +153,7 @@ type CloseBreakerDryRun struct {
 // dryRunOpenBreaker simulates POST .../open: it validates the body and
 // the §11.6 scope-immutability rule against any persisted breaker, reads
 // the current Redis state, and returns the reduced simulation object
-// without writing or auditing. spec: §15.1 line 1140.
+// without writing or auditing. spec: §15.1.
 func (r *Router) dryRunOpenBreaker(w http.ResponseWriter, req *http.Request, name string, body OpenBreakerRequest) {
 	b := circuitbreaker.Breaker{
 		Name:      name,
@@ -209,7 +209,7 @@ func (r *Router) dryRunOpenBreaker(w http.ResponseWriter, req *http.Request, nam
 
 // dryRunCloseBreaker simulates POST .../close: it validates the breaker
 // exists in Redis and returns the reduced simulation object without
-// writing or auditing. spec: §15.1 line 1140.
+// writing or auditing. spec: §15.1.
 func (r *Router) dryRunCloseBreaker(w http.ResponseWriter, req *http.Request, name string) {
 	existing, err := r.breakers.Get(req.Context(), name)
 	if err != nil {
@@ -245,7 +245,7 @@ func (r *Router) handleOpenBreaker(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true simulates the open (idempotency
+	// spec: §15.1 — ?dryRun=true simulates the open (idempotency
 	// + persisted-scope conflict) without writing Redis or auditing.
 	if req.URL.Query().Get("dryRun") == "true" {
 		r.dryRunOpenBreaker(w, req, name, body)
@@ -288,7 +288,7 @@ func (r *Router) handleOpenBreaker(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §16.7 line 673 — the operator-managed circuit-breaker
+	// spec: §16.7 — the operator-managed circuit-breaker
 	// lifecycle event is `circuit_breaker.state_changed` with
 	// old_state/new_state fields. The `circuit_breaker.opened` /
 	// `circuit_breaker.closed` strings the gateway used to emit are
@@ -316,7 +316,7 @@ func (r *Router) handleOpenBreaker(w http.ResponseWriter, req *http.Request) {
 
 func (r *Router) handleCloseBreaker(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
-	// spec: §15.1 line 1140 — ?dryRun=true simulates the close without
+	// spec: §15.1 — ?dryRun=true simulates the close without
 	// writing Redis or auditing.
 	if req.URL.Query().Get("dryRun") == "true" {
 		r.dryRunCloseBreaker(w, req, name)
@@ -337,7 +337,7 @@ func (r *Router) handleCloseBreaker(w http.ResponseWriter, req *http.Request) {
 			"admin handler reached without authenticated principal", nil)
 		return
 	}
-	// spec: §16.7 line 673 — close path emits the same
+	// spec: §16.7 — close path emits the same
 	// `circuit_breaker.state_changed` event with old_state=open,
 	// new_state=closed and a platform-generated reason ("operator
 	// close"). The persisted tier/scope are echoed so a SIEM joining

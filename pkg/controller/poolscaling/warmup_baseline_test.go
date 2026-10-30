@@ -39,7 +39,7 @@ func gaugeValueForPool(t *testing.T, pool string) (float64, bool) {
 
 // TestWarmupBaselineForAlertUsesExplicitBaseline verifies the alert
 // threshold source mirrors the operator-configured per-pool baseline.
-// spec: §16.5 line 488.
+// spec: §16.5.
 func TestWarmupBaselineForAlertUsesExplicitBaseline_spec_16_5_488(t *testing.T) {
 	for _, baseline := range []int64{5, 30, 60, 90} {
 		cfg := PoolConfig{ScalePolicy: &lennyv1.ScalePolicy{PodWarmupSecondsBaseline: baseline}}
@@ -51,7 +51,7 @@ func TestWarmupBaselineForAlertUsesExplicitBaseline_spec_16_5_488(t *testing.T) 
 
 // TestWarmupBaselineForAlertDefaultsTo30WhenUnset verifies an
 // unconfigured pool falls back to the spec's 30s default so the alert
-// fires at the prior fixed 60s threshold (2×30). spec: §16.5 line 488.
+// fires at the prior fixed 60s threshold (2×30). spec: §16.5.
 func TestWarmupBaselineForAlertDefaultsTo30WhenUnset_spec_16_5_488(t *testing.T) {
 	cases := []struct {
 		name string
@@ -72,7 +72,7 @@ func TestWarmupBaselineForAlertDefaultsTo30WhenUnset_spec_16_5_488(t *testing.T)
 
 // TestWarmupBaselineMeterSetAndForget verifies the meter publishes a
 // per-pool series and drops the series for pools removed from the
-// source. spec: §16.5 line 488.
+// source. spec: §16.5.
 func TestWarmupBaselineMeterSetAndForget_spec_16_5_488(t *testing.T) {
 	const poolA, poolB = "warmup-meter-a", "warmup-meter-b"
 	m := newWarmupBaselineMeter()
@@ -111,7 +111,7 @@ func (f *warmupFakeSource) ListPoolConfigs(context.Context) ([]PoolConfig, error
 
 // TestSyncEmitsWarmupBaselineGauge verifies a full reconcile pass
 // mirrors each pool's baseline into the gauge and clears it when the
-// pool is removed from the Postgres source. spec: §16.5 line 488.
+// pool is removed from the Postgres source. spec: §16.5.
 func TestSyncEmitsWarmupBaselineGauge_spec_16_5_488(t *testing.T) {
 	const pool = "warmup-sync-pool"
 	t.Cleanup(func() { poolWarmupBaselineSeconds.DeleteLabelValues(pool) })

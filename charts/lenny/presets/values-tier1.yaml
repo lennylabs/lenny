@@ -78,17 +78,17 @@ tokenService:
 # background loops; both replicas serve the HTTP surface.
 ops:
   replicas: 2
-  # §25.4 line 903 / §17.8.4 — Tier 1 may raise the self-monitor cadence
+  # §25.4 / §17.8.4 — Tier 1 may raise the self-monitor cadence
   # to 30s to reduce dev-cluster overhead (10s is recommended at Tier
   # 2/3 to catch fast failures).
   selfHealth:
     checkIntervalSeconds: 30
-  # §25.5 line 2598 / §17.8.4 — Tier 1 ops:events:stream MAXLEN of 10,000
+  # §25.5 / §17.8.4 — Tier 1 ops:events:stream MAXLEN of 10,000
   # (~5 MB Redis budget). Matches the base default; restated so the
   # §17.8.4 tier-preset override surface is explicit.
   events:
     streamMaxLen: 10000
-  # §25.5 lines 2655-2659 — Tier 1 webhook delivery retention of 1 day
+  # §25.5 — Tier 1 webhook delivery retention of 1 day
   # (dev: recent debugging only).
   webhooks:
     deliveryRetentionDays: 1

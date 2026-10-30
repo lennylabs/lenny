@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
 )
 
-// spec: §25.3 lines 443-451 — FiringAlerts returns the full Alert (rule +
+// spec: §25.3 — FiringAlerts returns the full Alert (rule +
 // severity) for every firing rule so the health derivation can map a
 // critical alert to unhealthy and a warning to degraded.
 func TestFiringAlertsCarriesRuleAndSeverity_spec_25_3_443(t *testing.T) {
@@ -53,7 +53,7 @@ func TestFiringAlertsCarriesRuleAndSeverity_spec_25_3_443(t *testing.T) {
 }
 
 // A rule still in StatePending (its For window has not elapsed) is not a
-// firing alert. spec: §25.3 lines 443-451.
+// firing alert. spec: §25.3.
 func TestFiringAlertsExcludesPending_spec_25_3_443(t *testing.T) {
 	warn := testRule("Pending", "warn_expr", time.Hour)
 	fake := &fakeExpr{active: map[string]bool{"warn_expr": true}}

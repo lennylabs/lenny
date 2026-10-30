@@ -8,7 +8,7 @@
 // cannot silently run without encryption, and that an operator running
 // with relaxed TLS is warned at startup and on a recurring cadence.
 //
-// spec: §17.4 lines 268-269 (dev mode guard rails).
+// spec: §17.4.
 package devmode
 
 import (
@@ -17,16 +17,16 @@ import (
 	"time"
 )
 
-// TLSDisabledWarning is the verbatim §17.4 line 269 startup warning.
+// TLSDisabledWarning is the verbatim §17.4 startup warning.
 // The gateway logs it once at startup and then re-broadcasts it every
 // WarnInterval while dev mode is active.
 const TLSDisabledWarning = "WARNING: TLS disabled — dev mode active. Do not use in production."
 
-// WarnInterval is the §17.4 line 269 cadence at which the gateway
+// WarnInterval is the §17.4 cadence at which the gateway
 // re-logs TLSDisabledWarning while the process runs.
 const WarnInterval = 60 * time.Second
 
-// ErrTLSRequired is the §17.4 line 268 hard-startup-assertion failure.
+// ErrTLSRequired is the §17.4 hard-startup-assertion failure.
 // The gateway serves plain HTTP and relies on an upstream ingress/proxy
 // to terminate TLS; with neither dev mode nor an explicit
 // upstream-termination acknowledgment, it refuses to start so a
@@ -34,12 +34,12 @@ const WarnInterval = 60 * time.Second
 var ErrTLSRequired = errors.New(
 	"gateway refuses to start with TLS disabled: set LENNY_DEV_MODE=true for local " +
 		"development, or LENNY_TLS_TERMINATED_UPSTREAM=true when an ingress or proxy " +
-		"terminates TLS in front of the gateway (§17.4 line 268)",
+		"terminates TLS in front of the gateway (§17.4)",
 )
 
-// ResolveStartupGate enforces the §17.4 line 268 hard startup assertion.
+// ResolveStartupGate enforces the §17.4 hard startup assertion.
 // The gateway's listener is always plain HTTP; production terminates TLS
-// at the ingress (the §17 line 7 Deployment+Service+Ingress topology)
+// at the ingress (the §17 Deployment+Service+Ingress topology)
 // and acknowledges that posture with tlsTerminatedUpstream. With neither
 // dev mode nor that acknowledgment the gate fails so a misconfigured
 // staging or production deployment cannot silently run without
@@ -52,7 +52,7 @@ func ResolveStartupGate(devMode, tlsTerminatedUpstream bool) error {
 }
 
 // StartWarnTicker logs TLSDisabledWarning immediately and then every
-// interval until ctx is cancelled, implementing the §17.4 line 269
+// interval until ctx is cancelled, implementing the §17.4
 // "logged on every startup ... repeated every 60 seconds" requirement.
 // It launches the recurring broadcast in its own goroutine and returns
 // at once. A non-positive interval falls back to WarnInterval. logf is

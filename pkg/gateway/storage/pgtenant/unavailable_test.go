@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// spec: §13.3 line 591 / line 601 — the connectivity classifier that
+// spec: §13.3 — the connectivity classifier that
 // distinguishes a Postgres outage (mapped to 503 token_store_unavailable
 // / token_validation_unavailable) from a genuine internal error or a
 // constraint violation (mapped to 500). F-13.3.4.

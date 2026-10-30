@@ -29,24 +29,24 @@
 //     CA-bundle injection.
 //   - admission_security_test.go — §13.1 pod-security single-vector
 //     bypass attempts.
-//   - admission_cred_test.go — §12.9.3 lenny-pod-security credential
+//   - admission_cred_test.go — TESTING.md §12.9.3 lenny-pod-security credential
 //     fsGroup-missing rejection.
-//   - admission_label_immutability_test.go — §12.9.3
+//   - admission_label_immutability_test.go — TESTING.md §12.9.3
 //     lenny-label-immutability UPDATE-guard rejection on a live agent
 //     pod.
-//   - admission_ephemeral_test.go — §12.9.3
+//   - admission_ephemeral_test.go — TESTING.md §12.9.3
 //     lenny-ephemeral-container-cred-guard rejection of a
 //     credential-reaching ephemeral-container attach on a live agent
 //     pod.
 //   - image_signing_test.go — §5.2 cosign webhook gating.
-//   - tenant_isolation_test.go — §12.9.1 cross-store tenant isolation
+//   - tenant_isolation_test.go — TESTING.md §12.9.1 cross-store tenant isolation
 //     (the §11.7 Postgres-backed audit chain partition and the
 //     cross-tenant audit-query rejection).
-//   - audit_integrity_test.go — §12.9.10 audit-chain continuity and
+//   - audit_integrity_test.go — TESTING.md §12.9.10 audit-chain continuity and
 //     sequence-number monotonicity against the Postgres audit_log.
-//   - rbac_test.go — §12.9.7 RBAC positive access and escalation
+//   - rbac_test.go — TESTING.md §12.9.7 RBAC positive access and escalation
 //     rejection over the dev-header role path.
-//   - ssrf_test.go — §12.9.5 SSRF connector-URL HTTPS-scheme
+//   - ssrf_test.go — TESTING.md §12.9.5 SSRF connector-URL HTTPS-scheme
 //     validation.
 //
 // Naming follows TESTING.md §12.9.1 through §12.9.11.
@@ -129,7 +129,7 @@ func resolvePentestBundlePath(bundleEnv, releaseGate, root string) (path string,
 	return filepath.Join(root, "tests", "tier9_security", "pentest", "v1-baseline-bundle.json"), true, nil
 }
 
-// §12.9.2 TLS enforcement — covered structurally by:
+// TESTING.md §12.9.2 TLS enforcement — covered structurally by:
 //   - tls_test.go (mTLS PKI readiness against the e2e cluster).
 //   - charts/lenny/tests/datastores_test.yaml (helm-unittest gate
 //     that asserts production-grade datastores ship with TLS
@@ -146,24 +146,24 @@ func resolvePentestBundlePath(bundleEnv, releaseGate, root string) (path string,
 // spec: 13
 // diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
 func TestTLSPlaintextRejection(t *testing.T) {
-	t.Logf("§12.9.2: mTLS PKI readiness covered by tls_test.go; chart-level TLS gate by " +
+	t.Logf("TESTING.md §12.9.2: mTLS PKI readiness covered by tls_test.go; chart-level TLS gate by " +
 		"datastores_test.yaml; preflight invariant by cmd/lenny-preflight. Live plaintext " +
 		"probe needs a TLS-configured store overlay (ops follow-on).")
 }
 
-// §12.9.3 Admission policy — fsGroup-missing rejection is implemented
+// TESTING.md §12.9.3 Admission policy — fsGroup-missing rejection is implemented
 // in admission_cred_test.go against the live lenny-pod-security webhook;
 // the label-immutability UPDATE guard is implemented in
 // admission_label_immutability_test.go and the ephemeral-container
 // cred-guard in admission_ephemeral_test.go, both against live agent
-// pods. The remaining §12.9.3 scaffolds below name a control the live
+// pods. The remaining TESTING.md §12.9.3 scaffolds below name a control the live
 // cluster cannot exercise.
 
-// §12.9.3 Admission policy — cred-group overbroad rejection is
+// TESTING.md §12.9.3 Admission policy — cred-group overbroad rejection is
 // implemented in admission_cred_test.go against the live
 // lenny-pod-security webhook.
 
-// §12.9.3 sandboxclaim concurrency guard — covered structurally by:
+// TESTING.md §12.9.3 sandboxclaim concurrency guard — covered structurally by:
 //   - pkg/admission/sandboxclaim_guard (decision logic + unit
 //     tests; the §4.6.1 ADR-0007 optimistic-locking CAS the guard
 //     defends).
@@ -178,64 +178,64 @@ func TestTLSPlaintextRejection(t *testing.T) {
 // spec: 13
 // diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
 func TestAdmissionSandboxClaimGuard(t *testing.T) {
-	t.Logf("§12.9.3: sandboxclaim-guard decision logic and webhook handler covered by " +
+	t.Logf("TESTING.md §12.9.3: sandboxclaim-guard decision logic and webhook handler covered by " +
 		"pkg/admission/sandboxclaim_guard + cmd/lenny-webhook unit tests and " +
 		"charts/lenny helm-unittest. Live double-claim exercise on the tier-5 ops backlog.")
 }
 
-// §12.9.4 NetworkPolicy adversarial — agent-namespace egress. The
-// lenny-system half of §12.9.4 is covered by TestNetworkPolicyAdversarial;
+// TESTING.md §12.9.4 NetworkPolicy adversarial — agent-namespace egress. The
+// lenny-system half of TESTING.md §12.9.4 is covered by TestNetworkPolicyAdversarial;
 // the agent-pod egress half is TestNetworkPolicyAgentEgress in
 // agent_egress_test.go, which schedules a probe pod in lenny-agents and
 // asserts every forbidden destination (internet, Postgres, Redis, a
 // sibling tenant's namespace, the cloud metadata address) times out at
 // the CNI layer.
 
-// §12.9.6 Input fuzzing — covered structurally by:
+// TESTING.md §12.9.6 Input fuzzing — covered structurally by:
 //   - pkg/audit, pkg/auth/jwt, pkg/checkpoint, pkg/circuitbreaker,
 //     pkg/delegation/cycle, pkg/delegation/lease, pkg/elicitation,
 //     pkg/environment, pkg/experiment, pkg/idempotency,
 //     pkg/podsecurity, pkg/quota, pkg/tokenexchange, pkg/upload,
 //     pkg/api/v1/session — every one carries a Go fuzz suite that
-//     the §12.9.6 in-process fuzzing battery drives at PR time.
+//     the TESTING.md §12.9.6 in-process fuzzing battery drives at PR time.
 //
 // The OWASP ZAP black-box fuzzing run is a release-pipeline CI job
 // (separate workflow against a deployed gateway, not a Go test
 // against the e2e Kind cluster) and is exercised by release
 // engineering; the test runner here pins the contract that every
-// §12.9.6 attack class has at least one fuzz target in tree.
+// TESTING.md §12.9.6 attack class has at least one fuzz target in tree.
 // spec: 13
 // diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
 func TestInputFuzzingOWASPZAP(t *testing.T) {
-	t.Logf("§12.9.6: in-process Go fuzz coverage spans audit, auth/jwt, checkpoint, " +
+	t.Logf("TESTING.md §12.9.6: in-process Go fuzz coverage spans audit, auth/jwt, checkpoint, " +
 		"circuitbreaker, delegation/{cycle,lease}, elicitation, environment, experiment, " +
 		"idempotency, podsecurity, quota, tokenexchange, upload, api/v1/session. " +
 		"OWASP ZAP black-box run is a release-pipeline CI job.")
 }
 
-// §12.9.8 Credential leakage — env vars / filesystem / egress. The
+// TESTING.md §12.9.8 Credential leakage — env vars / filesystem / egress. The
 // three live probes (TestCredentialLeakageEnvironment, …Filesystem,
 // …NetworkEgress) are implemented in credential_leakage_test.go. They
 // drive `kubectl exec` against the cred-shell-echo pod the e2e
 // overlay applies and assert no LLM-provider credential prefix
 // surfaces in the runtime container's environment, the §4.7
-// credential mount, or the §12.9.8 egress-capture sidecar's JSONL
+// credential mount, or the TESTING.md §12.9.8 egress-capture sidecar's JSONL
 // capture file. Structural coverage stays in:
-//   - cmd/runtimes/cred-shell-echo (the §12.9.8 probe runtime with
+//   - cmd/runtimes/cred-shell-echo (the TESTING.md §12.9.8 probe runtime with
 //     /bin/sh + credential declarations; built with unit tests).
-//   - cmd/lenny-egress-capture (the §12.9.8 capture sidecar;
+//   - cmd/lenny-egress-capture (the TESTING.md §12.9.8 capture sidecar;
 //     forward + JSONL hash recording covered by unit tests).
 //   - pkg/gateway/credassign + pkg/gateway/credleasestore (the
 //     §4.9 credential delivery path; per-handler unit tests).
 //   - pkg/controller/sandbox/podspec (egress_capture_test.go:
 //     sidecar injection on the pod spec layer).
 //   - pkg/controller/sandbox (egress_capture_test.go: reconciler
-//     activation when the Sandbox carries the §12.9.8 annotation).
+//     activation when the Sandbox carries the TESTING.md §12.9.8 annotation).
 //   - admission_cred_test.go (the §13.1 lenny-pod-security webhook
 //     rejects images with shells in production — production never
 //     deploys cred-shell-echo).
 
-// §12.9.9 elicitation content integrity — covered structurally by:
+// TESTING.md §12.9.9 elicitation content integrity — covered structurally by:
 //   - pkg/elicitation chain.go + chain_test.go (the §9.2 hop-by-hop
 //     walker with TamperError + ChainError; tier-2 fuzz suite).
 //   - pkg/elicitation/elicitation_test.go (EnforcementMode strict
@@ -260,7 +260,7 @@ func TestInputFuzzingOWASPZAP(t *testing.T) {
 // and no intermediate pod re-emits, so there is no per-hop re-emission
 // wire path to drive it; it is the post-v1 per-hop re-emission producer
 // bead that proposal 0030 (F-9.2.1) files.
-// §12.9.9 tamper-detect tests are implemented in
+// TESTING.md §12.9.9 tamper-detect tests are implemented in
 // elicitation_tamper_test.go: they drive the gateway's
 // /v1/admin/tenants/{id}/elicitation-content-integrity surface
 // against a real cluster, set the tenant mode under each §9.2
@@ -268,7 +268,7 @@ func TestInputFuzzingOWASPZAP(t *testing.T) {
 // correctly. The §9.2 chain walker remains covered by
 // pkg/elicitation and pkg/gateway/mcptools unit tests.
 
-// §12.9.11 SBOM generation. The release pipeline emits one
+// TESTING.md §12.9.11 SBOM generation. The release pipeline emits one
 // CycloneDX SBOM per built image, attaches each SBOM as a Sigstore
 // in-toto attestation bound to the image digest, and uploads the
 // SBOMs as release artifacts. The Kind cluster cannot observe the
@@ -283,7 +283,7 @@ func TestSBOMGeneration(t *testing.T) {
 	path := filepath.Join(repoRoot(t), ".github", "workflows", "release.yml")
 	body, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("§12.9.11 SBOM gate: cannot read %s: %v", path, err)
+		t.Fatalf("TESTING.md §12.9.11 SBOM gate: cannot read %s: %v", path, err)
 	}
 	src := string(body)
 	required := []struct {
@@ -298,7 +298,7 @@ func TestSBOMGeneration(t *testing.T) {
 	}
 	for _, r := range required {
 		if !strings.Contains(src, r.marker) {
-			t.Errorf("§12.9.11 SBOM gate: %s missing marker %q (%s)", path, r.marker, r.why)
+			t.Errorf("TESTING.md §12.9.11 SBOM gate: %s missing marker %q (%s)", path, r.marker, r.why)
 		}
 	}
 }

@@ -80,8 +80,7 @@ func poolCR(name, templateRef string, minWarm, maxWarm int32, sdkWarmDisabled bo
 // the pre-fix zero-byte fallback. It asserts the corrected outcome — real,
 // filtered CRD manifests — which fails against the nil-CRDExport code.
 //
-// spec: §25.11 (Exports CRD manifests from the K8s API, line 3989; the
-// lenny-backup-sa get/list on CRDs, line 3982).
+// spec: §25.11.
 //
 // diagnosis: the config/full backup archive's CRD component is empty; the
 // SEC-BACKUP-1 CRD export is unwired or lists the wrong group.
@@ -124,7 +123,7 @@ func TestCRDExporterDumpsOnlyLennyGroupCRDs(t *testing.T) {
 // config backup taken before the CRDs are installed still records an
 // explicit CRD component.
 //
-// spec: §25.11 (Exports CRD manifests from the K8s API, line 3989).
+// spec: §25.11.
 func TestCRDExporterEmptyClusterYieldsEmptyArray(t *testing.T) {
 	cs := apiextensionsfake.NewSimpleClientset(crd("certificates.cert-manager.io", "cert-manager.io"))
 	export := runner.NewCRDExporter(cs)
@@ -156,9 +155,7 @@ func TestCRDExporterEmptyClusterYieldsEmptyArray(t *testing.T) {
 // pre-fix (Postgres-sourced) runtime/pool export as well as against the
 // nil-ConfigExport "{}" fallback.
 //
-// spec: §25.11 (Exports platform configuration (runtimes, pools, tenants,
-// quotas) as JSON, line 3988; the runtime and pool CRDs from the K8s API,
-// line 3989; the lenny-backup-sa get on ConfigMaps, line 3982).
+// spec: §25.11.
 //
 // diagnosis: the config/full backup archive's config component is empty,
 // literal "{}", or omits a category (a restore cannot re-seed the missing
@@ -253,8 +250,7 @@ func TestConfigExporterDumpsRuntimesPoolsTenantsQuotasAndBootstrap(t *testing.T)
 // those two SELECTs (recorded here by the querier) and would emit empty
 // runtimes/pools when only CRDs are present.
 //
-// spec: §25.11 (the K8s API for the runtime and pool CRDs, line 3989; the
-// read-only lenny-backup Postgres role for tenants and quotas, line 3980).
+// spec: §25.11.
 //
 // diagnosis: the config export reads runtimes/pools from Postgres rather
 // than the CRDs the C4 design assigns; the read-only lenny-backup role has no
@@ -311,8 +307,7 @@ func TestConfigExporterReadsRuntimesAndPoolsFromCRDsNotPostgres(t *testing.T) {
 // error is wrapped and returned (the tenants read succeeds first) rather than
 // silently producing a config export that omits runtimes.
 //
-// spec: §25.11 (Exports platform configuration (runtimes, ...), line 3988; the
-// runtime CRD from the K8s API, line 3989).
+// spec: §25.11.
 func TestConfigExporterRuntimeListErrorSurfaces(t *testing.T) {
 	sentinel := errors.New("runtime list failed")
 	db := &fakeQuerier{}
@@ -327,8 +322,7 @@ func TestConfigExporterRuntimeListErrorSurfaces(t *testing.T) {
 // export that omits pools. The reader fails only the SandboxWarmPool list, so
 // the runtime list succeeds first.
 //
-// spec: §25.11 (Exports platform configuration (runtimes, pools, ...), line
-// 3988; the pool CRD from the K8s API, line 3989).
+// spec: §25.11.
 func TestConfigExporterPoolListErrorSurfaces(t *testing.T) {
 	sentinel := errors.New("pool list failed")
 	db := &fakeQuerier{}
@@ -343,7 +337,7 @@ func TestConfigExporterPoolListErrorSurfaces(t *testing.T) {
 // ConfigMap was garbage-collected) yields a config export with no
 // bootstrap values rather than an error.
 //
-// spec: §25.11 (the config export reads only reachable sources, line 3984).
+// spec: §25.11.
 func TestConfigExporterMissingBootstrapConfigMapIsNotFatal(t *testing.T) {
 	db := &fakeQuerier{}
 	crds := crdReaderWith(t)
@@ -368,7 +362,7 @@ func TestConfigExporterMissingBootstrapConfigMapIsNotFatal(t *testing.T) {
 // tenants read) is wrapped and returned rather than silently producing a
 // partial config.
 //
-// spec: §25.11 (config export, line 3988).
+// spec: §25.11.
 func TestConfigExporterQueryErrorSurfaces(t *testing.T) {
 	sentinel := errors.New("postgres down")
 	db := &fakeQuerier{queryErr: sentinel}
@@ -383,7 +377,7 @@ func TestConfigExporterQueryErrorSurfaces(t *testing.T) {
 // TestConfigExporterScanErrorSurfaces asserts a tenant row-scan failure is
 // wrapped and returned rather than producing a partial config.
 //
-// spec: §25.11 (config export, line 3988).
+// spec: §25.11.
 func TestConfigExporterScanErrorSurfaces(t *testing.T) {
 	db := &fakeQuerier{tenantScanErr: true}
 	crds := crdReaderWith(t)
@@ -397,7 +391,7 @@ func TestConfigExporterScanErrorSurfaces(t *testing.T) {
 // TestCRDExporterListErrorSurfaces asserts an apiextensions List error is
 // wrapped and returned rather than yielding a silently empty CRD component.
 //
-// spec: §25.11 (Exports CRD manifests from the K8s API, line 3989).
+// spec: §25.11.
 func TestCRDExporterListErrorSurfaces(t *testing.T) {
 	sentinel := errors.New("apiserver unreachable")
 	e := &runner.CRDExporter{Lister: errLister{err: sentinel}}
@@ -411,7 +405,7 @@ func TestCRDExporterListErrorSurfaces(t *testing.T) {
 // injected config). The client is built lazily and does not connect at
 // construction, so this exercises the constructor without a live apiserver.
 //
-// spec: §25.11 (the K8s API for the runtime and pool CRDs, line 3989).
+// spec: §25.11.
 func TestNewCRDReaderBuildsAClient(t *testing.T) {
 	r, err := runner.NewCRDReader(&rest.Config{Host: "https://127.0.0.1:6443"})
 	if err != nil {
@@ -426,7 +420,7 @@ func TestNewCRDReaderBuildsAClient(t *testing.T) {
 // the error when the rest.Config cannot build a client (an unparseable host),
 // rather than returning a nil reader with a nil error.
 //
-// spec: §25.11 (the K8s API for the runtime and pool CRDs, line 3989).
+// spec: §25.11.
 func TestNewCRDReaderRejectsInvalidConfig(t *testing.T) {
 	if _, err := runner.NewCRDReader(&rest.Config{Host: "://not a url"}); err == nil {
 		t.Fatal("NewCRDReader accepted an invalid rest.Config")

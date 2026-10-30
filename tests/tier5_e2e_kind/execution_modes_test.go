@@ -12,14 +12,14 @@
 // sequential pod reuse, and maxConcurrentSessions > 1 is the
 // concurrent-slot configuration").
 //
-// tests/tier4_integration/concurrent_workspace_test.go exercises slotId
+// tests/tier4_integration/concurrent_workspace_test.go exercises sessionId
 // multiplexing in-process: a bufconn adapter driving a spawned
 // echo-concurrent binary, with no real pod, no RuntimeClass, and no
 // per-slot filesystem isolation enforced by a real container boundary.
 // This file drives the same sequential-reuse and concurrent-slot
 // behaviors through the live gateway against pods
 // tests/testinfra/kind/install.sh warms in the lenny-agents namespace
-// (task-mode-echo-pool and concurrent-echo-pool), closing the §14.9
+// (task-mode-echo-pool and concurrent-echo-pool), closing the TESTING.md §14.9
 // coverage gap for concurrent per-slot directories on a real sandbox.
 // TestTaskModeRecycleScrubsWorkspaceBetweenSessions exercises the same
 // real-pod path for the task-mode workspace-scrub half of the gap. The
@@ -34,8 +34,8 @@
 // "runtime" container with the shared "workspace" emptyDir mounted,
 // mirroring the pattern gvisor_isolation_test.go uses for its
 // /proc/version kernel-fingerprint probe. The adapter (not the debug
-// container's unprivileged UID) owns /workspace/current and
-// /workspace/slots/{slotId}/current, so content is placed via a client
+// container's unprivileged UID) owns each session's
+// /workspace/slots/{sessionId}/current, so content is placed via a client
 // §14 WorkspacePlan at session start rather than by writing through the
 // debug container, which the directory's group-readable, non-group-
 // writable permissions would reject anyway.
@@ -72,7 +72,7 @@ const (
 
 // concurrentPoolName and concurrentRuntimeRef name the §5.2 concurrent-
 // session pool: sessionPolicy.maxConcurrentSessions: 2 with
-// acknowledgeProcessLevelIsolation, backed by the slotId dispatch-loop
+// acknowledgeProcessLevelIsolation, backed by the sessionId dispatch-loop
 // reference runtime (cmd/runtimes/echo-concurrent).
 const (
 	concurrentPoolName   = "concurrent-echo-pool"
@@ -90,18 +90,24 @@ const executionModesNamespace = "lenny-agents"
 // `recycling`... On a successful scrub on a `standard` or `in-place`
 // pool the pod is held for its tenant through the claim's `reserved`
 // state and serves the next session." And (§5.2, "Lenny scrub
-// procedure") — "Before materializing, the adapter MUST remove all
-// files from `/workspace/current` to prevent residual state from prior
-// tasks" and "Verify scrub by stat-checking the workspace path... if
-// any path is non-empty after scrub... the scrub is marked failed."
+// procedure") — the adapter removes each session's workspace tree before
+// materializing so no residual state from a prior task survives, and
+// "Verify scrub by stat-checking the workspace path... if any path is
+// non-empty after scrub... the scrub is marked failed."
+//
+// spec: §4.7.10 (Runtime process lifetime) — the runtime process lives as
+// long as the pod, and a later session on a recycled pod is served by the
+// runtime process that served the first.
 //
 // diagnosis: a failure here means §5.2 sequential pod reuse ("task
 // mode") is broken on a real agent pod: either the second session on a
 // recycling pod did not land on the same pod as the first (pod reuse
 // itself regressed — the pod was retired and replaced instead of
-// scrubbed and recycled) or the first session's workspace content
-// survived into the second session (the whole-pod scrub regressed or
-// never ran). This is the residual-state boundary between successive
+// scrubbed and recycled, for example with runtime_not_live because the
+// adapter ended the runtime at occupancy zero), the first session's
+// workspace content survived into the second session (the whole-pod
+// scrub regressed or never ran), or the runtime container restarted or
+// stopped across the recycle boundary. This is the residual-state boundary between successive
 // tasks on one pod that only a real pod — not the tier-4 compose stack —
 // can exercise, since it depends on the adapter's own scrub sequence
 // running against a real filesystem.
@@ -117,6 +123,9 @@ func TestTaskModeRecycleScrubsWorkspaceBetweenSessions(t *testing.T) {
 	if err := d.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
+	// spec: §10.6 — a bootstrapped tenant carries noEnvironmentPolicy
+	// deny-all, and this test creates sessions that name no environment.
+	ensureTenantAllowsSessionsWithNoEnvironment(t, d, tenant)
 
 	sessA, err := d.CreateAndStartWithPlan(ctx, tenant, taskModeRuntimeRef,
 		inlineWorkspacePlan("marker-a.txt", "workspace-of-session-A"))
@@ -135,9 +144,16 @@ func TestTaskModeRecycleScrubsWorkspaceBetweenSessions(t *testing.T) {
 
 	// The whole-pod scrub runs asynchronously after Terminate releases the
 	// pod (§5.2: "the gateway does not block the response on the scrub").
-	// Wait for the recycled pod to report idle again before claiming
-	// session B.
-	waitPodLabel(t, c, podA, "lenny.dev/state", "idle", 90*time.Second)
+	// A successful scrub carries the claim recycling -> reserved, which is
+	// the state §5.2 holds the pod for its tenant in and serves the next
+	// session from; §4.6.1 bounds that hold by claimHoldTTLSeconds (a
+	// deployment default of 10 seconds), after which the claim is deleted
+	// and the pod leaves the tenant's reach. Session B is therefore claimed
+	// while the claim is reserved. The pod label is not the signal here:
+	// §6.2 projects both claimed and reserved onto the coarse "active"
+	// value, so the label never reports idle inside the hold and reaches it
+	// only once the hold has already expired.
+	waitClaimPhase(t, c, podA, "reserved", 90*time.Second)
 
 	sessB, err := d.CreateAndStartWithPlan(ctx, tenant, taskModeRuntimeRef,
 		inlineWorkspacePlan("marker-b.txt", "workspace-of-session-B"))
@@ -152,38 +168,130 @@ func TestTaskModeRecycleScrubsWorkspaceBetweenSessions(t *testing.T) {
 	}
 	t.Logf("session B %s reused pod %s", sessB.ID, sessB.PodAssignment)
 
+	// spec: §6.4 — the per-slot tree is the only workspace layout, so each
+	// session materialized into its own /workspace/slots/{sessionId}/current
+	// and the recycled pod must carry session B's tree and none of session
+	// A's. The pod-global /workspace/current is retired on every pool class,
+	// including this exclusive one, so the directory must be absent.
 	listing := execDebugContainer(t, c, podA, []string{
-		"sh", "-c", "ls -la /workspace/current/ 2>&1",
+		"sh", "-c", "ls -la /workspace/slots/ 2>&1; echo ---; " +
+			"ls -la /workspace/slots/" + sessB.ID + "/current/ 2>&1; echo ---; " +
+			"[ -e /workspace/current ] && echo present || echo absent",
 	})
-	if strings.Contains(listing, "marker-a.txt") {
-		t.Errorf("pod %s: session A's /workspace/current/marker-a.txt survived into session B; "+
-			"the §5.2 whole-pod scrub did not clear residual state between recycled sessions:\n%s", podA, listing)
+	parts := strings.Split(listing, "---")
+	if len(parts) != 3 {
+		t.Fatalf("pod %s: debug container output did not split into 3 sections, got %d:\n%s", podA, len(parts), listing)
 	}
-	if !strings.Contains(listing, "marker-b.txt") {
-		t.Errorf("pod %s: session B's /workspace/current/marker-b.txt is missing; workspace materialization "+
-			"did not run for the reused pod:\n%s", podA, listing)
+	slotsListing, currentListing, podGlobal := strings.TrimSpace(parts[0]),
+		strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
+
+	if strings.Contains(slotsListing, sessA.ID) {
+		t.Errorf("pod %s: session A's slot tree /workspace/slots/%s survived into session B; "+
+			"the §5.2 whole-pod scrub did not clear residual state between recycled sessions:\n%s",
+			podA, sessA.ID, slotsListing)
 	}
-	if !strings.Contains(listing, "marker-a.txt") && strings.Contains(listing, "marker-b.txt") {
-		t.Logf("pod %s: /workspace/current scrubbed clean between sessions A and B; only session B's "+
-			"marker is present:\n%s", podA, listing)
+	if !strings.Contains(currentListing, "marker-b.txt") {
+		t.Errorf("pod %s: session B's /workspace/slots/%s/current/marker-b.txt is missing; workspace "+
+			"materialization did not run for the reused pod:\n%s", podA, sessB.ID, currentListing)
+	}
+	if podGlobal != "absent" {
+		t.Errorf("pod %s: /workspace/current is %s; §6.4 retires the pod-global path on every pool class, "+
+			"including a maxConcurrentSessions: 1 pool", podA, podGlobal)
+	}
+
+	requireRuntimeContainerKept(t, c, podA)
+}
+
+// requireRuntimeContainerKept asserts that the pod's runtime container is
+// the one the kubelet started with the pod: it has never restarted and is
+// still running. The task-mode pool sets recycle.runtimeProcess: keep, and a
+// keep pod keeps its runtime process across sessions (§5.2, Runtime-process
+// lifetime), so session B on a recycled pod is served by the runtime process
+// that served session A rather than by a restarted container.
+func requireRuntimeContainerKept(t *testing.T, c *kind.Cluster, pod string) {
+	t.Helper()
+	restarts := podField(t, c, pod, `{.status.containerStatuses[?(@.name=="runtime")].restartCount}`)
+	if restarts != "0" {
+		t.Errorf("pod %s: runtime container restartCount = %q, want 0; the runtime process must live as long "+
+			"as the pod and serve every session the pod serves", pod, restarts)
+	}
+	startedAt := podField(t, c, pod, `{.status.containerStatuses[?(@.name=="runtime")].state.running.startedAt}`)
+	if startedAt == "" {
+		t.Errorf("pod %s: runtime container is not running after the recycled session; the runtime process "+
+			"ended across the recycle boundary", pod)
+	}
+}
+
+// spec: §6.4 (spec/06_warm-pod-model.md) — a session's cwd is
+// `/workspace/slots/{sessionId}/current/` and no global
+// `/workspace/current` path exists.
+//
+// diagnosis: an exclusive pool (maxConcurrentSessions: 1) still
+// materializes into a pod-global /workspace/current on a real agent pod.
+// This is the pool class that used the retired path before the layout
+// became uniform, so a regression that reinstates it fails here and passes
+// unnoticed on the concurrent pool that never used it.
+func TestSessionModePoolMaterializesIntoTheSlotTree_spec_6_4(t *testing.T) {
+	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 30 * time.Second})
+	c := d.Cluster()
+	requirePoolReadyPods(t, c, taskModePoolName, 1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	tenant := uniqueName("session-mode-layout-tenant")
+	if err := d.BootstrapTenant(ctx, tenant); err != nil {
+		t.Fatalf("bootstrap tenant: %v", err)
+	}
+	// spec: §10.6 — a bootstrapped tenant carries noEnvironmentPolicy
+	// deny-all, and this test creates sessions that name no environment.
+	ensureTenantAllowsSessionsWithNoEnvironment(t, d, tenant)
+
+	sess, err := d.CreateAndStartWithPlan(ctx, tenant, taskModeRuntimeRef,
+		inlineWorkspacePlan("marker.txt", "workspace-of-session-mode"))
+	if err != nil {
+		t.Fatalf("create session on %s: %v", taskModeRuntimeRef, err)
+	}
+	t.Cleanup(func() { _ = d.Terminate(context.Background(), tenant, sess.ID) })
+	if sess.PodAssignment == "" {
+		t.Fatalf("session carries no podAssignment; the pool did not bind a pod")
+	}
+	pod := sess.PodAssignment
+
+	listing := execDebugContainer(t, c, pod, []string{
+		"sh", "-c", "cat /workspace/slots/" + sess.ID + "/current/marker.txt 2>&1; echo ---; " +
+			"[ -e /workspace/current ] && echo present || echo absent",
+	})
+	parts := strings.Split(listing, "---")
+	if len(parts) != 2 {
+		t.Fatalf("pod %s: debug container output did not split into 2 sections, got %d:\n%s", pod, len(parts), listing)
+	}
+	slotContent, podGlobal := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+
+	if slotContent != "workspace-of-session-mode" {
+		t.Errorf("pod %s: /workspace/slots/%s/current/marker.txt = %q, want the session's own content; "+
+			"an exclusive pool materializes into its session's slot tree like every other pool",
+			pod, sess.ID, slotContent)
+	}
+	if podGlobal != "absent" {
+		t.Errorf("pod %s: /workspace/current is %s; §6.4 retires the pod-global path", pod, podGlobal)
 	}
 }
 
 // spec: §5.2 (spec/05_runtime-registry-and-pool-model.md, "Concurrent
 // sessions (`maxConcurrentSessions > 1`)") — "Each slot gets its own
-// workspace under `/workspace/slots/{slotId}/`... Cross-slot isolation
+// workspace under `/workspace/slots/{sessionId}/`... Cross-slot isolation
 // is process-level and filesystem-level." And §6.4 (spec/
-// 06_warm-pod-model.md) — "The runtime MUST NOT assume a global
-// `/workspace/current` path when `maxConcurrentSessions > 1`."
+// 06_warm-pod-model.md) — "No global `/workspace/current` path exists,
+// and the runtime MUST NOT assume one."
 //
 // diagnosis: a failure here means the §5.2 concurrent-slot filesystem
 // isolation is broken on a real agent pod: either two sessions
 // multiplexed onto one pod's slots did not each get their own
-// /workspace/slots/{slotId}/current/ tree, one slot's file leaked into
-// a sibling slot's tree, or a slot's content leaked into the whole-pod
-// /workspace/current (which a concurrent-workspace pod must never use).
-// The gateway derives slotId from the session id (podsession/
-// slotbinder.go), so each session's own id names its slot directory.
+// /workspace/slots/{sessionId}/current/ tree, one slot's file leaked into
+// a sibling slot's tree, or a pod-global /workspace/current appeared on a
+// pod that must carry none. A session-mode slot's identifier is its
+// session's identifier, so each session's own id names its slot directory.
 func TestConcurrentSlotsIsolateWorkspaceDirectories(t *testing.T) {
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 30 * time.Second})
 	c := d.Cluster()
@@ -196,6 +304,9 @@ func TestConcurrentSlotsIsolateWorkspaceDirectories(t *testing.T) {
 	if err := d.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
+	// spec: §10.6 — a bootstrapped tenant carries noEnvironmentPolicy
+	// deny-all, and this test creates sessions that name no environment.
+	ensureTenantAllowsSessionsWithNoEnvironment(t, d, tenant)
 
 	sessA, err := d.CreateAndStartWithPlan(ctx, tenant, concurrentRuntimeRef,
 		inlineWorkspacePlan("marker.txt", "workspace-of-slot-A"))
@@ -221,7 +332,7 @@ func TestConcurrentSlotsIsolateWorkspaceDirectories(t *testing.T) {
 	// pod (podclaim/slotclaimer.go prefers a partially-occupied pod over
 	// claiming a fresh idle one), so both sessions should share the same
 	// pod. If they did not, the isolation assertions below would pass
-	// trivially without exercising slotId multiplexing at all, so this is
+	// trivially without exercising sessionId multiplexing at all, so this is
 	// a hard precondition rather than a soft log.
 	if sessB.PodAssignment != pod {
 		t.Fatalf("session B landed on pod %q, want session A's pod %q; the concurrent pool did not "+
@@ -231,13 +342,14 @@ func TestConcurrentSlotsIsolateWorkspaceDirectories(t *testing.T) {
 	listing := execDebugContainer(t, c, pod, []string{
 		"sh", "-c", "cat /workspace/slots/" + sessA.ID + "/current/marker.txt 2>&1; echo ---; " +
 			"cat /workspace/slots/" + sessB.ID + "/current/marker.txt 2>&1; echo ---; " +
-			"ls /workspace/current/ 2>&1",
+			"[ -e /workspace/current ] && echo present || echo absent",
 	})
 	parts := strings.Split(listing, "---")
 	if len(parts) != 3 {
 		t.Fatalf("pod %s: debug container output did not split into 3 sections, got %d:\n%s", pod, len(parts), listing)
 	}
-	slotAContent, slotBContent, wholePodListing := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
+	slotAContent, slotBContent, podGlobal := strings.TrimSpace(parts[0]),
+		strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
 
 	if slotAContent != "workspace-of-slot-A" {
 		t.Errorf("pod %s: /workspace/slots/%s/current/marker.txt = %q, want \"workspace-of-slot-A\"; "+
@@ -247,14 +359,14 @@ func TestConcurrentSlotsIsolateWorkspaceDirectories(t *testing.T) {
 		t.Errorf("pod %s: /workspace/slots/%s/current/marker.txt = %q, want \"workspace-of-slot-B\"; "+
 			"slot B's per-slot workspace is missing or was overwritten by a sibling slot", pod, sessB.ID, slotBContent)
 	}
-	// §6.4: a concurrent-workspace pod has no shared /workspace/current;
-	// the whole-pod path must never have been materialized into.
-	if wholePodListing != "" {
-		t.Errorf("pod %s: /workspace/current is non-empty (%q); a concurrent-workspace pod must never "+
-			"materialize into the whole-pod path, only into /workspace/slots/{slotId}/current/", pod, wholePodListing)
+	// §6.4: the pod-global /workspace/current is retired rather than kept as
+	// an empty directory, so the path must not exist at all.
+	if podGlobal != "absent" {
+		t.Errorf("pod %s: /workspace/current is %s; §6.4 retires the pod-global path, and every session "+
+			"materializes into /workspace/slots/{sessionId}/current/", pod, podGlobal)
 	}
-	t.Logf("pod %s: slot %s and slot %s each hold only their own workspace content, whole-pod "+
-		"/workspace/current is empty", pod, sessA.ID, sessB.ID)
+	t.Logf("pod %s: session %s and session %s each hold only their own workspace content, and no "+
+		"pod-global /workspace/current exists", pod, sessA.ID, sessB.ID)
 }
 
 // uniqueName returns a base name suffixed with a per-call nanosecond
@@ -292,47 +404,115 @@ func inlineWorkspacePlan(path, content string) json.RawMessage {
 // requirePoolReadyPods skips the calling test when the named pool has
 // fewer than n Ready warm pods, so a cluster whose install.sh predates
 // this pool (or that has not finished warming it) degrades to a clean
-// skip instead of a failure. Mirrors gvisor_isolation_test.go's
-// requireGvisorPoolPod.
+// skip instead of a failure. It counts the pods that report condition
+// Ready and waits for the count to reach n, rather than requiring every
+// pod carrying the pool label to be Ready: a wedged pod left behind by
+// an earlier run keeps a label-wide readiness wait failing forever, and
+// that hid the Ready pods beside it, skipping the §6.4 slot-tree cases
+// on a cluster that had the capacity to run them. It fails rather than
+// skips when the pod query itself never succeeded, because a skip there
+// would report a broken cluster query as an unwarmed pool.
 func requirePoolReadyPods(t *testing.T, c *kind.Cluster, pool string, n int) {
 	t.Helper()
-	selector := "lenny.dev/pool=" + pool
-	if err := c.Kubectl(
-		"-n", executionModesNamespace, "wait", "--for=condition=Ready",
-		"pod", "-l", selector, "--timeout=120s",
-	).Run(); err != nil {
-		t.Skip(pool + " has no Ready warm pod yet (pools warm asynchronously); " +
-			"re-run after tests/testinfra/kind/install.sh completes")
-	}
-	out, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "pods",
-		"-l", selector, "-o", "jsonpath={.items[*].metadata.name}")
-	if err != nil {
-		t.Fatalf("listing %s pods: %v\n%s", pool, err, out)
-	}
-	got := len(strings.Fields(strings.TrimSpace(out)))
-	if got < n {
-		t.Skip(pool + " has fewer than the expected warm pods; re-run after tests/testinfra/kind/install.sh completes")
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		ready, err := readyPoolPods(t, c, pool)
+		if err == nil && ready >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			// A query that never succeeded is a broken namespace, a
+			// renamed label, or an unusable kubeconfig, and reporting it
+			// as an unwarmed pool would let the §6.4 slot-tree cases
+			// silently not run while the tier reported green. Only a
+			// successful query that counted too few Ready pods is a
+			// precondition the cluster can still reach.
+			if err != nil {
+				t.Fatalf("counting Ready %s pods: %v", pool, err)
+			}
+			t.Skipf("not-yet-applicable: %s has %d Ready warm pods, fewer than the %d the case needs "+
+				"(pools warm asynchronously); re-run after tests/testinfra/kind/install.sh completes", pool, ready, n)
+		}
+		time.Sleep(3 * time.Second)
 	}
 }
 
-// waitPodLabel polls pod's named label until it equals want or timeout
-// elapses, failing the test on timeout. Used to observe the §5.2
-// recycle boundary: the WarmPoolController's lenny.dev/state label
-// transitions active -> idle once the whole-pod scrub reports and the
-// pod is returned to the pool.
-func waitPodLabel(t *testing.T, c *kind.Cluster, pod, label, want string, timeout time.Duration) {
+// readyPoolPods returns how many pods carrying the pool's label report
+// condition Ready true. A kubectl failure is returned rather than
+// counted as zero, so the caller can tell a pool that has not warmed
+// from a query that could not run.
+func readyPoolPods(t *testing.T, c *kind.Cluster, pool string) (int, error) {
 	t.Helper()
-	jsonpath := fmt.Sprintf("{.metadata.labels.%s}", strings.ReplaceAll(label, ".", `\.`))
+	out, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "pods",
+		"-l", "lenny.dev/pool="+pool, "-o",
+		`jsonpath={range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}`)
+	if err != nil {
+		return 0, fmt.Errorf("kubectl get pods -l lenny.dev/pool=%s in %s: %w\n%s", pool, executionModesNamespace, err, out)
+	}
+	ready := 0
+	for _, status := range strings.Fields(out) {
+		if status == "True" {
+			ready++
+		}
+	}
+	return ready, nil
+}
+
+// spec: 6.4
+// diagnosis: the Ready-warm-pod count reports success on a query that
+//
+//	could not run. The count then reads zero on a broken namespace, a
+//	renamed pool label, or an unusable kubeconfig, requirePoolReadyPods
+//	reports that as an unwarmed pool, and the §6.4 slot-tree cases skip
+//	while the tier reports green. A failure means a failed query is
+//	indistinguishable from an empty pool again.
+func TestCountingReadyWarmPodsReportsAFailedQueryRatherThanAnEmptyPool_spec_6_4(t *testing.T) {
+	unusable := &kind.Cluster{Name: "no-such-cluster", KubeconfigPath: filepath.Join(t.TempDir(), "absent.kubeconfig")}
+
+	ready, err := readyPoolPods(t, unusable, taskModePoolName)
+	if err == nil {
+		t.Fatalf("counting Ready pods against an unusable kubeconfig returned %d and no error; a query that could not run must report its failure", ready)
+	}
+	if ready != 0 {
+		t.Errorf("a failed query counted %d Ready pods; want 0", ready)
+	}
+}
+
+// waitClaimPhase polls the §4.6.3 binding state on the pod's SandboxClaim
+// until it equals want or timeout elapses, failing the test on timeout. It
+// observes the §5.2 recycle boundary at the claim, which carries the full
+// binding state (bound, recycling, reserved) rather than the coarse
+// idle/active/draining pod label §6.2 restricts to selectors.
+//
+// The poll interval is short because the reserved state is bounded by the
+// §4.6.1 hold TTL, a deployment default of 10 seconds, and the caller has
+// to act inside it. A claim that has disappeared fails immediately rather
+// than polling to the deadline: the claim is deleted at hold expiry and at
+// retirement, so its absence means the window the caller is waiting for is
+// already gone and no later poll can observe it.
+func waitClaimPhase(t *testing.T, c *kind.Cluster, pod, want string, timeout time.Duration) {
+	t.Helper()
+	claim := "claim-" + pod
 	deadline := time.Now().Add(timeout)
 	var last string
-	for time.Now().Before(deadline) {
-		last = podField(t, c, pod, jsonpath)
+	for {
+		out, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "sandboxclaim", claim,
+			"-o", "jsonpath={.status.phase}")
+		if err != nil {
+			t.Fatalf("reading the binding state of claim %s: %v\n%s\n(the claim is deleted at "+
+				"§4.6.1 hold expiry and at retirement, so an absent claim means the pod is no longer "+
+				"held for its tenant)", claim, err, out)
+		}
+		last = strings.TrimSpace(out)
 		if last == want {
 			return
 		}
-		time.Sleep(2 * time.Second)
+		if !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
-	t.Fatalf("%s: label %s did not reach %q within %s (last seen %q)", pod, label, want, timeout, last)
+	t.Fatalf("%s: claim %s did not reach binding state %q within %s (last seen %q)", pod, claim, want, timeout, last)
 }
 
 // execDebugContainer attaches a short-lived busybox ephemeral debug
@@ -348,7 +528,7 @@ func waitPodLabel(t *testing.T, c *kind.Cluster, pod, label, want string, timeou
 //
 // The debug container's securityContext satisfies both admission layers
 // a real attach goes through: §13.1 pod-security (non-root, read-only
-// root filesystem, all capabilities dropped) and §12.9.3's
+// root filesystem, all capabilities dropped) and TESTING.md §12.9.3's
 // lenny-ephemeral-container-cred-guard (runAsUser/runAsGroup distinct
 // from the pod's adapter/agent UIDs and the lenny-cred-readers GID). The
 // chosen UID/GID (25252) has no other significance; it is the same value

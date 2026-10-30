@@ -16,7 +16,7 @@ import (
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
-// spec: §6.1 lines 5, 16, 24 — "After a session completes or fails in
+// spec: §6.1 — "After a session completes or fails in
 // `executionMode: session`, the pod is terminated and replaced — never
 // recycled for a different session." F-6.1.12.
 //
@@ -41,12 +41,13 @@ import (
 // the only edge that would recycle the pod.
 
 func TestSessionModeReleaseDeletesClaim_spec_6_1_invariant(t *testing.T) {
+	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox("sbx-orig", "10.244.1.10"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-orig", "10.244.1.10"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-original", Runtime: "claude-code",
@@ -60,7 +61,7 @@ func TestSessionModeReleaseDeletesClaim_spec_6_1_invariant(t *testing.T) {
 	// WPC projects `claimed`. The session reaching `running` is a
 	// session-model state on the Postgres session row, not a CRD phase.
 	var claim lennyv1.SandboxClaim
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-orig"}, &claim); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-orig"}, &claim); err != nil {
 		t.Fatalf("get per-pod claim after bind: %v", err)
 	}
 	if claim.Status.Phase != string(claimstate.Bound) {
@@ -69,17 +70,14 @@ func TestSessionModeReleaseDeletesClaim_spec_6_1_invariant(t *testing.T) {
 
 	// Drive the §6.2 terminal disposition through Release with the
 	// `completed` disposition. The gateway releases the pod by deleting its
-	// per-pod claim; it does not write Sandbox.status.phase. The §6.1
-	// invariant requires the WPC to drain the pod (claim DELETE on a
-	// recycle.enabled:false pod projects draining then terminated), not
-	// return it to idle.
+	// per-pod claim; it does not write Sandbox.status.phase.
 	if err := binder.Release(context.Background(), res, "completed"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 
 	// Gateway side: the per-pod claim is deleted so the WPC projection
 	// reclaims the pod. The gateway wrote no Sandbox.status.phase.
-	err = c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-orig"}, &claim)
+	err = c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-orig"}, &claim)
 	if !apierrors.IsNotFound(err) {
 		t.Errorf("F-6.1.12: per-pod claim get after Release = %v, want NotFound (gateway deletes the claim)", err)
 	}
@@ -95,7 +93,7 @@ func TestSessionModeReleaseDeletesClaim_spec_6_1_invariant(t *testing.T) {
 // spec: §6.1, §6.2 — a session-mode pod (recycle.enabled: false) is
 // terminated and replaced after its session ends; it is never returned to
 // idle for a different session. The fine session-terminal states moved to
-// the Postgres session model (§6.2, §6.37), so the static §6.2 invariant is
+// the Postgres session model (§6.2), so the static §6.2 invariant is
 // that no coarse terminal or draining phase has an edge back to idle: a pod
 // that reaches failed, draining, or terminated can only proceed toward
 // termination, never re-enter the claimable pool. The recycle path's

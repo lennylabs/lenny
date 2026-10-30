@@ -45,7 +45,7 @@ ENTRYPOINT ["/my-agent"]
 | Build with `CGO_ENABLED=0` | Produces a static binary that runs on `scratch`. |
 | Use `-ldflags="-s -w"` | Strips debug info, reducing binary size by ~30%. |
 | Copy only the binary | No source code, no intermediate artifacts. |
-| Set `ENTRYPOINT` to your binary | The adapter spawns your binary via the entrypoint. |
+| Set `ENTRYPOINT` to your binary, and its absolute path in the `Runtime`'s `command` | In the sidecar model the runtime supervisor ignores `ENTRYPOINT`, `CMD`, and `ENV` and launches the `command` of your `Runtime` with the `env` it lists. The first element of `command` is the absolute path of the binary or interpreter in the image. Name a script argument by absolute path as well, so the launch does not depend on the image's `WORKDIR`. List every variable the image's `ENV` sets in `env`. [Runtime Configuration](runtime-configuration.md) states the rules for both fields. The entrypoint serves running the image directly. |
 
 ### Python Runtimes
 
@@ -65,6 +65,15 @@ ENTRYPOINT ["python", "-u", "main.py"]
 
 The `-u` flag disables Python's stdout buffering. Without it, the adapter never receives your output and the session hangs.
 
+The `Runtime` for this image names the interpreter and the script by absolute path and lists in `env` the variable the base image's `ENV` sets for text encoding, because the supervisor does not apply the image's `ENV`:
+
+```yaml
+command: ["/usr/local/bin/python", "-u", "/app/main.py"]
+env:
+  - name: LANG
+    value: "C.UTF-8"
+```
+
 ### TypeScript Runtimes
 
 ```dockerfile
@@ -81,6 +90,12 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json .
 ENTRYPOINT ["node", "dist/main.js"]
+```
+
+The `Runtime` for this image names the interpreter and the script by absolute path:
+
+```yaml
+command: ["/usr/local/bin/node", "/app/dist/main.js"]
 ```
 
 ### Image Size Targets
@@ -130,7 +145,7 @@ curl -X POST http://localhost:8080/v1/admin/runtimes \
 
 The `capabilities` block declares what the runtime supports. `interaction` is `one_shot` or `multi_turn`. `injection.supported` declares whether the runtime accepts mid-session message delivery, which a `multi_turn` runtime requires. `midSessionUpload` declares whether clients can add workspace files during an active session. `preConnect` controls SDK-warm pre-connection, described below.
 
-**`preConnect` explained:** When `preConnect: true`, the adapter starts the runtime binary during the warm phase, before a session is assigned. This removes cold-start latency from the assignment path. The runtime must implement the `DemoteSDK` contract: the ability to tear down a pre-connected SDK session when an actual session is assigned and the workspace includes files matching `sdkWarmBlockingPaths` (default: `["CLAUDE.md", ".claude/*"]`). Demotion adds 1--3 seconds and ensures the agent starts with workspace files present. `preConnect` is admitted only when `sessionPolicy.maxConcurrentSessions` is 1, and the pool controller rejects it for service-mode pools.
+**`preConnect` explained:** When `preConnect: true`, the platform launches the runtime's SDK process during the warm phase, before a session is assigned, which removes cold-start latency from the assignment path. In the sidecar model the [runtime supervisor](lifecycle.md#runtime-supervisor) launches the runtime's `command` at warm-up when the pool's SDK-warm circuit breaker is closed at the moment the pod is created. Otherwise the pod warms pod-warm with no process, and the supervisor launches the process when the session's workspace is configured. The runtime must implement the `DemoteSDK` contract: the ability to tear down the pre-connected SDK process before a session's workspace is materialized, when a source in the session's workspace plan targets a path that matches `sdkWarmBlockingPaths` (default: `["CLAUDE.md", ".claude/*"]`). Demotion adds 1--3 seconds and ensures the agent starts with workspace files present. `preConnect` is admitted only when `sessionPolicy.maxConcurrentSessions` is 1, and the pool controller rejects it for service-mode pools.
 
 ### Via Admin API (`type: mcp`)
 
@@ -364,7 +379,7 @@ Before publishing:
    lenny runtime validate --report compliance.json
    ```
 
-   The suite validates every JSON Lines frame your runtime emits against the canonical schemas published at [schemas.lenny.dev/adapter/v1/](https://schemas.lenny.dev/adapter/v1/) -- `lenny-adapter-jsonl.schema.json` for stdin/stdout frames and `messagepart.schema.json` for structured content parts. Validation failures are reported as structured diffs. See [Testing](testing.md) for the full workflow and [Adapter Contract → Canonical artifacts](../reference/adapter-contract.md#canonical-artifacts) for the schema list.
+   The suite validates every JSON Lines frame your runtime emits against the canonical schemas published at [schemas.lenny.dev/adapter/v1/](https://schemas.lenny.dev/adapter/v1/) -- `lenny-adapter-jsonl.schema.json` for stdin/stdout frames, `messagepart.schema.json` for structured content parts, and `runtime-ops-events.schema.json` for the Full-level runtime-operations frames. Validation failures are reported as structured diffs. See [Testing](testing.md) for the full workflow and [Adapter Contract → Canonical artifacts](../reference/adapter-contract.md#canonical-artifacts) for the schema list.
 
 2. **Write a clear description** of what your runtime does, what integration level it implements, and what LLM providers it supports.
 

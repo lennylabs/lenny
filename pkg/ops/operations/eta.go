@@ -57,15 +57,14 @@ type ETAInputs struct {
 	// historical path is skipped (etaMethod falls through to a lower
 	// method or "none").
 	//
-	// spec: §25.2 line 394 ("sample_size >= 3 receive etaMethod
-	// historical_p50 ... below that threshold they return etaMethod none").
+	// spec: §25.2.
 	SampleSize int
 	// ExpectedCadence is the operation kind's expected max inter-step
-	// cadence (§25.2 line 396). stalledForSeconds is populated only when
+	// cadence (§25.2). stalledForSeconds is populated only when
 	// now - lastProgressAt exceeds it; a zero cadence disables stall
 	// detection (the operation is never reported stalled).
 	//
-	// spec: §25.2 line 391, line 396.
+	// spec: §25.2.
 	ExpectedCadence time.Duration
 	// FixedPhaseDuration is the worst-confidence fallback: a constant
 	// duration the subsystem documents for the phase. The ETA equals
@@ -73,7 +72,7 @@ type ETAInputs struct {
 	FixedPhaseDuration time.Duration
 }
 
-// HistoricalP50MinSamples is the §25.2 line 394 minimum sample count an
+// HistoricalP50MinSamples is the §25.2 minimum sample count an
 // operation kind needs before the historical_p50 ETA method applies.
 const HistoricalP50MinSamples = 3
 
@@ -103,7 +102,7 @@ func Compute(in ETAInputs) conventions.Progress {
 	}
 	if !in.LastProgressAt.IsZero() {
 		p.LastProgressAt = in.LastProgressAt.UTC().Format(time.RFC3339)
-		// §25.2 line 391/396: stalledForSeconds is populated only when the
+		// §25.2: stalledForSeconds is populated only when the
 		// time since the last progress exceeds the operation kind's expected
 		// inter-step cadence, and reports the overrun beyond that cadence. A
 		// zero cadence disables stall detection; an operation advancing
@@ -127,7 +126,7 @@ func Compute(in ETAInputs) conventions.Progress {
 
 	switch {
 	case in.HistoricalP50 > 0 && in.SampleSize >= HistoricalP50MinSamples && !in.StartedAt.IsZero() && !in.Now.IsZero():
-		// §25.2 line 394: a kind with sample_size >= 3 receives
+		// §25.2: a kind with sample_size >= 3 receives
 		// historical_p50 with etaConfidence >= 0.5. Below the threshold the
 		// historical path is skipped and a lower-confidence method applies.
 		eta := historicalETA(in.Now, in.StartedAt, in.HistoricalP50)

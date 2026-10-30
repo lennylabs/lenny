@@ -33,6 +33,7 @@ export const meta = {
   phases: [
     { title: "Plan", detail: "blast radius + ordered build sequence, completeness-checked" },
     { title: "Build", detail: "implement each step in order; verify its tiers and adversarially review its diff before advancing; periodically re-plan the remaining steps on drift; abort if a step stays red or divergent" },
+    { title: "Sweep", detail: "align code comments with the landed spec edits; report any non-comment site for a human" },
     { title: "Verify", detail: "run the reached tiers across the whole change, fixing until green and coverage meets the floor" },
     { title: "Review", detail: "final cross-step design-conformance review of the cumulative diff against the proposal, fix divergences" },
   ],
@@ -43,12 +44,148 @@ if (typeof input === "string") input = JSON.parse(input);
 if (!input || !input.proposalPath) {
   throw new Error("args.proposalPath is required");
 }
-const repo = input.repoRoot || "/Users/joan/projects/lenny";
+// Required rather than defaulted: a default is one machine's checkout, and a
+// workflow that silently runs against the wrong tree is worse than one that
+// stops. change-proposal.js requires it for the same reason.
+if (!input.repoRoot) throw new Error("args.repoRoot is required and missing");
+const repo = input.repoRoot;
+// The parent passes this; a workflow script cannot call Date, so anything that
+// stamps a date takes it from here.
+const date = input.date || "";
 const proposal = input.proposalPath.startsWith("/")
   ? input.proposalPath
   : repo + "/" + input.proposalPath;
+// Where this proposal's parts live. Folder layout or legacy single file.
+const P = proposalFiles(input.proposalPath, repo);
 const maxPlanRounds = input.maxPlanRounds || 2;
+// Areas the caller already suspects a spec step will get wrong. Each spec
+// step's verification gains a dedicated reviewer that hunts these specifically,
+// beside the normal one rather than replacing it, and their findings are
+// concatenated with no dedup: two phrasings of one defect reaching the fixer is
+// cheap, and anything that can drop a finding on this path is not worth the
+// fidelity it costs.
+const specReviewFocus = (
+  Array.isArray(input.specReviewFocus)
+    ? input.specReviewFocus
+    : input.specReviewFocus
+      ? [input.specReviewFocus]
+      : []
+)
+  .map((a) => String(a).trim())
+  .filter(Boolean);
+if (specReviewFocus.length > 0) {
+  log("Spec review focus: " + specReviewFocus.length + " area(s) get a dedicated reviewer per spec step");
+}
+const FOCUS_BLOCK =
+  specReviewFocus.length === 0
+    ? ""
+    : "\n\nAREAS TO CONCENTRATE ON. The caller has reason to believe the spec drifts from the proposal " +
+      "in these places specifically:\n" +
+      specReviewFocus.map((a, i) => i + 1 + ". " + a).join("\n") +
+      "\n\nGo after each directly and exhaustively: find every site it covers, including sites outside " +
+      "the anchors the proposal names, and check each against what the proposal stages. These are where " +
+      "to look hardest, not the limit of what to report; a discrepancy elsewhere is still a discrepancy. " +
+      "Reporting nothing for an area is a valid answer when the area is genuinely clean.";
+// A caller-supplied build sequence, which replaces the planning phase outright.
+// Planning exists to derive a sequence from the proposal, and once the
+// proposal's checklist carries every step with its tiers and dependencies, that
+// derivation re-reads a very large document to reproduce what is already
+// written. A resumed run pays it again on every relaunch. When the caller
+// already knows the sequence, it hands it over and the run starts building.
+// The startup tick reconciliation still applies, so a supplied step whose box
+// is ticked is skipped exactly as a derived one is.
+const suppliedPlan =
+  input.plan && Array.isArray(input.plan.steps) && input.plan.steps.length > 0 ? input.plan : null;
 const maxStepAttempts = input.maxStepAttempts || 50;
+// Consecutive dead agents (see the loop below) that stop the run. Small,
+// because the condition it detects is an account or transport failure that a
+// retry cannot clear, and every spin costs wall-clock for nothing.
+const maxDeadAttempts = input.maxDeadAttempts || 3;
+// Re-verify a step whose checklist box is already ticked instead of skipping
+// it. Off by default: the tick is the pipeline's own record that the step went
+// green and conformant, so re-checking costs two review agents per step and
+// earns nothing on a healthy run. Worth turning on when the checklist may be
+// optimistic, after an interrupted run or when the proposal changed once some
+// steps had landed. The step's code is committed and its tiers passed when it
+// landed, so the question worth re-asking is conformance rather than green.
+const reverifyDoneSteps = !!input.reverifyDoneSteps;
+// Steps that were ticked, failed re-verification, and had to be repaired. A
+// step recorded as done that was not is worth surfacing rather than quietly
+// fixing.
+const reverifyRepaired = [];
+// How often the stuck-finding introspection fires inside a step's fix loop.
+// Every fifth attempt: a step that converges normally never reaches it, and a
+// step that does not has already told us something is wrong.
+const introspectEvery = input.introspectEvery || 5;
+// Detectors, not bounds. Reaching one wakes the stuck judges; none of them
+// stops a step. The only stopping conditions are maxStepAttempts, consecutive
+// dead agents, and an `unproductive` verdict.
+//
+// maxPhaseOscillations counts the conformance/test cycle: every fix to one
+// check breaking the other is a pattern the attempt cadence cannot see, because
+// it counts attempts across phases. maxFinalGateFailures counts a full tier
+// pass failing after the scoped runs called the tree done, which means the
+// scoping is systematically missing something.
+const maxPhaseOscillations = input.maxPhaseOscillations || 5;
+const maxFinalGateFailures = input.maxFinalGateFailures || 5;
+// Above this ledger median a tier must be justified by a named hunk before it
+// runs. An unknown cost is treated as expensive but is never a reason to skip a
+// first run.
+const expensiveTierSeconds = input.expensiveTierSeconds || 300;
+// A step's first final gate runs every tier the step reaches. A later one,
+// after a fix round, re-runs only the tiers the previous final gate failed and
+// the tiers the commits since it can reach, and carries the rest forward. Every
+// tier of a long step can pass in an hour-long full pass while one fails, and
+// re-running the whole set after a one-file fix spent most of a step's
+// wall-clock re-proving tiers nothing had touched. The end-of-proposal Verify
+// phase still runs the full set before anything merges.
+//
+// fullFinalPassesBeforeScoping exists for resuming a run that started before
+// this scoping. A resumed run replays an agent only when its prompt is
+// unchanged, so the final passes already in the journal must be re-issued with
+// the full-pass prompt they were issued with. Set it to the number of final
+// passes the journal holds; the first scoped pass is the one after them.
+const fullFinalPassesBeforeScoping = input.fullFinalPassesBeforeScoping || 0;
+let finalPassesIssued = 0;
+// Consecutive rounds that must have tried and failed before the judges may
+// return "unproductive". That verdict says the loop will not do work that is
+// legal and real, which is a claim about a pattern; one or two rounds that
+// missed is trial and error, not a pattern. "unresolvable" carries no such
+// minimum: whether the proposal contradicts the code is a fact about the two
+// documents, and more rounds do not make it truer.
+const minUnproductiveRounds = input.minUnproductiveRounds || 5;
+// Divergences a human has already seen and accepted. The final review is
+// whole-change and re-derives everything, so without this it re-raises a
+// settled question every round and can never converge on a change that
+// deliberately departs from its proposal. Each entry is quoted to the
+// reviewers as already adjudicated.
+const acceptedDivergences = (
+  Array.isArray(input.acceptedDivergences)
+    ? input.acceptedDivergences
+    : input.acceptedDivergences
+      ? [input.acceptedDivergences]
+      : []
+)
+  .map((d) => String(d).trim())
+  .filter(Boolean);
+const ACCEPTED_BLOCK =
+  acceptedDivergences.length === 0
+    ? ""
+    : "\n\nALREADY ADJUDICATED, AND NOT YOURS TO REOPEN. A human has reviewed each divergence below and " +
+      "accepted it: the landed code is what should ship and the proposal is what is wrong, and correcting " +
+      "the proposal is a separate act outside this run. They are recorded for that correction.\n" +
+      acceptedDivergences.map((d, i) => i + 1 + ". " + d).join("\n") +
+      "\n\nDo not report any of these, do not report a rephrasing or a near neighbour of one, and do not " +
+      "treat the code as non-conformant because of one. Reporting an adjudicated divergence cannot advance " +
+      "the run: no one may act on it here, so it only prevents the review from converging. Everything else " +
+      "in the change is fully in scope and you should be no gentler with it.";
+if (acceptedDivergences.length > 0) {
+  log("Final review: " + acceptedDivergences.length + " accepted divergence(s) seeded; reviewers will not re-raise them");
+}
+// Findings judged unresolvable by any change the step may legally make. Each is
+// recorded, suppressed from later review rounds of that step, written into the
+// step's commit trail, and surfaced at the end of the run.
+const stuckFindings = [];
 const maxVerifyRounds = input.maxVerifyRounds || 25;
 const maxReviewRounds = input.maxReviewRounds || 50;
 const coverageFloor = input.coverageFloor || 80;
@@ -66,6 +203,84 @@ const replanStruggleAttempts = input.replanStruggleAttempts || 4;
 // without re-walking (or re-planning) the build steps. baseRef is still computed
 // at the top of the Build phase and the build loop simply iterates zero steps.
 const skipBuild = !!input.skipBuild;
+// specOnly: run the leading spec-lane prefix of the checklist and stop. It is a
+// stop rule inside THIS sequence rather than a phase in the parent, because the
+// checklist is the only ordering (see the spec-step note below) and only this
+// planner knows each step's lane. The parent's own copy of the spec phase was
+// dead code: openLease() there was never called, so `implementCode:false`
+// returned after exactly one agent call with appliedEdits:[] and applied nothing.
+const specOnly = !!input.specOnly;
+const leaseTtlHours = input.leaseTtlHours || 24;
+// sweepComments: after the last checklist step, align code comments with the
+// spec edits this run landed (see the Sweep phase). On by default; false skips
+// it, and the result says it was skipped.
+const sweepComments = input.sweepComments !== false;
+
+// ---- Where a proposal's parts live ---------------------------------------
+//
+// A proposal is a directory of role-scoped files:
+//   proposals/NNNN_kind_slug/NNNN_kind_slug.problem-statement.md
+//   ...summary, status, implementation-checklist, spec-changes,
+//      non-spec-changes, review-log, deviations
+//
+// A proposal written before that layout is a single NNNN_kind_slug.md, and 79
+// of those exist. Both resolve here so no prompt ever concatenates a path by
+// hand, and so a legacy proposal still runs end to end: every role points at
+// the single file, and the prompts that consume a role say "the <role> section
+// of" rather than "the file".
+//
+// The layout is decided from the path string rather than by looking: a
+// workflow script has no filesystem access (see the sandbox note above), and a
+// path ending in .md is a legacy proposal while one that does not is a
+// directory. The pipeline calls migrate-proposal.js at startup on a legacy
+// path, so by the time the review or build loops run the path is a directory.
+function proposalFiles(ref, repoRoot) {
+  const abs = ref.startsWith("/") ? ref : repoRoot + "/" + ref;
+  const legacy = /\.md$/.test(abs);
+  if (legacy) {
+    const stem = abs.replace(/^.*\//, "").replace(/\.md$/, "");
+    return {
+      layout: "legacy",
+      stem,
+      dir: abs.replace(/\/[^/]*$/, ""),
+      root: abs,
+      problem: abs,
+      summary: abs,
+      status: abs,
+      checklist: abs,
+      spec: abs,
+      nonSpec: abs,
+      log: abs,
+      deviations: abs,
+    };
+  }
+  const stem = abs.replace(/\/+$/, "").replace(/^.*\//, "");
+  const f = (role) => abs.replace(/\/+$/, "") + "/" + stem + "." + role + ".md";
+  return {
+    layout: "folder",
+    stem,
+    dir: abs.replace(/\/+$/, ""),
+    root: abs.replace(/\/+$/, ""),
+    problem: f("problem-statement"),
+    summary: f("summary"),
+    status: f("status"),
+    checklist: f("implementation-checklist"),
+    spec: f("spec-changes"),
+    nonSpec: f("non-spec-changes"),
+    log: f("review-log"),
+    deviations: f("deviations"),
+  };
+}
+
+// How a prompt names a role, so one sentence works for both layouts. On a
+// folder proposal it is a file; on a legacy one it is a section of the one
+// file, and saying so is the difference between an agent reading the right
+// thing and an agent reading nothing.
+function roleRef(P, role, sectionName) {
+  return P.layout === "folder"
+    ? P[role]
+    : "the `" + sectionName + "` section of " + P.root;
+}
 
 // A schema'd agent occasionally completes without calling StructuredOutput
 // (returns prose after the nudge); the runtime throws and, uncaught, that one
@@ -75,7 +290,7 @@ const skipBuild = !!input.skipBuild;
 async function agentTry(p, o) {
   for (let i = 0; i < 4; i++) {
     try {
-      return await agent(p, o);
+      return await agent(p, based(o));
     } catch (e) {
       const msg = String((e && e.message) || e);
       if (i < 3 && msg.indexOf("StructuredOutput") !== -1) {
@@ -89,22 +304,216 @@ async function agentTry(p, o) {
   }
 }
 
+// Before any tier above 1, check the environment. A cluster whose images were
+// built from an earlier revision fails in a way that reads exactly like a code
+// defect, and one run spent 1400 seconds waiting on pods that had already
+// failed 2,741 times because the renderer passed a flag the image did not
+// define. The full checklist is in .claude/rules/test-coverage.md.
+const PREFLIGHT_NOTE =
+  " ENVIRONMENT PREFLIGHT, before any tier above 1. The cluster and its images were built from an earlier " +
+  "revision of this tree and drift from it. (a) Count the agent pods by phase " +
+  "(`kubectl -n lenny-agents get pods --no-headers | awk '{print $3}' | sort | uniq -c`): a pile of Error " +
+  "pods makes every label-selector wait run to its full timeout, so delete them with " +
+  "`--field-selector=status.phase=Failed --wait=false` before starting. (b) If a container exits at once " +
+  "with status 2, read the first line of its log: `flag provided but not defined` means the image predates " +
+  "the pod-spec renderer and must be rebuilt and reloaded, not worked around in code. (c) A warm pool at " +
+  "zero ready recreates failing pods indefinitely, so the pile rebuilds itself; read one of its pods' logs " +
+  "before running anything. (d) Reap orphaned envtest processes with `pkill -f kubebuilder-envtest`. " +
+  "(e) A test that creates cluster-scoped state must sweep it at START, not only in t.Cleanup, which does " +
+  "not run when a process is killed; a fixture minting a unique name per run leaks a whole object per " +
+  "killed run otherwise. (f) Treat a tier failure above 1 as an environment failure until you have ruled that out, and never " +
+  "rebuild landed code to make a broken fixture pass. When the environment is broken and fixing it is out " +
+  "of scope here, record the precondition and skip the case with a reason in " +
+  "tests/registers/skip-reasons.yaml, then say so in your result; that is a correct outcome, not a failure." +
+  " Read .claude/rules/test-coverage.md \"Environment preflight\" for the full checklist.";
+
 const RULES =
   "Follow the project rules in " +
   repo +
   "/.claude/rules/code-best-practices.md (small single-purpose functions, reuse over duplication, wrapped errors, injected dependencies, context propagation, fail-closed security, `// spec:` citations, no backward-compat shims) and " +
   repo +
-  "/.claude/rules/test-coverage.md (tests across every tier the change reaches, not unit alone; tier 0 and tier 1 always plus each higher tier the change touches; 80% changed-line coverage; the `// spec:` and `// diagnosis:` test conventions). REGRESSION TEST FOR EVERY BEHAVIORAL FIX: when this step CORRECTS existing behavior — a bug, a fail-open, a wrong status or error code, a missing or wrong authz/scope gate, a cross-tenant leak, an unwired or never-called path, a mislabeled state — it MUST add a test that ASSERTS the corrected behavior and is constructed so it would FAIL against the pre-fix code. Line coverage of the changed lines by a pre-existing happy-path test does NOT satisfy this: the test must exercise the corrected OUTCOME (the new code/status returned, the gate now rejecting, the path now firing), at the tier that owns it (a security fix → tier 9, a reliability/recovery fix → tier 7a/8, a wire/contract fix → tier 3, a state-machine fix → tier 2). Name the test for the behavior and the spec section or finding it pins. This is in addition to the coverage floor, not a substitute for it. REMOVE DEAD CODE: when the proposal eliminates a surface (a mode, field, RPC, frame, metric, enum value, function, struct, or whole file), delete it together with every code path, helper, test, fixture, schema entry, chart template, and identifier that becomes unreferenced as a result; never leave a removed surface compiling-but-dead or two implementations side by side. A removal is part of the change, not a follow-up. Do not hand-edit files under spec/ — the spec is already applied and the guard hook blocks direct writes." +
-  "\n\nNO PROPOSAL-INTERNAL IDENTIFIERS IN CODE, COMMENTS, TESTS, OR COMMIT MESSAGES: the proposal's own scaffolding labels name parts of the proposal document, not the shipped system, and mean nothing to someone reading the code later. NEVER write any of them into source, comments (including test-file comments and test names), or a git commit message: its change/section ids (e.g. `S1`, `S-A1`, `C-A2`, `CODE-A`, `CODE-D/D2`, `SPEC-D`), decision ids (e.g. `D1`, `D8`, `D9`, `RES-1`), review pass numbers (e.g. `Pass 7`), or a step/item/section number that exists only in the proposal's own numbering. Reference a DURABLE source instead: cite the spec section with the `// spec: §X.Y` convention, or describe the behavior directly. A numbered step or section the SPEC itself defines (for example a §5.2 scrub `step 7` that the spec numbers) IS a spec reference and may be cited by that number; the proposal's own build-sequence or change-list step (`step 3`, `S4`, `CODE-A`) is not — cite the spec section it implements instead. For a commit message, name the behavior and the spec section; the proposal file path (`proposals/NNNN_...md`) or the BUILD-GAPS finding id may be included for traceability, but never the internal change/decision/pass/step labels. This holds even when `git log -5` shows prior commits that used such labels: match the repository's format and tense, not that leak." +
+  "/.claude/rules/test-coverage.md (tests across every tier the change reaches, not unit alone; tier 0 and tier 1 always plus each higher tier the change touches; 80% changed-line coverage; the `// spec:` and `// diagnosis:` test conventions). REGRESSION TEST FOR EVERY BEHAVIORAL FIX: when this step CORRECTS existing behavior — a bug, a fail-open, a wrong status or error code, a missing or wrong authz/scope gate, a cross-tenant leak, an unwired or never-called path, a mislabeled state — it MUST add a test that ASSERTS the corrected behavior and is constructed so it would FAIL against the pre-fix code. Line coverage of the changed lines by a pre-existing happy-path test does NOT satisfy this: the test must exercise the corrected OUTCOME (the new code/status returned, the gate now rejecting, the path now firing), at the tier that owns it (a security fix → tier 9, a reliability/recovery fix → tier 7a/8, a wire/contract fix → tier 3, a state-machine fix → tier 2). Name the test for the behavior and the spec section or finding it pins. This is in addition to the coverage floor, not a substitute for it. REMOVE DEAD CODE: when the proposal eliminates a surface (a mode, field, RPC, frame, metric, enum value, function, struct, or whole file), delete it together with every code path, helper, test, fixture, schema entry, chart template, and identifier that becomes unreferenced as a result; never leave a removed surface compiling-but-dead or two implementations side by side. A removal is part of the change, not a follow-up. Do not hand-edit files under spec/ — the spec is already applied and the guard hook blocks direct writes. DO NOT EDIT THE PROPOSAL EITHER. The proposal is the authority this step is measured against, it is signed off by a human, and a step that rewrites it to match the code it just wrote has inverted the pipeline: it makes the conformance review vacuous and silently amends an approved design. This holds without exception. It is not relaxed by the proposal being wrong, by its design carrying a race, by it contradicting itself, or by it being unbuildable as written: none of those is a reason to edit it, and there is no circumstance in which this step edits that file. When the implementation ends up departing from what the proposal states, for any reason, record the departure in the `deviations` field of your result, naming what the proposal says, what you did instead, and why. Those entries are collected and reported to a human at the end of the run, which is where a proposal defect gets decided. The only edit any agent makes to the proposal file is ticking an implementation-checklist box, and a separate agent does that." +
+  "\n\nNO PROPOSAL-INTERNAL IDENTIFIERS IN CODE, COMMENTS, TESTS, OR COMMIT MESSAGES: the proposal's own scaffolding labels name parts of the proposal document, not the shipped system, and mean nothing to someone reading the code later. NEVER write any of them into source, comments (including test-file comments and test names), or a git commit message: its change/section ids (e.g. `S1`, `S-A1`, `C-A2`, `CODE-A`, `CODE-D/D2`, `SPEC-D`), decision ids (e.g. `D1`, `D8`, `D9`, `RES-1`), review pass numbers (e.g. `Pass 7`), or a step/item/section number that exists only in the proposal's own numbering. Reference a DURABLE source instead: cite the spec section with the `// spec: §X.Y` convention, or describe the behavior directly. A numbered step or section the SPEC itself defines (for example a `step 7` inside a §N.M procedure that the spec numbers) IS a spec reference and may be cited by that number; the proposal's own build-sequence or change-list step (`step 3`, `S4`, `CODE-A`) is not — cite the spec section it implements instead. For a commit message, name the behavior and the spec section; the proposal file path (`proposals/NNNN_...md`) or the BUILD-GAPS finding id may be included for traceability, but never the internal change/decision/pass/step labels. This holds even when `git log -5` shows prior commits that used such labels: match the repository's format and tense, not that leak." +
+  PREFLIGHT_NOTE +
   "\n\nPER-STEP VERIFICATION — must TEST the step, avoid the 180s no-progress watchdog, AND stay MEMORY-SAFE on a 16GB host (running heavy tests in the background or concurrently accumulates orphaned processes and OOM-crashes the whole machine, including this build). DO test every step; do NOT skip tests. Follow ALL of these: (1) DEFAULT to scoped FOREGROUND verification — NEVER use `run_in_background` for `go test`/`lenny-test`/envtest/integration/e2e UNLESS the tier is a single long-running command that will exceed the 180s watchdog without emitting output (see rule (6) for that case only); never more than one heavy job alive at once. (2) SCOPE every command to the changed packages, never the whole repo: `go build ./<changed-pkg>/...`, `go vet ./<changed-pkg>/...`, `golangci-lint run ./<changed-pkg>/...`, `go test ./<changed-pkg>/... -count=1 -p 2`. Scoped runs finish well under 180s (no watchdog stall) AND keep memory bounded; do NOT pipe through `| tail`/`| head` (let output stream). (3) For a tier-2 envtest package the step changes, run it FOREGROUND and SCOPED to that one package only (`go test ./<changed-envtest-pkg>/... -count=1 -p 1` with `KUBEBUILDER_ASSETS` set) so only ONE etcd+kube-apiserver pair is alive at a time; immediately after it returns, reap strays with `pkill -f kubebuilder-envtest 2>/dev/null` before continuing. (4) NEVER run `go test -race ./...` over the whole repo — the race detector uses ~10x memory; if you need `-race`, run it scoped to the one changed package only. (5) NEVER run whole-repo `lenny-test --max-tier unit`/`static` per step. A pre-existing whole-repo failure unrelated to this step's changed packages is not this step's failure. (6) LONG-SILENT TIER EXCEPTION: if and only if a single tier command will genuinely run longer than ~150s without emitting any output (a rare case for full component or integration tiers), you may launch it with `run_in_background: true` to a log file. In that case, poll for completion using the READ TOOL (read the log file path returned by the Bash tool) — do NOT use a Bash `tail -f`/`until` loop. A Bash poll loop depends on the task `.output` file remaining on disk; if the 180s watchdog kills the foreground Bash wrapper, the harness deletes that `.output` file and the poll loop hangs forever. The Read tool bypasses the task-output mechanism and reads the log file directly, making it immune to harness cleanup." +
   "\n\nBRANCH SAFETY (critical): you MUST stay on the current feature branch and commit ONLY to it. NEVER run `git checkout <branch-or-commit>`, `git switch`, `git reset --hard`, or `git branch -f` — switching the checkout has caused build commits to land on the wrong branch (a real, damaging failure). To inspect a historical commit or the pre-implementation baseline, use `git diff <SHA>..HEAD`, `git diff <SHA> -- <path>`, or `git show <SHA>:<path>`, which read history WITHOUT changing the working tree. Immediately before every `git commit`, confirm `git rev-parse --abbrev-ref HEAD` prints the feature branch (not `HEAD`/detached, and never `impl/v1-initial` or any base branch); if it does not, `git checkout <feature-branch>` to return before committing.";
+
+// The proposal's Summary is the one section every agent in this phase reads. It
+// carries the top-level changes, the decisions that are closed, and the traps, so
+// an implementer building step nine orients the same way as one building step one.
+// The script cannot read the proposal: the workflow sandbox has no `require` and
+// no filesystem access, so the agent reads its own Summary.
+const SUMMARY_BLOCK =
+  "\n\nTHE PROPOSAL'S SUMMARY. Read " +
+  roleRef(P, "summary", "## Summary") +
+  " before anything else. It states the top-level changes, the decisions that are closed and must not be " +
+  "reopened, and the traps this change has already fallen into. A proposal written before that section " +
+  "existed may not have one; when it is absent, read the Problem and Decisions sections in its place.\n";
+
+const BLANKS_BLOCK =
+  "\n\nBLANKS THE PROPOSAL LEAVES TO YOU. A proposal may delegate a detail rather than specify it, marked as " +
+  "**IMPLEMENTOR'S CHOICE:** naming what is open and the constraint any answer must satisfy. When you reach " +
+  "one: make the choice, satisfy the constraint, and record in your commit message and your result which " +
+  "choice you made and how it satisfies the constraint. A marked blank is a delegation, so it is not a defect " +
+  "and not a reason to stop. An UNMARKED gap is different: the proposal neither says what to do nor delegates " +
+  "it, so report it rather than guessing.\n";
+
+// Everything the per-step agents need beyond their own instructions.
+const RULES_FULL = RULES + SUMMARY_BLOCK + BLANKS_BLOCK;
+
+
+// The model and reasoning effort every agent runs at, unless it hard-codes its
+// own. Deliberately INDEPENDENT of the session's model and effort: a run that
+// silently changed tier because the operator had switched their own model would
+// produce results nobody could compare against an earlier run. Hard-coded
+// models stay ABSOLUTE rather than relative to the base, so the tiering is only
+// coherent while the base sits at or above sonnet.
+const MODELS = ["opus", "sonnet", "haiku", "fable"];
+const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const baseModel = input.baseModel || "opus";
+const baseEffort = input.baseEffort || "medium";
+if (!MODELS.includes(baseModel)) {
+  throw new Error('args.baseModel must be one of ' + MODELS.join(", ") + '; got "' + baseModel + '"');
+}
+if (!EFFORTS.includes(baseEffort)) {
+  throw new Error('args.baseEffort must be one of ' + EFFORTS.join(", ") + '; got "' + baseEffort + '"');
+}
+// Applied at the single point every agent call in this script passes through,
+// so an agent added later cannot escape the base by being written somewhere new.
+function based(o) {
+  const b = { ...(o || {}) };
+  if (!b.model) b.model = baseModel;
+  if (!b.effort) b.effort = baseEffort;
+  return b;
+}
+log("Base tier: " + baseModel + " at " + baseEffort + " effort" +
+  (input.baseModel || input.baseEffort ? " (caller-set)" : " (default)") +
+  ". Agents that name their own model keep it.");
+
+// ---- Argument classification ---------------------------------------------
+//
+// forward: read where it is used, present in no prompt already issued.
+// anchored: baked into prompts the run has issued.
+// launch: controls how a run starts.
+const ARG_CLASS = {
+  baseModel: "launch",
+  baseEffort: "launch",
+  proposalPath: "launch",
+  repoRoot: "launch",
+  date: "anchored",
+  plan: "anchored",
+  skipBuild: "launch",
+  specOnly: "launch",
+  sweepComments: "forward",
+  leaseTtlHours: "forward",
+  reverifyDoneSteps: "launch",
+  acceptedDivergences: "anchored",
+  specReviewFocus: "anchored",
+  maxPlanRounds: "forward",
+  maxStepAttempts: "forward",
+  maxDeadAttempts: "forward",
+  maxVerifyRounds: "forward",
+  maxReviewRounds: "forward",
+  maxReplans: "forward",
+  replanEvery: "forward",
+  replanStruggleAttempts: "forward",
+  coverageFloor: "forward",
+  introspectEvery: "forward",
+  minUnproductiveRounds: "forward",
+  maxPhaseOscillations: "forward",
+  maxFinalGateFailures: "forward",
+  expensiveTierSeconds: "forward",
+  fullFinalPassesBeforeScoping: "forward",
+};
+
+// ---- What a spec-lane step needs -----------------------------------------
+//
+// These came from implement-proposal.js, where spec application used to be a
+// phase of its own. Under one execution sequence a spec step is a step like
+// any other, so its rules and schemas live beside the loop that runs it.
+
+const SPEC_RULES =
+  "Spec content rules (these take precedence over verbatim application; record every deviation they force):\n" +
+  "- The spec never references source code files or implementation paths (pkg/, cmd/, charts/, sdks/, tests/, migrations/, .go or other source files). Rephrase staged text carrying such a reference into behavioral spec language, or drop the reference.\n" +
+  "- The spec cross-references other spec content by section number only: §X.Y or a relative markdown link to a section anchor. Replace a line-number cross-reference in staged text with the containing section's number.\n" +
+  "- Line numbers in the proposal's ANCHOR INSTRUCTIONS are location hints for you and never become spec content. Locate anchors by the quoted text and section headings; line numbers drift.\n" +
+  "- A staged edit that introduces a brand-new section or subsection is appended at the end of its level, after the last existing sibling at that level, and numbered as the next ordinal. Never insert a new section or subsection between existing ones: inserting in the middle forces every following section to be renumbered and breaks existing cross-references. When a staged anchor instruction would place a new section or subsection between existing ones, append it at the end of that level instead, renumber it to the next ordinal, and record the deviation. Editing the body of an existing section in place is unaffected by this rule; it applies only to introducing a new numbered section or subsection.\n" +
+  "- Apply staged prose as written otherwise; do not restyle it.\n" +
+  "- These rules govern text you author from a staged block. For a mechanical edit you do not author the text: if the script's output violates one of them, that is a defect in the script or its register, so record it as a deviation and stop, rather than hand-correcting the output, which would put the tree and the register out of step.";
+
+const APPLY_RESULT = {
+  type: "object",
+  required: ["applied", "unappliable", "deviations"],
+  properties: {
+    applied: { type: "array", items: { type: "string" } },
+    unappliable: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["id", "reason"],
+        properties: { id: { type: "string" }, reason: { type: "string" } },
+      },
+    },
+    deviations: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["id", "rule", "original", "replacement"],
+        properties: {
+          id: { type: "string" },
+          rule: { type: "string" },
+          original: { type: "string" },
+          replacement: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
+const DISCREPANCIES = {
+  type: "object",
+  required: ["discrepancies"],
+  properties: {
+    discrepancies: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["title", "file", "where", "expected", "observed", "fix"],
+        properties: {
+          title: { type: "string" },
+          file: { type: "string" },
+          where: { type: "string" },
+          expected: { type: "string", description: "What the proposal stages, quoted exactly" },
+          observed: { type: "string", description: "What the spec now says, quoted exactly" },
+          fix: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
+// The spec files one step's staged deliverables write, which becomes the
+// lease's allow list: the narrowest grant that still lets the step work.
+const SPEC_TARGETS = {
+  type: "object",
+  required: ["files"],
+  properties: {
+    files: { type: "array", items: { type: "string" }, description: "repo-relative paths under spec/" },
+  },
+};
 
 // One build step, shared by the initial plan and the tail re-plan.
 const STEP_ITEM = {
   type: "object",
-  required: ["id", "title", "work", "targets", "tiers"],
+  required: ["id", "lane", "title", "work", "targets", "tiers"],
   properties: {
     id: { type: "string", description: "stable short id, e.g. S1" },
+    lane: {
+      type: "string",
+      enum: ["spec", "code", "schema", "migration", "test", "docs"],
+      description:
+        "The lane selects which handler runs for this step, so a step carries exactly ONE and a step naming both a spec deliverable and a non-spec one is a defect. `spec` applies the staged spec edits its deliverables name; every other lane builds code and tests.",
+    },
     title: { type: "string" },
     work: { type: "string", description: "what to implement in this step" },
     targets: { type: "array", items: { type: "string" }, description: "files or packages" },
@@ -115,6 +524,26 @@ const STEP_ITEM = {
       description: "test tiers this step must create and run (e.g. unit, component, integration)",
     },
     specRefs: { type: "array", items: { type: "string" } },
+    checklistStep: {
+      type: "string",
+      description:
+        "the id of the proposal's implementation-checklist step this step carries across, when the proposal has a checklist",
+    },
+    alreadyDone: {
+      type: "boolean",
+      description:
+        "the step's surface is already present in the tree; keep it in the sequence so dependencies still resolve, but build nothing",
+    },
+    needsIntent: {
+      type: "boolean",
+      description:
+        "the step cannot be built literally as the checklist words it; the implementer works from the proposal's stated intent, recorded in work",
+    },
+    blocked: {
+      type: "string",
+      description:
+        "why this step cannot be built at all, when even its intent could not be recovered; steps that do not depend on it still run",
+    },
   },
 };
 
@@ -134,6 +563,12 @@ const PLAN = {
       items: STEP_ITEM,
     },
     risks: { type: "array", items: { type: "string" } },
+    deviations: {
+      type: "array",
+      items: { type: "string" },
+      description:
+        "every place the proposal's implementation checklist did not match the tree: a step already done, a step re-sequenced because its prerequisite was elsewhere, a step whose deliverable is missing, or the absence of a checklist entirely. Reported so the proposal can be corrected; an imperfect checklist is expected and is not a reason to stop.",
+    },
   },
 };
 
@@ -184,6 +619,10 @@ const CRITIQUE = {
   },
 };
 
+// The implementer's own test run is a smoke check: tier 0 static checks and
+// tier 1 for the packages it changed. Tier 2 and above belong to the verifier
+// and the final gate, which ran them again on the same tree when the
+// implementer ran them too.
 const STEP = {
   type: "object",
   required: ["implemented", "testsPassed", "tiersRun"],
@@ -191,9 +630,27 @@ const STEP = {
     implemented: { type: "boolean" },
     filesChanged: { type: "array", items: { type: "string" } },
     testsAddedOrModified: { type: "array", items: { type: "string" } },
-    tiersRun: { type: "array", items: { type: "string" } },
-    testsPassed: { type: "boolean" },
+    tiersRun: {
+      type: "array",
+      items: { type: "string" },
+      description: "the tiers you ran yourself as a smoke check: tier 0 static checks and tier 1 for the packages you changed, never tier 2 or above",
+    },
+    testsPassed: { type: "boolean", description: "whether your tier 0 and tier 1 smoke check passed" },
     commit: { type: "string" },
+    deviations: {
+      type: "array",
+      description:
+        "Every departure of the landed code from what the proposal states, one entry each. The proposal is never edited to close one; it is recorded here and reported to a human at the end of the run.",
+      items: {
+        type: "object",
+        required: ["proposalSays", "implementedInstead", "why"],
+        properties: {
+          proposalSays: { type: "string", description: "What the proposal states, and the section it states it in" },
+          implementedInstead: { type: "string", description: "What the code does, with file:line" },
+          why: { type: "string" },
+        },
+      },
+    },
     notes: { type: "string" },
   },
 };
@@ -206,7 +663,59 @@ const VERIFY = {
     tiersRun: { type: "array", items: { type: "string" } },
     changedLineCoverage: { type: "string" },
     failures: { type: "array", items: { type: "string" } },
+    // A scoped run's skips are only auditable if it states them as data. The
+    // final gate records the class and the skip that let a failure through,
+    // and it cannot parse either back out of `notes`, so both are fields. A
+    // full pass skips nothing and leaves both absent.
+    classification: { type: "string", description: "the change class this run assigned to the diff, from the class table" },
+    skipped: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["tier", "why"],
+        properties: { tier: { type: "string" }, why: { type: "string" } },
+      },
+    },
     notes: { type: "string" },
+  },
+};
+
+// The per-attempt verifier's schema. A verify that covered the step's whole
+// tier set on a tree nothing has changed since stands in for the final gate,
+// and these two fields are what lets the run decide that; either absent means
+// the gate runs. Kept off VERIFY so the final gate and the proposal-wide Verify
+// phase are unchanged.
+const STEP_VERIFY = {
+  ...VERIFY,
+  properties: {
+    ...VERIFY.properties,
+    treeHash: {
+      type: "string",
+      description: "`git rev-parse HEAD^{tree}`, identical before the first tier and after the last with a clean status both times; empty otherwise",
+    },
+    fullSet: {
+      type: "boolean",
+      description: "true only when tier 0 and tier 1 ran over every package the step changed and every one of the step's tiers ran, none skipped except a cloud-only tier",
+    },
+  },
+};
+
+// The tree the final gate would test, read just before it would run.
+const TREE = {
+  type: "object",
+  required: ["treeHash", "clean"],
+  properties: {
+    treeHash: { type: "string", description: "`git rev-parse HEAD^{tree}`" },
+    clean: { type: "boolean", description: "the status command printed nothing" },
+  },
+};
+
+// classify-diff.mjs's verdict over a range, relayed verbatim.
+const CLASSES = {
+  type: "object",
+  required: ["classes"],
+  properties: {
+    classes: { type: "array", items: { type: "string" }, description: "the `classes` array the tool printed, verbatim" },
   },
 };
 
@@ -230,6 +739,119 @@ const REVIEW = {
   },
 };
 
+// A ticked checklist box is the run's own record that the step landed, written
+// by the pipeline after that step went green and conformant. On a resumed or
+// re-entered run it is the authority on what is already done: re-running a
+// completed step re-does committed work and can undo the later steps built on
+// top of it. Read here rather than inferred by the planner from the tree,
+// because the planner infers a step is done from the surface being present,
+// which is weaker evidence and which it can get wrong in either direction.
+// The proposal is read-only to this phase and every agent is told so in the
+// strongest terms the prompt can carry. An instruction is not an enforcement
+// mechanism, so the run also looks: nothing blocks the edit, nothing reverts
+// it, and if one happened it is reported to a human with its diff rather than
+// silently kept or silently undone. Deciding what the proposal should have
+// said is the human's call, and this report is what that decision is made on.
+const PROPOSAL_EDITS = {
+  type: "object",
+  required: ["edited", "commits"],
+  properties: {
+    edited: { type: "boolean", description: "Whether any commit in the range touched the audited proposal paths" },
+    commits: {
+      type: "array",
+      description: "One entry per commit that touched the audited proposal paths, oldest first. Empty when none did.",
+      items: {
+        type: "object",
+        required: ["sha", "subject", "whatChanged"],
+        properties: {
+          sha: { type: "string" },
+          subject: { type: "string", description: "The commit subject line" },
+          whatChanged: {
+            type: "string",
+            description:
+              "What the edit did to the proposal's meaning, read from the diff: which section, what it said before, what it says now. Quote the changed sentences rather than paraphrasing them.",
+          },
+          statedReason: {
+            type: "string",
+            description: "The reason the commit message gives, verbatim, or an empty string when it gives none",
+          },
+        },
+      },
+    },
+  },
+};
+
+const TICKED = {
+  type: "object",
+  required: ["ticked"],
+  properties: {
+    ticked: {
+      type: "array",
+      description: "The step id of every checklist line whose box is `[x]`, e.g. S1, S4. Empty when none are ticked or the proposal has no checklist.",
+      items: { type: "string" },
+    },
+  },
+};
+
+// One judge's reading of whether a finding is stuck. A finding is STUCK when no
+// change this step may legally make can resolve it: the code is right, the
+// proposal is wrong, and the proposal is read-only to this phase. Suppressing
+// one is a real cost — the next round stops reporting it — so the bar is
+// unanimity at high confidence, and a single dissent or a single medium keeps
+// the loop grinding instead.
+const STUCK_VERDICT = {
+  type: "object",
+  required: ["verdict", "confidence", "reasoning"],
+  properties: {
+    verdict: {
+      type: "string",
+      enum: ["resolvable", "unresolvable", "unproductive"],
+      description:
+        "resolvable: a legal change closes this and the rounds show the loop converging on it. unresolvable: no legal change closes it, because the landed code is right and the proposal is wrong. unproductive: a legal change exists, but the rounds show this loop is not making it and further rounds would not either.",
+    },
+    confidence: { type: "string", enum: ["high", "medium", "low"] },
+    findingTitle: {
+      type: "string",
+      description: "the exact title of the finding you judge, copied verbatim from the findings you were given. Empty when the verdict is resolvable.",
+    },
+    roundsMovedIt: {
+      type: "string",
+      description: "What the rounds actually did about this finding, named round by round from the commits you inspected: which rounds touched the files the finding names, and which produced motion elsewhere. This is the evidence for your verdict and is required whenever the verdict is not resolvable.",
+    },
+    whyCodeIsRight: { type: "string", description: "unresolvable only: the evidence that the landed code is correct, with file:line" },
+    whyProposalIsWrong: { type: "string", description: "unresolvable only: what the proposal says that the code cannot satisfy, and where" },
+    outstandingWork: { type: "string", description: "unproductive only: the concrete work that would actually close the finding, and why the rounds did not do it" },
+    reasoning: { type: "string" },
+  },
+};
+
+// The cheap gate that runs before the conformance review: a reviewer handed
+// code that does not compile produces confident nonsense. It also runs the
+// tier 0 checks that cost seconds on the changed files (formatting, vet, and
+// map completeness), which otherwise failed only at the final gate and cost a
+// fix round plus another full gate each.
+const COMPILE = {
+  type: "object",
+  required: ["compiles", "staticClean"],
+  properties: {
+    compiles: { type: "boolean" },
+    staticClean: { type: "boolean", description: "gofumpt, goimports, go vet, and validate-maps all passed or had nothing to check" },
+    errors: { type: "array", items: { type: "string" } },
+  },
+};
+
+// The lease a code step owes before it runs at all. leaseHeld is REQUIRED: an
+// omitted field reads as undefined, which is indistinguishable from false at
+// the call site and would let a leak through the one gate whose subject is a
+// write boundary.
+const LEASE = {
+  type: "object",
+  required: ["leaseHeld"],
+  properties: {
+    leaseHeld: { type: "boolean", description: "the value of the `held` field printed by spec-lease.mjs status" },
+  },
+};
+
 const SHA = {
   type: "object",
   required: ["sha"],
@@ -238,26 +860,86 @@ const SHA = {
 
 // ---- Plan: blast radius + ordered build sequence, completeness-checked ----
 
-phase("Plan");
-log("Planning the blast radius and build sequence for " + proposal);
-let plan = skipBuild ? { steps: [] } : await agentTry(
-  "Plan the code implementation of an applied spec proposal.\n\n" +
+// Only announce a planning phase when one actually runs. A caller-supplied
+// sequence skips the planner, and opening a phase named "Plan" anyway makes
+// the progress view claim work the run is not doing.
+if (suppliedPlan) {
+  log(
+    "Build sequence supplied by the caller: " + suppliedPlan.steps.length +
+      " step(s); the planning and plan-critique phases are skipped",
+  );
+} else {
+  phase("Plan");
+  log("Planning the blast radius and build sequence for " + proposal);
+}
+let plan = skipBuild
+  ? { steps: [] }
+  : suppliedPlan
+    ? suppliedPlan
+    : await agentTry(
+  "Turn a proposal's implementation checklist into the build sequence for its code phase.\n\n" +
     "You are a read-only planner; do not edit any file. Work in " +
     repo +
-    ".\n\n" +
-    "Proposal: " +
+    ".\n\nProposal: " +
     proposal +
-    ". The proposal's spec edits are ALREADY applied to spec/. Read the proposal in full — every section, especially Detailed design, CRD and RBAC changes, Observability, Proposed spec changes (now landed in spec/), Testing, and Files touched. The finding(s) that reference this proposal are entry points; the proposal defines the complete change.\n\n" +
-    "Then map the full blast radius: grep spec/, pkg/, cmd/, charts/, schemas/, and migrations/ for every existing surface the change touches (call sites, builders, stores, controllers, reconcilers, CRD types, proto/JSONL schemas, chart templates, alert rules) and every new surface it adds. " +
-    "The blast radius and the build sequence MUST include the surfaces the proposal REMOVES, not only those it adds or changes: for every mode, field, RPC, frame, metric, enum value, function, or whole file the proposal eliminates, include an explicit removal step that deletes it plus the code paths, tests, fixtures, schema entries, and chart templates orphaned by its removal, sequenced so the removal lands without breaking the build (remove consumers before the surface, or in the same step). A surface the proposal eliminates that has no removal step is a planning gap. " +
-    "Produce blastRadius (one entry per surface) and an ORDERED build sequence of steps where each step is independently implementable once its dependencies are done. For each step give the work, the target files or packages, dependsOn (earlier step ids), the test tiers it must create and run (per " +
+    ". Its spec edits are ALREADY applied to spec/.\n\n" +
+    "READ THE PROPOSAL'S SUMMARY AND ITS IMPLEMENTATION CHECKLIST FIRST. The checklist is an ordered list of " +
+    "steps, each naming the staged deliverables it lands, the test tiers it must run, and the earlier steps it " +
+    "depends on. It was written and maintained while the proposal was reviewed, so it is the sequence, and you " +
+    "are not being asked to invent one. Carry its steps across in order, keeping their ids, their deliverable " +
+    "ids, their tiers, and their dependencies.\n\n" +
+    "A STEP WHOSE CHECKBOX IS ALREADY `[x]` IS DONE. The pipeline ticks a box only after that step went " +
+    "green and design-conformant, so on a resumed run the tick is the record of work that already landed. " +
+    "Carry such a step across with alreadyDone set and build nothing for it; re-doing it re-does committed " +
+    "work and can undo the steps built on top of it. The run enforces this independently of your answer.\n\n" +
+    "THEN CHECK IT AGAINST THE TREE, because a checklist written during review can be stale or wrong in three " +
+    "ways, and the run must survive all three rather than stopping at them.\n" +
+    "  A step whose surface is ALREADY PRESENT. Grep-confirm before you assume; a proposal can be partially " +
+    "implemented from an interrupted run or from work that landed by another route. Mark such a step " +
+    "alreadyDone with the evidence, and keep it in the sequence so the dependency graph stays intact.\n" +
+    "  A step that DEPENDS ON SOMETHING ABSENT that the checklist says an earlier step provides. The checklist " +
+    "is mis-ordered. Re-sequence locally: move the step after whatever genuinely provides its prerequisite, and " +
+    "record the move in deviations. Do not stop.\n" +
+    "  A step that CANNOT BE BUILT AS WRITTEN, because a deliverable it names does not exist in the proposal, or " +
+    "its target is gone. Keep the step, mark it needsIntent, and say what the proposal's own text says the step " +
+    "is for; the implementer will work from the intent. Only when the intent cannot be recovered either does the " +
+    "step become blocked, and a blocked step does not stop the steps that do not depend on it.\n\n" +
+    "A checklist that is imperfect is expected. Your job is to produce a runnable sequence from it and a clear " +
+    "record of where it was wrong, so the proposal can be corrected afterwards. Never abandon the checklist and " +
+    "derive your own order from scratch: the order encodes review decisions you cannot see.\n\n" +
+    "IF THE PROPOSAL HAS NO IMPLEMENTATION CHECKLIST, say so in deviations and derive the sequence yourself, " +
+    "the way a planner had to before checklists existed: map the blast radius by grepping spec/, pkg/, cmd/, " +
+    "charts/, schemas/, and migrations/ for every surface the change touches and every surface it REMOVES, and " +
+    "emit an ordered sequence with an explicit removal step for each eliminated mode, field, RPC, frame, metric, " +
+    "enum value, function, or file, including the code, tests, fixtures, and templates orphaned by it.\n\n" +
+    "Either way, produce blastRadius (one entry per surface the change touches) and the ordered steps, each with " +
+    "its work, target files or packages, dependsOn, test tiers per " +
     repo +
-    "/.claude/rules/test-coverage.md), and the spec sections it implements. Sequence so foundational changes (CRD fields, schemas, shared types) come before the code that consumes them, and tests for each step land within that step." +
-    " CRITICAL — RESUMING A PARTIALLY-BUILT PROPOSAL. A large prefix of this proposal is ALREADY IMPLEMENTED and committed on the current branch; run `git log --oneline -80` (commits tagged '0002 S1:' through '0002 S22:') and grep the current code to confirm. The following surfaces are DONE and you MUST NOT emit any step for them: the CRD API types (`executionMode: session;service` enum, `ConcurrencyStyle`/`TaskPolicy` removed, `sessionPolicy` types) with regenerated CRD manifests; migration 0167 (execution_mode enum re-key, `agent_pod_state` recycle counters, the concurrency_style Phase-3 gate); the mode-enum collapse and `sessionPolicy` mirror across the stores, admin, and persistence layers; the adapter-proto `ReportSessionScrub`/`ReportPodScrub` RPC declarations, the hand-authored OpenAPI document, the SDK `conversationContinuity` field, and the `CoarseState` mapping with `slot_active` removed; the deletion of between-task lifecycle frames and the `task_lifecycle` capability from schemas and examples; and the §6.2 coarse pod-state-machine re-key with recycle edges; ALSO committed (as S11 through S19) and likewise DONE: the `lenny-sandboxclaim-guard` CREATE-only re-key with its alert/runbook, `taskcleanup.Decide` re-sourced to `sessionPolicy`, the `pool_config_validator` derived-property re-keys, the `maxClientIdleSeconds` idle clock, the metric renames and new series, the chart RBAC decomposition with the gateway claim-hold/queue config, and the per-pod `SandboxClaim` claimer (`claim-<podName>`, Postgres-fallback slot gate) WITH the ownership decomposition (gateway no longer writes `Sandbox.status`, claim-driven occupancy projection, drains routed through claim DELETE plus the drain-request annotation); ALSO committed (as S20 through S22) and DONE: the `agent_pod_state` recycle-counter store accessors, the binding-state status writers with the precondition-guarded hold-expiry DELETE, and the gateway-side `ReportSessionScrub`/`ReportPodScrub` handlers with the recycle-disposition decision. Your plan MUST begin at the FIRST surface that is NOT yet implemented and cover ONLY the remainder; the remaining work is approximately the gateway recycle branch on session-end and reserved-hold rebind, the WarmPoolController claim-driven occupancy projection in the Sandbox status writer, the reserved-hold coordinator (hold TTL, rewarm stamp, precondition-guarded expiry DELETE), the binding-state-aware orphan GC, the `sdk_connecting` watchdog reserved-terminus and re-warm-start clock re-anchor, the `onPoolExhausted: queue` bounded wait, service-mode claimless routing and the `multi_turn`/`conversationContinuity` contract, the Session/Task 1:1 freeze, the PoolScalingController reserved-pod inventory and scaling derivations, the `podregistry`/`podlifecycle` re-source for the per-pod claim model, and the documentation/diagram sweep with finding closure — but grep-confirm each is genuinely absent before emitting it and SKIP any already present. For reference, the full candidate list in dependency order is: the per-pod `SandboxClaim` claimer (deterministic `claim-<podName>`, spec-only CREATE, Postgres `pod_assignment` binding, Redis slot-counter gate with §12.4 Postgres fallback); the `lenny-sandboxclaim-guard` CREATE-only per-pod-uniqueness re-key (drop the PATCH/PUT rule); the ownership decomposition (gateway stops writing `Sandbox.status`, WarmPoolController becomes sole writer, claim-driven occupancy projection, RBAC grant changes); the adapter scrub-split handlers wiring (`ReportSessionScrub`/`ReportPodScrub` gateway-side) and `taskcleanup.Decide` re-sourced to `sessionPolicy` with the `taskdriver` package removed; the recycle disposition and reserved-hold on the gateway binder/sessionserver; the binding-state-aware orphan GC; the `sdk_connecting` watchdog reserved-terminus and re-warm-start clock re-anchor; the `maxClientIdleSeconds` idle clock replacing `runtime.limits.maxIdleTimeSeconds`; the `onPoolExhausted: queue` bounded wait; service-mode claimless routing and the `multi_turn`/`conversationContinuity` contract with the registration-time warning; the metric renames and new series at every emitter and consumer; the RBAC convergence and alert-rule re-key; the Session/Task 1:1 freeze (TaskID, per-session manifest, integration-level matrix); the PoolScalingController reserved-pod inventory and scaling derivations; and the documentation/diagram sweep with finding closure. Confirm by grep that each step you emit targets a surface genuinely absent from the current code before including it.",
+    "/.claude/rules/test-coverage.md, and the spec sections it implements.",
   { schema: PLAN, label: "plan", phase: "Plan" },
 );
 
-for (let round = 1; !skipBuild && round < maxPlanRounds; round++) {
+// agent() returns null when the subagent never ran (see the dead-agent note in
+// the step loop below). Everything downstream reads plan.steps, so a dead
+// planner surfaced as "Cannot read properties of null (reading 'steps')" at the
+// checklist reconciliation below, hours into a run, rather than as a status,
+// and the caller got no result to report. skipBuild and a caller-supplied plan
+// both produce a non-null object, so this can only be the planner.
+if (!plan) {
+  log("The planner returned no result (it was skipped or errored); there is no build sequence, so nothing was built");
+  return {
+    status: "aborted",
+    abortReason: "the build planner returned no result (the agent was skipped or errored)",
+    steps: [],
+    commits: [],
+    green: false,
+    reviewClean: false,
+    failures: ["the build planner returned no result"],
+    resumeNote: "No build sequence was produced. Re-run implement-proposal to continue.",
+  };
+}
+
+for (let round = 1; !skipBuild && !suppliedPlan && round <= maxPlanRounds; round++) {
   const critique = await agentTry(
     "Adversarially check whether a build plan covers the entire blast radius of an applied spec proposal.\n\n" +
       "You are a read-only critic; do not edit any file. Work in " +
@@ -276,7 +958,7 @@ for (let round = 1; !skipBuild && round < maxPlanRounds; round++) {
     break;
   }
   log("Plan revision " + round + ": closing " + critique.gaps.length + " gap(s)");
-  plan = await agentTry(
+  const revised = await agentTry(
     "Revise a build plan to close the gaps a completeness critic found.\n\n" +
       "You are a read-only planner; do not edit any file. Work in " +
       repo +
@@ -289,6 +971,55 @@ for (let round = 1; !skipBuild && round < maxPlanRounds; round++) {
       "\n\nReturn the full revised plan (blast radius + ordered steps), incorporating the gaps and preserving the parts that were correct. Re-sequence if a gap is a prerequisite-ordering problem.",
     { schema: PLAN, label: "plan-revise:r" + round, phase: "Plan" },
   );
+  // A dead reviser is not a reason to discard the plan it was revising: the
+  // unrevised plan is a worse plan rather than no plan, and overwriting it with
+  // null crashed the checklist reconciliation below with "Cannot read
+  // properties of null (reading 'steps')". Stop revising and build what we
+  // have.
+  if (!revised) {
+    log("Plan revision " + round + ": the reviser returned no result; keeping the previous plan");
+    break;
+  }
+  plan = revised;
+}
+
+// Startup reconciliation: a step whose checklist box is already ticked is
+// skipped, whatever the plan says about it.
+//
+// Read P.checklist, the file the two tick writers at the end of each lane write
+// to, rather than the proposal path. Under the folder layout that path is the
+// directory, and running that grep against a directory prints `Is a directory`
+// and exits 2, so the agent reports no ids, no step is marked alreadyDone, and
+// the resumed run rebuilds every completed step, which is the outcome the note
+// above says this read exists to prevent. A recursive grep hides the error and
+// reads every role file in the directory instead, so the ticked lines quoted in
+// the review log and the spec-changes file come back as ticks, which is a second
+// way to get the answer wrong. On a legacy proposal
+// P.checklist is the single .md, where the same pattern still selects only
+// checklist lines, so one expression is correct for both layouts.
+if (!skipBuild && plan.steps.length > 0) {
+  const ticks = await agentTry(
+    "Read the implementation checklist in " + P.checklist + " and report which steps are already marked " +
+      "complete. Run `grep -nE '^- \\[[ x]\\] \\*\\*S' " + P.checklist + "` and return the step id of every " +
+      "line whose checkbox is `[x]` rather than `[ ]`. The id is the token right after the `**`, such as " +
+      "`S1` or `S12`. Return ids only, and do not edit anything.",
+    { schema: TICKED, label: "checklist-ticks", phase: "Plan", model: "haiku", effort: "high" },
+  );
+  const tickedSet = new Set(((ticks && ticks.ticked) || []).map((t) => String(t).trim()));
+  if (tickedSet.size > 0) {
+    let forced = 0;
+    for (const st of plan.steps) {
+      if (st.checklistStep && tickedSet.has(String(st.checklistStep).trim()) && !st.alreadyDone) {
+        st.alreadyDone = true;
+        forced++;
+      }
+    }
+    log(
+      "Checklist: " + tickedSet.size + " step(s) already ticked (" +
+        Array.from(tickedSet).join(", ") + ")" +
+        (forced > 0 ? "; " + forced + " of them were not marked done by the planner and are now skipped" : ""),
+    );
+  }
 }
 
 log("Build sequence: " + plan.steps.length + " steps");
@@ -306,6 +1037,194 @@ log("Build sequence: " + plan.steps.length + " steps");
 // Per-step review lenses, scoped to the single step's diff. Whole-change
 // completeness is left to the final Review; here a surface this step adds
 // for a later step to consume is explicitly out of scope.
+// The memory and stall rules every test-running agent is held to. Extracted so
+// the final gate states them identically to the per-attempt verifier rather
+// than paraphrasing them into something weaker.
+// For an agent that must look and not touch.
+const READ_ONLY_NOTE =
+  "You are READ-ONLY. Do not edit, create, revert, or delete any file, do not commit, and run no command " +
+  "that writes. Inspect the tree and the git history and report a judgement.";
+
+const MEMORY_SAFE_NOTE =
+  " MEMORY-SAFE and no-stall: run every command in the FOREGROUND, one at a time, scoped to the changed " +
+  "packages. Never use `run_in_background` for tests unless a single tier will exceed the 180s watchdog " +
+  "without emitting output, and never run whole-repo `go test -race ./...` or `lenny-test --max-tier unit`: " +
+  "orphaned or concurrent envtest etcd and kube-apiserver pairs, and the race detector's memory, OOM this " +
+  "16GB host and take the build down with them. Run a tier-2 envtest package foreground and alone with " +
+  "`-p 1` and `KUBEBUILDER_ASSETS` set, then reap strays with `pkill -f kubebuilder-envtest` before the " +
+  "next one. Let output stream rather than piping it through `tail` or `head`.";
+
+// Which tiers the implementer and fixer run themselves. They write the tests
+// for every tier the step reaches and run only a smoke check, because the
+// independent verifier runs the step's tiers next and the final gate after it:
+// one measured step ran tiers 0, 1, and 6 in its implementer and again in its
+// verifier on an unchanged tree. The RULES block's per-step verification text
+// is shared with the Verify and Review phase fixers, which do run the higher
+// tiers, so this note states the narrower rule for the build agents instead of
+// editing that block.
+const BUILD_SMOKE_NOTE =
+  "\n\nWHICH TIERS YOU RUN YOURSELF. Write or update the tests for EVERY tier this step reaches, as the header " +
+  "and the test-coverage rule say: that has not changed. RUN only a smoke check: build the changed packages, " +
+  "run the tier 0 static checks on what you changed (`gofumpt -l` and `goimports -l -local " +
+  "github.com/lennylabs/lenny` on the changed Go files, `go vet` on the changed packages, and `go run " +
+  "./cmd/lenny-test validate-maps`), and run tier 1 (`go test ./<changed-pkg>/... -count=1 -p 2`) for the " +
+  "packages you changed. Do NOT run tier 2 or above, do not bring infrastructure up, and do not run a " +
+  "higher-tier test file by hand: an independent verifier runs the step's tiers on your commit next, and the " +
+  "final gate runs them again before the step is ticked. Where the rules below speak of running an envtest " +
+  "package or a long-silent tier, that is the verifier's work. `go vet` compiles the test files of every " +
+  "package it is given, so include the higher-tier test packages you wrote or changed (with `-tags=contract` " +
+  "under tests/tier3_contract): a higher-tier test must at least vet before it reaches the verifier. Report the tiers you ran in `tiersRun` and " +
+  "set `testsPassed` from the smoke check.";
+
+// How a fix's test scope is decided.
+//
+// "Be smarter about which tiers to run" has to be made mechanical or it
+// regresses to "run everything", which is what the loop did. Two mechanisms.
+//
+// FIRST, the classification is grounded in a real diff. The classifier is
+// handed a git RANGE and runs the diff itself; it is never handed diff text and
+// never takes the fixer's self-report as its subject. That lesson is already in
+// change-proposal.js, where the post-fix reviewer was asked about drift from
+// the fixer's own prose summary, "which is precisely the document that omits an
+// edit the fixer did not notice making". The omission is worse here, because
+// the consequence is a skipped tier rather than an extra round.
+//
+// SECOND, the three cheapest classes are decided by a SCRIPT, not by the agent.
+// comment-only, doc-only and test-only carry the most risk if wrong --
+// comment-only skips everything above tier 0 -- and all three are mechanically
+// decidable. classify-diff.mjs is authoritative where it fires: if it says a
+// diff is not comment-only, the agent may not say it is, whatever the fixer
+// reported. That closes the failure mode this exists for: a fixer adjusts one
+// line of logic while editing the comment above it, self-reports "updated a
+// comment", and every test that would catch it is skipped.
+const CLASS_TABLE =
+  "| class | minimum tiers |\n" +
+  "| comment-only | 0 |\n" +
+  "| doc-only (not runbook, alert, or metric) | 0 |\n" +
+  "| doc-only (runbook, alert, or metric page) | 0, 11 |\n" +
+  "| test-only | 0, plus the tier that owns the test |\n" +
+  "| rename-local (no exported identifier crosses a package boundary) | 0, 1 for the package |\n" +
+  "| logic | 0, 1, plus the step's tiers whose subject the diff touches |\n" +
+  "| wire (proto, JSONL, HTTP, CRD schema) | + 3 |\n" +
+  "| security (auth, isolation, egress, credentials) | + 9 |\n" +
+  "| concurrency (ordering, atomicity, rate) | + 7a |\n" +
+  "| schema | + 0 schema checks, + 3 |\n" +
+  "| chart | + 5 |\n";
+
+function SCOPING_BLOCK(step) {
+  return (
+    "ONLY the tiers this fix warrants, out of the step's set: " +
+    ((step.tiers || []).join(", ") || "(none beyond tier 0/1)") +
+    ".\n\nHOW TO DECIDE, in this order.\n\n" +
+    "1. CLASSIFY THE REAL DIFF. Run `node " + repo + "/.claude/tools/classify-diff.mjs HEAD~1..HEAD`. It " +
+    "decides comment-only, doc-only and test-only mechanically, and its verdict is AUTHORITATIVE where it " +
+    "fires: if it does not say comment-only, this fix is not comment-only whatever anyone reported. Then " +
+    "read `git diff HEAD~1..HEAD` YOURSELF to classify what it left open. Do not take the fixer's account " +
+    "of what it changed as your subject: where the diff and the report disagree, the diff wins, and the " +
+    "disagreement is worth reporting on its own, because a fixer that changed more than it said is worth " +
+    "knowing about.\n\n" +
+    "2. MAP THE CLASS TO A MINIMUM TIER SET:\n" + CLASS_TABLE +
+    "\nYou may go ABOVE the table, and must name the specific hunk that requires it. You may go BELOW it " +
+    "only for comment-only, doc-only, and rename-local — and for the first two the script has already " +
+    "decided, so you are acting on a mechanical fact rather than your own reading.\n\n" +
+    "3. WEIGH THE COST. Read " + repo + "/scratchpad/test-times/$(git rev-parse --abbrev-ref HEAD | tr / -)" +
+    ".json if it exists: it records what each tier has actually cost on this branch. For any tier whose " +
+    "median exceeds " + expensiveTierSeconds + " seconds, name in ONE sentence the hunk that requires it. " +
+    "No named hunk, no run. A tier with no ledger entry runs once and creates one: an unknown cost is " +
+    "treated as expensive but is never a reason to skip a first run.\n\n" +
+    "4. RECORD WHAT YOU RAN AND WHAT YOU SKIPPED. Return the class you assigned in `classification`, and one " +
+    "entry per tier you skipped in `skipped`, each naming the `tier` and the `why`. Those two fields are what " +
+    "the run records; your notes are read by people, not by the gate. After each tier, append its wall-clock " +
+    "to the ledger file above (create it and its directory if absent; it is a JSON object keyed `tier|package` " +
+    "holding `{medianSeconds, runs, lastRun}`). Do not spawn a separate step for that: you just ran the tier " +
+    "and you know the number.\n\n" +
+    "A run that skips a tier is NOT the final gate. The whole set runs again once the design review is clean, " +
+    "before the step is marked done, so a tier skipped here is re-run before anything is certified — and if " +
+    "that gate then fails, your skip is recorded as the miss that caused it. Only a run that covered the whole " +
+    "set, green, on an unchanged tree stands in for that gate."
+  );
+}
+
+// ---- Reusing a per-attempt verify as the final gate ----------------------
+//
+// The final gate exists because a step that reached its state through scoped
+// runs has had no full pass over the tree being ticked. A per-attempt verify
+// that happened to cover the whole set, green, on the tree the gate would test
+// already is that pass, and re-running it measured nothing new: one measured
+// step re-ran tiers 0 and 1 on the commit its verify had just passed them on.
+// The reuse is fail-closed on every input. The verifier must record the tree
+// hash before and after its run with a clean status, say it covered the full
+// set, and list every required tier as run; a separate read of the tree just
+// before the gate must print the same hash with a clean status. Anything
+// missing or different runs the gate exactly as before.
+//
+// The pathspec leaves out the directories no tier reads and the run itself
+// writes outside a commit: the workflow state, the proposal (ticks and
+// deviations), and the git-ignored scratchpad.
+const TREE_PATHSPEC = "-- . ':(exclude).claude' ':(exclude)proposals' ':(exclude)scratchpad'";
+
+function TREE_RECORD_NOTE(step, stepRef) {
+  return (
+    " TREE RECORD. Before you run the first tier, run `git rev-parse HEAD^{tree}` and `git status --porcelain " +
+    TREE_PATHSPEC + "` in " + repo + ". After the last tier, run both again. Return the hash as `treeHash` " +
+    "only when both runs printed the same hash and the status printed nothing both times; otherwise return an " +
+    "empty string. Set `fullSet` true only when this run covered the step's whole tier set: tier 0 and tier 1 " +
+    "over every package changed since " + stepRef + ", and every one of the step's tiers (" +
+    ((step.tiers || []).join(", ") || "none beyond tier 0/1") + "), none skipped except a tier that needs a " +
+    "cloud-only resource. A run that skipped any other tier sets it false. A green run with both fields set " +
+    "stands in for the step's final gate, so report them exactly rather than generously."
+  );
+}
+
+// Tier spellings differ between checklists ("0", "tier 2", "unit",
+// "e2e (Kind)"), so coverage is compared on a canonical key: the tier number
+// from the test-coverage rule's tier model. An unrecognised spelling keeps its
+// own cleaned form, which only matches itself, so it fails closed.
+const TIER_NUMBERS = {
+  static: "0", unit: "1", component: "2", contract: "3", integration: "4",
+  e2e_kind: "5", kind: "5", e2e_cloud: "6", load_local: "7a", load_kind: "7b",
+  chaos: "8", security: "9", conformance: "10", docs: "11", documentation: "11", load_cloud: "12",
+};
+// The final gate itself skips a tier that needs a cloud-only resource, so a
+// verifier that skipped one covered what the gate would have run.
+const CLOUD_TIERS = ["6", "12"];
+
+function tierKey(t) {
+  const s = String(t || "").toLowerCase().trim();
+  const num = /(?:^|tier\s*)(\d+[ab]?)\b/.exec(s);
+  if (num) return num[1];
+  const name = s.replace(/[\s-]+/g, "_").replace(/[^a-z0-9_]/g, "");
+  return TIER_NUMBERS[name] || name;
+}
+
+function requiredTierKeys(step) {
+  return Array.from(new Set(["0", "1"].concat((step.tiers || []).map(tierKey)))).filter(Boolean);
+}
+
+// Whether a verify result covered the step's full tier set, green, on a
+// recorded tree. Every condition is required; a missing field is a false.
+function coversStepTiers(step, v) {
+  if (!v || v.green !== true || v.fullSet !== true || !String(v.treeHash || "").trim()) return false;
+  const ran = new Set((v.tiersRun || []).map(tierKey));
+  const skipped = new Set((v.skipped || []).map((s) => tierKey(s && s.tier)));
+  return requiredTierKeys(step).every((k) =>
+    CLOUD_TIERS.includes(k) ? ran.has(k) || skipped.has(k) : ran.has(k) && !skipped.has(k),
+  );
+}
+
+// ---- A lighter review after a mechanical fix -----------------------------
+//
+// A fix round that touched only comments, docs, or tests cannot change what
+// the code enforces, so re-running the invariants lens over it re-reads code
+// it already passed. The conformance lens still runs, because it is the one
+// that catches a proposal-internal label leaking into a comment or a test
+// name, which is what such a fix can introduce. The class comes from
+// classify-diff.mjs only, never from an agent's reading, and the range starts
+// at the commit the invariants lens last passed, so a logic change that never
+// reached that lens (a round that stopped at the compile gate) is inside the
+// range and forces both lenses.
+const MECHANICAL_CLASSES = ["comment-only", "doc-only", "test-only"];
+
 const STEP_REVIEW_LENSES = [
   {
     key: "conformance",
@@ -338,10 +1257,631 @@ if (!baseRef) {
 }
 
 const stepResults = [];
+// Every final-gate failure across the run. Each is a scoping miss: the scoped
+// runs said a tier could not be affected and the full pass proved otherwise.
+// The run returns them, because they are the evidence the change-class table is
+// tuned from.
+const gateMisses = [];
 let priorContext = "";
 let replanCount = 0;
+const skippedSteps = [];
+// The design-conformance review of one step's work, by every lens. Extracted
+// because it runs in two places: inside the attempt loop against the diff that
+// attempt just produced, and on its own against a step an earlier run already
+// built and ticked. `ref` is the commit the step's work is measured from; for a
+// re-verified step that is the run's base, because the step's commits predate
+// this run.
+// Three judges, three lenses, no sight of each other's verdicts. A finding is
+// suppressed only when all three say stuck at high confidence. The failure
+// direction matters: a loop wastes time visibly, while a wrongly suppressed
+// finding ships a defect silently, so a single dissent keeps the loop running.
+const STUCK_LENSES = [
+  {
+    key: "motion",
+    text:
+      "LENS: motion against the blocker. For each round, compare what the commit actually changed against " +
+      "the files and lines the finding names. Decide how many rounds touched the finding's own subject at " +
+      "all. Rounds that produced commits elsewhere while the finding's subject went untouched are motion " +
+      "without progress, and a run of them is the signature of a loop that will not close it.",
+  },
+  {
+    key: "remaining-work",
+    text:
+      "LENS: the size and legality of what remains. State concretely what would close the finding, then " +
+      "judge two things about it. Is it legal for this step (code and tests only, never the proposal)? And " +
+      "is it work the rounds have been attempting, or work they have been avoiding? A finding that needs a " +
+      "substantial new test or a new mechanism, where every round instead reworded prose around it, is one " +
+      "the loop is avoiding rather than approaching.",
+  },
+  {
+    key: "forecast",
+    text:
+      "LENS: forecast. Assume the loop runs five more rounds exactly as it has been running. Say what you " +
+      "expect to change. If you can name the specific commit that would close the finding and the rounds " +
+      "are visibly converging on it, it is resolvable. If your honest forecast is five more rounds of the " +
+      "same, say so, and say whether that is because no legal change exists or because the loop is not " +
+      "making the one that does.",
+  },
+];
+
+// The durable record of where the landed code departs from what the proposal
+// states. Two things make it worth a file rather than a variable.
+//
+// It is READ BY THE REVIEWERS, which is what stops an accepted deviation being
+// re-litigated every round by an agent that cannot know it was already
+// adjudicated. The in-memory suppression this replaces died with the step, so a
+// later run rediscovered the same argument from scratch.
+//
+// And it is the run's final statement of what did not land as proposed, which
+// is the input a human needs to decide whether the proposal or the code was
+// wrong. Nothing here edits the proposal to close a deviation: that would
+// invert the pipeline, making the conformance review vacuous and silently
+// amending an approved design.
+const DEVIATIONS_BLOCK =
+  "\n\nDEVIATIONS ALREADY ACCEPTED. " + P.deviations + " records where the landed code departs from " +
+  "what the proposal states, and why. Read it before you start. An entry whose status is `accepted` has " +
+  "been adjudicated: do NOT report it, do not report a rephrasing or a near neighbour of it, and do not " +
+  "treat leaving it alone as leaving the step unfinished. Reporting an adjudicated deviation cannot " +
+  "advance the run, because nobody here may act on it; it only prevents the review from converging. An " +
+  "entry marked `proposed` is not adjudicated and is fair game.\n";
+
+// Writing one. Only the stuck judges reach this, and only on a unanimous
+// `unresolvable`: the code is right, the proposal is wrong, and the proposal is
+// read-only to this phase, so no legal change closes the finding.
+// Departures a build step reported about its own work. Distinct from the
+// accepted kind below in who decided and in what it buys: nobody adjudicated
+// these, and they are fair game for the next round's reviewers.
+async function recordProposedDeviations(step, list) {
+  const entries = (Array.isArray(list) ? list : []).filter((d) => d && typeof d === "object");
+  if (entries.length === 0) return;
+  await agentTry(
+    "Append proposed deviation(s) to a proposal's deviations file.\n\n" +
+      "HARD CONSTRAINT: the only file you may edit is " + P.deviations + ". Create it if it is absent, " +
+      "with an `# Deviations: <proposal title>` heading. Append only; never rewrite or remove an entry " +
+      "that is already there, and never edit any other file.\n\n" +
+      "Append one section per entry below, under a `## Proposed: <short title>` heading, each stating " +
+      "**Status:** proposed, then what the proposal says, what landed instead, why, and what a later " +
+      "reader would otherwise get wrong. `proposed` means nobody has adjudicated it: it is a report from " +
+      "the step that made the departure, not a decision. Do not write `accepted` and do not argue for or " +
+      "against the departure.\n\n" +
+      "Step " + step.id + " (" + step.title + ") reported:\n\n" +
+      JSON.stringify(entries, null, 1),
+    { label: "deviation:proposed:" + step.id, phase: "Build" },
+  );
+  log("Step " + step.id + ": recorded " + entries.length + " proposed deviation(s) in " + P.deviations);
+}
+
+async function recordDeviation(step, rec) {
+  await agentTry(
+    "Record an accepted deviation in a proposal's deviations file.\n\n" +
+      "HARD CONSTRAINT: the only file you may edit is " + P.deviations + ". Create it if it is absent, " +
+      "with the heading `# Deviations — " + P.stem + "`. Never edit the proposal itself, spec/, or code.\n\n" +
+      "Append one entry in exactly this form, numbering it after the last one present:\n\n" +
+      "## D<n> · step " + step.id + " · " + date + " · accepted\n" +
+      "**Status:** accepted\n" +
+      "**Proposal says:** <what it states, and where>\n" +
+      "**Implemented instead:** <what the code does, with file:line>\n" +
+      "**Why:** <why no legal change could close this>\n" +
+      "**Consequence if the proposal is not corrected:** <what a later reader or implementor would get wrong>\n" +
+      "**Suggested next step:** correct the proposal | file a follow-up proposal | no action\n" +
+      "**Evidence:** <the commit, and the judges' verdicts>\n\n" +
+      "THE FINDING AND THE JUDGES' REASONING:\n" + JSON.stringify(rec, null, 2) +
+      "\n\nWrite what the judges established, not your own view of it. Follow " + repo +
+      "/.claude/rules/doc-style.md.",
+    { label: "deviation:" + step.id + ":" + (stuckFindings.length + 1), phase: "Build" },
+  );
+  log("Step " + step.id + ": recorded an accepted deviation in " + P.deviations);
+}
+
+// What the fixer and the reviewers are told about a finding already judged
+// unresolvable in THIS run. The file above is the durable record; this is the
+// in-memory reinforcement for the step currently running.
+function suppressedNote(step) {
+  const mine = stuckFindings.filter((f) => f.step === step.id && f.kind !== "unproductive");
+  if (mine.length === 0) return "";
+  return (
+    "\n\nALREADY JUDGED UNRESOLVABLE, AND NOT YOUR WORK. Every judge agreed that the finding(s) below " +
+    "cannot be closed by any change this step may legally make: the " +
+    "landed code is correct and the proposal is wrong, and the proposal is read-only to this phase. Each is " +
+    "recorded and will be reported to a human at the end of the run. Do not act on them, do not report them " +
+    "again, and do not treat leaving them alone as leaving the step unfinished:\n" +
+    mine.map((f, i) => i + 1 + ". " + f.title + "\n   why the code is right: " + f.whyCodeIsRight +
+      "\n   what the proposal gets wrong: " + f.whyProposalIsWrong).join("\n")
+  );
+}
+
+// The round-by-round activity for one step: what each attempt claimed, what it
+// committed, whether it verified green, and what the review said afterwards.
+// This is the judges' primary evidence. It replaces a filter over stepResults,
+// whose entries are only pushed when a step ENDS, so during the loop it
+// returned the other steps' results and nothing at all about this one. The
+// judges were being asked whether a loop was stuck while being shown no round
+// of that loop.
+// Trailing rounds that produced a commit and still came back with findings.
+// Counted from the end, so a round that cleared the findings resets it: the
+// loop demonstrably moved, and what came after is a fresh stall rather than a
+// continuation of the old one.
+function unproductiveRunLength(rounds) {
+  let n = 0;
+  for (let i = rounds.length - 1; i >= 0; i--) {
+    const r = rounds[i];
+    if (!r.commit || (r.findingTitles || []).length === 0) break;
+    n++;
+  }
+  return n;
+}
+
+function formatRounds(rounds) {
+  if (rounds.length === 0) return "(no rounds recorded yet)";
+  return rounds
+    .map((r) => {
+      const lines = [
+        "ROUND " + r.attempt + (r.fix ? " (fix)" : " (initial implementation)"),
+        "  commit: " + (r.commit || "(none committed)"),
+        "  the agent said it changed: " + ((r.filesChanged || []).join(", ") || "(nothing named)"),
+        "  tests it added or modified: " + ((r.testsAddedOrModified || []).join(", ") || "(none)"),
+        "  independent verify: " + (r.green ? "green" : "NOT green") +
+          ((r.failures || []).length ? " — " + r.failures.join("; ") : ""),
+        "  review findings after this round: " +
+          ((r.findingTitles || []).length ? "" : "(none)"),
+      ];
+      (r.findingTitles || []).forEach((t, i) => lines.push("    " + (i + 1) + ". " + t));
+      return lines.join("\n");
+    })
+    .join("\n\n");
+}
+
+async function judgeStuck(step, findings, rounds, attempt) {
+  const runLength = unproductiveRunLength(rounds);
+  const brief =
+    "You judge whether a build step's fix loop can still close the findings against it.\n\n" +
+    READ_ONLY_NOTE +
+    "\n\nProposal: " + proposal + " (its spec edits are applied). Step " + step.id + ": " + step.title +
+    "\nWork: " + step.work +
+    "\nSections it implements: " + ((step.specRefs || []).join(", ") || "(none named)") +
+    "\nTargets: " + ((step.targets || []).join(", ") || "(none named)") +
+    "\n\nThis step has run " + attempt + " attempts without going clean.\n\n" +
+    "DO THIS FIRST, BEFORE FORMING ANY VIEW. Read the round log below in order. For every round that " +
+    "names a commit, run `git show --stat <sha>` and, where the stat is not enough, `git show <sha>`. " +
+    "Compare what each commit actually changed against the files and lines the outstanding findings name. " +
+    "You are establishing one fact: across these rounds, did the loop move the thing the finding is about, " +
+    "or did it produce changes elsewhere while that thing stayed as it was. Answer the lens only after you " +
+    "have read the commits. A judgment formed from the finding's text alone, without reading what the " +
+    "rounds did, is the failure this step exists to avoid.\n\n" +
+    "THE THREE VERDICTS.\n" +
+    "  resolvable — a legal change closes the finding AND the rounds show the loop converging on it. This " +
+    "is the default and the common case. A hard finding, a finding that recurred, or a finding several " +
+    "reviewers reported is still resolvable.\n" +
+    "  unresolvable — no legal change closes it. The fixer may change code and tests and may NEVER edit " +
+    "the proposal, so when the code is right and the proposal is wrong, nothing legal closes the finding. " +
+    "The reviewer reports it, the fixer cannot fix it, and the step loops forever.\n" +
+    "  unproductive — a legal change exists and the loop is not making it. The reviewer is right, the code " +
+    "genuinely falls short, and the work that would close it is real; but round after round produced " +
+    "commits that did not touch it. Judge this on the rounds, not on the finding: the test is whether the " +
+    "loop is approaching the work or circling it.\n\n" +
+    "HOW LONG THIS HAS BEEN STALLED. The rounds below include " + runLength + " consecutive round(s) that " +
+    "committed something and still came back with findings. \"unproductive\" requires at least " +
+    minUnproductiveRounds + " such rounds, because it is a claim about a pattern rather than about a bad " +
+    "round or two: a fix agent groping toward a hard change looks the same from one round as one that will " +
+    "never get there, and only a run of them tells the two apart. At " + runLength + " round(s) you may " +
+    (runLength >= minUnproductiveRounds
+      ? "return it if the evidence supports it."
+      : "NOT return it; answer resolvable or unresolvable on what you see.") +
+    " This floor does not apply to \"unresolvable\", which is a fact about the code and the proposal " +
+    "rather than about the loop.\n\n" +
+    "The two non-resolvable verdicts have different consequences, so do not merge them. An unresolvable " +
+    "finding is set aside and reported as a defect in the proposal. An unproductive one is NOT set aside: " +
+    "the step stops and a human is told what work is outstanding, because the finding is real and setting " +
+    "it aside would ship the gap in silence.\n\n" +
+    "The findings still outstanding on this step:\n" + JSON.stringify(findings, null, 2) +
+    "\n\nTHE ROUND LOG:\n" + formatRounds(rounds) +
+    "\n\nCite file:line and commit SHAs for what you assert.";
+  return (await parallel(
+    STUCK_LENSES.map((l) => () =>
+      agentTry(brief + "\n\n" + l.text, {
+        schema: STUCK_VERDICT,
+        label: "stuck:" + step.id + ":" + l.key + ":a" + attempt,
+        phase: "Build",
+      }),
+    ),
+  )).filter(Boolean);
+}
+
+// Prompt-level suppression has been observed to leak, so the script drops a
+// finding whose title matches one already adjudicated. Belt and braces: the
+// prompt tells the reviewer not to raise it, and this catches the ones that do.
+// Matching is on a normalised title rather than exact text, because a reviewer
+// that raises the same defect twice rarely words it identically.
+function normTitle(t) {
+  return String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+function dropAdjudicated(findings, step) {
+  const adjudicated = stuckFindings
+    .filter((f) => f.kind === "unresolvable")
+    .map((f) => normTitle(f.title))
+    .concat(acceptedDivergences.map(normTitle))
+    .filter(Boolean);
+  if (adjudicated.length === 0) return findings;
+  const kept = [];
+  const dropped = [];
+  for (const f of findings) {
+    const n = normTitle(f.title);
+    const hit = adjudicated.some((a) => n === a || n.includes(a) || a.includes(n));
+    if (hit) dropped.push(f.title);
+    else kept.push(f);
+  }
+  if (dropped.length) {
+    log(
+      "Step " + step.id + ": dropped " + dropped.length +
+        " finding(s) already adjudicated as deviations: " + dropped.join("; "),
+    );
+  }
+  return kept;
+}
+
+async function reviewStep(step, ref, tag, lenses = STEP_REVIEW_LENSES) {
+  return await parallel(
+      lenses.map((l) => () =>
+        agentTry(
+          (ref
+            ? "Adversarially review ONE just-implemented build step against the proposal's design.\n\n"
+            : "Adversarially review ONE ALREADY-IMPLEMENTED build step against the proposal's design.\n\n") +
+            "The proposal is your measuring stick, never your subject. Report only findings whose remedy changes the CODE. Never report one whose remedy edits, reverts, or restores any file under proposals/, even when you are confident the proposal is the thing that is wrong. Nothing filters such a finding out: it is handed to the fixer as written, so a finding that says to change the proposal becomes an instruction to change it. State the divergence against the code instead, and if the code is right and the proposal wrong, say so in the divergence text and propose no code change; a human reads that at the end of the run and decides what the proposal should have said.\n\n" +
+            DEVIATIONS_BLOCK +
+            "Read the proposal at " +
+            proposal +
+            " (its spec edits are applied), focusing on the sections this step implements (" +
+            ((step.specRefs || []).join(", ") || "the sections relevant to this step's work") +
+            "), " + suppressedNote(step) + " " +
+            (ref
+              ? "and read ONLY this step's diff: `git diff " + ref + "..HEAD` in " + repo + "."
+              : // No diff exists for this step. Its commits landed in an earlier
+                // run, so they sit behind this run's base ref and `git diff
+                // base..HEAD` would be empty at the top of the loop and would
+                // carry other steps' work later in it. Either way it would not
+                // show this step, and a reviewer handed nothing reports nothing,
+                // which is a clean verdict that means only that it looked at
+                // the wrong thing. Read the tree instead.
+                "and read the CURRENT STATE OF THE TREE for what this step owns: " +
+                ((step.targets || []).join(", ") || "the files and packages this step's work names") +
+                ", in " + repo + ". There is no diff to read: this step was implemented and committed by an " +
+                "EARLIER run, so its work is already part of the baseline and `git diff` against this run's " +
+                "base shows nothing of it. Judge the code as it now stands against what the proposal " +
+                "specifies, exactly as if you were seeing it for the first time.") +
+            " You are read-only; report findings only.\n\n" +
+            "Scope: judge only what THIS step is responsible for (its work: " +
+            step.work +
+            "). A surface this step ADDS that a LATER step is meant to consume or wire up is NOT a divergence here — do not flag 'unused' or 'never called' for something a later step will use. A finding is a place this step's landed code diverges from the proposal's design for the sections it implements. Not a style preference, not new scope the proposal does not contain, not a coverage gap. Cite file:line and the proposal section. Report an empty findings array when this step conforms.\n\n" +
+            l.text,
+          {
+            schema: REVIEW,
+            label: "review:" + step.id + ":" + l.key + ":" + tag,
+            phase: "Build",
+          },
+        ),
+      ),
+    );
+
+}
+
+// ---- A spec-lane step ------------------------------------------------------
+//
+// Spec used to be a PHASE that landed every staged edit before the build began,
+// which meant the checklist's spec lane was decorative: the proposal wrote
+// `S1 · spec`, review validated that ordering, and the executor ignored it and
+// used its own. Two orderings of one proposal, and a progress record for each
+// that could disagree.
+//
+// One sequence now. A spec step applies the SPEC-n deliverables its line names,
+// under a lease scoped to exactly the files those deliverables target, verifies
+// what landed against what the proposal stages, and commits. Then it ticks the
+// same box a code step ticks, so progress is per-deliverable in one place.
+//
+// The lease is opened and released HERE rather than around the whole run, which
+// is what makes spec/ locked for the great majority of a run's wall-clock: a
+// code step holds none, and refuses to start if one is somehow still held.
+async function runSpecStep(step) {
+  const ids = (step.work || "").match(/SPEC-[A-Za-z0-9.-]+/g) || [];
+  log("Step " + step.id + " (spec): applying " + (ids.join(", ") || "its staged edits"));
+
+  const targets = await agentTry(
+    "List the spec files one checklist step's staged edits target. Do not edit anything.\n\n" +
+      "Work in " + repo + ". Read " + P.spec + " and find the staged edits this step names: " +
+      (ids.join(", ") || step.work) + ".\n\n" +
+      "Return every distinct path under spec/ they write, repo-relative. Nothing else.",
+    { schema: SPEC_TARGETS, label: "spec-targets:" + step.id, phase: "Build" },
+  );
+  const files = (targets && targets.files) || [];
+  if (files.length === 0) {
+    return { ok: false, reason: "no spec file could be resolved for the edits step " + step.id + " names" };
+  }
+
+  await agentTry(
+    "Run exactly this command and reply with its stdout and nothing else:\n\n" +
+      "node " + repo + "/.claude/tools/spec-lease.mjs open '" + P.root + "' --step '" + step.id +
+      "' --ttl-hours " + leaseTtlHours +
+      " --allow '" + files.join(",") + "'" +
+      "\n\nDo nothing else. Do not read, summarise, or edit any file.",
+    { label: "lease-open:" + step.id, model: "haiku", effort: "high", phase: "Build" },
+  );
+
+  let ok = false;
+  let reason = "";
+  try {
+    const applied = await agentTry(
+      "Apply one checklist step's staged spec edits.\n\n" +
+        "HARD CONSTRAINT: the only files you may edit are " + files.join(", ") + ". A write lease is open " +
+        "for exactly those and the guard hook refuses everything else under spec/.\n\n" +
+        "Work in " + repo + ". The staged edits are in " + P.spec + ": " + (ids.join(", ") || step.work) +
+        ".\n\n" + SPEC_RULES + SUMMARY_BLOCK + BLANKS_BLOCK +
+        "\n\nLocate every anchor by its quoted text and its heading rather than by a line number, which " +
+        "will have drifted. If an anchor cannot be located WITH CERTAINTY, stop: record that edit as " +
+        "unappliable and apply nothing further. Never guess a location and never skip an edit to continue " +
+        "with the ones after it -- a partially applied file is a state the verification cannot converge " +
+        "out of, because a later discrepancy cannot be told from an edit that never ran.",
+      { schema: APPLY_RESULT, label: "apply:" + step.id, phase: "Build" },
+    );
+    if (!applied || (applied.unappliable || []).length > 0) {
+      reason =
+        "an edit could not be located with certainty: " +
+        ((applied && (applied.unappliable || []).map((u) => u.id + " (" + u.reason + ")").join("; ")) ||
+          "the applier did not return");
+      return { ok: false, reason };
+    }
+
+    const checks = [
+      () => agentTry(
+      "Verify one step's applied spec edits match what the proposal stages.\n\n" +
+        "You are read-only. Work in " + repo + ". Proposal staging: " + P.spec + ".\n" +
+        "Files this step touched: " + files.join(", ") + ". Run `git diff -- " + files.join(" ") + "`.\n\n" +
+        "Confirm: every staged block appears at its anchor, character-exact except where a content rule " +
+        "forced a deviation; text the edit replaces or removes is gone; the diff contains nothing beyond " +
+        "the staged edits; every cross-reference the applied text adds resolves; and no added line cites a " +
+        "source path or a line number.\n\n" +
+        "FORWARD REFERENCES ARE NOT DISCREPANCIES. A cross-reference that does not resolve yet, because it " +
+        "names a heading, anchor, or bold label that a LATER step of this same proposal adds, is expected: " +
+        "the proposal lands in steps. Before reporting an unresolved reference, search " + P.spec + " for " +
+        "the staged edit that adds the target. If one exists, do not report it. Report it only when no " +
+        "staged edit anywhere in the proposal adds the target.\n\n" +
+        // PARENTHESISED. `+` binds tighter than `?:`, so without these the
+        // condition was the whole concatenated prompt -- always a truthy
+        // non-empty string -- and the ternary returned only the deviations
+        // block. The verifier received a 171-character prompt with none of its
+        // instructions, returned an empty discrepancy list because it had been
+        // asked nothing, and every spec deliverable landed unverified.
+        ((applied.deviations || []).length
+          ? "RECORDED RULE-FORCED DEVIATIONS, which are expected and are NOT discrepancies:\n" +
+            JSON.stringify(applied.deviations, null, 2)
+          : ""),
+      { schema: DISCREPANCIES, label: "verify:" + step.id + ":spec", phase: "Build" },
+      ),
+    ];
+    if (specReviewFocus.length > 0) {
+      checks.push(() =>
+        agentTry(
+          "Verify one step's applied spec edits against what the proposal stages, concentrating on areas " +
+            "the caller singled out.\n\nYou are read-only. Work in " + repo + ". Proposal staging: " +
+            P.spec + ". Files: " + files.join(", ") + ". Run `git diff -- " + files.join(" ") + "`." +
+            FOCUS_BLOCK,
+          { schema: DISCREPANCIES, label: "verify:" + step.id + ":spec:focus", phase: "Build" },
+        ),
+      );
+    }
+    const results = (await parallel(checks)).filter(Boolean);
+    // Fail closed: a reviewer that did not return is not evidence of alignment.
+    const check = results.length === checks.length ? { discrepancies: results.flatMap((r) => r.discrepancies || []) } : null;
+    const found = (check && check.discrepancies) || [];
+    if (!check || found.length > 0) {
+      reason = found.length
+        ? found.length + " discrepancy(ies) between the applied spec and what the proposal stages"
+        : "the spec verifier did not return";
+      return { ok: false, reason, discrepancies: found };
+    }
+
+    await agentTry(
+      "Commit the spec edits just applied and verified for one checklist step.\n\n" +
+        "HARD CONSTRAINT: commit only the files under spec/ this step touched (" + files.join(", ") +
+        "). Do not edit anything and do not amend an existing commit.\n\n" +
+        "Work in " + repo + ". Write the message in the repository's convention (read `git log " +
+        "--oneline -5`), describing what the spec now says. It references durable sources only: it may " +
+        "name the proposal path, and it must NOT carry the proposal's internal change, decision, review " +
+        "pass, or step labels.",
+      { label: "commit-spec:" + step.id, phase: "Build" },
+    );
+    ok = true;
+    return { ok: true, files, deviations: applied.deviations || [] };
+  } finally {
+    // On every path, including a failure. A lease left open leaves spec/
+    // writable for whatever runs next, and the code steps that follow assert it
+    // is closed and stop the run if it is not.
+    await agentTry(
+      "Run exactly this command and reply with its stdout and nothing else:\n\n" +
+        "node " + repo + "/.claude/tools/spec-lease.mjs release --step '" + step.id + "'" +
+        "\n\nDo nothing else. Do not read, summarise, or edit any file.",
+      { label: "lease-release:" + step.id, model: "haiku", effort: "high", phase: "Build" },
+    );
+  }
+}
+
 for (let i = 0; i < plan.steps.length; i++) {
   const step = plan.steps[i];
+  // The mode is the leading spec prefix, so the first non-spec step ends the run.
+  // A spec step BEHIND that step is reported rather than skipped: skipping it
+  // would leave the loop that called us building code against spec text that
+  // never landed.
+  if (specOnly && step.lane !== "spec") {
+    const behind = plan.steps.slice(i).filter((s) => s.lane === "spec").map((s) => s.id);
+    if (behind.length) {
+      log("spec-only: step " + step.id + " is not a spec step and spec step(s) " + behind.join(", ") + " sit behind it");
+    }
+    // The lease check below runs for a non-spec step that is about to BUILD.
+    // This mode returns before that, so without the same check here a spec
+    // step whose best-effort release failed would leave spec/ writable and the
+    // run would still report a clean spec-only stop. The release is the
+    // primary mechanism; this is what makes the invariant hold on the one exit
+    // path that skips it.
+    const leaseOnExit = await agentTry(
+      "Report whether a spec write lease is held. Work in " + repo + ". Do not edit anything.\n\n" +
+        "Run `node " + repo + "/.claude/tools/spec-lease.mjs status` and report its `held` field as " +
+        "leaseHeld. A present-but-expired lease reports held false and is not a leak.",
+      { schema: LEASE, label: "lease-check:spec-only-exit", phase: "Build" },
+    );
+    if (!leaseOnExit || leaseOnExit.leaseHeld !== false) {
+      return {
+        status: "lease-leaked",
+        stuckStep: step.id,
+        reason:
+          (leaseOnExit && leaseOnExit.leaseHeld === true
+            ? "the leading spec prefix ended at step " + step.id + " with a spec write lease still held, " +
+              "so an earlier spec step did not release it and spec/ is writable."
+            : "the lease check did not answer as the leading spec prefix ended at step " + step.id + ", so " +
+              "whether spec/ is writable is unknown. The run reports the leak rather than a clean stop.") +
+          " Check it with `.claude/tools/spec-lease.mjs status`, release it with " +
+          "`.claude/tools/spec-lease.mjs release`, and re-run.",
+        stoppedAt: step.id,
+        specStepsBehind: behind,
+        steps: stepResults,
+        commits: stepResults.map((x) => x.commit).filter(Boolean),
+        green: false,
+        reviewClean: false,
+      };
+    }
+    return {
+      status: behind.length ? "spec-only-incomplete" : "spec-only",
+      stoppedAt: step.id,
+      specStepsBehind: behind,
+      steps: stepResults,
+      commits: stepResults.map((x) => x.commit).filter(Boolean),
+      green: false,
+      reviewClean: false,
+      reason: behind.length
+        ? "spec step(s) " + behind.join(", ") + " sit behind non-spec step " + step.id +
+          ", so the leading spec prefix is not the whole spec lane"
+        : "",
+    };
+  }
+  // A step the planner found already present builds nothing. It stays in the
+  // sequence so later steps' dependencies still resolve, and it is reported so
+  // the proposal's checklist can be corrected.
+  if (step.alreadyDone && !reverifyDoneSteps) {
+    log("Step " + step.id + ": already present in the tree; nothing to build");
+    skippedSteps.push({ id: step.id, why: "already present" });
+    stepResults.push({ step: step.id, skipped: "already present" });
+    continue;
+  }
+  // A blocked step does not stop the ones that do not depend on it. Only when
+  // nothing remains runnable does the sequence end, which the tail check below
+  // reports.
+  if (step.blocked) {
+    log("Step " + step.id + ": BLOCKED — " + step.blocked);
+    skippedSteps.push({ id: step.id, why: step.blocked });
+    stepResults.push({ step: step.id, blocked: step.blocked });
+    continue;
+  }
+  // The lane is the dispatch key, so an absent or unrecognised one is an error
+  // rather than a guess: there is no safe default between "apply spec text" and
+  // "write code".
+  if (step.lane && !["spec", "code", "schema", "migration", "test", "docs"].includes(step.lane)) {
+    return {
+      status: "bad-lane",
+      stuckStep: step.id,
+      reason:
+        "step " + step.id + " declares lane " + JSON.stringify(step.lane) + ", which selects no handler. " +
+        "A step carries exactly one of spec, code, schema, migration, test, or docs.",
+      steps: stepResults,
+      green: false,
+      reviewClean: false,
+    };
+  }
+
+  const blockedDeps = (step.dependsOn || []).filter((d) =>
+    stepResults.some((r) => r.step === d && r.blocked),
+  );
+  if (blockedDeps.length) {
+    const why = "depends on blocked step(s) " + blockedDeps.join(", ");
+    log("Step " + step.id + ": skipped, " + why);
+    skippedSteps.push({ id: step.id, why });
+    stepResults.push({ step: step.id, blocked: why });
+    continue;
+  }
+  // A spec-lane step applies staged specification text; it does not build code,
+  // so it does not enter the implement/review/test loop below.
+  if (step.lane === "spec") {
+    const r = await runSpecStep(step);
+    if (!r.ok) {
+      log("Step " + step.id + " (spec) failed: " + r.reason);
+      return {
+        status: "spec-step-failed",
+        stuckStep: step.id,
+        reason: r.reason,
+        discrepancies: r.discrepancies || [],
+        steps: stepResults,
+        commits: stepResults.map((x) => x.commit).filter(Boolean),
+        green: false,
+        reviewClean: false,
+        resumeNote:
+          "Spec step " + step.id + " did not land. The steps before it are committed. Fix the staged " +
+          "text or the anchor it names, then re-run; a step whose box is already ticked is skipped.",
+      };
+    }
+    stepResults.push({ step: step.id, title: step.title, lane: "spec", specFiles: r.files, stepGreen: true, reviewClean: true, attempts: 1 });
+    if (step.checklistStep) {
+      await agentTry(
+        "In " + P.checklist + ", find the implementation-checklist line for step " + step.checklistStep +
+          ". It begins `- [ ] **" + step.checklistStep + "`. Change that line's `- [ ]` to `- [x]` and " +
+          "change NOTHING else in the file. If there is no such line, or its box is already `[x]`, change " +
+          "nothing. Reply DONE either way.",
+        { label: "tick:" + step.checklistStep, model: "haiku", effort: "high" },
+      );
+      log("Checklist: marked " + step.checklistStep + " complete");
+    }
+    log("Step " + step.id + " (spec) applied, verified and committed");
+    continue;
+  }
+
+  // ---- Step 0: the lease gate ----------------------------------------------
+  //
+  // The lease is the security boundary of the spec phase and a code step must
+  // never run under one, so this is the first thing a non-spec step does.
+  // Releasing on spec-step exit is the primary mechanism; this is the check
+  // that makes the invariant hold rather than merely be intended, and it closes
+  // the one hazard interleaving introduces: a spec step that died mid-flight
+  // leaving spec/ writable for whatever runs next. It used to ride along with
+  // the compile gate, which cannot run until the attempt's implementer has
+  // produced a diff to compile, so the leak was detected only after that
+  // implementer had already run and COMMITTED with spec/ writable, which is
+  // precisely the state the check exists to prevent. Once per step rather than
+  // once per attempt, because nothing inside a code step can open a lease:
+  // runSpecStep is the only opener and a spec step is its own iteration.
+  const lease = await agentTry(
+    "Report whether a spec write lease is held. Work in " + repo + ". Do not edit anything.\n\n" +
+      "Run `node " + repo + "/.claude/tools/spec-lease.mjs status` and report its `held` field as " +
+      "leaseHeld. A present-but-expired lease reports held false and is not a leak.",
+    { schema: LEASE, label: "lease-check:" + step.id, phase: "Build" },
+  );
+  // Fail closed. An agent that died, or one that answered without the field,
+  // is not evidence that spec/ is locked, and a gate that reads undefined as
+  // "no leak" is the same defect as no gate at all.
+  if (!lease || lease.leaseHeld !== false) {
+    return {
+      status: "lease-leaked",
+      stuckStep: step.id,
+      reason:
+        (lease && lease.leaseHeld === true
+          ? "a spec write lease was still held when step " + step.id + " (a non-spec step) was about to " +
+            "run, which means an earlier spec step did not release it and spec/ is writable."
+          : "the lease check did not answer before step " + step.id + " (a non-spec step) ran, so whether " +
+            "spec/ is writable is unknown. The run stops rather than building code under a lease that may " +
+            "be held.") +
+        " Check it with `.claude/tools/spec-lease.mjs status`, release it with " +
+        "`.claude/tools/spec-lease.mjs release`, and re-run.",
+      steps: stepResults,
+      commits: stepResults.map((s) => s.commit).filter(Boolean),
+      green: false,
+      reviewClean: false,
+    };
+  }
+
   const stepHeader =
     "Step " +
     step.id +
@@ -374,14 +1914,224 @@ for (let i = 0; i < plan.steps.length; i++) {
   let stepGreen = false;
   let stepReviewClean = false;
   let stepFindings = [];
+  // One entry per attempt, built as the attempt runs: what the agent said it
+  // changed, what it committed, how the independent verify came back, and what
+  // the review found afterwards. The stuck judges read this.
+  const stepRounds = [];
+  // Set when the judges agree the loop is not closing a real finding. The step
+  // stops rather than ticking, and this carries the outstanding work out.
+  let unproductiveStep = null;
   let issues = ""; // carried failures or divergences for the next attempt
   let attempt = 0;
+  // What the classifier said about the last fix, and what the scoping agent
+  // skipped on the strength of it. A final-gate failure records both, so a miss
+  // traces back to the class and the hunk that justified the skip.
+  let lastClassification = null;
+  let lastSkipped = null;
+  // Round counters the detectors and the end-of-step log read. The per-round
+  // PHASE is not tracked here: each stepRounds entry already carries its own
+  // `phase`, and that array is what the stuck judges are handed.
+  let testRounds = 0;
+  let oscillations = 0;
+  let finalGateFailures = 0;
+  // The step's previous final gate: the commit it covered and its result. A
+  // later final gate scopes against it.
+  let lastFinal = null;
+  // The commit the step's invariants lens last reviewed clean, from which a
+  // fix round's diff is classified for the lighter review.
+  let invariantsCleanAt = null;
+  let lastPhase = null;
+  // A fired detector RE-ARMS rather than re-firing: without that, oscillation
+  // six, seven and eight each cost a three-judge panel, and the machinery meant
+  // to diagnose an expensive loop becomes the expensive part of it.
+  let oscillationsAtLastJudge = 0;
+  let gateFailuresAtLastJudge = 0;
+
+  // A step an earlier run ticked is re-verified rather than rebuilt: its code
+  // is committed and its tiers passed when it landed, so what is worth asking
+  // again is whether it still matches the proposal. Measured from the run's
+  // base, because the step's own commits predate this run. A clean result skips
+  // the step as before; findings fall through into the loop below, which fixes,
+  // re-runs the tiers, and re-reviews until the step is green and conformant —
+  // the same bar a fresh step is held to.
+  if (step.alreadyDone) {
+    log("Step " + step.id + ": already ticked; re-verifying conformance and invariants");
+    const rv = (await reviewStep(step, null, "reverify")).filter(Boolean);
+    const rvRan = rv.length === STEP_REVIEW_LENSES.length;
+    const rvFindings = rv.flatMap((r) => r.findings);
+    if (rvRan && rvFindings.length === 0) {
+      log("Step " + step.id + ": re-verified clean; moving on");
+      skippedSteps.push({ id: step.id, why: "already present, re-verified clean" });
+      stepResults.push({ step: step.id, skipped: "already present", reverified: true });
+      continue;
+    }
+    log(
+      "Step " + step.id + ": re-verify found " + rvFindings.length + " finding(s)" +
+        (rvRan ? "" : " (a reviewer did not return, so conformance is unconfirmed)") + "; repairing",
+    );
+    stepFindings = rvFindings;
+    issues = rvFindings.length > 0
+      ? "This step was implemented by an earlier run and its checklist box is ticked, but a re-verification " +
+        "found it no longer matches the proposal's design. Fix the code to match the proposal for this step " +
+        "(do not change scope, do not touch spec/, do not edit the proposal). Its tests already exist, so " +
+        "strengthen them where a finding has a runtime effect the current tests pass over, and keep every " +
+        "test green:\n" + JSON.stringify(rvFindings, null, 2)
+      : "This step was implemented by an earlier run, but a re-verification reviewer did not return, so its " +
+        "conformance is unconfirmed. Re-check that this step's code matches the proposal's design for its " +
+        "sections; fix any divergence and keep the tests green.";
+    reverifyRepaired.push({ id: step.id, checklistStep: step.checklistStep, findings: rvFindings });
+  }
+  // A dead agent is not a failed attempt. agent() returns null when the
+  // subagent never ran: the account hit a usage limit, or the call died on a
+  // terminal API error after its own retries. That says nothing about the code
+  // this step is writing, so consuming the step's attempt budget for it is
+  // wrong twice over. It spins against a condition no retry can clear (one run
+  // burned thirty attempts in a tight loop against a weekly limit that had
+  // hours left on it), and it exhausts the budget a genuinely difficult step
+  // needs, so the step aborts for the wrong reason and the log blames the
+  // implementer. Dead attempts are counted separately and abort the run
+  // quickly, because the operator's move is to wait or re-authenticate rather
+  // than to let the loop keep trying.
+  let deadAttempts = 0;
+    // Every introspectEvery attempts, ask whether this loop can still close its
+    // findings. The judges read the round log and the commits before answering,
+    // because the question is about the loop's behaviour rather than the
+    // finding's merits, and a judge reasoning from the finding's text alone
+    // reaches the wrong answer confidently.
+    //
+    // The bar is every judge agreeing on the same non-resolvable verdict at
+    // medium or better. It was unanimous-at-high across three lenses that asked
+    // three different questions, which made the narrowest lens the decider:
+    // only what all three could see was ever detectable, and the two lenses
+    // that judged correctness could not see a loop failing to do work that was
+    // legal and real. These lenses read the same evidence and differ in how
+    // they weigh it, so agreement between them means something.
+  async function judgeAndAct(attempt) {
+    {
+      const runLength = unproductiveRunLength(stepRounds);
+      const votes = await judgeStuck(step, stepFindings, stepRounds, attempt);
+      const enough = (v) => v.confidence === "high" || v.confidence === "medium";
+      const all = (verdict) =>
+        votes.length === STUCK_LENSES.length &&
+        votes.every((v) => v.verdict === verdict && enough(v));
+      const summary = votes.map((v) => v.verdict + "/" + v.confidence).join(", ");
+      const titles = votes.map((v) => (v.findingTitle || "").trim()).filter(Boolean);
+      const title = titles[0] || (stepFindings[0] && stepFindings[0].title) || "";
+      const pick = (k) => votes.map((v) => v[k]).filter(Boolean)[0] || "";
+
+      if (all("unresolvable")) {
+        // No legal change closes it: the proposal is the defect. Set it aside
+        // so the loop can finish the rest of the step, and report it.
+        stuckFindings.push({
+          step: step.id,
+          checklistStep: step.checklistStep,
+          attempt,
+          kind: "unresolvable",
+          title,
+          whyCodeIsRight: pick("whyCodeIsRight"),
+          whyProposalIsWrong: pick("whyProposalIsWrong"),
+          roundsMovedIt: pick("roundsMovedIt"),
+          judges: votes.map((v) => ({ confidence: v.confidence, reasoning: v.reasoning })),
+        });
+        log(
+          "Step " + step.id + ": the judges agree no legal change closes \"" + title.slice(0, 110) +
+            "\" (" + summary + "). The code is right and the proposal is wrong. Recorded for a human and " +
+            "set aside for the rest of this step.",
+        );
+        // Durably, in the proposal's deviations file, rather than only in this
+        // run's memory. The judges CREATE the entry rather than promoting one:
+        // a finding usually reaches them with no fixer having proposed
+        // anything, so "promote a proposed entry" would find nothing to promote.
+        await recordDeviation(step, stuckFindings[stuckFindings.length - 1]);
+        return false;
+      } else if (all("unproductive") && runLength < minUnproductiveRounds) {
+        // The judges agreed, but the loop has not been given enough rounds for
+        // that verdict to mean what it claims. Enforced here as well as in the
+        // brief: a judge that returns it anyway must not be able to stop a step
+        // the fixer has barely started on.
+        log(
+          "Step " + step.id + ": the judges called the loop unproductive, but only " + runLength +
+            " consecutive round(s) have tried and failed and " + minUnproductiveRounds +
+            " are required; the loop continues",
+        );
+        return false;
+      } else if (all("unproductive")) {
+        // A legal change exists and this loop is not making it. Setting the
+        // finding aside would tick the step over a real gap, so the step stops
+        // here and the outstanding work goes to a human instead.
+        const rec = {
+          step: step.id,
+          checklistStep: step.checklistStep,
+          attempt,
+          kind: "unproductive",
+          title,
+          consecutiveFailedRounds: runLength,
+          outstandingWork: pick("outstandingWork"),
+          roundsMovedIt: pick("roundsMovedIt"),
+          judges: votes.map((v) => ({ confidence: v.confidence, reasoning: v.reasoning })),
+        };
+        stuckFindings.push(rec);
+        unproductiveStep = rec;
+        log(
+          "Step " + step.id + ": the judges agree the loop is not closing \"" + title.slice(0, 110) +
+            "\" (" + summary + "). The finding is real and the work is legal, so it is NOT set aside. " +
+            "Stopping the step and reporting the outstanding work.",
+        );
+        return true;
+      } else {
+        log("Step " + step.id + ": no agreed verdict (" + summary + "); the loop continues");
+      }
+    }
+    return false;
+  }
+
+  // Wake the stuck judges when a detector says so. Nothing here STOPS a step:
+  // the detectors are detectors, and the only three stopping conditions are the
+  // attempt cap, consecutive dead agents, and an `unproductive` verdict. A
+  // detector's output is a reason to look rather than a decision, which is the
+  // same division change-proposal.js records for its own introspection: a
+  // counter cannot tell a hard-but-converging step from a stuck one.
+  async function maybeJudge() {
+    const byCadence = attempt > 0 && attempt % introspectEvery === 0;
+    const byOscillation =
+      oscillations >= maxPhaseOscillations &&
+      oscillations - oscillationsAtLastJudge >= maxPhaseOscillations;
+    const byGate =
+      finalGateFailures >= maxFinalGateFailures &&
+      finalGateFailures - gateFailuresAtLastJudge >= maxFinalGateFailures;
+    if (!byCadence && !byOscillation && !byGate) return false;
+    if (byOscillation) oscillationsAtLastJudge = oscillations;
+    if (byGate) gateFailuresAtLastJudge = finalGateFailures;
+    if (stepFindings.length === 0) return false;
+    log(
+      "Step " + step.id + ": waking the stuck judges (" +
+        (byOscillation
+          ? oscillations + " conformance/test oscillation(s)"
+          : byGate
+            ? finalGateFailures + " final-gate failure(s)"
+            : attempt + " attempts") +
+        ")",
+    );
+    return await judgeAndAct(attempt);
+  }
+
+  // Whether the tree as it now stands has had a full tier pass. Every attempt
+  // commits, so any attempt invalidates it. A step is never marked done on a
+  // false value: when the lenses come back clean and this is false, the full
+  // set runs as the final gate. That is what makes the scoped runs below safe —
+  // they are early feedback, and the guarantee comes from the last full pass
+  // running against the exact tree that gets marked done.
+  let fullVerifyCurrent = false;
+  // A re-verified step (reverifyDoneSteps) enters the loop with findings
+  // already carried, so its first attempt is a fix rather than an initial
+  // implementation and takes the scoped path like any other fix.
+  const firstAttemptWasFix = !!issues;
   // Inner loop: implement/fix → verify → review, until green-and-conformant
   // or the attempt cap. Each iteration is one fix attempt.
   while (attempt < maxStepAttempts && !(stepGreen && stepReviewClean)) {
     attempt++;
     res = await agentTry(
-      attempt === 1
+      attempt === 1 && !issues
         ? "Implement one step of a build sequence for an applied spec proposal.\n\n" +
             "HARD CONSTRAINT: implement only this step. Do not start later steps. Do not edit spec/. Work in " +
             repo +
@@ -391,9 +2141,10 @@ for (let i = 0; i < plan.steps.length; i++) {
             ". Its spec edits are already in spec/; read the relevant sections.\n\n" +
             stepHeader +
             priorContext +
-            "\n\nImplement the code for this step, create or modify its tests across the listed tiers (and any other tier this step reaches per the test-coverage rule), and RUN them: tier 0 (`go build ./...`, `go vet`, lint) and tier 1 always, plus each listed higher tier (bring infrastructure up with `lenny-test infra up` when a tier needs it). If this step CORRECTS existing behavior, add a regression test that asserts the corrected outcome and would fail against the pre-fix code (see RULES below) — not merely a test that line-covers the changed lines. Fix the code until the tests pass. Then commit this step on the current branch with a message in the repository's convention (read `git log --oneline -5`). " +
-            RULES +
-            "\n\nReturn whether you implemented it, the files changed, the tests added or modified, the tiers you ran, whether they passed, and the commit SHA. If a tier genuinely cannot run here (a cloud-only resource), say so in notes and set testsPassed from the tiers that can run."
+            "\n\nImplement the code for this step, create or modify its tests across the listed tiers (and any other tier this step reaches per the test-coverage rule), and run the smoke check below. If this step CORRECTS existing behavior, add a regression test that asserts the corrected outcome and would fail against the pre-fix code (see RULES below) — not merely a test that line-covers the changed lines. Fix the code until the smoke check passes. Then commit this step on the current branch with a message in the repository's convention (read `git log --oneline -5`)." +
+            BUILD_SMOKE_NOTE + " " +
+            RULES_FULL +
+            "\n\nReturn whether you implemented it, the files changed, the tests added or modified, the tiers you ran, whether they passed, and the commit SHA."
         : "Continue one build step of an applied spec proposal that is not yet green-and-conformant.\n\n" +
             "HARD CONSTRAINT: work only on this step. Do not start later steps. Do not edit spec/. Work in " +
             repo +
@@ -404,8 +2155,15 @@ for (let i = 0; i < plan.steps.length; i++) {
             stepHeader +
             "\n\nThe prior attempt left this step not done. Address this:\n" +
             issues +
-            "\n\nFix the code (add or correct tests where the issue is a missing or wrong test; change the code to match the proposal's design where the issue is a divergence), run tier 0, tier 1, and this step's listed tiers to green (skip only a tier that genuinely needs a cloud-only resource, noting it), then commit on the current branch. " +
-            RULES +
+            "\n\nFix the code (add or correct tests where the issue is a missing or wrong test; change the code " +
+            "to match the proposal's design where the issue is a divergence), then commit on the current " +
+            "branch.\n\nTESTS FOR THIS ATTEMPT ARE SCOPED TO THE FIX. Run the smoke check below over the " +
+            "packages this fix touches. The verifier decides which of the step's tiers (" +
+            ((step.tiers || []).join(", ") || "none beyond tier 0/1") +
+            ") this fix warrants once the design review is clean, and the final gate runs the whole set " +
+            "before the step is marked done." +
+            BUILD_SMOKE_NOTE + " " +
+            RULES_FULL +
             "\n\nReturn the step result with testsPassed reflecting the tiers that can run here.",
       { schema: STEP, label: "build:" + step.id + (attempt > 1 ? ":fix" + attempt : ""), phase: "Build" },
     );
@@ -422,10 +2180,174 @@ for (let i = 0; i < plan.steps.length; i++) {
       stepFindings = [];
       issues =
         "The implementer agent returned no result (it was skipped or errored). Re-implement this step from the proposal and its tests across the listed tiers, run them to green, then commit.";
-      log("Step " + step.id + " attempt " + attempt + "/" + maxStepAttempts + ": implementer returned no result");
+      deadAttempts++;
+      attempt--; // the agent never ran; do not spend the step's budget on it
+      log(
+        "Step " + step.id + ": implementer returned no result (" + deadAttempts +
+          "/" + maxDeadAttempts + " dead attempt(s); attempt " + (attempt + 1) +
+          "/" + maxStepAttempts + " not consumed)",
+      );
+      if (deadAttempts >= maxDeadAttempts) {
+        log(
+          "Step " + step.id + ": " + deadAttempts + " consecutive dead agent(s). " +
+            "The subagents are not running, which no further retry fixes: the account is " +
+            "rate-limited, out of credit, or the session needs re-authenticating. Stopping so " +
+            "the run can be resumed once that clears; the completed steps are committed.",
+        );
+        break;
+      }
+      continue;
+    }
+    // The agent ran, so a later dead call is a fresh incident rather than a
+    // continuation of this one.
+    deadAttempts = 0;
+
+    // ---- The compile gate --------------------------------------------------
+    //
+    // The conformance and invariants review now runs BEFORE the tests, which is
+    // what makes the loop cheap: most fixes in a step answer that review, and
+    // running the tier set for each of them ran the same suites over and over
+    // while they stayed green. But a reviewer handed code that does not compile
+    // produces confident nonsense, so a build of the changed packages comes
+    // first. It costs seconds and removes the failure mode.
+    //
+    // The same agent runs the tier 0 checks that cost seconds on the changed
+    // files, with the commands tier 0 itself runs (cmd/lenny-test's static
+    // tier), so the two agree. One measured step failed its final gate twice,
+    // once on a test file missing from the change graph and once on a gofumpt
+    // nit, and each failure cost a fix round and another full gate. The rest of
+    // tier 0 (golangci-lint, buf, the lint scripts, tests/tier0_static) stays
+    // with the verifier, because it costs minutes rather than seconds.
+    const compiles = await agentTry(
+      "Report whether the changed packages compile and pass the cheap static checks. Work in " + repo +
+        ". Do not edit anything.\n\n" +
+        "Run `git diff --name-only --diff-filter=d " + stepRef + "..HEAD` to see what changed. Then:\n" +
+        "1. `go build ./<pkg>/...` over the Go packages among them. Set `compiles` from this alone.\n" +
+        "2. `gofumpt -l <files>` and `goimports -l -local github.com/lennylabs/lenny <files>` over the changed " +
+        "`.go` files, leaving out any under a testdata/ directory. Use the binary on PATH, else the one in " +
+        "`$(go env GOPATH)/bin`; when neither exists, skip that check and say so in errors, as tier 0 does. " +
+        "Any file either tool prints is a failure.\n" +
+        "3. `go vet ./<pkg>/...` over the changed Go packages, adding `-tags=contract` for a package under " +
+        "tests/tier3_contract.\n" +
+        "4. `go run ./cmd/lenny-test validate-maps`, which checks that tests/spec-map.json and " +
+        "tests/change-graph.json cover the tree.\n" +
+        "Skip steps 2 to 4 when step 1 fails. Set `staticClean` false when any of steps 2 to 4 failed, and put " +
+        "each failure in `errors` with the check's name and the file or message it printed. Nothing else: no " +
+        "tests, no golangci-lint, no whole-repo build or vet. If the change touches no Go package, report " +
+        "compiles true and still run step 4." +
+        MEMORY_SAFE_NOTE,
+      { schema: COMPILE, label: "compile:" + step.id + ":r" + attempt, phase: "Build" },
+    );
+    const staticFailed = !!compiles && compiles.compiles !== false && compiles.staticClean === false;
+    if (compiles && (compiles.compiles === false || staticFailed)) {
+      stepGreen = false;
+      stepReviewClean = false;
+      issues = staticFailed
+        ? "The changed packages compile but fail the cheap tier 0 checks (formatting, import order, go vet, " +
+          "or spec-map and change-graph completeness). Tier 0 runs the same checks, so fix them before " +
+          "anything is reviewed or tested:\n" + (compiles.errors || []).map((e) => "- " + e).join("\n")
+        : "The changed packages do not compile, so nothing can review or test them yet. Fix the build " +
+          "first:\n" + (compiles.errors || []).map((e) => "- " + e).join("\n");
+      log("Step " + step.id + " attempt " + attempt + ": " + (staticFailed ? "fails the compile gate's static checks" : "does not compile"));
+      stepRounds.push({ attempt, phase: "compile", fix: true, commit: res.commit || "", green: false, findingTitles: [] });
       continue;
     }
 
+    // ---- Conformance and invariants, BEFORE any test runs ------------------
+    //
+    // A fix round whose every commit since the invariants lens last passed is
+    // comment-only, doc-only, or test-only gets the conformance lens alone (see
+    // MECHANICAL_CLASSES). Without a recorded pass, or with any other class, or
+    // with no answer from the classifier, both lenses run.
+    let lenses = STEP_REVIEW_LENSES;
+    if ((attempt > 1 || firstAttemptWasFix) && invariantsCleanAt) {
+      const cls = await agentTry(
+        "Classify a commit range with the repository's diff classifier. Work in " + repo + ". " + READ_ONLY_NOTE +
+          "\n\nRun `node " + repo + "/.claude/tools/classify-diff.mjs " + invariantsCleanAt + "..HEAD --json` " +
+          "and return the `classes` array it prints, verbatim. Do not add, drop, or interpret a class. If the " +
+          "command fails, return an empty array.",
+        { schema: CLASSES, label: "classify:" + step.id + ":r" + attempt, model: "haiku", effort: "high", phase: "Build" },
+      );
+      const mechanical = ((cls && cls.classes) || []).filter((c) => MECHANICAL_CLASSES.includes(c));
+      if (mechanical.length > 0) {
+        lenses = STEP_REVIEW_LENSES.filter((l) => l.key === "conformance");
+        log(
+          "Step " + step.id + " attempt " + attempt + ": the changes since " + invariantsCleanAt + " are " +
+            mechanical.join(", ") + "; the invariants lens passed that commit, so only the conformance lens reviews",
+        );
+      }
+    }
+    const reviewResults = await reviewStep(step, stepRef, "r" + attempt, lenses);
+    // Fail closed: a reviewer that died (null) is not evidence of conformance.
+    const liveReviews = reviewResults.filter(Boolean);
+    const allReviewersRan = liveReviews.length === lenses.length;
+    stepFindings = dropAdjudicated(liveReviews.flatMap((r) => r.findings), step);
+    stepReviewClean = stepFindings.length === 0 && allReviewersRan;
+    // Where the invariants lens ran, record whether it passed this commit. A
+    // finding, a dead reviewer, or no recorded commit clears the record, so the
+    // next round runs both lenses. A round that ran conformance alone leaves it
+    // as it was: the range the next round classifies still starts there.
+    const invIdx = lenses.findIndex((l) => l.key === "invariants");
+    if (invIdx >= 0) {
+      const inv = reviewResults[invIdx];
+      invariantsCleanAt =
+        inv && Array.isArray(inv.findings) && inv.findings.length === 0 && res.commit ? res.commit : null;
+    }
+
+    if (!stepReviewClean) {
+      stepGreen = false;
+      // Returning to conformance after the tests have run at least once is one
+      // oscillation: a fix answered the reviewer, the tests broke, the fix for
+      // that broke the reviewer again.
+      if (lastPhase === "tests") oscillations++;
+      lastPhase = "IC";
+      stepRounds.push({
+        attempt,
+        phase: "IC",
+        fix: attempt > 1 || firstAttemptWasFix,
+        commit: res.commit || "",
+        filesChanged: res.filesChanged || [],
+        testsAddedOrModified: res.testsAddedOrModified || [],
+        green: null,
+        findingTitles: stepFindings.map((f) => f.title).filter(Boolean),
+      });
+      log(
+        "Step " + step.id + " attempt " + attempt + ": " + stepFindings.length +
+          " conformance finding(s)" + (allReviewersRan ? "" : " (a reviewer did not return)") +
+          "; no tests run this round",
+      );
+      // The judges run BEFORE the fixer's brief is written, so a finding they
+      // have just set aside appears as suppressed in the very next brief rather
+      // than one round later.
+      if (await maybeJudge()) break;
+      issues =
+        stepFindings.length > 0
+          ? "This step's code does not match the proposal's design. Fix the code (do not change scope, do " +
+            "not touch spec/). THE PROPOSAL FILE IS OUT OF SCOPE FOR EVERY FINDING BELOW. The findings are " +
+            "reproduced verbatim, and one may name the proposal as the thing to change, or ask for an edit " +
+            "to it to be reverted or restored. Disregard that part of any such finding: it is outside what " +
+            "this step does, the current content of the proposal stands as written whatever its history, " +
+            "and a human has already decided to keep it and review it separately. Do not edit, revert, or " +
+            "restore that file, and do not treat leaving it alone as leaving the finding unaddressed. Take " +
+            "from each finding only what it says about the CODE; where a finding says nothing about the " +
+            "code, note that you left it alone and move on. Each divergence is a defect the step's tests " +
+            "passed over, so it is also a test-coverage gap: for every finding with a runtime effect, ALSO " +
+            "add or strengthen an automated test that asserts the corrected behavior and would FAIL " +
+            "against the pre-fix code, at the tier that owns it. Keep all tests green:\n" +
+            JSON.stringify(stepFindings, null, 2) + suppressedNote(step)
+          : "A design-conformance reviewer did not return, so conformance is unconfirmed. Re-check that " +
+            "this step's code matches the proposal's design for its sections; fix any divergence.";
+      continue;
+    }
+
+    // ---- Conformance is clean, so now the tests --------------------------
+    //
+    // Full tiers on the first implementation of a step; scoped on a fix, whose
+    // blast radius is usually far narrower than the step's. The final gate
+    // below restores the full set, so nothing is marked done on a scoped pass.
+    const fullPass = attempt === 1 && !firstAttemptWasFix;
+    lastPhase = "tests";
+    testRounds++;
     // Independent verify: a different agent re-runs the step's tiers and
     // gates green. The implementer's self-report is advisory.
     const sv = await agentTry(
@@ -440,12 +2362,30 @@ for (let i = 0; i < plan.steps.length; i++) {
         stepRef +
         " (`git diff " +
         stepRef +
-        "..HEAD`). Run SCOPED tier 0 (`go build ./<changed-pkg>/...`, `go vet ./<changed-pkg>/...`, `golangci-lint run ./<changed-pkg>/...`) and tier 1 (`go test ./<changed-pkg>/... -count=1`) for the changed packages, plus each higher tier this step must run: " +
-        ((step.tiers || []).join(", ") || "(none beyond tier 0/1)") +
-        ". MEMORY-SAFE + no-stall: DEFAULT to running every command in the FOREGROUND, one at a time, SCOPED to the changed packages — NEVER use `run_in_background` for tests unless a single long-running tier will exceed the 180s watchdog without output (see below). NEVER run whole-repo `go test -race ./...` or `lenny-test --max-tier unit` (orphaned/concurrent envtest etcd+kube-apiserver and the race detector OOM-crash this 16GB host). Run the scoped tier 0/1 commands above directly (no `| tail`; they finish in seconds, streaming so no watchdog stall). For a tier-2 envtest package this step changes, run it FOREGROUND scoped to that one package (`go test ./<changed-envtest-pkg>/... -count=1 -p 1` with `KUBEBUILDER_ASSETS` set) so only one etcd+apiserver is alive, then reap strays (`pkill -f kubebuilder-envtest 2>/dev/null`) before the next. Use `-p 2` (or `-p 1` for envtest/integration) to cap memory. LONG-SILENT TIER EXCEPTION: if and only if a single tier will genuinely exceed ~150s without any output, you may run it with `run_in_background: true` to a log file path — but then poll by reading that log file with the Read tool (not with a Bash `tail`/`until` loop; a Bash poll loop can hang forever if the harness deletes its `.output` file after the 180s watchdog fires). Set green=true only if every tier that can run here passes (skip only a tier that genuinely needs a cloud-only resource, noting it); a pre-existing whole-repo failure unrelated to this step's changed packages is not this step's failure. List any real failures precisely so they can be fixed. Coverage is checked once over the whole change at the end, not here. BRANCH SAFETY: never `git checkout` a branch or commit to compare against a baseline — use `git diff <SHA>..HEAD` or `git show <SHA>:<path>` (you only run tests and report; do not change the checkout or the current branch).",
-      { schema: VERIFY, label: "verify:" + step.id + ":r" + attempt, phase: "Build" },
+        "..HEAD`). Run SCOPED tier 0 (`go build ./<changed-pkg>/...`, `go vet ./<changed-pkg>/...`, `golangci-lint run ./<changed-pkg>/...`) and tier 1 (`go test ./<changed-pkg>/... -count=1`) for the changed packages, plus " +
+        (fullPass
+          ? "each higher tier this step must run: " +
+            ((step.tiers || []).join(", ") || "(none beyond tier 0/1)")
+          : SCOPING_BLOCK(step)
+        ) +
+        ". " + PREFLIGHT_NOTE + " MEMORY-SAFE + no-stall: DEFAULT to running every command in the FOREGROUND, one at a time, SCOPED to the changed packages — NEVER use `run_in_background` for tests unless a single long-running tier will exceed the 180s watchdog without output (see below). NEVER run whole-repo `go test -race ./...` or `lenny-test --max-tier unit` (orphaned/concurrent envtest etcd+kube-apiserver and the race detector OOM-crash this 16GB host). Run the scoped tier 0/1 commands above directly (no `| tail`; they finish in seconds, streaming so no watchdog stall). For a tier-2 envtest package this step changes, run it FOREGROUND scoped to that one package (`go test ./<changed-envtest-pkg>/... -count=1 -p 1` with `KUBEBUILDER_ASSETS` set) so only one etcd+apiserver is alive, then reap strays (`pkill -f kubebuilder-envtest 2>/dev/null`) before the next. Use `-p 2` (or `-p 1` for envtest/integration) to cap memory. LONG-SILENT TIER EXCEPTION: if and only if a single tier will genuinely exceed ~150s without any output, you may run it with `run_in_background: true` to a log file path — but then poll by reading that log file with the Read tool (not with a Bash `tail`/`until` loop; a Bash poll loop can hang forever if the harness deletes its `.output` file after the 180s watchdog fires). Set green=true only if every tier that can run here passes (skip only a tier that genuinely needs a cloud-only resource, noting it); a pre-existing whole-repo failure unrelated to this step's changed packages is not this step's failure. List any real failures precisely so they can be fixed. Coverage is checked once over the whole change at the end, not here. BRANCH SAFETY: never `git checkout` a branch or commit to compare against a baseline — use `git diff <SHA>..HEAD` or `git show <SHA>:<path>` (you only run tests and report; do not change the checkout or the current branch)." +
+        TREE_RECORD_NOTE(step, stepRef),
+      { schema: STEP_VERIFY, label: "verify:" + step.id + ":r" + attempt, phase: "Build" },
     );
+    // Captured here rather than at the gate: a gate failure is evidence about
+    // the class table only if it names the class and the skip that let it
+    // through, and this is the only call that knows either. Assigned from
+    // whichever run just returned, so a full pass, which skips nothing and
+    // reports neither, clears a scoped verdict rather than leaving it to be
+    // misattributed to a pass that skipped nothing.
+    if (sv) {
+      lastClassification = sv.classification || null;
+      lastSkipped = sv.skipped || null;
+    }
     stepGreen = !!(sv && sv.green);
+    // This attempt committed, so whatever full pass preceded it is stale. A
+    // green full pass on THIS tree is the only thing that sets it true again.
+    fullVerifyCurrent = fullPass && stepGreen;
     if (!stepGreen) {
       stepReviewClean = false;
       stepFindings = [];
@@ -457,55 +2397,156 @@ for (let i = 0; i < plan.steps.length; i++) {
       continue;
     }
 
-    // Adversarial design-conformance review of THIS step's diff only.
-    const reviewResults = await parallel(
-      STEP_REVIEW_LENSES.map((l) => () =>
-        agentTry(
-          "Adversarially review ONE just-implemented build step against the proposal's design.\n\n" +
-            "Read the proposal at " +
-            proposal +
-            " (its spec edits are applied), focusing on the sections this step implements (" +
-            ((step.specRefs || []).join(", ") || "the sections relevant to this step's work") +
-            "), and read ONLY this step's diff: `git diff " +
-            stepRef +
-            "..HEAD` in " +
+    stepRounds.push({
+      attempt,
+      phase: "tests",
+      fix: attempt > 1 || firstAttemptWasFix,
+      commit: res.commit || "",
+      filesChanged: res.filesChanged || [],
+      testsAddedOrModified: res.testsAddedOrModified || [],
+      green: !!(sv && sv.green),
+      failures: (sv && sv.failures) || [],
+      findingTitles: [],
+    });
+    log("Step " + step.id + " attempt " + attempt + ": conformance clean, tests green");
+    // FINAL GATE. The lenses are clean, but if the tree reached this state
+    // through scoped runs then no full tier pass has covered it. Run the whole
+    // set now, against the exact tree about to be marked done. This is the
+    // guarantee the scoped fix rounds borrow against: green here, or the
+    // failures become the next attempt's work.
+    // Conformance is clean by construction here: a review that found anything
+    // continued at the top of the loop, so the only way past it is clean. The
+    // remaining question is whether a FULL tier pass has covered this tree.
+    //
+    // A scoped verify that covered the full set green stands in for the gate
+    // when the tree the gate would test is the one it recorded. The read of
+    // the tree runs only when the verify result qualifies, so the call order
+    // stays a function of earlier results and a resumed run replays it.
+    if (!fullVerifyCurrent && coversStepTiers(step, sv)) {
+      const verifiedTree = String(sv.treeHash).trim();
+      const tree = await agentTry(
+        "Report the tree the next test run would see. Work in " + repo + ". " + READ_ONLY_NOTE + "\n\n" +
+          "Run `git rev-parse HEAD^{tree}` and return its output as treeHash. Run `git status --porcelain " +
+          TREE_PATHSPEC + "` and set clean true only when it printed nothing.",
+        { schema: TREE, label: "tree:" + step.id + ":r" + attempt, model: "haiku", effort: "high", phase: "Build" },
+      );
+      const current = tree && tree.clean === true ? String(tree.treeHash || "").trim() : "";
+      if (current && current === verifiedTree) {
+        fullVerifyCurrent = true;
+        log(
+          "Step " + step.id + ": verify r" + attempt + " ran the full tier set green on tree " + verifiedTree +
+            ", which is the tree the final gate would test; reusing its result instead of running the gate",
+        );
+      } else {
+        log(
+          "Step " + step.id + ": verify r" + attempt + " covered the full tier set, but the tree now reads " +
+            (current || "unknown or not clean") + " against " + verifiedTree + "; running the final gate",
+        );
+      }
+    }
+    if (!fullVerifyCurrent) {
+      log("Step " + step.id + ": review clean after scoped runs; full tier pass as the final gate");
+      finalPassesIssued++;
+      const finalSha = (res && res.commit) || "";
+      const scopeFinal = !!(lastFinal && lastFinal.sha && finalSha) &&
+        finalPassesIssued > fullFinalPassesBeforeScoping;
+      if (scopeFinal) log("Step " + step.id + ": final gate scoped to the changes since " + lastFinal.sha);
+      const fg = await agentTry(
+        scopeFinal
+          ? FINAL_SCOPED_PROMPT(step, stepHeader, stepRef, lastFinal)
+          : "Run the FULL test set for one build step of an applied spec proposal and report whether it is green. " +
+            "You did not write this code. Work in " +
             repo +
-            ". You are read-only; report findings only.\n\n" +
-            "Scope: judge only what THIS step is responsible for (its work: " +
-            step.work +
-            "). A surface this step ADDS that a LATER step is meant to consume or wire up is NOT a divergence here — do not flag 'unused' or 'never called' for something a later step will use. A finding is a place this step's landed code diverges from the proposal's design for the sections it implements. Not a style preference, not new scope the proposal does not contain, not a coverage gap. Cite file:line and the proposal section. Report an empty findings array when this step conforms.\n\n" +
-            l.text,
-          {
-            schema: REVIEW,
-            label: "review:" + step.id + ":" + l.key + ":r" + attempt,
-            phase: "Build",
-          },
-        ),
-      ),
+            ". Do not edit anything; only run tests and report.\n\n" +
+            stepHeader +
+            "\n\nThe step's design review is clean and its code is committed. Earlier rounds ran only the tiers " +
+            "each fix could affect, so no single run has covered the tree as it now stands. Run tier 0 and " +
+            "tier 1 for every package this step changed (`git diff " +
+            stepRef +
+            "..HEAD`), and every higher tier this step must run: " +
+            ((step.tiers || []).join(", ") || "(none beyond tier 0/1)") +
+            ". Skip none of them except a tier that genuinely needs a cloud-only resource, which you name. " +
+            MEMORY_SAFE_NOTE + PREFLIGHT_NOTE +
+            "\n\nReport green, the tiers you ran, the changed-line coverage if you measured it, and every failure.",
+        { schema: VERIFY, label: "verify:" + step.id + ":final", phase: "Build" },
+      );
+      if (fg) lastFinal = { sha: finalSha, result: fg };
+      if (fg && fg.green) {
+        fullVerifyCurrent = true;
+        log("Step " + step.id + ": full tier pass green");
+      } else {
+        // A final-gate failure is a SCOPING MISS by definition: the scoped runs
+        // asserted a fix could not affect some tier and the full pass just
+        // proved otherwise. That is the only direct evidence available about
+        // whether the change-class table is calibrated, so it is recorded
+        // rather than thrown away.
+        finalGateFailures++;
+        gateMisses.push({
+          step: step.id,
+          attempt,
+          failures: (fg && fg.failures) || [],
+          classification: lastClassification,
+          whatWasSkippedAndWhy: lastSkipped,
+        });
+        stepGreen = false;
+        stepReviewClean = false;
+        lastPhase = "tests";
+        issues =
+          "The design review is clean, but the full tier pass run against the finished tree is not green. " +
+          "Earlier rounds ran only the tiers each fix could affect, so these failures are in tiers those " +
+          "rounds skipped. Fix them and keep the design conformant:\n" +
+          (((fg && fg.failures) || []).map((f) => "- " + f).join("\n") ||
+            "- (the final verifier reported not green without listing failures)") +
+          ((fg && fg.notes) ? "\nVerifier notes: " + fg.notes : "");
+        log(
+          "Step " + step.id + ": full tier pass FAILED after a clean review (" + finalGateFailures +
+            " so far); returning to the fix loop. Every one of these is a scoping miss and is recorded.",
+        );
+        await maybeJudge();
+        continue;
+      }
+    }
+  }
+
+  // Tick the proposal's checklist box for this step once it is green and
+  // conformant. The box is the resumption record: a later run reads it to find
+  // where to continue, which is what the pipeline previously had no way to know.
+  if (stepGreen && stepReviewClean && step.checklistStep) {
+    await agentTry(
+      "In " + P.checklist + ", find the implementation-checklist line for step " + step.checklistStep +
+        ". It begins `- [ ] **" + step.checklistStep + "`. Change that line's `- [ ]` to `- [x]` and change " +
+        "NOTHING else in the file: no wording, no other checkbox, no other line, and no file other than this " +
+        "one. If there is no such line, or its box is already `[x]`, change nothing. Reply DONE either way.",
+      { label: "tick:" + step.checklistStep, model: "haiku", effort: "high" },
     );
-    // Fail closed: a reviewer that died (null) is not evidence of conformance.
-    // Only declare the step review-clean when every reviewer ran and none
-    // found a divergence.
-    const liveReviews = reviewResults.filter(Boolean);
-    const allReviewersRan = liveReviews.length === STEP_REVIEW_LENSES.length;
-    stepFindings = liveReviews.flatMap((r) => r.findings);
-    stepReviewClean = stepFindings.length === 0 && allReviewersRan;
-    log(
-      "Step " +
-        step.id +
-        " attempt " +
-        attempt +
-        ": green, " +
-        stepFindings.length +
-        " design-conformance finding(s)" +
-        (allReviewersRan ? "" : " (a reviewer did not return; not treated as clean)"),
-    );
-    if (!stepReviewClean) {
-      issues =
-        stepFindings.length > 0
-          ? "This step builds and its tests pass, but the design-conformance review found divergences from the proposal. Fix the code to match the proposal's design for this step (do not change scope, do not touch spec/). Each divergence is a defect the step's tests passed over, so it is also a test-coverage gap: for every finding with a runtime effect, ALSO add or strengthen an automated test that asserts the corrected behavior and would FAIL against the pre-fix code, at the tier that owns it, so this class of issue cannot recur. Keep all tests green:\n" +
-            JSON.stringify(stepFindings, null, 2)
-          : "This step builds and its tests pass, but a design-conformance reviewer did not return, so conformance is unconfirmed. Re-check that this step's code matches the proposal's design for its sections; fix any divergence and keep the tests green.";
+    log("Checklist: marked " + step.checklistStep + " complete");
+    await recordStuckForStep(step);
+  }
+
+  // Whether the step ticked or aborted, a finding the judges could not send
+  // back to the loop is written into the commit trail. Tying it to the tick alone
+  // would lose it exactly when a step ends badly, which is when it matters most.
+  async function recordStuckForStep(step) {
+    const mine = stuckFindings.filter((f) => f.step === step.id && !f.recorded);
+    if (mine.length === 0) return;
+    for (const f of mine) f.recorded = true;
+    {
+      await agentTry(
+        "Record, in the git history, a finding this build step could not resolve. Work in " + repo + ".\n\n" +
+          "Stage nothing and write no file. Make an EMPTY commit on the current branch with " +
+          "`git commit --allow-empty` whose message records the following, in the repository's commit style: " +
+          "what each finding below records. A finding marked kind \"unresolvable\" was judged by every " +
+          "reviewer to be closable by no change the step could legally make, because the landed code is " +
+          "correct and the proposal is wrong; say that it is left for human review rather than fixed. A " +
+          "finding marked kind \"unproductive\" is real and its remedy is legal, but the rounds did not " +
+          "make it; say what work is outstanding, and do not describe it as resolved or as a defect in the " +
+          "proposal. Say whether the step ticked. Do not editorialise beyond what is given.\n\n" +
+          JSON.stringify(mine, null, 2) +
+          "\n\nUse a subject line under 72 characters naming the step and the subject of the finding. " +
+          "Reply with the commit sha.",
+        { label: "record-stuck:" + step.checklistStep, phase: "Build" },
+      );
+      log("Step " + step.id + ": recorded " + mine.length + " unclosed finding(s) in the commit trail");
     }
   }
 
@@ -518,13 +2559,40 @@ for (let i = 0; i < plan.steps.length; i++) {
     findings: stepReviewClean ? [] : stepFindings,
     ...(res || { implemented: false, testsPassed: false, tiersRun: [], notes: "agent failed" }),
   });
+  // A departure the step itself reported goes into the deviations file, as
+  // `proposed`. It was reaching the result object and nowhere else, and the
+  // result object is a task return nobody keeps: on two measured runs the file
+  // said there were no deviations while the run had returned several, so the
+  // one artifact a human reads to decide whether the proposal or the code was
+  // wrong was the one that lost them.
+  //
+  // `proposed` rather than `accepted` because nothing has adjudicated these.
+  // Only the stuck judges accept one, and the reviewers' immunity list is built
+  // from those in memory rather than by reading this file, so writing here
+  // grants a step's own claim no immunity from the next round's review.
+  await recordProposedDeviations(step, (res && res.deviations) || []);
   // Abort the sequence if the step did not reach green-and-conformant within
   // maxStepAttempts: its dependents would build on a broken or divergent
   // foundation. Stop here; the spec and the completed steps are already
   // committed for inspection and resume.
   if (!(stepGreen && stepReviewClean)) {
+    await recordStuckForStep(step);
     const remaining = plan.steps.length - i - 1;
-    const reason = !stepGreen ? "tests not green" : "design-conformance divergences outstanding";
+    // Name the real cause. A run stopped because its subagents were not
+    // running is resumable as soon as that clears, while a genuinely stuck
+    // step needs someone to read the findings; reporting the first as the
+    // second sends the operator to the wrong place.
+    // Name the phase the step is actually stuck in. Under the conformance-first
+    // order a step can exhaust its attempts without the tests ever running, and
+    // reporting that as "tests not green" sends the reader to the wrong place.
+    const reason = unproductiveStep
+      ? "the judges agreed the loop was not closing a real finding: " + unproductiveStep.title
+      : deadAttempts >= maxDeadAttempts
+      ? "subagents are not running (rate limit, exhausted credit, or expired auth), so the step was never attempted on its merits"
+      : !stepReviewClean
+        ? "design-conformance divergences outstanding" +
+          (testRounds === 0 ? " (the tests never ran: the step never got past conformance)" : "")
+        : "tests not green";
     log(
       "Step " +
         step.id +
@@ -539,6 +2607,13 @@ for (let i = 0; i < plan.steps.length; i++) {
     return {
       status: "step-stuck",
       stuckStep: step.id,
+      // Every final-gate failure across the run. Each is direct evidence about
+      // whether the change-class table is calibrated, which is otherwise
+      // unobtainable, so it is reported rather than thrown away.
+      gateMisses,
+      // Recorded even here: a step that aborts is the case where a suppressed
+      // proposal defect is most likely to be the reason it could not finish.
+      stuckFindings,
       blastRadius: plan.blastRadius,
       steps: stepResults,
       commits: stepResults.map((s) => s.commit).filter(Boolean),
@@ -684,6 +2759,237 @@ for (let i = 0; i < plan.steps.length; i++) {
   }
 }
 
+// A wholly-spec checklist reaches here having applied every spec step. It must
+// not fall into Verify and Review, which build and test code.
+if (specOnly) {
+  return {
+    status: "spec-only",
+    stoppedAt: "",
+    specStepsBehind: [],
+    steps: stepResults,
+    commits: stepResults.map((x) => x.commit).filter(Boolean),
+    green: false,
+    reviewClean: false,
+  };
+}
+
+// ---- Sweep: code comments the landed spec edits made false ----
+//
+// A spec edit can leave a Go comment, a doc comment, or a test's diagnosis
+// restating the behaviour the edit replaced. A proposal's review looks for
+// missed edit sites under spec/, docs/, schemas/ and charts/, and not in code
+// comments, so such a comment used to be caught only when a final reviewer
+// looked past its brief: one run of a proposal fixed it and the next run of the
+// same proposal did not. The sweep makes it a step. It runs here, once, because
+// only now is the spec text final, so the find agent reads the landed diff
+// rather than staged text that review rounds were still rewriting.
+//
+// It edits comment lines and nothing else, and an independent check reverts a
+// sweep commit that touched anything more, because a comment carries no
+// behaviour and so needs no proposal to change it. A site that is not a comment
+// (a test assertion, a client-visible string, a chart value) is behaviour the
+// proposal did not stage, so it is recorded as a proposed deviation for a human
+// and left as it is.
+//
+// It never blocks the run. A sweep agent that dies leaves the comments where
+// every earlier run left them, and the result says the sweep did not finish.
+
+const SWEEP_SITES = {
+  type: "object",
+  required: ["sites", "searched"],
+  properties: {
+    searched: { type: "string", description: "what you grepped for and where" },
+    sites: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["file", "line", "kind", "quote", "contradicts"],
+        properties: {
+          file: { type: "string", description: "repository-relative path" },
+          line: { type: "integer" },
+          kind: {
+            type: "string",
+            enum: ["comment", "non-comment"],
+            description: "comment: every line to change is a comment. non-comment: anything that compiles or renders into behaviour",
+          },
+          quote: { type: "string", description: "the text as it stands" },
+          contradicts: { type: "string", description: "the landed spec sentence it now contradicts, with its spec file and heading" },
+        },
+      },
+    },
+  },
+};
+
+const SWEEP_FIX = {
+  type: "object",
+  required: ["commit", "edited"],
+  properties: {
+    commit: { type: "string", description: "the sweep commit's SHA, or empty when nothing was edited" },
+    edited: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["file", "line"],
+        properties: { file: { type: "string" }, line: { type: "integer" }, after: { type: "string" } },
+      },
+    },
+    skipped: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["file", "why"],
+        properties: { file: { type: "string" }, line: { type: "integer" }, why: { type: "string" } },
+      },
+    },
+    details: { type: "string" },
+  },
+};
+
+const SWEEP_CHECK = {
+  type: "object",
+  required: ["commentOnly"],
+  properties: {
+    commentOnly: { type: "boolean", description: "every added or removed line in the commit is a comment or blank" },
+    offending: { type: "array", items: { type: "string" }, description: "each non-comment line the commit changed" },
+    reverted: { type: "string", description: "the SHA of the revert commit, or empty when nothing was reverted" },
+  },
+};
+
+const SWEEP_BRANCH_SAFETY =
+  " BRANCH SAFETY: confirm `git rev-parse --abbrev-ref HEAD` prints the feature branch before any commit; " +
+  "never checkout, switch, reset, stash, or branch -f.";
+
+async function sweepStaleComments(specFiles) {
+  const out = { ran: true, specFiles, sites: [], edited: [], skipped: [], commit: "", nonCommentSites: [], status: "" };
+  const found = await agentTry(
+    "Find code comments that the spec edits this run landed have made false. This is read-only: edit " +
+      "nothing and commit nothing.\n\n" +
+      "Repository: " + repo + ". The landed spec edits are `git diff " + baseRef + "..HEAD -- spec/` " +
+      "(files: " + specFiles.join(", ") + "). Read that diff first. Its removed lines are the contract the " +
+      "spec no longer states, and its added lines are the contract it states now.\n\n" +
+      "Search pkg/, cmd/, sdks/, tests/ and charts/ for text that still states the removed contract or the " +
+      "behaviour it described. Grep for the distinctive phrases and identifiers on the removed lines, and " +
+      "for what they asserted: an error code, a status, an outcome, an ordering, a rule. Read each hit " +
+      "against the landed spec. Report a site only when it now states something false. A site that names " +
+      "a function, a section, or an identifier without stating the replaced behaviour is still true and is " +
+      "not a site, and neither is a `// spec:` citation by section number.\n\n" +
+      "Classify each site. `comment` means every line that would change is a comment: a Go `//` or `/* */` " +
+      "comment, including a doc comment and a test's `// diagnosis:` text, or a `#` comment in YAML, a shell " +
+      "script, or a chart template. `non-comment` means anything else: a test assertion or fixture, an error " +
+      "or log string, a chart value, anything that compiles or renders into behaviour. Quote the text, and " +
+      "name the landed sentence it contradicts with its spec file and heading.\n\n" +
+      "Return what you searched. An empty `sites` list is the expected answer when the spec edits changed " +
+      "nothing a code comment describes.",
+    { schema: SWEEP_SITES, label: "sweep:find", phase: "Sweep" },
+  );
+  if (!found) {
+    out.status = "find-failed";
+    log("Comment sweep: the find agent returned no result; comments were left as they were");
+    return out;
+  }
+  out.sites = Array.isArray(found.sites) ? found.sites : [];
+  const commentSites = out.sites.filter((s) => s && s.kind === "comment");
+  out.nonCommentSites = out.sites.filter((s) => s && s.kind !== "comment");
+
+  if (out.nonCommentSites.length > 0) {
+    await recordProposedDeviations(
+      { id: "sweep", title: "stale code the landed spec edits left behind" },
+      out.nonCommentSites.map((s) => ({
+        proposalSays: "stages no change to " + s.file,
+        implementedInstead: s.file + ":" + s.line + " is unchanged and still states: " + s.quote,
+        why: "it contradicts the landed spec (" + s.contradicts + "), and it is not a comment, so changing it " +
+          "changes behaviour the proposal did not stage",
+        laterReader: "a reader of " + s.file + " takes the old contract as current",
+      })),
+    );
+  }
+
+  if (commentSites.length === 0) {
+    out.status = "no-comment-sites";
+    log("Comment sweep: " + out.sites.length + " site(s), none of them a comment to correct");
+    return out;
+  }
+
+  const fixed = await agentTry(
+    "Correct code comments that the spec edits this run landed have made false.\n\n" +
+      "Repository: " + repo + ". The landed spec edits are `git diff " + baseRef + "..HEAD -- spec/`; read " +
+      "it first. Each site below states the contract that diff removed.\n\n" +
+      "EDIT COMMENT LINES ONLY. Rewrite the false clause of each comment so it states what the landed spec " +
+      "now states, and leave the rest of the comment unchanged. Check each clause you write against the code " +
+      "it describes, not only against the spec. Keep the file's `// spec:` citation form (a section number, " +
+      "never a line number), write no proposal identifier (a change, decision, step, or proposal number), " +
+      "and follow " + repo + "/.claude/rules/doc-style.md. Skip a site, with the reason, when on inspection " +
+      "it is still true or cannot be corrected without changing a line that is not a comment.\n\n" +
+      "Then: (1) commit nothing yet, and confirm the change is comment-only: `git diff -U0 | grep '^[+-]' | " +
+      "grep -v '^+++' | grep -v '^---' | grep -vE '^[+-][[:space:]]*(//|/\\*|\\*|#|$)'` must print nothing. (2) Run " +
+      "`go build ./...`. (3) Run `go test -count=1 ./tests/tier0_static/...`, because the line-citation and " +
+      "proposal-label ratchets read Go comments. (4) Commit only the files you edited, with a message that " +
+      "begins `comments:` and names the spec section the comments now match. Return the commit SHA, or an " +
+      "empty string when you edited nothing." +
+      SWEEP_BRANCH_SAFETY + "\n\nSites:\n" + JSON.stringify(commentSites, null, 1),
+    { schema: SWEEP_FIX, label: "sweep:fix", phase: "Sweep" },
+  );
+  if (!fixed) {
+    out.status = "fix-failed";
+    log("Comment sweep: the fix agent returned no result; " + commentSites.length + " comment site(s) left as they were");
+    return out;
+  }
+  out.edited = Array.isArray(fixed.edited) ? fixed.edited : [];
+  out.skipped = Array.isArray(fixed.skipped) ? fixed.skipped : [];
+  out.commit = String(fixed.commit || "").trim();
+  if (!out.commit) {
+    out.status = "nothing-edited";
+    log("Comment sweep: " + commentSites.length + " comment site(s) found, none edited");
+    return out;
+  }
+
+  // The fix agent's own grep is a self-report. A separate agent classifies the
+  // commit it made with classify-diff.mjs, whose comment-only verdict is
+  // mechanical, and reverts it whole if any changed line is not a comment:
+  // the sweep's licence to act without the proposal is that it changes no
+  // behaviour, so a commit that did change some has no licence at all.
+  const checked = await agentTry(
+    "Check that one commit changes comment lines only, and revert it if it does not.\n\n" +
+      "Repository: " + repo + ". Commit: " + out.commit + ". Run `node " + repo + "/.claude/tools/classify-diff.mjs " +
+      out.commit + "~1.." + out.commit + " --json`. Its verdict is authoritative: the commit is comment-only " +
+      "exactly when `classes` contains `comment-only`. When it does, return commentOnly=true. When it does not, " +
+      "list the changed lines that are not comments (`git show -U0 --format= " + out.commit + "`), run `git revert " +
+      "--no-edit " + out.commit + "` on the current branch and return commentOnly=false, the offending " +
+      "lines, and the revert commit's SHA." + SWEEP_BRANCH_SAFETY,
+    { schema: SWEEP_CHECK, label: "sweep:check", phase: "Sweep", model: "haiku", effort: "high" },
+  );
+  if (!checked) {
+    out.status = "check-failed";
+    log("Comment sweep: the comment-only check returned no result for " + out.commit + "; the final review reads it");
+  } else if (!checked.commentOnly) {
+    out.status = "reverted";
+    out.reverted = String(checked.reverted || "");
+    out.offending = checked.offending || [];
+    log("Comment sweep: commit " + out.commit + " changed non-comment lines and was reverted" +
+      (out.reverted ? " (" + out.reverted + ")" : ""));
+  } else {
+    out.status = "committed";
+    log("Comment sweep: " + out.edited.length + " comment(s) corrected in " + out.commit);
+  }
+  return out;
+}
+
+const landedSpecFiles = Array.from(new Set(
+  stepResults.filter((s) => s && s.lane === "spec").flatMap((s) => s.specFiles || []),
+));
+let commentSweep = { ran: false, status: "", reason: "" };
+if (!sweepComments) {
+  commentSweep.reason = "disabled by sweepComments:false";
+} else if (landedSpecFiles.length === 0) {
+  commentSweep.reason = "no spec step landed in this run";
+} else if (!baseRef) {
+  commentSweep.reason = "no baseline commit to diff the landed spec edits against";
+  log("Comment sweep skipped: " + commentSweep.reason);
+} else {
+  phase("Sweep");
+  commentSweep = await sweepStaleComments(landedSpecFiles);
+}
+
 // ---- Verify: run the reached tiers across the whole change ----
 
 // Clean-checkout compile guard. The Verify and recheck agents run tests
@@ -717,6 +3023,87 @@ const GUARD_PROMPT =
 // Runs the guard and returns its verdict (or null if the agent died).
 async function runCompileGuard(label, phaseName) {
   return await agentTry(GUARD_PROMPT, { schema: GUARD, label: "compile-guard:" + label, phase: phaseName });
+}
+
+// Re-verification after a fix is scoped to what the fix changed.
+//
+// The whole-change Verify pass runs every reached tier, and on a large proposal
+// that takes hours. A re-run after a fix used to repeat all of it, so a fix that
+// touched one tier-11 test file cost a second multi-hour pass that could not
+// have failed differently. The first full pass is the baseline: a tier it
+// passed stays certified unless the fix's commits can reach it. The scope is
+// decided the same way the Build loop scopes a step fix, from the real diff
+// (classify-diff.mjs over a commit range, never the fixer's self-report) and
+// the class table, so the rule for "which tiers can this fix break" is stated
+// once. Changes to shared test infrastructure, build inputs, or images widen
+// the scope back to every reached tier, because they can break a tier without
+// touching its packages.
+
+// Captures HEAD before a fix, so the re-verify can diff exactly the fix's
+// commits. Returns null when the agent fails, which makes the re-verify fall
+// back to the full set.
+async function captureHead(label, phaseName) {
+  const r = await agentTry(
+    "Print the current git HEAD commit SHA in " + repo + " (run `git rev-parse HEAD`). Do not edit anything. Return it as {sha}.",
+    { schema: SHA, label: "head:" + label, phase: phaseName, model: "haiku", effort: "low" },
+  );
+  return r && r.sha ? r.sha.trim() : null;
+}
+
+// The prompt for a step's final gate after its first one. The previous final
+// gate covered prior.sha; the tiers it passed or carried forward stay certified
+// unless the commits since can reach them. REVERIFY_SCOPE holds the rules, so
+// the step gate and the proposal's Verify loop scope the same way.
+function FINAL_SCOPED_PROMPT(step, stepHeader, stepRef, prior) {
+  return (
+    "Run the final test gate for one build step of an applied spec proposal and report whether it is green. " +
+    "You did not write this code. Work in " + repo + ". Do not edit anything; only run tests and report.\n\n" +
+    stepHeader +
+    "\n\nThe step's design review is clean and its code is committed. The step's changes are everything since " +
+    stepRef + ". An earlier final gate for this step covered commit " + prior.sha + " and was not green; the " +
+    "fix rounds since then committed on top of it. Confirm `git merge-base --is-ancestor " + prior.sha + " HEAD` " +
+    "succeeds; if it does not, the earlier gate certifies nothing, so run tier 0 and tier 1 for every package " +
+    "this step changed and every tier the step must run (" + ((step.tiers || []).join(", ") || "none beyond tier 0/1") +
+    "), and say so in notes.\n\n" +
+    REVERIFY_SCOPE(prior.sha, prior.result, Array.from(new Set(["0", "1"].concat(step.tiers || [])))) +
+    " A carried-forward tier counts as passing for `green`.\n\n" +
+    MEMORY_SAFE_NOTE + PREFLIGHT_NOTE +
+    "\n\nReport green, the tiers you ran, the tiers you carried forward with why, the changed-line coverage if you " +
+    "measured it, and every failure."
+  );
+}
+
+// The prompt block telling a re-verify agent which tiers to run. fromSha is
+// HEAD before the fix; prior is the last VERIFY result, whose passing tiers
+// are carried forward when the fix cannot reach them.
+function REVERIFY_SCOPE(fromSha, prior, tiers) {
+  const fullSet = (tiers || tierSet).join(", ") || "from the diff";
+  if (!fromSha || !prior) {
+    return "SCOPE: run every reached tier (" + fullSet + "), because there is no earlier full pass and fix range to scope against.";
+  }
+  const priorFailures = (prior.failures || []).map((f) => "- " + f).join("\n") || "- (none listed)";
+  return (
+    "SCOPE: a full pass over every reached tier (" + fullSet + ") already ran. Its tiers run: " +
+    ((prior.tiersRun || []).join(", ") || "(unrecorded)") + ". Tiers it carried forward or skipped: " +
+    ((prior.skipped || []).map((k) => k.tier + " (" + k.why + ")").join("; ") || "(none)") +
+    ". Its failures:\n" + priorFailures +
+    "\n\nEvery tier that pass ran or carried forward without a failure stays certified unless the fix commits can reach it. " +
+    "Run ONLY what the fix warrants, decided in this order.\n\n" +
+    "1. CLASSIFY THE REAL DIFF. Run `node " + repo + "/.claude/tools/classify-diff.mjs " + fromSha + "..HEAD --json` " +
+    "and read `git diff " + fromSha + "..HEAD` yourself. The script's comment-only, doc-only, and test-only verdicts " +
+    "are authoritative where they fire. Do not take a fixer's account of its change as the subject; the diff wins.\n\n" +
+    "2. MAP THE CLASS TO TIERS with this table, limited to the reached set (" + fullSet + "):\n" + CLASS_TABLE +
+    "\nAlways run tier 0, and always re-run every test named in the failures above by name, in the tier that owns it.\n\n" +
+    "3. WIDEN TO THE FULL REACHED SET when the range touches shared test infrastructure or build inputs: " +
+    "`tests/testinfra/`, `cmd/lenny-test/`, a test helper package imported across tiers, `go.mod` or `go.sum`, " +
+    "`charts/`, `migrations/`, a proto or generated file, a Dockerfile or image build script, or a file under " +
+    "`pkg/` imported by packages in more than one reached tier. Name the file that forced the widening.\n\n" +
+    "4. COVERAGE: recompute `lenny-test coverage --diff " + baseRef + "` only when the range changes non-test Go " +
+    "code; otherwise carry the earlier figure (" + (prior.changedLineCoverage || "unrecorded") + ") forward and say so.\n\n" +
+    "5. RECORD THE SCOPE. Return the class in `classification`, and one `skipped` entry per reached tier you did not " +
+    "re-run, with `why` naming it as carried forward from the earlier full pass and why the range cannot reach it. " +
+    "`tiersRun` lists only the tiers this run executed."
+  );
 }
 
 phase("Verify");
@@ -754,6 +3141,8 @@ while (
 ) {
   vround++;
   log("Verify round " + vround + "/" + maxVerifyRounds + ": fixing " + verify.failures.length + " failure(s)");
+  const preFixSha = await captureHead("verify-fix:r" + vround, "Verify");
+  const priorVerify = verify;
   await agentTry(
     "Fix the test failures from the verification of an applied spec proposal's implementation.\n\n" +
       "Work in " +
@@ -767,13 +3156,13 @@ while (
     { label: "verify-fix:r" + vround, phase: "Verify" },
   );
   verify = await agentTry(
-    "Re-run the reached tiers for the implementation in " +
+    "Re-verify the implementation in " +
       repo +
-      " and report whether everything is now green. Tiers: " +
-      (tierSet.join(", ") || "from the diff") +
-      ". MEMORY-SAFE: run each tier in the FOREGROUND, scoped to the changed packages, one at a time (no `run_in_background` for tests; no whole-repo `go test -race ./...`); reap stray envtest processes (`pkill -f kubebuilder-envtest 2>/dev/null`) between tier-2 packages; pass `-p 1`/`-p 2` to cap memory; stream output (no `| tail`). Bring infrastructure up as needed. Apply the same coverage gate: green=true requires every reached tier to pass AND changed-line coverage (via `lenny-test coverage --diff " +
+      " after a fix and report whether everything is now green.\n\n" +
+      REVERIFY_SCOPE(preFixSha, priorVerify) +
+      "\n\nMEMORY-SAFE: run each tier in the FOREGROUND, scoped to the changed packages, one at a time (no `run_in_background` for tests; no whole-repo `go test -race ./...`); reap stray envtest processes (`pkill -f kubebuilder-envtest 2>/dev/null`) between tier-2 packages; pass `-p 1`/`-p 2` to cap memory; stream output (no `| tail`). Bring infrastructure up as needed. Apply the same coverage gate: green=true requires every reached tier to pass AND changed-line coverage (via `lenny-test coverage --diff " +
       baseRef +
-      "`) at least " +
+      "`, recomputed or carried forward as the scope above says) at least " +
       coverageFloor +
       "%, with a behavior-preserving refactor exempt. Report green, the tiers run, the changed-line coverage, and any remaining failures precisely.",
     { schema: VERIFY, label: "verify-rerun:r" + vround, phase: "Verify" },
@@ -838,25 +3227,28 @@ const REVIEW_LENSES = [
 // verify-postreview gates on those tests existing. The same rule applies to the
 // per-step review (issues message in the Build loop) and is enforced there too.
 const REVIEW_RULES =
+  DEVIATIONS_BLOCK +
   "Read the proposal at " +
   proposal +
   " (its spec edits are applied) and the cumulative implementation diff (`git diff " +
   baseRef +
   "..HEAD`) in " +
   repo +
-  ". You are read-only; report findings only. A finding is a place the landed code diverges from the proposal's design — not a style preference, not new scope the proposal does not contain, and not a bare coverage percentage (the coverage floor is handled separately). Cite file:line and the proposal section. For each finding, also name the tier at which an automated regression test should assert the corrected behavior (security → 9, reliability/recovery → 7a/8, wire/contract → 3, state-machine → 2, pure logic → 1): you are catching what the automated tests passed over, so the fix must close that test gap, not only the code. Report an empty array when the code conforms.";
+  ". You are read-only; report findings only. A commit whose message begins `comments:` comes from this run's comment sweep, which corrects code comments the landed spec edits made false: it is expected even though the proposal does not stage it, so it is not new scope, and it is a finding only where the corrected comment is itself wrong. A finding is a place the landed code diverges from the proposal's design — not a style preference, not new scope the proposal does not contain, and not a bare coverage percentage (the coverage floor is handled separately). Cite file:line and the proposal section. For each finding, also name the tier at which an automated regression test should assert the corrected behavior (security → 9, reliability/recovery → 7a/8, wire/contract → 3, state-machine → 2, pure logic → 1): you are catching what the automated tests passed over, so the fix must close that test gap, not only the code. Report an empty array when the code conforms.";
 
 let reviewClean = false;
 let reviewRound = 0;
 let lastReviewFindings = [];
 let reviewFixApplied = false;
+let preReviewSha = null;
 if (green) {
   phase("Review");
+  preReviewSha = await captureHead("pre-review", "Review");
   while (reviewRound < maxReviewRounds && !reviewClean) {
     reviewRound++;
     const reviewResults = await parallel(
       REVIEW_LENSES.map((l) => () =>
-        agentTry(REVIEW_RULES + "\n\n" + l.text, {
+        agentTry(REVIEW_RULES + ACCEPTED_BLOCK + "\n\n" + l.text, {
           schema: REVIEW,
           label: "review:" + l.key + ":r" + reviewRound,
           phase: "Review",
@@ -892,7 +3284,7 @@ if (green) {
         proposal +
         ".\n\nWork in " +
         repo +
-        ". The proposal's spec edits are applied; do not edit spec/. Apply each finding so the code matches the proposal's design. EACH FINDING IS A COVERAGE GAP BY DEFINITION: the automated tests passed, yet this review caught the defect — so fixing the code alone lets the same class of issue fall through next time. Therefore, for EVERY finding with a runtime effect (a wrong value, a broken invariant, a mis-wired or missing path, a wrong status/error code/label/metric, a fail-open), you MUST also add or strengthen an automated test that asserts the corrected behavior and is CONSTRUCTED SO IT FAILS against the pre-fix code and PASSES after your fix, at the tier that owns it (security → 9, reliability/recovery → 7a/8, wire/contract → 3, state-machine → 2, pure logic → 1). Line-covering the changed lines does not satisfy this — the assertion must target the corrected outcome, and you should confirm the would-have-caught property (e.g. by checking the test fails at the pre-fix revision). A finding whose code is fixed with no such regression test is NOT done. Run tier 0 and tier 1 (plus the higher tiers the change reaches) to green, and commit each fix together with its regression test. " +
+        ". The proposal's spec edits are applied; do not edit spec/. Apply each finding so the code matches the proposal's design. A finding about a COMMIT MESSAGE (for example a scaffolding label in a subject or body) is the one exception to the regression-test rule below: committed history is not rewritten, so record it in the deviations file and change nothing else for it. Do NOT add a lint, a tier-0 gate, or a register over commit messages or over file types the proposal does not stage; a new gate is scope the proposal does not contain, and two runs have had one reverted. EACH FINDING IS A COVERAGE GAP BY DEFINITION: the automated tests passed, yet this review caught the defect — so fixing the code alone lets the same class of issue fall through next time. Therefore, for EVERY finding with a runtime effect (a wrong value, a broken invariant, a mis-wired or missing path, a wrong status/error code/label/metric, a fail-open), you MUST also add or strengthen an automated test that asserts the corrected behavior and is CONSTRUCTED SO IT FAILS against the pre-fix code and PASSES after your fix, at the tier that owns it (security → 9, reliability/recovery → 7a/8, wire/contract → 3, state-machine → 2, pure logic → 1). Line-covering the changed lines does not satisfy this — the assertion must target the corrected outcome, and you should confirm the would-have-caught property (e.g. by checking the test fails at the pre-fix revision). A finding whose code is fixed with no such regression test is NOT done. Run tier 0 and tier 1 (plus the higher tiers the change reaches) to green, and commit each fix together with its regression test. " +
         RULES +
         "\n\nFindings to fix:\n" +
         JSON.stringify(findings, null, 2),
@@ -917,15 +3309,15 @@ if (green) {
 let finalGreen = green;
 if (green && reviewFixApplied) {
   const recheck = await agentTry(
-    "Re-run the reached tiers for the implementation in " +
+    "Re-verify the implementation in " +
       repo +
-      " after the design-conformance fixes and report whether everything is still green. Tiers: " +
-      (tierSet.join(", ") || "from the diff") +
-      ". MEMORY-SAFE: run each tier in the FOREGROUND, scoped to the changed packages, one at a time (no `run_in_background` for tests; no whole-repo `go test -race ./...`; reap stray envtest etcd/kube-apiserver between packages; `-p 1`/`-p 2` to cap memory; stream output, no `| tail`). Apply the coverage gate (changed-line coverage at least " +
+      " after the design-conformance fixes and report whether everything is still green.\n\n" +
+      REVERIFY_SCOPE(preReviewSha, verify) +
+      "\n\nMEMORY-SAFE: run each tier in the FOREGROUND, scoped to the changed packages, one at a time (no `run_in_background` for tests; no whole-repo `go test -race ./...`; reap stray envtest etcd/kube-apiserver between packages; `-p 1`/`-p 2` to cap memory; stream output, no `| tail`). Apply the coverage gate (changed-line coverage at least " +
       coverageFloor +
       "% via `lenny-test coverage --diff " +
       baseRef +
-      "`, refactors exempt). REGRESSION-TEST GATE FOR REVIEW FIXES: the design-conformance review just caught defects the automated tests had passed over. Inspect the commits made during the review rounds (`git log` since the review began) and confirm each code fix with a runtime effect is pinned by a test that asserts the corrected outcome and would fail against the pre-fix code — not merely line-covered by a pre-existing happy-path test. If any review-driven fix landed with no such regression test, set green=false and name the fix (file:line), the corrected behavior, and the missing test so the gap is closed before this returns. Report green, the tiers run, the coverage, and any remaining failures.",
+      "`, recomputed or carried forward as the scope above says, refactors exempt). REGRESSION-TEST GATE FOR REVIEW FIXES: the design-conformance review just caught defects the automated tests had passed over. Inspect the commits made during the review rounds (`git log` since the review began) and confirm each code fix with a runtime effect is pinned by a test that asserts the corrected outcome and would fail against the pre-fix code — not merely line-covered by a pre-existing happy-path test. If any review-driven fix landed with no such regression test, set green=false and name the fix (file:line), the corrected behavior, and the missing test so the gap is closed before this returns. Report green, the tiers run, the coverage, and any remaining failures.",
     { schema: VERIFY, label: "verify-postreview", phase: "Review" },
   );
   finalGreen = !!(recheck && recheck.green);
@@ -949,10 +3341,89 @@ if (green && reviewFixApplied) {
   }
 }
 
+// Did the proposal's text change during the build, and if so what did the change
+// say? Read from git rather than from any agent's self-report, because an agent
+// that edited the file against instruction is not the source to ask about it.
+//
+// Under the folder layout the proposal is a DIRECTORY, so a bare `-- <proposal>`
+// pathspec matches every file in it, including the two this run is entitled to
+// write: the tick agent writes the implementation checklist after each green
+// step, and recordDeviation writes the deviations file. Neither writer commits,
+// so the next step's commit sweeps the write in, and the audit then reports the
+// run's own bookkeeping as the forbidden edit SKILL.md tells the operator to
+// escalate. The history carries commits of exactly that form ("Mark the spec-map
+// step S22 done in proposal 0073", "Record S20 and S21 as done, with S21's two
+// deviations"). Excluding those two paths leaves the audit on the proposal's
+// authored text, which is the thing the step rules make read-only. A legacy
+// proposal is one file carrying every role, so there is nothing to exclude there
+// without blinding the audit; it keeps the bare pathspec and is told that a
+// ticked box or an appended deviation is this run's own writing.
+const auditPaths =
+  P.layout === "folder"
+    ? proposal + " ':(exclude)" + P.checklist + "' ':(exclude)" + P.deviations + "'"
+    : proposal;
+const auditLegacyNote =
+  P.layout === "folder"
+    ? ""
+    : " This proposal is a single file carrying every role, so a checklist box changed to `[x]` or an " +
+      "appended deviations entry is this run's own bookkeeping rather than an edit to the proposal's text. " +
+      "Report such a commit, and say so in whatChanged when that is all the diff contains.";
+const proposalEditReport = await agentTry(
+  "Report whether a proposal's text changed during a range of commits, and if so what the changes said. " +
+    "This is a read-only audit: do not edit, revert, or restore anything, and run no command that writes.\n\n" +
+    "Repository: " + repo + "\nPaths audited: " + auditPaths + "\nRange: " + baseRef + "..HEAD\n\n" +
+    "Run `git log --oneline " + baseRef + "..HEAD -- " + auditPaths + "` to list the commits that touched " +
+    "them. Run it with the pathspecs exactly as given, quoting included. For each commit, read its diff for " +
+    "those paths with `git show <sha> -- " + auditPaths + "` and its full message with " +
+    "`git show -s --format=%B <sha>`. Report what each edit did to the document's meaning, naming the section " +
+    "and quoting the sentences it replaced and the sentences it wrote, and give the reason the commit message " +
+    "states, verbatim. Do not judge whether the edit was right; a human decides that from your report. When no " +
+    "commit touched those paths, report edited=false with an empty list, which is the expected result." +
+    auditLegacyNote,
+  { schema: PROPOSAL_EDITS, label: "proposal-edit-audit", phase: "Review" },
+);
+if (proposalEditReport && proposalEditReport.edited) {
+  log(
+    "THE PROPOSAL WAS EDITED DURING THE BUILD, which the step rules forbid: " +
+      ((proposalEditReport.commits || []).length) +
+      " commit(s). Kept and reported rather than reverted; see proposalEdits in the result.",
+  );
+}
+
 return {
   status: finalGreen && reviewClean ? "implemented" : "implemented-not-green",
   blastRadius: plan.blastRadius,
   steps: stepResults,
+  // Where the proposal's implementation checklist did not match the tree. An
+  // imperfect checklist is expected and does not stop the run, so this is the
+  // record that lets the proposal be corrected afterwards.
+  checklistDeviations: plan.deviations || [],
+  // Where the landed code departs from what the proposal states. The build
+  // never edits the proposal to close one, so this is the only place a
+  // proposal defect surfaces, and it is addressed to a human.
+  // Steps that were ticked but failed re-verification and had to be repaired.
+  reverifyRepaired,
+  // Findings three judges agreed no legal change could close: the code is right
+  // and the proposal is wrong. Suppressed for the step, recorded in its commit
+  // trail, and surfaced here because each is a proposal defect for a human.
+  stuckFindings,
+  // The durable record of what did not land as proposed, which is what a human
+  // reads to decide whether the proposal or the code was wrong.
+  deviationsFile: P.deviations,
+  proposalDeviations: stepResults.flatMap((r) =>
+    (r.deviations || []).map((d) => ({ step: r.step, title: r.title, ...d })),
+  ),
+  // Edits the build made to the proposal despite being forbidden to. Recorded
+  // rather than prevented or reverted; see PROPOSAL_EDITS.
+  proposalEdits: proposalEditReport,
+  // Code comments corrected to match the landed spec edits, and any stale site
+  // that was not a comment and so was recorded as a proposed deviation instead.
+  commentSweep,
+  skippedSteps,
+  // Every final-gate failure across the run: a tier the scoped runs said could
+  // not be affected, which the full pass proved otherwise. A class that keeps
+  // appearing here gets its minimum tier set raised.
+  gateMisses,
   commits: stepResults.map((s) => s.commit).filter(Boolean),
   green: finalGreen,
   reviewClean,

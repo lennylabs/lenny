@@ -59,6 +59,28 @@ func underAny(rel string, prefixes []string) bool {
 	return false
 }
 
+// spdxHeaderExempt reports whether a tracked non-Go file is exempt from the
+// SPDX header requirement. The prefixes cover generated output, vendored
+// trees, and the fixture tree under tests/testdata/ whose bytes predate the
+// check. A fixture elsewhere carries the header like any other tracked file:
+// the header is a comment in every format the check covers, so seeding it
+// keeps the fixture loadable. GitHub action workflows have their own license
+// tooling.
+func spdxHeaderExempt(rel string) bool {
+	for _, prefix := range []string{
+		"tests/results/",
+		"tests/testdata/",
+		"sdks/vendor/",
+		"compose/otel-config.yaml",          // upstream-style config; SPDX would clutter
+		"tests/tier7b_load_kind/baselines/", // generated baselines
+	} {
+		if strings.HasPrefix(rel, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // spec: 13.0 (license headers on non-Go files: shell, YAML, Python, TypeScript)
 // diagnosis: A tracked .sh / .yaml / .yml / .py / .ts file is missing the
 //
@@ -78,22 +100,6 @@ func TestEveryNonGoFileHasSPDXHeader(t *testing.T) {
 		".py":   "# SPDX-License-Identifier:",
 		".ts":   "// SPDX-License-Identifier:",
 	}
-	// Files exempt from the header (generated, vendored, fixtures).
-	exempt := func(rel string) bool {
-		for _, prefix := range []string{
-			"tests/results/",
-			"tests/testdata/",
-			"sdks/vendor/",
-			"compose/otel-config.yaml",          // upstream-style config; SPDX would clutter
-			"tests/tier7b_load_kind/baselines/", // generated baselines
-		} {
-			if strings.HasPrefix(rel, prefix) {
-				return true
-			}
-		}
-		// .github action workflows have their own license tooling.
-		return false
-	}
 	// Enumerate git-tracked files so generated, gitignored artifacts
 	// (build output under dist/ and node_modules/, the Kind bootstrap
 	// overlay, cloud values overrides) are never flagged.
@@ -107,7 +113,7 @@ func TestEveryNonGoFileHasSPDXHeader(t *testing.T) {
 		if !underAny(rel, rootPrefixes) {
 			continue
 		}
-		if exempt(rel) {
+		if spdxHeaderExempt(rel) {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
@@ -120,5 +126,35 @@ func TestEveryNonGoFileHasSPDXHeader(t *testing.T) {
 	}
 	for _, m := range missing {
 		t.Errorf("missing SPDX header: %s", m)
+	}
+}
+
+// spec: 13.0 (license headers on non-Go files: shell, YAML, Python, TypeScript)
+// diagnosis: The SPDX header exemption covers a tracked file that must carry
+//
+//	the header, or it has stopped covering one of the generated,
+//	vendored, or legacy-fixture trees it is written for. A gate
+//	lands green by seeding the header into the files it reaches,
+//	so a fixture directory outside tests/testdata/ is inside the
+//	check rather than exempt from it.
+func TestSPDXHeaderExemptionIsLimitedToGeneratedAndVendoredTrees(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		rel  string
+		want bool
+	}{
+		{"tests/tier0_static/testdata/citation-resolution/baselines/empty.yaml", false},
+		{"scripts/specshift/testdata/registers/valid.yaml", false},
+		{"tests/testdata/example.yaml", true},
+		{"tests/results/run.yaml", true},
+		{"sdks/vendor/pkg/config.yaml", true},
+		{"tests/tier7b_load_kind/baselines/latency.yaml", true},
+		{"tests/tier0_static/license_check.yaml", false},
+		{"scripts/specshift/config.yaml", false},
+	}
+	for _, tc := range cases {
+		if got := spdxHeaderExempt(tc.rel); got != tc.want {
+			t.Errorf("spdxHeaderExempt(%q) = %v, want %v", tc.rel, got, tc.want)
+		}
 	}
 }

@@ -38,6 +38,9 @@ images: ## Build container images for the deployable platform binaries
 		echo "  image $$b"; \
 		docker build --build-arg BINARY=$$b -t ghcr.io/lennylabs/$$b:dev . || exit 1; \
 	done
+	@# §4.7.10 runtime supervisor: a freestanding C binary in a FROM scratch image.
+	@echo "  image lenny-supervisor"
+	@docker build -f Dockerfile.supervisor -t ghcr.io/lennylabs/lenny-supervisor:dev .
 
 .PHONY: runtime-images
 runtime-images: ## Build container images for the §4.7 reference runtimes
@@ -74,8 +77,18 @@ export EMBEDDED_MANIFEST_HEADER
 generate: ## Regenerate DeepCopy + CRD manifests + bundled alerting rules + embedded manifests
 	@echo "  controller-gen object → pkg/apis DeepCopy"
 	@$(GOPATH_BIN)/controller-gen object:headerFile=hack/boilerplate.go.txt paths=./pkg/apis/lenny/v1alpha1/...
+	@# controller-gen leaves the meta/v1 import unaliased, and the tier-0
+	@# goimports check (which covers generated files) wants the alias, so the
+	@# generated file is formatted here rather than by hand (F-10.5.16).
+	@echo "  goimports → pkg/apis DeepCopy"
+	@PATH="$(GOPATH_BIN):$$PATH" goimports -w -local github.com/lennylabs/lenny pkg/apis/lenny/v1alpha1/zz_generated.deepcopy.go
 	@echo "  controller-gen crd → charts/lenny/crds"
+	@# The schema-version annotation and the top-level preserve-unknown
+	@# markers come from +kubebuilder markers on the root types, so the
+	@# output needs no hand edits (F-10.5.16).
 	@$(GOPATH_BIN)/controller-gen crd paths=./pkg/apis/lenny/v1alpha1/... output:crd:dir=charts/lenny/crds
+	@echo "  copy charts/lenny/crds → pkg/embedded/crds"
+	@cp charts/lenny/crds/*.yaml pkg/embedded/crds/
 	@echo "  gen-alerting-rules → charts/lenny/files/alerting-rules.yaml"
 	@go run ./cmd/gen-alerting-rules
 	@echo "  genopsschemas → pkg/gateway/externalapi/openapi/openapi.json (merge lenny-ops routes)"
@@ -98,6 +111,10 @@ generate-proto: ## Regenerate the gRPC bindings from schemas/*.proto
 	done
 	@echo "  goimports → pkg/proto"
 	@PATH="$(GOPATH_BIN):$$PATH" goimports -w -local github.com/lennylabs/lenny ./pkg/proto
+	@echo "  gofumpt → pkg/proto"
+	@# gofumpt groups the protoc var declarations on its first pass and spaces
+	@# the grouped block on its second, so two passes reach its fixed point.
+	@for pass in 1 2; do find pkg/proto -name '*.go' -exec env PATH="$(GOPATH_BIN):$$PATH" gofumpt -w {} +; done
 
 .PHONY: install
 install: ## Install lenny-test + lenny-compliance into $(go env GOPATH)/bin
@@ -178,14 +195,14 @@ compose-tls: ## §17.4 credential-testing profile: generate self-signed mTLS mat
 	LENNY_DEV_TLS=true docker compose --profile credentials up
 
 .PHONY: test-smoke
-test-smoke: ## §17.4 line 276 Source Mode smoke test: boot the gateway, create an echo session, send a prompt, verify the response.
+test-smoke: ## §17.4 Source Mode smoke test: boot the gateway, create an echo session, send a prompt, verify the response.
 	@go test -tags smoke -count=1 -timeout 120s -run TestSourceModeSmoke ./tests/tier4_integration/...
 
 ECHO_TARBALL ?= $(CURDIR)/bin/runtime-echo-embedded.tar
 # The genuine sidecar-model runtime tarball the custom-sidecar smoke leg
 # imports. runtime-echo (cmd/runtimes/echo) is the Basic-level sidecar
 # reference: it dials the abstract @lenny-runtime socket the stamped
-# lenny-adapter container binds and speaks §15.4.1 JSONL, unlike the
+# lenny-adapter container binds and speaks §28.5.3 JSONL, unlike the
 # embedded-model echo-embedded image `lenny up` seeds. The custom-sidecar leg
 # imports it so placement is proven runtime-agnostic rather than echo-only.
 SIDECAR_RUNTIME_TARBALL ?= $(CURDIR)/bin/runtime-echo.tar
@@ -217,13 +234,13 @@ sidecar-runtime-tarball: ## Build the runtime-echo sidecar-model image and docke
 PLATFORM_BUNDLE ?= $(CURDIR)/bin/lenny-platform-images.tar
 # The tag the dev profile pins the bundled platform images at. It MUST match the
 # image.tag values in charts/lenny/presets/dev.yaml (gateway, controller, ops)
-# and controller.adapterImage, so the imported images satisfy the IfNotPresent
+# and controller.adapterImage and controller.supervisorImage, so the imported images satisfy the IfNotPresent
 # references the embedded render carries.
 PLATFORM_BUNDLE_TAG ?= 0.1.0
-PLATFORM_BUNDLE_IMAGES := lenny-gateway lenny-controller lenny-ops lenny-adapter
+PLATFORM_BUNDLE_IMAGES := lenny-gateway lenny-controller lenny-ops lenny-adapter lenny-supervisor
 
 .PHONY: platform-bundle
-platform-bundle: images ## Build and docker-save the §17.4 platform image bundle (bin/lenny-platform-images.tar): the gateway, controller, lenny-ops, and lenny-adapter images retagged to the dev-profile tag, which the Embedded Mode bring-up imports into the embedded containerd (resolvePlatformBundle / LENNY_PLATFORM_BUNDLE).
+platform-bundle: images ## Build and docker-save the §17.4 platform image bundle (bin/lenny-platform-images.tar): the gateway, controller, lenny-ops, lenny-adapter, and lenny-supervisor images retagged to the dev-profile tag, which the Embedded Mode bring-up imports into the embedded containerd (resolvePlatformBundle / LENNY_PLATFORM_BUNDLE).
 	@mkdir -p bin
 	@for b in $(PLATFORM_BUNDLE_IMAGES); do \
 		echo "  retag ghcr.io/lennylabs/$$b:dev → :$(PLATFORM_BUNDLE_TAG)"; \
@@ -233,7 +250,7 @@ platform-bundle: images ## Build and docker-save the §17.4 platform image bundl
 	@docker save $(foreach b,$(PLATFORM_BUNDLE_IMAGES),ghcr.io/lennylabs/$(b):$(PLATFORM_BUNDLE_TAG)) -o $(PLATFORM_BUNDLE)
 
 .PHONY: test-smoke-embedded
-test-smoke-embedded: echo-embedded-tarball sidecar-runtime-tarball platform-bundle ## §17.4 line 150 Embedded Mode quick-start smoke: lenny up -> session new --runtime echo -> down, plus the custom-sidecar runtime-agnostic leg. Needs LENNY_EMBEDDED_SMOKE=1 on a host with the embedded substrate (Linux, or Docker Desktop on macOS/Windows). Builds and stages the echo and sidecar runtime tarballs and the platform image bundle first.
+test-smoke-embedded: echo-embedded-tarball sidecar-runtime-tarball platform-bundle ## §17.4 Embedded Mode quick-start smoke: lenny up -> session new --runtime echo -> down, plus the custom-sidecar runtime-agnostic leg. Needs LENNY_EMBEDDED_SMOKE=1 on a host with the embedded substrate (Linux, or Docker Desktop on macOS/Windows). Builds and stages the echo and sidecar runtime tarballs and the platform image bundle first.
 	@LENNY_EMBEDDED_SMOKE=$${LENNY_EMBEDDED_SMOKE:-1} LENNY_EMBEDDED_SMOKE_RUNTIME=$${LENNY_EMBEDDED_SMOKE_RUNTIME:-echo} LENNY_ECHO_TARBALL=$${LENNY_ECHO_TARBALL:-$(ECHO_TARBALL)} LENNY_SIDECAR_RUNTIME_TARBALL=$${LENNY_SIDECAR_RUNTIME_TARBALL:-$(SIDECAR_RUNTIME_TARBALL)} LENNY_PLATFORM_BUNDLE=$${LENNY_PLATFORM_BUNDLE:-$(PLATFORM_BUNDLE)} LENNY_EMBEDDED_UP_TIMEOUT=$${LENNY_EMBEDDED_UP_TIMEOUT:-12m} go test -tags smoke -count=1 -timeout 1500s -run TestEmbeddedModeSmoke ./tests/tier4_integration/...
 
 .PHONY: test-smoke-embedded-security

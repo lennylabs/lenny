@@ -4,13 +4,13 @@
 
 // Tier-8 chaos: MinIO outage during a checkpoint write.
 //
-// spec: §4.4 lines 254, 271, 277, 281 — when MinIO becomes unreachable
+// spec: §4.4 — when MinIO becomes unreachable
 // mid-checkpoint, the gateway's eviction-fallback writer must:
 //
 //   1. Truncate `last_message_context` to ≤64 KB and write it inline
 //      to Postgres (with `is_minio_key=false` and, when the original
 //      payload exceeds the inline budget, `context_truncated=true`).
-//   2. Run the §4.4 line 277 Postgres-fallback retry budget
+//   2. Run the §4.4 Postgres-fallback retry budget
 //      (exponential backoff capped at 60s) before invoking
 //      `driveTotalLoss`.
 //   3. Increment `lenny_checkpoint_eviction_fallback_total` on the
@@ -57,12 +57,12 @@ import (
 // other tier-8 live runs once the toxiproxy + MinIO sidecar overlays
 // land (tier-8 ops backlog).
 //
-// spec: §4.4 lines 254, 271, 277, 281.
+// spec: §4.4.
 // diagnosis: a failure means a checkpoint write does not degrade safely
 // when MinIO is unavailable mid-checkpoint, so the session would lose
 // its checkpoint rather than fall back to the inline/truncated path.
 func TestMinIOOutageDuringCheckpoint(t *testing.T) {
-	// spec: §4.4 lines 254, 271, 277, 281.
+	// spec: §4.4.
 	t.Skip("tier-8 live exercise — requires toxiproxy + testcontainers MinIO; " +
 		"unit coverage lives in pkg/gateway/evictionfallback/* and " +
 		"tests/tier2_component/stores/evictionfallback_test.go")

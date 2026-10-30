@@ -87,11 +87,11 @@ func (r rewritingInterceptor) Intercept(_ context.Context, req interceptor.Reque
 	return interceptor.Result{Action: interceptor.ActionModify, ModifiedContent: out}, nil
 }
 
-// spec: §8.2 lines 56-65 — the full delegate_task flow walks
+// spec: §8.2 — the full delegate_task flow walks
 // PreDelegation → PreRoute → cycle gate → depth check → child INSERT
 // → taskInput delivery, and emits the §16.1 delegation metrics on
 // admission. This single integration test asserts every step on one
-// invocation. spec: §8.2; §16.1 lines 27, 79.
+// invocation. spec: §8.2; §16.1.
 func TestDelegateTaskFullFlowIntegration_spec_8_2(t *testing.T) {
 	store := memstore.New()
 	exec := newRecordingExecutor()
@@ -130,14 +130,15 @@ func TestDelegateTaskFullFlowIntegration_spec_8_2(t *testing.T) {
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        store,
-		Executor:     exec,
-		Interceptors: chain,
-		Delegation:   svc,
-		Runtimes:     runtimes,
-		Clock:        func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:       func() string { return "sess_mcp" },
-		TenantID:     "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          exec,
+		Interceptors:      chain,
+		Delegation:        svc,
+		Runtimes:          runtimes,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
 
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

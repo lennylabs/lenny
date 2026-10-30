@@ -38,7 +38,7 @@ func writeLockError(w http.ResponseWriter, err error) {
 	body := conventions.NewError(code, mapping.category, err.Error())
 	if coordination.IsSplitBrain(err) {
 		details := map[string]any{"splitBrain": true}
-		// §25.4 line 2267: the split-brain 409 carries the resolution
+		// §25.4: the split-brain 409 carries the resolution
 		// outcome and the retained holder so the losing holder learns who
 		// won.
 		if winner, winnerHolder := coordination.SplitBrainDetails(err); winner != "" {
@@ -154,7 +154,7 @@ func (s *Server) handleAcquireLock(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeLockScope(w, r, body.Scope) {
 		return
 	}
-	// §25.4 lines 2206-2212: the in-memory (Tier-3) acquire path is gated
+	// §25.4: the in-memory (Tier-3) acquire path is gated
 	// by ops.locks.memoryTier. In a multi-replica deployment under the
 	// single-replica-only default, an uncoordinated in-memory acquire fails
 	// closed with REMEDIATION_LOCK_NO_COORDINATION rather than granting two
@@ -184,7 +184,7 @@ func (s *Server) handleAcquireLock(w http.ResponseWriter, r *http.Request) {
 			coordWarning = dec.Warning
 		}
 	}
-	// §25.17 lines 5185-5186: when the body omits operationId, fall back
+	// §25.17: when the body omits operationId, fall back
 	// to the X-Lenny-Operation-ID correlation header so the lock record
 	// is tied to the remediation effort even when the agent sets the
 	// header rather than the body field.
@@ -203,7 +203,7 @@ func (s *Server) handleAcquireLock(w http.ResponseWriter, r *http.Request) {
 		writeLockError(w, err)
 		return
 	}
-	// §25.4 line 2215: the "always" mode grants the lock but signals that
+	// §25.4: the "always" mode grants the lock but signals that
 	// coordination is replica-local through the §25.2 degradation envelope.
 	// The warning attaches only when the lock was actually granted at the
 	// in-memory tier.

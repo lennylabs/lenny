@@ -38,7 +38,7 @@ import (
 // see no alert firing here, because no Prometheus exists in this test, and
 // the gateway component would stay healthy — failing the assertion.
 //
-// spec: §25.3 lines 436-451 — "The HealthService reads from three sources,
+// spec: §25.3 — "The HealthService reads from three sources,
 // none of which require Prometheus. 1. In-process metric registry ... No
 // Prometheus query needed — this works even when Prometheus is down ...
 // This means /v1/admin/health returns accurate results even when

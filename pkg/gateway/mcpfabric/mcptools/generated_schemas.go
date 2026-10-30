@@ -6,12 +6,48 @@
 // document by the build-pipeline code generation step §15.2.1 rule 4
 // mandates. Regenerate with: go generate ./pkg/gateway/mcptools/...
 //
-// spec: §15.2.1 rule 4 line 1386.
+// spec: §15.2.1 rule 4.
 
 package mcptools
 
 import "encoding/json"
 
 // GeneratedCreateSessionInputSchema is generated from the OpenAPI operation "postV1Sessions"
-// (MCP tool "lenny/create_session"). spec: §15.2.1 rule 4 line 1386.
-var GeneratedCreateSessionInputSchema = json.RawMessage(`{"properties":{"environment":{"type":"string"},"idempotencyKey":{"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached result without re-executing.","maxLength":128,"type":"string"},"isolationProfile":{"enum":["standard","sandboxed","microvm"],"type":"string"},"metadata":{"additionalProperties":{"type":"string"},"description":"§7.1 line 6 client annotations preserved verbatim for the session lifetime. Must be a flat string→string map; non-string values reject with 400 VALIDATION_ERROR.","type":"object"},"retryPolicy":{"description":"§7.3 client-supplied retry policy. The gateway clamps each populated field against the deployer caps at admission; a missing/zero value falls through to the cap as the effective value. Negative values reject with 400 VALIDATION_ERROR.","properties":{"maxResumeWindowSeconds":{"description":"§7.3 line 390 resume-window timer, clamped against the deployer cap.","minimum":0,"type":"integer"},"maxRetries":{"description":"§7.3 line 383 auto-retry budget.","minimum":0,"type":"integer"},"maxSessionAgeSeconds":{"description":"§7.3 line 389 per-session total-lifetime cap, clamped against the deployer cap.","minimum":0,"type":"integer"},"mode":{"description":"§7.3 line 382 retry mode. Defaults to auto_then_client.","enum":["auto_then_client","client_only"],"type":"string"},"nonRetryableFailures":{"description":"§7.3 line 385 non-retryable failure class advisory list.","items":{"type":"string"},"type":"array"},"retryableFailures":{"description":"§7.3 line 384 retryable failure class advisory list.","items":{"type":"string"},"type":"array"}},"type":"object"},"runtimeRef":{"type":"string"},"userId":{"type":"string"},"workspacePlan":{"additionalProperties":true,"type":"object"}},"required":["runtimeRef"],"type":"object"}`)
+// (MCP tool "lenny/create_session"). spec: §15.2.1 rule 4.
+var GeneratedCreateSessionInputSchema = json.RawMessage(`{"properties":{"environment":{"type":"string"},"idempotencyKey":{"description":"§11.5 idempotency key: a duplicate request with the same key (within 24h) replays the cached result without re-executing.","maxLength":128,"type":"string"},"isolationProfile":{"enum":["standard","sandboxed","microvm"],"type":"string"},"metadata":{"additionalProperties":{"type":"string"},"description":"client annotations preserved verbatim for the session lifetime. Must be a flat string→string map; non-string values reject with 400 VALIDATION_ERROR.","type":"object"},"retryPolicy":{"description":"§7.3 client-supplied retry policy. The gateway clamps each populated field against the deployer caps at admission; a missing/zero value falls through to the cap as the effective value. Negative values reject with 400 VALIDATION_ERROR.","properties":{"maxResumeWindowSeconds":{"description":"resume-window timer, clamped against the deployer cap.","minimum":0,"type":"integer"},"maxRetries":{"description":"auto-retry budget.","minimum":0,"type":"integer"},"maxSessionAgeSeconds":{"description":"per-session active-time session age cap, clamped against the deployer cap; time counts while the session is starting, running, or input_required and is paused while it is suspended, resume_pending, resuming, or awaiting_client_action.","minimum":0,"type":"integer"},"mode":{"description":"retry mode. Defaults to auto_then_client.","enum":["auto_then_client","client_only"],"type":"string"},"nonRetryableFailures":{"description":"non-retryable failure class advisory list.","items":{"type":"string"},"type":"array"},"retryableFailures":{"description":"retryable failure class advisory list.","items":{"type":"string"},"type":"array"}},"type":"object"},"runtimeRef":{"type":"string"},"userId":{"type":"string"},"workspacePlan":{"additionalProperties":true,"type":"object"}},"required":["runtimeRef"],"type":"object"}`)
+
+// GeneratedFinalizeWorkspaceInputSchema is generated from the OpenAPI operation "postV1SessionsByIdFinalize"
+// (MCP tool "lenny/finalize_workspace"). spec: §15.2.1 rule 4.
+var GeneratedFinalizeWorkspaceInputSchema = json.RawMessage(`{"properties":{"sessionId":{"description":"The target session id.","type":"string"},"workspacePlan":{"additionalProperties":true,"description":"WorkspacePlan bound at finalize when the session's CreateSessionRequest carried none (§14.1 Plan binding).","type":["object","null"]}},"required":["sessionId"],"type":"object"}`)
+
+// GeneratedGetSessionLogsInputSchema is generated from the OpenAPI operation "getV1SessionsByIdLogs"
+// (MCP tool "lenny/get_session_logs"). spec: §15.2.1 rule 4.
+var GeneratedGetSessionLogsInputSchema = json.RawMessage(`{"properties":{"limit":{"description":"Maximum number of log lines to return.","type":"integer"},"sessionId":{"description":"The target session id.","type":"string"},"since":{"description":"RFC3339 lower bound; only log lines at or after this time are returned.","type":"string"}},"required":["sessionId"],"type":"object"}`)
+
+// GeneratedGetSessionStatusInputSchema is generated from the OpenAPI operation "getV1SessionsById"
+// (MCP tool "lenny/get_session_status"). spec: §15.2.1 rule 4.
+var GeneratedGetSessionStatusInputSchema = json.RawMessage(`{"properties":{"sessionId":{"description":"The target session id.","type":"string"}},"required":["sessionId"],"type":"object"}`)
+
+// GeneratedGetTokenUsageInputSchema is generated from the OpenAPI operation "getV1SessionsByIdUsage"
+// (MCP tool "lenny/get_token_usage"). spec: §15.2.1 rule 4.
+var GeneratedGetTokenUsageInputSchema = json.RawMessage(`{"properties":{"sessionId":{"description":"The target session id.","type":"string"}},"required":["sessionId"],"type":"object"}`)
+
+// GeneratedInterruptSessionInputSchema is generated from the OpenAPI operation "postV1SessionsByIdInterrupt"
+// (MCP tool "lenny/interrupt_session"). spec: §15.2.1 rule 4.
+var GeneratedInterruptSessionInputSchema = json.RawMessage(`{"properties":{"sessionId":{"description":"The target session id.","type":"string"}},"required":["sessionId"],"type":"object"}`)
+
+// GeneratedListArtifactsInputSchema is generated from the OpenAPI operation "getV1SessionsByIdArtifacts"
+// (MCP tool "lenny/list_artifacts"). spec: §15.2.1 rule 4.
+var GeneratedListArtifactsInputSchema = json.RawMessage(`{"properties":{"sessionId":{"description":"The target session id.","type":"string"}},"required":["sessionId"],"type":"object"}`)
+
+// GeneratedResumeSessionInputSchema is generated from the OpenAPI operation "postV1SessionsByIdResume"
+// (MCP tool "lenny/resume_session"). spec: §15.2.1 rule 4.
+var GeneratedResumeSessionInputSchema = json.RawMessage(`{"properties":{"sessionId":{"description":"The target session id.","type":"string"}},"required":["sessionId"],"type":"object"}`)
+
+// GeneratedStartSessionInputSchema is generated from the OpenAPI operation "postV1SessionsByIdStart"
+// (MCP tool "lenny/start_session"). spec: §15.2.1 rule 4.
+var GeneratedStartSessionInputSchema = json.RawMessage(`{"properties":{"sessionId":{"description":"The target session id.","type":"string"}},"required":["sessionId"],"type":"object"}`)
+
+// GeneratedTerminateSessionInputSchema is generated from the OpenAPI operation "postV1SessionsByIdTerminate"
+// (MCP tool "lenny/terminate_session"). spec: §15.2.1 rule 4.
+var GeneratedTerminateSessionInputSchema = json.RawMessage(`{"properties":{"sessionId":{"description":"The target session id.","type":"string"}},"required":["sessionId"],"type":"object"}`)

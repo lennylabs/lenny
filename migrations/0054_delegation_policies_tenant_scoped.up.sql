@@ -1,9 +1,8 @@
--- §4.2 line 172 tenant-scope the delegation-policy registry.
+-- §4.2 tenant-scope the delegation-policy registry.
 --
 -- The original 0027_delegation_policies migration carried no
 -- tenant_id column because the earlier interpretation of §8.3
--- treated DelegationPolicies as platform-global records. The §4.2
--- line 172 classification table is authoritative and explicitly
+-- treated DelegationPolicies as platform-global records. The §4.2 classification table is authoritative and explicitly
 -- classifies delegation policies as Tenant-scoped: "tenant_id column
 -- + RLS. Each policy belongs to exactly one tenant. platform-admin
 -- can read/write across tenants; tenant-admin sees only own

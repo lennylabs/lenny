@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §15.4.1 (Basic fallback: a `message` with no platform MCP
+// spec: §28.5.3 (Basic fallback: a `message` with no platform MCP
 // client produces a `response` echoing the input parts)
 func TestHandleMessageBasicFallback(t *testing.T) {
 	var stdout bytes.Buffer
@@ -28,7 +28,7 @@ func TestHandleMessageBasicFallback(t *testing.T) {
 	}
 }
 
-// spec: §15.4.1 (malformed envelope is a protocolError that maps to
+// spec: §28.5.3 (malformed envelope is a protocolError that maps to
 // exit code 2)
 func TestHandleMessageRejectsMalformedEnvelope(t *testing.T) {
 	var stdout bytes.Buffer

@@ -33,7 +33,7 @@ import (
 // exhausting call would fail closed with 403 BUDGET_EXHAUSTED; this test would
 // fail against that code.
 //
-// spec: §8.6 line 629; §11.2 line 44; proposal 0023 S6.
+// spec: §8.6; §11.2; proposal 0023 S6.
 
 // TestLeaseControlWiredGrantDeliversHeldResponse proves the end-to-end
 // transparent path: an auto-mode tree grants the in-process extension, so the
@@ -57,10 +57,10 @@ func TestLeaseControlWiredGrantDeliversHeldResponse_spec_8_6_line_629(t *testing
 		t.Fatalf("sessions.Create: %v", err)
 	}
 
-	// A real auto-mode leasecontrol.Service with a registered tree keyed on the
-	// session id (the root session), with headroom under its ceiling so the
-	// auto-mode extension grants synchronously within the in-path wait.
-	svc, _ := autoExtendService(t, "s_lc", leasecontrol.ApprovalModeAuto)
+	// A real auto-mode leasecontrol.Service over the store-backed source, whose
+	// session store holds the root row s_lc with headroom under its ceiling, so
+	// the auto-mode extension grants synchronously within the in-path wait.
+	svc := storeBackedExtendService(t, "s_lc", leasecontrol.ApprovalModeAuto, nil)
 
 	term := &recordingTerminator{}
 	enforcer := sessionbudget.New(term, nil, nil)
@@ -121,10 +121,9 @@ func TestLeaseControlWiredNoTreeFailsClosed_spec_8_6_line_629(t *testing.T) {
 		t.Fatalf("sessions.Create: %v", err)
 	}
 
-	// A service whose budget source has NO tree for s_notree: ExtendForBudget
-	// cannot resolve the tenant/tree and fails closed.
-	budgets := leasecontrol.NewMemoryBudgetSource()
-	svc, err := leasecontrol.NewService(leasecontrol.Options{Budgets: budgets, Tenants: budgets})
+	// A service whose budget source's session store holds no row for
+	// s_notree: ExtendForBudget cannot resolve the tree and fails closed.
+	svc, err := leasecontrol.NewService(leasecontrol.Options{Budgets: emptyLeaseBudgets(t)})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}

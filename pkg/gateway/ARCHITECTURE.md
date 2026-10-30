@@ -12,7 +12,7 @@ subsystem boundaries that are Go interfaces within a single binary rather than
 separate services (§4.1). The grouping preserves that component boundary: every
 package stays inside `pkg/gateway`, and each §4.1 subsystem and the §4.8 policy
 engine occupies one group subtree, so a future per-pod extraction of a
-subsystem (the LLM Proxy is the named first target, per §02 and §4.1) is a
+subsystem (the LLM Proxy is the named first target, per §2 and §4.1) is a
 directory-subtree move rather than a scattered cherry-pick. The remaining
 packages group by their §10, §11, §12, and §25 concern beneath those boundaries.
 
@@ -31,8 +31,8 @@ it implements; this index is the coarse map from concern to directory.
   groups.
 - `middleware` is already an intermediate group directory and stays at the
   gateway root. The §11.6 operator-managed circuit-breaker store (`breakerstore`)
-  nests under its existing `middleware/circuitbreaker` package, because §1.3 of
-  the proposal anchors it to the gateway-core circuit breaker it depends on
+  nests under its existing `middleware/circuitbreaker` package, because the
+  proposal's §1.3 anchors it to the gateway-core circuit breaker it depends on
   rather than to the persistence cluster.
 - `events` is split by Part B C2 rather than moved by C3. The shared event-type
   vocabulary (the CloudEvents envelope, the `source` discriminator, and the
@@ -83,7 +83,7 @@ it is kept cohesive in one subtree.
 The policy engine is physically embedded in the gateway and is not yet split out
 (§4.8), so it stays in the gateway tree. The `RequestInterceptor` extension point
 (§4.8) and the §11.1 request-rate limiter group here. `interceptorstore` nests
-under `interceptor` because it anchors onto that gateway-core dependency (§1.3).
+under `interceptor` because it anchors onto that gateway-core dependency.
 
 `interceptor`, `interceptor/interceptorstore`, `policy`, `ratelimit`.
 
@@ -95,11 +95,12 @@ concern, beneath the subsystem boundaries above.
 ### `credentials/` — §4.9 Credential Leasing Service
 
 End-user and pool credential storage, lease lifecycle, renewal, fallback, the
-deny list, and the §13.3 platform-admin impersonation path.
+deny list, the §11.4 full_revoke lease step, and the §13.3 platform-admin
+impersonation path.
 
 `credassign`, `credcache`, `credentialpoolstore`, `credentialserver`,
 `credentialstore`, `credfallback`, `credleasestore`, `credrenewal`, `denylist`,
-`impersonation`, `revocation`, `usercreds`.
+`impersonation`, `leaserevoke`, `revocation`, `usercreds`.
 
 ### `connectors/` — §9.3 connector access
 
@@ -114,10 +115,10 @@ authorization boundary, secret resolution, invocation, and tool bridging.
 Session state, routing cache, session-scoped lifecycle workers, interactive
 input and tool-approval registries, message routing, and §9.4 agent memory.
 
-`createdsweeper`, `executor`, `inputwait`, `interactionstore`, `memorystore`,
-`messagerouting`, `orphansession`, `recycle`, `routingcache`, `sessionage`,
-`sessionbudget`, `sessioncallback`, `sessioncheckpointmeta`, `sessionevents`,
-`sessionidle`, `sessioninbox`, `sessionlogstore`, `sessionstore`, `sessionusage`,
+`executor`, `inputwait`, `interactionstore`, `memorystore`, `messagerouting`,
+`orphansession`, `recycle`, `routingcache`, `sessionage`, `sessionbudget`,
+`sessioncallback`, `sessioncheckpointmeta`, `sessionevents`, `sessionidle`,
+`sessioninbox`, `sessionlogstore`, `sessionstore`, `sessionusage`,
 `toolapproval`.
 
 ### `runtime/` — §5 runtime and data plane
@@ -133,10 +134,11 @@ and watchdog workers.
 
 ### `podlifecycle/` — §4.6 pod lifecycle
 
-Pod claim and session placement, termination, the PreStop path, and the
-drain-readiness endpoint.
+Pod claim and session placement, termination, the PreStop path, the
+drain-readiness endpoint, and the stale-slot reaper.
 
-`drainreadiness`, `podclaim`, `podsession`, `podterminate`, `prestop`.
+`bindrelease`, `drainreadiness`, `podclaim`, `podsession`, `prestop`,
+`slotreaper`.
 
 ### `checkpoint/` — §4.4 Event / Checkpoint Store
 
@@ -235,7 +237,7 @@ The bridge for the §9.1 GatewayControl platform tool surface.
 ### `externalapi/` — §15 external API surface
 
 The OpenAPI specification endpoint, canonical cursor pagination, the §15.2.1
-error classifier, the §15.4.1 output-part fidelity helper, the admin API router,
+error classifier, the §15.4 output-part fidelity helper, the admin API router,
 and the §17.6 initial-admin-token provisioner.
 
 `admin`, `admintoken`, `errorclassify`, `openapi`, `outputpartfidelity`,

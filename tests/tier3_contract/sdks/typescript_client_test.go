@@ -271,7 +271,7 @@ func runSDKStreamingReconnect(t *testing.T, name string, cmd []string) {
 	// bus; events published to that bus are the stream the SDK
 	// consumes.
 	bus := sessionevents.NewBus(64)
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Events: bus})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Events: bus})
 
 	// disconnector severs the SDK's first SSE connection mid-stream so
 	// the reconnect path is exercised. It is defined in
@@ -649,7 +649,7 @@ func TestTypeScriptClientIdempotencyKeyHandling(t *testing.T) {
 	// The gateway is wrapped in the §11.5 idempotency middleware so a
 	// replayed key returns the cached create response.
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	ts := httptest.NewServer(idempotencyWrapped(srv.Handler()))
 	t.Cleanup(ts.Close)
 	h := spawnTSHelper(t, ts.URL)
@@ -841,4 +841,62 @@ func TestTypeScriptClientMCP(t *testing.T) {
 		t.Fatalf("typescript MCP probe not found at %s: %v", probe, err)
 	}
 	runSDKMCPProbe(t, "ts-client", []string{"node", probe})
+}
+
+// spec: 15.4 (MessageEnvelope), 7.2 (message dispatch)
+// diagnosis: The TypeScript client SDK encoded a slot address into the
+// POST /v1/sessions/{id}/messages body. A client addresses a session
+// rather than a slot: the path's session identifier names the slot, so the
+// encoded payload carries no slotId key.
+func TestTypeScriptClientMessageBodyOmitsSlotAddress(t *testing.T) {
+	requireNode(t)
+	buildTypeScriptHelper(t)
+
+	var got []byte
+	rec := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"deliveryReceipt":{"messageId":"msg_1","status":"delivered"}}`))
+	}))
+	defer rec.Close()
+
+	root := repoRootFromCWD(t)
+	probe := filepath.Join(root, "sdks", "client", "typescript", "test", "message-body-probe.mjs")
+	if _, err := os.Stat(probe); err != nil {
+		t.Fatalf("typescript message-body probe not found at %s: %v", probe, err)
+	}
+	cmd := exec.Command("node", probe)
+	cmd.Env = append(
+		os.Environ(),
+		"LENNY_GATEWAY_URL="+rec.URL,
+		"LENNY_TENANT_ID=acme",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("typescript message-body probe failed: %v\n%s", err, out)
+	}
+
+	var body struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(got, &body); err != nil {
+		t.Fatalf("decode encoded request body: %v (body=%s, probe=%s)", err, got, out)
+	}
+	if len(body.Messages) != 1 {
+		t.Fatalf("encoded %d message payloads, want 1: %s", len(body.Messages), got)
+	}
+	if _, ok := body.Messages[0]["slotId"]; ok {
+		t.Errorf("encoded message payload carries a slotId key: %s", got)
+	}
+}
+
+// spec: 15.6 (Client SDKs), 15.1 (/start), 7.2 (starting → failed)
+// diagnosis: the TypeScript SDK start retried a retryable 503
+// STARTING_FAILED under its default retry policy. A failed /start leaves the
+// session failed, so a repeated /start is refused; start must send its
+// request once.
+func TestTypeScriptClientStartMakesOneAttempt_spec_15_6(t *testing.T) {
+	ts, stub := newStartingFailedStub(t)
+	h := spawnTSHelper(t, ts.URL)
+	assertSingleAttemptStart(t, h, stub)
 }

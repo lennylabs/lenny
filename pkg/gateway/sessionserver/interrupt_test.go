@@ -74,7 +74,7 @@ func dialStubAdapter(t *testing.T, stub *stubAdapterServer) *adapterclient.Clien
 	return cl
 }
 
-// spec: §7.2 line 168 — interrupt_request + interrupt_acknowledged
+// spec: §7.2 — interrupt_request + interrupt_acknowledged
 // transitions running → suspended. The gateway must signal the adapter
 // AND the row must reach suspended.
 func TestInterruptSignalsAdapterAndSuspendsOnAck_spec_7_2(t *testing.T) {
@@ -90,7 +90,7 @@ func TestInterruptSignalsAdapterAndSuspendsOnAck_spec_7_2(t *testing.T) {
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{SessionID: "sess_int", TenantID: "acme", Adapter: adapter})
 
-	srv := sessionserver.New(store, sessionserver.Options{PodRegistry: reg})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, PodRegistry: reg})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_int/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -113,7 +113,7 @@ func TestInterruptSignalsAdapterAndSuspendsOnAck_spec_7_2(t *testing.T) {
 	}
 }
 
-// spec: §7.2 line 169 / §4.7 — deadlineMs elapsed without ack: adapter
+// spec: §7.2 / §4.7 — deadlineMs elapsed without ack: adapter
 // forces suspended, RPC returns INTERRUPT_TIMEOUT. The row STILL flips
 // to suspended; the response advertises the timeout so a UI can flag it.
 func TestInterruptForcesSuspendedOnTimeout_spec_7_2(t *testing.T) {
@@ -129,7 +129,7 @@ func TestInterruptForcesSuspendedOnTimeout_spec_7_2(t *testing.T) {
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{SessionID: "sess_to", TenantID: "acme", Adapter: adapter})
 
-	srv := sessionserver.New(store, sessionserver.Options{PodRegistry: reg})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, PodRegistry: reg})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_to/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -141,7 +141,7 @@ func TestInterruptForcesSuspendedOnTimeout_spec_7_2(t *testing.T) {
 	}
 	got, _ := store.Get(context.Background(), "acme", "sess_to")
 	if got.State != session.StateSuspended {
-		t.Errorf("row state = %s, want suspended (§7.2 line 169 adapter-forces)", got.State)
+		t.Errorf("row state = %s, want suspended (§7.2 adapter-forces)", got.State)
 	}
 
 	var body map[string]any
@@ -169,7 +169,7 @@ func TestInterruptReturnsBusyAndLeavesRowRunning_spec_4_7(t *testing.T) {
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{SessionID: "sess_busy", TenantID: "acme", Adapter: adapter})
 
-	srv := sessionserver.New(store, sessionserver.Options{PodRegistry: reg})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, PodRegistry: reg})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_busy/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -202,7 +202,7 @@ func TestInterruptFallsBackToRowOnlyWhenNoBinding_spec_7_2(t *testing.T) {
 	})
 
 	// Wire a registry but never Put a binding.
-	srv := sessionserver.New(store, sessionserver.Options{PodRegistry: podsession.NewRegistry()})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, PodRegistry: podsession.NewRegistry()})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_nobind/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -233,7 +233,7 @@ func TestInterruptRejectsNonRunningStateBeforeAdapterCall_spec_15_1(t *testing.T
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{SessionID: "sess_sus", TenantID: "acme", Adapter: adapter})
 
-	srv := sessionserver.New(store, sessionserver.Options{PodRegistry: reg})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, PodRegistry: reg})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_sus/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -264,7 +264,7 @@ func TestInterruptForwardsDeadlineMs_spec_7_2(t *testing.T) {
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{SessionID: "sess_ddl", TenantID: "acme", Adapter: adapter})
 
-	srv := sessionserver.New(store, sessionserver.Options{PodRegistry: reg})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, PodRegistry: reg})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_ddl/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")

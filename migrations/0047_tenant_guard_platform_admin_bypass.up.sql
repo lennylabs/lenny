@@ -6,12 +6,12 @@
 -- lenny_tenant_isolation RLS policy so SELECT-side reads also honor
 -- the sentinel. The trigger continues to reject the unset, empty,
 -- and '__unset__' values, and now also rejects values that do not
--- match the tenant-id format ^[A-Za-z0-9_-]{1,128}$ (§12.3 line 53).
+-- match the tenant-id format ^[A-Za-z0-9_-]{1,128}$ (§12.3).
 --
 -- The DB-level bypass trusts the gateway: only a code path that has
 -- verified the caller holds the platform-admin role may set
 -- '__all__'. Every such code path MUST emit a cross_tenant_read
--- audit event (§12.3 line 141) recording the caller identity, the
+-- audit event (§12.3) recording the caller identity, the
 -- endpoint, and the query category.
 
 CREATE OR REPLACE FUNCTION lenny_tenant_guard() RETURNS trigger AS $$

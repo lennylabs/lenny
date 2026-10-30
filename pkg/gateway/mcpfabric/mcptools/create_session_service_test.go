@@ -29,7 +29,7 @@ func parseToolJSON(t *testing.T, text string) map[string]any {
 // fakeSessionCreator records the request lenny/create_session forwards and
 // returns a canned response or a typed ServiceError, so the routing and
 // error-projection behaviour of the tool can be asserted without the full
-// §15.1 gateway. spec: §15.2.1 rule 1 line 1380. F-15.2.4.
+// §15.1 gateway. spec: §15.2.1 rule 1. F-15.2.4.
 type fakeSessionCreator struct {
 	gotTenant string
 	gotReq    sessionserver.CreateSessionRequest
@@ -47,12 +47,13 @@ func newMCPWithCreator(t *testing.T, creator mcptools.SessionCreator) *mcp.Serve
 	t.Helper()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:          memstore.New(),
-		SessionCreator: creator,
-		Executor:       executor.NewEchoExecutor(),
-		Clock:          func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:         func() string { return "sess_mcp" },
-		TenantID:       "acme",
+		DevTenantFallback: true,
+		Store:             memstore.New(),
+		SessionCreator:    creator,
+		Executor:          executor.NewEchoExecutor(),
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
 	return srv
 }

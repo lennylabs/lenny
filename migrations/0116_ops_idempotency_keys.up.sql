@@ -5,7 +5,7 @@
 -- caller cannot replay another's operation by guessing their key.
 --
 -- The table is platform-scoped (the lenny-ops control plane is not
--- multi-tenanted at the §25 boundary; §25.4 line 1492 lists it among the
+-- multi-tenanted at the §25 boundary; §25.4 lists it among the
 -- PlatformPostgres() tables that must be reachable without a tenant or
 -- session id), so no tenant column or RLS policy applies. status moves
 -- in_progress -> completed | failed; response carries the cached response
@@ -15,7 +15,7 @@
 -- 7d long-running) are encoded in expires_at by the writer, not in a
 -- separate column.
 --
--- spec: §25.4 lines 2011-2130.
+-- spec: §25.4.
 
 CREATE TABLE ops_idempotency_keys (
     key         TEXT        NOT NULL,

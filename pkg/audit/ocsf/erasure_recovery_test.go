@@ -12,7 +12,7 @@ import (
 // TestErasureRecoveryEventsMapToEntityManagement asserts the §24.12
 // erasure-job operator-recovery audit events resolve to OCSF Entity
 // Management with the expected activity and Notice (severityLow)
-// severity. spec: §24.12 lines 143-144. F-24.12.4.
+// severity. spec: §24.12. F-24.12.4.
 func TestErasureRecoveryEventsMapToEntityManagement_spec_24_12(t *testing.T) {
 	cases := []struct {
 		eventType string

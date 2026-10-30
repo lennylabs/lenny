@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §7.3 lines 389-390 — a session's retryPolicy.maxSessionAgeSeconds
+// spec: §7.3 — a session's retryPolicy.maxSessionAgeSeconds
 // clamps the platform-wide watchdog cap. A tighter per-session value
 // expires the session earlier than the deployer default would.
 // F-7.3.24.

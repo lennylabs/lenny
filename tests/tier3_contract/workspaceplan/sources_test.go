@@ -216,7 +216,7 @@ func TestParserEmitsPathCollisionWarning(t *testing.T) {
 	}
 }
 
-// spec: §14 line 338 — workspace_plan_path_collision warning carries
+// spec: §14 — workspace_plan_path_collision warning carries
 // the structured fields `path`, `winningSourceIndex`, and
 // `losingSourceIndex` so consumers can distinguish overwriter from
 // overwritten without re-parsing the plan. F-14.1.23.
@@ -275,8 +275,7 @@ func TestPathCollisionWarningCarriesStructuredFields_spec_14_338(t *testing.T) {
 // matches the spec catalog character-for-character, so observability
 // sinks keyed on the spec-named value would silently miss the warning.
 func TestWarningCodeCatalogMatchesSpec_spec_14(t *testing.T) {
-	// The closed §14 catalog: line 100 (strip-components-skip),
-	// line 334 (unknown-source-type), line 338 (path-collision).
+	// The closed §14 catalog.
 	want := map[string]workspaceplan.WarningCode{
 		"workspace_plan_unknown_source_type":   workspaceplan.WarnUnknownSourceType,
 		"workspace_plan_strip_components_skip": workspaceplan.WarnStripComponentsSkip,
@@ -297,7 +296,7 @@ func TestWarningCodeCatalogMatchesSpec_spec_14(t *testing.T) {
 	// pkg/adapter/workspace/strip_skip_warnings_test.go.
 }
 
-// spec: §14 line 91 — gitClone.path default is `.` (the repo root).
+// spec: §14 — gitClone.path default is `.` (the repo root).
 // The parser must surface the default explicitly so the round-tripped
 // plan stored in Postgres carries the canonical value and downstream
 // consumers do not need to mirror the spec default themselves.
@@ -567,5 +566,56 @@ func TestParserSkipsUnknownSourceType(t *testing.T) {
 	}
 	if !strings.Contains(string(out), `"workspace_plan_unknown_source_type"`) {
 		t.Errorf("warning JSON missing code: %s", out)
+	}
+}
+
+// publishedUploadRefDescription is the description the published
+// WorkspacePlan schema carries on every uploadRef field.
+const publishedUploadRefDescription = "Opaque uploadRef returned by POST /v1/sessions/{id}/upload or /upload-archive for the session the plan binds to."
+
+// spec: §14 (Workspace Plan Schema, uploadRef field note), §14.1
+// (WorkspacePlan Schema Versioning, Plan binding).
+// diagnosis: a failure here means the published WorkspacePlan schema
+// again tells a client an uploadRef is a lenny-blob:// URI or an upload
+// id, leaves an upload source's uploadRef undescribed, or places plan
+// binding and ref resolution at session creation or pod claim. A plan
+// names only the opaque uploadRef the session's own upload returned, the
+// plan may bind at finalize, and gitClone.ref resolves when the plan
+// binds. Restore the descriptions in schemas/workspaceplan-v1.json.
+func TestPublishedSchemaDescribesOpaqueUploadRefAndBindTime(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "schemas", "workspaceplan-v1.json"))
+	if err != nil {
+		t.Fatalf("read schemas/workspaceplan-v1.json: %v", err)
+	}
+	var schema struct {
+		Description string `json:"description"`
+		Defs        map[string]struct {
+			Properties map[string]struct {
+				Description string `json:"description"`
+			} `json:"properties"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("decode schemas/workspaceplan-v1.json: %v", err)
+	}
+
+	for _, source := range []string{"uploadFile", "uploadArchive"} {
+		def, ok := schema.Defs[source]
+		if !ok {
+			t.Errorf("published schema has no $defs.%s", source)
+			continue
+		}
+		if got := def.Properties["uploadRef"].Description; got != publishedUploadRefDescription {
+			t.Errorf("$defs.%s.uploadRef description = %q, want %q", source, got, publishedUploadRefDescription)
+		}
+	}
+
+	ref := schema.Defs["gitClone"].Properties["ref"].Description
+	if !strings.Contains(ref, "when the plan binds") || strings.Contains(ref, "at session creation") {
+		t.Errorf("$defs.gitClone.ref description = %q, want resolution when the plan binds", ref)
+	}
+	if strings.Contains(schema.Description, "pod claim time") ||
+		!strings.Contains(schema.Description, "the finalize request body's workspacePlan") {
+		t.Errorf("top-level description = %q, want both plan carriers and no pod-claim timing", schema.Description)
 	}
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
-// spec: §14.1 line 326 — a plan whose schemaVersion exceeds the known
+// spec: §14.1 — a plan whose schemaVersion exceeds the known
 // revision MUST be rejected before materialization. schemaVersion 0
 // (unstamped/empty) and the known version pass; anything higher fails
 // with ErrSchemaVersionUnsupported. F-14.1.3.
@@ -41,7 +41,7 @@ func TestCheckSchemaVersion_spec_14_1_326(t *testing.T) {
 	}
 }
 
-// spec: §14.1 line 320 — the adapter's known schemaVersion must track the
+// spec: §14.1 — the adapter's known schemaVersion must track the
 // gateway-side wire identifier; a future bump that lands on only one side
 // would silently break the version-skew gate. F-14.1.3.
 func TestAdapterSchemaVersionTracksGateway_spec_14_1_320(t *testing.T) {

@@ -222,7 +222,7 @@ func DeriveIsolationDowngrade(tenantID, sourceSessionID, sourceIsolation, target
 }
 
 // PoolIsolationWarning builds the §11.2.1 pool.isolation_warning event
-// for one §8.3 line 350 proactive monotonicity conflict.
+// for one §8.3 proactive monotonicity conflict.
 func PoolIsolationWarning(tenantID, poolName, poolIsolation, matchedPolicyRule, conflictingPoolName, conflictingIsolation string) billingstore.Event {
 	return billingstore.Event{
 		TenantID:  tenantID,

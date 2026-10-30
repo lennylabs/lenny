@@ -32,8 +32,7 @@ func getSubresource(t *testing.T, h http.Handler, path, tenant string) *httptest
 // TestSetupOutput_spec_15_1_674 verifies GET /v1/sessions/{id}/setup-output
 // surfaces the §7.5 captured command output (executed and rejected
 // entries), returns an empty list for a session that ran no setup, and
-// 404s a missing or cross-tenant session. spec: §15.1 line 674; §7.5
-// lines 475, 488. F-15.1.3 / F-7.5.4 / F-7.5.11.
+// 404s a missing or cross-tenant session. spec: §15.1; §7.5. F-15.1.3 / F-7.5.4 / F-7.5.11.
 func TestSetupOutput_spec_15_1_674(t *testing.T) {
 	store := memstore.New()
 	ctx := context.Background()
@@ -45,7 +44,7 @@ func TestSetupOutput_spec_15_1_674(t *testing.T) {
 		},
 	})
 	_ = store.Create(ctx, sessionstore.Session{ID: "bare", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(2, 0)})
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	h := srv.Handler()
 
 	// Happy path: both the executed and the synthetic rejection entry surface.
@@ -95,7 +94,7 @@ func TestSetupOutput_spec_15_1_674(t *testing.T) {
 // /v1/sessions/{id}/workspace streams the §4.5 workspace snapshot,
 // resolves both the lenny-blob:// URI and path-style ref forms, fails a
 // cross-tenant ref closed, and 404s a session with no snapshot. spec:
-// §15.1 lines 671, 661; §4.5 line 311. F-15.1.3.
+// §15.1; §4.5. F-15.1.3.
 func TestWorkspaceDownload_spec_15_1_671(t *testing.T) {
 	ctx := context.Background()
 	blobs := blobstore.NewMemoryStore(nil)
@@ -130,7 +129,7 @@ func TestWorkspaceDownload_spec_15_1_671(t *testing.T) {
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: "lenny-blob://acme/workspace/s1/missing"},
 	})
 
-	srv := sessionserver.New(store, sessionserver.Options{Blobs: blobs})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Blobs: blobs})
 	h := srv.Handler()
 
 	// Happy path (URI ref): streams the bytes with MIME, disposition, hash.
@@ -175,24 +174,23 @@ func TestWorkspaceDownload_spec_15_1_671(t *testing.T) {
 
 // TestWorkspaceNoBlobStore_spec_15_1_671 verifies the download reports
 // 503 when the gateway has a snapshot ref but no blob store wired.
-// spec: §15.1 line 671. F-15.1.3.
+// spec: §15.1. F-15.1.3.
 func TestWorkspaceNoBlobStore_spec_15_1_671(t *testing.T) {
 	store := memstore.New()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		ID: "s1", TenantID: "acme", State: session.StateCompleted, CreatedAt: time.Unix(1, 0),
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: "lenny-blob://acme/workspace/s1/snap"},
 	})
-	srv := sessionserver.New(store, sessionserver.Options{}) // no Blobs
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}) // no Blobs
 	if rr := getSubresource(t, srv.Handler(), "/v1/sessions/s1/workspace", "acme"); rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("no-blobstore status = %d, want 503; body=%s", rr.Code, rr.Body.String())
 	}
 }
 
-// TestSubresourcesDeriveFailure404_spec_15_1_661 verifies the §15.1 line
-// 661 bounded-reachability contract: a derive_failure audit row returns
+// TestSubresourcesDeriveFailure404_spec_15_1_661 verifies the §15.1 bounded-reachability contract: a derive_failure audit row returns
 // 200 from GET /v1/sessions/{id} but 404 from every subresource GET
 // because no workspace, setup output, artifacts, or usage ever existed.
-// spec: §15.1 line 661; §7.1 derive rule 2. F-15.1.3.
+// spec: §15.1; §7.1 derive rule 2. F-15.1.3.
 func TestSubresourcesDeriveFailure404_spec_15_1_661(t *testing.T) {
 	store := memstore.New()
 	ctx := context.Background()
@@ -204,7 +202,7 @@ func TestSubresourcesDeriveFailure404_spec_15_1_661(t *testing.T) {
 	// missing dependency — only the derive_failure class drives it.
 	blobs := blobstore.NewMemoryStore(nil)
 	billing := billingstore.NewMemory()
-	srv := sessionserver.New(store, sessionserver.Options{Blobs: blobs, Billing: billing})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Blobs: blobs, Billing: billing})
 	h := srv.Handler()
 
 	// The session row itself is reachable (line 651).

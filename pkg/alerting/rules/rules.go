@@ -86,19 +86,18 @@ type Rule struct {
 	// alert_fired operational-event payload's `runbook` field (e.g.
 	// "warm-pool-exhaustion"). It matches the on-disk filename under
 	// docs/runbooks/<slug>.md and the runbook front matter `name`, which
-	// is what a watchdog routes on (§25.17 line 5177 reads `runbook`
+	// is what a watchdog routes on (§25.17 reads `runbook`
 	// directly off the event). When empty, RunbookSlug derives the slug
 	// from the last path segment of RunbookURL.
-	// spec: §25.7 line 3236; §25.17 line 5172.
+	// spec: §25.7; §25.17.
 	RunbookShortName string
 
 	// SuggestedAction is the §25.17 proposed remediation carried on the
 	// alert_fired payload so a watchdog can route to a concrete action
-	// without a separate diagnostic call (§25.17 line 5216 "the agent
-	// decides to follow the suggestedAction"). nil omits the field. The
+	// without a separate diagnostic call (§25.17). nil omits the field. The
 	// runtime-accurate body (e.g. the exact minWarm) is produced by the
 	// §25.6 pool diagnostic; the rule-level value is the routing template.
-	// spec: §25.17 line 5172.
+	// spec: §25.17.
 	SuggestedAction *conventions.SuggestedAction
 
 	// SLO names the §16.5 service-level objective this alert defends,
@@ -133,14 +132,14 @@ type Rule struct {
 	// owned annotation (summary, description, runbook_url, slo); Validate
 	// rejects a catalogue that tries to override one so each annotation
 	// has a single source. Empty for the common alert.
-	// spec: §25.13 line 4684 (the Annotations field of the Go Rule shape).
+	// spec: §25.13.
 	Annotations map[string]string
 }
 
 // reservedAnnotationKeys are the annotation names RenderPrometheusRule
 // derives from a Rule's typed fields. An operator-supplied Annotations
 // map must not set these; the typed field is the single source.
-// spec: §25.13 line 4684.
+// spec: §25.13.
 var reservedAnnotationKeys = map[string]struct{}{
 	"summary":     {},
 	"description": {},
@@ -209,26 +208,34 @@ func runbook(slug string) string {
 	return "https://docs.lenny.dev/runbooks/" + slug
 }
 
+// runbookSection builds a §17.7 runbook URL that points at one section
+// of a runbook page. anchor is the heading's rendered fragment id.
+func runbookSection(slug, anchor string) string {
+	return runbook(slug) + "#" + anchor
+}
+
 // RunbookSlug returns the §25.7 / §25.17 short runbook slug for the
 // alert_fired payload's `runbook` field. It prefers the explicit
 // RunbookShortName; absent that, it derives the slug from the last path
-// segment of RunbookURL (the docs/runbooks/<slug>.md convention), so a
-// rule that sets only RunbookURL still emits the slug rather than the
-// full URL. Returns "" when neither is set.
+// segment of RunbookURL (the docs/runbooks/<slug>.md convention), with
+// any section fragment dropped, so a rule that sets only RunbookURL
+// still emits the slug rather than the full URL. Returns "" when
+// neither is set.
 //
-// spec: §25.7 line 3236 — "include a runbook field ... set to the
-// alert's runbook annotation" (the short slug, per §25.17 line 5172).
+// spec: §25.7 — "include a runbook field ... set to the
+// alert's runbook annotation" (the short slug, per §25.17).
 func (r Rule) RunbookSlug() string {
 	if r.RunbookShortName != "" {
 		return r.RunbookShortName
 	}
-	if r.RunbookURL == "" {
+	page, _, _ := strings.Cut(r.RunbookURL, "#")
+	if page == "" {
 		return ""
 	}
-	if i := strings.LastIndex(r.RunbookURL, "/"); i >= 0 && i < len(r.RunbookURL)-1 {
-		return r.RunbookURL[i+1:]
+	if i := strings.LastIndex(page, "/"); i >= 0 && i < len(page)-1 {
+		return page[i+1:]
 	}
-	return r.RunbookURL
+	return page
 }
 
 // admissionPlaneDowngradeRule builds one (flag, webhook) pair of the
@@ -238,7 +245,7 @@ func (r Rule) RunbookSlug() string {
 // ValidatingWebhookConfiguration is absent from the cluster, sustained
 // for more than 2 minutes. flagName and webhook are stamped as static
 // rule labels so each firing identifies the specific missing surface.
-// spec: §16.5 line 487; §17.2 line 80. F-17.2.6.
+// spec: §16.5; §17.2. F-17.2.6.
 func admissionPlaneDowngradeRule(flagName, webhook, labelKey string) Rule {
 	return Rule{
 		Name: "AdmissionPlaneFeatureFlagDowngrade",
@@ -286,11 +293,11 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Warm pool has no available pods",
 			Description: "Available warm pods = 0 for any pool for more than 60s. New session creation blocks on pod claim until the controller replenishes the pool.",
-			// spec: §25.17 line 5172 — runbook slug is "warm-pool-exhaustion",
+			// spec: §25.17 — runbook slug is "warm-pool-exhaustion",
 			// matching docs/runbooks/warm-pool-exhaustion.md.
 			RunbookURL:       runbook("warm-pool-exhaustion"),
 			RunbookShortName: "warm-pool-exhaustion",
-			// §25.17 line 5172: the alert_fired payload carries a
+			// §25.17: the alert_fired payload carries a
 			// suggestedAction so a watchdog routes straight to the scale
 			// call. The concrete minWarm comes from the §25.6 pool
 			// diagnostic; this rule-level value is the action template.
@@ -309,7 +316,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Postgres sync replica lag exceeds 1 second",
 			Description: "Sync-replica replication lag exceeds 1 second sustained for 30 seconds. Session state writes risk read-after-write inconsistency.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/postgres-failover.md.
+			// spec: §17.7 — slug matches docs/runbooks/postgres-failover.md.
 			RunbookURL: runbook("postgres-failover"),
 			SpecRef:    "§16.5",
 		},
@@ -320,7 +327,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Healthy gateway replicas below tier minimum",
 			Description: "Healthy gateway replicas have fallen below the tier minimum (§17.8) for more than 30s. Request capacity is degraded and session creation may be rejected.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/gateway-replica-failure.md.
+			// spec: §17.7 — slug matches docs/runbooks/gateway-replica-failure.md.
 			RunbookURL: runbook("gateway-replica-failure"),
 			SpecRef:    "§16.5",
 		},
@@ -331,7 +338,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Postgres primary unreachable",
 			Description: "The Postgres primary has been unreachable for more than 15s. Session state writes fail and new session creation is rejected.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/postgres-failover.md.
+			// spec: §17.7 — slug matches docs/runbooks/postgres-failover.md.
 			RunbookURL: runbook("postgres-failover"),
 			SpecRef:    "§16.5",
 		},
@@ -370,7 +377,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "T4 tenant KMS key unusable",
 			Description: "The leader-elected continuous KMS probe has not successfully encrypted and decrypted against a T4 tenant's KMS key for at least two probe cycles. Any checkpoint or artifact write for this tenant will be rejected with CLASSIFICATION_CONTROL_VIOLATION / kms_unavailable.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/kms-unavailable.md.
+			// spec: §17.7 — slug matches docs/runbooks/kms-unavailable.md.
 			RunbookURL: runbook("kms-unavailable"),
 			SpecRef:    "§16.5",
 		},
@@ -381,7 +388,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "API server etcd connectivity errors",
 			Description: "API server etcd connectivity errors have been sustained for more than 15s. CRD reads and writes fail and warm-pool reconciliation stalls.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/etcd-operations.md.
+			// spec: §17.7 — slug matches docs/runbooks/etcd-operations.md.
 			RunbookURL: runbook("etcd-operations"),
 			SpecRef:    "§16.5",
 		},
@@ -392,7 +399,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Credential pool has no assignable credentials",
 			Description: "A credential pool has 0 assignable credentials (all exhausted, in cooldown, or revoked) for more than 30s. New session creation returns CREDENTIAL_POOL_EXHAUSTED for this pool.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/credential-pool-exhaustion.md.
+			// spec: §17.7 — slug matches docs/runbooks/credential-pool-exhaustion.md.
 			RunbookURL: runbook("credential-pool-exhaustion"),
 			SpecRef:    "§16.5",
 		},
@@ -403,7 +410,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Revoked credential has an active lease not on the deny list",
 			Description: "At least one credential in revoked state (pool-scoped or user-scoped) still has an active lease that is not shadowed by a deny-list entry for more than 30s, indicating revocation propagation did not reach the deny list and that the compromised key may still be in use. The alert clears once every active lease against the credential is on the deny list or has been terminated in direct mode.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/credential-revocation.md.
+			// spec: §17.7 — slug matches docs/runbooks/credential-revocation.md.
 			RunbookURL: runbook("credential-revocation"),
 			SpecRef:    "§16.5",
 		},
@@ -423,7 +430,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Controller Lease has not been renewed",
 			Description: "A controller's Lease has not been renewed within leaseDuration (15s); failover is imminent or in progress. Auto-resolves when a new leader acquires the lease.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/controller-leader-election.md.
+			// spec: §17.7 — slug matches docs/runbooks/controller-leader-election.md.
 			RunbookURL: runbook("controller-leader-election"),
 			SpecRef:    "§16.5",
 		},
@@ -434,7 +441,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "All dedicated agent CoreDNS replicas are down",
 			Description: "All dedicated CoreDNS replicas for the agent namespace have zero ready pods. Agent pods lose DNS resolution entirely and cannot reach external tools or LLM endpoints.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/dns-outage.md.
+			// spec: §17.7 — slug matches docs/runbooks/dns-outage.md.
 			RunbookURL: runbook("dns-outage"),
 			SpecRef:    "§16.5",
 		},
@@ -463,7 +470,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Internet egress NetworkPolicy except blocks are stale",
 			Description: "The continuous CIDR drift check detected that the installed internet egress NetworkPolicy except blocks no longer match the cluster's actual pod or service CIDRs. Agent pods with internet egress may be able to reach internal cluster IPs, enabling lateral movement.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/network-policy-drift.md.
+			// spec: §17.7 — slug matches docs/runbooks/network-policy-drift.md.
 			RunbookURL: runbook("network-policy-drift"),
 			SpecRef:    "§16.5",
 		},
@@ -503,7 +510,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Data-residency validator webhook unreachable",
 			Description: "The lenny-data-residency-validator ValidatingAdmissionWebhook (failurePolicy: Fail) has been unreachable for more than 30s. All operations on tenant-scoped CRD resources with a dataResidencyRegion field are denied.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/admission-webhook-outage.md.
+			// spec: §17.7 — slug matches docs/runbooks/admission-webhook-outage.md.
 			RunbookURL: runbook("admission-webhook-outage"),
 			SpecRef:    "§16.5",
 		},
@@ -540,7 +547,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Platform-tenant audit region unresolvable",
 			Description: "A platform-tenant audit event referencing a non-platform target_tenant_id failed to commit because the target tenant's dataResidencyRegion resolves to no storage.regions.<region>.postgresEndpoint entry or that region's platform-Postgres is unreachable.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/data-residency-violation.md.
+			// spec: §17.7 — slug matches docs/runbooks/data-residency-violation.md.
 			RunbookURL: runbook("data-residency-violation"),
 			SpecRef:    "§16.5",
 		},
@@ -550,7 +557,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "All PgBouncer replicas are down",
 			Description: "All PgBouncer pods in lenny-system have zero ready replicas (self-managed backends only). Postgres is unreachable for all gateway components — session creation and state writes will fail immediately.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/pgbouncer-saturation.md.
+			// spec: §17.7 — slug matches docs/runbooks/pgbouncer-saturation.md.
 			RunbookURL: runbook("pgbouncer-saturation"),
 			SpecRef:    "§16.5",
 		},
@@ -560,7 +567,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Session lost with no durable state",
 			Description: "Both MinIO and Postgres were unavailable during an eviction checkpoint, leaving the session unrecoverable with no durable state saved. Any non-zero value is immediately actionable.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/session-eviction-loss.md.
+			// spec: §17.7 — slug matches docs/runbooks/session-eviction-loss.md.
 			RunbookURL: runbook("session-eviction-loss"),
 			SpecRef:    "§16.5",
 		},
@@ -569,8 +576,8 @@ func criticalAlerts() []Rule {
 			Expr:        `lenny_delegation_budget_keys_expired_total > 0`,
 			Severity:    SeverityCritical,
 			Summary:     "Delegation budget keys expired while tree active",
-			Description: "A Lua script returned BUDGET_KEYS_EXPIRED, indicating the delegation budget keys for a root session have expired while the tree was still active. The gateway initiates tree cleanup (cascade cancel + root to failed).",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/delegation-budget-recovery.md.
+			Description: "A BUDGET_KEYS_EXPIRED detection: a delegate_task reservation found the tree-wide sentinel key absent on its retry, indicating the delegation budget keys for a root session have expired while the tree was still active. TTL may be configured too short or the explicit compliance purge ran prematurely.",
+			// spec: §17.7 — slug matches docs/runbooks/delegation-budget-recovery.md.
 			RunbookURL: runbook("delegation-budget-recovery"),
 			SpecRef:    "§16.5",
 		},
@@ -580,7 +587,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Billing Redis stream entry near TTL expiry",
 			Description: "The oldest unacknowledged entry in a per-tenant billing Redis stream exceeds 80% of billingStreamTTLSeconds. A small number of billing events have been sitting unflushed long enough to be at imminent risk of TTL expiry and permanent loss.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/billing-stream-backlog.md.
+			// spec: §17.7 — slug matches docs/runbooks/billing-stream-backlog.md.
 			RunbookURL: runbook("billing-stream-backlog"),
 			SpecRef:    "§16.5",
 		},
@@ -628,7 +635,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "Gateway LLM upstream egress anomaly",
 			Description: "The gateway observed an outbound connection attempt from the gateway pod to a destination outside the allow-gateway-egress-llm-upstream NetworkPolicy allowlist. Steady-state value is zero; any non-zero rate is a potential compromise signal.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/llm-egress-anomaly.md.
+			// spec: §17.7 — slug matches docs/runbooks/llm-egress-anomaly.md.
 			RunbookURL: runbook("llm-egress-anomaly"),
 			SpecRef:    "§16.5",
 		},
@@ -638,7 +645,7 @@ func criticalAlerts() []Rule {
 			For:         30 * time.Second,
 			Severity:    SeverityCritical,
 			Summary:     "Token store unavailable",
-			Description: "/v1/oauth/token has been returning 503 token_store_unavailable for more than 30s. Postgres primary is unreachable for token issuance; session creation, delegation minting, and credential leasing are all failing.",
+			Description: "/v1/oauth/token has been returning 503 token_store_unavailable for more than 30s. Postgres primary is unreachable for token issuance; session creation and credential leasing are both failing.",
 			RunbookURL:  runbook("token-store-unavailable"),
 			SpecRef:     "§16.5",
 		},
@@ -657,7 +664,7 @@ func criticalAlerts() []Rule {
 			Severity:    SeverityCritical,
 			Summary:     "ArtifactStore replication lag exceeds 4x RPO",
 			Description: "ArtifactStore replication lag exceeds 4x the configured RPO. The replication is severely degraded and a full-site disaster at this point would lose a materially larger artifact window than the deployment contract allows.",
-			// spec: §17.7 line 745 — slug matches docs/runbooks/minio-replication-lag.md.
+			// spec: §17.7 — slug matches docs/runbooks/minio-replication-lag.md.
 			RunbookURL: runbook("minio-replication-lag"),
 			SpecRef:    "§16.5",
 		},
@@ -701,7 +708,7 @@ func warningAlerts() []Rule {
 		},
 		{
 			Name: "CredentialPoolLow",
-			// spec: §25.13 line 4737 — tier-dependent utilisation
+			// spec: §25.13 — tier-dependent utilisation
 			// ceiling. The gateway emits the configured fraction on
 			// lenny_credential_pool_low_threshold (default 0.80,
 			// monitoring.alertThresholds.credentialPoolLow.utilizationThreshold).
@@ -727,7 +734,7 @@ func warningAlerts() []Rule {
 			Expr:        `lenny_credential_rotation_inflight_ceiling_hit_total > 0`,
 			Severity:    SeverityWarning,
 			Summary:     "Credential rotation hit the in-flight ceiling",
-			Description: "The 300-second in-flight gate ceiling was hit for a rotation whose trigger is not proactive_renewal and the adapter had to force credentials_rotated regardless of outstanding in-flight LLM requests. Indicates a compromised or buggy runtime.",
+			Description: "The 300-second in-flight gate ceiling was hit for a rotation whose trigger is not proactive_renewal and the adapter had to force credentials_rotated regardless of outstanding in-flight LLM requests. The gate polls the pod-wide per-provider in-flight counter, so on a pod holding more than one bound session a co-tenant's outstanding request for the same provider can drive the ceiling on its own. It indicates a compromised or buggy runtime that failed to emit llm_request_completed only once that cause is excluded.",
 			SpecRef:     "§16.5",
 		},
 		{
@@ -878,10 +885,10 @@ func warningAlerts() []Rule {
 			Expr:        `lenny_audit_siem_configured == 0 and lenny_env_production == 1`,
 			Severity:    SeverityWarning,
 			Summary:     "Audit SIEM endpoint not configured in production",
-			Description: "LENNY_ENV=production and audit.siem.endpoint is not set. Fires at startup and persists until an endpoint is configured. When any active tenant has a regulated complianceProfile the gateway refuses to start instead.",
+			Description: "The deployment runs in production mode (environment prod) and audit.siem.endpoint is not set. Fires at startup and persists until an endpoint is configured. When any active tenant has a regulated complianceProfile the gateway refuses to start instead.",
 			SpecRef:     "§16.5",
 		},
-		// spec: §16.5 line 471; §12.3 line 101; §11.7 audit sequencing.
+		// spec: §16.5; §12.3; §11.7 audit sequencing.
 		// state="broken" denotes a committed-row tamper or removal (a
 		// non-linking prev_hash). A benign intact-prev_hash-link sequence
 		// gap (the nextval-rollback or post-sweep case) is not the trigger,
@@ -954,8 +961,24 @@ func warningAlerts() []Rule {
 			Expr:        `rate(lenny_gateway_kms_signing_errors_total[30s]) > 1`,
 			For:         60 * time.Second,
 			Severity:    SeverityWarning,
-			Summary:     "Gateway KMS signing circuit breaker tripped",
-			Description: "The gateway JWTSigner circuit breaker has tripped open — new session creation is failing with KMS_SIGNING_UNAVAILABLE. Existing sessions are unaffected until JWT expiry.",
+			Summary:     "A JWTSigner circuit breaker on the gateway or the Token Service tripped open",
+			Description: "A JWTSigner circuit breaker on the gateway or the Token Service has tripped open, and new mints on that process fail with KMS_SIGNING_UNAVAILABLE. Verify KMS reachability and the KMS IAM binding of the ServiceAccount for the component the alert's job label names.",
+			SpecRef:     "§16.5",
+		},
+		{
+			// The `> 0` filter drops a zero or absent quota gauge, so
+			// scalar() sees no series and returns NaN and the comparison
+			// never fires when no quota is configured. max() collapses the
+			// gauge every gateway replica publishes into one series; a bare
+			// scalar() over more than one series is also NaN.
+			// spec: §16.5 (KMSSignQuotaApproaching); §10.2.
+			Name:        "KMSSignQuotaApproaching",
+			Expr:        `sum(rate(lenny_jwt_sign_requests_total{outcome!="circuit_open"}[5m])) > 0.8 * scalar(max(lenny_kms_sign_quota_per_second) > 0)`,
+			For:         10 * time.Minute,
+			Severity:    SeverityWarning,
+			Summary:     "Fleet-wide KMS sign request rate exceeds 80% of the configured quota",
+			Description: "The fleet-wide rate of JWT sign requests that reach the KMS has exceeded 80% of kms.signQuotaPerSecond for more than 10 minutes. Raise the provider's asymmetric Sign quota and kms.signQuotaPerSecond together.",
+			RunbookURL:  runbookSection("jwt-key-rotation", "kms-sign-quota"),
 			SpecRef:     "§16.5",
 		},
 		{
@@ -1065,7 +1088,7 @@ func warningAlerts() []Rule {
 			Description: "The lenny-ephemeral-container-cred-guard ValidatingAdmissionWebhook (failurePolicy: Fail) has been unreachable for more than 5 min. All update operations on pods/ephemeralcontainers in agent namespaces are denied while the webhook is down.",
 			SpecRef:     "§16.5",
 		},
-		// spec: §16.5 line 487 / §17.2 line 80 —
+		// spec: §16.5 / §17.2 —
 		// AdmissionPlaneFeatureFlagDowngrade is the union of one
 		// single-pair rule per (flag, webhook) entry in the §17.2
 		// Feature-gated chart inventory. All four rules share the alert
@@ -1083,7 +1106,7 @@ func warningAlerts() []Rule {
 		admissionPlaneDowngradeRule("features.compliance", "lenny-t4-node-isolation", "label_lenny_dev_flag_compliance_enabled"),
 		{
 			Name: "WarmPoolReplenishmentSlow",
-			// spec: §16.5 line 488 — fire at 2× the pool's
+			// spec: §16.5 — fire at 2× the pool's
 			// scalingPolicy.podWarmupSecondsBaseline. The
 			// PoolScalingController mirrors each pool's baseline into the
 			// per-pool lenny_pool_warmup_seconds_baseline gauge so the
@@ -1103,7 +1126,7 @@ func warningAlerts() []Rule {
 			For:         5 * time.Minute,
 			Severity:    SeverityWarning,
 			Summary:     "Warm pool warm-up failures sustained",
-			Description: "lenny_warmpool_warmup_failure_total rate exceeds 1 failure/min for any pool for more than 5 min; pods are failing to reach idle state during warm-up. WarmPoolLow / WarmPoolExhausted may follow.",
+			Description: "lenny_warmpool_warmup_failure_total rate exceeds 1 failure/min for any pool for more than 5 min. The error_type label classifies each failure. WarmPoolLow / WarmPoolExhausted may follow.",
 			SpecRef:     "§16.5",
 		},
 		{
@@ -1133,8 +1156,14 @@ func warningAlerts() []Rule {
 			SpecRef:     "§16.5",
 		},
 		{
-			Name:        "ErasureJobOverdue",
-			Expr:        `lenny_erasure_job_age_seconds > scalar(lenny_erasure_job_deadline_seconds)`,
+			Name: "ErasureJobOverdue",
+			// spec: §12.8 (Erasure SLA enforcement). The leader's sampler
+			// publishes each in-progress job's age minus its own deadline,
+			// so a T4 job is measured against 1h and a T3 job against 72h.
+			// max by (tenant_id, job_id) collapses the per-instance copies
+			// that every replica publishes when no leader election runs, so
+			// the alert evaluates once per job whatever the replica count.
+			Expr:        `max by (tenant_id, job_id) (lenny_erasure_job_overdue_seconds) > 0`,
 			Severity:    SeverityWarning,
 			Summary:     "A user-level erasure job is overdue",
 			Description: "A user-level erasure job has exceeded its tier-specific deadline (72h for T3, 1h for T4) without completing. Requires operator investigation.",
@@ -1207,7 +1236,7 @@ func warningAlerts() []Rule {
 			SpecRef:     "§16.5",
 		},
 		{
-			// spec: §11.2.1 line 187 — "deployer-configurable percentage (default 5%)".
+			// spec: §11.2.1 — "deployer-configurable percentage (default 5%)".
 			// The threshold is read from scalar(lenny_billing_correction_rate_threshold),
 			// a startup-set gauge the gateway emits from the
 			// billing.correctionRateThreshold Helm value. F-11.2.23.
@@ -1250,7 +1279,7 @@ func warningAlerts() []Rule {
 			Expr:        `lenny_audit_retention_days < 365 and lenny_audit_siem_configured == 0 and lenny_env_production == 1`,
 			Severity:    SeverityWarning,
 			Summary:     "Audit retention below 365 days without a SIEM",
-			Description: "LENNY_ENV=production and audit.retentionDays is below 365 days without a configured SIEM. Fires at startup. Suppressed when a SIEM is configured.",
+			Description: "The deployment runs in production mode (environment prod) and audit.retentionDays is below 365 days without a configured SIEM. Fires at startup. Suppressed when a SIEM is configured.",
 			SpecRef:     "§16.5",
 		},
 		{
@@ -1292,7 +1321,7 @@ func warningAlerts() []Rule {
 		},
 		{
 			Name: "PgBouncerPoolSaturated",
-			// spec: §12.3 line 47 / §16.5 line 510 — the pgbouncer_exporter
+			// spec: §12.3 / §16.5 — the pgbouncer_exporter
 			// sidecar exposes the SHOW POOLS maxwait stat (cl_waiting_time)
 			// as pgbouncer_pools_client_maxwait_seconds; the alert fires when
 			// any pool's longest-waiting client exceeds 1s. F-12.3.11.
@@ -1375,7 +1404,7 @@ func warningAlerts() []Rule {
 			Expr:        `increase(lenny_workspace_seal_duration_seconds_count{outcome="timeout"}[5m]) > 0`,
 			Severity:    SeverityWarning,
 			Summary:     "Workspace seal-and-export stuck",
-			Description: "A session's seal-and-export operation has been retrying for longer than maxWorkspaceSealDurationSeconds without success. Indicates sustained MinIO unavailability; pods held in draining beyond this deadline are forcibly terminated.",
+			Description: "A session's seal-and-export operation has been retrying for longer than maxWorkspaceSealDurationSeconds without success. Indicates sustained MinIO unavailability.",
 			SpecRef:     "§16.5",
 		},
 		{
@@ -1383,7 +1412,7 @@ func warningAlerts() []Rule {
 			Expr:        `increase(lenny_inbox_drain_failure_total[5m]) > 0`,
 			Severity:    SeverityWarning,
 			Summary:     "Inbox-to-DLQ drain failed",
-			Description: "The atomic inbox-to-DLQ drain failed during a resume_pending state transition and the in-memory inbox messages for that session were permanently lost. This is the only acknowledged silent-data-loss path for inter-session messages.",
+			Description: "The atomic inbox-to-DLQ drain failed, typically because Redis was unavailable, and the in-memory inbox messages for that session were permanently lost. This is the only acknowledged silent-data-loss path for inter-session messages.",
 			SpecRef:     "§16.5",
 		},
 		{

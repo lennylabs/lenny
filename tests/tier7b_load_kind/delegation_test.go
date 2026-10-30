@@ -2,7 +2,7 @@
 
 //go:build load_kind
 
-// Tier-7 Phase 9.5 incremental load test (delegation). The §13.21
+// Tier-7 Phase 9.5 incremental load test (delegation). The TESTING.md §13.21
 // phase gate baselines the §8.2 `lenny/delegate_task` MCP tool — the
 // production delegation surface — under a rate-bounded executor. The
 // PR-cadence smoke form drives the delegation_fanout_mcp k6 scenario
@@ -25,12 +25,12 @@ import (
 )
 
 // spec: 13.21 (Phase 9.5 — incremental load test, delegation)
-// diagnosis: the §13.21 delegation_fanout_mcp smoke run regressed or
+// diagnosis: the TESTING.md §13.21 delegation_fanout_mcp smoke run regressed or
 // failed. The scenario calls `lenny/delegate_task` through POST /mcp
 // against the e2e gateway; a failure means the MCP delegation
 // hot path errored under load (a 4xx/5xx transport response, or an
 // `isError: true` tool result for which the k6 check fails) or its
-// latency regressed beyond the baseline budget. The §9.5 phase gate
+// latency regressed beyond the baseline budget. The §9 phase gate
 // compares the smoke run against the committed baseline JSON. Inspect
 // the k6 output for the failing check, the MCP error envelope, and
 // the gateway logs for the delegation error.

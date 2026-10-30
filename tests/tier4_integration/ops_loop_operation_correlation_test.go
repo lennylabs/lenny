@@ -28,13 +28,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // TestOpsLoopRemediationAuditCarriesOperationID drives the §25.17
@@ -44,11 +42,7 @@ import (
 // and remediation.lock_released audit rows are correlated to the operation
 // the way the §25.9 audit-query API groups them.
 //
-// spec: §25.1 line 121 ("All audit events produced during the request
-// include this ID [X-Lenny-Operation-ID], enabling post-incident analysis
-// of multi-step remediations"); §25.17 line 5267 ("The audit trail shows
-// four calls tied to operation 550e8400-...: lock acquire, pool scale,
-// diagnostic re-check, lock release"); §25.9 ("audit events tagged with
+// spec: §25.1; §25.17; §25.9 ("audit events tagged with
 // the same operation ID are grouped in queries with ?operationId=", which
 // the gateway serves by matching payload.operation_id).
 //
@@ -60,6 +54,7 @@ import (
 // id entirely, or it recorded it under a payload key the §25.9 query
 // filter (payload.operation_id) does not match.
 func TestOpsLoopRemediationAuditCarriesOperationID(t *testing.T) {
+	t.Parallel()
 	// The operation-correlation contract for lenny-ops audit rows is an
 	// open TEST-GAPS finding: the remediation-lock audit rows drop the
 	// X-Lenny-Operation-ID, so the §25.9 ?operationId= query cannot group
@@ -69,9 +64,7 @@ func TestOpsLoopRemediationAuditCarriesOperationID(t *testing.T) {
 
 	opsprocess.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 
 	ops := opsprocess.StartWith(

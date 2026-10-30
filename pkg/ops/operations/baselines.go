@@ -13,7 +13,7 @@ import (
 // p50/p90 completion durations for an operation kind on this deployment
 // and the number of completed operations that fed them.
 //
-// spec: §25.2 line 393 (ops_operation_baselines (kind, p50_duration_ms,
+// spec: §25.2 (ops_operation_baselines (kind, p50_duration_ms,
 // p90_duration_ms, sample_size, last_updated)).
 type Baseline struct {
 	P50         time.Duration
@@ -22,8 +22,7 @@ type Baseline struct {
 	LastUpdated time.Time
 }
 
-// BaselineStore persists and serves the §25.2 historical baselines. A
-// completion is recorded on every operation completion (line 393); a
+// BaselineStore persists and serves the §25.2 historical baselines. A completion is recorded on every operation completion; a
 // lookup feeds the historical_p50 ETA method (line 394).
 type BaselineStore interface {
 	// RecordCompletion folds one completed operation's wall-clock

@@ -28,7 +28,7 @@ func (f fakeAlertSource) ComponentStatus(component string) (health.Status, []str
 	return v.status, v.firing, true
 }
 
-// spec: §25.3 lines 443-451 — a firing critical alert mapped to a component
+// spec: §25.3 — a firing critical alert mapped to a component
 // reports it unhealthy even when the dependency probe is healthy, and the
 // firing alert name surfaces on the Detail line.
 func TestAlertOverlayCriticalMarksComponentUnhealthy_spec_25_3_443(t *testing.T) {
@@ -50,7 +50,7 @@ func TestAlertOverlayCriticalMarksComponentUnhealthy_spec_25_3_443(t *testing.T)
 	}
 }
 
-// spec: §25.3 lines 443-451 — a firing warning alert reports degraded.
+// spec: §25.3 — a firing warning alert reports degraded.
 func TestAlertOverlayWarningMarksComponentDegraded_spec_25_3_443(t *testing.T) {
 	agg := health.NewAggregatorWithCache(0, nil)
 	agg.Register(healthy("redis"))
@@ -64,7 +64,7 @@ func TestAlertOverlayWarningMarksComponentDegraded_spec_25_3_443(t *testing.T) {
 	}
 }
 
-// spec: §25.3 lines 443-451 — the overlay only worsens a verdict; a degraded
+// spec: §25.3 — the overlay only worsens a verdict; a degraded
 // alert does not improve an already-unhealthy probe.
 func TestAlertOverlayNeverImprovesStatus_spec_25_3_443(t *testing.T) {
 	agg := health.NewAggregatorWithCache(0, nil)
@@ -96,7 +96,7 @@ func TestAlertOverlayUnmappedComponentUnchanged_spec_25_3_443(t *testing.T) {
 	}
 }
 
-// spec: §25.3 lines 443-451 — the aggregate Report reflects the worst
+// spec: §25.3 — the aggregate Report reflects the worst
 // alert-overlaid component verdict.
 func TestReportAggregatesAlertOverlay_spec_25_3_443(t *testing.T) {
 	agg := health.NewAggregatorWithCache(0, nil)
@@ -112,7 +112,7 @@ func TestReportAggregatesAlertOverlay_spec_25_3_443(t *testing.T) {
 	}
 }
 
-// spec: §10.4 line 386 / §25.3 lines 443-451 — readiness reads raw probes,
+// spec: §10.4 / §25.3 — readiness reads raw probes,
 // so an alert-only verdict (probe healthy) does not pull the replica out of
 // the Service.
 func TestHardDependencyStatusIgnoresAlertOverlay_spec_25_3_443(t *testing.T) {

@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
-// spec: §10.7 lines 835-844 (SCL-023) — once the per-tenant targeting
+// spec: §10.7 (SCL-023) — once the per-tenant targeting
 // circuit breaker opens, the gateway skips the OpenFeature call entirely
 // and sets lenny_experiment_targeting_circuit_open to 1. With a fixed
 // clock every failure lands in one window, so the 5th consecutive
@@ -42,9 +42,10 @@ func TestExperimentTargetingCircuitBreakerSkipsOFREPWhenOpen_spec_10_7_835(t *te
 	var gauge []gaugeEvent
 	at := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		Experiments: exps,
-		Tenants:     ofrepTenant(t, ofrepSrv.URL),
-		Clock:       func() time.Time { return at },
+		DevTenantHeader: true,
+		Experiments:     exps,
+		Tenants:         ofrepTenant(t, ofrepSrv.URL),
+		Clock:           func() time.Time { return at },
 		SetExperimentTargetingCircuitOpen: func(tn, p string, open bool) {
 			gauge = append(gauge, gaugeEvent{tn, p, open})
 		},

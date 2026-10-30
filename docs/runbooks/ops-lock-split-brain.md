@@ -75,4 +75,4 @@ A `split_brain_reconciled` event confirms the platform converged. Absence means 
 
 Page platform engineering for a split-brain that does not reconcile within one Deployment restart. Notify on-call lead when remediation actions were duplicated under the conflicting locks.
 
-Cross-reference: [§25.4](../../spec/25_agent-operability.md#254-remediation-locks-and-escalations), [§10.4](../../spec/10_gateway-internals.md#104-runtime-extensibility).
+Cross-reference: [§25.4](../../spec/25_agent-operability.md#254-the-lenny-ops-service), [§10.4](../../spec/10_gateway-internals.md#104-gateway-reliability).

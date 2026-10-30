@@ -48,7 +48,7 @@ func (f *fakeLabeler) LabelTenant(_ context.Context, podIP, tenantID string) err
 	return f.err
 }
 
-// spec: §5.2 line 500 — a stateless request reverse-proxies to the
+// spec: §5.2 — a stateless request reverse-proxies to the
 // tenant-pinned pod IP the router returns, bypassing the Service LB, and
 // the pin label is stamped on the newly-pinned pod.
 func TestProxyRoutesToPinnedPodAndLabelsOnFirstPin(t *testing.T) {
@@ -89,7 +89,7 @@ func TestProxyRoutesToPinnedPodAndLabelsOnFirstPin(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 502 — a second request for the same tenant reuses the
+// spec: §5.2 — a second request for the same tenant reuses the
 // already-pinned pod and does NOT re-stamp the label.
 func TestProxyReusesPinWithoutRelabel(t *testing.T) {
 	ip, port, stop := podBackend(t, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -111,7 +111,7 @@ func TestProxyReusesPinWithoutRelabel(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 519 — exhaustion (no available pod) returns
+// spec: §5.2 — exhaustion (no available pod) returns
 // WARM_POOL_EXHAUSTED with details.reason=no_idle_pods and Retry-After.
 func TestProxyEmptyPoolWarmPoolExhausted(t *testing.T) {
 	r := tenantaffinity.New("acme-stateless", nil)
@@ -146,7 +146,7 @@ func TestProxyEmptyPoolWarmPoolExhausted(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 500 — a missing authenticated tenant is rejected
+// spec: §5.2 — a missing authenticated tenant is rejected
 // before any routing.
 func TestProxyRejectsMissingTenant(t *testing.T) {
 	r := tenantaffinity.New("acme-stateless", nil)

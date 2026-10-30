@@ -10,7 +10,7 @@
 // unreachable returns the store error from List; the Inventory turns
 // that into a §25.4 degradation warning rather than failing the request.
 //
-// spec: §25.4 "Operations Inventory" (lines 1646-1786).
+// spec: §25.4 "Operations Inventory".
 package opsinventory
 
 import (
@@ -197,7 +197,7 @@ const maxEscalations = 1000
 // lifecycle onto the §25.4 inventory kind and status. A resolved
 // escalation is completed; a buffered-memory escalation awaits flush; a
 // durable open escalation is in progress (open, awaiting operator
-// resolution). spec: §25.4 lines 1665-1672, 1750-1752.
+// resolution). spec: §25.4.
 func escalationKindStatus(e escalation.Escalation) (operations.Kind, operations.Status) {
 	if e.ResolvedAt != nil {
 		// A resolved escalation is terminal-success; surface it as a
@@ -310,7 +310,7 @@ func upgradeProgress(st upgradeservice.State) *conventions.Progress {
 	if detail, ok := raw["currentStepDetail"].(string); ok {
 		p.CurrentStepDetail = detail
 	}
-	// §25.2 line 387 / §25.8 line 3496: percent is derived from the phase
+	// §25.2 / §25.8: percent is derived from the phase
 	// step count, mirroring the direct GET /v1/admin/platform/upgrade/status
 	// envelope (upgradeservice.FullProgress) so the two surfaces agree. The
 	// Inventory's ETA enrichment deliberately keeps this percent out of the
@@ -320,7 +320,7 @@ func upgradeProgress(st upgradeservice.State) *conventions.Progress {
 		pct := float64(*p.CompletedSteps) * 100.0 / float64(*p.TotalSteps)
 		p.Percent = &pct
 	}
-	// §25.2 lines 387-391: stamp startedAt and lastProgressAt so the
+	// §25.2: stamp startedAt and lastProgressAt so the
 	// Inventory's progress enrichment can derive the historical_p50 ETA
 	// and the cadence-relative stalledForSeconds. UpdatedAt is the time of
 	// the last §25.8 phase transition, i.e. when progress last advanced.

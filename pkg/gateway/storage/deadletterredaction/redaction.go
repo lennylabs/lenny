@@ -8,7 +8,7 @@
 // RedactionReceipt.
 //
 // For each dead-lettered row that names the target user, the service:
-//   - rewrites the payload to the §12.8 line 810 redacted shape and
+//   - rewrites the payload to the §12.8 redacted shape and
 //     recomputes payload_canonical_json (the raw PII is gone; the event
 //     type and OCSF error class are preserved);
 //   - persists a KMS-signed RedactionReceipt pinning the (original_hash,
@@ -19,7 +19,7 @@
 //     (the GDPR Art. 17(2) signal that flows through the OCSF translator
 //     to every sink that ingested the pre-redaction dead-letter receipt).
 //
-// spec: §12.8 lines 810-829; §16.7 lines 691-692.
+// spec: §12.8; §16.7.
 package deadletterredaction
 
 import (
@@ -52,7 +52,7 @@ type Emitter interface {
 // Signer produces the detached signature over a RedactionReceipt's
 // canonical tuple, using the KMS-held audit signing key. The signature is
 // the sole provenance token that distinguishes an authorized GDPR
-// redaction from a tamper that merely cleared the payload (§12.8 line 810).
+// redaction from a tamper that merely cleared the payload (§12.8).
 type Signer interface {
 	Sign(ctx context.Context, message []byte) (signature []byte, keyID string, err error)
 }
@@ -63,7 +63,7 @@ type Signer interface {
 // records "unknown".
 type Classifier func(row audit.Row) string
 
-// Event type constants (§16.7 lines 691-692).
+// Event type constants (§16.7).
 const (
 	eventRedacted           = "gdpr.erasure_deadletter_redacted"
 	eventDownstreamNotified = "gdpr.erasure_deadletter_downstream_notified"
@@ -143,7 +143,7 @@ func New(cfg Config) *Service {
 // redaction-then-event order means a row is never left scrubbed without an
 // in-system erasure record).
 //
-// spec: §12.8 lines 810-829.
+// spec: §12.8.
 func (s *Service) RedactForUser(ctx context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, auditstore.ErrEmptyScope

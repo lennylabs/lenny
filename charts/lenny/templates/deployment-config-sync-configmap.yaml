@@ -17,12 +17,12 @@ hook (same revision) as an idempotent replay. acknowledgedDowngrades is
 derived from .Values.acceptFeatureFlagDowngrade: each truthy flag expands
 to one entry per gated webhook (features.compliance gates two), carrying
 the operator justification when the flag value is a map with a
-justification key. The flag→webhook mapping matches the §16.7 line 682
+justification key. The flag→webhook mapping matches the §16.7
 per-(flag, webhook) decomposition.
 
 The ConfigMap is a post-install/post-upgrade hook at weight 5, below the
 lenny-deployment-config-sync Job at weight 11, so it exists before the Job
-pod starts. spec: §16.7 lines 672, 676, 677, 682; §17.2 line 86.
+pod starts. spec: §16.7; §17.2.
 F-8.2.5, F-9.2.10, F-17.2.8.
 */ -}}
 {{- if .Values.deploymentAudit.enabled }}

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package cache implements the §4.3 line 201 "access tokens
-// short-lived, cached in Redis (encrypted, not plaintext)" cache for
+// Package cache implements the §4.3 cache for
 // the Token Service. The cache stores the validated claims of a
 // recently exchanged token under the key `lenny:token:{jti}`, with the
 // claims envelope-encrypted under the Token Service's KMS KEK so that
@@ -15,7 +14,7 @@
 // Invalidate is called by the revocation path so a revoked token never
 // reads back from the cache.
 //
-// spec: §4.3 line 201; §13.3 revocation cache discipline.
+// spec: §4.3; §13.3 revocation cache discipline.
 package cache
 
 import (
@@ -38,7 +37,7 @@ import (
 var ErrNotFound = errors.New("tokenservice/cache: jti not found")
 
 // keyPrefix is the §4.3 cache key prefix the Token Service uses for
-// every access-token entry. spec: §4.3 line 201.
+// every access-token entry. spec: §4.3.
 const keyPrefix = "lenny:token:"
 
 // Cipher is the subset of envelope.Cipher the cache needs.
@@ -57,7 +56,7 @@ type Cache struct {
 }
 
 // CacheKEKAlias is the platform-scoped KEK alias under which cached
-// access-token claims are envelope-encrypted. spec: §4.3 line 201.
+// access-token claims are envelope-encrypted. spec: §4.3.
 const CacheKEKAlias = "platform:token-service-cache"
 
 // New returns a Redis-backed cache. provider must not be nil: the
@@ -84,7 +83,7 @@ func New(client redis.UniversalClient, provider kms.Provider) (*Cache, error) {
 // expired so caching it would only waste a Redis key. A nil receiver
 // is a no-op.
 //
-// spec: §4.3 line 201.
+// spec: §4.3.
 func (c *Cache) Put(ctx context.Context, jti string, claims jwt.Claims) error {
 	if c == nil {
 		return nil
@@ -118,7 +117,7 @@ func (c *Cache) Put(ctx context.Context, jti string, claims jwt.Claims) error {
 // has no entry. A nil receiver returns ErrNotFound — callers fall
 // through to the authoritative Postgres lookup transparently.
 //
-// spec: §4.3 line 201.
+// spec: §4.3.
 func (c *Cache) Get(ctx context.Context, jti string) (jwt.Claims, error) {
 	if c == nil || jti == "" {
 		return jwt.Claims{}, ErrNotFound
@@ -150,7 +149,7 @@ func (c *Cache) Get(ctx context.Context, jti string) (jwt.Claims, error) {
 // A nil receiver is a no-op. Returns nil for an absent key (Redis DEL
 // of a non-existent key is success-with-zero-affected).
 //
-// spec: §4.3 line 201, §13.3 revocation.
+// spec: §4.3, §13.3 revocation.
 func (c *Cache) Invalidate(ctx context.Context, jti string) error {
 	if c == nil || jti == "" {
 		return nil

@@ -43,14 +43,14 @@ type User struct {
 
 	// RoleAssigned reports whether a platform-managed role assignment is
 	// present on the row. When true, Roles fully replace the user's
-	// OIDC-derived role claim (the §10.2 line 294 precedence rule). When
+	// OIDC-derived role claim (the §10.2 precedence rule). When
 	// false — the state left by `DELETE /v1/admin/tenants/{id}/users/
 	// {userId}/role` — the row is retained (so the user still lists) but
 	// the OIDC claim is authoritative again.
-	// spec: §15.1 lines 827-828, §10.2 line 294.
+	// spec: §15.1, §10.2.
 	RoleAssigned bool
 
-	// RoleAssignedBy / RoleAssignedAt record the §15.1 line 826
+	// RoleAssignedBy / RoleAssignedAt record the §15.1
 	// provenance of the platform-managed role assignment: the operator
 	// subject that set it and when. They are empty/zero on a row with no
 	// assignment.
@@ -88,7 +88,7 @@ type User struct {
 	// starts at 1 and increments on every successful admin Update. The
 	// quoted decimal version is the resource's strong entity tag, enforced
 	// on PUT via the If-Match precondition and exposed on GET/list.
-	// spec: §15.1 lines 1207-1213.
+	// spec: §15.1.
 	Version int64
 }
 
@@ -98,7 +98,7 @@ func (u User) IsActive() bool { return !u.Disabled && u.DeletedAt.IsZero() }
 
 // Store is the §11.4 / §15.1 user registry contract.
 //
-// spec: §12.1 line 5 — DeleteByUser and DeleteByTenant are the
+// spec: §12.1 — DeleteByUser and DeleteByTenant are the
 // mandatory erasure primitives every storage role exposes at the
 // interface level. The user is the primary entity of this store, so
 // DeleteByUser purges the row hard rather than soft-deleting;
@@ -109,19 +109,6 @@ type Store interface {
 	Update(ctx context.Context, tenantID, subject string, mutate func(*User) error) (User, error)
 	List(ctx context.Context, tenantID string, filter ListFilter) ([]User, error)
 	SoftDelete(ctx context.Context, tenantID, subject string, at time.Time) error
-
-	// ClearProcessingRestriction clears the §12.8 / GDPR Article 18
-	// processing-restriction flag (and the associated erasure job id) on
-	// the user. It is the privileged §24.12 clear-processing-restriction
-	// path: it bypasses the migration 0042 database trigger that rejects a
-	// plain Update flipping processing_restricted true→false while an
-	// erasure job is still active (the Postgres backend sets the
-	// lenny.clear_processing_restriction session-local for the write).
-	// Returns ErrNotFound when no such user row exists.
-	//
-	// spec: §12.8 line 764 (POST .../clear-processing-restriction sets the
-	// lenny.clear_processing_restriction session-local bypass).
-	ClearProcessingRestriction(ctx context.Context, tenantID, subject string) (User, error)
 
 	// DeleteByUser implements the §12.1 mandatory-erasure primitive.
 	// Hard-deletes the user row keyed by (tenantID, userID); returns
@@ -143,6 +130,15 @@ type ListFilter struct {
 var (
 	ErrNotFound      = errors.New("userstore: user not found")
 	ErrAlreadyExists = errors.New("userstore: user already exists")
+	// ErrRestrictionHeldByOtherJob reports that the operator clear of a
+	// failed erasure job's processing restriction found the user's
+	// erasure_job_id naming a different job. The clear writes nothing,
+	// because lifting that job's restriction would reopen the creation
+	// fence while the other job runs.
+	//
+	// spec: §12.8 (Processing restriction during erasure (GDPR Article 18)),
+	// §15.1 (REST API).
+	ErrRestrictionHeldByOtherJob = errors.New("userstore: processing restriction is held by another erasure job")
 )
 
 // subjectPattern is the §10.2 JWT-subject pattern — printable ASCII
@@ -170,7 +166,7 @@ type Memory struct {
 // NewMemory returns an empty Memory store.
 func NewMemory() *Memory { return &Memory{users: map[string]User{}} }
 
-// spec: §12.1 line 5 — compile-time satisfaction of the mandatory
+// spec: §12.1 — compile-time satisfaction of the mandatory
 // erasure-bearing Store interface.
 var _ Store = (*Memory)(nil)
 
@@ -202,7 +198,7 @@ func (m *Memory) Create(_ context.Context, u User) error {
 	if u.UpdatedAt.IsZero() {
 		u.UpdatedAt = u.CreatedAt
 	}
-	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	// spec: §15.1 — a new resource is born at version 1.
 	if u.Version == 0 {
 		u.Version = 1
 	}
@@ -244,32 +240,76 @@ func (m *Memory) Update(_ context.Context, tenantID, subject string, mutate func
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
-	// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+	// spec: §15.1 — bump the entity-tag version on every write.
 	row.Version++
 	m.users[k] = row
 	return row, nil
 }
 
-// ClearProcessingRestriction implements Store. The in-memory store has
-// no Article-18 trigger, so the privileged clear is a direct flag reset.
-// spec: §12.8 line 764.
-func (m *Memory) ClearProcessingRestriction(_ context.Context, tenantID, subject string) (User, error) {
+// SetErasureRestriction is the in-memory form of the Postgres store's
+// SetErasureRestrictionTx: the one write path the erasure job store uses for
+// the §12.8 / GDPR Article 18 flag. It sets processing_restricted to
+// restricted and erasure_job_id to jobID (empty when restricted is false),
+// advances UpdatedAt monotonically, and increments Version. When
+// requireJobID is non-empty it writes only when the row's ErasureJobID
+// equals it, and otherwise returns 0 rows. A missing row returns
+// ErrNotFound.
+//
+// spec: §12.8 (Processing restriction during erasure (GDPR Article 18)).
+func (m *Memory) SetErasureRestriction(_ context.Context, tenantID, subject, jobID string, restricted bool, requireJobID string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.setRestrictionLocked(tenantID, subject, jobID, restricted, requireJobID)
+}
+
+// ClearProcessingRestrictionForJob is the in-memory form of the Postgres
+// store's ClearProcessingRestrictionTx, the operator clear of a failed
+// erasure job's restriction. It returns ErrRestrictionHeldByOtherJob and
+// writes nothing when the row's ErasureJobID names a job other than jobID,
+// and otherwise clears the flag through the same write path as
+// SetErasureRestriction. The in-memory store has no Article 18 trigger, so
+// there is no bypass to set.
+//
+// spec: §12.8 (Processing restriction during erasure (GDPR Article 18)),
+// §15.1 (REST API).
+func (m *Memory) ClearProcessingRestrictionForJob(_ context.Context, tenantID, subject, jobID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.users[key(tenantID, subject)]
+	if !ok || row.TenantID != tenantID {
+		return ErrNotFound
+	}
+	if row.ErasureJobID != "" && row.ErasureJobID != jobID {
+		return ErrRestrictionHeldByOtherJob
+	}
+	_, err := m.setRestrictionLocked(tenantID, subject, "", false, "")
+	return err
+}
+
+// setRestrictionLocked applies one restriction write; m.mu must be held.
+func (m *Memory) setRestrictionLocked(tenantID, subject, jobID string, restricted bool, requireJobID string) (int64, error) {
 	k := key(tenantID, subject)
 	row, ok := m.users[k]
 	if !ok || row.TenantID != tenantID {
-		return User{}, ErrNotFound
+		return 0, ErrNotFound
 	}
-	row.ProcessingRestricted = false
-	row.ErasureJobID = ""
+	if requireJobID != "" && row.ErasureJobID != requireJobID {
+		return 0, nil
+	}
+	if !restricted {
+		jobID = ""
+	}
+	row.ProcessingRestricted = restricted
+	row.ErasureJobID = jobID
 	now := time.Now().UTC()
 	if !now.After(row.UpdatedAt) {
 		now = row.UpdatedAt.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
+	// spec: §15.1 — bump the entity-tag version on every write.
+	row.Version++
 	m.users[k] = row
-	return row, nil
+	return 1, nil
 }
 
 // List implements Store.

@@ -3,6 +3,7 @@
 package stack_test
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -15,7 +16,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
+	"github.com/lennylabs/lenny/pkg/kms"
 )
 
 // TestCreateDevBearerSecretCreatesAndUpdatesInPlace_spec_10_2 covers the §17.4
@@ -33,9 +34,15 @@ import (
 // spec: §10.2 (the gateway loads the dev HMAC key as a second verifier), §17.4
 // (the dev bearer-trust Secret is created before the gateway Deployment).
 func TestCreateDevBearerSecretCreatesAndUpdatesInPlace_spec_10_2(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
+
+	// The product code fixes the Secret's namespace and name, so this test
+	// owns it on the package's shared control plane.
+	claimFixedObjects(t, cfg, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+		Namespace: stack.ControlPlaneNamespaceForTest(), Name: stack.DevBearerTrustSecretNameForTest(),
+	}})
 
 	keyFile := filepath.Join(t.TempDir(), "signing.key")
 	if err := os.WriteFile(keyFile, []byte(`{"keyId":"k1","secret":"AAAA"}`), 0o600); err != nil {
@@ -89,7 +96,7 @@ func TestCreateDevBearerSecretCreatesAndUpdatesInPlace_spec_10_2(t *testing.T) {
 //
 // spec: §17.4 (lenny up reports the gateway ready when its Deployment is ready).
 func TestWaitDeploymentReady_spec_17_4(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 
@@ -97,7 +104,9 @@ func TestWaitDeploymentReady_spec_17_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build core client: %v", err)
 	}
-	const ns = "default"
+	// waitDeploymentReady takes the namespace, so the test's Deployment lives
+	// in the test's own namespace on the shared control plane.
+	ns := createTestNamespace(t, cfg)
 	const name = "lenny-gateway"
 	replicas := int32(1)
 	dep := &appsv1.Deployment{
@@ -136,4 +145,92 @@ func TestWaitDeploymentReady_spec_17_4(t *testing.T) {
 	if err := stack.WaitDeploymentReadyForTest(ctx, cfg, ns, name, 5*time.Second, 100*time.Millisecond); err != nil {
 		t.Fatalf("waitDeploymentReady on a ready Deployment: %v", err)
 	}
+}
+
+// TestCreateMasterKeySecretCreatesWhenAbsentAndPreservesExisting_spec_17_4
+// covers the §17.4 local KMS master key Secret against a real kube-apiserver:
+// lenny up creates the Secret under the fixed name the development profile
+// sets, holding kms.DEKSize random bytes under data key "master-key", when the
+// cluster has none, and a later bring-up leaves the existing Secret
+// byte-identical rather than replacing the key. A Secret the operator seeded
+// with other content is likewise left unchanged.
+//
+// diagnosis: a failure means the embedded gateway and lenny-ops either cannot
+// start (the Secret their non-optional mount names was not created, or was
+// created with the wrong name, data key, or length) or lose every wrapped DEK
+// and every signed token across lenny up (a re-run replaced the persisted
+// master key).
+//
+// spec: §17.4 (the local provider is keyed by a master key Secret that lenny
+// up generates when the embedded cluster has none, so the key persists with
+// the substrate), §10.2 "Signing key and algorithm".
+func TestCreateMasterKeySecretCreatesWhenAbsentAndPreservesExisting_spec_17_4(t *testing.T) {
+	env := sharedEnv.Start(t)
+	ctx := context.Background()
+	cfg := env.RESTConfig()
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		t.Fatalf("build core client: %v", err)
+	}
+	ns := stack.ControlPlaneNamespaceForTest()
+	name := stack.DevKMSMasterKeySecretNameForTest()
+	key := stack.KMSMasterKeySecretKeyForTest()
+	secrets := cs.CoreV1().Secrets(ns)
+	// The product code fixes the Secret's namespace and name, so this test
+	// owns it on the package's shared control plane; the claim also deletes
+	// a copy an earlier iteration left.
+	claimFixedObjects(t, cfg, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name}})
+
+	if err := stack.CreateMasterKeySecretFromConfigForTest(ctx, cfg); err != nil {
+		t.Fatalf("create master key secret: %v", err)
+	}
+	created, err := secrets.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get created secret: %v", err)
+	}
+	first := created.Data[key]
+	if len(first) != kms.DEKSize {
+		t.Fatalf("secret data[%q] is %d bytes, want kms.DEKSize (%d)", key, len(first), kms.DEKSize)
+	}
+	if bytes.Equal(first, make([]byte, kms.DEKSize)) {
+		t.Fatalf("secret data[%q] is all zero bytes, want random key material", key)
+	}
+
+	// A second bring-up must keep the persisted key byte-identical.
+	if err := stack.CreateMasterKeySecretFromConfigForTest(ctx, cfg); err != nil {
+		t.Fatalf("re-run master key secret create: %v", err)
+	}
+	again, err := secrets.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get secret after re-run: %v", err)
+	}
+	if !bytes.Equal(again.Data[key], first) {
+		t.Errorf("secret data[%q] changed across a re-run; want the existing key preserved", key)
+	}
+	if again.ResourceVersion != created.ResourceVersion {
+		t.Errorf("secret resourceVersion %s -> %s across a re-run; want no update", created.ResourceVersion, again.ResourceVersion)
+	}
+
+	// An operator-seeded Secret is left exactly as it is.
+	if err := secrets.Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+		t.Fatalf("delete secret: %v", err)
+	}
+	seeded := bytes.Repeat([]byte{0x7e}, 48)
+	if _, err := secrets.Create(ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Data:       map[string][]byte{key: seeded},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("seed secret: %v", err)
+	}
+	if err := stack.CreateMasterKeySecretFromConfigForTest(ctx, cfg); err != nil {
+		t.Fatalf("create over a seeded secret: %v", err)
+	}
+	kept, err := secrets.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get seeded secret: %v", err)
+	}
+	if !bytes.Equal(kept.Data[key], seeded) {
+		t.Errorf("seeded secret data[%q] was replaced; want it left unchanged", key)
+	}
+	t.Cleanup(func() { _ = secrets.Delete(context.Background(), name, metav1.DeleteOptions{}) })
 }

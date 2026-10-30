@@ -87,8 +87,7 @@ func cmdImageImport(args []string, stdout, stderr io.Writer) int {
 	// 4 K3S_UNAVAILABLE that CtrCommand would otherwise surface when it
 	// fails to reach the embedded containerd socket. The persisted OIDC
 	// signing key exists only after `lenny up`, so its absence is the
-	// "outside Embedded Mode" condition. spec: §24.19.1 (image import
-	// requires embedded mode, exit 3 EMBEDDED_MODE_REQUIRED, line 282,291).
+	// "outside Embedded Mode" condition. spec: §24.19.1.
 	if code := requireEmbeddedStack(stderr); code != 0 {
 		return code
 	}
@@ -112,8 +111,7 @@ func cmdImageImport(args []string, stdout, stderr io.Writer) int {
 // (token.go) so `lenny image import` rejects a clustered invocation with
 // 3 EMBEDDED_MODE_REQUIRED rather than 4 K3S_UNAVAILABLE.
 //
-// spec: §24.19.1 (image import requires embedded mode, exit 3
-// EMBEDDED_MODE_REQUIRED, line 282,291; same guard as lenny token print).
+// spec: §24.19.1.
 func requireEmbeddedStack(stderr io.Writer) int {
 	root, err := stack.DefaultRoot()
 	if err != nil {
@@ -169,7 +167,7 @@ func cmdImageRm(args []string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
-	// spec: §24.19.1 line 278 — capture ctr stderr so we can recognise
+	// spec: §24.19.1 — capture ctr stderr so we can recognise
 	// the containerd "image in use" case and surface an actionable
 	// diagnostic instead of the raw ctr error.
 	var ctrErr bytes.Buffer
@@ -194,7 +192,7 @@ func cmdImageRm(args []string, stdout, stderr io.Writer) int {
 // "image is referenced/in use" failure (containerd refuses to remove
 // an image while it backs a running container or snapshot).
 //
-// spec: §24.19.1 line 278.
+// spec: §24.19.1.
 func imageInUseError(raw string) bool {
 	lower := strings.ToLower(raw)
 	for _, marker := range []string{
@@ -215,7 +213,7 @@ func imageInUseError(raw string) bool {
 // from a ctr "is referenced by" message when one is present; the empty
 // string means containerd did not name a specific consumer.
 //
-// spec: §24.19.1 line 278.
+// spec: §24.19.1.
 func imageInUseReference(raw string) string {
 	lower := strings.ToLower(raw)
 	idx := strings.Index(lower, "referenced by")

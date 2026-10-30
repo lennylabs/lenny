@@ -197,13 +197,12 @@ func TestWalkChainBlockAllSuppressesDelegatedSession(t *testing.T) {
 	}
 }
 
-// TestWalkChainUnsetPolicyDefaultsToSuppressAtDepth3 proves the §9.2
-// line 92 platform default: when a pool ships no elicitationDepthPolicy
+// TestWalkChainUnsetPolicyDefaultsToSuppressAtDepth3 proves the §9.2 platform default: when a pool ships no elicitationDepthPolicy
 // the chain auto-suppresses agent-initiated elicitations at depth >= 3.
 // Previously the coercion path resolved an unset value to `allow_all`,
 // silently disabling the spec-default backpressure for deep trees.
 //
-// spec: §9.2 line 92. F-9.2.16.
+// spec: §9.2. F-9.2.16.
 func TestWalkChainUnsetPolicyDefaultsToSuppressAtDepth3_spec_9_2_F_9_2_16(t *testing.T) {
 	// A four-hop chain places the raising session at depth 3 — exactly
 	// at the spec-default threshold. The agent-initiated request must
@@ -406,14 +405,14 @@ func TestCheckURLModeProvenanceConnectorAllowed(t *testing.T) {
 	// A connector-initiated url-mode elicitation is admitted even
 	// against an empty pool allowlist — §9.2 reserves url-mode for
 	// gateway-registered connectors. With no registered expected_domain
-	// the §9.2 line 87 boundary has nothing to match against.
+	// the §9.2 boundary has nothing to match against.
 	err := CheckURLModeProvenance(InitiatorConnector, "https://github.com/login/oauth/authorize", "", URLModeAllowlist{})
 	if err != nil {
 		t.Errorf("a connector url-mode elicitation must be admitted: %v", err)
 	}
 }
 
-// spec: §9.2 line 87 — a connector-initiated url-mode elicitation whose
+// spec: §9.2 — a connector-initiated url-mode elicitation whose
 // host matches the registered expected_domain is admitted; a mismatch is
 // the hard-boundary drop. F-9.2.7.
 func TestCheckURLModeProvenanceConnectorExpectedDomain_spec_9_2_87(t *testing.T) {
@@ -439,7 +438,7 @@ func TestCheckURLModeProvenanceConnectorExpectedDomain_spec_9_2_87(t *testing.T)
 	}
 }
 
-// spec: §9.2 line 87 — CheckConnectorURLDomain is the reusable hard
+// spec: §9.2 — CheckConnectorURLDomain is the reusable hard
 // boundary the connector OAuth surface and the chain check share.
 // F-9.2.7.
 func TestCheckConnectorURLDomain_spec_9_2_87(t *testing.T) {

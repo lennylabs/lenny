@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MIT
+#
+# Per-file line-citation counts.
+#
+# Each count is how many citations of the retired form the file carried
+# when the line-citation ratchet landed. A file that carries no such
+# citation holds no entry here, and it fails tier 0 on its first one.
+#
+# The ratchet rewrites this file downward: a count that falls is written
+# back in the same run, and no run raises a count, so a file that grows
+# fails tier 0 rather than being absorbed here. When every count has
+# fallen to zero the file is empty and the gate is a flat prohibition.
+kind: line-citation-count-baseline
+version: 1
+files: []

@@ -22,7 +22,7 @@ func withSub(sub string) *http.Request {
 	return req.WithContext(ctx)
 }
 
-// spec: §25.4 lines 2001-2003 — the per-service-account token bucket
+// spec: §25.4 — the per-service-account token bucket
 // admits up to `burst` requests, then rejects with 429 + Retry-After and
 // increments lenny_ops_rate_limited_total. The clock is frozen so no
 // token refills between calls.
@@ -57,7 +57,7 @@ func TestRateLimiterExhaustsBucket_spec_25_4_2001(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2001 — buckets are keyed per service account, so one
+// spec: §25.4 — buckets are keyed per service account, so one
 // account exhausting its budget does not throttle another.
 func TestRateLimiterPerSubIsolation_spec_25_4_2001(t *testing.T) {
 	rl := NewRateLimiter(20, 1)
@@ -83,7 +83,7 @@ func TestRateLimiterPerSubIsolation_spec_25_4_2001(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2003 — a refill of the clock restores capacity. With
+// spec: §25.4 — a refill of the clock restores capacity. With
 // rps=20 a 100ms advance refills ~2 tokens, so the next request passes.
 func TestRateLimiterRefillsOverTime_spec_25_4_2003(t *testing.T) {
 	rl := NewRateLimiter(20, 1)

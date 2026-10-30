@@ -51,7 +51,7 @@ ALTER TABLE runtime_definitions
 -- this migration stages no UPDATE. max_concurrent survives as the service-mode
 -- per-pod request bound.
 --
--- §10.5 Phase 3 column drop (spec §10.5 line 417). The drop is irreversible, so
+-- §10.5 Phase 3 column drop (spec §10.5). The drop is irreversible, so
 -- it is fronted by a PL/pgSQL DO $$ preflight gate that counts un-migrated rows
 -- and RAISE EXCEPTIONs when any remain. A non-default concurrency_style ('' is
 -- the 0040 default) is an un-migrated row: the §5.2 collapse stages no per-row
@@ -99,8 +99,8 @@ ALTER TABLE sandbox_warm_pools
     RENAME COLUMN task_policy TO session_policy;
 
 -- Add the nullable gateway-written per-pod recycle counters to
--- agent_pod_state. sessions_served is incremented at each session
--- release (ReportSessionScrub) and evaluated against
+-- agent_pod_state. sessions_served is incremented on each cleanup-outcome
+-- report (ReportSessionScrub) and evaluated against
 -- recycle.maxSessionsPerPod; scrub_failure_count is incremented on each
 -- failed whole-pod scrub (ReportPodScrub) and evaluated against
 -- recycle.maxScrubFailures. Both are NULL until the gateway first

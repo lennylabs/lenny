@@ -19,9 +19,8 @@
 // guard's operator override; that path is ForceDrop, which records the
 // §16.7 audit.partition_drop_forced event before it deletes.
 //
-// spec: §16.4 lines 378-382 (retention partition GC, gdpr.* carve-out,
-// SIEM delivery guard); §11.7 line 456 (regulated retention floor);
-// §12.8 line 839 (gdprRetentionDays floor).
+// spec: §16.4; §11.7;
+// §12.8.
 package auditretention
 
 import (
@@ -186,7 +185,7 @@ func (p *Pruner) cutoffs(now time.Time) (general, gdpr time.Time) {
 // sweep no-ops). On the first per-tenant error the sweep stops and
 // returns the count pruned so far.
 //
-// spec: §16.4 lines 378-382.
+// spec: §16.4.
 func (p *Pruner) Tick(ctx context.Context, now time.Time) (int, error) {
 	general, gdpr := p.cutoffs(now)
 	if general.IsZero() {
@@ -212,7 +211,7 @@ func (p *Pruner) Tick(ctx context.Context, now time.Time) (int, error) {
 			p.incRun("error")
 			return pruned, fmt.Errorf("auditretention: prune tenant %s: %w", tenant, err)
 		}
-		// spec: §16.4 line 378 — when the SIEM delivery guard withholds
+		// spec: §16.4 — when the SIEM delivery guard withholds
 		// past-TTL rows from the drop, the GC is "holding the partition"
 		// and the AuditPartitionDropBlocked alert must fire. Refresh the
 		// per-partition gauge from the count of held rows this tenant
@@ -282,7 +281,7 @@ type ForceDropResult struct {
 // window). An unconfigured emitter is rejected so a forced drop can
 // never bypass its own audit trail.
 //
-// spec: §16.4 line 378 (force-drop override); §16.7 line 687
+// spec: §16.4; §16.7
 // (audit.partition_drop_forced payload); §25.9 (the backing
 // POST /v1/admin/audit-partitions/{partition}/drop endpoint).
 func (p *Pruner) ForceDrop(ctx context.Context, tenantID, requesterSub string, now time.Time) (ForceDropResult, error) {

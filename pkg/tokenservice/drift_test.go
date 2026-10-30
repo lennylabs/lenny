@@ -11,19 +11,21 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
-// spec: §13.3 line 595 — when this replica's NTP drift exceeds the 5s
+// spec: §13.3 — when this replica's NTP drift exceeds the 5s
 // ceiling, /v1/oauth/token returns 503 token_validation_unavailable
 // rather than issuing a token whose `exp` it cannot trust. F-13.3.5.
 func TestDriftDegradedReturns503(t *testing.T) {
 	hmac := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	degraded := true
-	srv := NewServer(Options{
-		Signer:        hmac,
-		Verifier:      hmac,
-		Issuer:        "https://lenny.dev.test/token",
-		DriftDegraded: func() bool { return degraded },
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(hmac),
+		Verifier:           hmac,
+		Issuer:             "https://lenny.dev.test/token",
+		DriftDegraded:      func() bool { return degraded },
 	})
 
 	farFuture := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
@@ -59,15 +61,16 @@ func TestDriftDegradedReturns503(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 595 — when DriftDegraded reports false (or is nil),
+// spec: §13.3 — when DriftDegraded reports false (or is nil),
 // the exchange proceeds normally. F-13.3.5.
 func TestDriftHealthyDoesNotShortCircuit(t *testing.T) {
 	hmac := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	srv := NewServer(Options{
-		Signer:        hmac,
-		Verifier:      hmac,
-		Issuer:        "https://lenny.dev.test/token",
-		DriftDegraded: func() bool { return false },
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(hmac),
+		Verifier:           hmac,
+		Issuer:             "https://lenny.dev.test/token",
+		DriftDegraded:      func() bool { return false },
 	})
 
 	farFuture := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
@@ -92,14 +95,15 @@ func TestDriftHealthyDoesNotShortCircuit(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 595 — when DriftDegraded is nil, the exchange
+// spec: §13.3 — when DriftDegraded is nil, the exchange
 // proceeds (the option is opt-in). F-13.3.5.
 func TestDriftNilOptionLeavesHandlerOpen(t *testing.T) {
 	hmac := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	srv := NewServer(Options{
-		Signer:   hmac,
-		Verifier: hmac,
-		Issuer:   "https://lenny.dev.test/token",
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(hmac),
+		Verifier:           hmac,
+		Issuer:             "https://lenny.dev.test/token",
 	})
 
 	farFuture := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Unix()

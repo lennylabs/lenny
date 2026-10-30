@@ -14,6 +14,7 @@ package transcriptstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -24,7 +25,7 @@ import (
 // SchemaVersion is the §15.5 item 7 schema revision the gateway stamps on
 // every MessageEnvelope it persists to session_messages. v1 writers use 1.
 //
-// spec: §15.4.1 line 1694 — "Every MessageEnvelope persisted to the
+// spec: §15.4 — "Every MessageEnvelope persisted to the
 // session_messages table carries this field ... the gateway writes it at
 // inbox-enqueue time and it is immutable once written." §15.5 item 7 — the
 // field is an integer "starting at 1".
@@ -32,15 +33,15 @@ const SchemaVersion = 1
 
 // Entry is one transcript line.
 type Entry struct {
-	// ID is the stable per-message identifier the §15.4.1 MessageDAG
+	// ID is the stable per-message identifier the §15.4 MessageDAG
 	// view (`GET /v1/sessions/{id}/messages`) returns as the message
 	// node id. It is the durable session_messages.id row UUID. The
 	// Memory store generates one at append time; the Postgres store
 	// surfaces the column. Empty on the legacy transcript-write path is
 	// harmless — the transcript view does not depend on it.
 	//
-	// spec: §15.4.1 line 1784 — "every message has a stable ID"; line
-	// 1792 — the session_messages table is indexed on (session_id, id,
+	// spec: §15.4 MessageEnvelope format — "every message has a stable
+	// ID", and the session_messages table is indexed on (session_id, id,
 	// thread_id).
 	ID string `json:"id,omitempty"`
 
@@ -56,10 +57,10 @@ type Entry struct {
 	// Timestamp is the UTC instant the entry was recorded.
 	Timestamp time.Time `json:"timestamp"`
 
-	// SchemaVersion is the §15.4.1 MessageEnvelope schema revision the
+	// SchemaVersion is the §15.4 MessageEnvelope schema revision the
 	// gateway stamps at persist time. Zero on input is normalized to
 	// SchemaVersion (1) by the store; callers do not set it (the gateway
-	// owns it per §15.4.1 line 1694, "Runtimes MUST NOT set it").
+	// owns it per §15.4, "Runtimes MUST NOT set it").
 	SchemaVersion int `json:"schemaVersion"`
 }
 
@@ -68,7 +69,7 @@ var ErrNotFound = errors.New("transcriptstore: no transcript for session")
 
 // Store is the transcript registry contract.
 //
-// spec: §12.1 line 5 — DeleteByUser and DeleteByTenant are the
+// spec: §12.1 — DeleteByUser and DeleteByTenant are the
 // mandatory erasure primitives every storage role exposes at the
 // interface level. Transcripts are session-scoped; the §12.8
 // orchestrator walks the user's sessions and calls DeleteBySession.
@@ -107,7 +108,7 @@ type Memory struct {
 // NewMemory returns an empty Memory store.
 func NewMemory() *Memory { return &Memory{transcripts: map[string][]Entry{}} }
 
-// spec: §12.1 line 5 — compile-time satisfaction of the mandatory
+// spec: §12.1 — compile-time satisfaction of the mandatory
 // erasure-bearing Store interface.
 var _ Store = (*Memory)(nil)
 
@@ -131,9 +132,9 @@ func (m *Memory) Append(_ context.Context, tenantID, sessionID string, entries .
 		if e.SchemaVersion == 0 {
 			e.SchemaVersion = SchemaVersion
 		}
-		// Assign a stable message-node id so the §15.4.1 MessageDAG view
+		// Assign a stable message-node id so the §15.4 MessageDAG view
 		// has a durable identifier, mirroring the Postgres
-		// session_messages.id UUID column. spec: §15.4.1 line 1784.
+		// session_messages.id UUID column. spec: §15.4.
 		if e.ID == "" {
 			e.ID = uuid.NewString()
 		}
@@ -179,6 +180,40 @@ func (m *Memory) Page(_ context.Context, tenantID, sessionID string, afterSeq ui
 		}
 	}
 	return out, nil
+}
+
+// CopySession copies the transcript of sourceSessionID into
+// destSessionID under the store's lock, renumbering Seq from 1 in the
+// source order and keeping each entry's role, content, timestamp, and schema
+// version; each copied entry gets a new ID. A source with no entries copies
+// nothing and returns nil. A destination that already holds entries is an
+// error and copies nothing, as the Postgres copy fails on the
+// (session_id, seq) unique constraint.
+//
+// The in-memory session store calls it from CreateWithTranscript while it
+// holds its own lock, so the lock order is the session store's lock, then
+// this store's lock. No method of this store calls into the session store,
+// so the order is never reversed.
+// spec: §12.8 (Lifecycle fence and drain), §15.1 (REST API).
+func (m *Memory) CopySession(_ context.Context, tenantID, sourceSessionID, destSessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	src := m.transcripts[key(tenantID, sourceSessionID)]
+	if len(src) == 0 {
+		return nil
+	}
+	dk := key(tenantID, destSessionID)
+	if len(m.transcripts[dk]) > 0 {
+		return fmt.Errorf("transcriptstore: copy into %s: destination already has a transcript", destSessionID)
+	}
+	out := make([]Entry, len(src))
+	for i, e := range src {
+		e.ID = uuid.NewString()
+		e.Seq = uint64(i) + 1
+		out[i] = e
+	}
+	m.transcripts[dk] = out
+	return nil
 }
 
 // DeleteBySession removes the session's transcript and returns the

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package driftmonitor implements the §13.3 line 595 NTP clock-drift
+// Package driftmonitor implements the §13.3 NTP clock-drift
 // self-monitor. Each gateway replica periodically samples its wall-clock
 // offset from a reference source, publishes the absolute drift through
 // the `lenny_time_drift_seconds` gauge, and degrades itself once drift
@@ -15,7 +15,7 @@
 // deploy a real NTP probe (e.g., `chrony tracking` or an `adjtimex`
 // reader) supply their own `OffsetFunc` that returns the live offset.
 //
-// spec: §13.3 line 595, §16.1 lenny_time_drift_seconds, §16.5
+// spec: §13.3, §16.1 lenny_time_drift_seconds, §16.5
 // GatewayClockDrift.
 package driftmonitor
 
@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-// DegradedThreshold is the §13.3 line 595 absolute-drift ceiling above
+// DegradedThreshold is the §13.3 absolute-drift ceiling above
 // which a replica self-removes from the Service endpoints and returns
 // 503 on exchange.
 const DegradedThreshold = 5 * time.Second

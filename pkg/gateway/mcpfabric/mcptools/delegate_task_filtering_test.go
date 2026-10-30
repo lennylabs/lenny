@@ -33,11 +33,12 @@ func TestDelegateTaskEnvironmentScope(t *testing.T) {
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        store,
-		Executor:     executor.NewEchoExecutor(),
-		Runtimes:     runtimes,
-		Environments: envs,
-		Tenants:      tenants,
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		Environments:      envs,
+		Tenants:           tenants,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -105,11 +106,12 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        store,
-		Executor:     executor.NewEchoExecutor(),
-		Runtimes:     runtimes,
-		Environments: envs,
-		Tenants:      tenants,
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		Environments:      envs,
+		Tenants:           tenants,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -177,7 +179,7 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 50 — `lenny/delegate_task` rejects `type: mcp`
+// spec: §8.2 — `lenny/delegate_task` rejects `type: mcp`
 // targets with `target_not_an_agent`. The MCP shim is the primary
 // rejection site; the delegation Service enforces it again as
 // defence-in-depth. F-8.2.8 / F-8.5.4.
@@ -186,8 +188,9 @@ func TestDelegateTaskRejectsTypeMCPTarget_spec_8_2_F_8_2_8(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Runtimes: runtimes,
+		DevTenantFallback: true,
+		Store:             store,
+		Runtimes:          runtimes,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc:   func() string { return "sess_child" },
 			Runtimes: runtimes,
@@ -242,10 +245,11 @@ func TestDelegateTaskPoolIsolationMonotonicity(t *testing.T) {
 	audit := &fakeDelegationAuditor{}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Executor: executor.NewEchoExecutor(),
-		Pools:    pools,
-		Audit:    audit,
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Pools:             pools,
+		Audit:             audit,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -298,7 +302,7 @@ func TestDelegateTaskPoolIsolationMonotonicity(t *testing.T) {
 		t.Errorf("a same-environment violation should record cross_environment=false: %+v",
 			audit.events[0].detail)
 	}
-	// spec: §11.7 lines 99-101 — the audit payload uses the snake_case
+	// spec: §11.7 — the audit payload uses the snake_case
 	// field names (parent_isolation / target_isolation /
 	// matched_policy_rule) that SIEM consumers pivot on. F-8.5.18.
 	detail := audit.events[0].detail

@@ -279,7 +279,7 @@ func TestSyncUsesObservedDemandForMinWarm(t *testing.T) {
 // SafetyFactor inherits the Reconciler's tier-resolved default. With the
 // Tier 3 default of 1.2 (instead of the Tier 1/2 1.5) the formula yields
 // ceil(0.1 × 1.2 × 35 + 0.2 × 10) = ceil(4.2 + 2.0) = 7, one below the
-// Tier 1/2 result of 8. spec: spec/17_deployment-topology.md line 1008.
+// Tier 1/2 result of 8. spec: §17.8.2.
 func TestSyncAppliesTierDefaultSafetyFactor_spec_17_8_2_1008(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
@@ -308,7 +308,7 @@ func TestSyncAppliesTierDefaultSafetyFactor_spec_17_8_2_1008(t *testing.T) {
 // TestSyncPoolSafetyFactorOverridesTierDefault confirms a pool that pins
 // its own SafetyFactor ignores the Reconciler's tier default. With the
 // pool pinning 2.0 the formula yields ceil(0.1 × 2.0 × 35 + 0.2 × 10) =
-// ceil(7.0 + 2.0) = 9. spec: spec/17_deployment-topology.md line 1010.
+// ceil(7.0 + 2.0) = 9. spec: §17.8.2.
 func TestSyncPoolSafetyFactorOverridesTierDefault_spec_17_8_2_1010(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
@@ -643,7 +643,7 @@ func TestAdminResumerBindsNamespace(t *testing.T) {
 	}
 }
 
-// spec: §4.6.1 line 400 — a pool inside its scaleToZero window targets
+// spec: §4.6.1 — a pool inside its scaleToZero window targets
 // minWarm 0 regardless of its bootstrap floor or observed demand.
 func TestSyncScaleToZeroOverridesMinWarmToZero(t *testing.T) {
 	s := newScheme(t)
@@ -668,7 +668,7 @@ func TestSyncScaleToZeroOverridesMinWarmToZero(t *testing.T) {
 // PoolScalingController writes lenny.dev/config-generation onto both
 // SandboxTemplate and SandboxWarmPool, taking the value from the
 // PoolConfig.Generation the admin store bumps on every write.
-// spec: spec/04_system-components.md line 558.
+// spec: §4.6.2.
 func TestSyncStampsConfigGenerationOnCRDs_Spec4_6_2_558(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
@@ -770,7 +770,7 @@ func recyclingDemand() *fakeDemand {
 // mode_factor = 1.0 (cold-start one-session-per-pod sizing). With burst
 // factor 1 the formula is the base steady-plus-burst term, ceil(25.0…) = 26
 // (the float64 multiplication chain lands just above the integer boundary).
-// spec: §6.33 (cold-start fallback 1.0 until the histogram converges).
+// spec: §5.2 (cold-start fallback 1.0 until the histogram converges).
 func TestSyncRecyclingPoolColdStartUsesBaseModeFactor(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
@@ -791,7 +791,7 @@ func TestSyncRecyclingPoolColdStartUsesBaseModeFactor(t *testing.T) {
 // TestSyncRecyclingPoolNilSourceUsesBaseModeFactor confirms that with no
 // ModeFactorSource wired the recycling pool sizes at the same cold-start
 // mode_factor = 1.0 rather than assuming the configured ceiling.
-// spec: §6.33 (cold start, no historical data).
+// spec: §5.2 (cold start, no historical data).
 func TestSyncRecyclingPoolNilSourceUsesBaseModeFactor(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
@@ -809,7 +809,7 @@ func TestSyncRecyclingPoolNilSourceUsesBaseModeFactor(t *testing.T) {
 // recycling pool divides the steady-state term by the observed reuse median.
 // With median 5 (below the ceiling 10): steady = 21/5 = 4.2, burst = 4
 // (burst_mode_factor 1) → ceil(8.2) = 9.
-// spec: §6.33 (mode_factor from observed reuse p50).
+// spec: §5.2 (mode_factor from observed reuse p50).
 func TestSyncRecyclingPoolConvergedUsesObservedMedian(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
@@ -832,7 +832,7 @@ func TestSyncRecyclingPoolConvergedUsesObservedMedian(t *testing.T) {
 // serve more sessions than the configured ceiling, so an observed median of
 // 50 against a ceiling of 10 sizes at mode_factor = 10. steady = 21/10 = 2.1,
 // burst = 4 → ceil(6.1) = 7.
-// spec: §6.33 (converged value bounded above by recycle.maxSessionsPerPod).
+// spec: §5.2 (converged value bounded above by recycle.maxSessionsPerPod).
 func TestSyncRecyclingPoolMedianBoundedByMaxSessionsPerPod(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
@@ -853,7 +853,7 @@ func TestSyncRecyclingPoolMedianBoundedByMaxSessionsPerPod(t *testing.T) {
 // TestSyncRecyclingPoolSourceErrorFallsBackToColdStart confirms a
 // ModeFactorSource error is treated conservatively as not-yet-converged: the
 // pool sizes at mode_factor = 1.0 rather than from an unverifiable signal.
-// spec: §6.33 (cold-start fallback).
+// spec: §5.2 (cold-start fallback).
 func TestSyncRecyclingPoolSourceErrorFallsBackToColdStart(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
@@ -876,7 +876,7 @@ func TestSyncRecyclingPoolSourceErrorFallsBackToColdStart(t *testing.T) {
 // a non-recycling pool keeps mode_factor = 1.0 on the steady-state term.
 // With maxConcurrentSessions=4: steady ≈ 21 (mode_factor 1), burst = 4/4 = 1
 // → 23 (the steady term lands just above 21).
-// spec: §6.33 (burst_mode_factor = maxConcurrentSessions).
+// spec: §5.2 (burst_mode_factor = maxConcurrentSessions).
 func TestSyncSessionPoolConcurrentBurstFactor(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()

@@ -11,7 +11,7 @@ package rules
 // alongside the rule definitions rather than in the health package — the
 // "single source" the spec requires.
 //
-// spec: §25.3 lines 443-451 — "Component status is derived deterministically
+// spec: §25.3 — "Component status is derived deterministically
 // from the same threshold expressions used by the alerting rules (Section
 // 16.5): healthy — no firing alerts for this component; degraded —
 // warning-severity alerts firing; unhealthy — critical-severity alerts
@@ -39,8 +39,7 @@ const (
 // component's healthy/degraded/unhealthy verdict. An unmapped firing alert
 // therefore leaves every component's probe-derived status unchanged.
 //
-// spec: §25.3 lines 443-451, 540-542 (degradation section names postgres /
-// redis / objectStore by component).
+// spec: §25.3.
 var healthComponents = map[string]string{
 	// Postgres dependency (session truth store, token store, replicas).
 	"SessionStoreUnavailable":    HealthComponentPostgres,

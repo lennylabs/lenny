@@ -212,7 +212,7 @@ func TestRecordWithAuditFailsClosedWithoutAuditSequence_spec_13_3(t *testing.T) 
 		TokenHash: []byte("h"), Scope: []string{"sessions:read"},
 		Audience: "lenny-gateway", IssuedAt: now, ExpiresAt: now.Add(time.Hour),
 	}
-	_, err := store.RecordWithAudit(ctx, tok, string(auditcatalog.EventTokenExchanged),
+	_, err := store.RecordWithAudit(ctx, tok, nil, string(auditcatalog.EventTokenExchanged),
 		json.RawMessage(`{"policy_result":"accepted"}`), now)
 	assertUndefinedTable(t, err)
 
@@ -224,7 +224,7 @@ func TestRecordWithAuditFailsClosedWithoutAuditSequence_spec_13_3(t *testing.T) 
 	}
 }
 
-// spec: §13.3 line 597 / §11.7 / §10.2 — RecordWithRotationAudit fails closed
+// spec: §13.3 / §11.7 / §10.2 — RecordWithRotationAudit fails closed
 // when the audit sequence is absent: neither the new token is minted nor the
 // predecessor revoked, so an atomic rotation whose audit sequence_number
 // cannot be drawn leaves both tokens in their pre-rotation state.
@@ -260,7 +260,8 @@ func TestRotationWriteBeforeIssueFailsClosedWithoutAuditSequence_spec_13_3(t *te
 		JTI: "jti-next", TenantID: tenant, Subject: "bob@globex.com",
 		TokenHash: []byte("n"), IssuedAt: now.Add(time.Minute), ExpiresAt: now.Add(time.Hour),
 	}
-	_, _, err := store.RecordWithRotationAudit(ctx, next, "jti-prev",
+	_, _, err := store.RecordWithRotationAudit(ctx, next,
+		[]issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: "jti-prev"}}, "jti-prev",
 		"rotation_replaced", string(auditcatalog.EventTokenExchanged),
 		json.RawMessage(`{"policy_result":"accepted"}`), now.Add(time.Minute))
 	assertUndefinedTable(t, err)
@@ -282,7 +283,7 @@ func TestRotationWriteBeforeIssueFailsClosedWithoutAuditSequence_spec_13_3(t *te
 	}
 }
 
-// spec: §13.3 line 597 / §16.7 / §11.7 / §10.2 — RevokeWithAudit fails closed
+// spec: §13.3 / §16.7 / §11.7 / §10.2 — RevokeWithAudit fails closed
 // when the audit sequence is absent: the revoked_at stamp and the token.revoked
 // audit row share one transaction, so a missing audit sequence rolls back the
 // stamp too, leaving the token live rather than durably revoked with no audit

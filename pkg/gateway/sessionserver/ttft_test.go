@@ -20,7 +20,7 @@ import (
 )
 
 // ttftCapture is a thread-safe recorder for ObserveTimeToFirstToken
-// callbacks used by the §6.3 line 356 TTFT tests below.
+// callbacks used by the §6.3 TTFT tests below.
 type ttftCapture struct {
 	mu      sync.Mutex
 	samples []ttftSample
@@ -54,7 +54,7 @@ func (c *ttftCapture) Snapshot() []ttftSample {
 // observation has a deterministic seconds value.
 func fixedClock(t time.Time) func() time.Time { return func() time.Time { return t } }
 
-// spec: §6.3 line 356, §16.1 line 15 — POST /v1/sessions/{id}/messages
+// spec: §6.3, §16.1 — POST /v1/sessions/{id}/messages
 // emits the `response` SSE event for each agent-output part; the first
 // such event for a session must observe the TTFT histogram with the
 // pool/runtime_class/isolation_profile labels resolved from the session
@@ -65,6 +65,7 @@ func TestMessagesObservesTTFTOnFirstResponse_spec_6_3_F_6_3_3(t *testing.T) {
 	createdAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := createdAt.Add(800 * time.Millisecond)
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		Clock:                   fixedClock(now),
 		Executor:                executor.NewEchoExecutor(),
 		Transcripts:             transcriptstore.NewMemory(),
@@ -105,7 +106,7 @@ func TestMessagesObservesTTFTOnFirstResponse_spec_6_3_F_6_3_3(t *testing.T) {
 	}
 }
 
-// spec: §6.3 line 356 — TTFT is observed exactly once per session. A
+// spec: §6.3 — TTFT is observed exactly once per session. A
 // second POST /v1/sessions/{id}/messages on the same session must not
 // re-fire the histogram observation; the LoadOrStore gate is the
 // behavior contract.
@@ -115,6 +116,7 @@ func TestMessagesTTFTObservedOnlyOncePerSession_spec_6_3_F_6_3_3(t *testing.T) {
 	createdAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := createdAt.Add(500 * time.Millisecond)
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		Clock:                   fixedClock(now),
 		Executor:                executor.NewEchoExecutor(),
 		Transcripts:             transcriptstore.NewMemory(),
@@ -143,7 +145,7 @@ func TestMessagesTTFTObservedOnlyOncePerSession_spec_6_3_F_6_3_3(t *testing.T) {
 	}
 }
 
-// spec: §6.3 line 356 — TTFT is keyed off the agent-streamed `response`
+// spec: §6.3 — TTFT is keyed off the agent-streamed `response`
 // event type; the inbound `message_delivered` echo and the lifecycle
 // `status_change` frames do not represent first agent output and must
 // not produce a TTFT observation.
@@ -156,6 +158,7 @@ func TestMessagesTTFTSkipsNonResponseEvents_spec_6_3_F_6_3_3(t *testing.T) {
 	// only the inbound `message_delivered` echo and emits no `response`
 	// frame: the TTFT observation must stay zero.
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		Clock:                   fixedClock(now),
 		Executor:                noOutputExecutor{},
 		Transcripts:             transcriptstore.NewMemory(),
@@ -181,7 +184,7 @@ func TestMessagesTTFTSkipsNonResponseEvents_spec_6_3_F_6_3_3(t *testing.T) {
 	}
 }
 
-// spec: §6.3 line 356 — a session whose isolation profile has not been
+// spec: §6.3 — a session whose isolation profile has not been
 // resolved yet (RuntimeClassName returns ok=false) is skipped so the
 // histogram does not carry an empty runtime_class series. This also
 // covers the pgstore.Update path where a session is created before pool
@@ -192,6 +195,7 @@ func TestMessagesTTFTSkipsUnresolvedIsolation_spec_6_3_F_6_3_3(t *testing.T) {
 	createdAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := createdAt.Add(200 * time.Millisecond)
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		Clock:                   fixedClock(now),
 		Executor:                executor.NewEchoExecutor(),
 		Transcripts:             transcriptstore.NewMemory(),

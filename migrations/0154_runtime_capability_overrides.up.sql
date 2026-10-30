@@ -1,4 +1,4 @@
--- §5.1 line 49: "Capabilities are customizable per tenant, with the
+-- §5.1: "Capabilities are customizable per tenant, with the
 -- platform defaults as described above." A row records a single tenant's
 -- override of a subset of a platform-global runtime's §5.1 capabilities
 -- block: interaction, injection.supported, injection.modes, preConnect,
@@ -24,7 +24,7 @@
 -- filters reads through current_setting('app.current_tenant'), and
 -- lenny_app gets the DML grants.
 --
--- spec: §5.1 line 49 — F-5.1.20.
+-- spec: §5.1 — F-5.1.20.
 
 CREATE TABLE runtime_capability_overrides (
     tenant_id    TEXT        NOT NULL REFERENCES tenants(id),

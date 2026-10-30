@@ -33,7 +33,7 @@
 // (admin.set_pool_warm_count, x-lenny-scope tools:pool:write) through
 // POST /mcp/management with a token scoped only to tools:health:read.
 //
-// spec: §25.1 lines 89-94 — "Scopes are enforced in three places: ...
+// spec: §25.1 — "Scopes are enforced in three places: ...
 // 2. MCP tool invocation — /mcp/management tools/call checks the scope
 // before dispatch." and "A request for a tool not permitted by any scope
 // returns 403 SCOPE_FORBIDDEN with a response body listing the caller's
@@ -55,7 +55,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // scopeLiveBearerHMACKeyFile mirrors the on-disk format
@@ -128,9 +127,7 @@ func rpcCallToolsCall(t *testing.T, baseURL, bearer, toolName string, args map[s
 	return env
 }
 
-// spec: §25.1 lines 89-94 ("Scopes are enforced in three places: ...
-// 2. MCP tool invocation — /mcp/management tools/call checks the scope
-// before dispatch.") and §25.12 ("A caller whose scope doesn't match
+// spec: §25.1 and §25.12 ("A caller whose scope doesn't match
 // receives 403 SCOPE_FORBIDDEN from the MCP adapter before any REST call
 // is issued.").
 //
@@ -151,11 +148,10 @@ func rpcCallToolsCall(t *testing.T, baseURL, bearer, toolName string, args map[s
 // none of them would catch a regression in the OIDC auth middleware ->
 // Principal.Scopes -> MCP-boundary bridge this test exercises end to end.
 func TestOpsMCPToolsCallScopeGateRejectsLiveBearerE2E(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 
 	const keyID = "tier4-scope-probe-key"

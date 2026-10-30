@@ -49,7 +49,7 @@ func (s *fakeSink) Persist(_ context.Context, tenantID, child string, fl export.
 	return "blob://" + tenantID + "/" + child + "/" + fl.Path, nil
 }
 
-// fakeAuditor records the §8.7 line 793 overwrite events.
+// fakeAuditor records the §8.7 overwrite events.
 type fakeAuditor struct {
 	events []auditEvent
 }
@@ -89,7 +89,7 @@ func newMat(exp export.ParentExporter, sink export.Sink, aud export.Auditor) *ex
 // TestMaterializeRebasesAndPersists_spec_8_7 covers the happy path: two
 // distinct-path specs produce two uploadFile child sources, the durable
 // sink is called once per file, and the accounting sums the collapsed
-// set. spec: §8.7; §8.2 lines 91-95.
+// set. spec: §8.7; §8.2.
 func TestMaterializeRebasesAndPersists_spec_8_7(t *testing.T) {
 	exp := &fakeExporter{bySource: map[string][]export.ExportedFile{
 		"./src/*":      {file("src/auth.ts", "auth")},
@@ -118,7 +118,7 @@ func TestMaterializeRebasesAndPersists_spec_8_7(t *testing.T) {
 	if len(sink.persisted) != 2 {
 		t.Fatalf("persisted=%d, want 2", len(sink.persisted))
 	}
-	// Per-spec, declared-order export discipline (§8.7 line 774).
+	// Per-spec, declared-order export discipline (§8.7).
 	if len(exp.calls) != 2 || exp.calls[0].Source != "./src/*" || exp.calls[1].Source != "./cfg/*.json" {
 		t.Fatalf("export calls = %+v, want the two specs in declared order", exp.calls)
 	}
@@ -129,8 +129,7 @@ func TestMaterializeRebasesAndPersists_spec_8_7(t *testing.T) {
 }
 
 // TestMaterializeRejectsBadDestPrefix_spec_8_7_789 asserts a destPrefix
-// with a `..` segment is rejected before any export RPC. spec: §8.7 line
-// 789.
+// with a `..` segment is rejected before any export RPC. spec: §8.7.
 func TestMaterializeRejectsBadDestPrefix_spec_8_7_789(t *testing.T) {
 	exp := &fakeExporter{}
 	_, err := newMat(exp, &fakeSink{}, nil).Materialize(context.Background(), export.Params{
@@ -146,7 +145,7 @@ func TestMaterializeRejectsBadDestPrefix_spec_8_7_789(t *testing.T) {
 }
 
 // TestMaterializeEnforcesFileCount_spec_8_7_790 asserts the fileExportLimits
-// count ceiling. spec: §8.7 line 790.
+// count ceiling. spec: §8.7.
 func TestMaterializeEnforcesFileCount_spec_8_7_790(t *testing.T) {
 	exp := &fakeExporter{bySource: map[string][]export.ExportedFile{
 		"./*": {file("a.txt", "a"), file("b.txt", "b")},
@@ -165,7 +164,7 @@ func TestMaterializeEnforcesFileCount_spec_8_7_790(t *testing.T) {
 }
 
 // TestMaterializeEnforcesTotalSize_spec_8_7_790 asserts the aggregate-size
-// ceiling. spec: §8.7 lines 790-791.
+// ceiling. spec: §8.7.
 func TestMaterializeEnforcesTotalSize_spec_8_7_790(t *testing.T) {
 	exp := &fakeExporter{bySource: map[string][]export.ExportedFile{
 		"./*": {file("big.txt", "0123456789")},
@@ -181,7 +180,7 @@ func TestMaterializeEnforcesTotalSize_spec_8_7_790(t *testing.T) {
 
 // TestMaterializeDetectsOverwrite_spec_8_7_793 asserts a later export
 // entry overwriting an earlier child path is collapsed (last-write-wins),
-// recorded, and audited. spec: §8.7 lines 774, 793.
+// recorded, and audited. spec: §8.7.
 func TestMaterializeDetectsOverwrite_spec_8_7_793(t *testing.T) {
 	exp := &fakeExporter{bySource: map[string][]export.ExportedFile{
 		"./first/config.json":  {file("config.json", "FIRST")},
@@ -223,7 +222,7 @@ func TestMaterializeDetectsOverwrite_spec_8_7_793(t *testing.T) {
 // TestMaterializeRoutesArchiveAsUploadArchive_spec_8_7_792 asserts an
 // exported archive becomes an uploadArchive child source so the child
 // materialization inherits the §13.4 / §7.4 upload archive validators,
-// while a plain file stays an uploadFile. spec: §8.7 line 792.
+// while a plain file stays an uploadFile. spec: §8.7.
 func TestMaterializeRoutesArchiveAsUploadArchive_spec_8_7_792(t *testing.T) {
 	exp := &fakeExporter{bySource: map[string][]export.ExportedFile{
 		"./*": {file("input/bundle.tar.gz", "ARCHIVE"), file("notes.txt", "hi")},
@@ -360,7 +359,7 @@ func TestMaterializeEmptySpecs(t *testing.T) {
 // the child row and re-parse through workspaceplan.ParseStored: a plain
 // file becomes an uploadFile and a detected archive becomes an
 // uploadArchive whose validators the child materialization inherits
-// (§8.7 line 792). The root-level archive's empty pathPrefix is mapped to
+// (§8.7). The root-level archive's empty pathPrefix is mapped to
 // "." so the rendered plan stays ParseStored-valid.
 func TestResultWorkspacePlanJSON_spec_14_F_8_7_1(t *testing.T) {
 	exp := &fakeExporter{bySource: map[string][]export.ExportedFile{

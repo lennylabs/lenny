@@ -5,7 +5,7 @@
 // Tier-12 §6.3 startup-latency suite. The cloud tier measures SDK-warm
 // claim-to-ready across the three isolation classes (runc, gVisor, Kata)
 // in one provisioned cluster, so the per-class SDK-warm numbers are
-// directly comparable — the §6.3 line 352 SDK-warm complexity-tradeoff
+// directly comparable — the §6.3 SDK-warm complexity-tradeoff
 // validation. Pod-warm measurement stays on tier 7b (runc). This tier
 // therefore asserts no §6.3 pod-warm SLO; each arm gates on a healthy run
 // (assertScenarioRan) and records the SDK-warm claim-to-ready P95.

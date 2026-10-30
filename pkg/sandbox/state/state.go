@@ -9,7 +9,7 @@
 // InvalidTransitionError otherwise. The fine session-lifecycle states
 // (running, suspended, resume_pending, resuming, awaiting_client_action, and
 // the session terminals completed/cancelled/expired) live in the Postgres
-// session model, not on the CRD (spec: §6.2, §6.37); they are not part of
+// session model, not on the CRD (spec: §6.2); they are not part of
 // this enum. The host-schedulable label check that distinguishes a recycle
 // re-warm (claimed → sdk_connecting) from a retirement (claimed → draining)
 // on a cordoned node is enforced separately by the WarmPoolController; this
@@ -41,6 +41,30 @@ const LabelState = "lenny.dev/state"
 // this coarse label. It is immutable for a pod's lifetime, stamped once at
 // pod creation.
 const LabelRuntime = "lenny.dev/runtime"
+
+// LabelRuntimeProcess is the immutable pod label in which the
+// WarmPoolController records the pod's runtime-process lifetime when it
+// creates the pod. spec: §5.2 (Runtime-process lifetime), §17.2 item 5.
+const LabelRuntimeProcess = "lenny.dev/runtime-process"
+
+// The runtime-process lifetime values. A `keep` pod keeps its runtime
+// process across the recycle boundary, and a `restart` pod ends it in each
+// whole-pod scrub. spec: §5.2 (Runtime-process lifetime).
+const (
+	RuntimeProcessKeep    = "keep"
+	RuntimeProcessRestart = "restart"
+)
+
+// RuntimeProcessLifetime maps a pool's recycle.runtimeProcess value to the
+// pod's lifetime: `restart` when the value is `restart`, otherwise `keep`,
+// which is also the lifetime of a pod whose pool carries no value. spec:
+// §5.2 (Runtime-process lifetime).
+func RuntimeProcessLifetime(poolValue string) string {
+	if poolValue == RuntimeProcessRestart {
+		return RuntimeProcessRestart
+	}
+	return RuntimeProcessKeep
+}
 
 // The coarse pod-state label values. spec: §6.2 — the lenny.dev/state pod
 // label carries only these three operational values for kubectl,
@@ -98,8 +122,8 @@ const (
 	// `reserved`). A pod that reaches reserved is always scrubbed and, on
 	// a preConnect pool, SDK-warm; it is excluded from idle inventory and
 	// rebinds to claimed when a same-tenant session arrives within the
-	// hold, or returns to idle when the hold TTL expires. spec: §6.2
-	// (reserved hold semantics).
+	// hold, or returns to idle when the hold TTL expires or the acquisition
+	// path ends the hold. spec: §6.2 (reserved hold semantics).
 	Reserved   State = "reserved"
 	Claimed    State = "claimed"
 	Failed     State = "failed"
@@ -123,7 +147,7 @@ func All() []State {
 // reclaimed and no edge other than the failed → draining reclamation leaves
 // them; terminated has no outgoing edge of any kind. The fine
 // session-terminal states (completed, cancelled, expired) live in the
-// Postgres session model and are not coarse CRD phases (spec: §6.2, §6.37).
+// Postgres session model and are not coarse CRD phases (spec: §6.2).
 func Terminal() []State {
 	return []State{Failed, Terminated}
 }
@@ -150,7 +174,7 @@ type Transition struct {
 // serving any number of concurrent sessions projects claimed, so additional
 // and completing sessions are the claimed → claimed self-edge rather than a
 // distinct slot phase. The fine session-lifecycle transitions live in the
-// Postgres session model and are not CRD edges (spec: §6.2, §6.37).
+// Postgres session model and are not CRD edges (spec: §6.2).
 func ValidTransitions() []Transition {
 	return []Transition{
 		// Warm fill (pod-warm path).

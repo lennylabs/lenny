@@ -27,6 +27,8 @@ This appendix catalogs the **reference runtimes** shipped by the Lenny project a
 
 All reference runtimes are **`type: agent`** ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)). No reference runtime is `type: mcp` — MCP servers are deployed via the MCP connector mechanism ([§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc)), not as reference runtimes.
 
+Each reference runtime is a sidecar runtime whose `command` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)) is `["/usr/local/bin/lenny-<name>-adapter"]`, where `<name>` is the runtime name.
+
 **Tenant access.** Reference runtimes are registered by `lenny-ctl install` (§17.6, §24.20) as platform-global records with no default tenant access grants. Operators grant access per tenant via `POST /v1/admin/runtimes/{name}/tenant-access` with body `{"tenantId": "<uuid>"}` ([§15.1](15_external-api-surface.md#151-rest-api)) after install. For `local` profile installations, `lenny up` auto-grants access to the `default` tenant for every reference runtime it installs and the credential-free `echo` runtime ([§15.4.4](15_external-api-surface.md#1544-sample-echo-runtime)) runs out of the box. The auto-grant supplies tenant access only: a session against a placeholder-pinned reference-runtime record requires a runnable image digest, an applied Runtime CRD instance, and a warm pool before it starts.
 
 ---
@@ -37,12 +39,12 @@ The four coding-agent runtimes (`claude-code`, `gemini-cli`, `codex`, `cursor-cl
 
 **Isolation profile.** The reference coding-agent runtimes set `isolationProfile: sandboxed` (gVisor) as their runtime-level default ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)), because agents execute untrusted shell commands on behalf of the user and gVisor provides host-kernel isolation. An operator can override the profile per pool. A `microvm` (Kata) pool provides stronger isolation, and `standard` (runc) is permitted under the generic [§5.3](05_runtime-registry-and-pool-model.md#53-isolation-profiles) `allowStandardIsolation` opt-in. An operator that overrides the default accepts the resulting isolation tradeoff.
 
-**Workspace layout.** Per [§6.4](06_warm-pod-model.md#64-pod-filesystem-layout), each session's workspace lives at `/workspace/current/`. Coding-agent runtimes add the following conventions:
+**Workspace layout.** Per [§6.4](06_warm-pod-model.md#64-pod-filesystem-layout), each session's workspace lives at `/workspace/slots/{sessionId}/current/`. Coding-agent runtimes add the following conventions:
 
-- `/workspace/current/` is the **repo root** (`pwd` inside the shell defaults here).
+- `/workspace/slots/{sessionId}/current/` is the **repo root** (`pwd` inside the shell defaults here).
 - `.git/` is materialized by the gateway when the client's `WorkspacePlan` includes a `sources[].type: gitClone` entry; otherwise the workspace is a plain directory.
-- `/workspace/shared/` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime), `sharedAssets`) is used only on pools with `sessionPolicy.maxConcurrentSessions > 1`; coding-agent runtimes default to `executionMode: session` with one session per pod and do not use it.
-- `/workspace/output/` is provided for agents to write artifacts that should survive session teardown and be recoverable via `GET /v1/sessions/{id}/artifacts` ([§15.1](15_external-api-surface.md#151-rest-api)). Agents MUST write intended outputs here; the rest of `/workspace/current/` is ephemeral.
+- `/workspace/shared/` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime), `sharedAssets`) is mounted and populated on every pod by the adapter at warm time; coding-agent runtimes do not use it.
+- `/workspace/output/` is provided for agents to write artifacts that should survive session teardown and be recoverable via `GET /v1/sessions/{id}/artifacts` ([§15.1](15_external-api-surface.md#151-rest-api)). Agents MUST write intended outputs here; the rest of `/workspace/slots/{sessionId}/current/` is ephemeral.
 
 **Pre-installed tools.** The reference image for every coding-agent runtime includes: `bash`, `sh`, `git`, `curl`, `jq`, `ripgrep`, `fd`, `python3`, `node` (current LTS), `go` (current stable), `rustc`/`cargo`, `make`. Language toolchains for less-common ecosystems (Ruby, Java, Swift) are not pre-installed; `setupCommands` or user-supplied `sources[]` install them per-session. The pre-installed set is chosen to cover the top languages without bloating the image beyond ~1.5 GB.
 
@@ -71,7 +73,7 @@ capabilities:
 integrationLevel: full
 ```
 
-All four coding-agent runtimes declare `integrationLevel: full` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)), matching their `Level: Full` row in the §26.1 catalog table. Full level is required because these runtimes rely on the lifecycle channel for clean interrupt, checkpoint/restore, and in-place credential rotation during long coding sessions.
+All four coding-agent runtimes declare `integrationLevel: full` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)), matching their `Level: Full` row in the §26.1 catalog table. Full level is required because these runtimes rely on the CH-RUNTIMEOPS for clean interrupt, checkpoint/restore, and in-place credential rotation during long coding sessions.
 
 **Common `limits`.**
 
@@ -92,26 +94,22 @@ credentialCapabilities:
 
 Individual runtimes restrict `proxyDialect` to only the dialects their underlying CLI actually uses; see each entry for the restricted set.
 
-**Reference `WorkspacePlan`.** The following minimal plan is used by the `lenny session new --attach` CLI ([§24.17](24_lenny-ctl-command-reference.md#2417-session-operations)) when the client passes `--workspace=<local-path>`:
+**Reference `WorkspacePlan`.** The following minimal plan is used by the `lenny session new --attach` CLI ([§24.17](24_lenny-ctl-command-reference.md#2417-session-operations)) when the client passes `--workspace=<local-path>`, as the `POST /v1/sessions/{id}/finalize` body ([§14.1](14_workspace-plan-schema.md#141-workspaceplan-schema-versioning) **Plan binding.**):
 
 ```json
 {
-  "pool": "<runtime-name>-default",
   "workspacePlan": {
     "$schema": "https://schemas.lenny.dev/workspaceplan/v1.json",
     "schemaVersion": 1,
     "sources": [
-      { "type": "uploadArchive", "pathPrefix": ".", "uploadRef": "<upload_id>", "format": "tar.gz" }
+      { "type": "uploadArchive", "pathPrefix": ".", "uploadRef": "<uploadRef>", "format": "tar.gz" }
     ],
     "setupCommands": []
-  },
-  "env": {},
-  "timeouts": { "maxSessionAgeSeconds": 14400, "maxIdleSeconds": 900 },
-  "runtimeOptions": { /* per-runtime options per §14 */ }
+  }
 }
 ```
 
-The `uploadArchive` entry is populated by the CLI: it tars the `--workspace` directory (respecting a `.lennyignore` file if present; otherwise `.gitignore`), uploads it to the gateway via the upload API ([§15.1](15_external-api-surface.md#151-rest-api)), and references the resulting upload ID.
+The `uploadArchive` entry is populated by the CLI: it tars the `--workspace` directory (respecting a `.lennyignore` file if present; otherwise `.gitignore`), uploads it with `POST /v1/sessions/{id}/upload-archive` ([§15.1](15_external-api-surface.md#151-rest-api)), and names the returned `uploadRef` in the `uploadArchive` source.
 
 **Credential-lease scopes (shared).** Every coding-agent runtime declares lease scopes for its LLM provider. The scope naming follows [§4.9](04_system-components.md#49-credential-leasing-service):
 
@@ -127,7 +125,7 @@ $ lenny session new --runtime=<name> --workspace=./my-repo --attach \
     "Refactor the auth module to use the new token-exchange flow"
 ```
 
-The CLI uploads the workspace, creates the session via the gateway REST API, then attaches via the MCP WebSocket and streams the runtime's output to stdout until completion or Ctrl-C. See [§24.17](24_lenny-ctl-command-reference.md#2417-session-operations) for full command reference.
+The CLI stages the workspace over the gateway REST API, then attaches via the MCP WebSocket and streams the runtime's output to stdout until completion or Ctrl-C. See [§24.17](24_lenny-ctl-command-reference.md#2417-session-operations) for full command reference.
 
 ---
 
@@ -146,6 +144,7 @@ Anthropic's Claude Code CLI running inside a Lenny-managed sandbox.
 name: claude-code
 image: ghcr.io/lennylabs/runtime-claude-code:1.0.0
 type: agent
+command: ["/usr/local/bin/lenny-claude-code-adapter"]
 integrationLevel: full
 capabilities:
   interaction: multi_turn
@@ -215,13 +214,11 @@ The runtime does **not** request or use `anthropic.api.write` (fine-tuning/file-
 **Bootstrap behavior.**
 
 1. Warm-pool controller pulls the image and starts the pod in INIT state.
-2. Adapter binary boots, registers with the gateway, and signals READY.
-3. On session claim: gateway materializes the `WorkspacePlan` into `/workspace/current/`; runs any `setupCommands`; emits `session.created`.
+2. The platform adapter boots and signals READY.
+3. At finalize and start ([§7.1](07_session-lifecycle.md#71-normal-flow)): gateway materializes the `WorkspacePlan` into `/workspace/slots/{sessionId}/current/`; runs any `setupCommands`; the runtime supervisor launches `lenny-claude-code-adapter`, the runtime's `command`, as [§4.7.10](04_system-components.md#4710-deployment-model) **Runtime supervisor.** **Launch.** states.
 4. On first `message`: adapter invokes `claude --no-tty --print --session-id=<id>` and pipes the message to stdin. All subsequent messages for the session reuse the same `claude` process (multi-turn).
-5. Tool calls emitted by `claude` are translated by the adapter into Lenny's `tool_call` message envelope ([§15.4.1](15_external-api-surface.md#1541-adapterbinary-protocol)); tool results are injected back via `tool_result`.
+5. Tool calls emitted by `claude` are translated by the adapter into Lenny's `tool_call` message envelope ([§28.5.3](28_communication-channels.md#2853-intra-pod)); tool results are injected back via `tool_result`.
 6. On session termination: adapter sends SIGTERM to `claude`; waits up to 5s for graceful shutdown; force-kills on timeout. Any files written under `/workspace/output/` are sealed as session artifacts.
-
-**Setup-time image entrypoint:** `/usr/local/bin/lenny-claude-code-adapter` (the adapter binary; NOT the `claude` CLI directly). The adapter owns lifecycle and delegates message handling to `claude`.
 
 **Example session invocation.**
 
@@ -230,7 +227,7 @@ $ lenny session new --runtime=claude-code --workspace=./my-repo --attach \
     "Find all uses of the deprecated AuthV1 API and migrate them to AuthV2."
 ```
 
-The CLI uploads the repo, creates the session, and streams Claude Code's output (tool calls, intermediate reasoning if `thinkingBudget > 0`, final text) to stdout until the agent produces a `response` or the user presses Ctrl-C.
+The CLI stages the repo over REST ([§24.17](24_lenny-ctl-command-reference.md#2417-session-operations)) and streams Claude Code's output (tool calls, intermediate reasoning if `thinkingBudget > 0`, final text) to stdout until the agent produces a `response` or the user presses Ctrl-C.
 
 **Delegation behavior.** Claude Code does not delegate by default. A derived runtime (e.g., `claude-code-orchestrator`) can enable delegation by attaching a `delegationPolicyRef` and exposing `lenny/delegate_task` in the tool set. The reference implementation does not configure this — see [§8](08_recursive-delegation.md) for the delegation model.
 
@@ -381,7 +378,7 @@ LangGraph (Python) agent runtime. Framework-specific: the runtime loads a LangGr
 
 **Workspace conventions:**
 
-- `/workspace/current/` contains the user's graph definition (uploaded as `sources[]`) plus a `requirements.txt` or `pyproject.toml`.
+- `/workspace/slots/{sessionId}/current/` contains the user's graph definition (uploaded as `sources[]`) plus a `requirements.txt` or `pyproject.toml`.
 - `setupCommands` typically runs `pip install -r requirements.txt` or `poetry install` before the graph module is importable. Allowlist covers both.
 - Checkpointing (when `runtimeOptions.checkpointBackend: postgres` or `redis`) uses Lenny's platform Postgres/Redis, scoped to the session's tenant. The runtime's adapter connects via short-lived credentials issued by the credential leasing service with scope `datastore.checkpoint.rw`.
 
@@ -411,7 +408,7 @@ Mastra (TypeScript) agent framework runtime.
 
 **Workspace conventions:**
 
-- `/workspace/current/` contains the user's agent definition (`src/agent.ts` or similar) plus `package.json`.
+- `/workspace/slots/{sessionId}/current/` contains the user's agent definition (`src/agent.ts` or similar) plus `package.json`.
 - `setupCommands` typically runs `npm ci` or `pnpm install`. Allowlist covers both.
 - The adapter is a Node process; it imports the user module via `ts-node`/`tsx` (bundled in the image) and wraps the Mastra agent's message handling.
 
@@ -442,7 +439,7 @@ Runtime that adapts the OpenAI Assistants API shape to Lenny's session lifecycle
 **Workspace conventions:**
 
 - Assistants API manages its own file store; file uploads from the client are forwarded to OpenAI via the Files API using the pool's provider identity. Sealed Lenny artifacts at session end include any files produced by the assistant.
-- No `/workspace/current/` usage — the runtime is stateless relative to local filesystem.
+- No `/workspace/slots/{sessionId}/current/` usage — the runtime is stateless relative to local filesystem.
 
 **Bootstrap:** on session start, adapter creates a `Thread` on OpenAI with the assistant ID from `runtimeOptions`; on each `message`, adapter appends to the thread and starts a `Run`; streams the run's deltas as Lenny `response` parts; maps Assistants tool calls (including `code_interpreter`, `file_search`) to Lenny `tool_call` envelopes.
 
@@ -471,7 +468,7 @@ CrewAI multi-agent framework runtime with delegation wired to Lenny's `lenny/del
 
 **Workspace conventions:**
 
-- `/workspace/current/` contains the user's crew definition (`crew.py` or similar) plus `requirements.txt`.
+- `/workspace/slots/{sessionId}/current/` contains the user's crew definition (`crew.py` or similar) plus `requirements.txt`.
 - `setupCommands` runs `pip install -r requirements.txt`.
 
 **Bootstrap:** adapter imports the module specified by `runtimeOptions.crewModule`; resolves the `Crew` object; on `message`, invokes `crew.kickoff(inputs={"message": ...})`; streams agent-internal thoughts and tool calls; maps any `Task.delegate` calls to `lenny/delegate_task` invocations that create Lenny sub-sessions under the parent's delegation budget.

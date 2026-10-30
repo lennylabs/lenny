@@ -149,7 +149,7 @@ func TestArtifactCatalogContract(t *testing.T) {
 	// soft-deletes rows but never runs the optional Tombstone step, so
 	// hard-prune MUST remove soft_deleted rows past their deadline
 	// directly. A 'tombstoned'-only predicate would leak every
-	// retention-swept row. spec: §12.5 lines 333, 341.
+	// retention-swept row. spec: §12.5.
 	t.Run("HardPruneExpired removes soft_deleted rows without an intervening Tombstone", func(t *testing.T) {
 		uri := "lenny-blob://acme/sess_sd/p_sd"
 		if err := cat.Insert(ctx, artifactcatalog.Record{
@@ -236,7 +236,7 @@ func TestArtifactCatalogContract(t *testing.T) {
 	// past their TTL (so the GC deletes exactly those bucket objects)
 	// then drops the rows by URI. ListPrunable must report the same set
 	// HardPruneExpired would remove, and skip future-deadline / live /
-	// legal-held rows. spec: §12.5 lines 320, 341.
+	// legal-held rows. spec: §12.5.
 	t.Run("ListPrunable + HardPruneURIs drive a targeted catalog-driven prune", func(t *testing.T) {
 		ripe := "lenny-blob://acme/sess_lp_ripe/p"
 		future := "lenny-blob://acme/sess_lp_future/p"
@@ -328,7 +328,7 @@ func TestArtifactCatalogContract(t *testing.T) {
 		}
 	})
 
-	// spec: §15.1 lines 864-865 — SetLegalHold records the hold's
+	// spec: §15.1 — SetLegalHold records the hold's
 	// provenance (setBy, setAt, note); ListLegalHeld returns the tenant's
 	// held rows with that provenance; clearing the hold blanks it.
 	t.Run("SetLegalHold provenance round-trips through ListLegalHeld", func(t *testing.T) {

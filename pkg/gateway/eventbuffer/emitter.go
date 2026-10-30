@@ -30,13 +30,12 @@ func WithClock(now func() time.Time) EmitterOption {
 }
 
 // WithNonceCheckpoint enables the §25.3 on-disk nonce checkpoint so the
-// eventKey nonce survives a restart. spec: §25.3 line 748.
+// eventKey nonce survives a restart. spec: §25.3.
 func WithNonceCheckpoint(spec events.NonceCheckpoint) EmitterOption {
 	return func(c *emitterConfig) { c.checkpoint = &spec }
 }
 
-// WithMetrics wires the §25.3 event-emission metrics. spec: §25.3
-// lines 705-710.
+// WithMetrics wires the §25.3 event-emission metrics. spec: §25.3.
 func WithMetrics(m *events.Metrics) EmitterOption {
 	return func(c *emitterConfig) { c.metrics = m }
 }

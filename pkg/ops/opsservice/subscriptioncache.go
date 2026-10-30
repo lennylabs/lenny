@@ -16,7 +16,7 @@ import (
 // subscription to the §25.5 delivery worker. The store persists only the
 // SHA-256 hash, so the plaintext is recovered from an in-memory reveal
 // cache populated when the secret is generated (create/rotate). spec:
-// §25.5 lines 2715-2733, 2747-2756.
+// §25.5.
 type SecretResolver interface {
 	// Secret returns the plaintext signing secret for subID, or ok=false
 	// when none is cached (the secret was generated on another replica, or
@@ -43,7 +43,7 @@ type SecretResolver interface {
 // immediate Invalidate so a change propagates within a few hundred
 // milliseconds rather than at the next periodic refresh.
 //
-// spec: §25.5 lines 2747-2756.
+// spec: §25.5.
 type SubscriptionCache struct {
 	store           eventsubscription.Store
 	refreshInterval time.Duration
@@ -68,7 +68,7 @@ type SubscriptionCacheConfig struct {
 	// Store is the subscription registry the cache reads from. Required.
 	Store eventsubscription.Store
 	// RefreshInterval is the cache refresh period. A zero value defaults
-	// to 60 seconds, the §25.5 line 2752 periodic-refresh cadence.
+	// to 60 seconds, the §25.5 periodic-refresh cadence.
 	RefreshInterval time.Duration
 	// Logger receives cache-refresh failure logs. A nil logger uses
 	// slog.Default.
@@ -78,7 +78,7 @@ type SubscriptionCacheConfig struct {
 	Secrets SecretResolver
 	// OnAvailabilityChange, when non-nil, is invoked whenever the cache's
 	// Postgres availability changes, including the cold-start
-	// determination. The §25.5 line 2753 cold-start contract uses it to
+	// determination. The §25.5 cold-start contract uses it to
 	// emit ops_health_status_changed with subscriptionsUnavailable when
 	// the cache cannot load on startup, and again when Postgres recovers.
 	OnAvailabilityChange func(available bool)
@@ -125,8 +125,7 @@ func (c *SubscriptionCache) Subscriptions() []WebhookSubscription {
 // Current implements webhookloop.GenerationChecker: it reports whether
 // subID is still an active subscription at the given generation. The
 // worker calls it immediately before each delivery so a subscription
-// deleted or updated since the tick snapshot is skipped. spec: §25.5
-// line 2751.
+// deleted or updated since the tick snapshot is skipped. spec: §25.5.
 func (c *SubscriptionCache) Current(subID string, generation int64) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -135,7 +134,7 @@ func (c *SubscriptionCache) Current(subID string, generation int64) bool {
 }
 
 // Available reports whether the most recent refresh succeeded. The
-// §25.5 line 2753 cold-start path reads false while Postgres is down.
+// §25.5 cold-start path reads false while Postgres is down.
 func (c *SubscriptionCache) Available() bool { return c.available.Load() }
 
 // Refresh forces a synchronous refresh against the Store. The error is
@@ -148,7 +147,7 @@ func (c *SubscriptionCache) Refresh(ctx context.Context) error {
 // Invalidate forces an immediate refresh. The §25.5
 // subscription_cache_invalidate RPC and the in-process CRUD hook both
 // call it so a subscription change reaches the delivery worker within a
-// few hundred milliseconds. spec: §25.5 lines 2751, 2756.
+// few hundred milliseconds. spec: §25.5.
 func (c *SubscriptionCache) Invalidate(ctx context.Context) error {
 	return c.refresh(ctx)
 }
@@ -226,7 +225,7 @@ func (c *SubscriptionCache) refresh(ctx context.Context) error {
 
 // setAvailable records the latest Postgres availability and fires
 // OnAvailabilityChange on the cold-start determination and on every
-// subsequent transition. spec: §25.5 line 2753.
+// subsequent transition. spec: §25.5.
 func (c *SubscriptionCache) setAvailable(available bool) {
 	prev := c.available.Swap(available)
 	first := !c.determined.Swap(true)

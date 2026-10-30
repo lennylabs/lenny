@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// spec: §14 lines 47-50 — envArg renders the client env map as a JSONB
+// spec: §14 — envArg renders the client env map as a JSONB
 // argument; nil/empty maps store SQL NULL. F-14.1.12.
 func TestEnvArg_spec_14(t *testing.T) {
 	if got := envArg(nil); got != nil {
@@ -25,7 +25,7 @@ func TestEnvArg_spec_14(t *testing.T) {
 	}
 }
 
-// spec: §14.1 line 311 — requestEnvelopeArg bundles the §14.1 envelope
+// spec: §14.1 — requestEnvelopeArg bundles the §14.1 envelope
 // fields; a session carrying none of them stores SQL NULL. F-14.1.14.
 func TestRequestEnvelopeArg_emptyIsNull_spec_14_1(t *testing.T) {
 	if got := requestEnvelopeArg(sessionstore.Session{}); got != nil {
@@ -69,7 +69,7 @@ func TestRequestEnvelopeRoundTrip_spec_14_1(t *testing.T) {
 	if string(out.RuntimeOptions) != string(in.RuntimeOptions) {
 		t.Errorf("RuntimeOptions: got %s, want %s", out.RuntimeOptions, in.RuntimeOptions)
 	}
-	// spec: §27.6 line 203 — the origin=playground label survives the bundle
+	// spec: §27.6 — the origin=playground label survives the bundle
 	// round trip so a replica that reloads the row keeps the audit label.
 	// F-27.6.8.
 	if out.Origin != in.Origin {
@@ -77,7 +77,7 @@ func TestRequestEnvelopeRoundTrip_spec_14_1(t *testing.T) {
 	}
 }
 
-// spec: §27.6 line 203 — a session carrying only the origin=playground label
+// spec: §27.6 — a session carrying only the origin=playground label
 // (no §14 envelope fields) still serializes the bundle so the label is durable.
 // F-27.6.8.
 func TestRequestEnvelopeOriginOnly_spec_27_6(t *testing.T) {
@@ -92,7 +92,7 @@ func TestRequestEnvelopeOriginOnly_spec_27_6(t *testing.T) {
 	}
 }
 
-// spec: §14 line 311 / §15.1 line 598 — the client labels ride the
+// spec: §14 / §15.1 — the client labels ride the
 // request-envelope bundle so the §15.1 list label filter has a durable
 // JSONB target without a dedicated column; they round-trip back onto the
 // Session's Labels field. F-15.1.15.
@@ -109,7 +109,7 @@ func TestRequestEnvelopeLabelsRoundTrip_spec_15_1_598(t *testing.T) {
 	}
 }
 
-// spec: §14 lines 108-150 — the §14 callback fields (callbackUrl, the
+// spec: §14 — the §14 callback fields (callbackUrl, the
 // DNS-pinned IP, the KMS-sealed secret, and undelivered events) ride the
 // request-envelope bundle and round-trip back onto the Session. A session
 // carrying only a callbackUrl still serializes the bundle. F-14.1.11.
@@ -140,7 +140,7 @@ func TestRequestEnvelopeCallbackRoundTrip_spec_14_108(t *testing.T) {
 	}
 }
 
-// spec: §15 built-in adapter single-shot compute model / §14.1 line 311 — a
+// spec: §15 built-in adapter single-shot compute model / §14.1 — a
 // session carrying only a ContinuationParentID (the OpenResponsesAdapter
 // previous_response_id lineage, no other §14.1 bundled field) still serializes
 // the bundle rather than being dropped by the all-empty nil guard, and the

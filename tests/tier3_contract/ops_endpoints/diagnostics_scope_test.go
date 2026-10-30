@@ -28,7 +28,7 @@ var diagnosticReadPaths = []struct {
 // tools:diagnostics:read is rejected with 403 SCOPE_FORBIDDEN before the
 // handler runs, and the response body lists the caller's active scopes.
 //
-// spec: §25.1 lines 89, 92-94 — "A request for a tool not permitted by
+// spec: §25.1 — "A request for a tool not permitted by
 // any scope returns 403 SCOPE_FORBIDDEN with a response body listing the
 // caller's active scopes"; "Scopes are enforced in three places: 1. Admin
 // API middleware ... The middleware checks scopes before routing to the
@@ -65,7 +65,7 @@ func TestDiagnosticsRESTScopeForbidden(t *testing.T) {
 			if details["requiredScope"] != "tools:diagnostics:read" {
 				t.Errorf("details.requiredScope = %v, want tools:diagnostics:read", details["requiredScope"])
 			}
-			// §25.1 line 89: the body lists the caller's active scopes.
+			// §25.1: the body lists the caller's active scopes.
 			if details["activeScope"] != narrowedScope {
 				t.Errorf("details.activeScope = %v, want the caller's claim %q", details["activeScope"], narrowedScope)
 			}
@@ -78,7 +78,7 @@ func TestDiagnosticsRESTScopeForbidden(t *testing.T) {
 // Admin API scope gate and reaches the §25.6 diagnostic handler, so the
 // gate narrows the surface without blocking an in-scope caller.
 //
-// spec: §25.1 lines 90, 92-94 — an in-scope claim defers to the role
+// spec: §25.1 — an in-scope claim defers to the role
 // ceiling; §25.6 (diagnostic endpoints).
 // diagnosis: The scope gate wrongly rejected a token that carries the
 // endpoint's x-lenny-scope. A gate that forbids an in-scope caller breaks

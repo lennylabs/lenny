@@ -18,13 +18,13 @@ import (
 // *gatewaymetrics.Metrics satisfies it (the same methods the §11.1
 // HTTP middleware uses for its global/per-user/per-tenant scopes), so
 // rejections and counter failures land on one metric vocabulary across
-// both enforcement points. spec: §11.1 line 7.
+// both enforcement points. spec: §11.1.
 type AdmissionRateLimitMetrics interface {
 	IncRateLimitRejected(scope string)
 	IncRateLimitCounterFailure()
 }
 
-// requireAdmissionRateLimit enforces the §11.1 line 7 per-runtime and
+// requireAdmissionRateLimit enforces the §11.1 per-runtime and
 // per-pool requests-per-minute admission limits at session creation —
 // the point where the target runtime (and, when the pool model is
 // wired, the resolved pool) are known. The §11.1 HTTP middleware
@@ -38,7 +38,7 @@ type AdmissionRateLimitMetrics interface {
 // the create may proceed; when it returns false it has already written
 // the 429 RATE_LIMITED response.
 //
-// spec: §11.1 line 7. F-11.1.2.
+// spec: §11.1. F-11.1.2.
 func (s *Server) requireAdmissionRateLimit(w http.ResponseWriter, r *http.Request, tenantID, runtimeRef string, requested isolation.Profile, pinnedPool string) bool {
 	if s.admissionRL == nil || runtimeRef == "" {
 		return true
@@ -61,7 +61,7 @@ func (s *Server) requireAdmissionRateLimit(w http.ResponseWriter, r *http.Reques
 
 // checkAdmissionScope increments one §11.1 scope counter and either
 // admits, rejects with 429 RATE_LIMITED, or fails open on a counter
-// error. spec: §11.1 line 7 (fail-open). F-11.1.2.
+// error. spec: §11.1. F-11.1.2.
 func (s *Server) checkAdmissionScope(w http.ResponseWriter, r *http.Request, scope, key string, limit int, now time.Time) bool {
 	count, err := s.admissionRL.Incr(r.Context(), key, now)
 	if err != nil {
@@ -101,7 +101,7 @@ func (s *Server) checkAdmissionScope(w http.ResponseWriter, r *http.Request, sco
 // ("", false) when no pool resolver is wired (the Postgres-only posture)
 // or no pool matches the pair — the per-pool scope is then skipped, the
 // same fallback resolveIsolationLevel uses for the §7.1 isolation level.
-// spec: §11.1 line 7; §7.1 / §14.1 (pool selector). F-11.1.2 / F-CS2.
+// spec: §11.1; §7.1 / §14.1 (pool selector). F-11.1.2 / F-CS2.
 func (s *Server) resolvePoolName(ctx context.Context, runtimeRef string, requested isolation.Profile, pinnedPool string) (string, bool) {
 	if s.podBinder == nil || s.podBinder.Client == nil {
 		return "", false

@@ -40,9 +40,9 @@ func (s *Server) mcpHandshakeWasSeen() bool {
 // completed the §4.7 lifecycle handshake is Full (the §5.1 "runtime source
 // of truth"); a runtime that connected only to the platform MCP server is
 // Standard; a runtime that did neither is Basic (stdin/stdout binary
-// protocol only). When the adapter offers a lifecycle channel it waits up
+// protocol only). When the adapter offers a CH-RUNTIMEOPS it waits up
 // to wait for the handshake so a Full runtime that is slow to dial is not
-// misclassified; an adapter with no lifecycle channel cannot host a Full
+// misclassified; an adapter with no CH-RUNTIMEOPS cannot host a Full
 // runtime, so it classifies from the MCP signal without waiting. F-5.1.11.
 func (s *Server) observedIntegrationLevel(ctx context.Context, wait time.Duration) string {
 	if s.Lifecycle != nil {

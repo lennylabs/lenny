@@ -16,7 +16,7 @@ tests:
       - hasDocuments:
           count: 17
 
-  # spec: §25.4 line 1123; §17.2 line 31 — the operability-vs-agent
+  # spec: §25.4; §17.2 — the operability-vs-agent
   # boundary names lenny-ops-deny-all-ingress explicitly; render it by
   # name so runbooks and the §13.2 selector audit can assert its
   # presence. F-17.2.16.
@@ -137,7 +137,7 @@ tests:
           value: TCP
 
   - it: pairs the Ingress controller namespaceSelector with a controllerPodLabel podSelector
-    # spec: §13.2 lines 266-292. F-13.2.8. The from: clause pairs the
+    # spec: §13.2. F-13.2.8. The from: clause pairs the
     # namespaceSelector with a podSelector matching the controllerPodLabel
     # so only Ingress controller pods reach the gateway TLS listener;
     # sidecars and debug containers in the same namespace are denied.
@@ -150,7 +150,7 @@ tests:
           value: ingress-nginx
 
   - it: honors a custom ingress.controllerPodLabel override
-    # spec: §13.2 lines 266-292. F-13.2.8. Custom Ingress controller
+    # spec: §13.2. F-13.2.8. Custom Ingress controller
     # chart (e.g., traefik) overrides the default app.kubernetes.io/name
     # ingress-nginx label.
     set:
@@ -209,7 +209,7 @@ tests:
       value: allow-gateway-ingress
     asserts:
       # §13.2 NET-051/NET-070: lenny-ops matched by namespaceSelector +
-      # podSelector app: lenny-ops (the §13.2 line 201 selector exception).
+      # podSelector app: lenny-ops (the §13.2.3 selector exception).
       - equal:
           path: spec.ingress[3].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
           value: lenny-system
@@ -335,7 +335,7 @@ tests:
       - notExists:
           path: $[?(@.metadata.name == "allow-deployment-config-sync-egress")]
 
-  # spec: §4.6.2 / §13.2 line 218 — the PoolScalingController runs as its own
+  # spec: §4.6.2 / §13.2.3 — the PoolScalingController runs as its own
   # Deployment labelled lenny.dev/component: pool-scaling-controller, so the
   # allow-controller-egress policy (which selects lenny.dev/component:
   # controller) does not cover it. This policy admits the §13.2 PSC egress:
@@ -402,7 +402,7 @@ tests:
       path: metadata.name
       value: allow-ops
     asserts:
-      # §13.2 line 201: lenny-ops uses app: lenny-ops, not the component label.
+      # §13.2.3: lenny-ops uses app: lenny-ops, not the component label.
       - equal:
           path: spec.podSelector.matchLabels.app
           value: lenny-ops
@@ -420,7 +420,7 @@ tests:
     asserts:
       # §25.4: lenny-ops is leader-elected and needs kube-apiserver egress.
       # The kubeApiServerCIDR default matches kubeadm/k3s/kind cluster
-      # service CIDR (§17.6 lines 573-575). F-17.6.18.
+      # service CIDR (§17.6). F-17.6.18.
       - equal:
           path: spec.egress[0].to[0].ipBlock.cidr
           value: "10.96.0.0/12"
@@ -457,6 +457,42 @@ tests:
           path: spec.egress[1].ports
           content:
             port: 8080
+            protocol: TCP
+
+  # spec: §4.3; §13.2 — the gateway reverse-proxies /v1/oauth/* to the
+  # Token Service's HTTP listener, so the gateway egress rule to the
+  # token-service pods admits the HTTP port alongside the gRPC port,
+  # mirroring the ingress side of allow-token-service.
+  - it: allows gateway egress to the token-service gRPC and HTTP ports
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-egress
+    asserts:
+      - equal:
+          path: spec.egress[1].to[0].podSelector.matchLabels["lenny.dev/component"]
+          value: token-service
+      - contains:
+          path: spec.egress[1].ports
+          content:
+            port: 50052
+            protocol: TCP
+      - contains:
+          path: spec.egress[1].ports
+          content:
+            port: 8081
+            protocol: TCP
+
+  - it: follows a custom tokenService.httpPort on the gateway egress rule
+    set:
+      tokenService.httpPort: 9181
+    documentSelector:
+      path: metadata.name
+      value: allow-gateway-egress
+    asserts:
+      - contains:
+          path: spec.egress[1].ports
+          content:
+            port: 9181
             protocol: TCP
 
   - it: allows ops egress to CoreDNS for name resolution
@@ -595,3 +631,63 @@ tests:
       - equal:
           path: spec.egress[0].to[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
           value: tenant-x-filters
+
+  # spec: §13.2.4 (PgBouncer row), §25.4 (The lenny-ops Service) — lenny-ops
+  # reads its revocation set through PgBouncer, so allow-pgbouncer admits
+  # app: lenny-ops from the release namespace on 5432. lenny-ops carries the
+  # §13.2.3 selector exception label, so the peer pairs it with the
+  # release-namespace selector.
+  - it: admits lenny-ops from the release namespace to PgBouncer on 5432
+    documentSelector:
+      path: metadata.name
+      value: allow-pgbouncer
+    asserts:
+      - contains:
+          path: spec.ingress[0].from
+          content:
+            namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: lenny-system
+            podSelector:
+              matchLabels:
+                app: lenny-ops
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - port: 5432
+              protocol: TCP
+
+  # spec: §13.2 (PgBouncer row), §17.9.5 — with postgres.deploy the
+  # CloudNativePG pods are in-cluster, and a CNI need not match a pod
+  # address against the postgres.cidr ipBlock, so allow-pgbouncer names
+  # them by component label on 5432. F-17.9.25.
+  - it: admits PgBouncer egress to the CloudNativePG pods under postgres.deploy
+    set:
+      postgres.deploy: true
+    documentSelector:
+      path: metadata.name
+      value: allow-pgbouncer
+    asserts:
+      - contains:
+          path: spec.egress[0].to
+          content:
+            podSelector:
+              matchLabels:
+                lenny.dev/component: postgres
+      - equal:
+          path: spec.egress[0].ports
+          value:
+            - port: 5432
+              protocol: TCP
+
+  - it: names no CloudNativePG peer when postgres.deploy is false
+    documentSelector:
+      path: metadata.name
+      value: allow-pgbouncer
+    asserts:
+      - notContains:
+          path: spec.egress[0].to
+          content:
+            podSelector:
+              matchLabels:
+                lenny.dev/component: postgres

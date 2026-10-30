@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package tlsprobe implements the §10.3 line 359 gateway startup TLS
+// Package tlsprobe implements the §10.3 gateway startup TLS
 // probe. Before a gateway replica is marked ready it verifies that a
 // TLS handshake to Redis and PgBouncer succeeds and that a plaintext
 // connection to the same endpoint is refused. A misconfigured backend

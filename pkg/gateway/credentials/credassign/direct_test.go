@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 )
 
-// spec: §4.9 lines 1246-1298 — direct-mode credential assignment: the
+// spec: §4.9 — direct-mode credential assignment: the
 // Token Service materializes a per-provider credential bundle and the
 // gateway delivers it to the pod through the adapter credential file.
 
@@ -34,7 +34,7 @@ func TestAssignProtoDirectAnthropicPromotesAPIKey(t *testing.T) {
 	svc.RegisterPool(directPool("claude-direct", credential.ProviderAnthropicDirect,
 		healthyCred("key-1", "sk-ant-real")))
 
-	proto, err := svc.AssignProto("claude-direct", "s_1", "", "")
+	proto, err := svc.AssignProto("claude-direct", "s_1", "", "", 0)
 	if err != nil {
 		t.Fatalf("AssignProto: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestAssignProtoDirectBedrockDeliversMaterializedBundle(t *testing.T) {
 			},
 		}))
 
-	proto, err := svc.AssignProto("bedrock-prod", "s_1", "", "")
+	proto, err := svc.AssignProto("bedrock-prod", "s_1", "", "", 0)
 	if err != nil {
 		t.Fatalf("AssignProto: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestAssignProtoDirectBedrockDeliversMaterializedBundle(t *testing.T) {
 }
 
 func TestAssignDirectIncompleteBundleFailsMaterialization(t *testing.T) {
-	// spec: §4.9 line 1298 — an incomplete materializedConfig fails the
+	// spec: §4.9 — an incomplete materializedConfig fails the
 	// assign with a materialization error.
 	svc, _, _ := newService(t)
 	svc.RegisterPool(directPool("bedrock-broken", credential.ProviderAWSBedrock,
@@ -92,7 +92,7 @@ func TestAssignDirectIncompleteBundleFailsMaterialization(t *testing.T) {
 			Materialized: credential.MaterializedConfig{"region": "us-east-1"}, // missing STS triple + expiresAt
 		}))
 
-	_, err := svc.Assign("bedrock-broken", "s_1", "", "")
+	_, err := svc.Assign("bedrock-broken", "s_1", "", "", 0)
 	if !errors.Is(err, credential.ErrCredentialMaterialization) {
 		t.Fatalf("Assign error = %v, want a materialization error", err)
 	}

@@ -1,4 +1,4 @@
--- Revert the §4.2 line 173 tenant scoping of connectors.
+-- Revert the §4.2 tenant scoping of connectors.
 
 DROP POLICY IF EXISTS lenny_tenant_isolation ON connectors;
 ALTER TABLE connectors DISABLE ROW LEVEL SECURITY;

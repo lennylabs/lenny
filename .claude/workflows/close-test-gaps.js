@@ -10,7 +10,7 @@ export const meta = {
 }
 
 // args: { scope: string, batchSize?: number, severityOrder?: string[], maxAttemptsPerFinding?: number, branch?: string }
-// scope forms: "theme:T-STD" | "section:11.7" | "section:25" (whole §25) | "all"
+// scope forms: "theme:T-STD" | "section:N.M" | "section:N" (whole §N) | "all"
 // args sometimes arrives JSON-encoded as a string rather than parsed into an
 // object; parse defensively so a stringified call site still works.
 const parsedArgs = typeof args === 'string' ? JSON.parse(args) : (args || {})
@@ -75,7 +75,7 @@ phase('Select')
 const selectPrompt = [
   'ROLE. You are selecting the next batch of work from TEST-GAPS.md, the spec-vs-test coverage audit at the repo root.',
   '',
-  'SCOPE for this run: ' + scope + '. Interpret it as: `theme:T-XXX` means the `## Theme —` section whose anchor is `t-theme-...` matching that prefix (grep TEST-GAPS.md for the T-XXX findings\' parent theme heading); `section:X.Y` means the `## §X.Y` section (or, for a bare section number like `section:25`, every `## §25.*` heading); `all` means the whole file.',
+  'SCOPE for this run: ' + scope + '. Interpret it as: `theme:T-XXX` means the `## Theme —` section whose anchor is `t-theme-...` matching that prefix (grep TEST-GAPS.md for the T-XXX findings\' parent theme heading); `section:X.Y` means the `## §X.Y` section (or, for a bare section number like `section:N`, every `## §N.*` heading); `all` means the whole file.',
   '',
   explicitBranch
     ? ('1. Check out the branch this section accumulates on: run `git rev-parse --verify --quiet ' + explicitBranch + '` to test whether it exists. If it does, `git checkout ' + explicitBranch + '` — this is a continuation batch adding to the section\'s existing work. If it does not, create it off the current branch: `git checkout -b ' + explicitBranch + '` — this is the section\'s first batch. Either way report it as branch. (One branch per section: every batch for this section lands on this one branch and the integrator merges it; do not create a per-batch branch.)')

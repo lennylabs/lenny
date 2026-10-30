@@ -74,7 +74,7 @@ func (s *Store) Create(ctx context.Context, p credentialpoolstore.CredentialPool
 	if err != nil {
 		return err
 	}
-	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	// spec: §15.1 — every admin resource version starts at 1.
 	if p.Version == 0 {
 		p.Version = 1
 	}
@@ -151,7 +151,7 @@ func (s *Store) Update(ctx context.Context, tenantID, name string, mutate func(*
 			return err
 		}
 		p.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
-		// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+		// spec: §15.1 — bump the optimistic-concurrency version on
 		// every successful Update so the next If-Match compares against it.
 		p.Version++
 		creds, err := credentialsJSON(p.Credentials)
@@ -255,7 +255,7 @@ func (s *Store) SoftDelete(ctx context.Context, tenantID, name string, at time.T
 // per-session leases are released through the LeaseStore in §12.8). It
 // returns (0, nil) so the §12.1 contract holds at the interface level.
 //
-// spec: §12.1 line 5.
+// spec: §12.1.
 func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, errors.New("credentialpoolstore/pgstore: DeleteByUser requires non-empty tenant_id and user_id")
@@ -267,7 +267,7 @@ func (s *Store) DeleteByUser(_ context.Context, tenantID, userID string) (int, e
 // Hard-deletes every credential pool row owned by tenantID — the §12.8
 // Phase 4 tenant-teardown path for the CredentialPoolStore role.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("credentialpoolstore/pgstore: DeleteByTenant requires a concrete tenant_id")
@@ -296,7 +296,7 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 // it is a read, so the §12.3 cross_tenant_read audit (for
 // user-triggered cross-tenant reads) does not apply.
 //
-// spec: §4.9 lines 1668-1673 — a newly started gateway replica rebuilds
+// spec: §4.9 — a newly started gateway replica rebuilds
 // its deny list from the stores' revoked entries.
 func (s *Store) RevokedCredentials(ctx context.Context) ([]credentialpoolstore.RevokedCredential, error) {
 	var out []credentialpoolstore.RevokedCredential

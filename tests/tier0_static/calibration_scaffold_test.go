@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// spec: §4.1 lines 86-94 and 136-144 — the Phase 2 calibration harness
+// spec: §4.1 — the Phase 2 calibration harness
 // for the gateway capacity budget and the four subsystem extraction
 // thresholds. Both methodology blocks require empirically validated
 // values to replace the provisional defaults before any Tier 2

@@ -2,7 +2,7 @@
 
 package driftservice
 
-// §25.10 line 3871 drift audit event types. The HTTP layer and the
+// §25.10 drift audit event types. The HTTP layer and the
 // reconcile orchestrator emit these through the AuditSink; the catalog
 // in pkg/observability/audit declares the canonical constants and the
 // deps wiring maps these strings onto them. F-25.10.2.
@@ -15,7 +15,7 @@ const (
 )
 
 // AuditEvent is one §25.10 drift audit event. Type is one of the
-// EventXxx constants; Details carries the §25.10 line 3871 per-event
+// EventXxx constants; Details carries the §25.10 per-event
 // payload (e.g. previous_written_at / byteSize for snapshot_refreshed).
 type AuditEvent struct {
 	Type    string
@@ -37,7 +37,7 @@ type noopAuditSink struct{}
 
 func (noopAuditSink) Emit(AuditEvent) {}
 
-// Metrics receives the §25.10 line 3858-3859 drift metric increments.
+// Metrics receives the §25.10 drift metric increments.
 // The deps wiring backs it with the two Prometheus counters; tests use
 // a recording double. F-25.10.3.
 type Metrics interface {

@@ -33,7 +33,7 @@ func baseRow() Row {
 
 // TestHashIncludesID_spec_11_7_361 — the row UUID is part of the hash
 // input, so two rows identical except for id hash differently. Before
-// F-11.7.4 the id was omitted. spec: §11.7 item 3 line 361.
+// F-11.7.4 the id was omitted. spec: §11.7 item 3.
 func TestHashIncludesID_spec_11_7_361(t *testing.T) {
 	t.Parallel()
 	a := baseRow()
@@ -46,7 +46,7 @@ func TestHashIncludesID_spec_11_7_361(t *testing.T) {
 
 // TestHashIncludesEventSchemaVersion_spec_11_7_365 — a payload shape
 // change for the same event_type, modeled as a schema-version bump,
-// produces a distinct hash. spec: §11.7 item 3 line 365.
+// produces a distinct hash. spec: §11.7 item 3.
 func TestHashIncludesEventSchemaVersion_spec_11_7_365(t *testing.T) {
 	t.Parallel()
 	a := baseRow()
@@ -60,7 +60,7 @@ func TestHashIncludesEventSchemaVersion_spec_11_7_365(t *testing.T) {
 // TestSchemaVersionEmptyDefaultsToV1InHash_spec_11_7_365 — an unset
 // EventSchemaVersion hashes identically to the explicit default "v1",
 // matching the audit_log column default so an in-memory row and a
-// Postgres-scanned row agree. spec: §11.7 item 3 line 365.
+// Postgres-scanned row agree. spec: §11.7 item 3.
 func TestSchemaVersionEmptyDefaultsToV1InHash_spec_11_7_365(t *testing.T) {
 	t.Parallel()
 	a := baseRow()
@@ -76,7 +76,7 @@ func TestSchemaVersionEmptyDefaultsToV1InHash_spec_11_7_365(t *testing.T) {
 // canonicalizes the payload, so a key reordering (exactly what a Postgres
 // jsonb round trip produces) does not change the hash. This is what makes
 // the durable chain verify clean after the payload column is read back.
-// spec: §11.7 item 3 line 364.
+// spec: §11.7 item 3.
 func TestHashStableUnderPayloadKeyReorder_spec_11_7_364(t *testing.T) {
 	t.Parallel()
 	a := baseRow()
@@ -90,7 +90,7 @@ func TestHashStableUnderPayloadKeyReorder_spec_11_7_364(t *testing.T) {
 // TestHashStableUnderPayloadNumberForm_spec_11_7_364 — the same numeric
 // value written with a trailing zero or exponent canonicalizes to one
 // form, so a jsonb numeric round trip does not break the chain.
-// spec: §11.7 item 3 line 364.
+// spec: §11.7 item 3.
 func TestHashStableUnderPayloadNumberForm_spec_11_7_364(t *testing.T) {
 	t.Parallel()
 	a := baseRow()
@@ -117,7 +117,7 @@ func TestHashChangesWhenPayloadValueChanges(t *testing.T) {
 
 // TestLinkHashIsPredecessorContentHash_spec_11_7_361 — the prev_hash a
 // successor carries is the SHA-256 of the predecessor's canonical tuple,
-// which equals the predecessor's content hash. spec: §11.7 item 3 line 361.
+// which equals the predecessor's content hash. spec: §11.7 item 3.
 func TestLinkHashIsPredecessorContentHash_spec_11_7_361(t *testing.T) {
 	t.Parallel()
 	prev := baseRow()
@@ -154,7 +154,7 @@ func TestCanonicalPayloadSortsKeys(t *testing.T) {
 // TestAppendStampsIDAndSchemaVersion_spec_11_7_361 — the in-memory chain
 // stamps a unique id and the default schema version on every appended
 // row, so the spec-tuple hash inputs are populated end to end.
-// spec: §11.7 item 3 lines 361-365.
+// spec: §11.7 item 3.
 func TestAppendStampsIDAndSchemaVersion_spec_11_7_361(t *testing.T) {
 	t.Parallel()
 	c := NewChain("acme")

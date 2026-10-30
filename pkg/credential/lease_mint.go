@@ -151,7 +151,7 @@ func MintLease(req MintRequest) (Lease, error) {
 		}
 	}
 	if req.DeliveryMode == DeliveryDirect {
-		// §4.9 line 1298: the Token Service validates every Required:yes
+		// §4.9: the Token Service validates every Required:yes
 		// materializedConfig field before issuing a direct-mode lease; a
 		// missing field fails issuance with CREDENTIAL_MATERIALIZATION_ERROR.
 		if err := ValidateMaterializedConfig(req.Provider, req.Direct); err != nil {
@@ -175,7 +175,7 @@ func MintLease(req MintRequest) (Lease, error) {
 // vaultTokenExpiryTime)); the same clamp upholds the "must equal or
 // precede lease expiresAt" invariant the STS-style providers share.
 //
-// spec: §4.9 lines 1154, 1271.
+// spec: §4.9.
 func clampDirectExpiry(lease *Lease) {
 	credExpiry, ok := MaterializedExpiry(lease.Direct)
 	if !ok || !credExpiry.Before(lease.ExpiresAt) {

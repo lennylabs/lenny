@@ -18,12 +18,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
-// spec: §25.9 Audit Log Query API — query filters (line 3659), time
-// window + AUDIT_QUERY_TOO_BROAD (lines 3707-3708), per-row
-// chainIntegrity + auditMetadata (lines 3653, 3670-3679), error codes
-// (lines 3732-3735), audit.query_executed /
-// audit.chain_integrity_broken_detected emission (line 3750), and the
-// summary endpoint (line 3661).
+// spec: §25.9 Audit Log Query API — Endpoints (query filters and the
+// summary endpoint), Query Limits and Scatter-Gather (time window +
+// AUDIT_QUERY_TOO_BROAD), Implementation (per-row chainIntegrity +
+// auditMetadata), Error Codes, and Audit Events (audit.query_executed /
+// audit.chain_integrity_broken_detected emission).
 
 var auditTestClock = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -142,7 +141,7 @@ func TestListAuditEventsFilterByEventType_spec_25_9_3659(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 986 — the DSAR template's category-(b) invocation
+// spec: §12.8 — the DSAR template's category-(b) invocation
 // passes a comma-separated eventType list
 // (admin.impersonation_started,admin.impersonation_ended). A row matches
 // when its event type is any list member.
@@ -333,7 +332,7 @@ func TestListAuditEventsChainIntegrityReport_spec_25_9_3653(t *testing.T) {
 	}
 }
 
-// TestListAuditEventsGapWindow_spec_25_9_3669 pins the §25.9 line 3669
+// TestListAuditEventsGapWindow_spec_25_9_3669 pins the §25.9
 // benign nextval-rollback gap window: a sequence-number jump whose
 // prev_hash links across the gap is reported with reason
 // "nextval_rollback", the value the reconciled §25.9 and the
@@ -365,20 +364,19 @@ func TestListAuditEventsGapWindow_spec_25_9_3669(t *testing.T) {
 // TestListAuditEventsGapWindowNonLinking_spec_25_9_3668 pins that a
 // sequence-number gap whose prev_hash does NOT link across it is not
 // listed as a suspected-gap window at all, and is never labeled the
-// outage reason "postgres_unreachable". §25.9 line 3669 reserves
+// outage reason "postgres_unreachable". §25.9 reserves
 // "postgres_unreachable" for a gap an ops_postgres_outage_log window
 // covers; this handler does not operate that subsystem and cannot compute
-// an outage window, so it never emits that reason. §25.9 line 3668 makes
+// an outage window, so it never emits that reason. §25.9 makes
 // a non-linking-prev_hash gap the tamper case rather than an outage, so it
 // is excluded from the benign nextval-rollback window list entirely.
 // Against the pre-fix gapWindows this non-linking gap was emitted as an
 // outage window with reason "postgres_unreachable", mislabeling a tamper
-// as a Postgres outage — the §25.9 line 3668 condition the spec says is
+// as a Postgres outage — the §25.9 condition the spec says is
 // tampering, not an outage — so this assertion fails against the pre-fix
 // code.
 //
-// spec: §25.9 line 3668 (a non-linking prev_hash gap is tampering, not an
-// outage), §25.9 line 3669 (postgres_unreachable is outage-log-covered).
+// spec: §25.9, §25.9.
 // F-11.2.10.
 func TestListAuditEventsGapWindowNonLinking_spec_25_9_3668(t *testing.T) {
 	ts1 := auditTestClock.Add(-2 * time.Hour)
@@ -473,6 +471,140 @@ func TestAuditQueryEmitsChainIntegrityBroken_spec_25_9_3750(t *testing.T) {
 	}
 }
 
+// TestAuditQueryDeletedRowIsBrokenAcrossPages pins BUILD-GAPS F-25.9.21
+// on the §25.9 list: a committed interior row removed from the chain
+// leaves its successor with a prev_hash that does not link across the
+// sequence gap, so the successor is broken rather than gap_suspected. The
+// verdict is computed over the full chain, so it holds when the gap
+// falls on a page boundary. The page carrying the broken row tallies it
+// in chainIntegrityReport.broken and emits
+// audit.chain_integrity_broken_detected; the page before it does
+// neither. A non-linking gap is not a benign window, so auditMetadata
+// lists none.
+//
+// spec: 25.9 (Audit Log Query API, Chain gap detection), 11.7 (Audit
+// Logging)
+func TestAuditQueryDeletedRowIsBrokenAcrossPages(t *testing.T) {
+	ts := auditTestClock.Add(-time.Hour)
+	chain := craftChain(
+		"platform",
+		[3]any{"admin.tenant.created", `{"n":1}`, ts},
+		[3]any{"admin.tenant.created", `{"n":2}`, ts},
+		[3]any{"admin.tenant.created", `{"n":3}`, ts},
+		[3]any{"admin.tenant.created", `{"n":4}`, ts},
+		[3]any{"admin.tenant.created", `{"n":5}`, ts},
+	)
+	// Remove sequence 3; page 1 (limit 2) is rows 1 and 2, page 2 starts
+	// at row 4, whose prev_hash links to the absent row 3.
+	rows := append(append([]audit.Row{}, chain[:2]...), chain[3:]...)
+	since := "since=" + ts.Add(-time.Hour).Format(time.RFC3339)
+
+	sink1 := &recordingSink{}
+	_, page1 := listAudit(t, newCraftedRouter(&craftedAuditLog{rows: rows}, sink1), since+"&limit=2")
+	if page1.ChainIntegrityReport == nil || page1.ChainIntegrityReport.Broken != 0 ||
+		page1.ChainIntegrityReport.Verified != 2 {
+		t.Fatalf("page 1 report = %+v, want 2 verified and 0 broken", page1.ChainIntegrityReport)
+	}
+	if page1.NextCursor == "" {
+		t.Fatalf("page 1 carries no nextCursor over a 4-row chain with limit 2")
+	}
+	if sink1.has("audit.chain_integrity_broken_detected") {
+		t.Errorf("page 1 emitted the broken-chain event although it lists no broken row")
+	}
+
+	sink2 := &recordingSink{}
+	_, page2 := listAudit(t, newCraftedRouter(&craftedAuditLog{rows: rows}, sink2),
+		since+"&limit=2&cursor="+page1.NextCursor)
+	if page2.ChainIntegrityReport == nil || page2.ChainIntegrityReport.Broken != 1 ||
+		page2.ChainIntegrityReport.GapSuspected != 0 {
+		t.Fatalf("page 2 report = %+v, want broken 1 and gap_suspected 0 (F-25.9.21)", page2.ChainIntegrityReport)
+	}
+	if !sink2.has("audit.chain_integrity_broken_detected") {
+		t.Errorf("page 2 did not emit audit.chain_integrity_broken_detected; events=%+v", sink2.events)
+	}
+	if page2.AuditMetadata != nil && len(page2.AuditMetadata.SuspectedGaps) != 0 {
+		t.Errorf("non-linking gap listed as a benign window: %+v", page2.AuditMetadata.SuspectedGaps)
+	}
+}
+
+// receiptedAuditLog is a crafted audit backend that also serves §12.8
+// RedactionReceipts, so the list handler treats its redacted rows as lawful.
+type receiptedAuditLog struct {
+	craftedAuditLog
+	receipts map[uint64]audit.RedactionReceipt
+}
+
+func (r *receiptedAuditLog) Receipts(context.Context, string) (map[uint64]audit.RedactionReceipt, error) {
+	return r.receipts, nil
+}
+
+// redactedChain seals n platform rows, redacts row redactSeq in place with a
+// receipt binding its preserved pre-redaction hash, and returns the rows and
+// the receipts.
+func redactedChain(n int, redactSeq uint64) ([]audit.Row, map[uint64]audit.RedactionReceipt) {
+	ts := auditTestClock.Add(-time.Hour)
+	specs := make([][3]any, n)
+	for i := range specs {
+		specs[i] = [3]any{"admin.tenant.created", `{"n":` + strconv.Itoa(i+1) + `}`, ts}
+	}
+	rows := craftChain("platform", specs...)
+	idx := redactSeq - 1
+	rows[idx].Payload = json.RawMessage(`{"redacted":true}`)
+	rows[idx].Redacted = true
+	return rows, map[uint64]audit.RedactionReceipt{
+		redactSeq: {RedactedSeq: redactSeq, OriginalHash: rows[idx].Hash, Signature: "kms-sig"},
+	}
+}
+
+// TestAuditQueryDeletedRowAfterRedactionIsBroken pins BUILD-GAPS F-25.9.22
+// on the §25.9 list. A receipted GDPR redaction keeps the redacted row's
+// pre-redaction hash, which its successor's prev_hash carries, so the link
+// check runs through the redaction. Deleting the row directly after a
+// redacted row leaves the next row non-linking: it is tallied broken, the
+// broken-chain event fires, and the gap is not listed as a benign
+// nextval_rollback window. A nextval rollback directly after a redaction
+// still links and is listed as one.
+//
+// spec: 25.9 (Audit Log Query API, Chain gap detection), 11.7 (Audit
+// Logging), 12.8 (Compliance Interfaces, OCSF dead-letter PII redaction)
+func TestAuditQueryDeletedRowAfterRedactionIsBroken(t *testing.T) {
+	since := "since=" + auditTestClock.Add(-2*time.Hour).Format(time.RFC3339)
+	t.Run("deleted row after the redaction", func(t *testing.T) {
+		rows, receipts := redactedChain(4, 2)
+		rows = append(append([]audit.Row{}, rows[:2]...), rows[3])
+		sink := &recordingSink{}
+		_, env := listAudit(t, newCraftedRouter(&receiptedAuditLog{craftedAuditLog{rows: rows}, receipts}, sink), since)
+		rep := env.ChainIntegrityReport
+		if rep == nil || rep.Broken != 1 || rep.RedactedGDPR != 1 || rep.GapSuspected != 0 || rep.Verified != 1 {
+			t.Fatalf("report = %+v, want verified 1, redacted_gdpr 1, broken 1, gap_suspected 0", rep)
+		}
+		if !sink.has("audit.chain_integrity_broken_detected") {
+			t.Errorf("no audit.chain_integrity_broken_detected; events=%+v", sink.events)
+		}
+		if env.AuditMetadata != nil && len(env.AuditMetadata.SuspectedGaps) != 0 {
+			t.Errorf("deletion after a redaction listed as a benign window: %+v", env.AuditMetadata.SuspectedGaps)
+		}
+	})
+	t.Run("nextval rollback after the redaction", func(t *testing.T) {
+		rows, receipts := redactedChain(2, 2)
+		rows = append(rows, craftRow(4, "platform", "admin.tenant.created", `{"n":4}`,
+			auditTestClock.Add(-time.Hour), audit.LinkHash(rows[1])))
+		sink := &recordingSink{}
+		_, env := listAudit(t, newCraftedRouter(&receiptedAuditLog{craftedAuditLog{rows: rows}, receipts}, sink), since)
+		rep := env.ChainIntegrityReport
+		if rep == nil || rep.Broken != 0 || rep.RedactedGDPR != 1 || rep.GapSuspected != 1 {
+			t.Fatalf("report = %+v, want redacted_gdpr 1, gap_suspected 1, broken 0", rep)
+		}
+		if env.AuditMetadata == nil || len(env.AuditMetadata.SuspectedGaps) != 1 ||
+			env.AuditMetadata.SuspectedGaps[0].Reason != "nextval_rollback" {
+			t.Fatalf("auditMetadata = %+v, want one nextval_rollback window", env.AuditMetadata)
+		}
+		if sink.has("audit.chain_integrity_broken_detected") {
+			t.Errorf("an intact-link rollback emitted the broken-chain event")
+		}
+	})
+}
+
 func TestAuditSummaryGroupByEventType_spec_25_9_3661(t *testing.T) {
 	ts := auditTestClock.Add(-time.Hour)
 	backend := &craftedAuditLog{rows: craftChain(
@@ -507,8 +639,7 @@ func TestAuditSummaryGroupByEventType_spec_25_9_3661(t *testing.T) {
 // `audit.` prefix mapping), so a second list call does not 500 when it
 // encounters the row the first call wrote.
 //
-// spec: §25.9 line 3750; §4.4 line 232 (every audit row is OCSF-egress
-// translatable).
+// spec: §25.9; §4.4.
 func TestAuditQueryExecutedRowReQueriesCleanly(t *testing.T) {
 	router, _ := newAuditQueryRouter(t)
 	body, _ := json.Marshal(admin.TenantPayload{ID: "acme"})
@@ -555,10 +686,7 @@ func TestAuditSummaryInvalidGroupBy_spec_25_9_3661(t *testing.T) {
 // reconstruct a multi-subsystem remediation. The row here is a
 // backup.created payload exactly as pkg/ops/backup emits it.
 //
-// spec: §25.9 line 3707 ("audit events tagged with the same operation ID
-// are grouped in queries with ?operationId="); §25.1 line 121 (every
-// audit event produced during a request includes the operation id,
-// "enabling post-incident analysis of multi-step remediations").
+// spec: §25.9; §25.1.
 func TestListAuditEventsCorrelatesLennyOpsOperationID_spec_25_9_3707(t *testing.T) {
 	// The correlation key the lenny-ops emitters write (camelCase
 	// operationId) does not match the key the §25.9 filter reads (snake

@@ -12,9 +12,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 )
 
-// spec: §12.9 line 1048 — "Tier mismatches (e.g., writing T4 data to a
+// spec: §12.9 — "Tier mismatches (e.g., writing T4 data to a
 // store not configured for envelope encryption) are rejected at write
-// time with a CLASSIFICATION_CONTROL_VIOLATION error"; §15.1 line 1078 —
+// time with a CLASSIFICATION_CONTROL_VIOLATION error"; §15.1 —
 // the details.reason value `tier_store_mismatch`.
 
 // t4Guard returns a guard that classifies the given tenant ids as T4

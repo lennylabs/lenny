@@ -1,4 +1,4 @@
--- §7.3 line 408 step (d) — Recreate same absolute `cwd` path. The
+-- §7.3 step (d) — Recreate same absolute `cwd` path. The
 -- adapter reports its WorkspaceRoot on the §15.5 NegotiateVersion
 -- handshake; the gateway captures it on the first Bind and persists it
 -- on the session row so a subsequent Resume can pass it back to the

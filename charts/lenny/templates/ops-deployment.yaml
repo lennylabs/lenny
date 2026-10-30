@@ -7,7 +7,7 @@ delivery worker, the scheduled-backup runner). lenny-ops is mandatory
 in every installation (§17.8.5); the chart provides no flag to disable
 it.
 
-Pod label exception (§13.2 line 201): lenny-ops pods carry app:
+Pod label exception (§13.2.3): lenny-ops pods carry app:
 lenny-ops rather than the lenny.dev/component selector the rest of the
 control plane uses, because lenny-ops is a separate operability plane.
 The §13.2 NET-051 NetworkPolicies and podmonitor.yaml select it by this
@@ -21,8 +21,8 @@ its connection settings from the LENNY_POSTGRES_DSN and LENNY_REDIS_URL
 environment variables (cmd/lenny-ops/flags.go).
 
 §25.5 read-side wiring: lenny-ops reads the platform-scoped
-ops:events:stream Redis stream (§25.5 lines 2558, 2602; the StoreRouter
-PlatformRedis() route at §25.4 line 1512) to serve the SSE, polling, and
+ops:events:stream Redis stream (§25.5; the StoreRouter
+PlatformRedis() route at §25.4) to serve the SSE, polling, and
 webhook read surface, and falls back to the gateway event buffer over the
 lenny-gateway-pods headless Service when Redis is unreachable (§25.5
 gateway-buffer fallback). This Deployment therefore wires Redis from the
@@ -32,19 +32,23 @@ lenny-datastore-conn Secret). Without Redis configured the read side runs
 on lenny-ops's own per-replica in-memory buffer (§25.5 cold-start), and
 the Redis-down gateway-buffer fallback is unreachable, so a stock render
 that leaves redis.url empty stays in that degraded single-process mode.
-Postgres (postgres.dsn) is not wired here, so audit, backup, and upgrade
-state degrade gracefully when Postgres is absent (§25.4).
+Postgres is wired from postgres.dsn when it is set (LENNY_POSTGRES_DSN,
+sourced from the lenny-datastore-conn Secret), and lenny-ops reads the
+§25.4 revocation set for Lenny-issued tokens from it. When postgres.dsn
+is unset, audit, backup, and upgrade state degrade gracefully (§25.4),
+and the revocation set is never read, so lenny-ops refuses every
+Lenny-issued token.
 */ -}}
-{{- /* §17.8.5 line 1323: "Attempts to disable lenny-ops via Helm values
+{{- /* §17.8.5: "Attempts to disable lenny-ops via Helm values
    are rejected at chart validation." The chart has no ops.enabled key;
    an operator who supplies one (e.g., ops.enabled: false) gets a hard
    render failure rather than silent acceptance. The lenny-ops surface
    is mandatory in every Lenny installation regardless of tier. */ -}}
 {{- if hasKey (.Values.ops | default dict) "enabled" -}}
 {{- if not .Values.ops.enabled -}}
-{{- fail "§17.8.5 line 1323: lenny-ops is mandatory in every Lenny installation; ops.enabled: false is rejected. Remove the override or omit the ops.enabled key." -}}
+{{- fail "§17.8.5: lenny-ops is mandatory in every Lenny installation; ops.enabled: false is rejected. Remove the override or omit the ops.enabled key." -}}
 {{- else -}}
-{{- fail "§17.8.5 line 1323: ops.enabled is not a supported Helm value (lenny-ops is mandatory); remove the ops.enabled key from your values." -}}
+{{- fail "§17.8.5: ops.enabled is not a supported Helm value (lenny-ops is mandatory); remove the ops.enabled key from your values." -}}
 {{- end -}}
 {{- end -}}
 {{- /* §25.5 read-side Redis topology. lenny-ops consumes the same
@@ -63,8 +67,24 @@ state degrade gracefully when Postgres is absent (§25.4).
 {{- $hasRedis := and (eq $redisProvider "external") $redis $redis.url (ne $redis.url "") -}}
 {{- $hasRedisCluster := and (eq $redisProvider "cluster") $redisCluster (hasKey $redisCluster "addrs") (ne ($redisCluster.addrs | toString) "") -}}
 {{- $useSentinel := eq $redisProvider "sentinel" -}}
-{{- $hasRedisPassword := and $useSentinel (ne ($redis.password | default "" | toString) "") -}}
+{{- $hasRedisPassword := and (or $useSentinel $hasRedisCluster) (ne ($redis.password | default "" | toString) "") -}}
 {{- $hasSentinelPassword := and $useSentinel (ne ($redis.sentinelPassword | default "" | toString) "") -}}
+{{- /* §12.4 Cache/Pub-Sub concern: the gateway publishes token.revoked
+   there, so lenny-ops subscribes on the same instance (§25.4 revocation
+   set rule 2). §25.4: Postgres backs the revocation set's 30 s read. */ -}}
+{{- $concerns := (and $redis (hasKey $redis "concerns")) | ternary $redis.concerns dict -}}
+{{- $hasCacheRedis := and $concerns (hasKey $concerns "cachePubSubUrl") (ne ($concerns.cachePubSubUrl | toString) "") -}}
+{{- $pg := .Values.postgres -}}
+{{- $hasPg := and $pg $pg.dsn (ne $pg.dsn "") -}}
+{{- /* §17.4 "Dev mode guard rails": lenny-ops refuses the dev embedded-OIDC
+   trust hook without --dev-mode and in production mode (§17.9.1
+   environment: prod), so it renders only when global.devMode is true and
+   environment is not prod. The comparison is exact, as the binary's is. */ -}}
+{{- $devTrust := and .Values.security.oidc.bearerTrustKeySecret .Values.global.devMode (ne .Values.environment "prod") -}}
+{{- /* §17.4: under kms.provider=local lenny-ops mounts the master key Secret
+   the gateway and the Token Service share, so its key set holds the same
+   ES256 public key they sign with. */ -}}
+{{- $localKMS := include "lenny.kmsLocal" . -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -72,6 +92,12 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "lenny.labels" . | nindent 4 }}
+  {{- /* §10.2 "Signing topology": binds the ServiceAccount to the provider
+     identity that holds the KMS GetPublicKey permission. */}}
+  {{- with .Values.ops.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -155,7 +181,7 @@ spec:
             - --gateway-url=http://lenny-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.internalPort }}
             - --gateway-internal-tls=false
             {{- end }}
-            # §25.4 lines 1740-1974 GatewayClient routing: the per-replica
+            # §25.4 GatewayClient routing: the per-replica
             # fan-out resolves the headless Service; the breaker + timeout
             # bound the fallback path. F-25.4.8.
             - --gateway-headless-service={{ .Values.ops.gateway.headlessService }}
@@ -164,17 +190,31 @@ spec:
             - --gateway-fanout-timeout={{ .Values.ops.gateway.fanOutTimeoutSeconds }}s
             - --gateway-fanout-breaker-failure-threshold={{ .Values.ops.gateway.fanOutCircuitBreaker.failureThreshold }}
             - --gateway-fanout-breaker-reset-after={{ .Values.ops.gateway.fanOutCircuitBreaker.resetAfter }}s
-            # §25.4 lines 1956-1971 service-account token lifecycle.
+            # §25.4 service-account token lifecycle.
             - --gateway-sa-token-file=/var/run/secrets/lenny/gateway/token
             - --gateway-token-refresh-before-expiry={{ .Values.security.oidc.tokenRefreshBeforeExpirySeconds }}s
             - --gateway-token-min-ttl={{ .Values.security.oidc.minTokenTTLSeconds }}s
             {{- if .Values.ops.tls.caBundleConfigMap }}
-            # §25.4 line 1743 ops.tls.caBundleConfigMap — augment the
+            # §25.4 ops.tls.caBundleConfigMap — augment the
             # system trust store for the admin-API TLS link. F-25.4.19.
             - --gateway-ca-bundle-file=/etc/lenny/gateway-ca/ca.crt
             {{- end }}
-            - --production={{ .Values.ops.production }}
+            # §25.4: tier2 and tier3 require Idempotency-Key on the
+            # non-convergent endpoints; the value also surfaces in
+            # GET /v1/admin/me.platform.tier.
+            - --platform-tier={{ .Values.global.deploymentTier | default "tier1" }}
+            # §10.2 "Verifier key set and rotation": lenny-ops loads its key
+            # set from the same KMS provider, aliases, and environment the
+            # gateway and the Token Service sign with.
+            {{- include "lenny.kmsArgs" . | nindent 12 }}
             {{- if .Values.global.devMode }}
+            # §17.4 "Dev mode guard rails": LENNY_DEV_MODE is the single
+            # gate for every dev-mode relaxation, so lenny-ops reads the
+            # same global.devMode value the gateway's --dev-mode does. It
+            # admits the dev trust hook, the X-Lenny-* identity headers,
+            # and the dev roles; without it lenny-ops authenticates every
+            # request, in production mode (environment: prod) or not.
+            - --dev-mode
             # §12.4 requires Redis AUTH and TLS; a dev install backed by a
             # plaintext no-password Redis would otherwise fail the lenny-ops
             # startup invariant (cmd/lenny-ops/deps_setup.go). Dev mode
@@ -182,14 +222,14 @@ spec:
             - --redis-allow-insecure
             {{- end }}
             {{- if .Values.ops.prometheus.url }}
-            # §25.16 line 5124: when ops.prometheus.url is set, lenny-ops
+            # §25.16: when ops.prometheus.url is set, lenny-ops
             # uses the supplied BYO Prometheus HTTP API for §25.4
             # cross-replica health aggregation and §25.13 alert
             # evaluation. Empty (the Tier 1 default) leaves lenny-ops in
             # per-replica fan-out fallback.
             - --prometheus-url={{ .Values.ops.prometheus.url }}
             {{- end }}
-            # §25.10 line 3809 / line 3824 — drift detection knobs.
+            # §25.10 — drift detection knobs.
             # F-25.10.7, F-25.10.9.
             - --drift-snapshot-stale-warning-days={{ .Values.ops.drift.snapshotStaleWarningDays }}
             - --drift-running-state-cache-ttl-seconds={{ .Values.ops.drift.runningStateCacheTTLSeconds }}
@@ -204,37 +244,41 @@ spec:
             {{- if .Values.global.maintenanceMode }}
             - --maintenance-mode=true
             {{- end }}
-            # §25.4 line 903 / §17.8.4 ops.selfHealth.checkIntervalSeconds —
+            # §25.4 / §17.8.4 ops.selfHealth.checkIntervalSeconds —
             # self-monitor cadence (10s at Tier 2/3, 30s acceptable at
             # Tier 1). Tier-preset overridden. F-17.8.1.
             - --self-health-interval={{ .Values.ops.selfHealth.checkIntervalSeconds }}s
-            # §25.5 line 2598 / §17.8.4 ops.events.streamMaxLen — MAXLEN of
+            # §25.5 / §17.8.4 ops.events.streamMaxLen — MAXLEN of
             # the platform-scoped ops:events:stream (10k Tier 1, 50k Tier 2,
             # 100k Tier 3). Tier-preset overridden. F-17.8.1.
             - --events-stream-max-len={{ .Values.ops.events.streamMaxLen }}
-            # §25.5 lines 2649-2663 ops.webhooks — webhook delivery-tracking
+            # §25.5 ops.webhooks — webhook delivery-tracking
             # mode plus the retention windows the 03:45 UTC purge cron
             # enforces. F-25.5.15.
             - --webhook-tracking-mode={{ .Values.ops.webhooks.deliveryTrackingMode }}
             - --webhook-delivery-retention-days={{ .Values.ops.webhooks.deliveryRetentionDays }}
             - --webhook-failures-retention-days={{ .Values.ops.webhooks.failuresOnlyRetentionDays }}
-            # §25.4 lines 2396, 2414 ops.escalation — the escalation
+            # §25.4 ops.escalation — the escalation
             # durability posture (reject vs buffer when no durable tier is
             # reachable) and the leader-only reconciliation flush rate. F-25.4.7.
             - --escalation-require-durable={{ .Values.ops.escalation.requireDurable }}
             - --escalation-reconciliation-writes-per-second={{ .Values.ops.escalation.reconciliationWritesPerSecond }}
-            # §25.4 lines 1562-1564 / §17 security.oidc.issuerUrl — OIDC
+            # §25.4 / §17 security.oidc.issuerUrl — OIDC
             # authentication + role gate. F-25.4.1, F-25.4.20.
             {{- if .Values.security.oidc.issuerUrl }}
             - --oidc-issuer-url={{ .Values.security.oidc.issuerUrl }}
             {{- end }}
-            {{- if .Values.security.oidc.bearerTrustKeySecret }}
+            {{- if $devTrust }}
+            # §17.4 dev embedded-OIDC trust hook; lenny-ops refuses it
+            # without --dev-mode and in production mode (environment: prod),
+            # so it renders only when global.devMode is true and environment
+            # is not prod.
             - --bearer-trust-hmac-key-file=/etc/lenny/oidc/key
             {{- end }}
-            # §25.4 line 2001 per-service-account rate limiting. F-25.4.5.
+            # §25.4 per-service-account rate limiting. F-25.4.5.
             - --rate-limit-rps={{ .Values.ops.rateLimiting.requestsPerSecond }}
             - --rate-limit-burst={{ .Values.ops.rateLimiting.burst }}
-            # §25.4 lines 2206-2212 in-memory (Tier-3) lock policy. The
+            # §25.4 in-memory (Tier-3) lock policy. The
             # single-replica-only default counts ready replicas via the
             # lenny-ops Service Endpoints to reject uncoordinated acquires in
             # multi-replica deployments. F-25.4.26.
@@ -269,7 +313,7 @@ spec:
             - --webhook-domain-allowlist={{ join "," . }}
             {{- end }}
             - --ops-service-name=lenny-ops
-            # §25.4 line 1339 / §25.13 lines 4833-4834 — the leader-only
+            # §25.4 / §25.13 — the leader-only
             # bundleRules reconciler re-stamps the bundled-rules observability
             # gauges (lenny_alerting_rules_bundled{format},
             # lenny_alerting_rule_overrides) on the lenny-ops /metrics surface
@@ -321,20 +365,38 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            # §25.4 line 2208: the single-replica-only lock policy reads the
+            # §25.4: the single-replica-only lock policy reads the
             # lenny-ops Service Endpoints in this pod's own namespace to count
             # ready replicas.
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
-            {{- /* §25.5 lines 2558-2602 — the platform-scoped
+            {{- /* §25.5 — the platform-scoped
                    ops:events:stream Redis connection the read side (SSE,
                    polling, webhook worker) consumes, and the durable tier
                    for §25.4 escalations and remediation locks. External
                    (url) mode reads the connection URL from the
                    lenny-datastore-conn Secret; the plaintext dev Redis is
                    acknowledged via --redis-allow-insecure above. */}}
+            {{- if $hasPg }}
+            # §25.4: Postgres backs audit, backup, and upgrade state and
+            # the revocation set's 30 s read of revoked issued_tokens rows.
+            - name: LENNY_POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: postgres-dsn
+            {{- end }}
+            {{- if $hasCacheRedis }}
+            # §12.4 / §25.4: the Cache/Pub-Sub Redis the gateway publishes
+            # token.revoked on.
+            - name: LENNY_REDIS_CACHE_PUBSUB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-cache-pubsub-url
+            {{- end }}
             {{- if $hasRedis }}
             - name: LENNY_REDIS_URL
               valueFrom:
@@ -342,7 +404,7 @@ spec:
                   name: lenny-datastore-conn
                   key: redis-url
             {{- end }}
-            {{- /* §12.4 lines 260-264 — Redis Cluster seed nodes (plain
+            {{- /* §12.4 — Redis Cluster seed nodes (plain
                    env; addresses are not secret). lenny-ops reaches the
                    §25.5 ops:events:stream through the cluster client on
                    this topology. */}}
@@ -353,13 +415,27 @@ spec:
             {{- /* §17.9.3 / §12.4 — Redis Sentinel topology. The sentinel
                    addresses and master name are not secret (plain env);
                    the data AUTH password and the optional sentinel AUTH
-                   password come from the datastore Secret. TLS is requested
-                   on the Sentinel path so §12.4 AUTH+TLS holds. */}}
+                   password come from the datastore Secret. TLS and the data
+                   password render in the block that follows. */}}
             {{- if $useSentinel }}
             - name: LENNY_REDIS_SENTINEL_ADDRS
               value: {{ join "," $redis.sentinels | quote }}
             - name: LENNY_REDIS_SENTINEL_MASTER
               value: {{ $redis.sentinelMaster | quote }}
+            {{- if $hasSentinelPassword }}
+            - name: LENNY_REDIS_SENTINEL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-sentinel-password
+            {{- end }}
+            {{- end }}
+            {{- /* §12.4 "Security" — AUTH and TLS are required on every
+                   Redis instance. The Sentinel and Cluster topologies carry
+                   no URL, so TLS is requested explicitly and the data AUTH
+                   password is read from the datastore Secret. The external
+                   topology carries both in its rediss:// URL. F-12.4.37. */}}
+            {{- if or $useSentinel $hasRedisCluster }}
             - name: LENNY_REDIS_TLS
               value: "true"
             {{- if $hasRedisPassword }}
@@ -369,55 +445,49 @@ spec:
                   name: lenny-datastore-conn
                   key: redis-password
             {{- end }}
-            {{- if $hasSentinelPassword }}
-            - name: LENNY_REDIS_SENTINEL_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: lenny-datastore-conn
-                  key: redis-sentinel-password
-            {{- end }}
             {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.ops.httpPort }}
-            # spec: §16.9 line 723 — named metrics containerPort so the
+            # spec: §16.9 — named metrics containerPort so the
             # podmonitor.yaml `port: metrics` selector matches the
             # lenny-ops pod. lenny-ops serves /metrics on the same HTTP
             # listener as the §25 REST surface; the named entry surfaces
             # the metrics endpoint on the rendered pod spec. F-16.9.10.
             - name: metrics
               containerPort: {{ .Values.ops.httpPort }}
-          # §25.4 lines 1033-1057 — the permissive /healthz covers
-          # startup and liveness so a transient Postgres or Kubernetes
-          # API blip does not restart an otherwise-healthy pod; the
-          # startup probe's 30×2s budget covers Postgres connection
-          # establishment.
+          # §25.4 — startup and liveness probe the permissive /healthz,
+          # which restarts a pod only when neither Postgres nor the
+          # Kubernetes API is reachable; the startup probe's 30×2s budget
+          # covers Postgres connection establishment. Every probe sets
+          # timeoutSeconds 3, above the 2s bound on each dependency probe,
+          # so kubelet's 1s default does not fail a probe before /healthz
+          # answers.
           startupProbe:
             httpGet:
               path: /healthz
               port: http
+            timeoutSeconds: 3
             failureThreshold: 30
             periodSeconds: 2
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
+            timeoutSeconds: 3
             initialDelaySeconds: 15
             periodSeconds: 20
-          # §25.4 line 1055 — readiness uses the strict gate so traffic
-          # is not routed to a replica that cannot reach both Postgres
-          # and the Kubernetes API. Strict readiness is gated on
-          # ops.production: the stock degraded single-process render
-          # (LENNY_POSTGRES_DSN unset) would never reach Ready under the
-          # strict gate, so it falls back to the graceful /readyz report.
+          # §25.4 — readiness uses the permissive /healthz check in every
+          # environment, which passes when Postgres or the Kubernetes API
+          # is reachable, so a Postgres outage does not remove every
+          # replica from the Service and the §25.15 degraded mode stays
+          # reachable. The strict ?strict=true form and the /readyz report
+          # are diagnostic checks no probe uses. F-25.4.37.
           readinessProbe:
             httpGet:
-              {{- if .Values.ops.production }}
-              path: /healthz?strict=true
-              {{- else }}
-              path: /readyz
-              {{- end }}
+              path: /healthz
               port: http
+            timeoutSeconds: 3
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 3
@@ -428,13 +498,13 @@ spec:
               drop:
                 - ALL
           volumeMounts:
-            # §25.4 line 1027 — writable scratch for the read-only root
+            # §25.4 — writable scratch for the read-only root
             # filesystem posture. lenny-ops writes no temp files today,
             # but §25.4 calls the seam out explicitly so any future temp
             # write does not fail against the read-only root.
             - name: tmp
               mountPath: /tmp
-            # §25.4 lines 1956-1971 — the projected ServiceAccount token
+            # §25.4 — the projected ServiceAccount token
             # the GatewayClient presents to the gateway admin API. The
             # kubelet rotates it in place; FileTokenLoader re-reads it on
             # each pre-emptive refresh. F-25.4.8.
@@ -442,17 +512,22 @@ spec:
               mountPath: /var/run/secrets/lenny/gateway
               readOnly: true
             {{- if .Values.ops.tls.caBundleConfigMap }}
-            # §25.4 line 1743 ops.tls.caBundleConfigMap — operator CA for
+            # §25.4 ops.tls.caBundleConfigMap — operator CA for
             # the admin-API TLS link. F-25.4.19.
             - name: gateway-ca-bundle
               mountPath: /etc/lenny/gateway-ca
               readOnly: true
             {{- end }}
-            {{- if .Values.security.oidc.bearerTrustKeySecret }}
-            # §25.4 line 1562: the shared HMAC bearer-verify key. F-25.4.20.
+            {{- if $devTrust }}
+            # §17.4: the dev embedded-OIDC trust key. F-25.4.20.
             - name: oidc-bearer-trust-key
               mountPath: /etc/lenny/oidc
               readOnly: true
+            {{- end }}
+            {{- if $localKMS }}
+            # §17.4: the local provider's master key, read through
+            # --kms-master-key-file.
+            {{- include "lenny.kmsMasterKeyVolumeMount" . | nindent 12 }}
             {{- end }}
             {{- if .Values.platform.releaseChannel.publisher.enabled }}
             - name: release-channel-signing-key
@@ -469,7 +544,7 @@ spec:
             {{- end }}
           resources:
             {{- toYaml .Values.ops.resources | nindent 12 }}
-      {{- /* §25.4 line 1028 — spread replicas across nodes once
+      {{- /* §25.4 — spread replicas across nodes once
          lenny-ops scales past one replica, so a single node loss never
          takes the whole operability plane down. */ -}}
       {{- if ge (int .Values.ops.replicas) 2 }}
@@ -482,10 +557,10 @@ spec:
               app: lenny-ops
       {{- end }}
       volumes:
-        # §25.4 line 1027 — writable /tmp scratch under read-only root.
+        # §25.4 — writable /tmp scratch under read-only root.
         - name: tmp
           emptyDir: {}
-        # §25.4 lines 1956-1971 — projected SA token for the GatewayClient.
+        # §25.4 — projected SA token for the GatewayClient.
         - name: gateway-sa-token
           projected:
             sources:
@@ -501,13 +576,18 @@ spec:
               - key: ca.crt
                 path: ca.crt
         {{- end }}
-        {{- if .Values.security.oidc.bearerTrustKeySecret }}
+        {{- if $devTrust }}
         - name: oidc-bearer-trust-key
           secret:
             secretName: {{ .Values.security.oidc.bearerTrustKeySecret }}
             items:
               - key: key
                 path: key
+        {{- end }}
+        {{- if $localKMS }}
+        # §17.4: the local provider's master key Secret, shared with
+        # lenny-gateway and lenny-token-service.
+        {{- include "lenny.kmsMasterKeyVolume" . | nindent 8 }}
         {{- end }}
         {{- if .Values.platform.releaseChannel.publisher.enabled }}
         - name: release-channel-signing-key
@@ -529,7 +609,7 @@ spec:
 # scrape it.
 #
 # sessionAffinity: ClientIP with a 3h clientIP timeout pins each SSE
-# client to the replica that buffered its events (§25.4 line 1063 / §25.16
+# client to the replica that buffered its events (§25.4 / §25.16
 # Production block). During a dual gateway+Redis outage the per-replica
 # event buffer is the only durability layer; a reconnecting watchdog must
 # return to the same lenny-ops replica or it silently misses the locally

@@ -26,7 +26,7 @@ This template renders only when both:
   - admissionPolicies.kyverno.podSecurity.enabled is true (the default
     when the Kyverno block is enabled).
 
-failurePolicy: Fail (spec §17.2 line 88) — a Kyverno outage blocks agent
+failurePolicy: Fail (spec §17.2) — a Kyverno outage blocks agent
 pod admission rather than admitting a pod with an unverified PSS posture.
 validationFailureAction: Enforce rejects a non-compliant pod at admission.
 

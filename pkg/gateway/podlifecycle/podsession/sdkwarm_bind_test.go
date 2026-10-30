@@ -5,6 +5,8 @@ package podsession_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
@@ -41,7 +43,7 @@ func inlinePlan(path string) *adapterv1.WorkspacePlan {
 	}
 }
 
-// spec: §6.1 lines 34-40, §4.3, §4.4 (proposal) — RequiresDemotion is the pure
+// spec: §6.1, §7.1 — RequiresDemotion is the pure
 // §6.1 SDK-warm demotion decision the finalize-time Prepare makes and the
 // launch-only /start path recomputes from the persisted plan, so the gateway
 // does not persist the boolean. It must answer true only for a preConnect
@@ -91,18 +93,19 @@ func TestRequiresDemotionDecision_spec_6_1(t *testing.T) {
 	}
 }
 
-// spec: §6.1 lines 30-34 — a preConnect pod whose plan matches no blocking
+// spec: §6.1 — a preConnect pod whose plan matches no blocking
 // path stays SDK-warm: the binder points the pre-connected SDK at the
 // workspace (ConfigureWorkspace) and does not StartSession from cold.
 func TestBindSDKWarmConfiguresWhenNoBlockingPath_spec_6_1(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeSDKWarmRuntime{}
 	srv := adapter.New("adapter-test")
 	root := t.TempDir()
-	srv.WorkspaceRoot = root
+	srv.WorkspaceBase = root
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -115,8 +118,11 @@ func TestBindSDKWarmConfiguresWhenNoBlockingPath_spec_6_1(t *testing.T) {
 	}
 	defer res.Adapter.Close()
 
-	if len(rt.configured) != 1 || rt.configured[0] != root {
-		t.Errorf("ConfigureWorkspace cwd = %v, want [%q]", rt.configured, root)
+	// The gateway points the pre-connected SDK at the session's own §6.4
+	// cwd, derived from the workspace base the adapter reports.
+	want := filepath.Join(root, "slots", "sess-1", "current")
+	if len(rt.configured) != 1 || rt.configured[0] != want {
+		t.Errorf("ConfigureWorkspace cwd = %v, want [%q]", rt.configured, want)
 	}
 	if rt.demoted != 0 {
 		t.Errorf("unexpected demotion: %d", rt.demoted)
@@ -126,17 +132,18 @@ func TestBindSDKWarmConfiguresWhenNoBlockingPath_spec_6_1(t *testing.T) {
 	}
 }
 
-// spec: §6.1 lines 34-40 — a preConnect pod whose plan matches a blocking
+// spec: §6.1 — a preConnect pod whose plan matches a blocking
 // path is demoted (DemoteSDK) before materialization and served via the
 // pod-warm StartSession path; the demotion metric increments.
 func TestBindSDKWarmDemotesOnBlockingPath_spec_6_1(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeSDKWarmRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 	var demotedPools []string
 	var teardownSeen bool
 	binder.SDKDemotion = func(pool string, teardownSeconds float64) {
@@ -170,22 +177,23 @@ func TestBindSDKWarmDemotesOnBlockingPath_spec_6_1(t *testing.T) {
 		t.Errorf("SDKDemotion metric = %v, want [%q]", demotedPools, testPool)
 	}
 	if !teardownSeen {
-		t.Errorf("SDKDemotion did not report a teardown duration (§6.3 line 352)")
+		t.Errorf("SDKDemotion did not report a teardown duration (§6.3)")
 	}
 }
 
-// spec: §6.1 line 40 — a preConnect pod whose adapter cannot DemoteSDK
+// spec: §6.1 — a preConnect pod whose adapter cannot DemoteSDK
 // (returns UNIMPLEMENTED) fails the session with SDK_DEMOTION_NOT_SUPPORTED
 // rather than serving it with stale SDK state.
 func TestBindSDKWarmDemotionNotSupported_spec_6_1(t *testing.T) {
+	ns := testNamespace(t)
 	// A plain fakeRuntime is pod-warm: its DemoteSDK returns Unimplemented.
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	_, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -202,22 +210,69 @@ func TestBindSDKWarmDemotionNotSupported_spec_6_1(t *testing.T) {
 	}
 }
 
-// spec: §6.1 line 38 — an empty sdkWarmBlockingPaths list keeps the pod
-// SDK-warm for every request (no demotion path checking).
-func TestBindSDKWarmEmptyBlockingPathsNeverDemotes_spec_6_1(t *testing.T) {
-	rt := &fakeSDKWarmRuntime{}
+// failingDemoteRuntime is an SDK-warm runtime whose SDK teardown fails, so
+// the adapter answers DemoteSDK with an error other than UNIMPLEMENTED.
+type failingDemoteRuntime struct{ fakeSDKWarmRuntime }
+
+func (f *failingDemoteRuntime) DemoteSDK(context.Context) error {
+	f.demoted++
+	return errors.New("sdk teardown failed")
+}
+
+// A preConnect pod whose SDK teardown fails for a reason other than an
+// unimplemented DemoteSDK fails the bind with the wrapped demotion error,
+// which is distinct from SDK_DEMOTION_NOT_SUPPORTED, and the session never
+// starts on the pod.
+//
+// spec: §6.1
+func TestBindSDKWarmDemotionFailureFailsTheBind_spec_6_1(t *testing.T) {
+	ns := testNamespace(t)
+	rt := &failingDemoteRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, adapterDialer(t, srv))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
+
+	_, err := binder.Bind(context.Background(), podsession.BindRequest{
+		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
+		Plan:                 inlinePlan("CLAUDE.md"),
+		PreConnect:           true,
+		SDKWarmBlockingPaths: []string{"CLAUDE.md"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "demote SDK on pod sbx-1") {
+		t.Fatalf("Bind error = %v, want the wrapped demotion failure", err)
+	}
+	var notSupported *podsession.SDKDemotionNotSupported
+	if errors.As(err, &notSupported) {
+		t.Errorf("Bind error = %v, a failed teardown is not SDK_DEMOTION_NOT_SUPPORTED", err)
+	}
+	if rt.demoted != 1 {
+		t.Errorf("DemoteSDK called %d times, want 1", rt.demoted)
+	}
+	if rt.started != "" || len(rt.configured) != 0 {
+		t.Errorf("session must not launch after a failed demotion, started = %q, configured = %v", rt.started, rt.configured)
+	}
+}
+
+// spec: §6.1 — an empty sdkWarmBlockingPaths list keeps the pod
+// SDK-warm for every request (no demotion path checking).
+func TestBindSDKWarmEmptyBlockingPathsNeverDemotes_spec_6_1(t *testing.T) {
+	ns := testNamespace(t)
+	rt := &fakeSDKWarmRuntime{}
+	srv := adapter.New("adapter-test")
+	srv.WorkspaceBase = t.TempDir()
+	srv.Runtime = rt
+
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
 		Plan:                 inlinePlan("CLAUDE.md"),
 		PreConnect:           true,
-		SDKWarmBlockingPaths: nil, // §6.1 line 38 opt-out
+		SDKWarmBlockingPaths: nil, // §6.1 opt-out
 	})
 	if err != nil {
 		t.Fatalf("Bind: %v", err)

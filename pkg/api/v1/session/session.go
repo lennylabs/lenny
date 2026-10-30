@@ -34,7 +34,7 @@ import (
 // use NewID. The version nibble is 8 and the variant bits are 10, per the
 // §12.6 bit layout.
 //
-// spec: §12.6 line 576 — root session creation generates a UUIDv8 with a
+// spec: §12.6 — root session creation generates a UUIDv8 with a
 // fully random routing prefix.
 func NewID() string {
 	var b [16]byte
@@ -53,7 +53,7 @@ func NewID() string {
 // is deployed. rootID must be a session id produced by NewID or
 // NewChildID; a malformed routing prefix returns an error.
 //
-// spec: §12.6 line 577 — "the gateway copies the first 32 bits from the
+// spec: §12.6 — "the gateway copies the first 32 bits from the
 // root session's UUID into the child's UUID. The remaining bits are
 // random."
 func NewChildID(rootID string) (string, error) {
@@ -124,8 +124,8 @@ const (
 	StateCancelled            State = "cancelled"
 	StateExpired              State = "expired"
 
-	// StateResuming is the §7.2 line 195 internal transient between
-	// resume_pending and running. §15.1 line 621 normalises the GET
+	// StateResuming is the §7.2 internal transient between
+	// resume_pending and running. §15.1 normalises the GET
 	// /v1/sessions/{id} envelope's `state` field to `resume_pending` →
 	// `running` so the resuming value is never returned from a polling
 	// read. It does, however, appear on the wire in two cases:
@@ -138,7 +138,7 @@ const (
 	// reference it without depending on the internal pkg/session/state
 	// package; it is intentionally NOT a member of AllStates() because
 	// the §15.1 polling envelope never returns it.
-	// spec: §7.2 line 195; §15.1 line 621; §10.4 coordinator-handoff
+	// spec: §7.2; §15.1; §10.4 coordinator-handoff
 	// reattach synthesis.
 	StateResuming State = "resuming"
 )
@@ -168,19 +168,31 @@ func IsTerminal(s State) bool {
 	return false
 }
 
+// CountsTowardConcurrencyCaps reports whether a session in state s
+// counts toward the concurrent-session admission caps: the per-tenant
+// quota and the per-user, per-runtime, and global limits. Every
+// non-terminal state counts except suspended, whether or not the
+// suspended session still holds its pod. The pgstore count queries and
+// the migration-0185 partial index spell the same predicate in SQL
+// (state NOT IN the terminal states and 'suspended'), so a change here
+// changes both.
+// spec: §11.1 (Concurrent-session count)
+func CountsTowardConcurrencyCaps(s State) bool {
+	return !IsTerminal(s) && s != StateSuspended
+}
+
 // RecoveryStates returns the retry/recovery subset: states in which a
 // session is not actively serving because it is waiting on a resume
 // (resume_pending), mid-resume (resuming), or stalled awaiting a client
 // action (awaiting_client_action). The §16.5 Session availability SLO is
 // the "uptime of sessions not in retry/recovery state", so these states
 // are the unavailable fraction the SessionAvailabilityBurnRate alert
-// reads. spec: §16.5 line 616, §6.2 lines 246-254, §7.3.
+// reads. spec: §16.5, §6.2, §7.3.
 func RecoveryStates() []State {
 	return []State{StateResumePending, StateResuming, StateAwaitingClientAction}
 }
 
-// IsRecovery reports whether s is a retry/recovery state per §16.5
-// line 616.
+// IsRecovery reports whether s is a retry/recovery state per §16.5.
 func IsRecovery(s State) bool {
 	for _, r := range RecoveryStates() {
 		if s == r {
@@ -289,22 +301,30 @@ var preconditionTable = map[Endpoint]endpointRule{
 	EndpointFinalize: {baseStates: []State{StateCreated}},
 	EndpointStart:    {baseStates: []State{StateReady}},
 	EndpointInterrupt: {
-		// §7.2 line 178 — input_required is a sub-state of running where
-		// the agent is blocked in lenny/request_input; an interrupt must
-		// still suspend the underlying session, so the precondition
-		// admits both running and input_required.
-		baseStates: []State{StateRunning, StateInputRequired},
+		// spec: §15.1 — the interrupt row admits running alone. A session
+		// waiting in lenny/request_input is input_required, and its wait is
+		// held only by the replica holding the pod's LNK-GWCONTROL
+		// connection, so an interrupt that suspended the session would leave
+		// that wait live; the interrupt answers 409 INVALID_STATE_TRANSITION
+		// instead.
+		baseStates: []State{StateRunning},
 	},
 	EndpointTerminate: {
-		// §7.2 line 178 input_required → cancelled requires terminate to
-		// accept the sub-state too.
+		// spec: §7.2 (Session state machine) — terminate admits
+		// input_required on the input_required → completed terminate edge.
+		// spec: §7.2 (Interactive Session
+		// Model), §15.1 — terminate from the internal `resuming`
+		// transient is admitted, as DELETE admits it, and yields
+		// `completed` like terminate from resume_pending.
 		baseStates: []State{
 			StateCreated, StateFinalizing, StateReady, StateStarting,
 			StateRunning, StateInputRequired, StateSuspended, StateResumePending,
-			StateAwaitingClientAction,
+			StateAwaitingClientAction, StateResuming,
 		},
 	},
-	EndpointResume: {baseStates: []State{StateAwaitingClientAction}},
+	// spec: §15.1 — POST /resume admits awaiting_client_action and
+	// suspended, held-pod or podless.
+	EndpointResume: {baseStates: []State{StateAwaitingClientAction, StateSuspended}},
 	EndpointMessages: {
 		// §15.1 says "any non-terminal state". The terminal-state
 		// rejection is left to AllowedStates / Validate; the rule
@@ -318,12 +338,12 @@ var preconditionTable = map[Endpoint]endpointRule{
 		},
 	},
 	EndpointDelete: {
-		// spec: §7.2 line 197 — `resuming → cancelled` via DELETE is
+		// spec: §7.2 — `resuming → cancelled` via DELETE is
 		// the canonical mid-resume cancel edge. StateResuming is
-		// excluded from AllStates() (per §15.1 line 621 collapse rule)
+		// excluded from AllStates() (per §15.1 collapse rule)
 		// so nonTerminalStates() does not pick it up; admit it
 		// explicitly so a DELETE landing during the internal
-		// `resuming` transient drives the §7.2 line 214 snapshot-close
+		// `resuming` transient drives the §7.2 snapshot-close
 		// fence. F-7.1.14.
 		baseStates: append(nonTerminalStates(), StateResuming),
 	},
@@ -408,11 +428,10 @@ func Validate(r PreconditionRequest) error {
 			return nil
 		}
 	}
-	sort.Slice(allowed, func(i, j int) bool { return allowed[i] < allowed[j] })
 	return &PreconditionError{
 		Endpoint:      r.Endpoint,
 		CurrentState:  r.CurrentState,
-		AllowedStates: allowed,
+		AllowedStates: externallyVisible(allowed),
 	}
 }
 
@@ -428,6 +447,25 @@ func AllowedStates(endpoint Endpoint, capabilities map[Capability]bool) []State 
 	for _, g := range rule.gated {
 		if capabilities[g.flag] {
 			out = append(out, g.states...)
+		}
+	}
+	return externallyVisible(out)
+}
+
+// externallyVisible returns the members of states that AllStates() lists,
+// sorted. Admission checks the full set, internal `resuming` included, but
+// a §15.1 409 echoes only externally visible states, so no
+// details.allowedStates names `resuming`.
+// spec: §15.1 (Externally visible vs. internal-only states)
+func externallyVisible(states []State) []State {
+	visible := make(map[State]bool, len(AllStates()))
+	for _, st := range AllStates() {
+		visible[st] = true
+	}
+	out := make([]State, 0, len(states))
+	for _, st := range states {
+		if visible[st] {
+			out = append(out, st)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })

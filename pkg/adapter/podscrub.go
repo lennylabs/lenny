@@ -4,14 +4,18 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter/credfile"
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	"github.com/lennylabs/lenny/pkg/adapter/scrub"
+	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -31,8 +35,11 @@ import (
 // by retire-and-reprovision rather than by an in-guest restart the pod cannot
 // perform.
 //
-// spec: §5.2 (whole-pod scrub, retire-and-reprovision at the gateway); §4.7
-// (ReportPodScrub).
+// The report also carries whether the runtime process can serve the pod's
+// next session, sampled after the scrub (see sampleRuntimeLiveness).
+//
+// spec: §5.2 (whole-pod scrub, retire-and-reprovision at the gateway; Pod
+// retirement policy, Runtime not live); §4.7 (ReportPodScrub).
 func (s *Server) startPodScrub(rc *adapterv1.RecycleScrub) {
 	go func() {
 		defer s.signalScrubDone()
@@ -40,7 +47,6 @@ func (s *Server) startPodScrub(rc *adapterv1.RecycleScrub) {
 		// gateway→adapter connection is closed right after Shutdown returns;
 		// the report travels the independent GatewayControl link, and the
 		// gateway missing-report timeout bounds the whole operation.
-		ctx := context.Background()
 		if s.ScrubOps == nil {
 			// Fail-closed on a wiring gap. Without host operations the scrub
 			// cannot run: scrub.Run would return a nil-Ops error the driver
@@ -57,8 +63,23 @@ func (s *Server) startPodScrub(rc *adapterv1.RecycleScrub) {
 				"pod", rc.GetPodId())
 			return
 		}
-		rep, err := scrub.Run(ctx, s.ScrubOps, s.scrubConfig(rc))
-		outcome, detail := scrubOutcome(rep, err)
+		cfg, enumErr := s.scrubConfig(rc)
+		// spec: §28.5.3 (CH-SUPERVISE, Timing) — the scrub's supervisor
+		// requests run under a deadline, which every request's own bound
+		// fits inside.
+		ctx, cancel := context.WithTimeout(context.Background(), scrubDeadline(cfg.CleanupTimeout))
+		defer cancel()
+		rep, err := scrub.Run(ctx, s.ScrubOps, cfg)
+		// A workspace slots container the adapter could not read fails the
+		// scrub's outcome even when every enumerated step succeeded: the
+		// steps ran over a set that may be missing every leaked session's
+		// residue. An unreadable credentials container already failed step
+		// 0 inside scrub.Run. spec: §5.2 (whole-pod scrub outcome).
+		outcome, detail := scrubOutcome(rep, errors.Join(err, enumErr))
+		// The liveness sample is taken below, after the scrub has run:
+		// step 4 clears the /tmp and /dev/shm mounts the runtime container
+		// shares, and a runtime that exits over that must be reported as
+		// not live. spec: §5.2 (Pod retirement policy, Runtime not live).
 		if s.PodScrubReporter == nil {
 			// The dev path has no gateway link; the missing-report timeout is
 			// the backstop. Nothing to report through.
@@ -66,11 +87,50 @@ func (s *Server) startPodScrub(rc *adapterv1.RecycleScrub) {
 				"pod", rc.GetPodId(), "outcome", outcome)
 			return
 		}
-		if reportErr := s.PodScrubReporter.ReportPodScrub(ctx, rc.GetPodId(), outcome, detail); reportErr != nil {
+		live := s.sampleRuntimeLiveness(rc.GetPodId())
+		if reportErr := s.PodScrubReporter.ReportPodScrub(ctx, rc.GetPodId(), outcome, live, detail); reportErr != nil {
 			// The gateway missing-report timeout is the backstop; log and move on.
 			slog.Error("adapter: ReportPodScrub failed", "pod", rc.GetPodId(), "err", reportErr)
 		}
 	}()
+}
+
+// nextSessionRuntime is the optional capability of a RuntimeProcess that can
+// say whether it serves the pod's next session. It is declared here, at its
+// only consumer, so the RuntimeProcess interface and its test doubles stay
+// unchanged; a runtime without the method reads as not live, which retires
+// the pod rather than placing a session on a runtime nothing confirmed.
+// spec: §5.2 (Pod retirement policy, Runtime not live); §4.7.10 (Runtime
+// process lifetime).
+type nextSessionRuntime interface {
+	ServesNextSession() bool
+}
+
+// runtimeServesNextSession reports whether s.Runtime can serve the pod's
+// next session. A nil runtime, and one that does not implement
+// nextSessionRuntime, report false, so the gateway retires the pod with
+// runtime_not_live (fail closed). spec: §5.2 (Pod retirement policy,
+// Runtime not live).
+func (s *Server) runtimeServesNextSession() bool {
+	rt, ok := s.Runtime.(nextSessionRuntime)
+	if !ok {
+		return false
+	}
+	return rt.ServesNextSession()
+}
+
+// sampleRuntimeLiveness samples runtimeServesNextSession for the
+// ReportPodScrub request and logs a false sample at Warn with the pod
+// identifier, so the adapter's log names the retire the gateway is about to
+// take. spec: §5.2 (Pod retirement policy, Runtime not live); §4.7
+// (ReportPodScrub).
+func (s *Server) sampleRuntimeLiveness(podID string) bool {
+	live := s.runtimeServesNextSession()
+	if !live {
+		slog.Warn("adapter: runtime cannot serve the next session; reporting runtime_live=false so the pod retires",
+			"pod", podID)
+	}
+	return live
 }
 
 // signalScrubDone fires the optional scrubDone test seam once the async scrub
@@ -100,24 +160,118 @@ func (s *Server) SetScrubDoneHook(f func()) {
 // default because the pool configuration carries no cleanup shell field, so
 // cleanup commands run in the default argv mode.
 //
+// An enumeration failure is never folded into an empty set, because an
+// empty set is what the scrub reads as "this pod held no slot" and a
+// container the adapter cannot read may hold every leaked session's
+// workspace and credential lease. A credential enumeration failure rides in
+// the config as a step-0 error, so scrub.Run skips cleanupCommands while a
+// credential file may still be on disk and fails the scrub. A workspace
+// enumeration failure is returned beside the config: the caller runs the
+// scrub with what was enumerated and fails its outcome on the error, so the
+// pod is retired rather than recycled with unverified residue.
+//
 // spec: §5.2 (whole-pod scrub parameters).
-func (s *Server) scrubConfig(rc *adapterv1.RecycleScrub) scrub.Config {
-	return scrub.Config{
-		CredentialFile:  s.credentialFilePath(),
-		WorkspaceDir:    s.WorkspaceRoot,
-		CleanupCommands: rc.GetCleanupCommands(),
-		CleanupTimeout:  time.Duration(rc.GetCleanupTimeoutSeconds()) * time.Second,
+func (s *Server) scrubConfig(rc *adapterv1.RecycleScrub) (scrub.Config, error) {
+	creds, credErr := s.slotCredentialFiles()
+	trees, treeErr := s.slotWorkspaceTrees()
+	cfg := scrub.Config{
+		CredentialFiles:   creds,
+		CredentialEnumErr: credErr,
+		WorkspaceDirs:     trees,
+		CleanupDir:        s.WorkspaceBase,
+		CleanupCommands:   rc.GetCleanupCommands(),
+		CleanupTimeout:    time.Duration(rc.GetCleanupTimeoutSeconds()) * time.Second,
 	}
+	s.applySupervisedScrub(&cfg)
+	return cfg, treeErr
 }
 
-// credentialFilePath is the §4.7 credential file the scrub purges in step 0 and
-// re-verifies absent in step 6. It is empty when the adapter has no credentials
-// directory (the dev path), which the scrub treats as "skip the step 0 purge".
-func (s *Server) credentialFilePath() string {
-	if s.CredentialsDir == "" {
-		return ""
+// applySupervisedScrub adds the supervised steps on a pod that runs the
+// runtime supervisor: on every such pod the supervisor runs cleanupCommands
+// at the agent UID in the runtime container, and on a restart pod the first
+// and second end and sweep and the listener rebind run around them. A keep
+// pod keeps its runtime process across the boundary.
+// spec: §5.2 (Supervised scrub sequence); §4.7.10 (Runtime supervisor,
+// Cleanup; Runtime supervisor, End; Runtime supervisor, Sweep).
+func (s *Server) applySupervisedScrub(cfg *scrub.Config) {
+	rt := s.supervisedRuntime()
+	if rt == nil {
+		return
 	}
-	return filepath.Join(s.CredentialsDir, credfile.FileName)
+	cfg.CleanupRunner = rt
+	if rt.Lifetime() != LifetimeRestart {
+		return
+	}
+	cfg.EndRuntime = rt.EndAndSweep
+	cfg.EndRuntimeAgain = rt.EndAndSweep
+	cfg.RebindListeners = rt.RebindListeners
+}
+
+// scrubDeadline is the deadline of one whole-pod scrub's supervisor
+// requests: two ends and two sweeps at their bounds, the cleanup request's
+// bound, and a margin. It is the adapter's choice, because the specification
+// bounds each request without stating a value; it exceeds the cleanup
+// request's bound, which exceeds the cleanupTimeoutSeconds deadline.
+// spec: §28.5.3 (CH-SUPERVISE, Timing).
+func scrubDeadline(cleanupTimeout time.Duration) time.Duration {
+	if cleanupTimeout <= 0 {
+		cleanupTimeout = scrub.DefaultCleanupTimeout
+	}
+	return 2*(superviseEndBound+superviseSweepBound) + cleanupTimeout + superviseCleanupSlack + time.Minute
+}
+
+// slotCredentialFiles enumerates the §6.1 per-session credential files the
+// scrub purges in step 0 and re-verifies absent in step 6, from the
+// on-disk children of /run/lenny/slots. The enumeration is on-disk rather
+// than registry-backed because the residue the scrub must reach belongs to
+// a leaked slot whose registry entry is already gone. An unset credentials
+// root yields an empty set, which the scrub treats as "skip the step 0
+// purge". spec: §5.2; §6.1.
+func (s *Server) slotCredentialFiles() ([]string, error) {
+	dirs, err := slotChildren(slotlayout.SlotsDir(s.CredentialsDir))
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, dir := range dirs {
+		files = append(files, filepath.Join(dir, credfile.FileName))
+	}
+	return files, nil
+}
+
+// slotWorkspaceTrees enumerates the per-session workspace trees the scrub
+// removes in step 2 and re-verifies absent in step 6, from the on-disk
+// children of /workspace/slots, on the same terms as
+// slotCredentialFiles. spec: §5.2; §6.4.
+func (s *Server) slotWorkspaceTrees() ([]string, error) {
+	return slotChildren(slotlayout.SlotsDir(s.WorkspaceBase))
+}
+
+// slotChildren lists the immediate subdirectories of a slots container.
+// An unset container, and one that does not exist, yield nothing: a pod
+// that held no slot has no per-slot residue and the scrub's step 6 then
+// verifies an empty set. Any other read failure is returned, because it
+// leaves the adapter unable to say whether the container holds a leaked
+// session's tree and reading it as "no slots" would report a scrub that
+// purged and verified nothing as having succeeded.
+func slotChildren(slotsDir string) ([]string, error) {
+	if slotsDir == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(slotsDir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("enumerate slots under %s: %w", slotsDir, err)
+	}
+	dirs := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, filepath.Join(slotsDir, e.Name()))
+		}
+	}
+	return dirs, nil
 }
 
 // scrubOutcome converts a completed scrub Report (or a start error) into the
@@ -143,7 +297,7 @@ func scrubOutcome(rep *scrub.Report, err error) (gatewaycontrol.PodScrubOutcome,
 // scrub sets Failed only when a step errored or verification found a dirty path).
 func scrubFailureDetail(rep *scrub.Report) string {
 	for _, st := range rep.Steps {
-		if !st.Skipped && st.Err != nil {
+		if !st.Skipped && st.Err != nil && !errors.Is(st.Err, scrub.ErrNotLive) {
 			return fmt.Sprintf("scrub step %s failed: %v", st.Step, st.Err)
 		}
 	}

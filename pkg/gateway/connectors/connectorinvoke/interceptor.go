@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
-// §4.8 lines 1057-1058, 1077, §15.1 lines 1014-1015. A deliberate REJECT
+// §4.8, §15.1. A deliberate REJECT
 // by a PreConnectorRequest interceptor returns CONNECTOR_REQUEST_REJECTED
 // (HTTP 403); a PostConnectorResponse REJECT returns
 // CONNECTOR_RESPONSE_REJECTED (HTTP 502). Both are distinct from
@@ -26,7 +26,7 @@ const (
 // ConnectorChain is the §4.8 interceptor chain the gateway runs at the
 // PreConnectorRequest and PostConnectorResponse phases on the connector
 // proxy path. *interceptor.Chain satisfies it; a nil chain disables the
-// connector interceptor phases. spec: §4.8 line 1077.
+// connector interceptor phases. spec: §4.8.
 type ConnectorChain interface {
 	Run(ctx context.Context, req interceptor.Request) interceptor.Result
 	Len(phase interceptor.Phase) int
@@ -36,8 +36,7 @@ type ConnectorChain interface {
 // phase rejects the call. Code is the §15.1 error code the gateway
 // surfaces to the pod (CONNECTOR_REQUEST_REJECTED,
 // CONNECTOR_RESPONSE_REJECTED, INTERCEPTOR_TIMEOUT, or
-// INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION). spec: §4.8 lines 1057-1058,
-// 1077; §15.1 lines 1014-1015.
+// INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION). spec: §4.8; §15.1.
 type RejectionError struct {
 	Phase  interceptor.Phase
 	Code   string
@@ -50,14 +49,14 @@ func (e *RejectionError) Error() string {
 
 // ConnectorRejectionCode returns the §15.1 error code. It lets the
 // leasecontrol GatewayControl handler map the rejection to a gRPC status
-// without importing this package. spec: §15.1 lines 1014-1015.
+// without importing this package. spec: §15.1.
 func (e *RejectionError) ConnectorRejectionCode() string { return e.Code }
 
 // ConnectorRejectionReason returns the interceptor's human-readable
 // rejection reason for the gRPC status message.
 func (e *RejectionError) ConnectorRejectionReason() string { return e.Reason }
 
-// preConnectorPayload is the §4.8 line 1057 PreConnectorRequest content:
+// preConnectorPayload is the §4.8 PreConnectorRequest content:
 // the outgoing tool call before the gateway proxies it. The interceptor
 // may modify arguments but may not alter tool_name or connector_id (the
 // chain enforces the immutability via phaseImmutableFields).
@@ -71,7 +70,7 @@ type preConnectorPayload struct {
 // serialized outgoing tool call and returns the (possibly
 // MODIFY-rewritten) arguments. A nil or empty-phase chain returns the
 // arguments unchanged. A REJECT returns a *RejectionError carrying the
-// §15.1 code. spec: §4.8 line 1057.
+// §15.1 code. spec: §4.8.
 func (iv *Invoker) runPreConnectorRequest(ctx context.Context, tenantID, sessionID, connectorID, toolName string, arguments json.RawMessage) (json.RawMessage, error) {
 	if iv.interceptors == nil || iv.interceptors.Len(interceptor.PhasePreConnectorRequest) == 0 {
 		return arguments, nil
@@ -113,7 +112,7 @@ func (iv *Invoker) runPreConnectorRequest(ctx context.Context, tenantID, session
 // connector_id) onto the MCP tool result so the chain can enforce the
 // immutable routing fields while permitting content/isError edits. A nil
 // or empty-phase chain returns the result unchanged. A REJECT returns a
-// *RejectionError carrying the §15.1 code. spec: §4.8 line 1058.
+// *RejectionError carrying the §15.1 code. spec: §4.8.
 func (iv *Invoker) runPostConnectorResponse(ctx context.Context, tenantID, sessionID, connectorID, toolName string, result json.RawMessage) (json.RawMessage, error) {
 	if iv.interceptors == nil || iv.interceptors.Len(interceptor.PhasePostConnectorResponse) == 0 {
 		return result, nil
@@ -138,7 +137,7 @@ func (iv *Invoker) runPostConnectorResponse(ctx context.Context, tenantID, sessi
 	}
 }
 
-// mergePostConnectorPayload builds the §4.8 line 1058 PostConnectorResponse
+// mergePostConnectorPayload builds the §4.8 PostConnectorResponse
 // content `{ tool_name, connector_id, content, isError? }` by overlaying
 // the routing identity onto the connector's MCP tool result. content and
 // isError are taken from the result object when present; a result that is
@@ -190,7 +189,7 @@ func applyPostConnectorModify(original, modified json.RawMessage) (json.RawMessa
 // the connector proxy surfaces. A fail-closed timeout/error carries
 // INTERCEPTOR_TIMEOUT; an immutable-field violation carries its own code;
 // a deliberate REJECT carries the phase-specific connector code. spec:
-// §4.8 line 1077; §15.1 lines 1014-1015.
+// §4.8; §15.1.
 func rejectionFor(phase interceptor.Phase, res interceptor.Result) *RejectionError {
 	code := res.Code
 	if code == "" {
@@ -210,7 +209,7 @@ func mustJSONString(s string) json.RawMessage {
 
 // AsRejection reports whether err is a connector-interceptor RejectionError
 // and returns it. The leasecontrol GatewayControl handler uses it to map
-// the §15.1 code to a gRPC status. spec: §4.8 line 1077.
+// the §15.1 code to a gRPC status. spec: §4.8.
 func AsRejection(err error) (*RejectionError, bool) {
 	var re *RejectionError
 	if errors.As(err, &re) {

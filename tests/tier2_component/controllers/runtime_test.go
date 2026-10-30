@@ -20,7 +20,6 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	runtimecontroller "github.com/lennylabs/lenny/pkg/controller/runtime"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 const digest64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -39,7 +38,7 @@ const digest64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd
 // Registered condition or finalizer, or loses admin-configured fields
 // across reconciles.
 func TestRuntimeController_spec_5_1(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -53,6 +52,9 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 	store := runtimestore.NewMemory()
 	r := &runtimecontroller.Reconciler{Client: c, Scheme: scheme, Store: store}
 
+	// Each subtest names its Runtime with clusterName, because Runtimes are
+	// cluster-scoped and the control plane is shared with the other tests.
+	//
 	// reconcile drives a few passes so the finalizer-add pass and the
 	// mirror pass both run (the add-finalizer pass returns early).
 	reconcile := func(name string) {
@@ -66,12 +68,13 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 	}
 
 	t.Run("create mirrors and sets Registered", func(t *testing.T) {
-		const name = "langgraph-runtime"
+		name := clusterName(t, "Runtime", "langgraph-runtime")
 		mustCreate(t, ctx, c, &lennyv1.Runtime{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{"team": "platform"}},
 			Spec: lennyv1.RuntimeSpec{
 				Type:               "agent",
 				Image:              "registry.example.com/langgraph@sha256:" + digest64,
+				Command:            []string{"/usr/local/bin/lenny"},
 				IntegrationLevel:   "full",
 				SupportedProviders: []string{"anthropic_direct"},
 			},
@@ -91,6 +94,11 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 		if got.Labels["team"] != "platform" {
 			t.Errorf("labels = %v, want team=platform", got.Labels)
 		}
+		// spec: §5.1 (command) — a sidecar session runtime carrying command
+		// and no preConnect mirrors the derived restartable flag as true.
+		if !got.Restartable {
+			t.Error("restartable = false, want true for a sidecar session runtime with command")
+		}
 
 		var live lennyv1.Runtime
 		if err := c.Get(ctx, client.ObjectKey{Name: name}, &live); err != nil {
@@ -106,10 +114,10 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 	})
 
 	t.Run("update preserves admin-configured fields", func(t *testing.T) {
-		const name = "scanner"
+		name := clusterName(t, "Runtime", "scanner")
 		mustCreate(t, ctx, c, &lennyv1.Runtime{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
-			Spec:       lennyv1.RuntimeSpec{Type: "agent", Image: "img@sha256:" + digest64, IntegrationLevel: "basic"},
+			Spec:       lennyv1.RuntimeSpec{Type: "agent", Image: "img@sha256:" + digest64, Command: []string{"/usr/local/bin/lenny"}, IntegrationLevel: "basic"},
 		})
 		reconcile(name)
 		// Simulate an admin-API layer adding a field the CRD does not model.
@@ -143,10 +151,10 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 	})
 
 	t.Run("delete soft-deletes the registry row", func(t *testing.T) {
-		const name = "ephemeral"
+		name := clusterName(t, "Runtime", "ephemeral")
 		mustCreate(t, ctx, c, &lennyv1.Runtime{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
-			Spec:       lennyv1.RuntimeSpec{Type: "agent", Image: "img@sha256:" + digest64, IntegrationLevel: "basic"},
+			Spec:       lennyv1.RuntimeSpec{Type: "agent", Image: "img@sha256:" + digest64, Command: []string{"/usr/local/bin/lenny"}, IntegrationLevel: "basic"},
 		})
 		reconcile(name)
 
@@ -178,7 +186,7 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 		// model is a single trusted process with no adapter-agent socket
 		// boundary, so the RuntimeReconciler marks it Registered=False
 		// (InvalidRuntime) and does not mirror it into the registry.
-		const name = "embedded-nonce-only"
+		name := clusterName(t, "Runtime", "embedded-nonce-only")
 		falseVal := false
 		mustCreate(t, ctx, c, &lennyv1.Runtime{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
@@ -216,13 +224,14 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 		// requireSoPeercred: false mirrors normally, with the explicit
 		// false propagated CRD-to-store so the §5.3 pool admission gate
 		// sees the nonce-only posture.
-		const name = "sidecar-nonce-only"
+		name := clusterName(t, "Runtime", "sidecar-nonce-only")
 		falseVal := false
 		mustCreate(t, ctx, c, &lennyv1.Runtime{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
 			Spec: lennyv1.RuntimeSpec{
 				Type:              "agent",
 				Image:             "img@sha256:" + digest64,
+				Command:           []string{"/usr/local/bin/lenny"},
 				IntegrationLevel:  "basic",
 				DeploymentModel:   "sidecar",
 				RequireSoPeercred: &falseVal,
@@ -251,12 +260,13 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 		// spec: §4.7 — an unset field resolves to the default true through
 		// the CRD-to-store mirror, so the registry row keeps the
 		// SO_PEERCRED self-test mandatory.
-		const name = "sidecar-default"
+		name := clusterName(t, "Runtime", "sidecar-default")
 		mustCreate(t, ctx, c, &lennyv1.Runtime{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
 			Spec: lennyv1.RuntimeSpec{
 				Type:             "agent",
 				Image:            "img@sha256:" + digest64,
+				Command:          []string{"/usr/local/bin/lenny"},
 				IntegrationLevel: "basic",
 				DeploymentModel:  "sidecar",
 			},
@@ -275,10 +285,10 @@ func TestRuntimeController_spec_5_1(t *testing.T) {
 	t.Run("invalid name marks Registered False without requeue", func(t *testing.T) {
 		// A dotted name is a valid DNS-1123 subdomain (so the API server
 		// accepts it) but violates the §5.1 registry-name pattern.
-		const name = "bad.name"
+		name := clusterName(t, "Runtime", "bad.name")
 		mustCreate(t, ctx, c, &lennyv1.Runtime{
 			ObjectMeta: metav1.ObjectMeta{Name: name},
-			Spec:       lennyv1.RuntimeSpec{Type: "agent", Image: "img@sha256:" + digest64, IntegrationLevel: "basic"},
+			Spec:       lennyv1.RuntimeSpec{Type: "agent", Image: "img@sha256:" + digest64, Command: []string{"/usr/local/bin/lenny"}, IntegrationLevel: "basic"},
 		})
 		reconcile(name)
 

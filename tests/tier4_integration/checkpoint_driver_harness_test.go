@@ -69,13 +69,8 @@ type cpChunkedAdapter struct {
 	stallAfter int
 	// remintObserved records the grants the gateway minted per index.
 	remintObserved map[uint32]int
-	// recvSlotID records the slot_id the gateway put on the CheckpointStart
-	// frame, so a concurrent-pool test asserts each slot's stream carried
-	// its own slot identity (empty on a maxConcurrentSessions: 1 pod).
-	recvSlotID string
-
-	store *cpStore
-	mu    sync.Mutex
+	store          *cpStore
+	mu             sync.Mutex
 }
 
 func (a *cpChunkedAdapter) grantCount(index uint32) int {
@@ -84,21 +79,10 @@ func (a *cpChunkedAdapter) grantCount(index uint32) int {
 	return a.remintObserved[index]
 }
 
-// receivedSlotID reports the slot_id the gateway sent on CheckpointStart.
-func (a *cpChunkedAdapter) receivedSlotID() string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.recvSlotID
-}
-
 func (a *cpChunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
-	first, err := stream.Recv()
-	if err != nil {
+	if _, err := stream.Recv(); err != nil {
 		return err
 	}
-	a.mu.Lock()
-	a.recvSlotID = first.GetStart().GetSlotId().GetValue()
-	a.mu.Unlock()
 	if err := stream.Send(&adapterv1.CheckpointResponse{
 		Msg: &adapterv1.CheckpointResponse_Probe{Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: a.probeBytes}},
 	}); err != nil {
@@ -368,6 +352,7 @@ type cpDriverHarness struct {
 	catalog   *cpCatalog
 	metrics   *cpDriverMetrics
 	sessions  sessionstore.Store
+	registry  *podsession.Registry
 }
 
 func newCPDriverHarness(t *testing.T, adapter *cpChunkedAdapter) *cpDriverHarness {
@@ -375,38 +360,45 @@ func newCPDriverHarness(t *testing.T, adapter *cpChunkedAdapter) *cpDriverHarnes
 	store := newCPStore()
 	registry := podsession.NewRegistry()
 	sessions := memstore.New()
+	// An exclusive (maxConcurrentSessions=1) bind claims the pod for the
+	// session and carries no slot identifier, so the base-mode harness
+	// registers the binding production mints for it.
 	registerCPSlot(t, store, registry, sessions, adapter, cpSession, "")
 	return newCPCheckpointerHarness(store, registry, sessions)
 }
 
 // cpSlotSpec names one occupied slot in a concurrent (maxConcurrentSessions
-// > 1) pool: a session bound to a shared pod under a distinct slotID,
-// served by its own chunked producer.
+// > 1) pool: a session bound to the shared pod, served by its own chunked
+// producer. A session-mode slot's identifier is its session's identifier,
+// so the session name is the whole address.
 type cpSlotSpec struct {
 	sessionID string
-	slotID    string
 	adapter   *cpChunkedAdapter
 }
 
 // newCPConcurrentHarness stands up a concurrent pool: several slot-bound
 // sessions sharing one object store and one gateway checkpointer, each
-// bound to its own adapter under a distinct slotID. It drives the
-// gateway's per-slot checkpoint path (CheckpointStart carries the raw
-// binding slotID) so a test asserts each slot is captured independently.
+// bound to its own adapter. It drives the gateway's checkpoint path, which
+// addresses each stream by its session identifier, so a test asserts each
+// session is captured independently.
 func newCPConcurrentHarness(t *testing.T, slots []cpSlotSpec) *cpDriverHarness {
 	t.Helper()
 	store := newCPStore()
 	registry := podsession.NewRegistry()
 	sessions := memstore.New()
 	for _, s := range slots {
-		registerCPSlot(t, store, registry, sessions, s.adapter, s.sessionID, s.slotID)
+		// A session-mode slot's identifier is its session's identifier, so
+		// a concurrent bind carries the session name as its slot address.
+		registerCPSlot(t, store, registry, sessions, s.adapter, s.sessionID, s.sessionID)
 	}
 	return newCPCheckpointerHarness(store, registry, sessions)
 }
 
-// registerCPSlot wires one slot-bound session: it points the adapter at
-// the shared store, dials it, registers the (session, slotID) binding, and
-// seeds the running session row.
+// registerCPSlot wires one bound session: it points the adapter at the
+// shared store, dials it, registers the session's binding under slotID, and
+// seeds the running session row. slotID is empty for an exclusive bind and
+// the session's own identifier for a concurrent-pool bind, which is the
+// distinction BindResult.SlotID records.
 func registerCPSlot(t *testing.T, store *cpStore, registry *podsession.Registry, sessions sessionstore.Store, adapter *cpChunkedAdapter, sessionID, slotID string) {
 	t.Helper()
 	adapter.store = store
@@ -442,7 +434,7 @@ func newCPCheckpointerHarness(store *cpStore, registry *podsession.Registry, ses
 		DriverMetrics: metrics,
 		Deadline:      5 * time.Second,
 	}
-	return &cpDriverHarness{cp: cp, manifests: manifests, quota: quota, store: store, catalog: catalog, metrics: metrics, sessions: sessions}
+	return &cpDriverHarness{cp: cp, manifests: manifests, quota: quota, store: store, catalog: catalog, metrics: metrics, sessions: sessions, registry: registry}
 }
 
 // latestManifest resolves the manifest row for the session's latest
@@ -469,7 +461,7 @@ func (h *cpDriverHarness) manifestForSession(t *testing.T, sessionID string) par
 		}
 	}
 	// A zero-chunk abort soft-deletes its row in the finalising transaction
-	// (§10.1 line 132), so it is neither active nor referenced by a session
+	// (§10.1.7), so it is neither active nor referenced by a session
 	// ref. Recover the tombstoned row so the test can assert its disposition.
 	deleted, derr := h.manifests.ListSoftDeletedBefore(context.Background(), time.Now().Add(time.Hour))
 	if derr == nil {

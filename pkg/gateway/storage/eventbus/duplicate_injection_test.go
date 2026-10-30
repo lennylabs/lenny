@@ -35,7 +35,7 @@ func (c *sendCounter) count() int {
 	return c.n
 }
 
-// spec: §12.6 line 699 — "Configure the staging EventBus to publish every
+// spec: §12.6 — "Configure the staging EventBus to publish every
 // event twice (eventBus.duplicateInjectionFactor: 2)."
 // diagnosis: a factor of N must re-send the byte-identical envelope N
 // times total so the dedup integration test can assert no doubled side
@@ -68,7 +68,7 @@ func TestDuplicateInjectionFactor_spec_12_6_699(t *testing.T) {
 	}
 }
 
-// spec: §12.6 line 683/699 — a failed first send is buffered exactly once
+// spec: §12.6 — a failed first send is buffered exactly once
 // for opportunistic replay; the duplicate-injection copies must not run
 // (and must not double-buffer) when the primary send fails.
 func TestDuplicateInjectionSkippedOnPrimaryFailure_spec_12_6_699(t *testing.T) {

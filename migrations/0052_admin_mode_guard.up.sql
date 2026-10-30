@@ -1,4 +1,4 @@
--- §4.2 line 177: defense-in-depth BEFORE INSERT/UPDATE/DELETE trigger
+-- §4.2: defense-in-depth BEFORE INSERT/UPDATE/DELETE trigger
 -- on runtime_tenant_access and pool_tenant_access. The trigger rejects
 -- a write whose transaction has not set lenny.admin_mode = 'true'.
 -- The gateway sets the GUC via SET LOCAL only on platform-admin code

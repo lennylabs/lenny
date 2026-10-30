@@ -16,7 +16,7 @@ import (
 // meteringSortField is the only sort key the §11.2.1 billing ledger
 // exposes — the per-tenant monotonic sequence number that
 // `billingstore.Since` indexes on. Other fields would require a full
-// scan, which §15.1 line 1252 explicitly excludes from `total`
+// scan, which §15.1 explicitly excludes from `total`
 // computation; we exclude them from `sort` for the same reason.
 const meteringSortField = "sequenceNumber"
 
@@ -52,7 +52,7 @@ type meteringEvent struct {
 	CorrectionDetail     string  `json:"correctionDetail,omitempty"`
 	// Labels echoes the §14 session-label set denormalized onto the event
 	// so a consumer can read the labels it filters on. Omitted when the
-	// event carries none. spec: §14 line 106. F-14.1.13.
+	// event carries none. spec: §14. F-14.1.13.
 	Labels    map[string]string `json:"labels,omitempty"`
 	Timestamp string            `json:"timestamp"`
 	*billingstore.Conditional
@@ -65,7 +65,7 @@ type meteringEvent struct {
 // `sequenceNumber:asc|desc`. The legacy `?since_sequence=` parameter
 // is honoured for backwards-compatible callers (cursor is the
 // canonical form). Requires the §10.2 view_usage permission.
-// spec: §15.1 lines 1228-1253; §11.2.1 line 282.
+// spec: §15.1; §11.2.1.
 func (s *Server) handleMeteringEvents(w http.ResponseWriter, r *http.Request) {
 	principal, ok := getPrincipal(r)
 	if !ok || !pkgauth.RolesGrant(principal.Roles, pkgauth.PermViewUsage) {
@@ -97,7 +97,7 @@ func (s *Server) handleMeteringEvents(w http.ResponseWriter, r *http.Request) {
 		since = n
 	}
 
-	// spec: §14 line 106 — the repeatable `?label=key=value` query scopes
+	// spec: §14 — the repeatable `?label=key=value` query scopes
 	// the billing stream to events carrying every requested label. The
 	// predicate is pushed into the store query so the cursor/hasMore
 	// pagination below stays correct. F-14.1.13.

@@ -1,0 +1,20 @@
+{
+  "type": "session_start",
+  "sessionId": "sess_01J9X0ZW1ZF7K8Q1V2T3M4N5P0",
+  "startId": "st_01J9X0ZW1ZF7K8Q1V2T3M4N5P3",
+  "credentialsPath": "/run/lenny/slots/sess_01J9X0ZW1ZF7K8Q1V2T3M4N5P0/credentials.json",
+  "experimentContext": {
+    "experimentId": "claude-v2-rollout",
+    "variantId": "treatment",
+    "inherited": false
+  },
+  "tracingContext": null,
+  "llm": {
+    "deliveryMode": "proxy",
+    "dialect": "anthropic",
+    "apiKeyEnv": "ANTHROPIC_API_KEY",
+    "headers": {
+      "anthropic-version": "2023-06-01"
+    }
+  }
+}

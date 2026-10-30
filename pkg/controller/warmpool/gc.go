@@ -27,11 +27,14 @@ import (
 // defaultClaimOrphanTimeout is the §4.6.1 default for --claim-orphan-timeout:
 // a SandboxClaim whose orphan key is older than this with no active session
 // is treated as orphaned. spec: §4.6.1 "Orphaned SandboxClaim detection" —
-// default 5 minutes; §11.5 controls table records the same 300s default. The
+// default 15 minutes; §11.5 controls table records the same 900s default. The
+// gateway's stale-slot reaper shares the value as --slot-reaper-terminal-age,
+// and it must exceed the post-terminal slot activity windows §5.2 (Slot
+// assignment atomicity) states. The
 // key is the binding-state-transition time for a claim that has reached a
 // binding state, and metadata.creationTimestamp for an empty-status claim
 // (the CREATE-before-status fallback).
-const defaultClaimOrphanTimeout = 5 * time.Minute
+const defaultClaimOrphanTimeout = 15 * time.Minute
 
 // defaultReservedHoldGrace is the §4.6.1 grace period the orphan GC adds to a
 // reserved claim's holdExpiresAt before reclaiming it. spec: §4.6.1 predicate
@@ -67,20 +70,22 @@ var orphanedClaims = func() *prometheus.CounterVec {
 	return c
 }()
 
-// SessionLookup reports whether an active (non-terminal) session backs a
-// SandboxClaim. spec: §4.6.1 — "the controller queries Postgres to check
-// whether an active session references it. If no active session exists,
-// the claim is reclaimed". The per-pod claim (§4.6.3) carries no session
-// identifier, so the check keys on the pod through the Postgres
-// `pod_assignment` binding (§3.2). The WarmPoolController depends only on
-// this narrow contract so the GC loop stays decoupled from the session
-// store package.
+// SessionLookup reports whether a session holds the pod of a SandboxClaim:
+// a session whose row names the pod and is non-terminal or in its §7.1
+// post-terminal window. spec: §4.6.1 (Orphaned SandboxClaim detection) — the
+// controller reclaims a claim only when no session holds its pod. The
+// per-pod claim (§4.6.3) carries no session identifier, so the check keys
+// on the pod through the Postgres `pod_assignment` binding. The
+// WarmPoolController depends only on this narrow contract so the GC loop
+// stays decoupled from the session store package.
 type SessionLookup interface {
-	// PodHasActiveSession reports whether any non-terminal session is
-	// bound to the named Sandbox pod. A pod with no live session reports
-	// false (the gateway crashed before persisting the session, or every
-	// session it served has reached a terminal state), so its orphaned
-	// claim is reclaimable.
+	// PodHasActiveSession reports whether any session holds the named
+	// Sandbox pod: a non-terminal session bound to it, or a terminal one
+	// whose release the gateway has not recorded within the post-terminal
+	// cap (claimOrphanTimeout in the controller). A pod with no holder
+	// reports false (the gateway crashed before persisting the session, or
+	// every session it served released the pod or passed the cap), so its
+	// orphaned claim is reclaimable. spec: §7.1 (Post-terminal window).
 	PodHasActiveSession(ctx context.Context, sandboxRef string) (bool, error)
 }
 
@@ -181,11 +186,11 @@ const (
 	// reclaimDrain drains the pod, then deletes the claim. It applies to
 	// the live binding states (`bound`, `recycling`) and the empty-status
 	// CREATE-before-status fallback: the pod may be unscrubbed, so returning
-	// it to idle would break the scrub-before-idle invariant (§3.1/§5.2).
+	// it to idle would break the scrub-before-idle invariant (§5.2).
 	reclaimDrain
 	// reclaimReserved returns the scrubbed, SDK-warm pod to idle via a
 	// precondition-guarded DELETE (podclaim.DeleteOnHoldExpiry semantics),
-	// so a concurrent rebind from any gateway replica wins the race (§3.2).
+	// so a concurrent rebind from any gateway replica wins the race (§4.6.1).
 	reclaimReserved
 )
 
@@ -269,9 +274,8 @@ func (g *ClaimGarbageCollector) evaluate(ctx context.Context, claim *lennyv1.San
 //     termination path.
 //
 // spec: §4.6.1 (orphaned SandboxClaim detection, three binding-state
-// predicates plus the creation-timestamp fallback), §3.3 (drain rather than
-// return-to-idle for live states), §6.10 (recycling-with-no-holdExpiresAt
-// reclaimed by draining).
+// predicates plus the creation-timestamp fallback), §4.6.1
+// (recycling-with-no-holdExpiresAt reclaimed by draining).
 func (g *ClaimGarbageCollector) classify(claim *lennyv1.SandboxClaim, now time.Time) reclaimDisposition {
 	switch claimstate.State(claim.Status.Phase) {
 	case claimstate.Bound, claimstate.Recycling:
@@ -332,8 +336,18 @@ func (g *ClaimGarbageCollector) aged(key, now time.Time, window time.Duration) b
 }
 
 func (g *ClaimGarbageCollector) orphanTimeout() time.Duration {
-	if g.OrphanTimeout > 0 {
-		return g.OrphanTimeout
+	return ResolveClaimOrphanTimeout(g.OrphanTimeout)
+}
+
+// ResolveClaimOrphanTimeout returns the orphan timeout the GC loop applies
+// for a configured value d: d when positive, otherwise the §4.6.1 default.
+// The controller's session store takes the same value as its §7.1
+// post-terminal cap, so the window the orphan predicates count and the
+// orphan age the loop applies stay one number.
+// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.1 (Post-terminal window).
+func ResolveClaimOrphanTimeout(d time.Duration) time.Duration {
+	if d > 0 {
+		return d
 	}
 	return defaultClaimOrphanTimeout
 }
@@ -354,7 +368,7 @@ func (g *ClaimGarbageCollector) reservedHoldGrace() time.Duration {
 // already retiring when the claim disappears; the occupancy projection then
 // sees the draining phase and never pulls the pod back into the claimable set.
 //
-// spec: §4.6.1 (live-state and empty-status reclaim by draining), §3.3
+// spec: §4.6.1 (live-state and empty-status reclaim by draining), §4.6.1
 // (drain rather than return-to-idle; fail-closed on a coordinating-gateway
 // crash), §5.2 (scrub-before-idle invariant).
 func (g *ClaimGarbageCollector) reclaimByDraining(ctx context.Context, claim *lennyv1.SandboxClaim) error {
@@ -378,7 +392,7 @@ func (g *ClaimGarbageCollector) reclaimByDraining(ctx context.Context, claim *le
 // occupancy projection's reserved → idle edge and preserves the
 // scrub-before-idle invariant.
 //
-// spec: §4.6.1 (precondition-guarded hold-expiry DELETE), §3.2
+// spec: §4.6.1 (precondition-guarded hold-expiry DELETE), §4.6.1
 // (rebind-vs-hold-expiry race: a rebind that lands first aborts the reclaim).
 func (g *ClaimGarbageCollector) reclaimReserved(ctx context.Context, claim *lennyv1.SandboxClaim) error {
 	preconditions := client.Preconditions(metav1.Preconditions{
@@ -401,7 +415,7 @@ func (g *ClaimGarbageCollector) reclaimReserved(ctx context.Context, claim *lenn
 	case apierrors.IsConflict(err):
 		// A rebind (or any other writer) changed the resourceVersion since the
 		// sweep listed the claim: the precondition failed, the reclaim aborts,
-		// and the rebound claim is left intact. spec: §3.2.
+		// and the rebound claim is left intact. spec: §4.6.1.
 		logf.FromContext(ctx).Info("reserved-claim reclaim aborted: a rebind won the precondition race",
 			"claim", claim.Name)
 		return nil

@@ -30,7 +30,7 @@ var (
 // and excess distinct events per service account are dropped with the
 // lenny_audit_rate_limited_total counter incremented.
 //
-// spec: §25.9 lines 3695-3703 (Diagnostics Audit Rate Limiting).
+// spec: §25.9.
 type DiagnosticsAuditConfig struct {
 	// Emit is the terminal audit sink each coalesced diagnostic audit
 	// event is handed to when its window closes. lenny-ops wires it to
@@ -64,8 +64,7 @@ func (s *Server) diagNow() time.Time {
 // recordDiagnosticAudit applies the §25.9 diagnostics-audit rate limiting
 // to one successful diagnosis. resourceType/resourceID identify the
 // coalescing window; eventType is the §16.7 diagnostic audit event type.
-// A dropped event increments the rate-limited counter. The §25.9 line
-// 3703 X-Lenny-Operation-ID correlation is stamped onto the emitted
+// A dropped event increments the rate-limited counter. The §25.9 X-Lenny-Operation-ID correlation is stamped onto the emitted
 // event so a query with ?operationId= groups the diagnostic events.
 func (s *Server) recordDiagnosticAudit(r *http.Request, eventType, resourceType, resourceID string) {
 	if s.diagAudit == nil {

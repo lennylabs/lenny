@@ -10,6 +10,6 @@
 --
 -- A NULL row means the pool carries no explicit SDK-warm override: the
 -- breaker runs under automatic control and the demotion-rate-high event
--- is not acknowledged. See spec/06_warm-pod-model.md §6.1 lines 48, 63-65.
+-- is not acknowledged. See spec/06_warm-pod-model.md §6.1.
 ALTER TABLE sandbox_warm_pools
     ADD COLUMN IF NOT EXISTS sdk_warm_config JSONB;

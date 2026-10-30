@@ -7,6 +7,6 @@
 -- experiments, users, environments, connectors, credential_pools, and
 -- tenants; this migration completes the rollout with the runtime
 -- definitions resource. Existing rows default to version 1.
--- See spec/15_external-api-surface.md §15.1 lines 1207-1224.
+-- See spec/15_external-api-surface.md §15.1.
 ALTER TABLE runtime_definitions
     ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;

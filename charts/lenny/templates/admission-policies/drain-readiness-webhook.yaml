@@ -22,7 +22,7 @@ node drain in any cluster that runs Lenny with default network
 policies in place. The allow-gateway-ingress counterpart admits the
 inbound side.
 
-Per §13.2 NET-068 / §17.2 line 56 the podSelector uses the canonical
+Per §13.2 NET-068 / §17.2 the podSelector uses the canonical
 lenny.dev/component: admission-webhook key plus the additive
 lenny.dev/webhook-name: drain-readiness key, so this gateway-egress
 grant narrows to the drain-readiness pods only. The other eight

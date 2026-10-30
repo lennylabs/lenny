@@ -16,12 +16,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §7.3 line 427 — when a session transitions into
+// spec: §7.3 — when a session transitions into
 // awaiting_client_action the gateway fires session.awaiting_action via the
 // §14 callbackUrl webhook stream so CI systems react without polling. The
 // emitter helper publishes the §16.6 EventSessionAwaitingAction
 // operational event, the §11.7 / §16.7 session.awaiting_action_entered
-// audit row, and the §7.2 line 137 status_change(awaiting_client_action)
+// audit row, and the §7.2 status_change(awaiting_client_action)
 // SSE frame. F-7.3.13 / F-7.3.25.
 func TestEmitAwaitingClientActionEnteredEmitsAllSurfaces_spec_7_3_13(t *testing.T) {
 	bus := sessionevents.NewBus(64)
@@ -29,6 +29,7 @@ func TestEmitAwaitingClientActionEnteredEmitsAllSurfaces_spec_7_3_13(t *testing.
 	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
 	at := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
 	srv := New(memstore.New(), Options{
+		DevTenantHeader:    true,
 		Events:             bus,
 		OpsEmitter:         emitter,
 		LifecycleAuditSink: sink,
@@ -60,7 +61,7 @@ func TestEmitAwaitingClientActionEnteredEmitsAllSurfaces_spec_7_3_13(t *testing.
 		t.Errorf("F-7.3.25: audit at = %v, want %v", ev.At, at)
 	}
 
-	// §7.2 line 137 status_change SSE frame.
+	// §7.2 status_change SSE frame.
 	sc := sseEventsOfType(bus, "s_await", "status_change")
 	if len(sc) != 1 {
 		t.Fatalf("F-7.3.13: status_change count = %d, want 1", len(sc))
@@ -83,7 +84,7 @@ func TestEmitAwaitingClientActionEnteredIgnoresWrongState_spec_7_3_13(t *testing
 	bus := sessionevents.NewBus(64)
 	sink := &captureLifecycleAudit{}
 	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
-	srv := New(memstore.New(), Options{Events: bus, OpsEmitter: emitter, LifecycleAuditSink: sink})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus, OpsEmitter: emitter, LifecycleAuditSink: sink})
 
 	srv.emitAwaitingClientActionEntered(context.Background(), sessionstore.Session{
 		ID: "s", TenantID: "acme", State: session.StateRunning,
@@ -96,13 +97,14 @@ func TestEmitAwaitingClientActionEnteredIgnoresWrongState_spec_7_3_13(t *testing
 	}
 }
 
-// spec: §7.3 line 423 — the awaiting_client_action → expired entry
+// spec: §7.3 — the awaiting_client_action → expired entry
 // path writes the distinct §11.7 session.expired_in_awaiting_action audit
 // row so SIEM/SOC dashboards can filter on the cause of expiry. F-7.3.25.
 func TestEmitAwaitingClientActionExpiredEmitsAuditRow_spec_7_3_25(t *testing.T) {
 	sink := &captureLifecycleAudit{}
 	at := time.Date(2026, 5, 26, 11, 0, 0, 0, time.UTC)
 	srv := New(memstore.New(), Options{
+		DevTenantHeader:    true,
 		LifecycleAuditSink: sink,
 		Clock:              func() time.Time { return at },
 	})
@@ -122,7 +124,7 @@ func TestEmitAwaitingClientActionExpiredEmitsAuditRow_spec_7_3_25(t *testing.T) 
 
 // spec: nil sinks must never panic — every collaborator is optional.
 func TestAwaitingActionEmittersNoSinkSafe_spec_7_3_13(t *testing.T) {
-	srv := New(memstore.New(), Options{})
+	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	srv.emitAwaitingClientActionEntered(context.Background(), sessionstore.Session{
 		ID: "s", TenantID: "acme", State: session.StateAwaitingClientAction,
 	})
@@ -135,7 +137,7 @@ func TestAwaitingActionEmittersNoSinkSafe_spec_7_3_13(t *testing.T) {
 // via the AwaitingClientActionExpiryNotifier optional interface, so
 // Server satisfies it.
 func TestServerImplementsAwaitingExpiryNotifier_spec_7_3_25(t *testing.T) {
-	srv := New(memstore.New(), Options{})
+	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	var _ interface {
 		OnSessionExpiredFromAwaitingClientAction(ctx context.Context, sess sessionstore.Session)
 	} = srv
@@ -145,18 +147,20 @@ func TestServerImplementsAwaitingExpiryNotifier_spec_7_3_25(t *testing.T) {
 	})
 }
 
-// spec: §6.2 lines 249/292 — the watchdog's awaiting-action ENTRY hook
-// fires for resume_pending → awaiting_client_action (line 292 wall-clock
-// cap) and resuming → awaiting_client_action (line 249 retries-exhausted
-// branch). Server implements AwaitingClientActionEntryNotifier so the
-// watchdog can drive the §7.3 line 427 webhook + §16.6 op event + §11.7
-// audit row through the existing emit helper. F-6.2.14.
+// spec: §6.2 — the watchdog's awaiting-action ENTRY hook fires for
+// resume_pending → awaiting_client_action under the resume_pending
+// wall-clock cap, and for resuming → awaiting_client_action on the
+// retries-exhausted branch. Server implements
+// AwaitingClientActionEntryNotifier so the watchdog can drive the §7.3
+// webhook, the §16.6 op event, and the §11.7 audit row through the
+// existing emit helper. F-6.2.14.
 func TestServerImplementsAwaitingEntryNotifier_spec_6_2_14(t *testing.T) {
 	sink := &captureLifecycleAudit{}
 	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
 	bus := sessionevents.NewBus(64)
 	at := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
 	srv := New(memstore.New(), Options{
+		DevTenantHeader:    true,
 		Events:             bus,
 		OpsEmitter:         emitter,
 		LifecycleAuditSink: sink,
@@ -178,7 +182,7 @@ func TestServerImplementsAwaitingEntryNotifier_spec_6_2_14(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 249 — the watchdog's resuming → resume_pending retry
+// spec: §6.2 — the watchdog's resuming → resume_pending retry
 // path notifies the §16.1 retry counter + §11.7 audit row via the
 // optional RetryAttemptNotifier. Server implements it by delegating to
 // the existing recordSessionRetry helper. F-6.2.14.
@@ -186,6 +190,7 @@ func TestServerImplementsRetryAttemptNotifier_spec_6_2_14(t *testing.T) {
 	sink := &captureLifecycleAudit{}
 	var retryCalls []string
 	srv := New(memstore.New(), Options{
+		DevTenantHeader:    true,
 		LifecycleAuditSink: sink,
 		IncSessionRetry:    func(class string) { retryCalls = append(retryCalls, class) },
 	})

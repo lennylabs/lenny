@@ -79,7 +79,7 @@ spec:
         app.kubernetes.io/component: e2e-datastore
         lenny.dev/e2e-datastore: postgres
     spec:
-      # Prefer the control-plane node so the §13.19 Kind node-drain
+      # Prefer the control-plane node so the TESTING.md §13.19 Kind node-drain
       # test (which drains a worker) does not evict the database, lose
       # its emptyDir, and force every downstream test to re-migrate.
       # The preference falls back to any node on clusters that lack a
@@ -196,7 +196,7 @@ spec:
         app.kubernetes.io/component: e2e-datastore
         lenny.dev/e2e-datastore: redis
     spec:
-      # Prefer the control-plane node so the §13.19 Kind node-drain
+      # Prefer the control-plane node so the TESTING.md §13.19 Kind node-drain
       # test does not evict the cache, lose its emptyDir, and clear
       # coordination state mid-suite. Falls back to any node when the
       # control-plane label is absent (EKS / cloud installs).
@@ -277,7 +277,7 @@ spec:
       port: 6379
       targetPort: redis
 ---
-# §12.5 line 280 — the artifact-store TLS mandate binds the plaintext-MinIO
+# §12.5 — the artifact-store TLS mandate binds the plaintext-MinIO
 # exception to backends: embedded only; all other backends enforce TLS. The
 # e2e overlay runs a real in-cluster MinIO (a non-embedded backend), so the
 # §12.5 chart guard requires minio.tls.enabled: true, which means the MinIO
@@ -353,7 +353,7 @@ spec:
         app.kubernetes.io/component: e2e-datastore
         lenny.dev/e2e-datastore: minio
     spec:
-      # Prefer the control-plane node so the §13.19 Kind node-drain
+      # Prefer the control-plane node so the TESTING.md §13.19 Kind node-drain
       # test does not evict MinIO, vanish the bucket with the emptyDir,
       # and cause the gateway's §12.5 drain-readiness probe to reject
       # subsequent agent-pod evictions. Falls back to any node when
@@ -375,7 +375,7 @@ spec:
           effect: NoSchedule
       securityContext:
         runAsNonRoot: true
-        # The minio/minio image runs as uid/gid 1000.
+        # The MinIO server runs as uid/gid 1000.
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
@@ -383,14 +383,17 @@ spec:
           type: RuntimeDefault
       containers:
         - name: minio
-          image: minio/minio:RELEASE.2024-09-13T20-26-02Z
+          # pgsty/silo, the maintained fork of the MinIO server, pinned by
+          # tag and index digest. install.sh pulls it on the host, loads it
+          # onto the nodes, and registers the digest-pinned name.
+          image: pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7
           imagePullPolicy: IfNotPresent
           args:
             - server
             - /data
             - --console-address
             - ":9090"
-            # §12.5 line 280 — serve the artifact-store API over TLS. MinIO
+            # §12.5 — serve the artifact-store API over TLS. MinIO
             # reads public.crt/private.key from --certs-dir and serves https
             # on :9000 when they are present. The cert-manager-issued cert is
             # projected into this dir by the tls-certs volume below.
@@ -459,7 +462,9 @@ spec:
         # missing, so this loop is what keeps tier-5 node-drain
         # exercisable across the lifetime of the cluster.
         - name: bucket-init
-          image: minio/mc:RELEASE.2024-09-16T17-43-14Z
+          # pgsty/mc, the maintained fork of the MinIO client, pinned by
+          # tag and index digest; install.sh loads it like the server image.
+          image: pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8
           imagePullPolicy: IfNotPresent
           # The mc client writes its config to $HOME/.mc; the image's
           # default HOME is `/` which is unwritable for uid 1000.

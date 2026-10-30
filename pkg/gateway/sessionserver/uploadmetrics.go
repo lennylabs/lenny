@@ -11,11 +11,11 @@ import (
 // UploadHandlerMetrics receives the §16.1 gateway upload-handler
 // observations: the cumulative bytes committed through the handler and
 // the current in-flight depth of the §4.1 Upload Handler subsystem. The
-// subsystem's concurrency limiter and circuit breaker (the §7.4 line 448
+// subsystem's concurrency limiter and circuit breaker (the §7.4
 // isolation guarantee) are wired separately on the Subsystem value; this
 // interface supplies the two catalogued metric emitters those primitives
 // did not previously feed. Implementations must be non-blocking — the
-// upload path records best-effort. spec: §7.4 line 448; §16.1 — F-13.4.12.
+// upload path records best-effort. spec: §7.4; §16.1 — F-13.4.12.
 type UploadHandlerMetrics interface {
 	// AddUploadBytes increments lenny_upload_bytes_total by n, the
 	// uncompressed bytes a successful upload committed to the blob store.
@@ -24,8 +24,7 @@ type UploadHandlerMetrics interface {
 	// Handler subsystem's current in-flight-plus-queued request count.
 	SetUploadQueueDepth(depth int)
 	// AddExtractionAbort increments
-	// lenny_upload_extraction_aborted_total{error_type} for one §7.4 line
-	// 462 archive-extraction abort. errorType is the §13.4 sub-code
+	// lenny_upload_extraction_aborted_total{error_type} for one §7.4 archive-extraction abort. errorType is the §13.4 sub-code
 	// (max_decompressed_size, non_regular_entry, symlink, etc.). F-7.4.11.
 	AddExtractionAbort(errorType string)
 }

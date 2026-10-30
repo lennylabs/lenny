@@ -10,7 +10,7 @@ import (
 // longRunningPaths are the §25.4 multi-phase operations that use the 7d
 // long-running TTL class because the agent may pause between steps.
 //
-// spec: §25.4 lines 2024-2027.
+// spec: §25.4.
 var longRunningPaths = map[string]bool{
 	"/v1/admin/platform/upgrade/start":    true,
 	"/v1/admin/platform/upgrade/proceed":  true,
@@ -21,10 +21,10 @@ var longRunningPaths = map[string]bool{
 
 // classify returns whether the endpoint requires an idempotency key at
 // Tier 2/3 and its §25.4 TTL class. The required set is the non-convergent
-// operations §25.4 lines 2031-2035 enumerate; POST /v1/admin/backups is
+// operations §25.4 enumerate; POST /v1/admin/backups is
 // required only for a full backup (body type:"full").
 //
-// spec: §25.4 lines 2024-2035.
+// spec: §25.4.
 func classify(method, path string, body []byte) (required bool, class TTLClass) {
 	if longRunningPaths[path] {
 		class = ClassLongRunning

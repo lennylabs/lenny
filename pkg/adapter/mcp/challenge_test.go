@@ -35,7 +35,7 @@ func readChallenge(t *testing.T, dec *json.Decoder) string {
 	return c
 }
 
-// spec: §4.7 lines 879-883 — a connection that answers the
+// spec: §4.7 — a connection that answers the
 // adapterChallenge with the correct HMAC-SHA256(key=nonce) proceeds to
 // the initialize response and can dispatch tools.
 func TestServerChallengeSuccess_spec_4_7(t *testing.T) {
@@ -64,7 +64,7 @@ func TestServerChallengeSuccess_spec_4_7(t *testing.T) {
 	}
 }
 
-// spec: §4.7 line 883 — a mismatched HMAC closes the socket with no
+// spec: §4.7 — a mismatched HMAC closes the socket with no
 // protocol response.
 func TestServerChallengeWrongHMAC_spec_4_7(t *testing.T) {
 	enc, dec := serverPipe(t, challengeServer(), testNonce)
@@ -81,7 +81,7 @@ func TestServerChallengeWrongHMAC_spec_4_7(t *testing.T) {
 	}
 }
 
-// spec: §4.7 line 883 — a challenge response missing the HMAC field is
+// spec: §4.7 — a challenge response missing the HMAC field is
 // rejected and the socket is closed.
 func TestServerChallengeMissingField_spec_4_7(t *testing.T) {
 	enc, dec := serverPipe(t, challengeServer(), testNonce)
@@ -96,7 +96,7 @@ func TestServerChallengeMissingField_spec_4_7(t *testing.T) {
 	}
 }
 
-// spec: §4.7 line 882 — a response that does not arrive within 500 ms
+// spec: §4.7 — a response that does not arrive within 500 ms
 // times out and the socket is closed.
 func TestServerChallengeTimeout_spec_4_7(t *testing.T) {
 	client, server := net.Pipe()
@@ -118,7 +118,7 @@ func TestServerChallengeTimeout_spec_4_7(t *testing.T) {
 	}
 }
 
-// spec: §4.7 line 904 — the adapterChallenge is generated fresh per
+// spec: §4.7 — the adapterChallenge is generated fresh per
 // connection ("each connection requires a fresh HMAC computation gated on
 // the adapter's ephemeral challenge"), so a stale HMAC captured by a
 // process that observed the manifest nonce on one connection cannot be
@@ -171,7 +171,7 @@ func TestServerChallengeReplayAcrossConnectionsRejected_spec_4_7(t *testing.T) {
 	}
 }
 
-// spec: §4.7 lines 879-883 — the supplement is opt-in: a server with
+// spec: §4.7 — the supplement is opt-in: a server with
 // RequireChallenge unset sends the initialize response directly with no
 // intervening challenge frame.
 func TestServerNoChallengeWhenDisabled_spec_4_7(t *testing.T) {

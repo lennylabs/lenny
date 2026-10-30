@@ -9,10 +9,10 @@
 -- serves cached data when the channel is unreachable.
 --
 -- Both tables are platform-scoped (the §25 control plane is not
--- multi-tenanted at this boundary; §25.4 line 1492 lists them among the
+-- multi-tenanted at this boundary; §25.4 lists them among the
 -- PlatformPostgres() tables), so no tenant column or RLS policy applies.
 --
--- spec: §25.8 lines 3579-3605.
+-- spec: §25.8.
 
 CREATE TABLE platform_upgrade_state (
     id                    TEXT PRIMARY KEY DEFAULT 'singleton',

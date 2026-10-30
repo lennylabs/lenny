@@ -54,7 +54,7 @@ func poolWithRefs(tenant, name string, refs ...string) admin.CredentialPoolPaylo
 	return p
 }
 
-// spec: §4.9 line 1212 — pool creation probes every secretRef; an
+// spec: §4.9 — pool creation probes every secretRef; an
 // allowed probe persists the pool.
 func TestCreatePool_ProbeAllowedPersists(t *testing.T) {
 	prober := &fakeSecretProber{}
@@ -72,7 +72,7 @@ func TestCreatePool_ProbeAllowedPersists(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1212 — a DENIED verdict rejects creation with 422
+// spec: §4.9 — a DENIED verdict rejects creation with 422
 // CREDENTIAL_SECRET_RBAC_MISSING, naming every failing Secret and the
 // RBAC patch command; the pool is not persisted.
 func TestCreatePool_ProbeDeniedRejects(t *testing.T) {
@@ -110,7 +110,7 @@ func TestCreatePool_ProbeDeniedRejects(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1212 — a NOT_FOUND verdict also rejects with 422.
+// spec: §4.9 — a NOT_FOUND verdict also rejects with 422.
 func TestCreatePool_ProbeNotFoundRejects(t *testing.T) {
 	prober := &fakeSecretProber{verdicts: map[string]admin.SecretProbeVerdict{
 		"lenny-system/absent": admin.SecretProbeNotFound,
@@ -123,7 +123,7 @@ func TestCreatePool_ProbeNotFoundRejects(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1212 — an indeterminate probe (transport failure)
+// spec: §4.9 — an indeterminate probe (transport failure)
 // rejects with 503 CREDENTIAL_PROBE_UNAVAILABLE; the write does not fail
 // open.
 func TestCreatePool_ProbeUnavailableRejects(t *testing.T) {
@@ -162,7 +162,7 @@ func TestCreatePool_NoProberSkips(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1212 — a PUT that introduces a new secretRef probes
+// spec: §4.9 — a PUT that introduces a new secretRef probes
 // only the new ref; a DENIED new ref rejects the update.
 func TestUpdatePool_ProbesNewSecretRefOnly(t *testing.T) {
 	prober := &fakeSecretProber{verdicts: map[string]admin.SecretProbeVerdict{
@@ -189,7 +189,7 @@ func TestUpdatePool_ProbesNewSecretRefOnly(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1212 — a PUT that changes nothing about the secretRefs
+// spec: §4.9 — a PUT that changes nothing about the secretRefs
 // re-probes none of them and succeeds even when the existing refs would
 // be denied.
 func TestUpdatePool_UnchangedSecretRefNotReprobed(t *testing.T) {

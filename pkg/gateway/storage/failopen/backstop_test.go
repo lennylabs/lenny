@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// spec: §12.4 line 220 — the in-memory backstop counts per the §11.1
+// spec: §12.4 — the in-memory backstop counts per the §11.1
 // one-minute window and resets at the minute boundary.
 func TestBackstopPerMinuteWindowResets_spec_12_4(t *testing.T) {
 	base := time.Date(2026, 6, 2, 12, 0, 30, 0, time.UTC)
@@ -48,7 +48,7 @@ func TestBackstopSweep(t *testing.T) {
 	}
 }
 
-// spec: §12.4 lines 222-224 — the ceiling formula divides tenant_limit by
+// spec: §12.4 — the ceiling formula divides tenant_limit by
 // the replica count and caps at per_replica_hard_cap; the per-user ceiling
 // is a pure fraction of the effective tenant ceiling.
 func TestComputeCeilings_spec_12_4(t *testing.T) {

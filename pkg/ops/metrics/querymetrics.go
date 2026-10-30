@@ -5,7 +5,7 @@ package metrics
 import "github.com/prometheus/client_golang/prometheus"
 
 // PromQueryMetrics is the production QueryMetrics adapter: it observes
-// the §25.4 lines 1914-1916 lenny_prometheus_query_duration_seconds{kind}
+// the §25.4 lenny_prometheus_query_duration_seconds{kind}
 // histogram. Wire it into PrometheusConfig.Metrics so each PromQL query
 // records its wall-clock latency.
 type PromQueryMetrics struct {
@@ -23,7 +23,7 @@ func NewPromQueryMetrics(reg prometheus.Registerer) (*PromQueryMetrics, error) {
 	}
 	h := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "lenny_prometheus_query_duration_seconds",
-		Help:    "§25.4 lines 1914-1916 Prometheus query latency by kind (instant, range, alerts).",
+		Help:    "§25.4 Prometheus query latency by kind (instant, range, alerts).",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"kind"})
 	if err := reg.Register(h); err != nil {

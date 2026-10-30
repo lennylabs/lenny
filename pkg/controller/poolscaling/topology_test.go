@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
 )
 
-// spec: §5.2 lines 631-634 — the PoolScalingController owns
+// spec: §5.2 — the PoolScalingController owns
 // SandboxTemplate.spec and writes the soft zone/node spread defaults
 // when the pool definition carries none.
 func TestSyncWritesTopologyDefaults_spec_5_2_631(t *testing.T) {
@@ -52,7 +52,7 @@ func TestSyncWritesTopologyDefaults_spec_5_2_631(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 636 — deployers can override the defaults per pool;
+// spec: §5.2 — deployers can override the defaults per pool;
 // when the definition carries constraints the controller writes them
 // verbatim rather than replacing them with the defaults.
 func TestSyncPreservesTopologyOverride_spec_5_2_636(t *testing.T) {

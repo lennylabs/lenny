@@ -17,7 +17,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/common/registry"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // TestUpgradeOpsRollPatchesDeploymentWithDigestWhenRequireDigest exercises
@@ -31,12 +30,9 @@ import (
 // instead of the digest form, defeating the requireDigest guarantee that a
 // registry mutation cannot silently change which bits an upgrade rolls out.
 //
-// spec: §25.8 line 3506 ("Old lenny-ops patches its own Deployment's image
-// tag via K8s API to the resolved ops image reference. The patch is a
-// strategic merge patch using the digest form when
-// platform.registry.requireDigest: true").
+// spec: §25.8.
 func TestUpgradeOpsRollPatchesDeploymentWithDigestWhenRequireDigest(t *testing.T) {
-	t.Skip("pkg/ops/upgradeservice has no OpsRoll Deployment-patch call site: " +
+	t.Skip("blocked: pkg/ops/upgradeservice has no OpsRoll Deployment-patch call site: " +
 		"grep for StrategicMergePatchType across pkg/ops/upgradeservice and " +
 		"cmd/lenny-ops finds none. The orchestrator is documented and built " +
 		"as operator-paced (it records phase transitions and audit/events; " +
@@ -46,7 +42,7 @@ func TestUpgradeOpsRollPatchesDeploymentWithDigestWhenRequireDigest(t *testing.T
 		"whether to add an in-process self-patch or keep the operator-paced " +
 		"model as the accepted reading of the spec sentence cited above.")
 
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -60,9 +56,9 @@ func TestUpgradeOpsRollPatchesDeploymentWithDigestWhenRequireDigest(t *testing.T
 	const ns = "lenny-system"
 	const deploymentName = "lenny-ops"
 
-	if err := cl.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}); err != nil {
-		t.Fatalf("create namespace: %v", err)
-	}
+	// lenny-ops patches its own Deployment in the namespace it runs in, so
+	// the test claims that fixed namespace on the shared control plane.
+	ensureFixedNamespace(t, cl, ns)
 
 	oldRef := "ghcr.io/lennylabs/lenny-ops:1.4.3"
 	dep := &appsv1.Deployment{

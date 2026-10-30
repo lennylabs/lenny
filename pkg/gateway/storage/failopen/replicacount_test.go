@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// spec: §12.4 line 224 — cold start defaults to 1; Observe updates the
+// spec: §12.4 — cold start defaults to 1; Observe updates the
 // last-known good count.
 func TestReplicaCountColdStartAndObserve_spec_12_4(t *testing.T) {
 	rc := NewReplicaCount()
@@ -21,7 +21,7 @@ func TestReplicaCountColdStartAndObserve_spec_12_4(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 224 — a non-positive (zero ready endpoints) read does
+// spec: §12.4 — a non-positive (zero ready endpoints) read does
 // not overwrite the last-known good count.
 func TestReplicaCountIgnoresNonPositive_spec_12_4(t *testing.T) {
 	rc := NewReplicaCount()
@@ -50,7 +50,7 @@ func TestReplicaPollerObservesOnSuccess(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 224 — a poll failure retains the last-known good count
+// spec: §12.4 — a poll failure retains the last-known good count
 // (the dual-outage protection).
 func TestReplicaPollerRetainsOnFailure_spec_12_4(t *testing.T) {
 	rc := NewReplicaCount()

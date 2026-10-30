@@ -36,7 +36,7 @@ func NewReadyzProbe(cfg *rest.Config) (func(context.Context) error, error) {
 // probe: a lightweight GET /healthz against the API server using the
 // cluster rest config's transport. It returns nil when the API server
 // answers 200 and an error otherwise, suitable as a health.backends
-// ProbeFunc. spec: §25.3 line 441 — "K8s API server (/healthz). Each
+// ProbeFunc. spec: §25.3 — "K8s API server (/healthz). Each
 // probe has a hard timeout of 2 seconds."
 func NewHealthzProbe(cfg *rest.Config) (func(context.Context) error, error) {
 	return newAPIServerProbe(cfg, "/healthz")

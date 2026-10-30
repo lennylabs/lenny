@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §9.3 line 136 / §5.1 — connector tool-capability metadata
+// spec: §9.3 / §5.1 — connector tool-capability metadata
 // derived from MCP ToolAnnotations. Migration 0114 adds the
 // capability_inference_mode, capabilities, tool_capabilities, and
 // capabilities_refreshed_at columns; the down migration drops them.

@@ -16,20 +16,23 @@ import (
 )
 
 // writeRuntimeScript drops an executable POSIX sh runtime that consumes
-// the inbound message line, then runs `body`.
+// the session_start the executor opens a Send-spawned child with and the
+// inbound message line, then runs `body`. Reading both lines before exiting
+// keeps the message write from racing the child's exit.
 func writeRuntimeScript(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "runtime.sh")
-	script := "#!/bin/sh\nread line\n" + body + "\n"
+	script := "#!/bin/sh\nread start\nread line\n" + body + "\n"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write runtime script: %v", err)
 	}
 	return path
 }
 
-// spec: §15.4.1 line 1889 — a runtime that exits non-zero without
+// spec: §28.5.3 — a runtime that exits non-zero without
 // emitting a `response` is reported as a synthesized RUNTIME_CRASH
-// carrying the exit code and stderr (MED-016).
+// carrying its exit status, to which the developer-loop executor adds the
+// stderr tail (MED-016).
 func TestSubprocessExecutorSynthesizesRuntimeCrash_spec_15_4_1_1889(t *testing.T) {
 	bin := writeRuntimeScript(t, "echo 'boom-detail' >&2\nexit 7")
 	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
@@ -60,7 +63,7 @@ func TestSubprocessExecutorSynthesizesRuntimeCrash_spec_15_4_1_1889(t *testing.T
 	}
 }
 
-// spec: §15.4.1 line 1889 — a CLEAN (code 0) exit without a response is a
+// spec: §28.5.3 — a CLEAN (code 0) exit without a response is a
 // protocol error, not a crash: the gateway must not mislabel it
 // RUNTIME_CRASH.
 func TestSubprocessExecutorCleanExitNoResponseIsNotCrash_spec_15_4_1_1889(t *testing.T) {

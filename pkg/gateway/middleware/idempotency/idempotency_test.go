@@ -58,7 +58,7 @@ func (s *stubStore) Put(_ context.Context, rec idempotency.Record) error {
 // prior record exists, it's returned with claimed=false so the
 // middleware's existing-row branch runs. Errors from getErr are
 // surfaced through claimErr too so the §15.1 envelope test keeps
-// covering the store-failure path. spec: §11.5 line 277; F-11.5.2.
+// covering the store-failure path. spec: §11.5; F-11.5.2.
 func (s *stubStore) Claim(_ context.Context, tenantID, key, bodyHash string, now time.Time) (idempotency.Record, bool, error) {
 	if s.claimErr != nil {
 		return idempotency.Record{}, false, s.claimErr
@@ -87,7 +87,7 @@ func (s *stubStore) Release(_ context.Context, _, _ string) error {
 	return nil
 }
 
-// spec: §11.5 line 277 "scoped per tenant". The middleware must fail
+// spec: §11.5. The middleware must fail
 // closed when no tenant header is present so requests are never
 // collapsed under a shared "default" bucket. spec: F-11.5.13.
 func TestWrap_FailsClosedWhenTenantMissing_spec_11_5(t *testing.T) {
@@ -124,7 +124,7 @@ func TestWrap_FailsClosedWhenTenantMissing_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277. When the tenant header is present, the
+// spec: §11.5. When the tenant header is present, the
 // middleware proceeds normally and reaches the inner handler.
 func TestWrap_AdmitsWhenTenantPresent_spec_11_5(t *testing.T) {
 	called := false
@@ -149,7 +149,7 @@ func TestWrap_AdmitsWhenTenantPresent_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §15.1 lines 958-972 — the canonical error envelope carries
+// spec: §15.1 — the canonical error envelope carries
 // code, category, message, retryable, and (optionally) details. The
 // middleware must emit the same shape as sessionserver. spec: F-11.5.14.
 func TestWrap_ErrorEnvelopeIncludesCategoryAndRetryable_spec_15_1(t *testing.T) {
@@ -163,7 +163,7 @@ func TestWrap_ErrorEnvelopeIncludesCategoryAndRetryable_spec_15_1(t *testing.T) 
 		wantRetry bool
 	}{
 		{
-			// spec: §11.5 line 277 — `INVALID_IDEMPOTENCY_KEY` is the
+			// spec: §11.5 — `INVALID_IDEMPOTENCY_KEY` is the
 			// dedicated PERMANENT envelope for malformed keys (the same
 			// key fails identically until the client picks a different
 			// one). F-15.1.30 catalogued it on the classifier.
@@ -329,7 +329,7 @@ func (r *recordingMetrics) IncIdempotencyCacheSkipped(tenantID, reason string) {
 	r.skipped = append(r.skipped, struct{ tenant, reason string }{tenantID, reason})
 }
 
-// spec: §11.5 line 277 — a transient 5xx must not be replayed for the
+// spec: §11.5 — a transient 5xx must not be replayed for the
 // 24-hour TTL; the middleware skips the cache write so the next retry
 // re-executes against a (hopefully) healthy backend. Closes F-11.5.3.
 func TestWrap_DoesNotCache5xxResponses_spec_11_5(t *testing.T) {
@@ -363,7 +363,7 @@ func TestWrap_DoesNotCache5xxResponses_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — a 4xx is a deterministic per-request outcome
+// spec: §11.5 — a 4xx is a deterministic per-request outcome
 // (e.g. VALIDATION_ERROR), so it IS cached: replay is correct and
 // avoids re-executing the rejected operation. spec: F-11.5.3.
 func TestWrap_Caches4xxResponses_spec_11_5(t *testing.T) {
@@ -395,7 +395,7 @@ func TestWrap_Caches4xxResponses_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — when the durable Put rejects after the inner
+// spec: §11.5 — when the durable Put rejects after the inner
 // handler executed, the failure is recorded so the operator knows a
 // retry with the same key WILL re-execute. Closes F-11.5.4.
 func TestWrap_StorePutError_LogsAndIncrementsMetric_spec_11_5(t *testing.T) {
@@ -427,7 +427,7 @@ func TestWrap_StorePutError_LogsAndIncrementsMetric_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 268 — only the six "critical operations" support
+// spec: §11.5 — only the six "critical operations" support
 // idempotency. A GET with an Idempotency-Key passes through without
 // being trapped in the cache. Closes F-11.5.7.
 func TestWrap_PassesThroughNonAllowedMethod_spec_11_5(t *testing.T) {
@@ -458,7 +458,7 @@ func TestWrap_PassesThroughNonAllowedMethod_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 268 — POST is the default admitted method.
+// spec: §11.5 — POST is the default admitted method.
 func TestWrap_AdmitsPOSTWithDefaultAllowedMethods_spec_11_5(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) })
 	store := &stubStore{}
@@ -554,7 +554,7 @@ func TestWrap_PathAllowList_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — replay reproduces "the cached response (same
+// spec: §11.5 — replay reproduces "the cached response (same
 // HTTP status and body)"; preserving every value of a multi-valued
 // header keeps Set-Cookie / Vary / WWW-Authenticate round-trips
 // faithful. Closes F-11.5.9.
@@ -602,7 +602,7 @@ func TestWrap_MultiValueHeadersPreservedOnReplay_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — when the inner handler returns without
+// spec: §11.5 — when the inner handler returns without
 // calling WriteHeader, captured.status is 0; the cache row stores 200
 // so a future replay never gives back a degenerate 0 status. Closes
 // F-11.5.12.
@@ -661,7 +661,7 @@ func TestMatchPathPattern(t *testing.T) {
 // lint when the test file doesn't use io anywhere else.
 var _ io.Reader = strings.NewReader("")
 
-// spec: §11.5 line 277 ("without re-executing the operation"). The
+// spec: §11.5. The
 // atomic Claim inserts a pending row before the inner handler runs; a
 // concurrent retry that arrives mid-execution observes the pending row
 // and is rejected with 409 IDEMPOTENCY_KEY_IN_FLIGHT. Closes F-11.5.2.
@@ -728,7 +728,7 @@ func TestWrap_AtomicClaim_ConcurrentRetryGetsInFlight_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — when the inner handler returns a 5xx, the
+// spec: §11.5 — when the inner handler returns a 5xx, the
 // pending row is released so the retry can re-execute against a healthy
 // backend. Closes F-11.5.2 (release on 5xx skip path) + F-11.5.3.
 func TestWrap_AtomicClaim_5xxReleasesPendingRow_spec_11_5(t *testing.T) {
@@ -764,7 +764,7 @@ func TestWrap_AtomicClaim_5xxReleasesPendingRow_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — a streamed response (handler calls Flush) is
+// spec: §11.5 — a streamed response (handler calls Flush) is
 // not cached; the pending row is released so a retry re-executes.
 // Closes F-11.5.10.
 func TestWrap_StreamingResponseSkipsCache_spec_11_5(t *testing.T) {
@@ -820,7 +820,7 @@ func TestWrap_StreamingResponseSkipsCache_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — the atomic Claim path remains compatible with
+// spec: §11.5 — the atomic Claim path remains compatible with
 // the existing same-key-different-body 422 contract: after the original
 // completes, a same-key retry with a mismatched body sees IDEMPOTENCY_KEY_REUSED.
 // Regression guard against the Claim/DetectReuse rewiring. spec: F-11.5.2.
@@ -857,7 +857,7 @@ func TestWrap_AtomicClaim_PreservesReuseRejection_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — MemoryStore.Claim returns claimed=true the
+// spec: §11.5 — MemoryStore.Claim returns claimed=true the
 // first time and an existing record (pending or final) on conflict.
 // spec: F-11.5.2.
 func TestMemoryStore_Claim_spec_11_5(t *testing.T) {
@@ -905,7 +905,7 @@ func TestMemoryStore_Claim_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — an expired pending row is treated as absent so
+// spec: §11.5 — an expired pending row is treated as absent so
 // a fresh claim wins the slot (stuck claims are reclaimable by TTL).
 // spec: F-11.5.2.
 func TestMemoryStore_Claim_ExpiredRecordReclaimed_spec_11_5(t *testing.T) {
@@ -930,7 +930,7 @@ func TestMemoryStore_Claim_ExpiredRecordReclaimed_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — Options.MaxBodyBytes governs the cap on the
+// spec: §11.5 — Options.MaxBodyBytes governs the cap on the
 // request body the middleware buffers; a request larger than the cap
 // is rejected with 413 BODY_TOO_LARGE, smaller bodies pass through.
 // The flag --idempotency-max-body-bytes raises the operator-tunable
@@ -976,7 +976,7 @@ func TestWrap_MaxBodyBytesIsOperatorTunable_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: §11.5 line 277 — the new IDEMPOTENCY_KEY_IN_FLIGHT code is in
+// spec: §11.5 — the new IDEMPOTENCY_KEY_IN_FLIGHT code is in
 // the §15.2.1 classifier with (POLICY, retryable=true). Regression
 // guard for the envelope shape on the in-flight gate. spec: F-11.5.2.
 func TestErrorClassify_IdempotencyKeyInFlight_spec_15_1(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 	recovermw "github.com/lennylabs/lenny/pkg/gateway/middleware/recover"
 )
 
-// spec: §27.5 / §27.3.1 line 142 — the recovery wrapper sits on the MCP
+// spec: §27.5 / §27.3.1 — the recovery wrapper sits on the MCP
 // WebSocket upgrade path at /mcp/v1/ws. nhooyr.io/websocket performs a
 // direct http.Hijacker assertion, so the wrapper must re-expose Hijack or
 // the upgrade fails. This test confirms a hijack survives the wrapper.

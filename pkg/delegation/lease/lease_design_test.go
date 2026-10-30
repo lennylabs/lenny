@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §4.2 line 161 design clarification — "delegation lease ==
+// spec: §4.2 design clarification — "delegation lease ==
 // child session row + Redis budget keys". The v1 invariant is that
 // a delegation lease has no dedicated row: every field of the lease
 // is captured on the child session row.
@@ -70,24 +70,24 @@ func TestDelegationLeaseFieldsCapturedByChildSessionRow(t *testing.T) {
 	// granted_at: the child row's CreatedAt records the moment the
 	// gateway issued the lease.
 	if !row.CreatedAt.Equal(childCreated) {
-		t.Errorf("CreatedAt = %v, want %v (§4.2 line 161 granted_at)",
+		t.Errorf("CreatedAt = %v, want %v (§4.2 granted_at)",
 			row.CreatedAt, childCreated)
 	}
-	// expiry: the §4.2 line 159 resume window doubles as the lease
+	// expiry: the §4.2 resume window doubles as the lease
 	// lifetime cap.
 	if !row.ResumeEligibleUntil.Equal(leaseExpiry) {
-		t.Errorf("ResumeEligibleUntil = %v, want %v (§4.2 line 161 expiry)",
+		t.Errorf("ResumeEligibleUntil = %v, want %v (§4.2 expiry)",
 			row.ResumeEligibleUntil, leaseExpiry)
 	}
-	// parent reference: the §4.2 line 157 lineage pointer.
+	// parent reference: the §4.2 lineage pointer.
 	if row.ParentSessionID != "sess_parent" {
-		t.Errorf("ParentSessionID = %q, want sess_parent (§4.2 line 161 parent ref)",
+		t.Errorf("ParentSessionID = %q, want sess_parent (§4.2 parent ref)",
 			row.ParentSessionID)
 	}
 	// policy reference: the gateway records the resolved §8.3
 	// effective policy on the child for replay and audit.
 	if string(row.PolicyEnforcementState) != string(policy) {
-		t.Errorf("PolicyEnforcementState = %s, want %s (§4.2 line 161 policy ref)",
+		t.Errorf("PolicyEnforcementState = %s, want %s (§4.2 policy ref)",
 			row.PolicyEnforcementState, policy)
 	}
 }

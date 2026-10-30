@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+#
+# Residual members of the anchor class. Another class reads this file as
+# ordinary tree content.
+kind: residual-anchors
+version: 1
+entries: []

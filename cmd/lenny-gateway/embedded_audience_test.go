@@ -3,13 +3,14 @@
 package main
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 )
 
-// spec: §17.4 line 182 — "the embedded OIDC provider refuses any audience
+// spec: §17.4 — "the embedded OIDC provider refuses any audience
 // claim not matching dev.local; the gateway rejects externally-issued
 // tokens." The gateway trusts the embedded OIDC HMAC key directly via
 // --bearer-trust-hmac-key-file; embeddedHMACVerifier pins that path to the
@@ -36,7 +37,7 @@ func signFor(t *testing.T, s *jwt.HMACSigner, aud string) string {
 
 func TestEmbeddedHMACVerifierRejectsForeignAudience_spec_17_4_182(t *testing.T) {
 	embedded := jwt.NewHMACSigner("embedded-kid", []byte("embedded-signing-secret-0123456789"))
-	v := embeddedHMACVerifier(embedded)
+	v := embeddedHMACVerifier(embedded, "tenant_id")
 
 	if _, err := v.Verify(signFor(t, embedded, embeddedOIDCAudience)); err != nil {
 		t.Fatalf("dev.local token rejected: %v", err)
@@ -47,21 +48,32 @@ func TestEmbeddedHMACVerifierRejectsForeignAudience_spec_17_4_182(t *testing.T) 
 }
 
 // TestEmbeddedAudienceCompositionMatchesGateway mirrors the gateway's
-// MultiVerifier(primary, embedded) wiring: a Token Service token verifies
-// through the primary member regardless of its audience, while an
+// MultiVerifier(keySet, embedded) wiring: a Lenny-issued token verifies
+// through the key-set member regardless of its audience, while an
 // embedded-key token is accepted only when it carries the dev.local
 // audience. F-17.4.16.
 func TestEmbeddedAudienceCompositionMatchesGateway_spec_17_4_182(t *testing.T) {
-	primary := jwt.NewHMACSigner("token-service-kid", []byte("token-service-secret-abcdefghijklmnop"))
+	keySet, signer := gatewaySigning(t, localSigningProvider(t, 0x66, "local-key-1"))
 	embedded := jwt.NewHMACSigner("embedded-kid", []byte("embedded-signing-secret-0123456789"))
-	bearer := jwt.NewMultiVerifier(primary, embeddedHMACVerifier(embedded))
+	bearer := embeddedBearerVerifier(keySet, embedded, "tenant_id")
+	now := time.Now()
+	lennyIssued, err := signer.Sign(context.Background(), jwt.Claims{
+		Subject:  "alice@dev.local",
+		Audience: []string{"lenny-gateway"},
+		IssuedAt: now.Unix(),
+		Expiry:   now.Add(time.Hour).Unix(),
+		TenantID: "default",
+	})
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
 
 	cases := []struct {
 		name   string
 		token  string
 		accept bool
 	}{
-		{"token-service token (any aud) accepted via primary", signFor(t, primary, "lenny-gateway"), true},
+		{"Lenny-issued token (any aud) accepted via the key set", lennyIssued, true},
 		{"embedded token with dev.local accepted", signFor(t, embedded, embeddedOIDCAudience), true},
 		{"embedded token with foreign aud rejected", signFor(t, embedded, "lenny-gateway"), false},
 	}

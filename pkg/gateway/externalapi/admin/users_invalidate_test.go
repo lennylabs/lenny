@@ -203,7 +203,7 @@ func (s *listFilterCapturingStore) List(ctx context.Context, tenantID string, f 
 // TestFullRevokeNarrowsListByUserID asserts the §11.4 step-1
 // SessionStore lookup pushes the user filter into the store call so
 // the Postgres-backed store reads `idx_sessions_tenant_user` instead
-// of scanning tenant-wide. spec: §11.4 line 256.
+// of scanning tenant-wide. spec: §11.4.
 func TestFullRevokeNarrowsListByUserID_spec_11_4_256(t *testing.T) {
 	users := userstore.NewMemory()
 	base := memstore.New()

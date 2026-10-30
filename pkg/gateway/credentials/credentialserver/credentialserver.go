@@ -41,8 +41,7 @@ type AuditSink interface {
 // a nil propagator leaves the handlers registry-only with a zero affected-
 // lease count.
 //
-// spec: §4.9 line 1350 (PUT rotates active leases), 1351 (revoke
-// invalidates active leases), 1423-1424 (rotation triggers).
+// spec: §4.9.
 type LeasePropagator interface {
 	// RotateUser re-materializes the active leases backed by
 	// (tenant, credentialRef) with the credential's new secret and returns
@@ -116,7 +115,7 @@ type CredentialPayload struct {
 
 // RegisterRequest is the §15.1 POST /v1/credentials body.
 //
-// Environment is the §4.3 line 202 environment scoping field. An empty
+// Environment is the §4.3 environment scoping field. An empty
 // value selects the no-environment scope; a non-empty value scopes the
 // credential to that §10.6 environment.
 type RegisterRequest struct {
@@ -172,7 +171,7 @@ func caller(r *http.Request) (tenant, user string, ok bool) {
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	tenant, user, ok := caller(r)
 	if !ok {
-		// spec: §15.1 line 986 — UNAUTHORIZED is the canonical 401 code
+		// spec: §15.1 — UNAUTHORIZED is the canonical 401 code
 		// for "missing or invalid auth credentials".
 		writeErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "credential endpoints require an authenticated user")
 		return
@@ -212,7 +211,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	tenant, user, ok := caller(r)
 	if !ok {
-		// spec: §15.1 line 986 — UNAUTHORIZED is the canonical 401 code
+		// spec: §15.1 — UNAUTHORIZED is the canonical 401 code
 		// for "missing or invalid auth credentials".
 		writeErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "credential endpoints require an authenticated user")
 		return
@@ -233,13 +232,13 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 	tenant, user, ok := caller(r)
 	if !ok {
-		// spec: §15.1 line 986 — UNAUTHORIZED is the canonical 401 code
+		// spec: §15.1 — UNAUTHORIZED is the canonical 401 code
 		// for "missing or invalid auth credentials".
 		writeErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "credential endpoints require an authenticated user")
 		return
 	}
-	// spec: §16.3 line 352 — the §15.1 credential-rotate path runs under
-	// the credential.rotate span. §16.4 line 376 excludes the rotate RPC's
+	// spec: §16.3 — the §15.1 credential-rotate path runs under
+	// the credential.rotate span. §16.4 excludes the rotate RPC's
 	// payload from span attributes, so the secret and credential ref are
 	// not recorded here; correlation attributes (tenant_id, …) auto-project
 	// from the request context and the span records only the rotate
@@ -267,7 +266,7 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
-	// spec: §4.9 line 1350 — active leases backed by this credential are
+	// spec: §4.9 — active leases backed by this credential are
 	// immediately rotated. User leases are proxy-mode (the secret never
 	// reached the pod), so propagation re-caches the new secret gateway-
 	// side and running sessions pick it up on their next upstream request;
@@ -296,7 +295,7 @@ func (s *Server) handleRotate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	tenant, user, ok := caller(r)
 	if !ok {
-		// spec: §15.1 line 986 — UNAUTHORIZED is the canonical 401 code
+		// spec: §15.1 — UNAUTHORIZED is the canonical 401 code
 		// for "missing or invalid auth credentials".
 		writeErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "credential endpoints require an authenticated user")
 		return
@@ -315,7 +314,7 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		s.writeStoreErr(w, err)
 		return
 	}
-	// spec: §4.9 line 1351 — the revoke immediately invalidates all active
+	// spec: §4.9 — the revoke immediately invalidates all active
 	// leases backed by the credential via the user-shaped deny-list entry
 	// {source: user, tenantId, credentialRef}, propagated across replicas.
 	terminated := 0
@@ -341,7 +340,7 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	tenant, user, ok := caller(r)
 	if !ok {
-		// spec: §15.1 line 986 — UNAUTHORIZED is the canonical 401 code
+		// spec: §15.1 — UNAUTHORIZED is the canonical 401 code
 		// for "missing or invalid auth credentials".
 		writeErr(w, http.StatusUnauthorized, "UNAUTHORIZED", "credential endpoints require an authenticated user")
 		return

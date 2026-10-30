@@ -5,6 +5,8 @@ package adapter
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -14,6 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lennylabs/lenny/pkg/adapter/credfile"
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	"github.com/lennylabs/lenny/pkg/adapter/scrub"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -118,15 +121,16 @@ type recordingPodScrubReporter struct {
 }
 
 type podScrubReport struct {
-	podID   string
-	outcome gatewaycontrol.PodScrubOutcome
-	detail  string
+	podID       string
+	outcome     gatewaycontrol.PodScrubOutcome
+	runtimeLive bool
+	detail      string
 }
 
-func (r *recordingPodScrubReporter) ReportPodScrub(_ context.Context, podID string, outcome gatewaycontrol.PodScrubOutcome, detail string) error {
+func (r *recordingPodScrubReporter) ReportPodScrub(_ context.Context, podID string, outcome gatewaycontrol.PodScrubOutcome, runtimeLive bool, detail string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.reports = append(r.reports, podScrubReport{podID: podID, outcome: outcome, detail: detail})
+	r.reports = append(r.reports, podScrubReport{podID: podID, outcome: outcome, runtimeLive: runtimeLive, detail: detail})
 	return r.err
 }
 
@@ -149,7 +153,7 @@ func recycleServer(t *testing.T) (*Server, *recordingPodScrubReporter, *fakePodS
 	ops := newFakePodScrubOps()
 	done := make(chan struct{})
 	s := New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.Runtime = rt
 	s.PodScrubReporter = reporter
 	s.ScrubOps = ops
@@ -193,7 +197,8 @@ func TestShutdownRecycleRunsWholePodScrubAndReportsSuccess_spec_5_2(t *testing.T
 	startRecycleSession(t, s, "sess-1")
 
 	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
 			PodId: "pod-abc",
 		},
@@ -224,8 +229,8 @@ func TestShutdownRecycleRunsWholePodScrubAndReportsSuccess_spec_5_2(t *testing.T
 		t.Errorf("outcome = %v, want PodScrubSucceeded", reports[0].outcome)
 	}
 
-	// The pod process stays alive across the recycle boundary: releaseSession
-	// returned it to idle, so a replacement session can bind.
+	// The pod process stays alive across the recycle boundary: the adapter
+	// released the slot, so a replacement session can bind.
 	startRecycleSession(t, s, "sess-2")
 }
 
@@ -240,7 +245,8 @@ func TestShutdownRecycleEmptyCleanupCommandsStillReportsSuccess_spec_5_2(t *test
 	startRecycleSession(t, s, "sess-1")
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
 			PodId: "pod-empty",
 			// CleanupCommands intentionally empty.
@@ -290,7 +296,8 @@ func TestShutdownRecycleConcurrentModeTriggersWholePodScrub_spec_5_2(t *testing.
 	// guard admits it, and no slot_id so it is a whole-pod (not per-slot)
 	// teardown.
 	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "slot-sess"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "slot-sess"},
 		Recycle: &adapterv1.RecycleScrub{
 			PodId: "pod-concurrent",
 		},
@@ -364,7 +371,8 @@ func TestShutdownRecycleVMRestartReportsSuccessNoWithhold_spec_5_2(t *testing.T)
 	startRecycleSession(t, s, "sess-1")
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
 			PodId: "pod-vm",
 		},
@@ -403,7 +411,8 @@ func TestShutdownRecycleVMRestartReportsFailedOnDirtyScrub_spec_5_2(t *testing.T
 	startRecycleSession(t, s, "sess-1")
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 		Recycle: &adapterv1.RecycleScrub{
 			PodId: "pod-vm-dirty",
 		},
@@ -440,7 +449,8 @@ func TestShutdownTerminatePathRunsNoScrub_spec_4_7(t *testing.T) {
 	startRecycleSession(t, s, "sess-1")
 
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 	}); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
@@ -465,8 +475,12 @@ func TestShutdownTerminatePathRunsNoScrub_spec_4_7(t *testing.T) {
 // spec: 5.2 (whole-pod scrub parameters, retire-and-reprovision)
 func TestScrubConfigThreadsParametersUniformlyAcrossProfiles_spec_5_2(t *testing.T) {
 	s := New("test")
-	s.WorkspaceRoot = "/workspace/current"
-	s.CredentialsDir = "/run/lenny"
+	base := t.TempDir()
+	credRoot := t.TempDir()
+	s.WorkspaceBase = base
+	s.CredentialsDir = credRoot
+	mustMkdirAll(t, filepath.Join(base, "slots", "sess-a"))
+	mustMkdirAll(t, filepath.Join(credRoot, "slots", "sess-a"))
 
 	var first scrub.Config
 	// The loop still iterates the three §5.2 scrub-profile names to document
@@ -476,10 +490,13 @@ func TestScrubConfigThreadsParametersUniformlyAcrossProfiles_spec_5_2(t *testing
 	// the gateway retire, not an in-guest branch), so the request carries only
 	// the cleanup parameters. spec: 5.2 (whole-pod scrub parameters).
 	for i, profile := range []string{"standard", "in-place", "vm-restart"} {
-		cfg := s.scrubConfig(&adapterv1.RecycleScrub{
+		cfg, err := s.scrubConfig(&adapterv1.RecycleScrub{
 			CleanupCommands:       []string{"echo cleanup"},
 			CleanupTimeoutSeconds: 12,
 		})
+		if err != nil {
+			t.Fatalf("profile %q: scrubConfig: %v", profile, err)
+		}
 		if cfg.ShellMode {
 			t.Errorf("profile %q: ShellMode = true, want false (no cleanup shell field)", profile)
 		}
@@ -489,11 +506,16 @@ func TestScrubConfigThreadsParametersUniformlyAcrossProfiles_spec_5_2(t *testing
 		if cfg.CleanupTimeout != 12*time.Second {
 			t.Errorf("profile %q: CleanupTimeout = %v, want 12s", profile, cfg.CleanupTimeout)
 		}
-		if cfg.CredentialFile != "/run/lenny/credentials.json" {
-			t.Errorf("profile %q: CredentialFile = %q, want /run/lenny/credentials.json", profile, cfg.CredentialFile)
+		wantCred := []string{filepath.Join(credRoot, "slots", "sess-a", credfile.FileName)}
+		if !reflect.DeepEqual(cfg.CredentialFiles, wantCred) {
+			t.Errorf("profile %q: CredentialFiles = %v, want %v", profile, cfg.CredentialFiles, wantCred)
 		}
-		if cfg.WorkspaceDir != "/workspace/current" {
-			t.Errorf("profile %q: WorkspaceDir = %q, want /workspace/current", profile, cfg.WorkspaceDir)
+		wantWs := []string{filepath.Join(base, "slots", "sess-a")}
+		if !reflect.DeepEqual(cfg.WorkspaceDirs, wantWs) {
+			t.Errorf("profile %q: WorkspaceDirs = %v, want %v", profile, cfg.WorkspaceDirs, wantWs)
+		}
+		if cfg.CleanupDir != base {
+			t.Errorf("profile %q: CleanupDir = %q, want the workspace base %q", profile, cfg.CleanupDir, base)
 		}
 		// Every profile yields an identical config: no per-profile restart
 		// divergence survives the retire-and-reprovision reconciliation.
@@ -534,9 +556,9 @@ func TestScrubOutcomeMapping_spec_5_2(t *testing.T) {
 	}
 
 	// Failed report with only a dirty verification path → detail names the path.
-	dirty := &scrub.Report{Result: scrub.Failed, VerifyDirty: []string{"/workspace/current"}}
+	dirty := &scrub.Report{Result: scrub.Failed, VerifyDirty: []string{"/workspace/slots/sess-1/current"}}
 	_, detail = scrubOutcome(dirty, nil)
-	if !strings.Contains(detail, "/workspace/current") {
+	if !strings.Contains(detail, "/workspace/slots/sess-1/current") {
 		t.Errorf("dirty report detail = %q, want it to name the dirty path", detail)
 	}
 
@@ -573,7 +595,7 @@ func TestStartPodScrubWithNilScrubOpsWithholdsReport_spec_5_2(t *testing.T) {
 	reporter := &recordingPodScrubReporter{}
 	done := make(chan struct{})
 	s := New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.ScrubOps = nil // the pre-fix production state: never wired
 	s.PodScrubReporter = reporter
 	s.scrubDone = func() { close(done) }
@@ -609,7 +631,7 @@ func TestStartPodScrubToleratesReportError_spec_5_2(t *testing.T) {
 	reporter := &recordingPodScrubReporter{err: errors.New("gateway unreachable")}
 	done := make(chan struct{})
 	s := New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.ScrubOps = newFakePodScrubOps()
 	s.PodScrubReporter = reporter
 	s.scrubDone = func() { close(done) }
@@ -631,7 +653,7 @@ func TestStartPodScrubToleratesReportError_spec_5_2(t *testing.T) {
 func TestStartPodScrubWithoutReporterDoesNotPanic_spec_5_2(t *testing.T) {
 	done := make(chan struct{})
 	s := New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.ScrubOps = newFakePodScrubOps()
 	s.PodScrubReporter = nil
 	s.scrubDone = func() { close(done) }
@@ -669,7 +691,7 @@ func TestShutdownRecycleScrubIsAsynchronous_spec_5_2(t *testing.T) {
 	ops := &gatedScrubOps{fakePodScrubOps: newFakePodScrubOps(), release: make(chan struct{})}
 	done := make(chan struct{})
 	s := New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.Runtime = rt
 	s.PodScrubReporter = reporter
 	s.ScrubOps = ops
@@ -680,8 +702,9 @@ func TestShutdownRecycleScrubIsAsynchronous_spec_5_2(t *testing.T) {
 	// KillUserProcesses). If it blocked on the scrub, this call would hang on
 	// the unreleased gate and the test would time out.
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		Recycle:   &adapterv1.RecycleScrub{PodId: "pod-async"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
+		Recycle:               &adapterv1.RecycleScrub{PodId: "pod-async"},
 	}); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
@@ -696,5 +719,107 @@ func TestShutdownRecycleScrubIsAsynchronous_spec_5_2(t *testing.T) {
 	reports := reporter.snapshot()
 	if len(reports) != 1 || reports[0].podID != "pod-async" || reports[0].outcome != gatewaycontrol.PodScrubSucceeded {
 		t.Fatalf("post-release reports = %+v, want one PodScrubSucceeded for pod-async", reports)
+	}
+}
+
+// mustMkdirAll creates a directory tree the scrub enumeration reads, so a
+// test can put a per-session slot tree on disk without driving a bind.
+func mustMkdirAll(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+}
+
+// TestRecycleScrubWithUnreadableSlotsContainerReportsFailure asserts the
+// recycle scrub fails its outcome when it cannot read a slots container.
+// The per-slot enumeration is what the purge and the step-6 verification
+// run over, so a container the adapter cannot read is a pod whose
+// per-session workspaces and credential leases may all still be on disk
+// with nothing having examined them. Reading that failure as "this pod
+// held no slot" would report SUCCEEDED for a scrub that purged and
+// verified nothing, and the gateway would return the pod to the pool with
+// the previous sessions' residue intact.
+//
+// diagnosis: an unreadable slots container is being folded into the empty
+// set again, so the between-session isolation path fails open and a
+// recycled pod can carry one session's workspace and credential lease into
+// the next.
+// spec: 5.2 (whole-pod scrub, credential purge and workspace removal), 6.4
+// (per-slot layout)
+func TestRecycleScrubWithUnreadableSlotsContainerReportsFailure_spec_5_2(t *testing.T) {
+	s, reporter, _, done := recycleServer(t)
+	credBase := t.TempDir()
+	s.CredentialsDir = credBase
+	// A regular file where the per-slot credentials container belongs:
+	// os.ReadDir fails with ENOTDIR, which is a read failure rather than
+	// absence, on every uid the tests run as.
+	if err := os.WriteFile(filepath.Join(credBase, "slots"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write the slots path: %v", err)
+	}
+	// No session is started: the residue the scrub has to reach belongs to
+	// a leaked slot whose registry entry is already gone, which is why the
+	// enumeration is on-disk in the first place.
+
+	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
+		Recycle:               &adapterv1.RecycleScrub{PodId: "pod-unreadable"},
+	}); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	waitScrubDone(t, done)
+
+	reports := reporter.snapshot()
+	if len(reports) != 1 {
+		t.Fatalf("ReportPodScrub calls = %d, want exactly 1", len(reports))
+	}
+	if reports[0].outcome != gatewaycontrol.PodScrubFailed {
+		t.Fatalf("outcome = %v, want PodScrubFailed for a slots container the scrub could not read",
+			reports[0].outcome)
+	}
+	if !strings.Contains(reports[0].detail, "slots") {
+		t.Errorf("failure detail = %q, want it to name the slots container it could not enumerate",
+			reports[0].detail)
+	}
+}
+
+// TestRecycleScrubSkipsCleanupWhenCredentialsCannotBeEnumerated asserts that
+// on a pod without the runtime supervisor a credentials container the
+// adapter cannot read keeps the deployer's cleanupCommands from running and
+// fails the scrub: the adapter cannot confirm every credential file is gone.
+//
+// diagnosis: the credential enumeration failure is reaching the outcome only
+// after scrub.Run, so cleanupCommands run with a previous session's
+// credential file possibly still on disk.
+// spec: 5.2 (Supervised scrub sequence, Step 0)
+func TestRecycleScrubSkipsCleanupWhenCredentialsCannotBeEnumerated_spec_5_2(t *testing.T) {
+	s, reporter, _, done := recycleServer(t)
+	credBase := t.TempDir()
+	s.CredentialsDir = credBase
+	if err := os.WriteFile(filepath.Join(credBase, "slots"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write the slots path: %v", err)
+	}
+	marker := filepath.Join(t.TempDir(), "cleanup-ran")
+
+	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
+		Recycle: &adapterv1.RecycleScrub{
+			PodId:                 "pod-unreadable-creds",
+			CleanupCommands:       []string{"/usr/bin/touch " + marker},
+			CleanupTimeoutSeconds: 5,
+		},
+	}); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	waitScrubDone(t, done)
+
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("cleanupCommands ran although the credential files could not be enumerated")
+	}
+	reports := reporter.snapshot()
+	if len(reports) != 1 || reports[0].outcome != gatewaycontrol.PodScrubFailed {
+		t.Fatalf("reports = %+v, want one PodScrubFailed", reports)
 	}
 }

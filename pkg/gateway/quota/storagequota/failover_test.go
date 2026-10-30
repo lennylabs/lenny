@@ -17,7 +17,7 @@ var errRedisDown = errors.New("redis: connection refused")
 
 // fakePrimary is a configurable storagequota.Counter standing in for the
 // Redis primary. Each method returns its programmed error so a test can
-// drive the §12.4 line 210 failover branches deterministically.
+// drive the §12.4 failover branches deterministically.
 type fakePrimary struct {
 	reserveErr error
 	reservePr  int64
@@ -44,7 +44,7 @@ func (f *fakePrimary) Set(_ context.Context, tenantID string, value int64) error
 	return f.setErr
 }
 
-// spec: §12.4 line 210 — a healthy Redis reserve is forwarded unchanged
+// spec: §12.4 — a healthy Redis reserve is forwarded unchanged
 // and never consults the Postgres fallback.
 func TestFailoverReserveForwardsPrimarySuccess_spec_12_4_210(t *testing.T) {
 	fallbackCalls := 0
@@ -65,7 +65,7 @@ func TestFailoverReserveForwardsPrimarySuccess_spec_12_4_210(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 210 — ErrQuotaExceeded is a domain outcome forwarded
+// spec: §12.4 — ErrQuotaExceeded is a domain outcome forwarded
 // without consulting the fallback (a healthy Redis reject, not an outage).
 func TestFailoverReserveForwardsQuotaExceeded_spec_12_4_210(t *testing.T) {
 	fallbackCalls := 0
@@ -89,7 +89,7 @@ func TestFailoverReserveForwardsQuotaExceeded_spec_12_4_210(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 210 — on a Redis outage the pre-check reads the
+// spec: §12.4 — on a Redis outage the pre-check reads the
 // Postgres SUM(artifact_size_bytes) and admits when sum+incoming fits.
 func TestFailoverReserveAdmitsAgainstPostgresSum_spec_12_4_210(t *testing.T) {
 	fallbackCalls := 0
@@ -107,7 +107,7 @@ func TestFailoverReserveAdmitsAgainstPostgresSum_spec_12_4_210(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 210 — the Postgres-derived pre-check still rejects an
+// spec: §12.4 — the Postgres-derived pre-check still rejects an
 // over-quota upload during the outage window.
 func TestFailoverReserveRejectsAgainstPostgresSum_spec_12_4_210(t *testing.T) {
 	sizeOf := func(context.Context, string) (int64, error) { return 800, nil }
@@ -121,7 +121,7 @@ func TestFailoverReserveRejectsAgainstPostgresSum_spec_12_4_210(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 210 — dual-store outage (Redis down AND Postgres down)
+// spec: §12.4 — dual-store outage (Redis down AND Postgres down)
 // fails closed with ErrUnavailable so the upload handler returns 503.
 func TestFailoverReserveDualOutageFailsClosed_spec_12_4_210(t *testing.T) {
 	sizeOf := func(context.Context, string) (int64, error) { return 0, errors.New("postgres: down") }
@@ -143,7 +143,7 @@ func TestFailoverReserveNilSizeOfSurfacesPrimaryError(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 210 — Used reads the Postgres sum during the outage.
+// spec: §12.4 — Used reads the Postgres sum during the outage.
 func TestFailoverUsedFallsBackToPostgresSum_spec_12_4_210(t *testing.T) {
 	sizeOf := func(context.Context, string) (int64, error) { return 777, nil }
 	f := storagequota.NewFailover(&fakePrimary{usedErr: errRedisDown}, sizeOf, nil)
@@ -190,7 +190,7 @@ func TestFailoverAdjustForwardsSuccess(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 210 — Set is the recovery write-back target; it
+// spec: §12.4 — Set is the recovery write-back target; it
 // delegates to the Redis primary and surfaces a still-down error.
 func TestFailoverSetDelegatesToPrimary_spec_12_4_210(t *testing.T) {
 	fp := &fakePrimary{}

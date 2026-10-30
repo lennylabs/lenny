@@ -18,13 +18,13 @@ func TestStorageWriteMetricsExposeValues(t *testing.T) {
 	}
 	m.SetPostgresWriteIops(123)
 	m.SetPostgresWriteCeilingIops(600)
-	// §12.3 line 97 / §16.1 line 228 — the SIEM outbox forwarder sets the
+	// §12.3 / §16.1 — the SIEM outbox forwarder sets the
 	// delivery-lag gauge; the configured threshold is emitted at startup
 	// so AuditSIEMDeliveryLag compares against an operator-tunable scalar.
 	// F-12.3.6 / F-12.3.17.
 	m.SetSIEMDeliveryLagSeconds(42)
 	m.SetSIEMMaxDeliveryLagSeconds(45)
-	// §12.3 line 99 — the AuditBatchingNoSIEM counter is incremented once
+	// §12.3 — the AuditBatchingNoSIEM counter is incremented once
 	// at startup when production batching has no SIEM. F-12.3.15.
 	m.IncAuditBatchingNoSIEM()
 	m.IncBillingFlushPressure()

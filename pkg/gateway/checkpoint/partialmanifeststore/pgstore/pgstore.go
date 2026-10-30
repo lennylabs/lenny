@@ -2,7 +2,7 @@
 
 // Package pgstore is the Postgres-backed §10.1 checkpoint_manifest
 // store. It persists rows to the checkpoint_manifest table from
-// migration 0178, with the §10.1 line 143-151 at-most-one-active-partial
+// migration 0178, with the §10.1 at-most-one-active-partial
 // invariant enforced by the partial_manifest_active_uniq partial unique
 // index, and applies the §12.3 tenant-context RLS guard via
 // pgtenant.InTx.
@@ -37,7 +37,7 @@ func New(pool *pgxpool.Pool, now func() time.Time) *Store {
 
 var _ partialmanifeststore.Store = (*Store)(nil)
 
-const selectList = `tenant_id, checkpoint_id, session_id, slot_id,
+const selectList = `tenant_id, checkpoint_id, session_id,
 	coordination_generation, recovery_generation, partial, manifest_reason,
 	chunk_object_key_prefix, chunk_size_bytes, chunk_encoding, chunk_count,
 	workspace_bytes_uploaded, reserved_bytes, reservation_released_at,
@@ -47,7 +47,7 @@ const selectList = `tenant_id, checkpoint_id, session_id, slot_id,
 // selectListM is selectList qualified with the m. alias so the
 // ListReclaimable join can disambiguate the manifest table's columns
 // from the sessions table's.
-const selectListM = `m.tenant_id, m.checkpoint_id, m.session_id, m.slot_id,
+const selectListM = `m.tenant_id, m.checkpoint_id, m.session_id,
 	m.coordination_generation, m.recovery_generation, m.partial, m.manifest_reason,
 	m.chunk_object_key_prefix, m.chunk_size_bytes, m.chunk_encoding, m.chunk_count,
 	m.workspace_bytes_uploaded, m.reserved_bytes, m.reservation_released_at,
@@ -61,16 +61,16 @@ const terminalStates = `('completed', 'failed', 'cancelled', 'expired')`
 
 // Put writes the §10.1 intent row for a fresh checkpoint attempt in a
 // single transaction: it fences on coordination_generation and
-// supersedes prior attempts for the same (session, slot). A write whose
+// supersedes prior attempts for the same session. A write whose
 // generation is below an already-active strictly-higher generation is a
 // fenced stale-coordinator attempt and is rejected with
-// ErrStaleGeneration (§10.1 line 155); otherwise every active partial
+// ErrStaleGeneration (§10.1.7); otherwise every active partial
 // row at or below the incoming generation is soft-deleted
 // (manifest_reason = 'superseded') before the INSERT so the
 // partial_manifest_active_uniq index never sees two active partial rows.
 // A duplicate checkpoint_id is rejected with ErrAlreadyExists.
 //
-// spec: §10.1 lines 137, 143-151, 155.
+// spec: §10.1.
 func (s *Store) Put(ctx context.Context, r partialmanifeststore.Record) error {
 	if err := validatePut(&r); err != nil {
 		return err
@@ -90,49 +90,49 @@ func (s *Store) Put(ctx context.Context, r partialmanifeststore.Record) error {
 			return partialmanifeststore.ErrAlreadyExists
 		}
 
-		// §10.1 line 155 fencing: reject a stale write before any mutation.
+		// §10.1.7 fencing: reject a stale write before any mutation.
 		var higherActive bool
 		if err := tx.QueryRow(ctx,
 			`SELECT EXISTS(
 				SELECT 1 FROM checkpoint_manifest
-				WHERE tenant_id = $1 AND session_id = $2 AND slot_id = $3
+				WHERE tenant_id = $1 AND session_id = $2
 					AND partial = TRUE AND deleted_at IS NULL
-					AND coordination_generation > $4)`,
-			r.TenantID, r.SessionID, r.SlotID, r.CoordinationGeneration).Scan(&higherActive); err != nil {
+					AND coordination_generation > $3)`,
+			r.TenantID, r.SessionID, r.CoordinationGeneration).Scan(&higherActive); err != nil {
 			return err
 		}
 		if higherActive {
 			return partialmanifeststore.ErrStaleGeneration
 		}
 
-		// §10.1 line 137 supersede-on-write: soft-delete every active
+		// §10.1.7 supersede-on-write: soft-delete every active
 		// partial row at or below the incoming generation in the same
 		// transaction as the INSERT so the active partial set collapses to
 		// the new row.
 		if _, err := tx.Exec(ctx,
 			`UPDATE checkpoint_manifest
-				SET deleted_at = $5, manifest_reason = 'superseded'
-				WHERE tenant_id = $1 AND session_id = $2 AND slot_id = $3
+				SET deleted_at = $4, manifest_reason = 'superseded'
+				WHERE tenant_id = $1 AND session_id = $2
 					AND partial = TRUE AND deleted_at IS NULL
-					AND coordination_generation <= $4
-					AND checkpoint_id != $6`,
-			r.TenantID, r.SessionID, r.SlotID, r.CoordinationGeneration,
+					AND coordination_generation <= $3
+					AND checkpoint_id != $5`,
+			r.TenantID, r.SessionID, r.CoordinationGeneration,
 			now, r.CheckpointID); err != nil {
 			return err
 		}
 
 		_, err := tx.Exec(ctx,
 			`INSERT INTO checkpoint_manifest (
-				tenant_id, checkpoint_id, session_id, slot_id,
+				tenant_id, checkpoint_id, session_id,
 				coordination_generation, recovery_generation, partial,
 				manifest_reason, chunk_object_key_prefix, chunk_size_bytes,
 				chunk_encoding, chunk_count, workspace_bytes_uploaded,
 				reserved_bytes, reservation_released_at,
 				baseline_full_checkpoint_bytes, checkpoint_started_at,
 				checkpoint_timeout_at, created_at, deleted_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-				$14, NULL, $15, $16, $17, $18, NULL)`,
-			r.TenantID, r.CheckpointID, r.SessionID, r.SlotID,
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+				$13, NULL, $14, $15, $16, $17, NULL)`,
+			r.TenantID, r.CheckpointID, r.SessionID,
 			r.CoordinationGeneration, r.RecoveryGeneration, r.Partial,
 			r.ManifestReason, r.ChunkObjectKeyPrefix, r.ChunkSizeBytes,
 			string(r.ChunkEncoding), r.ChunkCount, r.WorkspaceBytesUploaded,
@@ -154,11 +154,8 @@ func validatePut(r *partialmanifeststore.Record) error {
 	if r.ChunkObjectKeyPrefix == "" {
 		return errors.New("partialmanifeststore: chunk_object_key_prefix is required")
 	}
-	if r.SlotID == "" {
-		r.SlotID = partialmanifeststore.SlotDefault
-	}
 	if r.ChunkEncoding == "" {
-		r.ChunkEncoding = partialmanifeststore.ChunkEncodingTar
+		r.ChunkEncoding = partialmanifeststore.ChunkEncodingTarGz
 	}
 	if !r.ChunkEncoding.IsValid() {
 		return errors.New("partialmanifeststore: invalid chunk_encoding")
@@ -232,7 +229,7 @@ func (s *Store) LatestActive(ctx context.Context, tenantID, sessionID string) (p
 
 // LatestActiveAny returns the highest-coordination_generation active row
 // (`deleted_at IS NULL`) for (tenantID, sessionID) regardless of `partial` —
-// the §10.1 line 154 resume-reassembly selector. Ties on
+// the §10.1.7 resume-reassembly selector. Ties on
 // coordination_generation break to the most recently created row.
 func (s *Store) LatestActiveAny(ctx context.Context, tenantID, sessionID string) (partialmanifeststore.Record, error) {
 	var out partialmanifeststore.Record
@@ -279,7 +276,7 @@ func (s *Store) HasActivePartialManifest(ctx context.Context, tenantID, sessionI
 // LatestFull returns the most-recently-created active full checkpoint row
 // (`partial = FALSE AND deleted_at IS NULL`) for (tenantID, sessionID), or
 // ErrNotFound when the session has no surviving full checkpoint. It is the
-// §10.1 line 155 fallback selector the resume path consults when the
+// §10.1.7 fallback selector the resume path consults when the
 // selected partial manifest fails its reassembly contiguity check.
 func (s *Store) LatestFull(ctx context.Context, tenantID, sessionID string) (partialmanifeststore.Record, error) {
 	var out partialmanifeststore.Record
@@ -306,36 +303,7 @@ func (s *Store) LatestFull(ctx context.Context, tenantID, sessionID string) (par
 	return out, nil
 }
 
-// LatestActiveForSlot returns the active partial row for
-// (tenantID, sessionID, slotID), the single slot the supersede path scopes
-// on (§10.1 line 137). partial_manifest_active_uniq admits at most one such
-// row, so the ORDER BY / LIMIT is defensive.
-func (s *Store) LatestActiveForSlot(ctx context.Context, tenantID, sessionID, slotID string) (partialmanifeststore.Record, error) {
-	var out partialmanifeststore.Record
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-		row := tx.QueryRow(ctx,
-			`SELECT `+selectList+` FROM checkpoint_manifest
-				WHERE tenant_id = $1 AND session_id = $2 AND slot_id = $3
-					AND partial = TRUE AND deleted_at IS NULL
-				ORDER BY coordination_generation DESC, created_at DESC LIMIT 1`,
-			tenantID, sessionID, slotID)
-		r, err := scanRow(row)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return partialmanifeststore.ErrNotFound
-		}
-		if err != nil {
-			return err
-		}
-		out = r
-		return nil
-	})
-	if err != nil {
-		return partialmanifeststore.Record{}, err
-	}
-	return out, nil
-}
-
-// ConfirmChunk applies the §10.1 line 131 monotonic counter UPDATE under
+// ConfirmChunk applies the §10.1.7 monotonic counter UPDATE under
 // the `deleted_at IS NULL` and `chunk_count < n + 1` guards.
 func (s *Store) ConfirmChunk(ctx context.Context, tenantID, checkpointID string, n int, workspaceBytesUploaded int64) error {
 	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
@@ -355,7 +323,7 @@ func (s *Store) ConfirmChunk(ctx context.Context, tenantID, checkpointID string,
 // in the same transaction rather than left active for a later supersede or
 // the §12.5 backstop to reclaim.
 //
-// spec: §10.1 line 132 — the zero-chunk finalisation soft-deletes the row
+// spec: §10.1.7 — the zero-chunk finalisation soft-deletes the row
 // in the same transaction.
 func (s *Store) Finalise(ctx context.Context, tenantID, checkpointID string, partial bool, manifestReason string) error {
 	if !partialmanifeststore.IsValidReason(manifestReason) {
@@ -540,7 +508,7 @@ func scanRow(row pgx.Row) (partialmanifeststore.Record, error) {
 		deletedAt     *time.Time
 	)
 	if err := row.Scan(
-		&r.TenantID, &r.CheckpointID, &r.SessionID, &r.SlotID,
+		&r.TenantID, &r.CheckpointID, &r.SessionID,
 		&r.CoordinationGeneration, &r.RecoveryGeneration, &r.Partial,
 		&r.ManifestReason, &r.ChunkObjectKeyPrefix, &r.ChunkSizeBytes,
 		&encoding, &r.ChunkCount, &r.WorkspaceBytesUploaded,

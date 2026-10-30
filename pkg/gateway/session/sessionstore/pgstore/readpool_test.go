@@ -26,7 +26,7 @@ func fakePool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// spec: §12.3 line 146 — without a read replica, the read-heavy
+// spec: §12.3 — without a read replica, the read-heavy
 // session-status and task-tree query paths share the primary pool.
 func TestNewSharesPrimaryWhenNoReadPool_spec_12_3_146(t *testing.T) {
 	primary := fakePool(t)
@@ -36,7 +36,7 @@ func TestNewSharesPrimaryWhenNoReadPool_spec_12_3_146(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 146 — WithReadPool routes the read-heavy
+// spec: §12.3 — WithReadPool routes the read-heavy
 // session-status and task-tree queries to the replica while writes stay
 // on the primary. F-12.3.16.
 func TestWithReadPoolRoutesReadsToReplica_spec_12_3_146(t *testing.T) {
@@ -51,7 +51,7 @@ func TestWithReadPoolRoutesReadsToReplica_spec_12_3_146(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 146 — a nil read pool is ignored so reads stay on the
+// spec: §12.3 — a nil read pool is ignored so reads stay on the
 // primary; the gateway passes nil when no LENNY_PG_READ_DSN is set.
 func TestWithReadPoolNilKeepsReadsOnPrimary_spec_12_3_146(t *testing.T) {
 	primary := fakePool(t)

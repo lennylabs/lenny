@@ -2,7 +2,7 @@
 # (SLODefinitions) in pkg/alerting/rules. DO NOT EDIT. Run
 # `make generate` to refresh.
 #
-# spec: §16.10 lines 732-736 — operator-facing OpenSLO v1 reference,
+# spec: §16.10 — operator-facing OpenSLO v1 reference,
 # rendered with deployment_tier="tier1" as a concrete example. The
 # chart fragment charts/lenny/files/openslo.yaml carries a tier
 # placeholder the Helm chart substitutes per deployment.

@@ -44,7 +44,7 @@ func cacheStaleRows(app *fakeAppender) []capturedRow {
 	return out
 }
 
-// spec: §16.7 line 679 — a fresh cache (age within the 5s budget) serves
+// spec: §16.7 — a fresh cache (age within the 5s budget) serves
 // no cache-stale audit event.
 func TestCacheStaleFreshCacheNoEvent_spec_16_7(t *testing.T) {
 	h, app, met := staleHarness(t, nil, 1*time.Second)
@@ -57,7 +57,7 @@ func TestCacheStaleFreshCacheNoEvent_spec_16_7(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 679 — a decision admitted against a stale cache emits
+// spec: §16.7 — a decision admitted against a stale cache emits
 // the security-salient outcome="admitted" cache-stale event and still
 // admits the request (the cache could not verify a breaker, so the
 // request was not blocked).

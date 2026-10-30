@@ -5,6 +5,7 @@ package main
 import (
 	"flag"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +74,13 @@ func TestParseFlagsPopulatesEveryDefault(t *testing.T) {
 		{"postgresDSN", f.postgresDSN == nil},
 		{"redisURL", f.redisURL == nil},
 		{"redisPassword", f.redisPassword == nil},
+		{"redisSentinelAddrs", f.redisSentinelAddrs == nil},
+		{"redisSentinelMaster", f.redisSentinelMaster == nil},
+		{"redisSentinelPassword", f.redisSentinelPassword == nil},
+		{"redisClusterAddrs", f.redisClusterAddrs == nil},
+		{"redisTLS", f.redisTLS == nil},
+		{"redisAllowInsecure", f.redisAllowInsecure == nil},
+		{"redisCachePubSubURL", f.redisCachePubSubURL == nil},
 		{"rlCallerPerSec", f.rlCallerPerSec == nil},
 		{"rlCallerPerMin", f.rlCallerPerMin == nil},
 		{"rlTenantPerSec", f.rlTenantPerSec == nil},
@@ -81,6 +89,7 @@ func TestParseFlagsPopulatesEveryDefault(t *testing.T) {
 		{"tlsKey", f.tlsKey == nil},
 		{"tlsCA", f.tlsCA == nil},
 		{"secretNamespace", f.secretNamespace == nil},
+		{"capabilityTokenTTL", f.capabilityTokenTTL == nil},
 		{"kmsOpts", f.kmsOpts == nil},
 		{"kmsFinalize", f.kmsFinalize == nil},
 	}
@@ -108,11 +117,13 @@ func TestParseFlagsPopulatesEveryDefault(t *testing.T) {
 		// registerIssuerAndStateFlags (§13.3 issuer, §4.9 probe namespace)
 		{"issuer", *f.issuer, "https://lenny.dev.local/token"},
 		{"secretNamespace", *f.secretNamespace, "lenny-system"},
-		// registerRateLimitFlags (§13.3 line 607 normative limits)
+		// registerRateLimitFlags (§13.3 normative limits)
 		{"rlCallerPerSec", *f.rlCallerPerSec, 10},
 		{"rlCallerPerMin", *f.rlCallerPerMin, 300},
 		{"rlTenantPerSec", *f.rlTenantPerSec, 100},
 		{"rlSampleWindow", *f.rlSampleWindow, 10 * time.Second},
+		// registerLifetimeFlags (§10.2 auth.capabilityTokenTtlSeconds default)
+		{"capabilityTokenTTL", *f.capabilityTokenTTL, 900},
 		// registerKMSFlags (§4 / §17.5 KMS provider selector; local default)
 		{"kmsProvider", f.kmsOpts.Provider, providerflags.ProviderLocal},
 	}
@@ -136,10 +147,18 @@ func clearTokenServiceEnv(t *testing.T) {
 		"LENNY_POSTGRES_DSN",
 		"LENNY_REDIS_URL",
 		"LENNY_REDIS_PASSWORD",
+		"LENNY_REDIS_SENTINEL_ADDRS",
+		"LENNY_REDIS_SENTINEL_MASTER",
+		"LENNY_REDIS_SENTINEL_PASSWORD",
+		"LENNY_REDIS_CLUSTER_ADDRS",
+		"LENNY_REDIS_TLS",
+		"LENNY_REDIS_ALLOW_INSECURE",
+		"LENNY_REDIS_CACHE_PUBSUB_URL",
 		"LENNY_OAUTH_RL_CALLER_PER_SECOND",
 		"LENNY_OAUTH_RL_CALLER_PER_MINUTE",
 		"LENNY_OAUTH_RL_TENANT_PER_SECOND",
 		"LENNY_OAUTH_RL_SAMPLE_WINDOW",
+		"LENNY_CAPABILITY_TOKEN_TTL_SECONDS",
 		"LENNY_TOKEN_SERVICE_TLS_CERT",
 		"LENNY_TOKEN_SERVICE_TLS_KEY",
 		"LENNY_TOKEN_SERVICE_CA",
@@ -149,5 +168,47 @@ func clearTokenServiceEnv(t *testing.T) {
 		"LENNY_ENV",
 	} {
 		t.Setenv(key, "")
+	}
+}
+
+// spec: 10.2 (Authentication)
+//
+// TestCapabilityTokenTTLFlagBound_spec_10_2 pins the Token Service startup
+// gate on --capability-token-ttl-seconds: 119 and 3601 are fatal, and 120 and
+// 3600 start. main calls the gate before any wiring.
+func TestCapabilityTokenTTLFlagBound_spec_10_2(t *testing.T) {
+	for _, tc := range []struct {
+		seconds int
+		ok      bool
+	}{
+		{119, false},
+		{120, true},
+		{900, true},
+		{3600, true},
+		{3601, false},
+	} {
+		err := validateCapabilityTokenTTLFlag(tc.seconds)
+		if (err == nil) != tc.ok {
+			t.Errorf("validateCapabilityTokenTTLFlag(%d) = %v, want ok=%v", tc.seconds, err, tc.ok)
+			continue
+		}
+		if err != nil && (!strings.Contains(err.Error(), "--capability-token-ttl-seconds") ||
+			!strings.Contains(err.Error(), "auth.capabilityTokenTtlSeconds")) {
+			t.Errorf("error %q does not name the flag and auth.capabilityTokenTtlSeconds", err)
+		}
+	}
+	b, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "validateCapabilityTokenTTLFlag(*f.capabilityTokenTTL)"; !strings.Contains(string(b), want) {
+		t.Errorf("main.go: the capability token lifetime gate is not wired (%q missing)", want)
+	}
+	b, err = os.ReadFile("server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "time.Duration(*w.f.capabilityTokenTTL) * time.Second"; !strings.Contains(string(b), want) {
+		t.Errorf("server.go: buildServer does not pass the flag as Options.CapabilityTokenTTL (%q missing)", want)
 	}
 }

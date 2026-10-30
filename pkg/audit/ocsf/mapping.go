@@ -78,12 +78,22 @@ var exactCatalog = map[string]ClassMapping{
 	// §24.11 operator session force-terminate → API Activity (6003),
 	// Delete: an admin terminates a session out of band. Explicit so the
 	// row carries a Delete activity rather than the generic `session.`
-	// prefix Unknown. spec: §24.11 line 136 — F-24.11.3.
+	// prefix Unknown. spec: §24.11 — F-24.11.3.
 	"session.force_terminated": apiActivity(ActivityDelete),
 
 	// §16.7 impersonation → Account Change (3006).
 	"admin.impersonation_started": accountChange(ActivityCreate),
 	"admin.impersonation_ended":   accountChange(ActivityDelete),
+
+	// §12.3 cross-tenant read receipt → API Activity (6003), Read. Every
+	// code path that sets app.current_tenant = '__all__' writes one
+	// (the SIEM forwarder, the retranscribe worker, the OCSF translator,
+	// and the §25.9 scatter-gather), so without an entry each receipt is
+	// a class_mapping_missing row that dead-letters on the SIEM path and
+	// fails the §25.9 audit-events query that renders it.
+	// spec: §12.3 (cross-tenant reads, audit event); §11.7 (OCSF wire
+	// format, every audit event leaving the hot tier is OCSF).
+	"cross_tenant_read": apiActivity(ActivityRead),
 
 	// §11.7 forged-tenant rejection → Application Security Finding (2004).
 	"security.audit_write_rejected": finding(ActivityCreate),
@@ -93,7 +103,7 @@ var exactCatalog = map[string]ClassMapping{
 	"delegation.self_recursion_allowed": finding(ActivityCreate),
 	"delegation.cycle_warning":          finding(ActivityCreate),
 
-	// §11.7 line 62 — `delegation.spawned` records the creation of a
+	// §11.7 — `delegation.spawned` records the creation of a
 	// child session via recursive delegation. API Activity (6003)
 	// because it is a successful admission rather than a security
 	// finding. spec: F-8.5.8.
@@ -120,7 +130,7 @@ var exactCatalog = map[string]ClassMapping{
 	// §16.7 compliance posture → Account Change (3006).
 	"compliance.profile_decommissioned": accountChange(ActivityUpdate),
 
-	// §12 line 291 — operator-forced emergency node drain that bypasses
+	// §12 — operator-forced emergency node drain that bypasses
 	// the MinIO drain-readiness gate. An operator infrastructure action
 	// → API Activity (6003), Update (it transitions the node to
 	// draining). Critical severity is assigned in ocsf.go. F-16.7.3.
@@ -154,7 +164,7 @@ var exactCatalog = map[string]ClassMapping{
 	"connector.oauth.authorization_initiated": authn(ActivityCreate),
 	"connector.oauth.credential_stored":       authn(ActivityCreate),
 
-	// §16.7 line 690 / §25.11 cross-region replication audit → API
+	// §16.7 / §25.11 cross-region replication audit → API
 	// Activity (6003). These are ArtifactStore replication lifecycle
 	// events catalogued alongside the backup.* / restore.* operational
 	// family rather than workspace file access: the verified event is a
@@ -181,7 +191,7 @@ var prefixCatalog = []struct {
 	// §12.8 / §24.10 tenant-deletion lifecycle events. F-12.8.1, F-24.10.3.
 	{"admin.tenant.deletion_initiated", entityMgmt(ActivityDelete)},
 	{"admin.tenant.deletion_blocked", entityMgmt(ActivityDelete)},
-	// §5.1 line 49 per-tenant runtime capability override (updated /
+	// §5.1 per-tenant runtime capability override (updated /
 	// deleted). F-5.1.20.
 	{"admin.tenant.runtime_capability_override", entityMgmt(ActivityUpdate)},
 	{"admin.user.created", accountChange(ActivityCreate)},
@@ -277,7 +287,7 @@ func LookupClass(eventType string) (ClassMapping, bool) {
 }
 
 // CatalogEventTypes returns every event type with an exact catalog
-// entry, sorted. The §12.3.5 contract test generates one of each to
+// entry, sorted. A contract test generates one of each to
 // confirm the translation passes schema validation.
 func CatalogEventTypes() []string {
 	out := make([]string, 0, len(exactCatalog))

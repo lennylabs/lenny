@@ -24,7 +24,7 @@ import (
 // by minting a fresh key, which would orphan every ciphertext written
 // under the old key.
 //
-// spec: §17.4 line 163 — embedded soft-HSM with a file-backed master
+// spec: §17.4 — embedded soft-HSM with a file-backed master
 // key at ~/.lenny/kms/master.key.
 func LoadOrCreateMasterKey(path string) ([]byte, error) {
 	if path == "" {
@@ -81,7 +81,7 @@ func LoadOrCreateMasterKey(path string) ([]byte, error) {
 // WrappedDEK written before a restart unwraps after it — the persistence
 // property NewLocalRandom lacks.
 //
-// spec: §17.4 line 163 — the embedded KMS is a file-backed soft-HSM.
+// spec: §17.4 — the embedded KMS is a file-backed soft-HSM.
 func NewLocalFromKeyFile(path string) (*Local, error) {
 	seed, err := LoadOrCreateMasterKey(path)
 	if err != nil {

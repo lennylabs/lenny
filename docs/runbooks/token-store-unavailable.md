@@ -11,7 +11,6 @@ components:
 symptoms:
   - "POST /v1/oauth/token returns 503 token_store_unavailable"
   - "session creation and credential leasing fail platform-wide"
-  - "delegation minting fails"
 tags:
   - oauth
   - tokens
@@ -27,7 +26,7 @@ related:
 
 # token-store-unavailable
 
-The Postgres-backed token store (the `issued_tokens` table and associated write-path) is unavailable. `/v1/oauth/token` returns `503 token_store_unavailable`; session creation, delegation minting, and credential leasing are blocked platform-wide. This is **fail-closed by design** (Spec §13.3) — do not add a fallback path.
+The Postgres-backed token store (the `issued_tokens` table and associated write-path) is unavailable. `/v1/oauth/token` returns `503 token_store_unavailable`; session creation and credential leasing are blocked platform-wide. This is **fail-closed by design**, so do not add a fallback path.
 
 ## Trigger
 

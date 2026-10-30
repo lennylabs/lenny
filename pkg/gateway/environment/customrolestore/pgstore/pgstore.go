@@ -54,7 +54,7 @@ func (s *Store) Create(ctx context.Context, r customrolestore.CustomRole) error 
 	if r.UpdatedAt.IsZero() {
 		r.UpdatedAt = r.CreatedAt
 	}
-	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	// spec: §15.1 — every admin resource version starts at 1.
 	if r.Version == 0 {
 		r.Version = 1
 	}
@@ -121,7 +121,7 @@ func (s *Store) Update(ctx context.Context, tenantID, name string, mutate func(*
 			return err
 		}
 		r.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
-		// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+		// spec: §15.1 — bump the optimistic-concurrency version on
 		// every successful Update so the next If-Match precondition compares
 		// against the new value.
 		r.Version++
@@ -188,7 +188,7 @@ func (s *Store) Delete(ctx context.Context, tenantID, name string) error {
 // returns (0, nil); the role definition itself is not removed when a
 // user inside the tenant is erased.
 //
-// spec: §12.1 line 5.
+// spec: §12.1.
 func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
@@ -196,7 +196,7 @@ func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 // DeleteByTenant implements the §12.1 mandatory-erasure primitive.
 // Removes every custom-role row belonging to tenantID.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("customrolestore: DeleteByTenant requires a concrete tenant_id")

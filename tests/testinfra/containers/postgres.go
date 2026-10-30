@@ -70,7 +70,7 @@ type Postgres struct {
 // StoreRouter in Postgres-only mode (no Redis). Billing and audit store
 // component and integration tests construct their stores through it so
 // the test path matches production: billing/audit writes route through
-// StoreRouter rather than holding a raw pool. spec: §12.3 R-03 line 144.
+// StoreRouter rather than holding a raw pool. spec: §12.3 R-03.
 func (p *Postgres) Router(t testing.TB) *storerouter.SingleShardRouter {
 	t.Helper()
 	r, err := storerouter.NewSingleShardRouter(storerouter.Config{Postgres: p.Pool})
@@ -85,6 +85,19 @@ func (p *Postgres) Router(t testing.TB) *storerouter.SingleShardRouter {
 // container at test end.
 func StartPostgres(t testing.TB, opts PostgresOptions) *Postgres {
 	t.Helper()
+	opts = opts.withDefaults()
+	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
+	defer cancel()
+
+	container, err := runPostgres(ctx, opts)
+	if err != nil {
+		t.Fatalf("StartPostgres: %v", err)
+	}
+	return finishPostgres(t, ctx, container, opts)
+}
+
+// withDefaults fills the zero fields of opts with their defaults.
+func (opts PostgresOptions) withDefaults() PostgresOptions {
 	if opts.Image == "" {
 		opts.Image = defaultImage
 	}
@@ -100,13 +113,14 @@ func StartPostgres(t testing.TB, opts PostgresOptions) *Postgres {
 	if opts.StartupTimeout == 0 {
 		opts.StartupTimeout = 30 * time.Second
 	}
+	return opts
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
-	defer cancel()
-
-	container, err := tcpostgres.Run(
-		ctx,
-		opts.Image,
+// runPostgres starts a Postgres container configured by opts, with extra
+// customizers applied after the defaults, and waits until it accepts
+// connections.
+func runPostgres(ctx context.Context, opts PostgresOptions, extra ...testcontainers.ContainerCustomizer) (*tcpostgres.PostgresContainer, error) {
+	customizers := append([]testcontainers.ContainerCustomizer{
 		tcpostgres.WithDatabase(opts.Database),
 		tcpostgres.WithUsername(opts.User),
 		tcpostgres.WithPassword(opts.Password),
@@ -115,11 +129,18 @@ func StartPostgres(t testing.TB, opts PostgresOptions) *Postgres {
 				WithOccurrence(2).
 				WithStartupTimeout(opts.StartupTimeout),
 		),
-	)
+	}, extra...)
+	c, err := tcpostgres.Run(ctx, opts.Image, customizers...)
 	if err != nil {
-		t.Fatalf("StartPostgres: %v", err)
+		return nil, fmt.Errorf("run postgres container: %w", err)
 	}
+	return c, nil
+}
 
+// finishPostgres registers the container's termination with t, applies
+// opts.MigrationsDir, and opens the handle's pool.
+func finishPostgres(t testing.TB, ctx context.Context, container *tcpostgres.PostgresContainer, opts PostgresOptions) *Postgres {
+	t.Helper()
 	t.Cleanup(func() {
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer stopCancel()
@@ -158,6 +179,9 @@ func StartPostgres(t testing.TB, opts PostgresOptions) *Postgres {
 // registered by StartPostgres tolerates a double Terminate.
 func (p *Postgres) Stop(t testing.TB) {
 	t.Helper()
+	if p.container == nil {
+		t.Fatal("Postgres.Stop: the database lives on a SharedPostgres container, which one test may not stop; use StartPostgres for an outage")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := p.container.Terminate(ctx); err != nil {
@@ -188,6 +212,10 @@ func applyMigrations(dsn, dir string) error {
 	if err != nil {
 		return fmt.Errorf("migrate new: %w", err)
 	}
+	// The driver holds one connection checked out of db, which db.Close
+	// does not close; m.Close returns it, so the database has no session
+	// left once the migration returns (SharedPostgres clones it next).
+	defer func() { _, _ = m.Close() }()
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("migrate up: %w", err)
 	}

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 #
-# §12.9.8 tier-9 credential-leakage probe runtime image. Pairs the
+# Tier-9 credential-leakage probe runtime image. Pairs the
 # Basic-level echo loop (pkg/runtimekit/echocore) with an Alpine
 # base that retains /bin/sh, so the probes can run
 # `kubectl exec ... cat /proc/<pid>/environ` and

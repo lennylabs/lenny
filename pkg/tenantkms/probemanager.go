@@ -14,7 +14,7 @@ import (
 
 // ErrControlPlaneUnsupported is returned by a ProviderProbeManager for
 // every control-plane operation (ProvisionKey, RotateKey, DisableKey,
-// DestroyKey, KeyInfoFor). §12.5 line 301 makes per-tenant key
+// DestroyKey, KeyInfoFor). §12.5 makes per-tenant key
 // provisioning the deployer's responsibility ("Operators MUST provision
 // the tenant-specific KMS key … before setting workspaceTier: T4") and
 // §12.8 Phase 4a destruction is driven against the cloud KMS console/API.
@@ -66,7 +66,7 @@ func NewProviderProbeLifecycle(prov kms.Provider, now func() time.Time) *Lifecyc
 // maps to ErrKeyUnavailable; any other provider error is wrapped
 // verbatim. Probe is read-only.
 //
-// spec: §12.5 line 301 (admin-time probe), line 307 (continuous probe).
+// spec: §12.5.
 func (m *ProviderProbeManager) Probe(ctx context.Context, alias string) error {
 	wrapped, err := m.prov.WrapDEK(ctx, alias, probeDEK)
 	if err != nil {

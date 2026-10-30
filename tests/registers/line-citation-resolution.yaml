@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+#
+# Line-citation resolution baseline.
+#
+# Every citation listed here pointed outside the specification section
+# it names when the citation resolver landed. Entries are keyed by the
+# file the citation was written in and by the citation as written, so an
+# entry covers that citation in that file alone and the same text
+# written elsewhere is a failure.
+#
+# The resolver rewrites this file downward: an entry whose citation is no
+# longer in the tree is removed in the same run, and no run adds an
+# entry, so a citation that stops resolving fails tier 0 rather than
+# being absorbed here. The file empties as the citations are retired.
+kind: line-citation-resolution-baseline
+version: 1
+files: []

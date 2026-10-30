@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: MIT
+#
+# Residual register for the skip-reasons class.
+#
+# Each entry is a member of the class that the enumeration the migration
+# works from does not carry. An in-class entry belongs to the class, and
+# its route out is the class's own pass or remediation. An excluded entry
+# never belonged to the class, and it is permanent.
+#
+# The residual gate in tests/tier0_static fails tier 0 on a member that
+# matches the class's broad predicate and appears in neither the
+# enumeration nor this file, so a member no enumeration anticipated is
+# triaged here rather than absorbed. The gate removes an in-class entry
+# whose member has left the class in the same run, and it never adds an
+# entry.
+kind: residual-register
+version: 1
+class: skip-reasons
+entries:
+  - member: |-
+      migrations/0168_session_conditions_conversation_continuity_test.go TestSessionConditionsMigrationDB_spec_6_49_7_1 (site 1): Skip
+    class: skip-reasons
+    disposition: in-class
+    reason: |-
+      a skip in the migration tree, outside the classifier trees, whose reason opens with no category
+  - member: |-
+      migrations/0173_billing_audit_ddl_role_test.go TestBillingAuditDDLRoleMigrationDB_spec_11_7_15_1_10_2 (site 1): Skip
+    class: skip-reasons
+    disposition: in-class
+    reason: |-
+      a skip in the migration tree, outside the classifier trees, whose reason opens with no category
+  - member: |-
+      migrations/0174_default_tenant_billing_audit_sequences_test.go TestDefaultTenantSequencesMigrationDB_spec_11_2_1_11_7_15_1_10_2 (site 1): Skip
+    class: skip-reasons
+    disposition: in-class
+    reason: |-
+      a skip in the migration tree, outside the classifier trees, whose reason opens with no category
+  - member: |-
+      migrations/credential_leases_expires_at_test.go TestCredentialLeasesExpiresAtMigrationDB_spec_4_9 (site 1): Skip
+    class: skip-reasons
+    disposition: in-class
+    reason: |-
+      a skip in the migration tree, outside the classifier trees, whose reason opens with no category
+  - member: |-
+      migrations/runtime_definitions_execution_mode_service_test.go TestExecutionModeServiceGatePredicate_spec_5_2_10_5 (site 1): Skip
+    class: skip-reasons
+    disposition: in-class
+    reason: |-
+      a skip in the migration tree, outside the classifier trees, whose reason opens with no category
+  - member: |-
+      migrations/runtime_definitions_execution_mode_service_test.go TestExecutionModeServiceMigrationDB_spec_5_2_12_6 (site 1): Skip
+    class: skip-reasons
+    disposition: in-class
+    reason: |-
+      a skip in the migration tree, outside the classifier trees, whose reason opens with no category
+  - member: |-
+      pkg/gateway/checkpoint/checkpointer/uploaddriver.go *uploadDriver.onStreamError (site 1): SkippedEventFunc
+    class: skip-reasons
+    disposition: excluded
+    reason: |-
+      a callback that reports a skipped upload rather than a test skip
+  - member: |-
+      pkg/gateway/sessionserver/experimentrouter.go *Server.ApplyExperimentRouting (site 1): SkippedAfter
+    class: skip-reasons
+    disposition: excluded
+    reason: |-
+      a helper that reports a skipped experiment assignment rather than a test skip

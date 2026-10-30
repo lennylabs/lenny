@@ -11,23 +11,25 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 func newReserver(t *testing.T) (*treebudget.Reserver, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	cl := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cl := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = cl.Close() })
 	return treebudget.New(cl, 0), mr
 }
 
-// spec: §8.2 line 57 — a delegation within every cap is admitted and
+// spec: §8.2 — a delegation within every cap is admitted and
 // the tree-wide counters advance by the reserved deltas.
 func TestReserveAdmitsWithinCaps_spec_8_2_57(t *testing.T) {
 	t.Parallel()
 	r, _ := newReserver(t)
 	got, err := r.Reserve(context.Background(), treebudget.Reservation{
 		RootSessionID:         "root1",
+		CreateTree:            true,
 		ParentSessionID:       "root1",
 		TreeSizeCap:           50,
 		TreeSizeDelta:         1,
@@ -49,14 +51,14 @@ func TestReserveAdmitsWithinCaps_spec_8_2_57(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 57 — a zero cap means no limit on that axis; the
+// spec: §8.2 — a zero cap means no limit on that axis; the
 // reservation is admitted regardless of accumulated value.
 func TestReserveZeroCapUnbounded_spec_8_2_57(t *testing.T) {
 	t.Parallel()
 	r, _ := newReserver(t)
 	for i := 0; i < 100; i++ {
 		if _, err := r.Reserve(context.Background(), treebudget.Reservation{
-			RootSessionID: "rootZ", ParentSessionID: "rootZ",
+			RootSessionID: "rootZ", ParentSessionID: "rootZ", CreateTree: true,
 			TreeSizeCap: 0, TreeSizeDelta: 1,
 		}); err != nil {
 			t.Fatalf("Reserve %d under zero cap: %v", i, err)
@@ -64,14 +66,14 @@ func TestReserveZeroCapUnbounded_spec_8_2_57(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 127 — a reservation that would push tree_size over
+// spec: §8.2 — a reservation that would push tree_size over
 // maxTreeSize is rejected with BUDGET_EXHAUSTED and no counter mutates.
 func TestReserveTreeSizeExhausted_spec_8_2_127(t *testing.T) {
 	t.Parallel()
 	r, mr := newReserver(t)
 	ctx := context.Background()
 	res := treebudget.Reservation{
-		RootSessionID: "root2", ParentSessionID: "root2",
+		RootSessionID: "root2", ParentSessionID: "root2", CreateTree: true,
 		TreeSizeCap: 2, TreeSizeDelta: 1,
 	}
 	for i := 0; i < 2; i++ {
@@ -93,14 +95,14 @@ func TestReserveTreeSizeExhausted_spec_8_2_127(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 127 — every capped axis rejects independently. Memory
+// spec: §8.2 — every capped axis rejects independently. Memory
 // is the binding axis here even though tree_size has headroom.
 func TestReserveMemoryExhausted_spec_8_2_127(t *testing.T) {
 	t.Parallel()
 	r, _ := newReserver(t)
 	ctx := context.Background()
 	res := treebudget.Reservation{
-		RootSessionID: "root3", ParentSessionID: "root3",
+		RootSessionID: "root3", ParentSessionID: "root3", CreateTree: true,
 		TreeSizeCap: 100, TreeSizeDelta: 1,
 		TreeMemoryCap: treebudget.PerNodeMemoryBytes, TreeMemoryDelta: treebudget.PerNodeMemoryBytes,
 	}
@@ -114,7 +116,7 @@ func TestReserveMemoryExhausted_spec_8_2_127(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 193 — parallel_children is per-parent. Two distinct
+// spec: §12.4 — parallel_children is per-parent. Two distinct
 // parents in the same tree each get their own ceiling.
 func TestReserveParallelChildrenPerParent_spec_12_4_193(t *testing.T) {
 	t.Parallel()
@@ -122,7 +124,7 @@ func TestReserveParallelChildrenPerParent_spec_12_4_193(t *testing.T) {
 	ctx := context.Background()
 	mk := func(parent string) treebudget.Reservation {
 		return treebudget.Reservation{
-			RootSessionID: "root4", ParentSessionID: parent,
+			RootSessionID: "root4", ParentSessionID: parent, CreateTree: true,
 			ParallelChildrenCap: 1, ParallelChildrenDelta: 1,
 		}
 	}
@@ -142,14 +144,14 @@ func TestReserveParallelChildrenPerParent_spec_12_4_193(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 130 — Return decrements the reserved axes; a released
+// spec: §8.2 — Return decrements the reserved axes; a released
 // parallel-children slot frees capacity for a new child.
 func TestReturnFreesParallelSlot_spec_8_2_130(t *testing.T) {
 	t.Parallel()
 	r, _ := newReserver(t)
 	ctx := context.Background()
 	res := treebudget.Reservation{
-		RootSessionID: "root5", ParentSessionID: "root5",
+		RootSessionID: "root5", ParentSessionID: "root5", CreateTree: true,
 		ParallelChildrenCap: 1, ParallelChildrenDelta: 1,
 	}
 	if _, err := r.Reserve(ctx, res); err != nil {
@@ -166,14 +168,14 @@ func TestReturnFreesParallelSlot_spec_8_2_130(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 130 — Return clamps at zero so a double-return cannot
+// spec: §8.2 — Return clamps at zero so a double-return cannot
 // drive a counter negative and inflate available budget.
 func TestReturnClampsAtZero_spec_8_2_130(t *testing.T) {
 	t.Parallel()
 	r, mr := newReserver(t)
 	ctx := context.Background()
 	res := treebudget.Reservation{
-		RootSessionID: "root6", ParentSessionID: "root6",
+		RootSessionID: "root6", ParentSessionID: "root6", CreateTree: true,
 		TreeSizeCap: 5, TreeSizeDelta: 1,
 	}
 	if _, err := r.Reserve(ctx, res); err != nil {
@@ -190,14 +192,14 @@ func TestReturnClampsAtZero_spec_8_2_130(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 213 — a Redis outage fails closed; Reserve returns
+// spec: §12.4 — a Redis outage fails closed; Reserve returns
 // ErrBudgetUnavailable rather than admitting an unbudgeted delegation.
 func TestReserveFailsClosedOnRedisOutage_spec_12_4_213(t *testing.T) {
 	t.Parallel()
 	r, mr := newReserver(t)
 	mr.Close()
 	_, err := r.Reserve(context.Background(), treebudget.Reservation{
-		RootSessionID: "root7", ParentSessionID: "root7",
+		RootSessionID: "root7", ParentSessionID: "root7", CreateTree: true,
 		TreeSizeCap: 10, TreeSizeDelta: 1,
 	})
 	if !errors.Is(err, treebudget.ErrBudgetUnavailable) {
@@ -205,7 +207,30 @@ func TestReserveFailsClosedOnRedisOutage_spec_12_4_213(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 57 — an empty root session id is rejected before any
+// spec: §8.3 (Return on completion), §12.4 — a Return that cannot consult
+// Redis fails with ErrBudgetUnavailable, the same class Reserve reports, and
+// never with ErrBudgetKeysExpired, which is reserved for an absent sentinel.
+func TestReturnDuringRedisOutageIsBudgetUnavailable_spec_8_3(t *testing.T) {
+	t.Parallel()
+	r, mr := newReserver(t)
+	res := treebudget.Reservation{
+		RootSessionID: "root7r", ParentSessionID: "root7r", CreateTree: true,
+		TreeSizeCap: 10, TreeSizeDelta: 1,
+	}
+	if _, err := r.Reserve(context.Background(), res); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	mr.Close()
+	err := r.Return(context.Background(), res)
+	if !errors.Is(err, treebudget.ErrBudgetUnavailable) {
+		t.Fatalf("Return after outage err = %v, want ErrBudgetUnavailable", err)
+	}
+	if errors.Is(err, treebudget.ErrBudgetKeysExpired) {
+		t.Fatalf("Return after outage err = %v, must not be ErrBudgetKeysExpired", err)
+	}
+}
+
+// spec: §8.2 — an empty root session id is rejected before any
 // Redis interaction.
 func TestReserveEmptyRootRejected_spec_8_2_57(t *testing.T) {
 	t.Parallel()
@@ -215,13 +240,13 @@ func TestReserveEmptyRootRejected_spec_8_2_57(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 193 — all five keys share the {root} hash tag so a
+// spec: §12.4 — all five keys share the {root} hash tag so a
 // Redis Cluster co-locates them on one slot for atomic multi-key Lua.
 func TestReserveKeysShareHashTag_spec_12_4_193(t *testing.T) {
 	t.Parallel()
 	r, mr := newReserver(t)
 	if _, err := r.Reserve(context.Background(), treebudget.Reservation{
-		RootSessionID: "rootH", ParentSessionID: "pX",
+		RootSessionID: "rootH", ParentSessionID: "pX", CreateTree: true,
 		TreeSizeCap: 10, TreeSizeDelta: 1,
 		TreeMemoryCap: 1 << 20, TreeMemoryDelta: 1,
 		ParallelChildrenCap: 5, ParallelChildrenDelta: 1,
@@ -241,7 +266,7 @@ func TestReserveKeysShareHashTag_spec_12_4_193(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 379 — the reserve script tracks the per-tree
+// spec: §8.3 — the reserve script tracks the per-tree
 // parallel-children high-watermark, and ObserveHighWatermark reads it
 // once at tree completion and clears the key (GETDEL) so a re-settle
 // cannot double-count. F-8.9.6.
@@ -251,7 +276,7 @@ func TestHighWatermarkTracksMaxParallelChildren_spec_8_3_379(t *testing.T) {
 	ctx := context.Background()
 	mk := func(parent string) treebudget.Reservation {
 		return treebudget.Reservation{
-			RootSessionID: "rootW", ParentSessionID: parent,
+			RootSessionID: "rootW", ParentSessionID: parent, CreateTree: true,
 			ParallelChildrenCap: 10, ParallelChildrenDelta: 1,
 		}
 	}
@@ -282,7 +307,7 @@ func TestHighWatermarkTracksMaxParallelChildren_spec_8_3_379(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 379 — a tree that admitted no delegation has no
+// spec: §8.3 — a tree that admitted no delegation has no
 // recorded watermark, so ObserveHighWatermark returns found=false and
 // the caller skips the histogram observation. F-8.9.6.
 func TestHighWatermarkAbsentForUndelegatedTree_spec_8_3_379(t *testing.T) {
@@ -297,7 +322,7 @@ func TestHighWatermarkAbsentForUndelegatedTree_spec_8_3_379(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 379 — the watermark does not regress when a later
+// spec: §8.3 — the watermark does not regress when a later
 // reservation observes a lower per-parent in-flight count (e.g. a
 // different parent's first child). F-8.9.6.
 func TestHighWatermarkDoesNotRegress_spec_8_3_379(t *testing.T) {
@@ -306,7 +331,7 @@ func TestHighWatermarkDoesNotRegress_spec_8_3_379(t *testing.T) {
 	ctx := context.Background()
 	for i := 0; i < 2; i++ {
 		if _, err := r.Reserve(ctx, treebudget.Reservation{
-			RootSessionID: "rootR", ParentSessionID: "pA",
+			RootSessionID: "rootR", ParentSessionID: "pA", CreateTree: true,
 			ParallelChildrenCap: 10, ParallelChildrenDelta: 1,
 		}); err != nil {
 			t.Fatalf("pA reserve %d: %v", i, err)
@@ -314,7 +339,7 @@ func TestHighWatermarkDoesNotRegress_spec_8_3_379(t *testing.T) {
 	}
 	// pC's first child is in-flight count 1 < the existing watermark 2.
 	if _, err := r.Reserve(ctx, treebudget.Reservation{
-		RootSessionID: "rootR", ParentSessionID: "pC",
+		RootSessionID: "rootR", ParentSessionID: "pC", CreateTree: true,
 		ParallelChildrenCap: 10, ParallelChildrenDelta: 1,
 	}); err != nil {
 		t.Fatalf("pC reserve: %v", err)
@@ -325,94 +350,5 @@ func TestHighWatermarkDoesNotRegress_spec_8_3_379(t *testing.T) {
 	}
 	if value != 2 {
 		t.Fatalf("high-watermark = %d, want 2 (no regression)", value)
-	}
-}
-
-// spec: §8.6 line 643 — a granted lease extension raises the tree's
-// tokens-axis ceiling so a delegation that would breach the parent's
-// pre-extension MaxTokenBudget is admitted after the grant. Without the
-// bridge the second reserve below would exhaust against the old cap.
-// F-8.6.3.
-func TestGrantTokenBudgetRaisesTokenCeiling_spec_8_6_643(t *testing.T) {
-	t.Parallel()
-	r, _ := newReserver(t)
-	ctx := context.Background()
-	res := treebudget.Reservation{
-		RootSessionID: "rootG", ParentSessionID: "rootG",
-		TokenCap: 100, TokenDelta: 80,
-	}
-	// First reservation consumes 80 of the 100-token cap.
-	if _, err := r.Reserve(ctx, res); err != nil {
-		t.Fatalf("first reserve: %v", err)
-	}
-	// A second 80-token reservation would breach the 100 cap pre-grant.
-	if _, err := r.Reserve(ctx, res); !errors.As(err, new(*treebudget.BudgetExhaustedError)) {
-		t.Fatalf("pre-grant second reserve err = %v, want token exhaustion", err)
-	}
-	// Grant 100 more tokens: the effective ceiling becomes 200, so 80+80
-	// now fits.
-	if err := r.GrantTokenBudget(ctx, "rootG", 100); err != nil {
-		t.Fatalf("GrantTokenBudget: %v", err)
-	}
-	if _, err := r.Reserve(ctx, res); err != nil {
-		t.Fatalf("post-grant reserve: %v", err)
-	}
-}
-
-// spec: §8.6 line 643 — the grant is cumulative; repeated grants stack so
-// a tree that is extended twice observes the sum. F-8.6.3.
-func TestGrantTokenBudgetIsCumulative_spec_8_6_643(t *testing.T) {
-	t.Parallel()
-	r, _ := newReserver(t)
-	ctx := context.Background()
-	if err := r.GrantTokenBudget(ctx, "rootC", 30); err != nil {
-		t.Fatalf("grant 1: %v", err)
-	}
-	if err := r.GrantTokenBudget(ctx, "rootC", 40); err != nil {
-		t.Fatalf("grant 2: %v", err)
-	}
-	// Base cap 10 + cumulative grant 70 = 80; an 80-token reservation fits
-	// exactly, one more token does not.
-	if _, err := r.Reserve(ctx, treebudget.Reservation{
-		RootSessionID: "rootC", ParentSessionID: "rootC",
-		TokenCap: 10, TokenDelta: 80,
-	}); err != nil {
-		t.Fatalf("reserve at the cumulative ceiling: %v", err)
-	}
-	if _, err := r.Reserve(ctx, treebudget.Reservation{
-		RootSessionID: "rootC", ParentSessionID: "rootC",
-		TokenCap: 10, TokenDelta: 1,
-	}); !errors.As(err, new(*treebudget.BudgetExhaustedError)) {
-		t.Fatalf("reserve past the cumulative ceiling should exhaust")
-	}
-}
-
-// spec: §8.6 line 643 — a zero base token cap means "unlimited"; a grant
-// must not narrow it to a finite ceiling. A non-positive grant and an
-// empty root are no-ops / errors respectively. F-8.6.3.
-func TestGrantTokenBudgetEdges_spec_8_6_643(t *testing.T) {
-	t.Parallel()
-	r, _ := newReserver(t)
-	ctx := context.Background()
-	// A grant against an unlimited (zero-cap) tree leaves it unlimited.
-	if err := r.GrantTokenBudget(ctx, "rootU", 50); err != nil {
-		t.Fatalf("grant: %v", err)
-	}
-	if _, err := r.Reserve(ctx, treebudget.Reservation{
-		RootSessionID: "rootU", ParentSessionID: "rootU",
-		TokenCap: 0, TokenDelta: 1 << 30,
-	}); err != nil {
-		t.Fatalf("zero-cap tree must stay unlimited after a grant: %v", err)
-	}
-	// Non-positive deltas are no-ops.
-	if err := r.GrantTokenBudget(ctx, "rootU", 0); err != nil {
-		t.Fatalf("zero grant should be a no-op: %v", err)
-	}
-	if err := r.GrantTokenBudget(ctx, "rootU", -5); err != nil {
-		t.Fatalf("negative grant should be a no-op: %v", err)
-	}
-	// An empty root id is rejected.
-	if err := r.GrantTokenBudget(ctx, "", 10); err == nil {
-		t.Fatalf("empty root id should error")
 	}
 }

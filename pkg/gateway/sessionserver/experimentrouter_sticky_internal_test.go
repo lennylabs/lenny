@@ -56,7 +56,7 @@ func stickyTestSession() *sessionstore.Session {
 	return &sessionstore.Session{ID: "sess-1", TenantID: "acme", UserID: "alice"}
 }
 
-// spec: §10.7 line 831 — on a cache hit the OpenFeature provider (inner
+// spec: §10.7 — on a cache hit the OpenFeature provider (inner
 // evaluator) is not called.
 func TestStickyWrapper_CacheHitSkipsProvider_spec_10_7(t *testing.T) {
 	cache := newFakeSticky()
@@ -77,7 +77,7 @@ func TestStickyWrapper_CacheHitSkipsProvider_spec_10_7(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 831 — on a cache miss the provider is consulted and the
+// spec: §10.7 — on a cache miss the provider is consulted and the
 // result is written back so the next session is a hit.
 func TestStickyWrapper_MissEvaluatesAndWritesBack_spec_10_7(t *testing.T) {
 	cache := newFakeSticky()

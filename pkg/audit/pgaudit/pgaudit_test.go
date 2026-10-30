@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/pgaudit"
 )
 
-// spec: §4.4 line 232 — pgaudit sink consumers in the OCSF egress
+// spec: §4.4 — pgaudit sink consumers in the OCSF egress
 // targets list.
 
 // recordingSink captures every Deliver call. The tail loop delivers from
@@ -193,7 +193,7 @@ func TestProcessLineSurfacesSinkError(t *testing.T) {
 // tempfile: the shipper picks up lines appended after Start and
 // delivers them to the sink.
 //
-// spec: §4.4 line 232.
+// spec: §4.4.
 func TestStartTailsLogFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "pgaudit.log")

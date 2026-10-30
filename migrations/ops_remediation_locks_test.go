@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §25.4 lines 2160-2253. Migration 0121 creates the remediation
+// spec: §25.4. Migration 0121 creates the remediation
 // lock coordination trio — ops_remediation_locks (Tier 1 acquire table
 // with the unique(scope) compare-and-set primitive), ops_lock_epoch
 // (the dual-store outage-epoch singleton), and ops_lock_conflicts (the

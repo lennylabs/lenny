@@ -8,5 +8,5 @@
 // is the testable core; cmd just wires flag parsing and signal
 // handling around it.
 //
-// TESTING.md §12.12 and §24.1.
+// spec: §24.1.
 package loadctl

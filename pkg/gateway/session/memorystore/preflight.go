@@ -14,7 +14,7 @@ import (
 // default backend satisfies the agent_memory → tenants(id) foreign key
 // via the migration that seeds this reserved tenant.
 //
-// spec: §12.8 line 746.
+// spec: §12.8.
 const (
 	// PreflightTenantID is the reserved tenant the erasure preflight
 	// writes its probe row under.
@@ -43,7 +43,7 @@ const (
 // survives or any operation errors; the caller composes the §12.8 fatal
 // startup message.
 //
-// spec: §12.8 lines 743-758; §9.4 lines 196, 200.
+// spec: §12.8; §9.4.
 func ValidateMemoryStoreErasure(ctx context.Context, store Store) error {
 	if store == nil {
 		return fmt.Errorf("memorystore: erasure preflight: store is nil")

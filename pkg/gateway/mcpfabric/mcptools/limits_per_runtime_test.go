@@ -42,6 +42,7 @@ func newMCPForElicitationWithRuntimes(t *testing.T, globalTimeout time.Duration,
 	rts := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:         true,
 		Store:                     store,
 		Interactions:              interactions,
 		Runtimes:                  rts,
@@ -56,7 +57,7 @@ func newMCPForElicitationWithRuntimes(t *testing.T, globalTimeout time.Duration,
 // TestElicitationBudgetHonorsPerRuntimeLimit_spec_11_3_203 proves a runtime's
 // `limits.maxElicitationsPerSession` overrides the platform default (50): a
 // single previously-recorded elicitation trips a per-runtime budget of 1,
-// which the default-50 path would not. spec: §11.3 line 203. F-11.3.6.
+// which the default-50 path would not. spec: §11.3. F-11.3.6.
 func TestElicitationBudgetHonorsPerRuntimeLimit_spec_11_3_203(t *testing.T) {
 	srv, store, interactions, rts := newMCPForElicitationWithRuntimes(t, 5*time.Second, 50)
 	mkRuntimeLimits(t, rts, "rt-budget", &runtimestore.Limits{MaxElicitationsPerSession: 1})
@@ -83,7 +84,7 @@ func TestElicitationBudgetHonorsPerRuntimeLimit_spec_11_3_203(t *testing.T) {
 // `limits.maxElicitationWaitSeconds` overrides the platform default: the
 // elicitation times out after the 1s per-runtime wait even though the global
 // ElicitationTimeout is 30s, and the returned error reports the 1s value.
-// spec: §11.3 line 202. F-11.3.6.
+// spec: §11.3. F-11.3.6.
 func TestElicitationWaitHonorsPerRuntimeLimit_spec_11_3_202(t *testing.T) {
 	srv, store, _, rts := newMCPForElicitationWithRuntimes(t, 30*time.Second, 50)
 	mkRuntimeLimits(t, rts, "rt-wait", &runtimestore.Limits{MaxElicitationWaitSeconds: 1})
@@ -116,13 +117,14 @@ func TestElicitationWaitHonorsPerRuntimeLimit_spec_11_3_202(t *testing.T) {
 // event on the parent session's stream — the channel the parent observes via
 // lenny/await_children — carrying childId, requestId, and expiredAt so the
 // parent can distinguish an input-request timeout from other child failures.
-// spec: §11.3 line 238. F-11.3.4.
+// spec: §11.3. F-11.3.4.
 func TestRequestInputExpiredPublishedToParentStream_spec_11_3_238(t *testing.T) {
 	store := memstore.New()
 	reg := inputwait.NewRegistry()
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:   true,
 		Store:               store,
 		Events:              bus,
 		InputWaits:          reg,
@@ -135,7 +137,7 @@ func TestRequestInputExpiredPublishedToParentStream_spec_11_3_238(t *testing.T) 
 
 	// The call blocks until the 10ms request_input timeout fires.
 	resp := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_child","requestId":"req-x","parts":[{"type":"text","text":"hi"}]}`)
+		`{"sessionId":"sess_child","parts":[{"type":"text","text":"hi"}]}`)
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
 	if env["code"] != "REQUEST_INPUT_TIMEOUT" {
@@ -151,7 +153,7 @@ func TestRequestInputExpiredPublishedToParentStream_spec_11_3_238(t *testing.T) 
 	if hist[0].Type != "request_input_expired" {
 		t.Errorf("parent event type = %q, want request_input_expired", hist[0].Type)
 	}
-	for _, want := range []string{`"request_input_expired"`, `"childId":"sess_child"`, `"requestId":"req-x"`, `"expiredAt"`} {
+	for _, want := range []string{`"request_input_expired"`, `"childId":"sess_child"`, `"requestId":"req_`, `"expiredAt"`} {
 		if !strings.Contains(hist[0].Data, want) {
 			t.Errorf("parent event data missing %s: %s", want, hist[0].Data)
 		}
@@ -168,6 +170,7 @@ func TestRequestInputExpiredSkippedForRootSession_spec_11_3_238(t *testing.T) {
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:   true,
 		Store:               store,
 		Events:              bus,
 		InputWaits:          reg,
@@ -179,7 +182,7 @@ func TestRequestInputExpiredSkippedForRootSession_spec_11_3_238(t *testing.T) {
 	mkSession(t, store, "sess_root", session.StateRunning, "")
 
 	resp := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_root","requestId":"req-r","parts":[{"type":"text","text":"hi"}]}`)
+		`{"sessionId":"sess_root","parts":[{"type":"text","text":"hi"}]}`)
 	result, _ := resp["result"].(map[string]any)
 	if env := readLennyErrorEnvelope(t, result); env["code"] != "REQUEST_INPUT_TIMEOUT" {
 		t.Fatalf("envelope.code = %v, want REQUEST_INPUT_TIMEOUT", env["code"])

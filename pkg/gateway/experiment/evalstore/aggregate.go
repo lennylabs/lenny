@@ -37,8 +37,7 @@ type VariantAggregate struct {
 // does not back the matview (e.g. Memory) omits this interface and the
 // handler always aggregates on read.
 //
-// spec: §10.7 line 954 (matview used only for unfiltered, no-breakdown
-// requests), §10.7 line 1088 (refresh scheduling and routing).
+// spec: §10.7, §10.7.
 type AggregateReader interface {
 	// AggregatesByExperiment returns the per-variant aggregates for the
 	// experiment, keyed by variant id. A variant with no eval rows is

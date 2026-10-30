@@ -1,0 +1,824 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Seed the claim register from the reference document's status table.
+
+WHAT THE REGISTER IS FOR. Specification §28.4 requires every normative statement
+§28 makes about a mechanism to carry a row here, so the specification cannot
+assert a mechanism that does not run. A row that is not `WIRED` names the step
+that closes it, which makes the register the work queue for the steps that
+follow.
+
+WHERE THE ROWS COME FROM. `gateway-runtime-comms.md` §7.1, "Status of every
+mechanism named in this document", is the enumeration the reference already made
+and evidenced: each row names a mechanism, its status, and the `file:line`
+citation that was opened to establish it. Re-deriving that from the tree would be
+a second investigation with no better evidence than the first.
+
+WHY A COMPOUND STATUS BECOMES TWO ROWS. The reference labels a mechanism per side
+of the boundary it crosses, so "server WIRED, client UNWIRED" is one line about
+two mechanisms. §28.4's set holds one status per row, and the two halves are
+separately true and separately closed, so each becomes its own row.
+
+WHY THE DEFERRAL FALLS BACK TO R24. A row that is not `WIRED` names the step that
+closes it. Where the plan has a step for the mechanism the mapping names it, and
+where it does not the row names R24, "disposition of the remaining unwired
+surfaces", which is the step the plan defines for exactly this remainder. The
+fallback is visible in the output rather than silent, so a row that deserves a
+specific step can be moved to one.
+
+Usage:
+    seed-claim-register.py --out tests/claim-map.json [--print]
+"""
+
+import argparse
+import json
+import re
+import sys
+
+REFERENCE = "gateway-runtime-comms.md"
+SECTION = "### 7.1 Status of every mechanism named in this document"
+
+STATUS = re.compile(r"\b(WIRED|UNWIRED|ABSENT|UNVERIFIED)\b")
+
+# A status cell naming a side before its label describes that side alone.
+SIDED = re.compile(
+    r"\b(server|client|gateway|pod client|producer|consumer|binary|deployment)\b"
+    r"[^,]*?\b(WIRED|UNWIRED|ABSENT|UNVERIFIED)\b", re.I)
+
+# Which plan step closes a mechanism, by the words the reference uses for it.
+# The order is significant: the first match wins, so a more specific rule sits
+# above a more general one.
+DEFERRAL_RULES = [
+    (r"off.holder", "R21"),
+    (r"mtls|certificate|client identity|peercred|spiffe", "R14"),
+    (r"kubelet|probe|podspec|chart|deployment boundary", "R6"),
+    (r"runtimeops|runtime.operations|runtime ops", "R17"),
+    (r"runtime.frame|frame schema|schema conformance", "R15"),
+    (r"llm proxy|proxy dialect|responses|proxy .*lease", "R11"),
+    (r"evict|quiesce|generation (gap|fence)|in.flight rpc|poddisruptionbudget|pdb|drain",
+     "R16"),
+    (r"coordinator (resolution|address)|coordinator_address|bind|mirror|coordlease"
+     r"|routing (read|cache)|getbysession", "R13"),
+    (r"inter.replica|gateway.to.gateway", "R18"),
+    (r"cross.replica|forward", "R19"),
+    (r"durabilit|input wait|message plane|inbox|redeliver|ready_for_input"
+     r"|single.consumer|attach", "R20"),
+    (r"slot|resume|restore", "R22"),
+    (r"pre.?connect|sdk.warm", "R23"),
+    (r"health", "R23"),
+    (r"lifecycle channel|adapter.to.gateway|gatewaycontrol|control (stream|direction)"
+     r"|hold state|service.account token", "R12"),
+]
+
+# Which §28 heading states the mechanism a row carries a status for, by the words
+# the reference uses for it. The register records how far the tree has reached a
+# statement the specification makes, so a row names the heading that makes it, in
+# the `#slug` form a markdown link to that heading takes. The order is
+# significant: the first match wins, so a rule for one mechanism sits above the
+# rule for the boundary or the register it shares words with. A claim no rule
+# matches stops the run rather than taking a default, because a wrong anchor
+# sends a reader to a heading that does not state the mechanism and the schema
+# validator cannot tell the two apart.
+ANCHOR_RULES = [
+    (r"metric name", "#naming-table"),
+    (r"compliance suite", "#287-wire-contract-artifact-register"),
+    (r"gatewaycontrol|gateway.to.gateway", "#link-register"),
+    (r"coordination_generation", "#2851-gateway-to-pod"),
+    (r"slot identifier field|slot_id|slot.qualified|restore onto a concurrent pod"
+     r"|single.consumer|generation gap|quiesce",
+     "#286-exclusivity-and-concurrency-model"),
+    (r"barrier target set|eviction checkpoint|eviction snapshot|prestop drain"
+     r"|kubelet probe|mtls|podspec|sdk.warm|`adapter` grpc service"
+     r"|`attach` content stream|`checkpointbarrier`|`checkpoint` stream"
+     r"|`coordinatorfence`|health", "#2851-gateway-to-pod"),
+    (r"prestop hook|hold state|orphan.session|adapterevicting|adapterevents",
+     "#2852-pod-to-gateway"),
+    (r"heartbeat|mcp socket|runtime lifecycle|message socket|ready_for_input",
+     "#2853-intra-pod"),
+    (r"\bcross.replica|input.wait|inbox|tool.approval|coordinator_address",
+     "#2854-inter-replica"),
+    (r"llm proxy|object.store|spiffe", "#2855-pod-egress"),
+    (r"eviction.api|pods/eviction|poddisruptionbudget", "#2856-control-plane"),
+    (r"routing cache|\bsse\b", "#2857-gateway-to-store"),
+    (r"mirror|coordination.lease|coordlease|sweeper|orphan.claim|binding eviction",
+     "#register-entry-register"),
+]
+
+# The reference document is frozen at a point before the channel rename, so its
+# citations spell identifiers the way the tree no longer does. The register is a
+# live document about the current tree rather than a copy of a frozen one, so
+# each citation is carried over at the canonical spelling the §28.3 naming table
+# declares. Leaving the retired spellings in would give every renamed identifier
+# a second live spelling, which is the state the identifier gate exists to
+# prevent.
+RENAMES = [
+    ("controlchannel", "adapterevents"),
+    ("lifecyclechannel", "runtimeops"),
+    ("lifecycle-events", "runtime-ops-events"),
+    ("lifecycle-socket", "runtime-ops-socket"),
+    ("@lenny-lifecycle", "@lenny-runtime-ops"),
+    ("LifecycleChannel", "AdapterEvents"),
+    ("lifecycleChannel", "runtimeOps"),
+]
+
+
+def canonical(text):
+    for retired, current in RENAMES:
+        text = text.replace(retired, current)
+    return text
+
+
+# Rows whose status or surface the frozen reference cannot state, keyed by the
+# claim the table names. The reference recorded the capability by the absence of
+# a request field, and the wire has since dropped that field: the request names
+# its session by the session identifier alone. Carrying the reference's wording
+# forward would make the register contradict the code it cites, so the row names
+# the current path and states in its note what that path does.
+#
+# An entry may carry a `status` beside its `surface` and its `note`. The
+# reference's status cell records the tree as it stood when the reference was
+# frozen, so a status the tree has since contradicted is corrected here, on the
+# mechanism the override already restates. Setting a status to `WIRED` drops the
+# `deferral_id` the reference's own cell assigned, because a wired mechanism has
+# no step left to close it and the claim-register validator refuses a `WIRED`
+# row that names one.
+#
+# An entry may also carry a `deferral_id`, which replaces the step the
+# deferral rules assigned to a row that stays unwired or absent. It is used when
+# part of the mechanism landed and the part that remains belongs to a different
+# step than the one the reference's wording selects.
+SURFACE_OVERRIDES = {
+    "Checkpoint restore onto a concurrent pod": {
+        "status": "WIRED",
+        "surface": "`pkg/adapter/resume.go` resolves the restore's checkpoint roots "
+                   "from the request's session identifier through "
+                   "`checkpointRootsForSession` (`pkg/adapter/slot.go`)",
+        "note": "the request addresses its session by the session identifier and the "
+                "restore extracts into that session's own slot tree, so the per-slot "
+                "restore runs on every pod",
+    },
+    # The reference cited the stream by line on the request-scoped open it
+    # recorded. The gateway now holds one stream per session for the life of its
+    # binding, opened by streamFor and owned by an attachConn with a single
+    # reader, so the override names the current surface on both ends.
+    "`Attach` content stream": {
+        "surface": "`pkg/gateway/session/executor/pod.go` `streamFor`, "
+                   "`pkg/gateway/session/executor/podstream.go` `attachConn`, "
+                   "handler `pkg/adapter/attach.go` `Server.Attach`",
+        "note": "the gateway opens one Attach stream per session on a context detached "
+                "from the opening request and keeps it across turns, with one reader "
+                "that hands each response to the turn holding the stream, until the "
+                "binding is released, the stream is evicted, or the stream ends",
+    },
+    # The coordinating replica dequeues its own inbox through deliverBuffered,
+    # and a message a non-coordinating replica receives is no longer buffered in
+    # that replica's in-process inbox. §29.3 Forwarding rule 6 holds a message
+    # carrying no inReplyTo whose forward is not delivered in the session's DLQ,
+    # which the coordinating replica already drains. The REST and MCP message
+    # sites enqueue that hold with the recovering-row TTL, which closes
+    # BUILD-GAPS.md F-29.3.2.
+    "Session inbox redelivery": {
+        "status": "WIRED",
+        "surface": "`pkg/gateway/sessionserver/messages_delivery.go` `forwardMessageBatch` and "
+                   "`pkg/gateway/sessionserver/held_delivery.go` `HoldUndeliveredForward` hold a "
+                   "message whose forward to the coordinator is not delivered in the session DLQ",
+        "note": "a message carrying no inReplyTo to a running or input_required session whose "
+                "forward is not delivered is held in the session DLQ with the recovering-row "
+                "TTL under §29.3 Forwarding rule 6, and the coordinating replica delivers it "
+                "at its next delivery point",
+    },
+    # A reply carrying inReplyTo resolves the pending lenny/request_input call
+    # only on the replica whose LNK-GWCONTROL connection received that call. The
+    # forward carries the reply there, and storing the input wait across
+    # replicas belongs to the message-plane durability step (R20) rather than to
+    # the forward.
+    "Input-wait resolution across replicas": {
+        "deferral_id": "R20",
+        "surface": "`pkg/gateway/session/inputwait/inputwait.go:41-49` is process-local",
+        "note": "the pending lenny/request_input call waits on the replica the pod's "
+                "LNK-GWCONTROL connection reached, and no store carries it to another replica",
+    },
+}
+
+# Mechanisms the frozen reference table still names whose row the seeding loop
+# drops instead of re-emitting it from the table. A row is retired for one of
+# two reasons. Either the platform removed the capability rather than deferring
+# it, so the row carries no claim left to verify, or the specification restates
+# the claim under a different name or heading, so an EXPLICIT row below carries
+# the restated claim and SURFACE_OVERRIDES, which cannot rename or re-anchor a
+# generated row, has no way to carry it.
+#
+# Proposal 0073 removed the duplicate slot address from the gRPC leg: every
+# session is bound to a slot on every pod and the request names it by the
+# session identifier, so there is no slot-qualified dispatch left to defer.
+#
+# The three inter-replica rows are restated by §28.5.4 and §10.1.1. The
+# forward is the HTTP channel CH-HOLDERFORWARD, the coordinator's address is
+# carried in the REG-COORDLEASE holder value rather than in a
+# coordinator_address field, and the gateway-to-gateway transport is the
+# forward listener with NET-072 peer validation (§10.3). Each has an EXPLICIT
+# replacement row.
+RETIRED = {
+    "Slot-qualified interrupt, deadline, usage, and barrier",
+    "Cross-replica message forward",
+    "`coordinator_address` population",
+    "Gateway-to-gateway transport",
+}
+
+# Rows the proposal writes explicitly, because no status table carries them.
+EXPLICIT = [
+    {
+        "claim": "Adapter metric names carrying the retired channel spelling",
+        "status": "ABSENT",
+        "spec_anchor": "#naming-table",
+        "deferral_id": "R12",
+        "surface": "pkg/adapter/metrics.go:71, pkg/adapter/metrics.go:79",
+        "note": "the two metric names keep the retired spelling until R12 adds the "
+                "adapter metrics endpoint and the catalog entries",
+    },
+    {
+        "claim": "Agent podspec mTLS certificate material",
+        "status": "ABSENT",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "deferral_id": "R14",
+        "surface": "spec/04_system-components.md §4.4",
+        "note": "the agent-pod mTLS client identity step supplies the certificate volumes",
+    },
+    {
+        "claim": "Runtime-operations events schema asserted by the external-adapter "
+                 "compliance suite",
+        "status": "ABSENT",
+        "spec_anchor": "#287-wire-contract-artifact-register",
+        "deferral_id": "R8",
+        "surface": "cmd/lenny-compliance/schemavalidate.go",
+        "note": "the suite compiles two schema files and reads no third, while "
+                "spec/24, the adapter-contract reference, and the publishing guide "
+                "all name schemas/runtime-ops-events.schema.json as an artifact it asserts against",
+    },
+    # The three credential operations address the session whose lease they act
+    # on, so each rewrites or re-arms that session's own lease rather than a
+    # pod-global one. The rows name that behavior rather than a request field,
+    # because the duplicate slot address the frozen reference recorded them
+    # against is off the wire and the behavior outlives it. Each anchors to the
+    # CH-RUNTIMEOPS contract card, which is the heading that states the
+    # adapter's per-session credential-file handling, including the rewrite of
+    # /run/lenny/slots/{sessionId}/credentials.json ahead of the in-flight gate.
+    # The exclusivity heading states the one-holder rule and the pod-level
+    # operation lock and says nothing about credential addressing.
+    {
+        "claim": "Credential rotation addressed to the session's own lease file",
+        "status": "WIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "surface": "`pkg/adapter/credentials.go` `RotateCredentials` into "
+                   "`rotateCredentialsSlot` (`pkg/adapter/slotcreds.go`), reached from "
+                   "`cmd/lenny-gateway/cred_renewal.go` `(*credRenewalWiring).onRenewed` "
+                   "and `cmd/lenny-gateway/cred_fallback.go` `proxyFallbackRotator.Rotate` "
+                   "through `pkg/gateway/runtime/adapterclient/client.go` `RotateCredentials`",
+        "note": "the rotation rewrites the addressed session's own "
+                "/run/lenny/slots/{sessionId}/credentials.json first, so a co-tenant's file "
+                "is untouched; the pod-wide per-provider in-flight completion gate and its "
+                "300s ceiling run after that rewrite, inside rotateProviderFull, on "
+                "Full-level runtimes only, and carry no session dimension",
+    },
+    {
+        "claim": "Credential lease extension addressed to the session's own lease set",
+        "status": "WIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "surface": "`pkg/adapter/credentials.go` `ExtendCredentialLease` into "
+                   "`extendCredentialLeaseSlot` (`pkg/adapter/slotcreds.go`), reached from "
+                   "`cmd/lenny-gateway/cred_renewal.go` `(*credRenewalWiring).onExtend` "
+                   "through `pkg/gateway/runtime/adapterclient/client.go` `ExtendCredentialLease`",
+        "note": "the extension re-arms the addressed session's own expiry timer and "
+                "touches neither its credential file nor a co-tenant's deadline",
+    },
+    # The adapter's revocation handler resolves the addressed session's own
+    # credential file, and no gateway code calls the RPC, which is the state
+    # §28.4 labels UNWIRED. R14 is the step that owns the adapter's revocation
+    # as an unwired security surface.
+    {
+        "claim": "Credential revocation addressed to the session's own lease file",
+        "status": "UNWIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "deferral_id": "R14",
+        "surface": "`pkg/adapter/credentials.go` `RevokeCredentials` into "
+                   "`revokeCredentialsSlot` (`pkg/adapter/slotcreds.go`)",
+        "note": "the handler drops the named providers from the addressed session's "
+                "own credential file, and no gateway caller invokes the adapter's "
+                "RevokeCredentials; the Token Service revocation the gateway does call "
+                "is a separate service and is not part of this claim",
+    },
+    # The §4.7.1 bind attempt token and the Shutdown teardown precondition. §28.4
+    # does not oblige these rows, because Shutdown carries no §28 statement; they
+    # are carried under the same seeding convention as the rows above because a
+    # production reader ships with the wire contract. Each anchors to the
+    # gateway-to-pod heading the sibling generation-fence rows use.
+    {
+        "claim": "ShutdownRequest bind_attempt and unconditional_teardown teardown precondition",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/adapter/session.go` `Server.Shutdown` two-field precondition and "
+                   "bind-attempt comparison, `pkg/gateway/podlifecycle/podsession/slotbinder.go` "
+                   "`Binder.compensateFailedSlotBind`",
+        "note": "the adapter requires exactly one of the two fields, compares the carried "
+                "token against the entry it holds, and performs neither teardown on a "
+                "mismatch; the gateway's compensation names the token its own attempt "
+                "minted and reads the outcome",
+    },
+    {
+        "claim": "bind_attempt carried on the six slot-entry requests and stamped once on create",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/adapter/slot.go` `Server.ensureSlotStateLocked`, "
+                   "`pkg/gateway/podlifecycle/podsession/bindattempt.go` `newBindAttempt`",
+        "note": "the adapter writes the token on the create branch alone and compares it "
+                "on every resolve",
+    },
+    # §15.4 publishes the §4.7.1 slot-bind rules as normative for a third-party
+    # adapter, and the project has no harness that can run them against one: the
+    # Tier 3 and Tier 10 batteries drive this repository's own adapter only. R8,
+    # the reciprocal host-conformance battery, is the step that supplies one.
+    {
+        "claim": "third-party adapter conformance harness for the §15.4 slot-bind rules",
+        "status": "ABSENT",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "deferral_id": "R8",
+        "surface": "`tests/tier3_contract/adapter_bind_attempt/`, "
+                   "`tests/tier10_conformance/slot_bind_attempt_conformance_test.go`",
+        "note": "the rules are normative for any adapter implementation; cmd/lenny-compliance "
+                "drives a runtime binary over JSONL against a fake adapter and imports no "
+                "gRPC, so the project runs the clauses against its own adapter only",
+    },
+    # The §28.5.1 CH-ATTACH card owns the stream-failure rule, so the row
+    # anchors to the gateway-to-pod heading. The card's replacement-pod
+    # re-attach sentence carries no row: no driver moves resume_pending to
+    # resuming, and the validator accepts a deferral only for a declared R step,
+    # so BUILD-GAPS.md carries that gap until the driver is scheduled.
+    {
+        "claim": "Coordinating replica reports a CH-ATTACH stream failure as runtime_crash, "
+                 "releases the pod with the failed disposition, and does not redial Attach",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/gateway/session/executor/podstream.go` `endConn`, "
+                   "`pkg/gateway/sessionserver/stream_failure.go` `ReportAttachStreamFailure`, "
+                   "`pkg/gateway/sessionserver/failure.go` `applyFailureFromActive`",
+        "note": "endConn evicts the ended stream and hands its failure to the injected "
+                "handler, which confirms this replica still coordinates the session and "
+                "files a runtime_crash report that the failure funnel applies by releasing "
+                "the pod with the failed disposition, with no new Attach dialed",
+    },
+    # Session suspend and resume. The resume driver row carries the §28.5.1
+    # CH-ATTACH sentence that the gateway re-attaches a session on its
+    # replacement pod, which had no row while no driver existed.
+    {
+        "claim": "Resume driver restores a resume_pending session onto a replacement pod "
+                 "and re-attaches CH-ATTACH",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/gateway/runtime/watchdog/watchdog.go` `sweepResumePending`, "
+                   "`pkg/gateway/sessionserver/resume_driver.go` `DriveResume`, "
+                   "`pkg/gateway/sessionserver/resume_rebind.go` `resumeOnPod`",
+        "note": "the watchdog hands each resume_pending row to the driver, which starts one "
+                "restore attempt only on the replica holding the session's coordination "
+                "lease, writes resuming, claims a replacement pod, re-attaches the session "
+                "on it, and commits running",
+    },
+    {
+        "claim": "Coordination lease adoption in the recovering and pod-holding states, "
+                 "with no lease and a released mirror for a podless suspended session",
+        "status": "WIRED",
+        "spec_anchor": "#register-entry-register",
+        "surface": "`pkg/gateway/coordination/coordination/coordination.go` `adoptedState`, "
+                   "`pkg/gateway/coordination/coordination/coordination.go` `podlessSuspended`, "
+                   "`pkg/gateway/coordination/coordination/coordination.go` `Sweeper.RecordHandoff`, "
+                   "`pkg/gateway/coordination/coordination/coordination.go` `Sweeper.releaseMirror`",
+        "note": "a peer adopts a lapsed REG-COORDLEASE on a resume_pending, "
+                "awaiting_client_action, or pod-holding running, input_required, or suspended "
+                "row through the generation compare-and-swap, and releases the lease and "
+                "the mirror entry of a suspended row whose pod was released",
+    },
+    {
+        "claim": "Suspension release checkpoints a held-pod suspended session at "
+                 "maxSuspendedPodHoldSeconds and releases its pod",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/gateway/runtime/watchdog/suspended.go` `sweepSuspended`, "
+                   "`pkg/gateway/sessionserver/suspend_release.go` `ReleaseSuspendedPod`",
+        "note": "the watchdog hands a suspended session whose pod hold ended to the "
+                "coordinating replica, which checkpoints the workspace, clears the row's "
+                "pod assignment, and releases the pod while the session stays suspended",
+    },
+    {
+        "claim": "Idle suspension seals, checkpoints, and suspends an idle running session "
+                 "and releases its pod or slot",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/gateway/runtime/watchdog/watchdog.go` `sweepIdle`, "
+                   "`pkg/gateway/sessionserver/suspend_release.go` `SuspendIdle`",
+        "note": "a running session with no qualifying activity for maxClientIdleSeconds is "
+                "sealed on the adapter, checkpointed, and written suspended, and its pod or "
+                "slot is released at once",
+    },
+    {
+        "claim": "Adapter session seal keyed on the session's last activity",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/adapter/sessionseal.go` `Server.SealSession`, "
+                   "`pkg/adapter/activity.go` `observeRuntimeFrame`, "
+                   "`pkg/gateway/sessionserver/session_seal.go` `sealSession`",
+        "note": "the adapter seals a session only when its last activity is older than the "
+                "requested idle bound, answers the activity age otherwise, and refuses "
+                "every later message to a sealed session until it is unsealed",
+    },
+    {
+        "claim": "SealSession unary RPC on the CH-ATTACH service",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/adapter/sessionseal.go` `Server.SealSession`, "
+                   "`pkg/gateway/runtime/adapterclient/client.go` `Client.SealSession`",
+        "note": "the gateway calls SealSession with the session's coordination generation "
+                "before an idle suspension, and the adapter answers sealed or the session's "
+                "idle age",
+    },
+    {
+        "claim": "UnsealSession unary RPC on the CH-ATTACH service",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/adapter/sessionseal.go` `Server.UnsealSession`, "
+                   "`pkg/gateway/runtime/adapterclient/client.go` `Client.UnsealSession`",
+        "note": "the gateway lifts a seal when the idle suspension it guarded does not "
+                "complete, and the adapter admits messages to the session again",
+    },
+    {
+        "claim": "heartbeat frame names its session in sessionId",
+        "status": "WIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "surface": "`pkg/adapter/heartbeat.go` `heartbeatMonitor.frame`, "
+                   "`pkg/adapter/heartbeat.go` `Server.startHeartbeatLocked`",
+        "note": "the adapter runs one heartbeat monitor per session from its written "
+                "session_start and stamps the session's identifier on every heartbeat",
+    },
+    {
+        "claim": "heartbeat_ack sessionId and busy fields, with the heartbeat busy "
+                 "compliance check",
+        "status": "WIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "surface": "`pkg/adapter/activity.go` `observeHeartbeatAck`, "
+                   "`sdks/runtime/go/runtime/session.go` `busyCounts`, "
+                   "`cmd/lenny-compliance/heartbeatbusy.go` `checkHeartbeatBusy`",
+        "note": "the runtime SDK answers busy true for a session while it does work for it, "
+                "the adapter counts a busy ack that names a session as that session's "
+                "activity, and the compliance suite checks the busy report",
+    },
+    {
+        "claim": "Backlog resume of a suspended session that holds messages",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/gateway/sessionserver/suspended_backlog.go` `Server.ResumeBacklog`, "
+                   "`pkg/gateway/sessionserver/suspend_release.go` `checkBacklogOnce`, "
+                   "`pkg/gateway/sessionserver/suspended_backlog.go` `BacklogRechecker.Pass`, "
+                   "`cmd/lenny-gateway/leader_sweeps.go` `addSuspendedBacklogRecheck`",
+        "note": "the coordinating replica's sweep resumes a held-pod suspended session with "
+                "held messages, the suspension release checks once after it releases the "
+                "pod, and the gateway leader re-checks podless suspended sessions",
+    },
+    {
+        "claim": "User erasure deletes each session's message queues",
+        "status": "WIRED",
+        "spec_anchor": "#2857-gateway-to-store",
+        "surface": "`cmd/lenny-gateway/adminrouter.go` `buildSessionScopedErasers`, "
+                   "`pkg/gateway/session/sessioninbox/coordinator.go` `Coordinator.EraseSession`",
+        "note": "the user-erasure job deletes the DLQ and durable inbox keys of each of the "
+                "user's sessions, and tenant deletion Phase 4 erases them too: its "
+                "session_message_queues entry in `cmd/lenny-gateway/tenant_erasers.go` lists the "
+                "tenant's sessions from the primary and calls `Coordinator.EraseSession` for each",
+    },
+    {
+        "claim": "Pod release returns only the credential leases at or below the binding's "
+                 "coordination generation",
+        "status": "WIRED",
+        "spec_anchor": "#2851-gateway-to-pod",
+        "surface": "`pkg/gateway/podlifecycle/podsession/credentiallease.go` "
+                   "`Binder.releasePodCredentials`, "
+                   "`pkg/gateway/credentials/credassign/credassign.go` `Service.ReleaseThrough`",
+        "note": "a pod release returns the leases its own binding minted and the session's "
+                "leases recorded at or below its generation, so a later incarnation's "
+                "leases stay in place",
+    },
+    {
+        "claim": "Suspended-session lifetime expiry",
+        "status": "WIRED",
+        "spec_anchor": "#2857-gateway-to-store",
+        "surface": "`pkg/gateway/runtime/watchdog/suspended.go` `Watchdog.expireSuspendedIfDue`, "
+                   "`pkg/gateway/runtime/watchdog/watchdog.go` `EffectiveMaxSuspendedSessionSeconds`",
+        "note": "the watchdog expires a session that stayed suspended past the "
+                "operator-tunable suspended-session lifetime",
+    },
+    {
+        "claim": "Concurrent-session count excludes suspended sessions, and a resume of a "
+                 "suspended session passes the admission check",
+        "status": "WIRED",
+        "spec_anchor": "#2857-gateway-to-store",
+        "surface": "`pkg/api/v1/session/session.go` `CountsTowardConcurrencyCaps`, "
+                   "`pkg/gateway/session/sessionstore/pgstore/pgstore.go` `Store.CountActiveSessions`, "
+                   "`pkg/gateway/sessionserver/quota.go` `Server.admitResume`, "
+                   "`pkg/gateway/mcpfabric/mcptools/send_delivery.go` `mcpSend.admitResume`",
+        "note": "the tenant, user, runtime, and global counts leave suspended sessions out, "
+                "and a resume that would exceed a cap is refused with the quota error while "
+                "the session stays suspended",
+    },
+    {
+        "claim": "Session age measured as active time",
+        "status": "WIRED",
+        "spec_anchor": "#2857-gateway-to-store",
+        "surface": "`pkg/gateway/session/sessionstore/sessionstore.go` `ActiveAge`, "
+                   "`pkg/gateway/runtime/watchdog/watchdog.go` `Watchdog.sweepMaxAge`",
+        "note": "the watchdog compares the session's accumulated active time, which pauses "
+                "in suspended and the recovery states, with maxSessionAgeSeconds",
+    },
+    # The lifecycle drain writes each scoped session's terminal row from the
+    # replica that runs it, and §12.8 has it publish its transitioned sessions
+    # on the CH-BINDRELEASE fan-out §28.5.7 registers, so the replica that holds
+    # a drained session's binding releases it before user erasure deletes the
+    # row. BUILD-GAPS.md F-12.8.43 records the resolution.
+    {
+        "claim": "Lifecycle drain releases the pod of a session bound on another gateway "
+                 "replica before the drained scope's rows are erased",
+        "status": "WIRED",
+        "spec_anchor": "#2857-gateway-to-store",
+        "surface": "`pkg/gateway/externalapi/admin/drain.go` `DrainSessions` publishes its "
+                   "transitioned sessions on CH-BINDRELEASE through "
+                   "`bindReleaseFanOut.TerminateUserSessions`",
+        "note": "after its forced transitions the drain hands the transitioned session "
+                "identifiers to the binding-release fan-out, which releases the bindings this "
+                "replica holds and publishes the list so each peer's subscriber releases the "
+                "bindings it holds; the erasure, tenant-deletion, and tenant-suspension drains "
+                "share the one fan-out the full_revoke step uses, and a lost publish is not "
+                "redelivered",
+    },
+    # The §11.4 binding-release fan-out, which §28.5.7 registers as
+    # CH-BINDRELEASE: the replica that handles a full_revoke releases the
+    # bindings it holds and publishes the session list over Redis pub/sub, and
+    # each peer's subscriber releases the bindings that peer holds.
+    {
+        "claim": "CH-BINDRELEASE binding-release fan-out",
+        "status": "WIRED",
+        "spec_anchor": "#2857-gateway-to-store",
+        "surface": "`cmd/lenny-gateway/adminrouter.go` propagator construction over "
+                   "`cmd/lenny-gateway/user_revocation.go` `bindReleaseFanOut.TerminateUserSessions`",
+        "note": "the full_revoke handler releases the bindings its replica holds and publishes "
+                "the session list, and each peer replica's subscriber releases the bindings of "
+                "those sessions it holds without re-publishing",
+    },
+    # The off-holder forward on CH-HOLDERFORWARD, which §28.5.4 states and §29.3
+    # Forwarding numbers the rules of. The serving replica replays the request
+    # it received to the coordinator the REG-COORDLEASE holder value names.
+    {
+        "claim": "Off-holder request forward on CH-HOLDERFORWARD",
+        "status": "WIRED",
+        "spec_anchor": "#2854-inter-replica",
+        "surface": "`pkg/gateway/sessionserver/holder_forward.go` `forwardToHolder`, called by "
+                   "`handleTerminalWrite`, `handleInterrupt`, `handleUploadToSession`, "
+                   "`resumeHeldPodRequest`, and `parseMessageBatch`, and `ForwardToolCall`, "
+                   "called by the lenny/send_message and lenny/cancel_session handlers in "
+                   "`pkg/gateway/mcpfabric/mcptools/mcptools_register.go` `registerSessionLifecycleTools`",
+        "note": "each forwarded route and MCP tool site replays an off-holder request to the "
+                "coordinating replica after its entry read and precondition and before any "
+                "write, and answers 409 TARGET_NOT_READY when the forward is not delivered or "
+                "its outcome is unknown",
+    },
+    {
+        "claim": "Replica address in the REG-COORDLEASE holder value",
+        "status": "WIRED",
+        "spec_anchor": "#2854-inter-replica",
+        "surface": "`pkg/gateway/sessionserver/holder_forward.go` `HolderValue` builds the "
+                   "holder value, which `cmd/lenny-gateway/coordination_identity.go` "
+                   "`coordinationHolder` passes to every lease and mirror consumer",
+        "note": "§10.1.1 Replica address: the holder value carries the replica identity, a "
+                "per-process token, and the forward-listener address, and a gateway with a "
+                "lease store refuses to start without a valid advertise address",
+    },
+    {
+        "claim": "Inter-replica forward listener with gateway peer validation (NET-072)",
+        "status": "WIRED",
+        "spec_anchor": "#2854-inter-replica",
+        "surface": "`pkg/gateway/sessionserver/holder_forward_listener.go` "
+                   "`HolderForwardServerTLS` validates the gateway peer, and "
+                   "`cmd/lenny-gateway/holder_forward_listener.go` `buildHolderForwardServer` "
+                   "serves the listener on gateway.holderForwardPort",
+        "note": "§10.3 NET-072: both replicas present the gateway replica certificate, the "
+                "listener rejects plaintext, one-way TLS, and any other cluster-CA "
+                "certificate at handshake, and outside dev mode a gateway with a lease store "
+                "refuses to start without the material",
+    },
+    # The adapter's CH-SUPERVISE client and the supervised runtime: the launch
+    # and end of each runtime process through the runtime supervisor, the one
+    # accept before READY, the ping, the boundary sweep on a restart pod, and
+    # cleanupCommands run at the agent UID in the runtime container.
+    {
+        "claim": "CH-SUPERVISE launch and end of the runtime process",
+        "status": "WIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "surface": "`pkg/adapter/supervisedruntime.go` `SupervisedRuntime.Start`, `SupervisedRuntime.EndProcess`, `pkg/adapter/supervisewiring.go` `Server.UseSupervisedRuntime`, `cmd/lenny-adapter/main.go` `main`",
+        "note": "the adapter launches each runtime process through the supervisor under the launch permit and ends it with end; the adapter reaches the path when the pod builder renders --supervise-socket",
+    },
+    {
+        "claim": "CH-SUPERVISE ping while no other request is outstanding",
+        "status": "WIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "surface": "`pkg/adapter/supervise.go` `SupervisorLink.RunPing`, `cmd/lenny-adapter/main.go` `preReadyConfig`",
+        "note": "a missed pong is a link failure, which sets the adapter's not-live state",
+    },
+    {
+        "claim": "CH-SUPERVISE single accept before READY",
+        "status": "WIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "surface": "`pkg/adapter/supervise.go` `AwaitSupervisor`, `pkg/adapter/preready.go` `RunPreReady`, `cmd/lenny-adapter/main.go` `preReadyConfig`",
+        "note": "the adapter accepts one connection through the agent-UID check, closes its listener, and reads ready before it binds the gRPC listener",
+    },
+    {
+        "claim": "CH-SUPERVISE sweep after each boundary end on a restart pod",
+        "status": "WIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "surface": "`pkg/adapter/supervisedruntime.go` `SupervisedRuntime.EndAndSweep`, `pkg/adapter/podscrub.go` `Server.applySupervisedScrub`, `pkg/adapter/scrub/scrub.go` `Run`",
+    },
+    {
+        "claim": "Supervised cleanupCommands at the agent UID in the runtime container",
+        "status": "WIRED",
+        "spec_anchor": "#2853-intra-pod",
+        "surface": "`pkg/adapter/supervisedruntime.go` `SupervisedRuntime.RunCleanup`, `pkg/adapter/podscrub.go` `Server.applySupervisedScrub`, `pkg/adapter/scrub/scrub.go` `Run`",
+    },
+]
+
+# One row per request-message field the specification adds, each naming the step
+# the plan assigns as the field's reader. The field does not exist in the tree
+# before that change, so no status table can carry a row for it.
+GENERATION_FENCE = [
+    "InterruptRequest", "SignalDeadlineRequest", "ReportUsageRequest",
+    "CheckpointBarrierRequest", "ResumeRequest", "AttachRequest",
+    "SendMessageRequest", "ShutdownRequest", "CheckpointRequest",
+    "RotateCredentialsRequest", "ExtendCredentialLeaseRequest",
+    "RevokeCredentialsRequest", "ExportPathsRequest",
+]
+
+
+def rows_of_section(path, heading):
+    """The table rows under the named heading, as lists of cells."""
+    lines = open(path, errors="ignore").read().splitlines()
+    try:
+        start = next(i for i, l in enumerate(lines) if l.strip() == heading)
+    except StopIteration:
+        raise SystemExit(f"{path}: heading not found: {heading}")
+    out = []
+    for l in lines[start + 1:]:
+        if l.startswith("|"):
+            cells = [c.strip() for c in l.strip("|").split("|")]
+            if not all(set(c) <= set(":- ") for c in cells):
+                out.append(cells)
+        elif out:
+            break
+    return out[1:] if out else []
+
+
+def anchor_for(claim):
+    for pat, anchor in ANCHOR_RULES:
+        if re.search(pat, claim, re.I):
+            return anchor
+    raise SystemExit(f"no spec anchor rule matches claim: {claim}")
+
+
+def deferral_for(mechanism):
+    for pat, step in DEFERRAL_RULES:
+        if re.search(pat, mechanism, re.I):
+            return step, False
+    # R24 is the plan's own step for the surfaces no earlier step claims.
+    return "R24", True
+
+
+def split_status(cell):
+    """The (side, status) pairs a status cell states."""
+    sides = SIDED.findall(cell)
+    if len(sides) > 1:
+        return [(s.lower(), st.upper()) for s, st in sides]
+    found = STATUS.findall(cell)
+    if not found:
+        return []
+    if len(set(found)) > 1:
+        # Two labels with no side word, as in "WIRED in the binary, UNWIRED at
+        # deployment": keep both, named by the clause each sits in.
+        parts = [p.strip() for p in re.split(r",|;", cell) if STATUS.search(p)]
+        return [(re.sub(r"\b(WIRED|UNWIRED|ABSENT|UNVERIFIED)\b", "", p).strip(" .`") or "overall",
+                 STATUS.search(p).group(1).upper()) for p in parts]
+    return [(None, found[0].upper())]
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--print", action="store_true", dest="show")
+    args = ap.parse_args()
+
+    claims, fallbacks, dropped = [], [], []
+    overridden, retired = set(), set()
+    for cells in rows_of_section(REFERENCE, SECTION):
+        if len(cells) < 3:
+            continue
+        mechanism, status_cell, citation = cells[0], cells[1], cells[2]
+        pairs = split_status(status_cell)
+        if not pairs:
+            # A cell with no label states something other than a status, such as
+            # a mechanism retired by design. It carries no claim to verify.
+            dropped.append((mechanism, status_cell))
+            continue
+        for side, status in pairs:
+            if status == "UNVERIFIED":
+                # §28.4's set has no UNVERIFIED. The reference uses it for what
+                # it could not establish, which is not a statement the
+                # specification makes, so it carries no row.
+                dropped.append((mechanism, status_cell))
+                continue
+            claim = mechanism if side is None else f"{mechanism} ({side})"
+            row = {
+                "claim": canonical(claim),
+                "status": status,
+                "spec_anchor": anchor_for(canonical(claim)),
+                "surface": canonical(citation),
+            }
+            if status != "WIRED":
+                step, fell_back = deferral_for(mechanism + " " + (side or ""))
+                row["deferral_id"] = step
+                if fell_back:
+                    fallbacks.append(claim)
+            if row["claim"] in RETIRED:
+                retired.add(row["claim"])
+                continue
+            override = SURFACE_OVERRIDES.get(row["claim"])
+            if override:
+                row["surface"] = override["surface"]
+                row["note"] = override["note"]
+                if "status" in override:
+                    row["status"] = override["status"]
+                    if row["status"] == "WIRED":
+                        row.pop("deferral_id", None)
+                if "deferral_id" in override:
+                    row["deferral_id"] = override["deferral_id"]
+                overridden.add(row["claim"])
+            claims.append(row)
+
+    missed = sorted(set(SURFACE_OVERRIDES) - overridden)
+    if missed:
+        # An override whose claim the table no longer names would drop silently
+        # and leave the register stating a surface the tree contradicts.
+        raise SystemExit("surface override matched no table row: " + ", ".join(missed))
+
+    unmatched = sorted(RETIRED - retired)
+    if unmatched:
+        # A retirement whose claim the table no longer names has nothing left to
+        # suppress, so the entry is stale and the run fails rather than passing
+        # silently.
+        raise SystemExit("retired claim matched no table row: " + ", ".join(unmatched))
+
+    claims.extend(EXPLICIT)
+    for msg in GENERATION_FENCE:
+        claims.append({
+            "claim": f"{msg}.coordination_generation generation fence field",
+            "status": "UNWIRED",
+            "spec_anchor": "#2851-gateway-to-pod",
+            "deferral_id": "R16",
+            "surface": "schemas/lenny-adapter.proto",
+            "note": "the field is carried on the request and no production reader "
+                    "compares it until the generation fence lands",
+        })
+
+    seen = {}
+    for c in claims:
+        if c["claim"] in seen:
+            raise SystemExit(f"duplicate claim: {c['claim']}")
+        seen[c["claim"]] = c
+
+    doc = {
+        "kind": "claim-register",
+        "version": 1,
+        "claims": sorted(claims, key=lambda c: c["claim"]),
+    }
+    with open(args.out, "w") as fh:
+        json.dump(doc, fh, indent=2)
+        fh.write("\n")
+
+    by_status = {}
+    for c in claims:
+        by_status[c["status"]] = by_status.get(c["status"], 0) + 1
+    print(f"{len(claims)} claim(s) -> {args.out}")
+    print("  by status:", by_status)
+    print(f"  rows whose deferral fell back to R24: {len(fallbacks)}")
+    for f in fallbacks:
+        print(f"      {f[:90]}")
+    if dropped:
+        print(f"  rows carrying no verifiable status: {len(dropped)}")
+        for m, s in dropped:
+            print(f"      {m[:60]:62} | {s[:44]}")
+    if args.show:
+        print(json.dumps(doc, indent=2)[:1500])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

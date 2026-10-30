@@ -30,7 +30,7 @@ import (
 )
 
 func main() {
-	// spec: §16.4 lines 370-372 — structured JSON logs; routes the stdlib
+	// spec: §16.4 — structured JSON logs; routes the stdlib
 	// log package through the §16.4 handler (component=tier-promote).
 	// F-16.4.1.
 	logging.Setup(os.Stderr, "tier-promote")
@@ -50,17 +50,17 @@ func main() {
 	redisExternal := flag.Bool("redis-external", false,
 		"set when Redis is wired to a managed endpoint (ElastiCache, Memorystore, Azure Cache)")
 	autoscalingProvider := flag.String("autoscaling-provider", "",
-		"rendered chart's autoscaling.provider value (\"hpa\" or \"keda\"; KEDA is mandatory at Tier 3 per §17.8.3 line 1285)")
+		"rendered chart's autoscaling.provider value (\"hpa\" or \"keda\"; KEDA is mandatory at Tier 3 per §17.8.3)")
 	minReplicas := flag.Int("min-replicas", 0,
 		"rendered chart's autoscaling.minReplicas value (§17.8.2 SCL-036 burst-absorption floor)")
 	maxSessionsPerReplica := flag.Int("max-sessions-per-replica", 0,
 		"rendered chart's gateway.maxSessionsPerReplica value (§17.8.2 SCL-036 input)")
 	llmProxyAttested := flag.Bool("llm-proxy-extraction-attested", false,
-		"operator attestation that the Phase 13.5 LLM Proxy extraction ratio benchmark passed (§17.8.3 line 1263)")
+		"operator attestation that the Phase 13.5 LLM Proxy extraction ratio benchmark passed (§17.8.3)")
 	gcPauseAttested := flag.Bool("gc-pause-attested", false,
-		"operator attestation that the Phase 13.5 gateway GC pause P99 below 50 ms benchmark passed (§17.8.3 line 1264)")
+		"operator attestation that the Phase 13.5 gateway GC pause P99 below 50 ms benchmark passed (§17.8.3)")
 	maxSessionsCalibrated := flag.Bool("max-sessions-per-replica-calibrated", false,
-		"operator attestation that gateway.maxSessionsPerReplica was empirically calibrated (§17.8.3 line 1265)")
+		"operator attestation that gateway.maxSessionsPerReplica was empirically calibrated (§17.8.3)")
 	flag.Parse()
 
 	if *from == "" || *to == "" {

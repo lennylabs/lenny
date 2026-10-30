@@ -10,11 +10,10 @@
 // configuration. When an operator PUTs a runtime override it is persisted
 // to the platform_registry_config singleton (migration 0135) and overlays
 // the base, so the next image resolution (upgrade preflight, warm-pool
-// reference) reads the override without a redeploy — the §25.8 line 3362
+// reference) reads the override without a redeploy — the §25.8
 // "takes effect on next image resolution" contract.
 //
-// spec: §25.8 (Image Registry Configuration / Runtime API), lines
-// 3300-3301, 3360-3362, 3352-3355.
+// spec: §25.8 (Image Registry Configuration / Runtime API).
 package registryservice
 
 import (
@@ -61,7 +60,7 @@ type EffectiveConfig struct {
 	// Overrides maps a component short name to a complete image reference.
 	Overrides map[string]string `json:"overrides,omitempty"`
 	// PullSecretName is the Kubernetes image-pull Secret name. The secret
-	// contents are never returned (§25.8 line 3362).
+	// contents are never returned (§25.8).
 	PullSecretName string `json:"pullSecretName"`
 	// RequireDigest reports whether resolved references must be
 	// digest-pinned (@sha256:).
@@ -193,7 +192,7 @@ func New(opts Options) *Service {
 
 // Effective returns the §25.8 effective registry configuration: the chart
 // base overlaid by any persisted runtime override. A store error is
-// returned so the handler surfaces the §25.8 line 3610 "Postgres down"
+// returned so the handler surfaces the §25.8
 // degradation; a missing override is not an error (the base is effective).
 func (s *Service) Effective(ctx context.Context) (EffectiveConfig, error) {
 	if s.store == nil {
@@ -238,7 +237,7 @@ type UpdateRequest struct {
 // override (ErrNoBase) and an update with no store configured
 // (ErrReadOnly). The returned config is the new effective configuration.
 //
-// spec: §25.8 PUT /v1/admin/platform/registry (line 3362).
+// spec: §25.8 PUT /v1/admin/platform/registry.
 func (s *Service) Update(ctx context.Context, req UpdateRequest) (EffectiveConfig, error) {
 	if s.store == nil {
 		return EffectiveConfig{}, ErrReadOnly
@@ -300,7 +299,7 @@ func (s *Service) Resolver(ctx context.Context) (*registry.Resolver, error) {
 // (gateway, ops, controllers, backup). It is the plan the preflight
 // returns and the upgrade start records as target_images.
 //
-// spec: §25.8 Image Resolution (lines 3333-3358), line 3404-3406.
+// spec: §25.8 Image Resolution.
 func (s *Service) ResolveImagePlan(ctx context.Context, version string, digests map[string]string) (map[string]string, error) {
 	cfg, err := s.Effective(ctx)
 	if err != nil {

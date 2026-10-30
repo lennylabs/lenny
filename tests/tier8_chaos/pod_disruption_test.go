@@ -133,7 +133,7 @@ func TestGatewayReplicaFailure(t *testing.T) {
 }
 
 // spec: 13.7
-// diagnosis: §13.7 / §17.2 admission-webhook HA did not survive a pod
+// diagnosis: TESTING.md §13.7 / §17.2 admission-webhook HA did not survive a pod
 // loss. The lenny-sandboxclaim-guard webhook runs as a 2-replica
 // Deployment behind its Service; the test deletes one pod and asserts
 // the Deployment reschedules a replacement to Ready and the Service

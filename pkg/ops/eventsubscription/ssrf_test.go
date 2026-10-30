@@ -18,7 +18,7 @@ func (f fixedResolver) LookupNetIP(_ context.Context, _, _ string) ([]netip.Addr
 	return []netip.Addr{netip.MustParseAddr(f.addr)}, nil
 }
 
-// spec: §25.5 lines 2735-2745 — the SSRF validator rejects non-HTTPS,
+// spec: §25.5 — the SSRF validator rejects non-HTTPS,
 // IP literals, metadata hosts, and hosts that resolve into private,
 // reserved, IMDS, or blocked-CIDR ranges; it accepts a public host.
 func TestSSRFValidator_spec_25_5(t *testing.T) {
@@ -59,7 +59,7 @@ func TestSSRFValidator_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2735 — ops.webhooks.allowHTTP permits http.
+// spec: §25.5 — ops.webhooks.allowHTTP permits http.
 func TestSSRFValidatorAllowHTTP_spec_25_5(t *testing.T) {
 	v := es.NewSSRFValidator(es.SSRFConfig{AllowHTTP: true, Resolver: fixedResolver{"93.184.216.34"}})
 	if err := v.Validate(context.Background(), "http://acme.example/hook"); err != nil {
@@ -67,7 +67,7 @@ func TestSSRFValidatorAllowHTTP_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2745 — the domain allowlist restricts callbacks by
+// spec: §25.5 — the domain allowlist restricts callbacks by
 // suffix.
 func TestSSRFValidatorDomainAllowlist_spec_25_5(t *testing.T) {
 	v := es.NewSSRFValidator(es.SSRFConfig{
@@ -87,7 +87,7 @@ func TestSSRFValidatorDomainAllowlist_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2742 — extra blocked CIDRs (k8s service/pod ranges)
+// spec: §25.5 — extra blocked CIDRs (k8s service/pod ranges)
 // are rejected even though they are not in the built-in private set.
 func TestSSRFValidatorBlockedCIDR_spec_25_5(t *testing.T) {
 	v := es.NewSSRFValidator(es.SSRFConfig{

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// spec: §10.3 lines 344-350 — `admin ca-rotation status` maps to
+// spec: §10.3 — `admin ca-rotation status` maps to
 // GET /v1/admin/ca-rotation. F-10.3.21.
 func TestAdminCARotationStatus(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{"stage":"idle","currentCaId":"lenny-mtls-ca"}`,

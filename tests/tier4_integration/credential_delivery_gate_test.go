@@ -123,10 +123,10 @@ func deliveryGateCluster(t *testing.T) client.Client {
 // is 422 but not the guard's ProxyModeSpiffeBindingDisabled code, the gate
 // rejected for the wrong reason.
 func TestCredentialDeliveryGateRejectsProxySpiffeDisabledAtFinalize(t *testing.T) {
+	t.Parallel()
 	rt := &eagerRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
-	adapterSrv.StagingDir = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.CredentialsDir = t.TempDir()
 	adapterSrv.Runtime = rt
 
@@ -175,6 +175,7 @@ func TestCredentialDeliveryGateRejectsProxySpiffeDisabledAtFinalize(t *testing.T
 	}
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-gate" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,

@@ -50,7 +50,7 @@ const erasureRole = "lenny_erasure"
 // mandates "no grants on non-erasure tables"; any grant on a table
 // outside this set is drift that the startup verifier rejects.
 //
-// spec: §12.8 line 830 — "audit_redaction_receipts is grant-restricted:
+// spec: §12.8 — "audit_redaction_receipts is grant-restricted:
 // lenny_erasure holds INSERT only" (migration 0160). The erasure job
 // persists one signed RedactionReceipt per redacted row, so the INSERT
 // grant is an erasure-owned grant rather than scope drift.
@@ -185,7 +185,7 @@ func VerifyTriggersEnabled(ctx context.Context, db Querier) error {
 // §12.5 artifact_store catalog), which carry a tenant_id column but are
 // read cross-tenant through annotated platform-admin paths.
 //
-// spec: §12.3 line 56 — the gateway "queries pg_trigger" for the
+// spec: §12.3 — the gateway "queries pg_trigger" for the
 // lenny_tenant_guard trigger on tenant-scoped tables. A trigger that has
 // been disabled (pg_trigger.tgenabled = 'D', e.g. via ALTER TABLE …
 // DISABLE TRIGGER) counts as a gap, matching the VerifyTriggersEnabled
@@ -232,15 +232,14 @@ func TenantGuardCoverageGaps(ctx context.Context, db Querier) ([]string, error) 
 	return gaps, nil
 }
 
-// CloudManagedPoolerFatalMessage is reproduced verbatim from §12.3
-// line 56. The gateway exits with this message when
+// CloudManagedPoolerFatalMessage is reproduced verbatim from §12.3. The gateway exits with this message when
 // LENNY_POOLER_MODE=external but the lenny_tenant_guard trigger is
 // absent from one or more tenant-scoped tables, so operators can match
 // it against the documented remediation.
 const CloudManagedPoolerFatalMessage = "FATAL: cloud-managed pooler mode (LENNY_POOLER_MODE=external) detected but lenny_tenant_guard trigger is absent from tenant-scoped tables — RLS tenant isolation defense is not active; run schema migrations before starting the gateway (Section 12.3)"
 
-// VerifyCloudManagedPoolerDefense enforces the §12.3 lines 49-56 /
-// §17.6 line 488 cloud-managed pooler defense at gateway startup. When
+// VerifyCloudManagedPoolerDefense enforces the §12.3 /
+// §17.6 cloud-managed pooler defense at gateway startup. When
 // poolerMode is "external" the deployment fronts Postgres with a managed
 // proxy (RDS Proxy, Cloud SQL Auth Proxy, Azure PgBouncer integration)
 // that cannot run the connect_query __unset__ sentinel, so the
@@ -252,7 +251,7 @@ const CloudManagedPoolerFatalMessage = "FATAL: cloud-managed pooler mode (LENNY_
 //
 // The check runs independently of the §17.6 preflight Job so that it
 // also catches trigger removal after initial installation (e.g. a manual
-// migration rollback). spec: §12.3 line 56.
+// migration rollback). spec: §12.3.
 func VerifyCloudManagedPoolerDefense(ctx context.Context, db Querier, poolerMode string) error {
 	if poolerMode != "external" {
 		return nil

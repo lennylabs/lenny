@@ -32,16 +32,16 @@ func (noopCloser) Close() error { return nil }
 // the client certificate and pins the gateway's DNS SAN (§10.3 NET-060).
 // In the embedded model the runtime process is the adapter, so the same
 // wiring applies to a first-party runtime that links this package.
-// spec: §9.1 lines 14-31. F-9.1.1.
+// spec: §9.1. F-9.1.1.
 func (s *Server) ConnectGateway(mcpSocket, gatewayAddr, certFile, keyFile, clientCAFile string) (io.Closer, error) {
-	// §9.1 lines 8-31: the platform MCP server binds the abstract socket
+	// §9.1: the platform MCP server binds the abstract socket
 	// the manifest advertises (@lenny-platform-mcp) so a type:agent runtime
 	// can dial it. F-9.1.1.
 	s.MCPSocket = mcpSocket
 	if gatewayAddr == "" {
 		return noopCloser{}, nil
 	}
-	// §9.1 lines 14-31: dial the gateway's GatewayControl service so the
+	// §9.1: dial the gateway's GatewayControl service so the
 	// platform MCP server can forward a runtime's tools/list and tools/call
 	// to the gateway platform tool surface. The dial reuses the adapter's
 	// mesh identity (its server cert/key) as the client certificate and
@@ -56,23 +56,23 @@ func (s *Server) ConnectGateway(mcpSocket, gatewayAddr, certFile, keyFile, clien
 		return nil, fmt.Errorf("§9.1 dial gateway %s: %w", gatewayAddr, err)
 	}
 	s.PlatformForwarder = gwClient
-	// §9.3 lines 142-164 — the same gateway-control channel forwards a
+	// §9.3 — the same LNK-GWCONTROL connection forwards a
 	// type:agent runtime's per-connector tool calls (against the intra-pod
 	// @lenny-connector-<id> sockets) to the gateway, which dials the external
 	// endpoint with the gateway-held credential. F-9.1.2.
 	s.ConnectorForwarder = gwClient
-	// §5.2 whole-pod scrub — the same gateway-control channel carries the
+	// §5.2 whole-pod scrub — the same LNK-GWCONTROL connection carries the
 	// recycle-boundary ReportPodScrub the adapter emits after running the
 	// whole-pod scrub. Retain the dialed client as the PodScrubReporter so the
 	// recycle-scrub driver can report the outcome. spec: §4.7 (ReportPodScrub);
 	// §5.2. F-5.2.15.
 	s.PodScrubReporter = gwClient
-	// §5.2 per-slot cleanup — the same gateway-control channel carries the
-	// per-session-release ReportSessionScrub the adapter emits on every slot
-	// release, so the gateway advances sessions_served (feeding the
-	// maxSessionsPerPod retirement) and feeds a leaked outcome into the
-	// unhealthy-threshold ledger. Retain the dialed client as the
-	// SessionScrubReporter so the slot-release path can report the outcome.
+	// §5.2 per-slot cleanup — the same LNK-GWCONTROL connection carries the
+	// ReportSessionScrub the adapter emits for the outcome of a cleanup a
+	// `Shutdown` performs to reclaim a slot that reached `running`, so the
+	// gateway advances sessions_served (feeding the maxSessionsPerPod retirement)
+	// and feeds a leaked outcome into the unhealthy-threshold ledger. Retain the
+	// dialed client as the SessionScrubReporter so the slot-release path can report it.
 	// spec: §4.7 (ReportSessionScrub); §5.2 (maxSessionsPerPod). F-5.2.31.
 	s.SessionScrubReporter = gwClient
 	return gwClient, nil

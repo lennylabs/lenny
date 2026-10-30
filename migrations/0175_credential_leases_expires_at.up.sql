@@ -7,7 +7,7 @@
 -- about lease expiry without that decrypt:
 --
 --   * the bounded expired-lease sweep, which deletes rows whose lease is past
---     ExpiresAt (spec §4.9 line 1671 — deny-list entries "expire when the
+--     ExpiresAt (spec §4.9 — deny-list entries "expire when the
 --     credential's natural lease TTL lapses"), and
 --   * the fail-closed lease-existence count that gates deny-list-entry
 --     removal and the startup rebuild filter, which counts leases still

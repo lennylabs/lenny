@@ -16,7 +16,7 @@ import (
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
-// spec: §11.7 line 428 — write-time tenant validation rejects an audit
+// spec: §11.7 — write-time tenant validation rejects an audit
 // row whose tenant differs from the authenticated caller's scope.
 // F-11.7.6.
 
@@ -154,8 +154,8 @@ func TestValidatorAllowsSystemWriteWithoutPrincipal_F1176(t *testing.T) {
 	inner := &recordingChain{}
 	v := auditscope.New(inner, nil)
 	// No authenticated principal on ctx: a gateway-internal write
-	// (background reconciler, key-rotation observer). It passes.
-	if _, err := v.Append(context.Background(), "acme", "platform.jwt_signing_key_rotated", json.RawMessage(`{}`), time.Time{}); err != nil {
+	// (background reconciler, CA-rotation observer). It passes.
+	if _, err := v.Append(context.Background(), "acme", "platform.ca_rotated", json.RawMessage(`{}`), time.Time{}); err != nil {
 		t.Fatalf("system write should pass: %v", err)
 	}
 	if len(inner.appends) != 1 || inner.appends[0].tenant != "acme" {

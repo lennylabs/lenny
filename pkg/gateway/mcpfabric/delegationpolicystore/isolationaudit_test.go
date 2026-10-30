@@ -179,7 +179,7 @@ func TestAuditIsolation_NoPolicies_spec_24_14(t *testing.T) {
 	}
 }
 
-// TestProactiveWarningsForPool_spec_8_3_350 verifies the §8.3 line 350
+// TestProactiveWarningsForPool_spec_8_3_350 verifies the §8.3
 // proactive single-pool filter: when a weaker pool is registered, the
 // audit reports only the warnings where that pool is the weaker
 // delegation target a stronger parent could reach, and reports nothing

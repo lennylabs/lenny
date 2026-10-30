@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package quotabudget implements the §12.4 line 268 in-memory quota
+// Package quotabudget implements the §12.4 in-memory quota
 // budget enforcement mode (`quotaEnforcementMode: in_memory_reconciled`).
 //
 // In this mode each gateway replica maintains an in-memory per-tenant
@@ -29,7 +29,7 @@
 // tenant limit, and fails closed when the slice is exhausted and Postgres
 // is unreachable.
 //
-// This mode is scoped to the §12.4 line 268 per-tenant token budget. The
+// This mode is scoped to the §12.4 per-tenant token budget. The
 // per-user and platform-global scopes of the §11.2 hierarchy are not
 // tracked here (they remain Redis-backed in the default mode); the
 // adapter reports zero for those scopes so QuotaEvaluator gates only on
@@ -41,7 +41,7 @@
 // mode does not add a per-request tenant-store lookup beyond the one the
 // QuotaEvaluator already performs.
 //
-// spec: §12.4 line 268; §11.2 line 44 (sync interval, final reconciliation).
+// spec: §12.4; §11.2.
 package quotabudget
 
 import (
@@ -64,12 +64,12 @@ import (
 // zero delta is a valid read of the current total (the startup slice
 // draw). The Postgres implementation is the quotacheckpoint pgstore.
 //
-// spec: §12.4 line 268; §11.2 line 44.
+// spec: §12.4; §11.2.
 type CheckpointAdder interface {
 	AddTenantTotal(ctx context.Context, tenantID, period, windowLabel string, delta int64) (int64, error)
 }
 
-// ReplicaCounter reports the §12.4 line 224 cached replica count used as
+// ReplicaCounter reports the §12.4 cached replica count used as
 // the divisor N in the 1/N slice. failopen.ReplicaCount satisfies it.
 type ReplicaCounter interface {
 	Get() int
@@ -104,7 +104,7 @@ type Options struct {
 	// Replicas supplies the slice divisor N. Required; use
 	// StaticReplicaCount(1) when no Endpoints poller is wired.
 	Replicas ReplicaCounter
-	// ReconcileInterval is the periodic reconcile cadence (§12.4 line 268
+	// ReconcileInterval is the periodic reconcile cadence (§12.4
 	// "default: every 30s"). A non-positive value selects the
 	// quota.DefaultSyncIntervalSeconds cadence; a positive value below the
 	// §11.2 floor is raised to it.
@@ -228,7 +228,7 @@ func (t *Tracker) TenantUsed(ctx context.Context, tenantID string, period quota.
 // Postgres blip never fails the proxied call (the next admission read
 // retries the reconcile). A non-positive token count is a no-op.
 //
-// spec: §12.4 line 268 ("decrements locally per request").
+// spec: §12.4.
 func (t *Tracker) Add(ctx context.Context, tenantID string, period quota.ResetPeriod, at time.Time, tokens int64) {
 	if tokens <= 0 {
 		return
@@ -242,7 +242,7 @@ func (t *Tracker) Add(ctx context.Context, tenantID string, period quota.ResetPe
 	defer e.mu.Unlock()
 	t.rollWindowLocked(e, label)
 	e.consumed += tokens
-	// §12.4 line 268: reconcile when the local slice is 80% consumed. Only
+	// §12.4: reconcile when the local slice is 80% consumed. Only
 	// a drawn, limited entry has a meaningful slice; the limit is re-read
 	// only at this (infrequent) crossing, never per recorded response.
 	if e.drawn && e.limit > 0 && t.sliceConsumedLocked(e) {
@@ -253,7 +253,7 @@ func (t *Tracker) Add(ctx context.Context, tenantID string, period quota.ResetPe
 }
 
 // Flush folds every tenant's unflushed local consumption into Postgres.
-// It is the §11.2 line 44 final-reconciliation hook, called on graceful
+// It is the §11.2 final-reconciliation hook, called on graceful
 // shutdown so a replica's last slice is not lost. The first error
 // encountered is returned; a partial flush still persists the entries that
 // succeeded.
@@ -287,7 +287,7 @@ func (t *Tracker) Flush(ctx context.Context) error {
 	return firstErr
 }
 
-// Run drives the §12.4 line 268 periodic reconcile ("reconciles with
+// Run drives the §12.4 periodic reconcile ("reconciles with
 // Postgres periodically (default: every 30s)"): every interval it folds
 // each tenant's unflushed local consumption into Postgres via Flush, so a
 // low-traffic tenant whose admission reads do not themselves trigger the

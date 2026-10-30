@@ -33,7 +33,7 @@ func ctlRepoRoot(t *testing.T) string {
 }
 
 // TestCmdValuesValidateConformingFile exercises the success path against
-// the chart's own default values.yaml. spec: §24.20 line 303.
+// the chart's own default values.yaml. spec: §24.20.
 func TestCmdValuesValidateConformingFile_spec_24_20(t *testing.T) {
 	path := filepath.Join(ctlRepoRoot(t), "charts", "lenny", "values.yaml")
 	var stdout, stderr bytes.Buffer
@@ -48,7 +48,7 @@ func TestCmdValuesValidateConformingFile_spec_24_20(t *testing.T) {
 
 // TestCmdValuesValidateRejectsBadValue asserts a non-conforming file
 // exits 1 and prints a validation report naming the offending field.
-// spec: §17.6 line 666.
+// spec: §17.6.
 func TestCmdValuesValidateRejectsBadValue_spec_17_6_666(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.yaml")
@@ -91,7 +91,7 @@ func TestCmdValuesUnknownSubcommand(t *testing.T) {
 	}
 }
 
-// TestComposedAnswerFilesConformToChartSchema is the §17.9.2 line 1374 CI
+// TestComposedAnswerFilesConformToChartSchema is the §17.9.2 CI
 // lint, applied to the implementation's actual answer-file shape: each
 // shipped wizard answer file is parsed and run through composeValues, and
 // the composed chart-values document must validate against the generated

@@ -22,7 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
-// spec: §11.1 line 7 — per-runtime and per-pool requests-per-minute
+// spec: §11.1 — per-runtime and per-pool requests-per-minute
 // admission limits, enforced at session creation. F-11.1.2.
 
 // rlRecorder captures the §11.1 rejection-scope and counter-failure
@@ -79,6 +79,7 @@ func admissionServer(opts sessionserver.Options) *sessionserver.Server {
 func TestPerRuntimeRateLimitRejects_spec_11_1_7(t *testing.T) {
 	rec := &rlRecorder{}
 	srv := admissionServer(sessionserver.Options{
+		DevTenantHeader:           true,
 		AdmissionRateLimitCounter: rlcounter.NewMemory(),
 		PerRuntimePerMinute:       2,
 		RateLimitMetrics:          rec,
@@ -108,6 +109,7 @@ func TestPerRuntimeRateLimitRejects_spec_11_1_7(t *testing.T) {
 
 func TestPerRuntimeRateLimitIsPerRuntime_spec_11_1_7(t *testing.T) {
 	srv := admissionServer(sessionserver.Options{
+		DevTenantHeader:           true,
 		AdmissionRateLimitCounter: rlcounter.NewMemory(),
 		PerRuntimePerMinute:       1,
 	})
@@ -128,6 +130,7 @@ func TestPerRuntimeRateLimitIsPerRuntime_spec_11_1_7(t *testing.T) {
 func TestPerRuntimeRateLimitFailsOpen_spec_11_1_7(t *testing.T) {
 	rec := &rlRecorder{}
 	srv := admissionServer(sessionserver.Options{
+		DevTenantHeader:           true,
 		AdmissionRateLimitCounter: erroringRLCounter{},
 		PerRuntimePerMinute:       1,
 		RateLimitMetrics:          rec,
@@ -148,7 +151,7 @@ func TestPerRuntimeRateLimitFailsOpen_spec_11_1_7(t *testing.T) {
 func TestAdmissionRateLimitNilCounterNoLimit_spec_11_1_7(t *testing.T) {
 	// No counter wired: the per-runtime / per-pool scopes are disabled
 	// even when a limit is configured.
-	srv := admissionServer(sessionserver.Options{PerRuntimePerMinute: 1, PerPoolPerMinute: 1})
+	srv := admissionServer(sessionserver.Options{DevTenantHeader: true, PerRuntimePerMinute: 1, PerPoolPerMinute: 1})
 	h := srv.Handler()
 	for i := 1; i <= 4; i++ {
 		rr := createRequest(t, h, sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
@@ -158,11 +161,12 @@ func TestAdmissionRateLimitNilCounterNoLimit_spec_11_1_7(t *testing.T) {
 	}
 }
 
-// spec: §11.1 line 7 — an empty runtimeRef is left to the required-field
+// spec: §11.1 — an empty runtimeRef is left to the required-field
 // check (the gate skips it rather than consuming a rate-limit slot for a
 // request that will be rejected as VALIDATION_ERROR). F-11.1.2.
 func TestAdmissionRateLimitSkipsEmptyRuntime_spec_11_1_7(t *testing.T) {
 	srv := admissionServer(sessionserver.Options{
+		DevTenantHeader:           true,
 		AdmissionRateLimitCounter: rlcounter.NewMemory(),
 		PerRuntimePerMinute:       1,
 	})
@@ -173,7 +177,7 @@ func TestAdmissionRateLimitSkipsEmptyRuntime_spec_11_1_7(t *testing.T) {
 	}
 }
 
-// spec: §11.1 line 7 — the per-pool scope is enforced against the
+// spec: §11.1 — the per-pool scope is enforced against the
 // resolved warm pool, keyed independently of the per-runtime scope.
 // F-11.1.2.
 func TestPerPoolRateLimitRejects_spec_11_1_7(t *testing.T) {
@@ -204,6 +208,7 @@ func TestPerPoolRateLimitRejects_spec_11_1_7(t *testing.T) {
 
 	rec := &rlRecorder{}
 	srv := admissionServer(sessionserver.Options{
+		DevTenantHeader:           true,
 		AdmissionRateLimitCounter: rlcounter.NewMemory(),
 		PerPoolPerMinute:          2,
 		PodBinder:                 binder,
@@ -227,11 +232,12 @@ func TestPerPoolRateLimitRejects_spec_11_1_7(t *testing.T) {
 	}
 }
 
-// spec: §11.1 line 7 — when no pool resolver is wired (the Postgres-only
+// spec: §11.1 — when no pool resolver is wired (the Postgres-only
 // posture), the per-pool scope is skipped rather than blocking
 // admission. F-11.1.2.
 func TestPerPoolRateLimitSkippedWithoutBinder_spec_11_1_7(t *testing.T) {
 	srv := admissionServer(sessionserver.Options{
+		DevTenantHeader:           true,
 		AdmissionRateLimitCounter: rlcounter.NewMemory(),
 		PerPoolPerMinute:          1, // would reject the 2nd create if a pool resolved
 	})

@@ -3,6 +3,12 @@
 package adapter
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"time"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -11,44 +17,344 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// slotState is one §6.4 concurrent-workspace slot's independent state: the
-// session bound to the slot, its resolved per-slot filesystem tree, and
-// its §6.1 per-slot credential lease set. Sibling slots share none of this,
-// so a rotation, teardown, or workspace change on one slot does not disturb
-// another. The single pod-global runtime serves every slot, multiplexed on
-// slotId over the one runtime connection (spec/05:509, spec/15:1459), so a
-// slot owns no runtime process of its own. spec: §6.4 lines 385-409;
-// §6.1 line 28.
+// slotState is one slot's independent state: the session bound to the
+// slot, its resolved per-slot filesystem tree, and its §6.1 per-slot
+// credential lease set. Sibling slots share none of this, so a rotation,
+// teardown, or workspace change on one slot does not disturb another. The
+// single pod-global runtime serves every slot, so a slot owns no runtime
+// process of its own. Every session is bound to a slot on every pod,
+// whatever the pool's concurrency. spec: §5.2; §6.4; §6.1.
 type slotState struct {
-	// sessionID is the session assigned to this slot. The gateway uses
-	// the session id as the slot id, but the adapter validates inbound
-	// RPCs against the recorded session id independently.
+	// runtimeGen is the runtime generation whose process the rule-8 record
+	// of this entry's start gave the session to. Zero until the record. A
+	// crash of that generation fails the session. Guarded by s.mu.
+	// spec: §4.7.10 (Runtime supervisor, Crash; Runtime supervisor,
+	// Generation).
+	runtimeGen uint64
+	// crash is closed when the runtime process the session runs in crashed
+	// while it held the session; the session's Attach stream then ends with
+	// runtime_crash. Created lazily under s.mu. spec: §4.7.10 (Runtime
+	// supervisor, Crash).
+	crash chan struct{}
+	// sessionID is the session assigned to this slot. A session-mode
+	// slot's identifier is its session's identifier (§5.2), so the
+	// registry key and this value are the same string once the slot is
+	// bound; the field records whether the binding has happened.
 	sessionID string
+	// started records that the merged claim has run for this session,
+	// which is what separates a bound-not-started entry (credentials
+	// assigned ahead of the start, per the §4.7 bind sequence) from a
+	// started one. A second start for the same session is refused on it.
+	// spec: §4.7.
+	started bool
 	// paths is the slot's resolved per-slot directory tree.
 	paths slotlayout.SlotPaths
 	// creds is the slot's independent credential lease set, keyed by
 	// provider. Written to paths.CredentialsFile.
 	creds map[string]*adapterv1.CredentialLease
+	// assigned records that AssignCredentials has run for this entry. It
+	// is the fail-closed was-assigned precondition the rotate and revoke
+	// handlers restate: the registry lookup those handlers open with
+	// tests registration rather than assignment, and every live session
+	// holds a registry entry seeded with an empty lease map by the
+	// workspace-prep RPCs. Nothing clears the marker while the entry
+	// lives, because creds is the live lease set the platform empties on
+	// its own (a direct-mode expiry deletes the provider's entry, and a
+	// revocation deletes the revoked ones), and a predicate keyed on the
+	// lease set would refuse the replacement lease the expiry fallback
+	// pushes over RotateCredentials. spec: §6.1; §4.9.
+	assigned bool
 	// timers holds the slot's §4.9 direct-mode lease-expiry timers, keyed
 	// by provider, independent of sibling slots and the single-slot set.
 	timers map[string]*expiryTimer
+	// coord is this session's §10.1 coordination state: the generation the
+	// pod last accepted for it, whether any fence has landed within this
+	// binding, and whether a barrier is holding it quiesced. The unit is
+	// the session's binding on the pod rather than the pod's lifetime, so
+	// one session's fence neither rejects, gap-flags, nor mis-attributes
+	// anything belonging to a co-tenant session. spec: §10.1.2.
+	coord coordinationState
+	// barrier is this session's §10.1.8 quiesce-and-hold gate, carrying the
+	// gateway-minted checkpoint id its own Checkpoint stream links. Each
+	// co-tenant session drained together holds its own gate, so two
+	// concurrent barriers neither overwrite each other's channel nor
+	// cross-link each other's checkpoint id. It keeps its own leaf mutex,
+	// independent of coord.mu. spec: §10.1.8.
+	barrier barrierGate
+	// ack is this entry's session_started acknowledgement gate. The open
+	// sequence resets it at each start and settles it on the start's
+	// outcome, the deregistration releases it, and every session-scoped
+	// CH-RUNTIMEOPS sender waits on it, so the adapter writes such a frame
+	// only after it has read the session_started that answers the start.
+	// It leaves the registry with its entry, so a successor attempt's entry
+	// under the same key carries a new gate. spec: §28.5.3 (CH-MSGSOCK,
+	// Outbound: session_started); §28.5.3 (CH-RUNTIMEOPS, Messages).
+	ack ackGate
+	// sessionStartWritten records, under s.mu, that this entry's open
+	// sequence wrote the session's session_start. The open sequence is the
+	// only writer of session_start, and the message-writing paths (Attach
+	// and SendMessage) refuse an entry that does not carry it, so on the
+	// runtime connection the session_start precedes every message addressed
+	// to the session whatever order the gateway's calls arrive in. It is
+	// set right after the write and before any session_started wait,
+	// because the session's other frames do not wait for the
+	// acknowledgement. A start that writes the session's session_end clears
+	// it. The flag is per entry, so a successor attempt's entry starts
+	// without it. spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start), rule
+	// 1; §28.5.3 (CH-MSGSOCK, Outbound: session_started), rule 4.
+	sessionStartWritten bool
+	// bindAttempt is the §4.7.1 bind attempt token the request that created
+	// the entry carried, empty when that request carried none. It is written
+	// once, by the create branch of ensureSlotStateLocked, and never again
+	// while the entry lives (the stamp-once rule). It is a capability over
+	// the entry's teardown, so it is never logged or returned in a message.
+	// spec: §4.7.1 (role and gateway RPC contract).
+	bindAttempt string
+	// lastActivity is the time of the session's last activity as §4.7.1
+	// **Session seal.** defines it, the adapter half of the idle decision.
+	// The write of the session's session_start stamps it, so each start and
+	// each restore begins a fresh window; no site clears it, and it leaves
+	// the registry with its entry, so nothing about activity crosses a
+	// checkpoint. Guarded by s.mu. spec: §4.7.1 (Role and Gateway RPC
+	// Contract).
+	lastActivity time.Time
+	// toolCalls counts the session's CH-MCP-PLATFORM and CH-MCP-CONNECTOR
+	// calls in flight. SealSession places no seal while it is above zero.
+	// Guarded by s.mu. spec: §4.7.1 (Role and Gateway RPC Contract).
+	toolCalls int
+	// sealed records that SealSession sealed the session against message
+	// delivery: writeSessionEnvelope refuses every message frame while it
+	// is set. UnsealSession clears it, and a new entry starts unsealed, so
+	// the entry's removal ends the seal. Guarded by s.mu. spec: §4.7.1
+	// (Role and Gateway RPC Contract), §28.5.1 (CH-ATTACH).
+	sealed bool
+	// hb is the session's heartbeat monitor, started when the session's
+	// session_start is written and stopped before its session_end is
+	// written or when the entry is removed. A stopped monitor stays on the
+	// entry, so a hung runtime keeps refusing Attach for the session until
+	// the entry is removed. Guarded by s.mu. spec: §28.5.3 (CH-MSGSOCK).
+	hb *heartbeatMonitor
 }
 
-// useSlot reports whether the adapter should take the §6.4 per-slot path
-// for slotID: the RPC carries a non-empty slot id. A slotId-bearing frame
-// is by definition a concurrent-pool frame (spec/15:1459: runtimes on
-// maxConcurrentSessions == 1 pods never see a slotId), so the per-slot
-// decision keys on slotId presence alone. The single-session base layout
-// (slotID == "") is left untouched.
-func (s *Server) useSlot(slotID string) bool {
-	return slotID != ""
+// ackState is one state of an entry's session_started acknowledgement
+// gate. spec: §28.5.3 (CH-MSGSOCK, Outbound: session_started).
+type ackState int
+
+const (
+	// ackNotStarted is the gate of an entry no start has opened yet. A
+	// sender waits, so a frame for a session whose start is still ahead is
+	// written only once that start's outcome is known.
+	ackNotStarted ackState = iota
+	// ackPending is the gate of a start that waits for its session_started.
+	ackPending
+	// ackRead is the gate of a start whose session_started the adapter read.
+	ackRead
+	// ackFailed is the gate of a start that ended without the record: its
+	// wait ended without the frame, the frame carried error, its
+	// session_start write failed, or a rule-8 confirmation was refused.
+	ackFailed
+	// ackNotAwaiting is the gate of a start that did not wait, because the
+	// runtime's CH-RUNTIMEOPS handshake had not completed when it began.
+	ackNotAwaiting
+	// ackReleased is the gate of a removed entry. It is terminal.
+	ackReleased
+)
+
+// String names the state for logs and test failures.
+func (a ackState) String() string {
+	switch a {
+	case ackNotStarted:
+		return "not_started"
+	case ackPending:
+		return "pending"
+	case ackRead:
+		return "read"
+	case ackFailed:
+		return "failed"
+	case ackNotAwaiting:
+		return "not_awaiting"
+	case ackReleased:
+		return "released"
+	default:
+		return fmt.Sprintf("ackState(%d)", int(a))
+	}
+}
+
+// errSessionStartNotAcknowledged is the error a session-scoped
+// CH-RUNTIMEOPS sender receives when the gate of its session's entry
+// failed or was released, or when it did not settle before the sender's
+// bound. The sender writes no frame and ends as it ends for a frame the
+// runtime does not answer. spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+var errSessionStartNotAcknowledged = errors.New("session_started not read for the session")
+
+// ackGate is an entry's session_started acknowledgement gate.
+//
+// Its lock is a leaf: it is taken after s.mu when both are held and is
+// never held across a wait. Every transition closes the current changed
+// channel and replaces it, so each waiter wakes on every transition and
+// reads the state again. A waiter from before a start therefore wakes at
+// the start's reset to pending, waits again, and returns on that start's
+// outcome. The zero value is the not-started gate.
+type ackGate struct {
+	mu      sync.Mutex
+	state   ackState
+	startID string
+	// changed is closed at the next transition. It is created lazily so
+	// the zero value is usable.
+	changed chan struct{}
+}
+
+// transitionLocked moves the gate to next and wakes every waiter. Callers
+// hold g.mu.
+func (g *ackGate) transitionLocked(next ackState) {
+	g.state = next
+	if g.changed != nil {
+		close(g.changed)
+		g.changed = nil
+	}
+}
+
+// waitChLocked returns the channel the next transition closes. Callers
+// hold g.mu.
+func (g *ackGate) waitChLocked() <-chan struct{} {
+	if g.changed == nil {
+		g.changed = make(chan struct{})
+	}
+	return g.changed
+}
+
+// reset opens the gate for one start: pending when the start waits for its
+// session_started, not awaiting when it does not. A released gate is left
+// unchanged, because an unguarded removal can deregister the entry between
+// the open sequence's first confirmation and this reset.
+func (g *ackGate) reset(startID string, awaiting bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.state == ackReleased {
+		return
+	}
+	g.startID = startID
+	if awaiting {
+		g.transitionLocked(ackPending)
+		return
+	}
+	g.transitionLocked(ackNotAwaiting)
+}
+
+// settle records that the open sequence read the session_started for
+// startID carrying no error, which moves the gate to read. It runs only
+// from pending and only for the start the gate was reset to, and reports
+// whether it moved the gate. A frame carrying error fails the gate
+// through fail instead.
+func (g *ackGate) settle(startID string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.state != ackPending || g.startID != startID {
+		return false
+	}
+	g.transitionLocked(ackRead)
+	return true
+}
+
+// fail moves the gate to failed for the start whose startID it names,
+// unless the gate is already released or failed. A start that ends before
+// it minted a startID passes the empty string. The transition applies only
+// while the gate belongs to that start (its startID is the gate's) or
+// while no start has reset it yet, so a start that returns late cannot
+// fail a later start's gate on the same entry, which would refuse every
+// session-scoped CH-RUNTIMEOPS frame for the session that later start
+// runs. spec: §28.5.3 (CH-MSGSOCK, Session frame writes); §5.2 (slot
+// serialization).
+func (g *ackGate) fail(startID string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.state == ackReleased || g.state == ackFailed {
+		return
+	}
+	if g.startID != startID && g.state != ackNotStarted {
+		return
+	}
+	g.transitionLocked(ackFailed)
+}
+
+// release moves the gate to released, which is terminal.
+func (g *ackGate) release() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.state == ackReleased {
+		return
+	}
+	g.transitionLocked(ackReleased)
+}
+
+// current returns the gate's state.
+func (g *ackGate) current() ackState {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.state
+}
+
+// check reports the gate's verdict without waiting: nil for read and not
+// awaiting, an error for failed and released, and, with unsettled set, the
+// channel a waiter blocks on for not started and pending.
+func (g *ackGate) check() (unsettled <-chan struct{}, err error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	switch g.state {
+	case ackRead, ackNotAwaiting:
+		return nil, nil
+	case ackNotStarted, ackPending:
+		return g.waitChLocked(), nil
+	default:
+		return nil, fmt.Errorf("%w: gate %s", errSessionStartNotAcknowledged, g.state)
+	}
+}
+
+// await returns once the gate admits a session-scoped frame, or with an
+// error when the gate failed or was released, or when ctx ends while the
+// gate is not started or pending. Only the wait observes ctx, so a caller
+// whose context already ended still writes its frame through a settled
+// gate.
+func (g *ackGate) await(ctx context.Context) error {
+	for {
+		ch, err := g.check()
+		if err != nil || ch == nil {
+			return err
+		}
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return fmt.Errorf("%w: %w", errSessionStartNotAcknowledged, ctx.Err())
+		}
+	}
+}
+
+// ready is await for a caller that must not wait: a gate that is not
+// started or pending is an error.
+func (g *ackGate) ready() error {
+	ch, err := g.check()
+	if err != nil {
+		return err
+	}
+	if ch != nil {
+		return fmt.Errorf("%w: gate %s", errSessionStartNotAcknowledged, g.current())
+	}
+	return nil
+}
+
+// lastFencedGeneration returns the generation this session's binding on
+// the pod last accepted through CoordinatorFence, or zero when no
+// coordinator has fenced it within this binding. spec: §10.1.2.
+func (st *slotState) lastFencedGeneration() int64 {
+	st.coord.mu.Lock()
+	defer st.coord.mu.Unlock()
+	return st.coord.lastFenced
 }
 
 // concurrentRoots derives the §6.4 base directories the per-slot trees
-// nest under from the adapter's configured roots: the workspace base is
-// the parent of the single WorkspaceRoot (WorkspaceBase), and sessions,
-// artifacts, and credentials reuse the same roots the single-slot layout
-// uses.
+// nest under from the adapter's configured roots: the workspace base the
+// operator renders onto --workspace-base, and the sessions, artifacts,
+// and credentials roots.
 func (s *Server) concurrentRoots() slotlayout.Roots {
 	return slotlayout.Roots{
 		Workspace:   s.WorkspaceBase,
@@ -64,19 +370,66 @@ func (s *Server) resolveSlotPaths(slotID string) (slotlayout.SlotPaths, error) {
 	return slotlayout.Resolve(s.concurrentRoots(), slotID)
 }
 
-// ensureSlotState returns the slot's state, creating the registry entry
-// and its on-disk tree on first reference. It is idempotent: a second
-// call for the same slot returns the existing state without recreating
-// the tree's content. Callers hold s.mu.
+// ensureSlotStateLocked resolves the slot's registry entry or creates it,
+// and admits or refuses the caller in the same indivisible step. Callers
+// hold s.mu for the whole of it, as §4.7.1's registry critical section and
+// stamp-once rule require.
 //
-// spec: §6.4 lines 401-405 — "The adapter creates the slot directory on
-// slotId assignment".
-func (s *Server) ensureSlotStateLocked(slotID string) (*slotState, error) {
+// This function is the adapter's only resolve-or-create step. Its
+// production callers, ensureSlotPaths, assignCredentialsSlot and
+// claimSessionSlotUnderLock, cover the requests §4.7.1's admission rules
+// govern, so the predicate here is the whole of the admission rules that
+// read the registry and no handler carries a second copy of them.
+// Well-formedness of bind_attempt against mid_session is a property of the
+// request alone, checked by validateBindFields at each handler that carries
+// the fields, before the resolve, so a malformed request never reaches this
+// function.
+//
+// The create branch creates the slot's on-disk tree on the first reference
+// to the identifier the gateway minted at claim time (§6.4), and inserts no
+// entry when the identifier is malformed or the tree cannot be created.
+//
+// spec: §4.7.1 (role and gateway RPC contract), rules 2 through 7; §6.4.
+func (s *Server) ensureSlotStateLocked(slotID string, r slotResolve) (*slotState, error) {
+	// The reclaim hold, applied before the map lookup: a held identifier has
+	// no entry to return.
+	if _, held := s.reclaiming[slotID]; held {
+		return nil, errSlotReclaimInProgress
+	}
+	st, ok := s.slots[slotID]
+	switch {
+	case !ok && !r.allowCreate:
+		// The mid-session-create rule. A mid-session request resolves an
+		// entry that already exists and never creates one. Creating here
+		// would mint an entry carrying no token, which no attempt could ever
+		// reclaim and no sweep collects.
+		return nil, errSlotMidSessionNoEntry(slotID)
+	case !ok:
+		// The create-and-stamp rule. The stamp-once rule makes this branch
+		// the only writer of bindAttempt.
+		return s.createSlotStateLocked(slotID, r.bindAttempt)
+	case r.bindAttempt != "" && st.bindAttempt != "" && st.bindAttempt != r.bindAttempt:
+		// The attempt identity rule, evaluated ahead of the started-session
+		// rule so a stale attempt is refused as the transient condition it is.
+		return nil, errSlotBindAttemptSuperseded(slotID)
+	case st.started && !r.allowStarted:
+		// The started-session rule.
+		return nil, errSlotBindAlreadyStarted(slotID)
+	default:
+		// The admit rule. The entry is returned and the token is not
+		// written, which covers both "the entry carries no token" and "the
+		// caller asserts no identity".
+		return st, nil
+	}
+}
+
+// createSlotStateLocked is the create branch of ensureSlotStateLocked: it
+// validates the identifier, creates the slot's on-disk tree, and inserts
+// the entry stamped with bindAttempt. Callers hold s.mu.
+// spec: §4.7.1 rule 4; §6.4.
+func (s *Server) createSlotStateLocked(slotID, bindAttempt string) (*slotState, error) {
 	if s.slots == nil {
 		s.slots = map[string]*slotState{}
-	}
-	if st, ok := s.slots[slotID]; ok {
-		return st, nil
 	}
 	paths, err := s.resolveSlotPaths(slotID)
 	if err != nil {
@@ -85,13 +438,38 @@ func (s *Server) ensureSlotStateLocked(slotID string) (*slotState, error) {
 	if err := slotlayout.EnsureTree(paths); err != nil {
 		return nil, err
 	}
+	// The entry's acknowledgement gate starts not started, its zero value,
+	// so a session-scoped CH-RUNTIMEOPS sender that resolves the entry
+	// before the session's start waits for that start's outcome.
+	// spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
 	st := &slotState{
-		paths:  paths,
-		creds:  map[string]*adapterv1.CredentialLease{},
-		timers: map[string]*expiryTimer{},
+		paths:       paths,
+		creds:       map[string]*adapterv1.CredentialLease{},
+		timers:      map[string]*expiryTimer{},
+		bindAttempt: bindAttempt,
 	}
 	s.slots[slotID] = st
 	return st, nil
+}
+
+// validateBindFields applies §4.7.1 rule 1, the pairing rule: a request
+// that is not marked mid_session must carry a bind attempt token, and one
+// marked mid_session must carry none. It reads no registry state and takes
+// no lock, because well-formedness is a property of the request alone, and
+// each handler whose message carries the fields calls it before any
+// resolve. The refusal is returned unwrapped: its code is already the one
+// the rule fixes. The message never contains the token.
+// spec: §4.7.1 (role and gateway RPC contract), rule 1.
+func validateBindFields(bindAttempt string, midSession bool) error {
+	if midSession && bindAttempt != "" {
+		return status.Error(codes.InvalidArgument,
+			"a mid_session request must not carry a bind_attempt")
+	}
+	if !midSession && bindAttempt == "" {
+		return status.Error(codes.InvalidArgument,
+			"a request that is not marked mid_session requires a bind_attempt")
+	}
+	return nil
 }
 
 // slotStateLocked returns the slot's state if it has been assigned.
@@ -106,50 +484,64 @@ func (s *Server) slotStateLocked(slotID string) (*slotState, bool) {
 // (PrepareWorkspace, FinalizeWorkspace, RunSetup) run before StartSession,
 // so this creates the slot tree the first time the gateway materializes
 // the slot's workspace, ahead of the slot's StartSession claim.
-func (s *Server) ensureSlotPaths(slotID string) (slotlayout.SlotPaths, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	st, err := s.ensureSlotStateLocked(slotID)
+//
+// r is the caller's assertion about the entry, passed through to the
+// resolve. spec: §4.7.1 (role and gateway RPC contract).
+func (s *Server) ensureSlotPaths(slotID string, r slotResolve) (slotlayout.SlotPaths, error) {
+	st, err := s.ensureSlotEntry(slotID, r)
 	if err != nil {
 		return slotlayout.SlotPaths{}, err
 	}
 	return st.paths, nil
 }
 
-// workspaceRootForSlot returns the cwd the adapter-local tool dispatch
-// resolves against for slotID: the slot's /workspace/slots/{slotId}/current
-// for a concurrent slot, or the pod-global WorkspaceRoot for the
-// single-session base path. An unknown slot falls back to WorkspaceRoot.
-func (s *Server) workspaceRootForSlot(slotID string) string {
-	if !s.useSlot(slotID) {
-		return s.WorkspaceRoot
-	}
+// ensureSlotEntry is ensureSlotPaths for a caller that holds on to the
+// entry it resolved, such as a mid-session FinalizeWorkspace whose
+// files_updated frame waits on that entry's acknowledgement gate.
+// spec: §4.7.1 (role and gateway RPC contract); §28.5.3 (CH-RUNTIMEOPS,
+// Messages).
+func (s *Server) ensureSlotEntry(slotID string, r slotResolve) (*slotState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if st, ok := s.slots[slotID]; ok && st.paths.Current != "" {
-		return st.paths.Current
-	}
-	return s.WorkspaceRoot
+	return s.ensureSlotStateLocked(slotID, r)
 }
 
-// checkpointRootsForSlot returns the §4.4 checkpoint bundle for slotID.
-// For the single-session base path (slotID == "") it returns the pod-global
-// s.checkpointRoots() slice unchanged, so an absent slot_id checkpoints
-// byte-for-byte as before. For a concurrent slot it swaps both roots to the
-// slot subtree: /workspace/slots/{slotId}/current under WorkspacePrefix and
-// /sessions/{slotId} under SessionsPrefix, because the session tmpfs is
-// itself slot-scoped. A slot with no registry entry or no bound session is
-// rejected with FailedPrecondition so a checkpoint never captures an empty
-// or nonexistent subtree for an unassigned slot; the adapter fails closed
-// on the slot gate. spec: §5.2 (per-slot checkpoint granularity), §6.4
-// (slot-qualified export target /workspace/slots/{slotId}/current and
-// /sessions/{slotId}), §4.4 (durability contract).
-func (s *Server) checkpointRootsForSlot(slotID string) ([]workspace.NamedRoot, error) {
-	if !s.useSlot(slotID) {
-		return s.checkpointRoots(), nil
-	}
+// workspaceRootForSession returns the cwd the adapter-local tool dispatch
+// resolves against for the named session: its
+// /workspace/slots/{sessionId}/current. The per-slot tree is the only
+// layout, so a session the registry does not hold has no root and the
+// caller fails closed rather than dispatching against a pod-global
+// directory. spec: §6.4.
+func (s *Server) workspaceRootForSession(sessionID string) (string, error) {
 	s.mu.Lock()
-	st, ok := s.slotStateLocked(slotID)
+	defer s.mu.Unlock()
+	st, ok := s.slots[sessionID]
+	if !ok || st.paths.Current == "" {
+		return "", status.Errorf(codes.FailedPrecondition,
+			"session %s has no workspace on this pod", sessionID)
+	}
+	return st.paths.Current, nil
+}
+
+// checkpointRootsForSession returns the §4.4 checkpoint bundle for the
+// named session together with the registry entry it resolved:
+// /workspace/slots/{sessionId}/current under WorkspacePrefix and
+// /sessions/{sessionId} under SessionsPrefix, because the session tmpfs is
+// itself per-session. A session with no registry entry or no bound session
+// is rejected with FailedPrecondition so a checkpoint never captures an
+// empty or nonexistent subtree for an unassigned slot; the adapter fails
+// closed on the slot gate.
+//
+// The entry is returned so a caller that later links into that session's
+// barrier gate holds the pointer this guard validated. A second lookup by
+// session identifier would race the deregistration paths, which delete the
+// map key while a checkpoint queued behind a co-tenant's upload is still
+// running. spec: §5.2 (per-slot checkpoint granularity), §6.4 (per-slot
+// export target), §4.4 (durability contract), §10.1.8 (the barrier gate
+// the stream links into).
+func (s *Server) checkpointRootsForSession(sessionID string) ([]workspace.NamedRoot, *slotState, error) {
+	s.mu.Lock()
+	st, ok := s.slotStateLocked(sessionID)
 	var current, sessions, sess string
 	if ok {
 		current = st.paths.Current
@@ -158,8 +550,8 @@ func (s *Server) checkpointRootsForSlot(slotID string) ([]workspace.NamedRoot, e
 	}
 	s.mu.Unlock()
 	if !ok || sess == "" {
-		return nil, status.Errorf(codes.FailedPrecondition,
-			"slot %s has no assigned session", slotID)
+		return nil, nil, status.Errorf(codes.FailedPrecondition,
+			"session %s has no assigned slot on this pod", sessionID)
 	}
 	roots := []workspace.NamedRoot{
 		{Prefix: workspace.WorkspacePrefix, Root: current},
@@ -169,28 +561,36 @@ func (s *Server) checkpointRootsForSlot(slotID string) ([]workspace.NamedRoot, e
 			Prefix: workspace.SessionsPrefix, Root: sessions,
 		})
 	}
-	return roots, nil
+	return roots, st, nil
 }
 
 // removeSlotTree removes the slot's per-slot directory tree on cleanup.
-// spec: §6.4 lines 401-405.
+// spec: §6.4.
 func removeSlotTree(st *slotState) error {
 	return slotlayout.RemoveTree(st.paths)
 }
 
-// runtimeForSlot returns the runtime process that drives slotID. The
-// single pod-global Runtime serves every slot, multiplexed on slotId over
-// the one runtime connection (spec/05:509, spec/15:1459), so an assigned
-// concurrent slot resolves to the same Runtime as the single-session base
-// layout. An unknown (unassigned) slot returns nil so the caller surfaces
-// a FailedPrecondition.
-func (s *Server) runtimeForSlot(slotID string) RuntimeProcess {
-	if !s.useSlot(slotID) {
-		return s.Runtime
+// removeSlotTreeVia removes the slot's per-slot tree through the test seam
+// when one is set and through removeSlotTree otherwise. Every release site
+// whose reclaim-hold release reads the removal's result calls it, so the
+// retained-hold arm can be driven from a unit test.
+// spec: §5.2 (slot-identifier reclaim hold); §6.4.
+func (s *Server) removeSlotTreeVia(st *slotState) error {
+	if s.removeSlotTreeFn != nil {
+		return s.removeSlotTreeFn(st)
 	}
+	return removeSlotTree(st)
+}
+
+// runtimeForSession returns the runtime process that drives the named
+// session. The single pod-global Runtime serves every slot, so every
+// registered session resolves to the same Runtime. A session the registry
+// does not hold returns nil so the caller surfaces a FailedPrecondition.
+// spec: §6.4.
+func (s *Server) runtimeForSession(sessionID string) RuntimeProcess {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.slots[slotID]; ok {
+	if _, ok := s.slots[sessionID]; ok {
 		return s.Runtime
 	}
 	return nil

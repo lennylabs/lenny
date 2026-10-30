@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT
+#
+# The register resolves both occurrences of the sibling carrier and
+# records nothing for the two carriers whose § tokens the anchor-move
+# map retires no anchor for. Those tokens are outside the citation class
+# whether or not the tree states a heading for the number they name, so
+# the run redirects the sibling and leaves both carriers as they are
+# written rather than demanding an entry for each.
+kind: anchor-senses
+version: 1
+entries:
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2851-ch-adapterbinary

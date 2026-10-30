@@ -61,11 +61,10 @@ type Credential struct {
 	// Status is the §4.9 lifecycle state of this credential within the
 	// pool. Empty reads as active. Emergency revocation
 	// (POST .../credentials/{credId}/revoke) sets it to revoked; the
-	// /re-enable path returns it to active. spec: §4.9 line 1640 step 1.
+	// /re-enable path returns it to active. spec: §4.9 step 1.
 	Status CredentialStatus
 
-	// RevokedAt / RevokedBy / RevocationReason record the §4.9 emergency
-	// revocation (spec line 1640 step 1). They are zero for an active
+	// RevokedAt / RevokedBy / RevocationReason record the §4.9 emergency revocation. They are zero for an active
 	// credential.
 	RevokedAt        time.Time
 	RevokedBy        string
@@ -73,7 +72,7 @@ type Credential struct {
 }
 
 // IsRevoked reports whether the credential has been emergency-revoked.
-// An empty Status reads as active. spec: §4.9 line 1640 step 1.
+// An empty Status reads as active. spec: §4.9 step 1.
 func (c Credential) IsRevoked() bool { return c.Status == CredentialRevoked }
 
 // CredentialPool is the §4.9 tenant-scoped credential pool resource.
@@ -151,7 +150,7 @@ type CredentialPool struct {
 	// the pool (strategy, ttl, similarityThreshold, backend). It is nil
 	// when the pool declares no cachePolicy; §4.9 caching is disabled by
 	// default and opt-in per pool, so a nil policy (or one with Enabled
-	// false) leaves the LLM proxy path uncached. spec: §4.9 lines 1542-1556.
+	// false) leaves the LLM proxy path uncached. spec: §4.9.
 	CachePolicy *CachePolicy
 
 	// CreatedAt / UpdatedAt / DeletedAt are the audit timestamps.
@@ -163,20 +162,19 @@ type CredentialPool struct {
 	// 1 and increments on every successful write (Update or SoftDelete).
 	// The quoted decimal version is the resource's strong ETag, enforced
 	// on the admin PUT via the If-Match precondition and exposed on
-	// GET/list responses. spec: §15.1 lines 1207-1213.
+	// GET/list responses. spec: §15.1.
 	Version int64
 }
 
 // IsActive reports whether the pool has not been soft-deleted.
 func (p CredentialPool) IsActive() bool { return p.DeletedAt.IsZero() }
 
-// CachePolicy is the §4.9 semantic-cache configuration on a pool. The
-// spec example (lines 1542-1547) carries strategy, ttl, similarityThreshold,
-// and backend; Enabled is the per-pool opt-in (§4.9 line 1549 — caching is
+// CachePolicy is the §4.9 semantic-cache configuration on a pool. The spec example carries strategy, ttl, similarityThreshold,
+// and backend; Enabled is the per-pool opt-in (§4.9 — caching is
 // disabled by default and opt-in per pool). The zero value (every field
 // empty, Enabled false) is the disabled state.
 //
-// spec: spec/04_system-components.md lines 1542-1556.
+// spec: §4.9.
 type CachePolicy struct {
 	// Enabled is the per-pool opt-in. A policy with Enabled false leaves
 	// the LLM proxy path uncached even when the other fields are set.
@@ -227,7 +225,7 @@ func validCacheBackend(b string) bool {
 // validateCachePolicy reports the §4.9 structural invariants of a pool's
 // CachePolicy: a recognized strategy and backend, a non-negative ttl,
 // and a similarityThreshold in [0, 1]. A nil policy is valid (caching is
-// off). spec: §4.9 lines 1542-1556.
+// off). spec: §4.9.
 func validateCachePolicy(c *CachePolicy) error {
 	if c == nil {
 		return nil
@@ -276,7 +274,7 @@ type Store interface {
 	// deny-list rebuild. Soft-deleted pools are skipped: their leases
 	// are gone, so their credentials cannot be presented.
 	//
-	// spec: §4.9 lines 1668-1673 — a newly started gateway replica
+	// spec: §4.9 — a newly started gateway replica
 	// rebuilds its deny list from the stores' revoked entries so no
 	// revoked credential silently becomes accepted on a replica that
 	// missed the original pub/sub notification.
@@ -293,7 +291,7 @@ type Store interface {
 	// the no-op mirrors the documented pattern for non-user-scoped
 	// stores.
 	//
-	// spec: §12.1 line 5.
+	// spec: §12.1.
 	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
 
 	// DeleteByTenant implements the §12.1 mandatory-erasure primitive.
@@ -301,7 +299,7 @@ type Store interface {
 	// Phase 4 tenant-teardown path for the CredentialPoolStore role.
 	// Returns the number of pools removed.
 	//
-	// spec: §12.1 line 5, §12.8 Phase 4.
+	// spec: §12.1, §12.8 Phase 4.
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }
 
@@ -323,7 +321,7 @@ var (
 	// `https://` scheme. The §4.9 proxy-mode guarantee (the real API
 	// key never leaves the gateway) requires the lease token to travel
 	// encrypted, so a plaintext `http://` endpoint is rejected. spec:
-	// §4.9 line 1513 (InvalidProxyEndpointScheme).
+	// §4.9.
 	ErrInvalidProxyEndpointScheme = errors.New("credentialpoolstore: proxyEndpoint must use the https:// scheme")
 )
 
@@ -372,7 +370,7 @@ func validDeliveryMode(m string) bool {
 // the gateway's configured endpoint). An `http://` endpoint, or any
 // other non-HTTPS scheme, yields ErrInvalidProxyEndpointScheme.
 //
-// spec: §4.9 line 1513 — the proxy endpoint must use TLS so the lease
+// spec: §4.9 — the proxy endpoint must use TLS so the lease
 // token is always encrypted in transit; the controller rejects an
 // `http://` endpoint (InvalidProxyEndpointScheme).
 func validateProxyEndpoint(endpoint string) error {
@@ -389,7 +387,7 @@ func validateProxyEndpoint(endpoint string) error {
 // dialect. Empty is accepted (a direct-mode pool declares no dialect).
 // The §4.9 launch dialects are `openai` and `anthropic`; §26 extends the
 // set with `google` (codex / langgraph / mastra) and `cursor` (cursor-cli).
-// spec: §4.9 lines 1473-1476; §26.6 line 297; §26.5/§26.8/§26.9.
+// spec: §4.9; §26.6; §26.5/§26.8/§26.9.
 func validProxyDialect(d string) bool {
 	if d == "" {
 		return true
@@ -484,7 +482,7 @@ func (m *Memory) Create(_ context.Context, p CredentialPool) error {
 	if p.UpdatedAt.IsZero() {
 		p.UpdatedAt = p.CreatedAt
 	}
-	// spec: §15.1 line 1207 — every admin resource version starts at 1.
+	// spec: §15.1 — every admin resource version starts at 1.
 	if p.Version == 0 {
 		p.Version = 1
 	}
@@ -528,7 +526,7 @@ func (m *Memory) Update(_ context.Context, tenantID, name string, mutate func(*C
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
-	// spec: §15.1 line 1207 — bump the optimistic-concurrency version on
+	// spec: §15.1 — bump the optimistic-concurrency version on
 	// every successful Update so the next If-Match compares against it.
 	row.Version++
 	m.pools[tenantID][name] = clonePool(row)
@@ -564,7 +562,7 @@ func (m *Memory) SoftDelete(_ context.Context, tenantID, name string, at time.Ti
 	}
 	row.DeletedAt = at
 	row.UpdatedAt = at
-	// spec: §15.1 line 1213 — a soft-delete is a write; advance the
+	// spec: §15.1 — a soft-delete is a write; advance the
 	// version so a stale If-Match on a later operation is caught.
 	row.Version++
 	m.pools[tenantID][name] = row
@@ -612,7 +610,7 @@ func clonePool(p CredentialPool) CredentialPool {
 // DeleteByUser implements Store. Credential pools are tenant-scoped, so
 // a user erasure removes no pool; it returns (0, nil).
 //
-// spec: §12.1 line 5.
+// spec: §12.1.
 func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, errors.New("credentialpoolstore: DeleteByUser requires non-empty tenant_id and user_id")
@@ -623,7 +621,7 @@ func (m *Memory) DeleteByUser(_ context.Context, tenantID, userID string) (int, 
 // DeleteByTenant implements Store. It removes every credential pool the
 // tenant owns and returns the count.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (m *Memory) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("credentialpoolstore: DeleteByTenant requires a concrete tenant_id")

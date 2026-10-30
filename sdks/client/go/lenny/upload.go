@@ -17,14 +17,17 @@ import (
 // request must present it.
 const uploadTokenHeader = "X-Lenny-Upload-Token"
 
-// contentHashHeader carries the §7.4 line 444 optional client-computed
+// contentHashHeader carries the §7.4 optional client-computed
 // SHA-256 of the upload body. When set the gateway verifies the streamed
 // bytes against it and rejects a mismatch with VALIDATION_ERROR.
 const contentHashHeader = "X-Lenny-Content-Hash"
 
 // UploadResult is the §15.1 POST /v1/sessions/{id}/upload(-archive)
-// response. UploadRef is the §4.5 lenny-blob:// URI the caller passes as
-// sources[<n>].uploadRef in the workspace plan it binds at finalize.
+// response. UploadRef is the opaque reference the caller passes verbatim
+// as sources[<n>].uploadRef in a plan bound to this same session at
+// finalize.
+//
+// spec: §14 Workspace Plan Schema (uploadRef field note); §15.1.
 type UploadResult struct {
 	UploadRef   string `json:"uploadRef"`
 	MimeType    string `json:"mimeType,omitempty"`
@@ -49,7 +52,7 @@ type UploadArchiveOptions struct {
 // UploadArchive uploads an archive body to POST
 // /v1/sessions/{id}/upload-archive and returns the resulting uploadRef.
 // The upload requires the §7.1 uploadToken from the create response. It
-// is the §26.2 line 114 step that stages a tar'd workspace before the
+// is the §26.2 step that stages a tar'd workspace before the
 // plan referencing it is bound at finalize.
 //
 // The call is issued once (no retry): each upload mints a distinct staged
@@ -57,7 +60,7 @@ type UploadArchiveOptions struct {
 // surfaces to the caller, which re-drives the create → upload → finalize
 // flow.
 //
-// spec: §15.1 (upload endpoints); §7.1 (uploadToken); §26.2 line 114.
+// spec: §15.1 (upload endpoints); §7.1 (uploadToken); §26.2.
 func (c *Client) UploadArchive(ctx context.Context, sessionID, uploadToken string, body []byte, opt UploadArchiveOptions) (*UploadResult, error) {
 	if sessionID == "" {
 		return nil, fmt.Errorf("lenny: UploadArchive requires a session id")
@@ -85,7 +88,7 @@ func (c *Client) UploadArchive(ctx context.Context, sessionID, uploadToken strin
 // and returns its uploadRef for use as an `uploadFile` plan source. Like
 // UploadArchive it requires the §7.1 uploadToken and is issued once.
 //
-// spec: §15.1 (upload endpoint); §26.2 line 213 (`--file`).
+// spec: §15.1 (upload endpoint); §26.2.
 func (c *Client) UploadFile(ctx context.Context, sessionID, uploadToken string, body []byte, opt UploadArchiveOptions) (*UploadResult, error) {
 	if sessionID == "" {
 		return nil, fmt.Errorf("lenny: UploadFile requires a session id")
@@ -110,13 +113,14 @@ func (c *Client) UploadFile(ctx context.Context, sessionID, uploadToken string, 
 }
 
 // FinalizeWorkspace calls POST /v1/sessions/{id}/finalize with a §14
-// workspace plan body, binding the plan onto a created session and
-// transitioning it to ready. The plan references blobs uploaded against
-// this session (via UploadArchive); the gateway materializes them when
-// the session starts. Pass a nil plan for a no-plan finalize (equivalent
-// to Finalize).
+// workspace plan body, binding the plan onto a created session (§14.1
+// Plan binding). The plan references blobs uploaded against this session
+// (via UploadArchive or UploadFile). The gateway validates the plan and,
+// during finalize, materializes its sources, including the uploads it
+// names; the call returns once the session is ready. Pass a nil plan for
+// a no-plan finalize (equivalent to Finalize).
 //
-// spec: §7.1 step 11 (FinalizeWorkspace); §26.2 lines 95-114.
+// spec: §14.1 WorkspacePlan Schema Versioning (Plan binding); §7.1 Normal Flow; §26.2.
 func (c *Client) FinalizeWorkspace(ctx context.Context, id string, plan json.RawMessage, opts ...RequestOption) (*Session, error) {
 	if len(plan) == 0 {
 		return c.Finalize(ctx, id, opts...)

@@ -8,11 +8,11 @@ import "fmt"
 // a Bearer JWT. ClaimChecker rejects any token whose iss or aud claim
 // does not match.
 //
-// spec: §10.2 line 237 — the standard auth chain validates
-// "signature, iss, aud, exp, nbf" together. The signer wrappers
-// (HMACSigner / KMSSigner / RotatingVerifier) validate signature / exp
-// / nbf; ClaimChecker layers iss and aud on top so the entire chain
-// matches the spec.
+// spec: §10.2 — the standard auth chain validates
+// "signature, iss, aud, exp, nbf" together. The verifiers (KeySet for
+// Lenny-issued tokens, HMACSigner for the dev-only embedded OIDC trust
+// hook) validate signature, exp, and nbf; ClaimChecker layers iss and
+// aud on top so the entire chain matches the spec.
 type ExpectedClaims struct {
 	// Issuer is the canonical issuer string the gateway minted with.
 	// When empty, the iss check is skipped — a deployment without an
@@ -47,7 +47,7 @@ func audienceMatch(got, expected []string) bool {
 // gateway uses a single-key verifier (including inside a
 // MultiVerifier).
 //
-// spec: §10.2 line 237.
+// spec: §10.2.
 type ClaimChecker struct {
 	inner    Verifier
 	expected ExpectedClaims

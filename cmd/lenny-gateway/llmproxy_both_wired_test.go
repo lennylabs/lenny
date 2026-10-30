@@ -33,7 +33,7 @@ import (
 // (the seam would fire twice per exhaustion). The pre-fix handler dispatched
 // its own ExtendForBudget after the record path already dispatched one.
 //
-// spec: §8.6 line 629; §11.2 line 44; proposal 0023 S3/S4/S6.
+// spec: §8.6; §11.2; proposal 0023 S3/S4/S6.
 
 // countingSeam is a sessionbudget.ExtendOnExhaustion that records how many
 // times the enforcer dispatches the §8.6 extension and returns a scripted

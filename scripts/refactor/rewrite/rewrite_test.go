@@ -691,7 +691,8 @@ func TestParseManifest_RejectsMalformedLine(t *testing.T) {
 	}
 }
 
-// The committed manifest must parse cleanly and contain the §1.3 exclusion
+// The committed manifest must parse cleanly and contain the proposal's §1.3
+// exclusion
 // moves at their re-anchored destinations. This pins the driver to the actual
 // manifest the C1 step authored.
 func TestParseManifest_CommittedManifestExclusions(t *testing.T) {

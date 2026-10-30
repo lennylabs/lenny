@@ -1,0 +1,9 @@
+# 28. Communication channels
+
+### 28.3 Registers
+
+#### Naming table
+
+| channel | carrier | retired spelling | canonical spelling |
+|:--|:--|:--|:--|
+| `CH-ADAPTEREVENTS` | path | `controlchannel` | `adapterevents` |

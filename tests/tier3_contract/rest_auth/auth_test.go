@@ -48,7 +48,7 @@ func newTestServer(t *testing.T, opts authmw.Options) (*httptest.Server, *jwt.HM
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	opts.Verifier = signer
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	wrapped := authmw.Wrap(srv.Handler(), opts)
 	ts := httptest.NewServer(wrapped)
 	t.Cleanup(ts.Close)
@@ -261,7 +261,7 @@ func TestTamperedTokenReturns401(t *testing.T) {
 	}
 }
 
-// spec: §10.2 + §15.1 line 986 — a no-credentials request must reject
+// spec: §10.2 + §15.1 — a no-credentials request must reject
 // with the canonical UNAUTHORIZED code (401) and carry details.reason
 // = "auth_required" so callers can discriminate the missing-bearer
 // case while scripting against the §15.1 catalog.

@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
+
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
@@ -35,7 +37,9 @@ import (
 var echoBinary string
 
 func TestMain(m *testing.M) {
-	tmp, err := os.MkdirTemp("", "echo-contract-*")
+	// The fixture binary lives under the harness temp root rather than
+	// /tmp, which a host cleanup can empty mid-run (TEST-GAPS T-4.7.23).
+	tmp, err := testtmp.MkdirTemp("echo-contract-*")
 	if err != nil {
 		panic("echo contract TestMain: mkdtemp: " + err.Error())
 	}
@@ -45,6 +49,7 @@ func TestMain(m *testing.M) {
 	root := repoRoot()
 	cmd := exec.Command("go", "build", "-o", echoBinary, "./cmd/runtimes/echo")
 	cmd.Dir = root
+	cmd.Env = append(os.Environ(), testtmp.Env(filepath.Dir(tmp))...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		panic("echo contract TestMain: build: " + err.Error())
@@ -159,8 +164,8 @@ func TestAdapterAcceptsCanonicalMessages(t *testing.T) {
 // spec: 15.4
 // diagnosis: heartbeat → heartbeat_ack must complete within 10 seconds.
 //
-//	If the adapter delays beyond that, the gateway sends SIGTERM
-//	per the spec.
+//	If the adapter delays beyond that, the adapter ends the session's
+//	stream per the spec.
 func TestAdapterHeartbeatAckWithin10s(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

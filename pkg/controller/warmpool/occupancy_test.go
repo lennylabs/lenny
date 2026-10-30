@@ -19,9 +19,9 @@ import (
 // for the named Sandbox. The status (binding phase, rewarm stamp) is seeded
 // separately via seedClaimStatus because the API server rejects status on
 // create.
-func occupancyClaim(podName, binding string) *lennyv1.SandboxClaim {
+func occupancyClaim(ns, podName, binding string) *lennyv1.SandboxClaim {
 	return &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + podName, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + podName, Namespace: ns},
 		Spec: lennyv1.SandboxClaimSpec{
 			SandboxRef: podName,
 			TenantID:   "acme",
@@ -37,12 +37,13 @@ func occupancyClaim(podName, binding string) *lennyv1.SandboxClaim {
 // re-warm anchor).
 func seedClaimStatus(t *testing.T, c client.Client, podName, binding string, rewarm bool) {
 	t.Helper()
+	ns := testNamespace(t)
 	patch := &lennyv1.SandboxClaim{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: lennyv1.GroupVersion.String(),
 			Kind:       "SandboxClaim",
 		},
-		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + podName, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + podName, Namespace: ns},
 	}
 	patch.Status.Phase = binding
 	if rewarm {
@@ -59,9 +60,10 @@ func seedClaimStatus(t *testing.T, c client.Client, podName, binding string, rew
 // Sandbox.
 func reconcileOccupancy(t *testing.T, c client.Client, podName string) {
 	t.Helper()
+	ns := testNamespace(t)
 	r := &warmpool.OccupancyReconciler{Client: c}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: client.ObjectKey{Namespace: testNS, Name: podName},
+		NamespacedName: client.ObjectKey{Namespace: ns, Name: podName},
 	}); err != nil {
 		t.Fatalf("occupancy reconcile %s: %v", podName, err)
 	}
@@ -69,8 +71,9 @@ func reconcileOccupancy(t *testing.T, c client.Client, podName string) {
 
 func sandboxPhase(t *testing.T, c client.Client, podName string) string {
 	t.Helper()
+	ns := testNamespace(t)
 	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: podName}, &sb); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podName}, &sb); err != nil {
 		t.Fatalf("get sandbox %s: %v", podName, err)
 	}
 	return sb.Status.Phase
@@ -78,8 +81,8 @@ func sandboxPhase(t *testing.T, c client.Client, podName string) string {
 
 // occupiedSandbox is a Sandbox seeded into the given coarse phase, so a
 // claim-deletion projection has an occupied phase to act on.
-func occupiedSandbox(name, phase string) *lennyv1.Sandbox {
-	sb := idleSandbox(name)
+func occupiedSandbox(ns, name, phase string) *lennyv1.Sandbox {
+	sb := idleSandbox(ns, name)
 	sb.Status.Phase = phase
 	return sb
 }
@@ -93,8 +96,9 @@ func occupiedSandbox(name, phase string) *lennyv1.Sandbox {
 // spec: 4.6.1 (occupancy projection), 6.14 (binding-state enumeration), 3.3
 // (ownership decomposition).
 func TestOccupancyProjectsBoundClaimToClaimed(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, idleSandbox("pod-1"), occupancyClaim("pod-1", "bound"))
+	c := newClient(t, s, idleSandbox(ns, "pod-1"), occupancyClaim(ns, "pod-1", "bound"))
 	seedClaimStatus(t, c, "pod-1", "bound", false)
 
 	reconcileOccupancy(t, c, "pod-1")
@@ -111,8 +115,9 @@ func TestOccupancyProjectsBoundClaimToClaimed(t *testing.T) {
 //
 // spec: 4.6.1 (occupancy projection), 6.2 (recycle edges, scrub leg).
 func TestOccupancyProjectsRecyclingScrubToClaimed(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, occupiedSandbox("pod-1", "claimed"), occupancyClaim("pod-1", "recycling"))
+	c := newClient(t, s, occupiedSandbox(ns, "pod-1", "claimed"), occupancyClaim(ns, "pod-1", "recycling"))
 	seedClaimStatus(t, c, "pod-1", "recycling", false)
 
 	reconcileOccupancy(t, c, "pod-1")
@@ -129,8 +134,9 @@ func TestOccupancyProjectsRecyclingScrubToClaimed(t *testing.T) {
 // spec: 4.6.1 (occupancy projection), 6.2 (recycle re-warm edge), 6.14 (rewarm
 // stamp).
 func TestOccupancyProjectsRecyclingRewarmToSDKConnecting(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, occupiedSandbox("pod-1", "claimed"), occupancyClaim("pod-1", "recycling"))
+	c := newClient(t, s, occupiedSandbox(ns, "pod-1", "claimed"), occupancyClaim(ns, "pod-1", "recycling"))
 	seedClaimStatus(t, c, "pod-1", "recycling", true)
 
 	reconcileOccupancy(t, c, "pod-1")
@@ -147,8 +153,9 @@ func TestOccupancyProjectsRecyclingRewarmToSDKConnecting(t *testing.T) {
 //
 // spec: 4.6.1 (occupancy projection), 6.2 (reserved hold semantics).
 func TestOccupancyProjectsReservedClaimToReserved(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, occupiedSandbox("pod-1", "sdk_connecting"), occupancyClaim("pod-1", "reserved"))
+	c := newClient(t, s, occupiedSandbox(ns, "pod-1", "sdk_connecting"), occupancyClaim(ns, "pod-1", "reserved"))
 	seedClaimStatus(t, c, "pod-1", "reserved", false)
 
 	reconcileOccupancy(t, c, "pod-1")
@@ -164,8 +171,9 @@ func TestOccupancyProjectsReservedClaimToReserved(t *testing.T) {
 //
 // spec: 4.6.1 (occupancy projection), 6.14 (terminal dispositions).
 func TestOccupancyProjectsTerminalDispositionToDraining(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, occupiedSandbox("pod-1", "claimed"), occupancyClaim("pod-1", "released"))
+	c := newClient(t, s, occupiedSandbox(ns, "pod-1", "claimed"), occupancyClaim(ns, "pod-1", "released"))
 	seedClaimStatus(t, c, "pod-1", "released", false)
 
 	reconcileOccupancy(t, c, "pod-1")
@@ -182,8 +190,9 @@ func TestOccupancyProjectsTerminalDispositionToDraining(t *testing.T) {
 // spec: 4.6.1 (occupancy projection on claim DELETE), 6.2 (reserved → idle
 // hold expiry).
 func TestOccupancyClaimDeletedOnReservedPodReturnsToIdle(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, occupiedSandbox("pod-1", "reserved"))
+	c := newClient(t, s, occupiedSandbox(ns, "pod-1", "reserved"))
 
 	reconcileOccupancy(t, c, "pod-1")
 
@@ -200,8 +209,9 @@ func TestOccupancyClaimDeletedOnReservedPodReturnsToIdle(t *testing.T) {
 // spec: 4.6.1 (occupancy projection on claim DELETE), 6.2 (claimed → draining),
 // 5.2 (scrub-before-idle invariant).
 func TestOccupancyClaimDeletedOnClaimedPodDrains(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, occupiedSandbox("pod-1", "claimed"))
+	c := newClient(t, s, occupiedSandbox(ns, "pod-1", "claimed"))
 
 	reconcileOccupancy(t, c, "pod-1")
 
@@ -217,8 +227,9 @@ func TestOccupancyClaimDeletedOnClaimedPodDrains(t *testing.T) {
 // spec: 4.6.1 (occupancy projection), 3.3 (ownership decomposition), 6.2
 // (warm-fill legs).
 func TestOccupancyLeavesUnclaimedIdlePodUntouched(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, idleSandbox("pod-1"))
+	c := newClient(t, s, idleSandbox(ns, "pod-1"))
 
 	reconcileOccupancy(t, c, "pod-1")
 
@@ -234,12 +245,13 @@ func TestOccupancyLeavesUnclaimedIdlePodUntouched(t *testing.T) {
 // spec: 4.6.1 (claim-existence occupancy projection via the SandboxClaim
 // watch).
 func TestClaimToSandboxMapsToOwner(t *testing.T) {
+	ns := testNamespace(t)
 	r := &warmpool.OccupancyReconciler{}
-	reqs := r.ClaimToSandboxForTest(context.Background(), occupancyClaim("pod-7", "bound"))
+	reqs := r.ClaimToSandboxForTest(context.Background(), occupancyClaim(ns, "pod-7", "bound"))
 	if len(reqs) != 1 {
 		t.Fatalf("got %d requests, want 1", len(reqs))
 	}
-	if reqs[0].Name != "pod-7" || reqs[0].Namespace != testNS {
-		t.Errorf("request = %s/%s, want %s/pod-7", reqs[0].Namespace, reqs[0].Name, testNS)
+	if reqs[0].Name != "pod-7" || reqs[0].Namespace != ns {
+		t.Errorf("request = %s/%s, want %s/pod-7", reqs[0].Namespace, reqs[0].Name, ns)
 	}
 }

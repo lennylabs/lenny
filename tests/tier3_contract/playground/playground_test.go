@@ -33,6 +33,7 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // fakeTenants is the in-test playground.TenantRegistry and the
@@ -54,14 +55,14 @@ func devSigner() *jwt.HMACSigner {
 func newPlayground(t *testing.T, mode playground.AuthMode) *playground.Handler {
 	t.Helper()
 	cfg := playground.Config{
-		Enabled:        true,
-		AuthMode:       mode,
-		DevTenantID:    "acme",
-		BearerTTL:      900 * time.Second,
-		OIDCSessionTTL: time.Hour,
+		Enabled:            true,
+		AuthMode:           mode,
+		DevTenantID:        "acme",
+		CapabilityTokenTTL: 900 * time.Second,
+		OIDCSessionTTL:     time.Hour,
 	}
 	return playground.New(cfg, playground.Options{
-		Signer:   devSigner(),
+		Signer:   jwtsign.HMAC(devSigner()),
 		Verifier: devSigner(),
 		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 		Sessions: playground.NewMemorySessionStore(),
@@ -247,10 +248,10 @@ func TestPlaygroundJWTAcceptedByPublicSessionsAPI(t *testing.T) {
 	// the gateway shares one JWTSigner across both.
 	cfg := playground.Config{
 		Enabled: true, AuthMode: playground.AuthModeDev, DevTenantID: "acme",
-		BearerTTL: 900 * time.Second, OIDCSessionTTL: time.Hour,
+		CapabilityTokenTTL: 900 * time.Second, OIDCSessionTTL: time.Hour,
 	}
 	h := playground.New(cfg, playground.Options{
-		Signer:   signer,
+		Signer:   jwtsign.HMAC(signer),
 		Verifier: signer,
 		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 		Sessions: playground.NewMemorySessionStore(),
@@ -272,7 +273,7 @@ func TestPlaygroundJWTAcceptedByPublicSessionsAPI(t *testing.T) {
 	// §10.2 auth middleware, verifying with the same signer.
 	store := memstore.New()
 	publicAPI := authmw.Wrap(
-		sessionserver.New(store, sessionserver.Options{}).Handler(),
+		sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}).Handler(),
 		authmw.Options{
 			Verifier:    signer,
 			MultiTenant: true,
@@ -292,12 +293,14 @@ func TestPlaygroundJWTAcceptedByPublicSessionsAPI(t *testing.T) {
 	}
 }
 
-// spec: 27.3.1 (apiKey mode rejects a non-user_bearer subject token)
+// spec: 27.3.1 (apiKey mode rejects a non-user_bearer subject token), 10.2 (Playground mint invariants, invariant 1)
 // diagnosis: A session_capability JWT pasted into the API-key form
 //
-//	was not rejected with LENNY_PLAYGROUND_BEARER_TYPE_REJECTED.
-//	The §10.2 playground mint invariant (subject typ ==
-//	user_bearer) is not enforced; inspect mintAPIKey.
+//	was not rejected with LENNY_PLAYGROUND_BEARER_TYPE_REJECTED, or
+//	the rejection does not carry details.subjectTyp, the key §10.2
+//	invariant 1 and the §15.1 catalog row name. The §10.2 playground
+//	mint invariant (subject typ == user_bearer) is not enforced or its
+//	details key drifted; inspect mintAPIKey.
 func TestAPIKeyModeRejectsCapabilitySubjectToken(t *testing.T) {
 	signer := devSigner()
 	capToken, err := signer.Sign(jwt.Claims{
@@ -308,8 +311,8 @@ func TestAPIKeyModeRejectsCapabilitySubjectToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sign capability token: %v", err)
 	}
-	cfg := playground.Config{Enabled: true, AuthMode: playground.AuthModeAPIKey, BearerTTL: 900 * time.Second}
-	h := playground.New(cfg, playground.Options{Signer: signer, Verifier: signer})
+	cfg := playground.Config{Enabled: true, AuthMode: playground.AuthModeAPIKey, CapabilityTokenTTL: 900 * time.Second}
+	h := playground.New(cfg, playground.Options{Signer: jwtsign.HMAC(signer), Verifier: signer})
 	srv := httptest.NewServer(h.TokenRoutes())
 	defer srv.Close()
 
@@ -320,12 +323,19 @@ func TestAPIKeyModeRejectsCapabilitySubjectToken(t *testing.T) {
 	}
 	var env struct {
 		Error struct {
-			Code string `json:"code"`
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
 		} `json:"error"`
 	}
 	_ = json.Unmarshal(raw, &env)
 	if env.Error.Code != "LENNY_PLAYGROUND_BEARER_TYPE_REJECTED" {
 		t.Fatalf("error code = %q, want LENNY_PLAYGROUND_BEARER_TYPE_REJECTED", env.Error.Code)
+	}
+	if got := env.Error.Details["subjectTyp"]; got != string(auth.TokenSessionCapability) {
+		t.Fatalf("details.subjectTyp = %v, want %s; body=%s", got, auth.TokenSessionCapability, raw)
+	}
+	if _, ok := env.Error.Details["presentedTyp"]; ok {
+		t.Fatalf("details carries presentedTyp; §10.2 invariant 1 names subjectTyp; body=%s", raw)
 	}
 }
 

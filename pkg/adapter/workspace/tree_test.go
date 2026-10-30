@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 )
 
-// spec: §7.3 lines 408-409 — ArchiveTree/ExtractTree bundle the session
+// spec: §7.3 — ArchiveTree/ExtractTree bundle the session
 // workspace and the /sessions session-file tmpfs into one checkpoint and
 // replay each to its own root on resume. F-7.3.14.
 

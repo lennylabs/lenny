@@ -13,7 +13,7 @@ import (
 // immutable under the retain-until-hold-release object lock; clearing the
 // hold lifts the lock and makes the object eligible for deletion.
 //
-// spec: §12.8 line 884.
+// spec: §12.8.
 type EscrowDeleter interface {
 	// Delete removes tenantID's escrow object at key in region. A delete of
 	// an already-absent object is not an error (idempotent re-clear). The
@@ -22,7 +22,7 @@ type EscrowDeleter interface {
 	Delete(ctx context.Context, tenantID, region, key string) error
 }
 
-// Released is the §16.7 line 694 legal_hold.escrow_released event written
+// Released is the §16.7 legal_hold.escrow_released event written
 // once per escrow object the GC deletes after its hold is cleared.
 type Released struct {
 	TenantID        string
@@ -41,7 +41,7 @@ type ReleaseLedger interface {
 	EscrowReleased(ctx context.Context, ev Released) error
 }
 
-// Releaser implements the §12.8 line 884 escrow-GC release flow: when a
+// Releaser implements the §12.8 escrow-GC release flow: when a
 // legal hold is cleared via POST /v1/admin/legal-hold (hold: false) — which
 // the API accepts on a tombstoned tenant for this purpose — it deletes the
 // escrow objects the cleared hold protected and emits a

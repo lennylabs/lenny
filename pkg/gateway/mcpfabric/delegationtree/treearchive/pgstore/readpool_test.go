@@ -26,7 +26,7 @@ func fakePool(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-// spec: §12.3 line 146 — without a read replica, the task-tree replay and
+// spec: §12.3 — without a read replica, the task-tree replay and
 // lookup paths share the primary pool.
 func TestNewSharesPrimaryWhenNoReadPool_spec_12_3_146(t *testing.T) {
 	primary := fakePool(t)
@@ -36,7 +36,7 @@ func TestNewSharesPrimaryWhenNoReadPool_spec_12_3_146(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 146 — WithReadPool routes the task-tree replay/lookup
+// spec: §12.3 — WithReadPool routes the task-tree replay/lookup
 // reads to the replica while archive writes stay on the primary. F-12.3.16.
 func TestWithReadPoolRoutesReadsToReplica_spec_12_3_146(t *testing.T) {
 	primary := fakePool(t)

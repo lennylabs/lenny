@@ -28,7 +28,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -43,7 +42,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/webhookdelivery"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // TestOpsColdStartWithPostgresDownEmitsSubscriptionsUnavailable boots the
@@ -69,6 +67,7 @@ import (
 // subscriptionsUnavailable: true on the event stream — an operator would
 // have no notification that no webhooks will fire until Postgres recovers.
 func TestOpsColdStartWithPostgresDownEmitsSubscriptionsUnavailable(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
 	rd := containers.StartRedis(t, containers.RedisOptions{})
@@ -160,9 +159,8 @@ func TestOpsColdStartWithPostgresDownEmitsSubscriptionsUnavailable(t *testing.T)
 // worker kept delivering nothing — an operator's subscriptions would stay
 // dark after the database came back.
 func TestSubscriptionCacheColdStartNoDeliveryThenResumesOnPostgresRecovery(t *testing.T) {
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	t.Parallel()
+	pg := sharedDatabase(t)
 	ctx := context.Background()
 
 	// ---- callback receiver ----

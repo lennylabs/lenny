@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// §25.8 cert-manager certificate-expiry thresholds (spec lines 3457-3459).
+// §25.8 cert-manager certificate-expiry thresholds.
 const (
 	// certExpiryDegradedThreshold is the window within which a certificate
 	// whose last renewal failed reports degraded.
@@ -40,8 +40,7 @@ type CertStatus struct {
 // via the Kubernetes API; tests supply a fixed slice. A source that
 // returns an error reports the probe could not reach cert-manager.
 //
-// spec: §25.8 Cert-Manager Integration (line 3456, "lenny-ops's health
-// API probes cert-manager's certificate status").
+// spec: §25.8 Cert-Manager Integration.
 type CertStatusSource interface {
 	CertStatuses(ctx context.Context) ([]CertStatus, error)
 }
@@ -61,7 +60,7 @@ type CertStatusSource interface {
 // to probe, which is not a fault. A source error reports unhealthy: the
 // probe cannot confirm certificate health.
 //
-// spec: §25.8 lines 3456-3461.
+// spec: §25.8.
 func CertManagerCheck(source CertStatusSource) SelfCheck {
 	return func() CheckResult {
 		res := CheckResult{Name: CheckCertManager, Status: StatusHealthy}

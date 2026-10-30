@@ -20,7 +20,7 @@ import (
 // is written to the platform chain (empty tenant id) with the
 // service_instance_id and timestamp the §16.7 catalogue entry requires.
 //
-// spec: §12.4 line 224; §16.7 (quota_failopen_started).
+// spec: §12.4; §16.7 (quota_failopen_started).
 type quotaFailOpenAuditEmitter struct {
 	appender policy.AuditAppender
 }
@@ -30,7 +30,7 @@ func (e quotaFailOpenAuditEmitter) EmitQuotaFailOpenStarted(ctx context.Context,
 		return
 	}
 	payload, err := json.Marshal(map[string]any{
-		// spec: §12.4 line 224 — the event carries tenant_id (empty for a
+		// spec: §12.4 — the event carries tenant_id (empty for a
 		// replica-wide outage), service_instance_id, and timestamp.
 		"tenant_id":           "",
 		"service_instance_id": serviceInstanceID,
@@ -47,10 +47,10 @@ func (e quotaFailOpenAuditEmitter) EmitQuotaFailOpenStarted(ctx context.Context,
 
 // gatewayEndpointsLister counts the ready endpoints backing the gateway
 // Service via the controller-runtime client. It implements
-// failopen.EndpointsLister so the §12.4 line 224 cached_replica_count is
+// failopen.EndpointsLister so the §12.4 cached_replica_count is
 // sourced from the Kubernetes Endpoints object for the gateway Service.
 //
-// spec: §12.4 line 224.
+// spec: §12.4.
 type gatewayEndpointsLister struct {
 	client    client.Client
 	namespace string
@@ -77,7 +77,7 @@ func (l gatewayEndpointsLister) CountReady(ctx context.Context) (int, error) {
 // per-user backstop are active. The CumulativeTimer's OnChange mirrors the
 // running value onto the lenny_quota_failopen_cumulative_seconds gauge.
 //
-// spec: §12.4 lines 220-224. F-12.4.9 / F-11.2.6.
+// spec: §12.4. F-12.4.9 / F-11.2.6.
 func buildFailOpenController(cfg failOpenWiring) *failopen.Controller {
 	timer := failopen.NewCumulativeTimer(failopen.CumulativeConfig{
 		MaxSeconds: time.Duration(cfg.cumulativeMaxSeconds) * time.Second,

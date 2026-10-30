@@ -7,7 +7,7 @@
 // posts the per-scenario ack back to loadctl, and uploads the k6
 // JSON to object storage.
 //
-// TESTING.md §12.12 (Wave 5 lenny-loadrunner binary).
+// Wave 5 lenny-loadrunner binary.
 package main
 
 import (

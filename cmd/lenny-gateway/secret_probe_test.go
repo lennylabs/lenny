@@ -31,7 +31,7 @@ func verdictResp(v tokensv1.Verdict) *tokensv1.ProbeSecretAccessResponse {
 	return &tokensv1.ProbeSecretAccessResponse{Verdict: v}
 }
 
-// spec: §4.9 line 1212 — the gateway adapter maps each wire verdict onto
+// spec: §4.9 — the gateway adapter maps each wire verdict onto
 // the admin verdict the credential-pool handler consumes.
 func TestTokenServiceSecretProber_VerdictMapping(t *testing.T) {
 	cases := []struct {
@@ -61,7 +61,7 @@ func TestTokenServiceSecretProber_VerdictMapping(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1212 — an RPC error (the probe could not return a
+// spec: §4.9 — an RPC error (the probe could not return a
 // definitive verdict) is propagated so the handler maps it to 503.
 func TestTokenServiceSecretProber_RPCErrorPropagates(t *testing.T) {
 	p := &tokenServiceSecretProber{stub: &fakeTokenServiceClient{err: errors.New("unavailable")}}

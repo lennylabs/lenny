@@ -13,7 +13,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// spec: §16.3 line 330 ("Gateway → External MCP tools (HTTP headers)") — the
+// spec: §16.3 ("Gateway → External MCP tools (HTTP headers)") — the
 // outbound connector request carries a W3C traceparent injected from the
 // gateway's current trace context, so the mcp.external_tool_call span and any
 // tracing the external connector performs share one trace. F-16.3.3.

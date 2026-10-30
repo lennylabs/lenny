@@ -39,11 +39,13 @@ func TestRecycleMaxPodUptimeRoundTrip_spec_5_2(t *testing.T) {
 		IsolationProfile: isolation.ProfileSandboxed,
 		ExecutionMode:    runtimestore.ExecutionModeSession,
 		SessionPolicy: &runtimestore.SessionPolicy{
+			AcknowledgeProcessLevelIsolation: true,
 			Recycle: &runtimestore.RecyclePolicy{
 				Enabled:                    true,
 				AcknowledgeBestEffortScrub: true,
 				MaxSessionsPerPod:          50,
 				MaxPodUptimeSeconds:        3600,
+				RuntimeProcess:             runtimestore.RuntimeProcessKeep,
 			},
 		},
 		WarmCount: 1,

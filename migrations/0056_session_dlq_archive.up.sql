@@ -1,6 +1,6 @@
--- §4.2 line 179 session_dlq_archive scaffold.
+-- §4.2 session_dlq_archive scaffold.
 --
--- spec: §4.2 line 179 — "| session_dlq_archive | Tenant-scoped |
+-- spec: §4.2 — "| session_dlq_archive | Tenant-scoped |
 -- tenant_id column + RLS (current_setting('app.current_tenant')).
 -- Keyed by (tenant_id, session_id, message_id)."
 --

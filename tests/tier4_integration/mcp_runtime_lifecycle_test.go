@@ -2,13 +2,13 @@
 
 //go:build integration
 
-// Tier-4 integration test for §13.26 Phase 12b — type: mcp runtime
+// Tier-4 integration test for TESTING.md §13.26 Phase 12b — type: mcp runtime
 // support. It drives the type: mcp runtime-side adapter path against
 // the reference type: mcp runtime (cmd/runtimes/mcp-reference) through
 // the full §4.7 session lifecycle: the adapter Server selects the type:
 // mcp path via RuntimeKind, StartSession spawns the MCP-server agent
 // and performs the MCP initialize handshake, SendMessage maps a
-// §15.4.1 message onto an MCP tools/call, and Shutdown terminates the
+// §28.5.3 message onto an MCP tools/call, and Shutdown terminates the
 // runtime and releases the pod.
 //
 // The gateway-side type: mcp endpoints (/mcp/runtimes/{name}) are a
@@ -70,7 +70,7 @@ func TestMCPRuntimeLifecycle(t *testing.T) {
 
 	rt := &adapter.MCPRuntime{Command: bin}
 	s := adapter.New("integration")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.RuntimeKind = adapter.RuntimeKindMCP
 	s.Runtime = rt
 
@@ -94,8 +94,8 @@ func TestMCPRuntimeLifecycle(t *testing.T) {
 		t.Fatalf("Output: %v", err)
 	}
 
-	// SendMessage: a §15.4.1 message naming the `echo` tool maps onto an
-	// MCP tools/call; the result returns as a §15.4.1 response frame.
+	// SendMessage: a §28.5.3 message naming the `echo` tool maps onto an
+	// MCP tools/call; the result returns as a §28.5.3 response frame.
 	env, _ := json.Marshal(map[string]any{
 		"type":      "message",
 		"id":        "msg-1",
@@ -136,7 +136,8 @@ func TestMCPRuntimeLifecycle(t *testing.T) {
 
 	// Shutdown: terminate the runtime and release the pod.
 	resp, err := s.Shutdown(ctx, &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-mcp-lifecycle"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-mcp-lifecycle"},
 	})
 	if err != nil {
 		t.Fatalf("Shutdown: %v", err)
@@ -155,6 +156,7 @@ func TestMCPRuntimeLifecycle(t *testing.T) {
 		t.Fatalf("StartSession after Shutdown: pod was not released: %v", err)
 	}
 	_, _ = s.Shutdown(ctx, &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-mcp-lifecycle-2"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-mcp-lifecycle-2"},
 	})
 }

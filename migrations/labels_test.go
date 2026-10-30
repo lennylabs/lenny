@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §14 line 106 — session labels are filterable in GET /v1/usage and
+// spec: §14 — session labels are filterable in GET /v1/usage and
 // GET /v1/metering/events. Migrations 0152 / 0153 denormalize the
 // session's labels onto usage_events / billing_events as a nullable JSONB
 // column with a GIN index backing the `@>` containment filter; the down

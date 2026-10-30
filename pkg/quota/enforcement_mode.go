@@ -5,20 +5,17 @@ package quota
 import "fmt"
 
 // EnforcementMode selects how the gateway enforces token quota counters.
-// spec: §12.4 line 268 ("In-memory quota budgets with Postgres
-// reconciliation ... deployers enable it via `quotaEnforcementMode:
-// in_memory_reconciled`").
+// spec: §12.4.
 type EnforcementMode string
 
 const (
 	// EnforcementModeRedis is the default: the QuotaEvaluator reads the
 	// §12.4 Redis token-usage counters on the admission path and the
-	// recorder writes them on each upstream response, with the §11.2 line
-	// 44 Postgres checkpoint providing durability. spec: §12.4 (the
+	// recorder writes them on each upstream response, with the §11.2 Postgres checkpoint providing durability. spec: §12.4 (the
 	// counters under t:{tenant_id}:quota:tokens:{user_id}:{window}).
 	EnforcementModeRedis EnforcementMode = "redis"
 
-	// EnforcementModeInMemoryReconciled selects the §12.4 line 268
+	// EnforcementModeInMemoryReconciled selects the §12.4
 	// per-replica in-memory budget allocation drawn from Postgres: each
 	// gateway replica requests a budget slice from Postgres on startup
 	// (1/N of the tenant's remaining budget, where N is the replica
@@ -52,7 +49,7 @@ func (m EnforcementMode) IsValid() bool {
 // string. An empty value selects the default (Redis); any other value
 // outside the closed enum is a configuration error so the gateway can
 // fail closed at startup rather than silently fall back.
-// spec: §12.4 line 268.
+// spec: §12.4.
 func ParseEnforcementMode(s string) (EnforcementMode, error) {
 	if s == "" {
 		return DefaultEnforcementMode, nil

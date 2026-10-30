@@ -5,7 +5,7 @@
 // PromQL alert expressions directly against the gateway's in-process
 // Prometheus metric registry.
 //
-// spec: §25.13 line 4676 — "The in-process alert state tracker (Section
+// spec: §25.13 — "The in-process alert state tracker (Section
 // 25.3, Health API) evaluates these expressions against the in-process
 // metric registry. This is the per-replica fallback used when Prometheus
 // is unreachable."

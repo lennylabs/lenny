@@ -15,7 +15,7 @@ import "time"
 //
 // Splitting the surface as an interface keeps the package testable and
 // stops the Token Service from depending on the Prometheus client.
-// spec: §4.3 / §16.1 / §13.3 lines 607–611.
+// spec: §4.3 / §16.1 / §13.3.
 type Metrics interface {
 	// RecordRequestDuration observes one token-endpoint request's
 	// duration. operation is "exchange" for /v1/oauth/token; future
@@ -43,7 +43,7 @@ type Metrics interface {
 	// counter the §16.5 TokenStoreUnavailable alert reads. errorType is
 	// the RFC 8693 / §13.3 error code carried in the body
 	// (token_store_unavailable, server_error, kms_signing_unavailable,
-	// token_validation_unavailable). spec: §13.3 line 591 / §16.1.
+	// token_validation_unavailable). spec: §13.3 / §16.1.
 	Inc5xx(errorType string)
 
 	// ObserveRevocationPropagation observes one revoked-token propagation

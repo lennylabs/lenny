@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -88,11 +87,12 @@ type DeriveResponse struct {
 	// the same parent bytes by comparing this hash with the
 	// parent session's published hash.
 	//
-	// spec: §4.5 line 311.
+	// spec: §4.5.
 	WorkspaceSnapshotContentHash string `json:"workspaceSnapshotContentHash,omitempty"`
 
 	// ParentSessionID echoes the source session id for client-side
-	// audit / lineage display.
+	// audit / lineage display. The derived row itself carries no
+	// delegation parent: it is a new root (§12.6 StoreRouter).
 	ParentSessionID string `json:"parentSessionId,omitempty"`
 }
 
@@ -122,7 +122,7 @@ type DeriveIsolationDowngradeEvent struct {
 
 // handleDerive implements POST /v1/sessions/{id}/derive per §7.1 and
 // §15.1. The handler runs the per-source-session advisory lock
-// acquisition (§7.1 line 92), the source-session lookup, the
+// acquisition (§7.1), the source-session lookup, the
 // precondition state check, the workspace-snapshot resolution, the
 // SEC-001 monotonicity check (with platform-admin override), the
 // snapshot copy, and the atomic INSERT of the derived session row.
@@ -149,7 +149,7 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	}
 	sourceID := r.PathValue("id")
 
-	// §7.1 line 92 — acquire the per-source-session advisory lock
+	// §7.1 — acquire the per-source-session advisory lock
 	// before reading the workspace snapshot reference. Concurrent
 	// derives on the same source session serialize across replicas so
 	// no caller observes a torn read while a checkpoint is mid-update.
@@ -190,6 +190,13 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
+	// spec: §12.8 (Processing restriction during erasure (GDPR Article
+	// 18)) — the source session's owner, when restricted, refuses the
+	// derive before the isolation-downgrade audit event, the reservation,
+	// and the copy, whatever the new owner's and the tenant's markers.
+	if !s.requireSourceOwnerNotRestricted(w, r, tenantID, source.UserID) {
+		return
+	}
 
 	var req DeriveRequest
 	if r.ContentLength > 0 {
@@ -201,17 +208,17 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// §15.1 line 622-624 precondition table for /derive: terminal source
+	// §15.1 precondition table for /derive: terminal source
 	// admitted by default; non-terminal source admitted only when the
 	// caller passes `allowStale: true` AND the state is one of
 	// {running, suspended, resume_pending, awaiting_client_action}. The
 	// table-driven validator centralises that rule. When the rejection is
-	// specifically "non-terminal-without-allowStale", §15.1 line 1052
+	// specifically "non-terminal-without-allowStale", §15.1
 	// upgrades the wire code from the generic INVALID_STATE_TRANSITION to
 	// the dedicated DERIVE_ON_LIVE_SESSION so SDK clients can distinguish
 	// "retry with allowStale" from "the source state is not derivable at
 	// all" (e.g., created/finalizing/ready/starting/input_required).
-	// spec: §15.1 line 622-624; spec: §15.1 line 1052.
+	// spec: §15.1; spec: §15.1.
 	capabilities := map[session.Capability]bool{}
 	if req.AllowStale {
 		capabilities[session.CapabilityAllowStaleDerive] = true
@@ -318,61 +325,27 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 
 	now := s.clock()
 	derivedID := s.idFn()
-	derivedRef := derivedSnapshotRef(tenantID, derivedID)
-	// spec: §10.1 line 155 / §7.1 derive — when the parent's checkpoint is a
-	// chunked manifest, derive copies every chunk under the parent's
-	// chunk_object_key_prefix into the derived session's own prefix and
-	// writes a derived manifest row, so the derived session owns a resumable
-	// and downloadable checkpoint with no object shared with the parent. The
-	// handler falls through to the legacy single-snapshot copy when the
-	// parent has no chunked manifest.
-	if newRef, handled, cerr := s.deriveChunkedCheckpoint(r.Context(), source, derivedID, now); handled {
-		if cerr != nil {
-			if errors.Is(cerr, blobstore.ErrNotFound) {
-				s.persistDeriveFailure(r.Context(), source, derivedID, target, "derive_snapshot_unavailable")
-				s.writeError(w, http.StatusServiceUnavailable, "DERIVE_SNAPSHOT_UNAVAILABLE",
-					"parent workspace checkpoint chunk is absent in storage",
-					map[string]any{"snapshotRef": source.WorkspaceSnapshot.Ref})
-				return
-			}
-			s.persistDeriveFailure(r.Context(), source, derivedID, target, "workspace_copy_failed")
-			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-				"workspace checkpoint copy failed: "+cerr.Error(), nil)
-			return
-		}
-		derivedRef = newRef
-	} else if _, ok := s.blobs.(blobstore.Copier); ok && source.WorkspaceSnapshot != nil && source.WorkspaceSnapshot.Ref != "" {
-		// spec: §4.5 ll. 311 — legacy single-object copy for a checkpoint
-		// that predates the chunked model. The copy runs through the
-		// tenant-scoped boundary; otherwise the ref-rewrite behavior (tests
-		// + the minimal gateway) applies.
-		srcURI, dstURI, ok := parseDeriveURIs(source.WorkspaceSnapshot.Ref, derivedRef, tenantID, source.ID, derivedID)
-		if ok {
-			// spec: §12.5 ll. 295 — run the snapshot copy through the
-			// tenant-scoped boundary so both the parent (src) and derived
-			// (dst) URIs are validated against the caller tenant at the
-			// store interface rather than trusted from the constructed URI.
-			scoped := blobstore.NewTenantScoped(tenantID, s.blobs)
-			if err := scoped.Copy(srcURI, dstURI); err != nil && !errors.Is(err, blobstore.ErrConflict) {
-				// spec: §7.1 derive rule 2 — the copy was attempted, so
-				// under the opt-in this failure persists a terminal
-				// derive_failure audit row before the error is returned.
-				// F-15.1.14.
-				if errors.Is(err, blobstore.ErrNotFound) {
-					s.persistDeriveFailure(r.Context(), source, derivedID, target, "derive_snapshot_unavailable")
-					s.writeError(w, http.StatusServiceUnavailable, "DERIVE_SNAPSHOT_UNAVAILABLE",
-						"parent workspace snapshot object is absent in storage",
-						map[string]any{"snapshotRef": source.WorkspaceSnapshot.Ref})
-					return
-				}
-				s.persistDeriveFailure(r.Context(), source, derivedID, target, "workspace_copy_failed")
-				s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-					"workspace snapshot copy failed: "+err.Error(), nil)
-				return
-			}
-		}
+	// spec: §12.8 (Lifecycle fence and drain) — reserve derivedID for its
+	// owner before any object is copied under it. The reservation runs the
+	// creation fence over the tenant and the new owner. Every error return
+	// below that precedes the insert undoes the copy and releases it.
+	if !s.reserveDerivedSession(w, r, tenantID, userID, derivedID) {
+		return
 	}
-	// spec: §7.1 line 75 — resolve the derived session's pool-derived
+	// spec: §7.1 (Derive copy semantics) — derive always copies the
+	// parent's snapshot into the derived session's own prefix, and the
+	// stored ref names the copied object. A copy that cannot run fails the
+	// derive rather than storing a ref with no object behind it. Under the
+	// opt-in, a failed copy persists the derive rule 2 derive_failure row
+	// (F-15.1.14).
+	derivedRef, cerr := s.copyWorkspaceSnapshot(r.Context(), source, derivedID, now)
+	if cerr != nil {
+		s.undoDerivedWrites(r.Context(), tenantID, derivedID)
+		s.persistDeriveFailure(r.Context(), source, derivedID, target, snapshotCopyFailureReason(cerr))
+		s.writeSnapshotCopyError(w, cerr, source.WorkspaceSnapshot.Ref)
+		return
+	}
+	// spec: §7.1 — resolve the derived session's pool-derived
 	// isolation level once so executionMode + scrubPolicy are persisted
 	// alongside isolationProfile (same path as the plain create flow).
 	// GET /v1/sessions/{id} on a derived row therefore returns the same
@@ -395,10 +368,25 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		ScrubPolicy:            derivedLevel.ScrubPolicy,
 		ConversationContinuity: derivedLevel.ConversationContinuity,
 		WorkspaceSnapshot:      copySnapshotRef(source.WorkspaceSnapshot, derivedRef),
-		ParentSessionID:        source.ID,
-		ParentWorkspaceRef:     source.WorkspaceSnapshot.Ref,
+		// spec: §12.6 (StoreRouter), §15.1 (Session Replay Semantics),
+		// §4.5 (Workspace lineage) — a derived session is a new root. It
+		// carries no delegation parent, so the store makes it its own
+		// root_session_id, and its lineage to the source is the
+		// parent_workspace_ref below.
+		ParentWorkspaceRef: source.WorkspaceSnapshot.Ref,
 	}
-	if err := s.store.Create(r.Context(), derived); err != nil {
+	if err := s.store.CreateReserved(r.Context(), derived); err != nil {
+		// spec: §12.8 (Lifecycle fence and drain) — a fence refusal, or a
+		// reservation the owner's erasure ended, undoes the copy, releases
+		// the reservation, and answers 403. Any other insert error keeps
+		// the objects and the reservation, because such an error can
+		// follow a committed insert.
+		var ref *sessionstore.CreationRefusal
+		if errors.As(err, &ref) {
+			s.undoDerivedWrites(r.Context(), tenantID, derivedID)
+			s.writeCreationRefusal(w, ref)
+			return
+		}
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
@@ -408,7 +396,7 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		WorkspaceSnapshotSource:      string(derived.WorkspaceSnapshot.Source),
 		WorkspaceSnapshotTimestamp:   derived.WorkspaceSnapshot.Timestamp.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
 		WorkspaceSnapshotContentHash: derived.WorkspaceSnapshot.ContentHash,
-		ParentSessionID:              derived.ParentSessionID,
+		ParentSessionID:              source.ID,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -421,12 +409,11 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 // WorkspaceSnapshot.Ref (the four-segment object-path form
 // /{tenant}/checkpoints/{derived_session}/{derived_checkpoint_id} the
 // snapshot parsers accept, whose last segment is the derived checkpoint_id).
-// It reports handled=true when the parent has a chunked manifest that it
-// acted on, so the caller skips the legacy single-snapshot copy;
-// handled=false leaves the caller on the legacy path (dev mode, a store
-// without Copier, or a checkpoint predating the chunked model). A copy or
-// manifest-write failure returns handled=true with a non-nil error so the
-// caller maps it to the derive error response.
+// The caller has checked that every dependency is wired. A parent ref with
+// no manifest row, or a row with no chunk, returns
+// errSnapshotRefUnresolvable; a missing chunk object returns the store's
+// blobstore.ErrNotFound; any other manifest read, copy, or manifest write
+// failure returns that error.
 //
 // The parent's ref is resolved by its trailing checkpoint_id segment, so
 // both the bare-checkpoint_id and four-segment ref forms name the same
@@ -436,27 +423,26 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 // complete via the intent-row model (Put → ConfirmChunk →
 // Finalise(partial=false)).
 //
-// spec: §10.1 line 155 (chunk layout); §7.1 derive copy semantics; §4.5
-// line 311 (content-addressed independence from the parent).
-func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstore.Session, derivedID string, now time.Time) (derivedRef string, handled bool, err error) {
-	if s.checkpointManifests == nil || s.checkpointManifestWriter == nil {
-		return "", false, nil
-	}
-	if _, ok := s.blobs.(blobstore.Copier); !ok || source.WorkspaceSnapshot == nil || source.WorkspaceSnapshot.Ref == "" {
-		return "", false, nil
-	}
+// spec: §10.1; §7.1 (Derive copy semantics); §7.1 (Derive session
+// semantics) derive rule 2; §4.5.
+func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstore.Session, derivedID string, now time.Time) (string, error) {
 	parentCheckpointID := checkpointIDFromSnapshotRef(source.WorkspaceSnapshot.Ref)
 	parentRec, gerr := s.checkpointManifests.Get(ctx, source.TenantID, parentCheckpointID)
-	if gerr != nil || parentRec.ChunkCount <= 0 {
-		// No chunked manifest for this ref: fall through to the legacy path.
-		return "", false, nil
+	if errors.Is(gerr, partialmanifeststore.ErrNotFound) {
+		return "", errSnapshotRefUnresolvable
+	}
+	if gerr != nil {
+		return "", fmt.Errorf("read manifest of checkpoint %s: %w", parentCheckpointID, gerr)
+	}
+	if parentRec.ChunkCount <= 0 {
+		return "", errSnapshotRefUnresolvable
 	}
 	encoding := parentRec.ChunkEncoding
 	if encoding == "" {
-		encoding = partialmanifeststore.ChunkEncodingTar
+		encoding = partialmanifeststore.ChunkEncodingTarGz
 	}
 	derivedCheckpointID := s.idFn()
-	derivedRef = checkpointSnapshotRef(source.TenantID, derivedID, derivedCheckpointID)
+	derivedRef := checkpointSnapshotRef(source.TenantID, derivedID, derivedCheckpointID)
 
 	// spec: §12.5 ll. 295 — copy each chunk through the tenant-scoped
 	// boundary so both source and destination URIs are validated against
@@ -467,7 +453,7 @@ func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstor
 		srcURI := resumechunks.ChunkObjectURI(source.TenantID, source.ID, parentCheckpointID, uint32(n), encoding)
 		dstURI := resumechunks.ChunkObjectURI(source.TenantID, derivedID, derivedCheckpointID, uint32(n), encoding)
 		if cerr := scoped.Copy(srcURI, dstURI); cerr != nil && !errors.Is(cerr, blobstore.ErrConflict) {
-			return derivedRef, true, cerr
+			return "", cerr
 		}
 	}
 
@@ -479,7 +465,6 @@ func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstor
 		TenantID:                    source.TenantID,
 		CheckpointID:                derivedCheckpointID,
 		SessionID:                   derivedID,
-		SlotID:                      partialmanifeststore.SlotDefault,
 		ManifestReason:              partialmanifeststore.ReasonInProgress,
 		ChunkObjectKeyPrefix:        derivedChunkPrefix(source.TenantID, derivedID, derivedCheckpointID),
 		ChunkSizeBytes:              parentRec.ChunkSizeBytes,
@@ -490,17 +475,17 @@ func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstor
 		CreatedAt:                   now,
 	}
 	if perr := s.checkpointManifestWriter.Put(ctx, rec); perr != nil {
-		return derivedRef, true, perr
+		return "", perr
 	}
 	if cerr := s.checkpointManifestWriter.ConfirmChunk(ctx, source.TenantID, derivedCheckpointID,
 		parentRec.ChunkCount-1, parentRec.WorkspaceBytesUploaded); cerr != nil {
-		return derivedRef, true, cerr
+		return "", cerr
 	}
 	if ferr := s.checkpointManifestWriter.Finalise(ctx, source.TenantID, derivedCheckpointID,
 		false, partialmanifeststore.ReasonComplete); ferr != nil {
-		return derivedRef, true, ferr
+		return "", ferr
 	}
-	return derivedRef, true, nil
+	return derivedRef, nil
 }
 
 // checkpointSnapshotRef builds the four-segment object-path form the
@@ -508,7 +493,7 @@ func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstor
 // /{tenant}/checkpoints/{session}/{checkpoint_id}. Its last segment is the
 // checkpoint_id the manifest row is keyed by, so a derived session's ref
 // round-trips through checkpointIDFromSnapshotRef on the next download or
-// re-derive. spec: §10.1 line 155; §4.5 line 312.
+// re-derive. spec: §10.1; §4.5.
 func checkpointSnapshotRef(tenantID, sessionID, checkpointID string) string {
 	return fmt.Sprintf("/%s/%s/%s/%s", tenantID, blobstore.ObjectTypeCheckpoint, sessionID, checkpointID)
 }
@@ -521,13 +506,12 @@ func derivedChunkPrefix(tenantID, derivedSessionID, derivedCheckpointID string) 
 }
 
 // copySnapshotRef returns a §7.1 derived-snapshot reference at the
-// derived session's path, preserving the §4.5 ll. 311
-// content-addressed hash so the derived session can identify the
-// inherited workspace bytes. The minimal gateway elides the MinIO
-// copy and simply rewrites the ref; production wires the §4.5 ll.
-// 311 byte-copy via blobstore.Copier (see Server.deriveCopier).
+// derived session's path, preserving the §4.5 content-addressed hash so
+// the derived session can identify the inherited workspace bytes. newRef
+// is the ref copyWorkspaceSnapshot returned, which names the object the
+// copy wrote.
 //
-// spec: §4.5 ll. 311; §7.1 derive copy semantics.
+// spec: §4.5 (Artifact Store); §7.1 (Derive copy semantics).
 func copySnapshotRef(src *sessionstore.WorkspaceSnapshot, newRef string) *sessionstore.WorkspaceSnapshot {
 	if src == nil {
 		return nil
@@ -540,91 +524,34 @@ func copySnapshotRef(src *sessionstore.WorkspaceSnapshot, newRef string) *sessio
 	}
 }
 
-// derivedSnapshotRef computes the §4.5 MinIO path for a derived
-// snapshot under the derived session's own object prefix.
-func derivedSnapshotRef(tenantID, sourceSessionID string) string {
-	return fmt.Sprintf("/%s/workspace/derived-from-%s", tenantID, sourceSessionID)
-}
-
-// parseDeriveURIs builds the blobstore.URI pair the §4.5 ll. 311
-// Copy call needs. The parent's `Ref` may carry either a stored
-// `lenny-blob://...` URI or the historical MinIO path; this helper
-// resolves whichever form is present. Returns ok=false when the
-// reference can't be normalised to a workspace URI (an in-memory
-// gateway with no real object storage uses the path form and falls
-// through to the legacy ref-rewrite behavior).
-//
-// spec: §4.5 ll. 311; §7.1 derive copy semantics.
-func parseDeriveURIs(parentRef, derivedRef, tenantID, sourceSessionID, derivedSessionID string) (src, dst blobstore.URI, ok bool) {
-	if strings.HasPrefix(parentRef, blobstore.Scheme+"://") {
-		parsed, err := blobstore.ParseURI(parentRef)
-		if err != nil {
-			return blobstore.URI{}, blobstore.URI{}, false
-		}
-		src = parsed
-	} else {
-		// Path-style reference (e.g. "/acme/workspace/sess/snap.tar").
-		// Strip the leading slash if present and pull out the part_id.
-		trimmed := strings.TrimPrefix(parentRef, "/")
-		parts := strings.SplitN(trimmed, "/", 4)
-		if len(parts) < 4 {
-			return blobstore.URI{}, blobstore.URI{}, false
-		}
-		src = blobstore.URI{
-			TenantID:   parts[0],
-			ObjectType: blobstore.ObjectType(parts[1]),
-			SessionID:  parts[2],
-			PartID:     parts[3],
-			TTL:        blobstore.DerivedSnapshotTTL,
-		}
-	}
-	if src.TenantID != tenantID {
-		return blobstore.URI{}, blobstore.URI{}, false
-	}
-	dst = src
-	dst.SessionID = derivedSessionID
-	dst.PartID = derivedSnapshotPart(sourceSessionID)
-	if dst.TTL == 0 {
-		dst.TTL = blobstore.DerivedSnapshotTTL
-	}
-	return src, dst, true
-}
-
-// derivedSnapshotPart is the §4.5 part-id stamp on the derived
-// workspace object — a stable identifier so the same source +
-// derived pair always names the same object, making the §7.1
-// derive idempotent under retry.
-func derivedSnapshotPart(sourceSessionID string) string {
-	return "derived-from-" + sourceSessionID
-}
-
 // persistDeriveFailure writes the §7.1 derive rule 2 opt-in
 // derive_failure audit row. It is a no-op unless
 // `gateway.persistDeriveFailureRows` is enabled. The row is created
 // directly in the terminal `failed` state (no intermediate visible
-// `created` state) carrying `failureClass = derive_failure`,
-// `parentSessionId = source.ID`, and the intended target isolation
-// profile; no workspace snapshot, pod, or credential lease is recorded
-// because none ever existed.
+// `created` state) carrying `failureClass = derive_failure` and the
+// intended target isolation profile. The row has no delegation parent: it is
+// not a node in the source's delegation tree (§15.1), so a ListByRoot of the
+// source's tree does not return it. When the source has a workspace snapshot,
+// the row records that snapshot's ref as `parent_workspace_ref`, which is
+// where its lineage lives (§4.5). No workspace snapshot of its own, pod, or
+// credential lease is recorded because none ever existed.
 //
-// The write is guarded by a §10.1 coordinator-handoff CAS fence: the
-// source's `coordination_generation` is re-read and compared against the
-// stamp captured at derive admission (the generation on the `source` row
-// the handler already holds). If a replacement coordinator has
-// incremented it (replica crash or Postgres failover mid-copy), the
-// stale replica skips the write so no orphan `failed` row becomes
-// visible. spec: §7.1 derive rule 2 (CAS-fenced INSERT); §15.1 lines
-// 647-663 (reachability). F-15.1.14.
+// The write is guarded by a §10.1 coordinator-handoff CAS fence inside the
+// INSERT transaction (CreateIfGeneration): the store reads the source's
+// `coordination_generation` under a shared lock and compares it against the
+// stamp captured at derive admission (the generation on the `source` row the
+// handler already holds). The fence skips the write whenever the source's
+// coordination_generation has advanced since admission: a replacement
+// coordinator's handoff (replica crash or Postgres failover mid-copy), and a
+// resume_pending → resuming write that started a new resuming incarnation of
+// the source. Because the read and the INSERT share one transaction, a bump
+// racing the insert cannot leave a row at a stale generation. The write runs
+// on a context detached from the request's cancellation, so a client that
+// disconnects after the copy failed does not cut the audit row. The row
+// records the Terminated fact in its own Create. spec: §7.1 (Derive session
+// semantics) derive rule 2 (CAS-fenced INSERT); §15.1. F-15.1.14.
 func (s *Server) persistDeriveFailure(ctx context.Context, source sessionstore.Session, derivedID string, target isolation.Profile, reason string) {
 	if !s.persistDeriveFailureRows {
-		return
-	}
-	// CAS fence: re-read the source and confirm the coordinator that
-	// admitted this derive is still authoritative. A changed generation
-	// means a handoff occurred; the stale replica must not write.
-	cur, err := s.store.Get(ctx, source.TenantID, source.ID)
-	if err != nil || cur.CoordinationGeneration != source.CoordinationGeneration {
-		s.recordDeriveFailureAudit("fenced")
 		return
 	}
 	now := s.clock()
@@ -637,15 +564,30 @@ func (s *Server) persistDeriveFailure(ctx context.Context, source sessionstore.S
 		FailureReason:    reason,
 		RuntimeRef:       source.RuntimeRef,
 		IsolationProfile: target,
-		ParentSessionID:  source.ID,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
-	if err := s.store.Create(ctx, row); err != nil {
-		s.recordDeriveFailureAudit("error")
-		return
+	// spec: §15.1 (Session Replay Semantics), §4.5 (Workspace lineage) — the
+	// audit row is no node in the source's delegation tree ("no tree node is
+	// materialised"), so it carries no delegation parent and keeps lineage in
+	// parent_workspace_ref when the source has a snapshot.
+	if source.WorkspaceSnapshot != nil {
+		row.ParentWorkspaceRef = source.WorkspaceSnapshot.Ref
 	}
-	s.recordDeriveFailureAudit("persisted")
+	sessionstore.MarkTerminated(&row, "", now)
+	// spec: §7.1 (Derive session semantics) — the CAS fence runs in the
+	// INSERT transaction, so a stale replica, or an admission an entry
+	// write overtook, persists no row.
+	err := s.store.CreateIfGeneration(context.WithoutCancel(ctx), row,
+		source.TenantID, source.ID, source.CoordinationGeneration)
+	switch {
+	case err == nil:
+		s.recordDeriveFailureAudit("persisted")
+	case errors.Is(err, sessionstore.ErrGenerationAdvanced), errors.Is(err, sessionstore.ErrNotFound):
+		s.recordDeriveFailureAudit("fenced")
+	default:
+		s.recordDeriveFailureAudit("error")
+	}
 }
 
 // recordDeriveFailureAudit bumps the §16.1

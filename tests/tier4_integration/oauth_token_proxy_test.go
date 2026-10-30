@@ -21,14 +21,12 @@
 //     gateway no longer mints tokens itself and the canonical surface
 //     exists only when it proxies to the actual minter.
 //
-// The full success path (a 200 with a verifiable access_token) cannot
-// run in this harness: the deployed Token Service signs with a random
-// KMS-sealed key generated at process start, so a test cannot forge a
-// caller/subject token the deployed binary would accept, and there is
-// no test-only signing-key injection on a security component. These
-// assertions instead pin the observable proxy contract end to end: an
-// exchange request reaches the deployed minter and the minter's
-// response returns to the caller.
+// These assertions pin the observable proxy contract end to end: an
+// exchange request reaches the deployed minter and the minter's response
+// returns to the caller. The success path through the proxy, a 200 with
+// an access_token every gateway replica verifies, is in
+// jwt_keyset_cross_process_test.go, where the gateways and the Token
+// Service share the stack's §10.2 key set.
 
 package tier4_integration_test
 
@@ -82,7 +80,7 @@ func TestOAuthTokenExchangeProxiedToDeployedTokenService(t *testing.T) {
 	ts := tokensvc.Start(t)
 	waitHTTPListener(t, ts.HTTPAddr(), 5*time.Second)
 
-	// §4.3 line 194: the gateway reverse-proxies /v1/oauth/* to the
+	// §4.3: the gateway reverse-proxies /v1/oauth/* to the
 	// Token Service when --token-service-http-url is set, so the
 	// canonical POST /v1/oauth/token is served by the actual minter.
 	gw := gateway.StartWith(

@@ -15,7 +15,7 @@ import (
 // alertWarmupBaselineDefaultSeconds is the per-pool warm-up baseline the
 // §16.5 WarmPoolReplenishmentSlow alert assumes for a pool that does not
 // set scalingPolicy.podWarmupSecondsBaseline. spec:
-// spec/16_observability.md line 488 — "2× the pool's
+// §16.5 — "2× the pool's
 // scalingPolicy.podWarmupSecondsBaseline (default: 30s)". 2×30 = 60s
 // reproduces the alert's prior fixed threshold for an unconfigured pool
 // while a pool that sets an explicit baseline gets a per-pool 2×
@@ -29,7 +29,7 @@ const alertWarmupBaselineDefaultSeconds = 30.0
 // §16.5 WarmPoolReplenishmentSlow alert compares P95 startup against. It
 // mirrors the operator-configured scalingPolicy.podWarmupSecondsBaseline
 // when set, falling back to alertWarmupBaselineDefaultSeconds. spec:
-// §16.5 line 488.
+// §16.5.
 func warmupBaselineForAlert(cfg PoolConfig) float64 {
 	if cfg.ScalePolicy != nil && cfg.ScalePolicy.PodWarmupSecondsBaseline > 0 {
 		return float64(cfg.ScalePolicy.PodWarmupSecondsBaseline)
@@ -45,7 +45,7 @@ func warmupBaselineForAlert(cfg PoolConfig) float64 {
 // per-pool baseline rather than a single hard-coded value. The
 // PoolScalingController owns the SandboxWarmPool spec, so it is the
 // emit point that keeps the alert threshold in lock-step with the
-// configured baseline. spec: spec/16_observability.md line 488.
+// configured baseline. spec: §16.5.
 var poolWarmupBaselineSeconds = func() *prometheus.GaugeVec {
 	g, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_pool_warmup_seconds_baseline",
@@ -74,7 +74,7 @@ func newWarmupBaselineMeter() *warmupBaselineMeter {
 
 // Set publishes the pool's warm-up baseline (seconds) to the gauge so
 // the §16.5 WarmPoolReplenishmentSlow alert evaluates 2× the
-// operator-configured value. spec: §16.5 line 488.
+// operator-configured value. spec: §16.5.
 func (m *warmupBaselineMeter) Set(poolName string, seconds float64) {
 	if m == nil {
 		return

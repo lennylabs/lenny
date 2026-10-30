@@ -4,7 +4,7 @@ package sessionserver
 
 import "sync"
 
-// §11.1 line 10-11 upload-admission scopes the §11.1 table names that
+// §11.1 upload-admission scopes the §11.1 table names that
 // the §4.1 Upload Handler subsystem limiter does not cover. The
 // subsystem limiter (uploadSubsystem.Limiter) is a per-replica
 // back-pressure semaphore that returns 503 SUBSYSTEM_UNAVAILABLE when
@@ -12,10 +12,10 @@ import "sync"
 // extraction-threshold default and protects gateway goroutines, not
 // per-caller fairness. These admission scopes are the policy caps:
 //
-//   - Concurrent uploads, per-session and global (§11.1 line 10) — a
+//   - Concurrent uploads, per-session and global (§11.1) — a
 //     misbehaving client must not hold unbounded parallel upload
 //     sockets against one session or against the replica as a whole.
-//   - Upload size, per-session cumulative (§11.1 line 11) — the
+//   - Upload size, per-session cumulative (§11.1) — the
 //     per-file (per-blob) cap lives at UploadMaxBodyBytes; the
 //     per-session axis bounds the sum of all uploads in one session so
 //     a single session cannot consume the whole tenant storage quota
@@ -30,7 +30,7 @@ const (
 	scopeUploadGlobal  = "upload_global"
 )
 
-// uploadLimiter enforces the §11.1 line 10-11 per-session and global
+// uploadLimiter enforces the §11.1 per-session and global
 // concurrent-upload caps and the per-session cumulative upload-size cap
 // for one gateway replica. Concurrent-upload counting is inherently
 // per-replica: an in-flight upload holds an HTTP body stream on the
@@ -46,15 +46,15 @@ const (
 type uploadLimiter struct {
 	// maxConcurrentPerSession caps in-flight uploads against one
 	// session. Zero means the per-session concurrency scope is
-	// unlimited. spec: §11.1 line 10.
+	// unlimited. spec: §11.1.
 	maxConcurrentPerSession int
 	// maxConcurrentGlobal caps in-flight uploads across the replica.
 	// Zero means the global concurrency scope is unlimited.
-	// spec: §11.1 line 10.
+	// spec: §11.1.
 	maxConcurrentGlobal int
 	// maxBytesPerSession caps the cumulative size of all uploads in one
 	// session. Zero means the per-session size scope is unlimited.
-	// spec: §11.1 line 11.
+	// spec: §11.1.
 	maxBytesPerSession int64
 
 	mu              sync.Mutex
@@ -66,7 +66,7 @@ type uploadLimiter struct {
 // newUploadLimiter returns a limiter for the supplied §11.1 caps, or nil
 // when no cap is configured — a nil limiter is the pass-through posture
 // every call site already tolerates, so the unconfigured gateway pays no
-// per-upload bookkeeping. spec: §11.1 lines 10-11.
+// per-upload bookkeeping. spec: §11.1.
 func newUploadLimiter(maxPerSession, maxGlobal int, maxBytesPerSession int64) *uploadLimiter {
 	if maxPerSession <= 0 && maxGlobal <= 0 && maxBytesPerSession <= 0 {
 		return nil
@@ -86,7 +86,7 @@ func newUploadLimiter(maxPerSession, maxGlobal int, maxBytesPerSession int64) *u
 // returns (nil, <violated scope>, false) so the caller can attribute the
 // 429. The per-session scope is checked before the global scope so a
 // client that floods one session sees the precise reason. A nil limiter
-// admits unconditionally. spec: §11.1 line 10.
+// admits unconditionally. spec: §11.1.
 func (l *uploadLimiter) acquireSlot(sid string) (release func(), scope string, ok bool) {
 	if l == nil {
 		return func() {}, "", true
@@ -126,7 +126,7 @@ func (l *uploadLimiter) acquireSlot(sid string) (release func(), scope string, o
 // does not reserve — the authoritative check-and-add is commitBytes,
 // which runs against the bytes actually streamed. A nil limiter, an
 // unlimited cap, or a non-positive `incoming` never exceeds.
-// spec: §11.1 line 11.
+// spec: §11.1.
 func (l *uploadLimiter) wouldExceedBytes(sid string, incoming int64) (current, limit int64, exceeds bool) {
 	if l == nil || l.maxBytesPerSession <= 0 || incoming <= 0 {
 		return 0, 0, false
@@ -144,7 +144,7 @@ func (l *uploadLimiter) wouldExceedBytes(sid string, incoming int64) (current, l
 // The caller invokes it once the streamed byte count is final so the
 // per-session axis is enforced against bytes actually written even when
 // a client under-declares Content-Length. A nil limiter or unlimited cap
-// admits without tracking. spec: §11.1 line 11.
+// admits without tracking. spec: §11.1.
 func (l *uploadLimiter) commitBytes(sid string, n int64) (total, limit int64, ok bool) {
 	if l == nil || l.maxBytesPerSession <= 0 {
 		return 0, 0, true
@@ -164,11 +164,11 @@ func (l *uploadLimiter) commitBytes(sid string, n int64) (total, limit int64, ok
 }
 
 // closeSession drops the per-session cumulative byte total when the
-// upload window closes (§7.4 line 463 finalize / terminal transition).
+// upload window closes (§7.4 finalize / terminal transition).
 // In-flight concurrency registrations are NOT touched here: each
 // in-flight upload decrements its own slot via the release closure
 // acquireSlot returned, so clearing the count here would corrupt the
-// global tally. A nil limiter is a no-op. spec: §11.1 line 11.
+// global tally. A nil limiter is a no-op. spec: §11.1.
 func (l *uploadLimiter) closeSession(sid string) {
 	if l == nil {
 		return

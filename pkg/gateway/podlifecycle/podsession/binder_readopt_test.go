@@ -114,14 +114,15 @@ func recordingAdapterDialer(t *testing.T, srv *adapter.Server, rec *readoptRecor
 // version handshake that the §10.1 hold-state pod rejects, so the reacquired
 // pod is never fenced and self-terminates at the hold timeout.
 func TestReadoptConnectSkipsVersionHandshakeSoFenceIsFirst_spec_10_1(t *testing.T) {
+	ns := testNamespace(t)
 	rt := &fakeRuntime{}
 	srv := adapter.New("adapter-test")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
 	rec := &readoptRecorder{}
-	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
-	binder := newBinder(c, recordingAdapterDialer(t, srv, rec))
+	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newBinder(ns, c, recordingAdapterDialer(t, srv, rec))
 
 	// A session is started on the pod, so it is a still-running pod a crash
 	// takeover re-adopts. The initial bind runs the §15.5 handshake normally.
@@ -192,10 +193,11 @@ func TestReadoptConnectSkipsVersionHandshakeSoFenceIsFirst_spec_10_1(t *testing.
 // diagnosis: a failure means a handoff with a lost binding dials nothing and
 // misreports a connection, so a peer never re-adopts the actual pod.
 func TestReadoptConnectFailsClosedOnEmptyBinding_spec_10_1(t *testing.T) {
+	ns := testNamespace(t)
 	rec := &readoptRecorder{}
 	srv := adapter.New("adapter-test")
 	c := k8sClient(t)
-	binder := newBinder(c, recordingAdapterDialer(t, srv, rec))
+	binder := newBinder(ns, c, recordingAdapterDialer(t, srv, rec))
 
 	sb, cl, err := binder.ReadoptConnect(context.Background(), "")
 	if err == nil {
@@ -215,11 +217,12 @@ func TestReadoptConnectFailsClosedOnEmptyBinding_spec_10_1(t *testing.T) {
 // diagnosis: a failure means a re-adopt against a gone pod is not surfaced, so
 // the takeover reports success for a pod it never reached.
 func TestReadoptConnectFailsWhenBoundPodIsGone_spec_10_1(t *testing.T) {
+	ns := testNamespace(t)
 	rec := &readoptRecorder{}
 	srv := adapter.New("adapter-test")
 	// No Sandbox is seeded, so resolveSandbox cannot find the bound pod.
 	c := k8sClient(t)
-	binder := newBinder(c, recordingAdapterDialer(t, srv, rec))
+	binder := newBinder(ns, c, recordingAdapterDialer(t, srv, rec))
 
 	if _, _, err := binder.ReadoptConnect(context.Background(), "sbx-gone"); err == nil {
 		t.Fatal("ReadoptConnect against a gone pod succeeded, want a resolve error")

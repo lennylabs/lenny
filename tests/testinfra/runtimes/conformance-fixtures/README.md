@@ -1,7 +1,7 @@
 # Conformance fixtures
 
 §11 of TESTING.md names this directory: runtime adapters that
-**intentionally violate** the conformance contract. The §12.10
+**intentionally violate** the conformance contract. The TESTING.md §12.10
 conformance harness runs each fixture against `lenny-compliance` and
 asserts the documented diagnostic.
 
@@ -16,6 +16,9 @@ follows the adapter binary protocol up to a deliberate breakage:
 | `oversize-payload` | Sends a payload above the documented size cap. | `ADAPTER_PAYLOAD_TOO_LARGE` |
 | `blocked-stdin` | Spawns a goroutine that consumes stdin but never returns. | `ADAPTER_HANDSHAKE_TIMEOUT` |
 | `late-shutdown` | Receives `shutdown` but takes longer than the deadline to exit. | `ADAPTER_SHUTDOWN_TIMEOUT` |
+| `bare-ack-while-handling` | Answers a heartbeat with a bare `heartbeat_ack` while a message for the session is outstanding. | `heartbeat_busy` fails |
+| `always-busy` | Conforming: reports `busy: true` with the session's `sessionId` on every `heartbeat_ack`. | `heartbeat_busy` passes |
+| `sdk-delayed-response` | Conforming: a Go runtime SDK runtime whose handler is still running when the heartbeat arrives. | `heartbeat_busy` passes |
 
 Build all fixtures:
 

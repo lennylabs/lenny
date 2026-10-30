@@ -58,14 +58,53 @@ func InstallLenny(t testing.TB) *Cluster {
 	if !controlPlaneReady(c) {
 		t.Skip(installHint + " (Helm release present but control-plane pods are not Ready)")
 	}
+	if version, dirty := dirtySchemaVersion(c); dirty {
+		t.Skipf("blocked: schema_migrations on the in-cluster lenny-postgres is dirty at version %s, so the "+
+			"deployed release runs against a partly applied schema; the database is shared with other worktrees, "+
+			"so do not edit schema_migrations by hand: follow the reset procedure in tests/testinfra/README.md "+
+			"(section \"Shared Kind cluster database\") with the owner's approval", version)
+	}
 	return c
+}
+
+// schemaMigrationsQuery reads the golang-migrate version row the
+// lenny-migrate Job records in the e2e database.
+const schemaMigrationsQuery = `psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT version, dirty FROM schema_migrations"`
+
+// dirtySchemaVersion reports whether the in-cluster lenny-postgres that
+// install.sh deploys records a dirty migration, and at which version. A
+// failed migration leaves the Helm release of the previous install
+// deployed and its pods Ready, so the release and readiness gates pass
+// while the schema is half applied and the images predate the tree. When
+// the row cannot be read (no in-cluster Postgres, or no migration has run
+// yet) the gate reports clean and the readiness gate above stands alone.
+func dirtySchemaVersion(c *Cluster) (string, bool) {
+	out, err := c.Kubectl("-n", lennySystemNamespace, "exec", "deploy/lenny-postgres", "--",
+		"sh", "-c", schemaMigrationsQuery).Output()
+	if err != nil {
+		return "", false
+	}
+	return parseDirtySchemaVersion(string(out))
+}
+
+// parseDirtySchemaVersion parses the unaligned `version|dirty` output of
+// schemaMigrationsQuery. It is separated from the kubectl call so the
+// parse can be exercised in-process.
+func parseDirtySchemaVersion(out string) (string, bool) {
+	version, dirty, ok := strings.Cut(strings.TrimSpace(out), "|")
+	if !ok || strings.TrimSpace(dirty) != "t" {
+		return "", false
+	}
+	return strings.TrimSpace(version), true
 }
 
 // AgentPod identifies one managed agent pod and the warm pool that
 // owns it. Model is the §4.7 deployment model the pool declares:
 // "sidecar" (the runtime in a separate container bridged to the
 // adapter) or "embedded" (one container whose image embeds the
-// adapter), derived from the pool name suffix the agent workload sets.
+// adapter), read from the spec.deploymentModel of the Runtime the pod's
+// lenny.dev/runtime label names. It is "unknown" when that Runtime is
+// absent from the cluster.
 type AgentPod struct {
 	Name  string
 	Pool  string
@@ -87,21 +126,27 @@ func RequireAgentWorkload(t testing.TB, c *Cluster) []AgentPod {
 		"-n", agentNamespace, "get", "pods",
 		"-l", "lenny.dev/managed=true",
 		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}"+
-			"{.metadata.labels.lenny\\.dev/pool}{\"\\n\"}{end}",
+			"{.metadata.labels.lenny\\.dev/pool}{\"\\t\"}"+
+			"{.metadata.labels.lenny\\.dev/runtime}{\"\\n\"}{end}",
 	).Output()
 	if err != nil {
 		t.Skip(agentWorkloadHint)
 	}
+	models := deploymentModels(c)
 	var pods []AgentPod
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		fields := strings.Split(line, "\t")
-		if len(fields) != 2 || fields[0] == "" {
+		if len(fields) != 3 || fields[0] == "" {
 			continue
+		}
+		model, ok := models[fields[2]]
+		if !ok {
+			model = "unknown"
 		}
 		pods = append(pods, AgentPod{
 			Name:  fields[0],
 			Pool:  fields[1],
-			Model: deploymentModel(fields[1]),
+			Model: model,
 		})
 	}
 	if len(pods) == 0 {
@@ -118,31 +163,37 @@ func RequireAgentWorkload(t testing.TB, c *Cluster) []AgentPod {
 	return pods
 }
 
-// deploymentModel maps an agent workload pool name to its §4.7
-// deployment model. The two reference echo pools name themselves
-// with a -sidecar or -embedded suffix; the tier-9 probe pools
-// (cred-shell-echo-pool, elicitation-echo-pool), the §5.3 sandboxed
-// reference pool (gvisor-echo-pool), and the §5.2 sequential-reuse /
-// concurrent-slot reference pools (task-mode-echo-pool,
-// concurrent-echo-pool) declare their model on the Runtime CRD instead.
-func deploymentModel(pool string) string {
-	switch {
-	case strings.HasSuffix(pool, "-sidecar"):
-		return "sidecar"
-	case strings.HasSuffix(pool, "-embedded"):
-		return "embedded"
-	case strings.Contains(pool, "cred-shell-echo") || strings.Contains(pool, "elicitation-echo") ||
-		strings.Contains(pool, "gvisor-echo") || strings.Contains(pool, "task-mode-echo") ||
-		strings.Contains(pool, "concurrent-echo"):
-		// These runtimes all deploy as sidecar (see
-		// tests/testinfra/kind/agent-workload.yaml). The §4.7
-		// container topology is the same as the reference sidecar
-		// pool: adapter + runtime (and optionally the §12.9.8
-		// egress-capture sidecar on cred-shell-echo).
-		return "sidecar"
-	default:
-		return "unknown"
+// deploymentModels reads the §4.7 deployment model every Runtime on the
+// cluster declares, keyed by Runtime name. The Runtime CRD's
+// spec.deploymentModel is the authoritative statement of the model: it
+// is what the Sandbox reconciler renders the pod's container topology
+// from. Deriving the model from the pool's name instead requires every
+// new reference pool to be added to a name list, and a pool that is not
+// on it reports no recognized model even though its Runtime declares
+// one.
+//
+// A read failure yields an empty map, so every pod reports "unknown"
+// and the caller decides what that means.
+//
+// spec: §4.7
+func deploymentModels(c *Cluster) map[string]string {
+	out, err := c.Kubectl(
+		"get", "runtimes.lenny.dev", "-A",
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}"+
+			"{.spec.deploymentModel}{\"\\n\"}{end}",
+	).Output()
+	if err != nil {
+		return map[string]string{}
 	}
+	models := make(map[string]string)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Split(line, "\t")
+		if len(fields) != 2 || fields[0] == "" || fields[1] == "" {
+			continue
+		}
+		models[fields[0]] = fields[1]
+	}
+	return models
 }
 
 // releaseDeployed reports whether the `lenny` Helm release in
@@ -229,6 +280,49 @@ func allPodsRunningAndReady(jsonpathOut string) bool {
 func (c *Cluster) ApplyStdin(t testing.TB, manifest string) (string, error) {
 	t.Helper()
 	cmd := exec.Command("kubectl", "--kubeconfig", c.KubeconfigPath, "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(manifest)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	err := cmd.Run()
+	return out.String(), err
+}
+
+// ApplyStdinAs pipes manifest to `kubectl apply -f -` impersonating
+// username, and returns the combined output and error.
+//
+// A write the platform admits only from one of its own principals needs
+// this: the lenny-pool-config-validator webhook rejects a
+// SandboxTemplate or SandboxWarmPool spec write from any principal
+// other than the PoolScalingController service account, so a test that
+// needs such an object on the cluster creates it as that principal
+// rather than as the kubeconfig's cluster-admin.
+//
+// spec: §4.6.3
+func (c *Cluster) ApplyStdinAs(t testing.TB, manifest, username string) (string, error) {
+	t.Helper()
+	return c.kubectlStdinAs(t, manifest, username, "apply")
+}
+
+// ReplaceStdinAs pipes manifest to `kubectl replace -f -` impersonating
+// username, and returns the combined output and error.
+//
+// `kubectl apply` on an existing object issues a PATCH, and a
+// least-privilege platform principal holds `update` without `patch`:
+// the PoolScalingController's ClusterRole is the case in point, because
+// controller-runtime writes a whole object rather than a patch. An
+// update issued as such a principal therefore goes through replace,
+// which is a PUT.
+func (c *Cluster) ReplaceStdinAs(t testing.TB, manifest, username string) (string, error) {
+	t.Helper()
+	return c.kubectlStdinAs(t, manifest, username, "replace")
+}
+
+// kubectlStdinAs runs `kubectl <verb> -f -` with the manifest on stdin,
+// impersonating username.
+func (c *Cluster) kubectlStdinAs(t testing.TB, manifest, username, verb string) (string, error) {
+	t.Helper()
+	cmd := c.Kubectl(verb, "--as", username, "-f", "-")
 	cmd.Stdin = strings.NewReader(manifest)
 	var out bytes.Buffer
 	cmd.Stdout = &out

@@ -19,7 +19,7 @@ var ErrQuotaTenantNotFound = errors.New("admin: quota reconcile tenant not found
 // `POST /v1/admin/quota/reconcile`. After a Redis outage the operator
 // (or the redis-failure / redis-sentinel-failover runbook) invokes this
 // endpoint to re-aggregate in-flight session usage from the Postgres
-// checkpoint into the Redis counters using the §12.4 line 216 two-source
+// checkpoint into the Redis counters using the §12.4 two-source
 // MAX rule (`MAX(postgres_checkpoint, in_memory_counter)`).
 //
 // The reconciler depends on the Postgres token-usage checkpoint store
@@ -32,7 +32,7 @@ var ErrQuotaTenantNotFound = errors.New("admin: quota reconcile tenant not found
 // its reconciler satisfies this interface and the route reconciles for
 // real.
 //
-// spec: §15.1 line 879; §24.6 line 99; §12.4 line 216; §11.2.
+// spec: §15.1; §24.6; §12.4; §11.2.
 type QuotaReconciler interface {
 	// Reconcile re-aggregates quota counters for the requested scope and
 	// returns a per-tenant summary. It returns ErrQuotaTenantNotFound when
@@ -45,7 +45,7 @@ type QuotaReconciler interface {
 // sets neither or both.
 type QuotaReconcileScope struct {
 	// AllTenants reconciles every tenant with active quota counters. It
-	// backs the spec-documented `--all-tenants` form. spec: §24.6 line 99.
+	// backs the spec-documented `--all-tenants` form. spec: §24.6.
 	AllTenants bool
 	// TenantID reconciles a single tenant. It backs the per-tenant
 	// `--tenant <id>` form the redis-sentinel-failover runbook uses to
@@ -87,9 +87,9 @@ type quotaReconcileRequest struct {
 }
 
 // handleQuotaReconcile implements `POST /v1/admin/quota/reconcile` — the
-// §15.1 line 879 operator-driven quota-counter re-aggregation that the
+// §15.1 operator-driven quota-counter re-aggregation that the
 // §24.6 `lenny-ctl admin quota reconcile` command and the Redis-recovery
-// runbooks invoke. spec: §15.1 line 879; §24.6 line 99; §12.4 line 216.
+// runbooks invoke. spec: §15.1; §24.6; §12.4.
 func (r *Router) handleQuotaReconcile(w http.ResponseWriter, req *http.Request) {
 	var body quotaReconcileRequest
 	if req.Body != nil {

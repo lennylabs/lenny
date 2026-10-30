@@ -49,7 +49,7 @@ type UsageMeter interface {
 // reports on each §4.7 llm_request_completed lifecycle frame (§11.2
 // direct-mode usage) into a running cumulative total, and serves both
 // the incremental delta read the gateway polls steady-state and the
-// cumulative read a reconnected gateway replica pulls for the §11.2:46
+// cumulative read a reconnected gateway replica pulls for the §11.2
 // crash-recovery MAX rule.
 //
 // The adapter (not the gateway) holds the last-read watermark across a
@@ -59,7 +59,7 @@ type UsageMeter interface {
 // cumulative total, the next steady-state delta returns zero and does
 // not double-count. The watermark is never reset on rebind; a rebind is
 // an ordinary coordinator handoff, so an unreset watermark after a
-// cumulative recovery read is the correct state (§11.2:46, §10.1).
+// cumulative recovery read is the correct state (§11.2, §10.1).
 type SessionUsageMeter struct {
 	// now returns the current time. Injected so a unit test can drive
 	// the wall-clock accounting deterministically; nil selects time.Now.
@@ -149,7 +149,7 @@ func (m *SessionUsageMeter) Usage(_ context.Context, sessionID string) (Usage, e
 
 // Cumulative returns sessionID's running cumulative total and advances
 // the watermark to that total, so a reconnected gateway replica seeds
-// its restored counter from the cumulative total (the §11.2:46
+// its restored counter from the cumulative total (the §11.2
 // crash-recovery MAX rule) and its first subsequent delta read returns
 // zero rather than re-adding the recovered tokens. An unknown session
 // reports zero. spec: §11.2 (pod-reported cumulative-usage re-report on
@@ -198,54 +198,64 @@ func (m *SessionUsageMeter) readLocked(sessionID string, cumulative bool) Usage 
 	return out
 }
 
-// sessionTokenSink bridges the lifecycle channel's session-less
-// tokenSink to a per-session SessionUsageMeter. The lifecycle frame
-// carries no session id (§6.1 one session per pod), so the sink resolves
-// the pod's current session at fold time and keys the meter by it. A
-// token frame that arrives while the pod is idle (no assigned session)
-// is dropped, since it belongs to no session.
+// sessionTokenSink bridges the CH-RUNTIMEOPS tokenSink to a per-session
+// SessionUsageMeter. Each llm_request_completed frame names its session,
+// so the sink keys the meter by that name. It folds only for a session
+// the pod holds a binding for: bound is the same bound-session check the
+// session-scoped RPCs apply (Server.checkSessionBound), and a frame that
+// names no session or an unbound one is dropped, so a runtime cannot
+// charge tokens to a session the pod does not serve. Dropping is safe for
+// the credential-rotation gate because RuntimeOps.readLoop decrements the
+// in-flight counter before it calls the sink.
+// spec: §28.5.3 (CH-RUNTIMEOPS, Messages), §11.2.
 type sessionTokenSink struct {
-	meter          *SessionUsageMeter
-	currentSession func() string
+	meter *SessionUsageMeter
+	bound func(sessionID string) error
 }
 
-// AddTokens folds the counts into the pod's current session's total.
-func (s sessionTokenSink) AddTokens(inputTokens, outputTokens int64) {
-	s.meter.Add(s.currentSession(), inputTokens, outputTokens)
+// AddTokens folds the counts into sessionID's total when sessionID names
+// a session bound to the pod, and drops them otherwise.
+func (s sessionTokenSink) AddTokens(sessionID string, inputTokens, outputTokens int64) {
+	if sessionID == "" || s.bound(sessionID) != nil {
+		return
+	}
+	s.meter.Add(sessionID, inputTokens, outputTokens)
 }
 
-// NewSessionTokenSink returns the lifecycle-channel token sink that
-// folds llm_request_completed token counts into meter under the pod's
-// current session id. cmd/lenny-adapter wires it via
-// LifecycleChannel.SetUsageSink.
-func NewSessionTokenSink(meter *SessionUsageMeter, currentSession func() string) tokenSink {
-	return sessionTokenSink{meter: meter, currentSession: currentSession}
+// NewSessionTokenSink returns the CH-RUNTIMEOPS token sink that folds
+// llm_request_completed token counts into meter under the session each
+// frame names. bound reports a nil error only for a session bound to the
+// pod; WireDirectModeUsage passes Server.checkSessionBound.
+func NewSessionTokenSink(meter *SessionUsageMeter, bound func(sessionID string) error) tokenSink {
+	return sessionTokenSink{meter: meter, bound: bound}
 }
 
 // WireDirectModeUsage installs the §4.7 direct-mode usage path on the
 // adapter server: it constructs the concrete SessionUsageMeter, assigns
 // it to s.Usage so ReportUsage stops returning codes.Unimplemented in
-// production (F-15.3.7), and, when a lifecycle channel is present, wires
+// production (F-15.3.7), and, when a CH-RUNTIMEOPS is present, wires
 // the token sink that folds each llm_request_completed frame's
-// direct-mode token counts (§4.7, §11.2) into the meter under the pod's
-// current session. It returns the meter so a caller that needs the
+// direct-mode token counts (§4.7, §11.2) into the meter under the
+// session each frame names. It returns the meter so a caller that needs the
 // concrete type (a test asserting the wired path, or a future
 // gateway-pull integration) can reach it.
 //
 // cmd/lenny-adapter calls this once during server assembly. Extracting it
 // keeps the production wiring in one place and directly testable over the
-// real gRPC transport rather than re-derived in main. A nil lifecycle
-// channel leaves the meter installed with no frame source (the
+// real gRPC transport rather than re-derived in main. A nil CH-RUNTIMEOPS leaves the meter installed with no frame source (the
 // Basic/Standard path), which is a valid state: ReportUsage then reports
 // a zero delta the §11.2 anomaly detector observes.
 //
 // spec: §4.7 (ReportUsage, llm_request_completed token fields), §11.2
 // (direct-mode usage).
-func WireDirectModeUsage(s *Server, lc *LifecycleChannel) *SessionUsageMeter {
+func WireDirectModeUsage(s *Server, lc *RuntimeOps) *SessionUsageMeter {
 	meter := NewSessionUsageMeter(nil)
 	s.Usage = meter
 	if lc != nil {
-		lc.SetUsageSink(NewSessionTokenSink(meter, s.CurrentSessionID))
+		lc.SetUsageSink(NewSessionTokenSink(meter, s.checkSessionBound))
+		// spec: §4.7.1 (Session seal) — each llm_request_completed naming a
+		// session is that session's adapter activity.
+		lc.SetActivityObserver(s.observeRuntimeOpsSession)
 	}
 	return meter
 }
@@ -256,13 +266,13 @@ func WireDirectModeUsage(s *Server, lc *LifecycleChannel) *SessionUsageMeter {
 // reports usage accumulated since the previous read. When the request
 // sets cumulative, the read returns the session's running cumulative
 // total instead, which a reconnected gateway replica uses to seed its
-// restored counter for the §11.2:46 crash-recovery MAX rule.
+// restored counter for the §11.2 crash-recovery MAX rule.
 func (s *Server) ReportUsage(ctx context.Context, req *adapterv1.ReportUsageRequest) (*adapterv1.ReportUsageResponse, error) {
 	sessionID := req.GetSessionId().GetValue()
 	if sessionID == "" {
 		return nil, status.Error(codes.InvalidArgument, "ReportUsage requires a session id")
 	}
-	if err := s.checkSession(sessionID); err != nil {
+	if err := s.checkSessionBound(sessionID); err != nil {
 		return nil, err
 	}
 	if s.Usage == nil {

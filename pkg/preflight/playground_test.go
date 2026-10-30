@@ -14,7 +14,7 @@ import (
 // playground.enabled=false leaves every other playground.* value
 // unread, so a malformed authMode passes trivially.
 //
-// spec: §27.2 lines 41–42.
+// spec: §27.2.
 func TestCheckPlaygroundConfigSkipsWhenDisabled_spec_27_2(t *testing.T) {
 	d := preflight.CheckPlaygroundConfig(preflight.PlaygroundConfig{
 		Enabled:  false,
@@ -100,7 +100,7 @@ func TestCheckPlaygroundConfigMultiTenantDefaultRejected_F_27_2_6(t *testing.T) 
 	}
 }
 
-// TestCheckPlaygroundAPIKeyModeWarning exercises the §27.9 line 255
+// TestCheckPlaygroundAPIKeyModeWarning exercises the §27.9
 // `playground.apiKeyMode` row: apiKey mode outside dev mode without an
 // acknowledgement emits a non-blocking WARNING (passes install but
 // carries the reason).

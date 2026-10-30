@@ -58,7 +58,7 @@ type receivedWebhook struct {
 // receiver — the "webhook subscriber still paged when Postgres is down"
 // guarantee, composed end to end against real backends.
 //
-// The subscription-CRUD SSRF/allowlist gate (§25.5 lines 2735-2745) is
+// The subscription-CRUD SSRF/allowlist gate (§25.5) is
 // exercised elsewhere (cmd/lenny-ops/webhook_ssrf_test.go); it blocks a
 // loopback callback URL and is not part of the guarantee under test, so
 // the worker here is driven with a static subscription pointed at an
@@ -85,8 +85,12 @@ type receivedWebhook struct {
 // naming the created escalation — any of which leaves an operator unpaged
 // during exactly the storage outage most likely to produce an escalation.
 func TestEscalationWebhookReachesReceiverWhilePostgresDown(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
+	// A container of its own rather than sharedDatabase: the test stops
+	// Postgres to inject an outage, and a shared container cannot stop for
+	// one test (T-17.4.33).
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
 		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
 	})

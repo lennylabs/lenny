@@ -16,7 +16,7 @@
 // variables. Configuration is supplied by the caller (usually via Helm
 // values surfaced through `platform.registry.*`).
 //
-// See TESTING.md §13.3 and the spec/18 ImageResolver requirement.
+// See the spec/18 ImageResolver requirement.
 package registry
 
 import (

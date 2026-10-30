@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 )
 
-// autoExtensionLimiter enforces the §8.6 line 712 auto-mode rate limit.
+// autoExtensionLimiter enforces the §8.6 auto-mode rate limit.
 // It counts auto-mode extension requests per task tree per one-minute
 // window and reports when a tree has exceeded its configured
 // maxAutoExtensionsPerMinute, at which point ExtendLease pauses
@@ -23,7 +23,7 @@ import (
 // already use, keyed per tenant and tree. The counter increments on every
 // auto-mode request; the limit comparison rolls with the window, so once
 // a tree trips the limit it stays in elicitation until the window
-// advances. spec: §8.6 line 712.
+// advances. spec: §8.6.
 type autoExtensionLimiter struct {
 	counter ratelimit.Counter
 }
@@ -39,9 +39,9 @@ func newAutoExtensionLimiter(counter ratelimit.Counter) *autoExtensionLimiter {
 
 // over records one auto-mode extension request against the tree's current
 // one-minute window and reports whether the tree has now exceeded
-// maxPerMin. A maxPerMin <= 0 means "no limit" — the §8.6 line 712 default
+// maxPerMin. A maxPerMin <= 0 means "no limit" — the §8.6 default
 // — so the limiter never increments and never trips, leaving auto mode
-// fully independent. spec: §8.6 line 712.
+// fully independent. spec: §8.6.
 func (l *autoExtensionLimiter) over(ctx context.Context, tenantID, rootSessionID string, maxPerMin int, now time.Time) (bool, error) {
 	if maxPerMin <= 0 {
 		return false, nil

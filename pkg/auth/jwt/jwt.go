@@ -1,18 +1,17 @@
 // SPDX-License-Identifier: MIT
 
-// Package jwt is the dev-mode HMAC-SHA256 JWT signer / verifier. It
-// is the §10.2 LENNY_DEV_MODE=true backend; production deploys swap
-// in a KMS-backed signer behind the same Signer / Verifier interface.
-// This implementation handles the §10.2 claim shape (typ, tenant_id,
-// sub, exp, iat) and the RFC 7519 whole-second exp requirement.
-//
-// The package intentionally does not depend on any third-party JWT
-// library — the dev mode wants minimal dependencies. Production
-// callers using a KMS signer wrap a real library behind the Signer
-// interface from this package.
+// Package jwt signs and verifies the §10.2 JWTs Lenny issues. Every
+// Lenny-issued token is ES256-signed through the KMS provider by
+// RemoteSigner and verified by the static KeySet loaded at startup. The
+// package also holds the HMAC signer behind the dev-only embedded OIDC
+// trust hook, the claim checker, and the multi-member verifier. It
+// handles the §10.2 claim structure (typ, tenant_id, sub, exp, iat) and
+// the RFC 7519 whole-second exp requirement, and it depends on no
+// third-party JWT library.
 package jwt
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -38,6 +37,10 @@ const (
 	JWTSkewAllowance    = 1 * time.Second
 )
 
+// OriginPlayground is the value of the §27.3 `origin` claim on every
+// token minted for a /playground/* request.
+const OriginPlayground = "playground"
+
 // Claims are the §10.2 JWT payload claims this package recognises.
 // Unknown claims are preserved through Marshal so callers can carry
 // additional values.
@@ -59,6 +62,20 @@ type Claims struct {
 	Scope           string         `json:"scope,omitempty"`
 	Typ             auth.TokenType `json:"typ,omitempty"`
 
+	// Act is the RFC 8693 `act` claim naming the delegating actor of an
+	// `a2a_delegation` child token. The Token Service sets it on an
+	// exchange that presents an `actor_token`, and only then, so the
+	// pointer is nil and the claim is omitted from the payload on every
+	// other token. The object is flat: §13.3 lists the actor's four
+	// fields and no nested prior-actor chain, so ActorClaim carries no
+	// `act` of its own.
+	//
+	// spec: §13.3 "RFC 8693 parameter mapping to Lenny claims" (the
+	// `actor_token` row) and "Lenny JWT claim structure" (the `act`
+	// row); §10.2 "JWT claims" `typ` (`a2a_delegation` carries a
+	// non-empty `act` claim, `user_bearer` carries none).
+	Act *ActorClaim `json:"act,omitempty"`
+
 	// Roles carries the §10.2 RBAC role claim. Values are the closed
 	// auth.Role enum (`platform-admin`, `tenant-admin`, `tenant-viewer`,
 	// `billing-viewer`, `user`). The role claim is admission-time only;
@@ -72,7 +89,7 @@ type Claims struct {
 	// claim, the group claim is admission-time only.
 	Groups []string `json:"groups,omitempty"`
 
-	// AuthorizedTools carries the §13.3 line 580 narrowed tool allowlist
+	// AuthorizedTools carries the §13.3 narrowed tool allowlist
 	// for operability-scope tokens (§25.1). A token exchange preserves or
 	// further narrows it (broadening is rejected by the §13.3 validator),
 	// so the claim survives the exchange path rather than being dropped.
@@ -94,15 +111,32 @@ type Claims struct {
 	// from the raw JWT payload; Sign leaves it nil. Use ClaimString to
 	// resolve a string claim by name across the union of the typed
 	// fields above and Extras.
-	// spec: §10.2 line 212. F-10.2.9.
+	// spec: §10.2. F-10.2.9.
 	Extras map[string]json.RawMessage `json:"-"`
+}
+
+// ActorClaim is the payload of the RFC 8693 `act` claim:
+// `{sub, tenant_id, session_id, delegation_depth}` of the actor, copied
+// from the verified `actor_token` of the exchange that minted the token.
+// SessionID is omitted when the actor is not itself a Lenny session, as
+// the §15 ActorClaim projection allows. DelegationDepth is always
+// written, because a root actor's depth 0 is a value rather than an
+// absence.
+//
+// spec: §13.3 "Lenny JWT claim structure" (the `act` row); §15
+// "Shared Adapter Types" ActorClaim.
+type ActorClaim struct {
+	Subject         string `json:"sub"`
+	TenantID        string `json:"tenant_id"`
+	SessionID       string `json:"session_id,omitempty"`
+	DelegationDepth int    `json:"delegation_depth"`
 }
 
 // ClaimString returns the string value of the JWT payload claim named
 // name. Standard typed fields take precedence over the raw Extras map
 // so `tenant_id` resolves identically regardless of which path
 // populated the value. Returns "" when the claim is absent or non-
-// string. spec: §10.2 line 212. F-10.2.9.
+// string. spec: §10.2. F-10.2.9.
 func (c Claims) ClaimString(name string) string {
 	switch name {
 	case "tenant_id":
@@ -174,9 +208,14 @@ func (c Claims) ExpiryTime() time.Time {
 	return time.Unix(c.Expiry, 0).UTC()
 }
 
-// Signer signs Claims into a compact JWT string.
+// Signer signs Claims into a compact JWT string. Sign takes the
+// caller's request context because the production signer sends the
+// signing input's digest to the KMS Sign operation, which is a remote
+// call bounded by that context.
+//
+// spec: §10.2 (Authentication).
 type Signer interface {
-	Sign(c Claims) (string, error)
+	Sign(ctx context.Context, c Claims) (string, error)
 	KeyID() string
 }
 
@@ -185,14 +224,18 @@ type Verifier interface {
 	Verify(token string) (Claims, error)
 }
 
-// HMACSigner is the dev-mode HMAC-SHA256 Signer / Verifier. It is
-// safe for concurrent use; the secret is read-only after construction.
+// HMACSigner is the HMAC-SHA256 signer and verifier behind the dev-only
+// embedded OIDC trust hook and the tests that stand in for an external
+// IdP. Its Sign takes no context, so it does not satisfy Signer: no
+// Lenny-issued token is HMAC-signed (§10.2 "Development"), and no
+// production wiring can pass it where a Signer is expected. It is safe
+// for concurrent use; the secret is read-only after construction.
 type HMACSigner struct {
 	secret []byte
 	keyID  string
 }
 
-// NewHMACSigner returns a Signer + Verifier backed by secret. The
+// NewHMACSigner returns an HMAC signer and verifier backed by secret. The
 // keyID is stamped on every signed token's JOSE header so the
 // verifier can rotate keys later.
 func NewHMACSigner(keyID string, secret []byte) *HMACSigner {
@@ -244,15 +287,28 @@ func (s *HMACSigner) Verify(token string) (Claims, error) {
 	if !hmac.Equal(expected, got) {
 		return Claims{}, &VerifyError{Reason: "signature_mismatch"}
 	}
-	payload, err := decode(parts[1])
+	return decodeClaims(parts[1], time.Now())
+}
+
+// decodeClaims decodes the base64url payload segment of a token whose
+// signature the caller has already checked, and applies the claim
+// checks every verifier in this package shares: the exp and nbf bounds
+// under the §13.3 skew allowance.
+func decodeClaims(payloadB64 string, now time.Time) (Claims, error) {
+	payload, err := decode(payloadB64)
 	if err != nil {
 		return Claims{}, &VerifyError{Reason: "malformed", Detail: "payload is not base64url"}
 	}
+	return decodeClaimsJSON(payload, now)
+}
+
+// decodeClaimsJSON is decodeClaims over an already-decoded JSON payload.
+func decodeClaimsJSON(payload []byte, now time.Time) (Claims, error) {
 	var claims Claims
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return Claims{}, &VerifyError{Reason: "malformed", Detail: fmt.Sprintf("payload not JSON: %v", err)}
 	}
-	// spec: §10.2 line 212. Capture every payload claim verbatim so the
+	// spec: §10.2. Capture every payload claim verbatim so the
 	// auth middleware can read tenant under a deployment-configurable
 	// claim name (the `auth.tenantIdClaim` Helm value defaults to
 	// `tenant_id`). The typed Claims fields above stay authoritative for
@@ -262,22 +318,27 @@ func (s *HMACSigner) Verify(token string) (Claims, error) {
 	if err := json.Unmarshal(payload, &extras); err == nil {
 		claims.Extras = extras
 	}
-	now := time.Now().Unix()
-	if claims.Expiry > 0 {
-		// §13.3 ±JWTSkewAllowance skew allowance.
-		if claims.Expiry+int64(JWTSkewAllowance/time.Second) < now {
-			return Claims{}, &VerifyError{Reason: "expired"}
-		}
-	}
-	// spec: §10.2 line 237 — the standard auth chain validates nbf
-	// alongside signature/exp. A token whose not-before lies in the
-	// future (beyond the ±skew window) is rejected as not-yet-valid.
-	if claims.NotBefore > 0 {
-		if claims.NotBefore-int64(JWTSkewAllowance/time.Second) > now {
-			return Claims{}, &VerifyError{Reason: "not_yet_valid"}
-		}
+	if err := checkTimeClaims(claims, now.Unix()); err != nil {
+		return Claims{}, err
 	}
 	return claims, nil
+}
+
+// checkTimeClaims rejects an expired or not-yet-valid token under the
+// ±JWTSkewAllowance window.
+func checkTimeClaims(claims Claims, now int64) error {
+	skew := int64(JWTSkewAllowance / time.Second)
+	// §13.3 ±JWTSkewAllowance skew allowance.
+	if claims.Expiry > 0 && claims.Expiry+skew < now {
+		return &VerifyError{Reason: "expired"}
+	}
+	// spec: §10.2 — the standard auth chain validates nbf
+	// alongside signature/exp. A token whose not-before lies in the
+	// future (beyond the ±skew window) is rejected as not-yet-valid.
+	if claims.NotBefore > 0 && claims.NotBefore-skew > now {
+		return &VerifyError{Reason: "not_yet_valid"}
+	}
+	return nil
 }
 
 // VerifyError captures every JWT verification failure.

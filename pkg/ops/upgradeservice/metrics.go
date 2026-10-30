@@ -16,7 +16,7 @@ import (
 // recorded the collector emits nothing (the gauges are absent rather
 // than reporting a stale or zero upgrade).
 //
-// spec: §25.8 Metrics (line 3614) — lenny_platform_upgrade_phase
+// spec: §25.8 Metrics — lenny_platform_upgrade_phase
 // (Gauge, target_version) and lenny_platform_upgrade_duration_seconds
 // (Gauge, target_version).
 type MetricsCollector struct {

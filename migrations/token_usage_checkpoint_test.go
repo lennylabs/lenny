@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-// spec: §11.2 lines 42-48; §12.4. Migration 0119 creates the
+// spec: §11.2; §12.4. Migration 0119 creates the
 // token_usage_checkpoint table — the durable Postgres checkpoint of the
-// §11.2 Redis token-usage counters that the §11.2 line 48 two-source
+// §11.2 Redis token-usage counters that the §11.2 two-source
 // reconstruction restores via the MAX rule on Redis recovery and the
 // §24.6 operator reconcile re-aggregates into Redis. The table carries
 // the standard §12.3 tenant-guard trigger and RLS policy; the down

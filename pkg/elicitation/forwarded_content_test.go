@@ -10,7 +10,7 @@ import (
 
 // twoHopChain builds a leaf→root chain whose forward loop runs exactly
 // one re-emission verification (at the root hop). depth 1 keeps the
-// agent-initiated origin below the §9.2 line 92 suppress-at-depth=3
+// agent-initiated origin below the §9.2 suppress-at-depth=3
 // default so the depth policy never interferes with the integrity test.
 func twoHopChain() []Hop {
 	return []Hop{
@@ -19,7 +19,7 @@ func twoHopChain() []Hop {
 	}
 }
 
-// TestDivergentFields_spec_9_2 covers the §16.7 line 674 divergent_fields
+// TestDivergentFields_spec_9_2 covers the §16.7 divergent_fields
 // payload: message-only, schema-only, both, and no divergence.
 func TestDivergentFields_spec_9_2(t *testing.T) {
 	schemaA := map[string]any{"type": "object", "required": []any{"a"}}

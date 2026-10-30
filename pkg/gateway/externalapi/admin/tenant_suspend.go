@@ -11,10 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // eventTenantSuspended / eventTenantResumed are the §15.1 tenant
@@ -22,7 +20,7 @@ import (
 // observability/audit.EventTenantSuspended / EventTenantResumed; the
 // admin emit path serializes event-type strings (see r.emit), so the
 // constants are duplicated here to avoid importing the catalog package
-// into the router. spec: §15.1 line 818.
+// into the router. spec: §15.1.
 const (
 	eventTenantSuspended = "tenant.suspended"
 	eventTenantResumed   = "tenant.resumed"
@@ -30,14 +28,18 @@ const (
 
 // tenantSuspendPayload is the §15.1 suspend response: the resulting
 // suspension marker, the operator identity and reason recorded with it,
-// and the count of active sessions drained by the suspension.
+// the count of sessions this request's drain terminated, and the IDs of
+// the sessions the drain did not bring to a terminal state. A non-empty
+// FailedSessions means the drain is incomplete; the field encodes as an
+// empty array, never null, when the drain succeeded.
 type tenantSuspendPayload struct {
-	TenantID        string `json:"tenantId"`
-	Suspended       bool   `json:"suspended"`
-	Reason          string `json:"reason,omitempty"`
-	SuspendedAt     string `json:"suspendedAt,omitempty"`
-	SuspendedBy     string `json:"suspendedBy,omitempty"`
-	DrainedSessions int    `json:"drainedSessions"`
+	TenantID        string   `json:"tenantId"`
+	Suspended       bool     `json:"suspended"`
+	Reason          string   `json:"reason,omitempty"`
+	SuspendedAt     string   `json:"suspendedAt,omitempty"`
+	SuspendedBy     string   `json:"suspendedBy,omitempty"`
+	DrainedSessions int      `json:"drainedSessions"`
+	FailedSessions  []string `json:"failedSessions"`
 }
 
 // tenantResumePayload is the §15.1 resume response.
@@ -46,15 +48,36 @@ type tenantResumePayload struct {
 	Suspended bool   `json:"suspended"`
 }
 
-// handleSuspendTenant implements POST /v1/admin/tenants/{id}/suspend —
-// the §15.1 line 818 operator suspension. Setting the suspension marker
-// makes the gateway reject new session creation and message injection
-// with TENANT_SUSPENDED; all of the tenant's active sessions are then
-// drained. The optional `reason` body and the operator identity are
-// recorded on the row and in the tenant.suspended audit event. The
-// endpoint is idempotent: suspending an already-suspended tenant returns
-// 200 with the current marker and neither re-drains nor re-emits.
-// Platform-admin only. spec: §15.1 line 818.
+// errAlreadySuspended is the sentinel the suspend mutate closure returns
+// when the locked row already carries the marker. Returning an error
+// from the closure makes the store write nothing, so a repeat suspend
+// never rewrites the reason, timestamp, or operator of the first one.
+var errAlreadySuspended = errors.New("tenant already suspended")
+
+// handleSuspendTenant implements POST /v1/admin/tenants/{id}/suspend,
+// the §15.1 operator suspension. The handler commits the suspension
+// marker under the tenant row lock, writes one tenant.suspended audit
+// row, and then drains the tenant's live sessions through the shared
+// lifecycle drain. With the marker committed, the creation fence refuses
+// new sessions and message injection is rejected with TENANT_SUSPENDED.
+//
+// Newness is decided under the row lock rather than from the pre-read,
+// so two concurrent first-time suspends write the marker once and audit
+// exactly one already_suspended=false row between them. A repeat
+// suspend leaves the marker unchanged, writes its own audit row with
+// already_suspended=true (§11.8 audits every admin operation, and the
+// repeat's drain terminates sessions), and runs the drain again, which
+// is the retry path for an incomplete drain. The audit emit and the
+// drain run on a context detached from request cancellation, so a
+// client disconnect cannot skip the audit row or stop the drain inside
+// a session's terminal pipeline.
+//
+// An incomplete drain answers 200 with the unfinished IDs in
+// failedSessions. A drain that cannot list the tenant's sessions
+// answers 500 INTERNAL_ERROR with the marker left set. Platform-admin
+// only.
+//
+// spec: §15.1 (REST API), §12.8 (Lifecycle fence and drain), §11.8
 func (r *Router) handleSuspendTenant(w http.ResponseWriter, req *http.Request) {
 	id := strings.TrimSpace(req.PathValue("id"))
 	if id == "" {
@@ -68,11 +91,7 @@ func (r *Router) handleSuspendTenant(w http.ResponseWriter, req *http.Request) {
 
 	existing, err := r.tenants.Get(req.Context(), id)
 	if err != nil {
-		if errors.Is(err, tenantstore.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		writeTenantLookupError(w, err)
 		return
 	}
 	// §12.8 tombstone: a deleted tenant's row is retained with mutable
@@ -82,51 +101,74 @@ func (r *Router) handleSuspendTenant(w http.ResponseWriter, req *http.Request) {
 			"tenant is deleted and cannot be suspended", nil)
 		return
 	}
-	if existing.IsSuspended() {
-		// Idempotent no-op: already suspended.
-		writeJSON(w, http.StatusOK, newTenantSuspendPayload(existing, 0))
+
+	p, _ := authmw.FromContext(req.Context())
+	row, already, err := r.commitSuspension(req.Context(), id, reason, p.Subject)
+	if err != nil {
+		writeTenantLookupError(w, err)
 		return
 	}
 
-	p, _ := authmw.FromContext(req.Context())
-	updated, err := r.tenants.Update(req.Context(), id, func(t *tenantstore.Tenant) error {
+	dctx := context.WithoutCancel(req.Context())
+	r.emit(dctx, p, eventTenantSuspended, id, map[string]any{
+		"tenant_id":         id,
+		"reason":            reason,
+		"already_suspended": already,
+	})
+
+	res, err := r.drainTenant(dctx, id)
+	if err != nil && !errors.Is(err, ErrDrainIncomplete) {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"tenant suspended; listing the tenant's sessions for the drain failed: "+err.Error(),
+			map[string]any{"drainedSessions": res.Terminated})
+		return
+	}
+	writeJSON(w, http.StatusOK, newTenantSuspendPayload(row, res))
+}
+
+// commitSuspension sets the suspension marker under the tenant row lock.
+// It returns the locked row and already=true without writing when the
+// marker was already set, and the updated row and already=false when
+// this call set it. spec: §12.8 (Lifecycle fence and drain).
+func (r *Router) commitSuspension(ctx context.Context, id, reason, subject string) (tenantstore.Tenant, bool, error) {
+	var locked tenantstore.Tenant
+	updated, err := r.tenants.Update(ctx, id, func(t *tenantstore.Tenant) error {
+		if t.Suspended {
+			locked = *t
+			return errAlreadySuspended
+		}
 		t.Suspended = true
 		t.SuspendedReason = reason
 		t.SuspendedAt = r.clock()
-		t.SuspendedBy = p.Subject
+		t.SuspendedBy = subject
 		return nil
 	})
+	if errors.Is(err, errAlreadySuspended) {
+		return locked, true, nil
+	}
 	if err != nil {
-		if errors.Is(err, tenantstore.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return tenantstore.Tenant{}, false, err
+	}
+	return updated, false, nil
+}
+
+// writeTenantLookupError answers a tenant store error: 404 for a missing
+// row and 500 for anything else.
+func writeTenantLookupError(w http.ResponseWriter, err error) {
+	if errors.Is(err, tenantstore.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "tenant not found", nil)
 		return
 	}
-
-	// spec: §15.1 line 818 — all active sessions in the tenant are
-	// drained. The marker set above is the authoritative rejection; the
-	// drain is a best-effort consequence performed when the session
-	// seams are wired. A drain error does not unwind the suspension.
-	drained, _ := r.drainTenantSessions(req.Context(), id)
-
-	detail := map[string]any{"tenant_id": id, "drained_sessions": drained}
-	if reason != "" {
-		detail["reason"] = reason
-	}
-	r.emit(req.Context(), p, eventTenantSuspended, id, detail)
-
-	writeJSON(w, http.StatusOK, newTenantSuspendPayload(updated, drained))
+	writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 }
 
 // handleResumeTenant implements POST /v1/admin/tenants/{id}/resume — the
-// §15.1 line 819 operator resumption. Clearing the suspension marker
+// §15.1 operator resumption. Clearing the suspension marker
 // restores normal tenant operation. Sessions terminated by the
 // suspension stay terminated; resumption is not a pause. The endpoint is
 // idempotent: resuming a tenant that is not suspended returns 200 with
 // the current marker and emits no event. Platform-admin only. spec:
-// §15.1 line 819.
+// §15.1.
 func (r *Router) handleResumeTenant(w http.ResponseWriter, req *http.Request) {
 	id := strings.TrimSpace(req.PathValue("id"))
 	if id == "" {
@@ -170,37 +212,16 @@ func (r *Router) handleResumeTenant(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, tenantResumePayload{TenantID: updated.ID, Suspended: updated.Suspended})
 }
 
-// drainTenantSessions force-terminates every non-terminal session in the
-// tenant per the §15.1 suspend contract and returns the count actually
-// transitioned. It is a no-op returning (0, nil) when the session store
-// or the force-terminate seam is not wired. ForceTerminate is idempotent,
-// so a session that reaches a terminal state concurrently is skipped.
-// spec: §15.1 line 818.
-func (r *Router) drainTenantSessions(ctx context.Context, tenantID string) (int, error) {
+// drainTenant runs the shared lifecycle drain over the whole tenant
+// when the session seams are wired, publishing the transitioned sessions
+// through the router's binding-release fan-out, and is a no-op returning
+// a zero result and nil otherwise.
+// spec: §15.1; §12.8 (Lifecycle fence and drain); §28.5.7 (Gateway-to-store).
+func (r *Router) drainTenant(ctx context.Context, tenantID string) (DrainResult, error) {
 	if r.sessions == nil || r.sessionAdmin == nil {
-		return 0, nil
+		return DrainResult{}, nil
 	}
-	rows, err := r.sessions.List(ctx, tenantID, sessionstore.ListFilter{})
-	if err != nil {
-		return 0, err
-	}
-	drained := 0
-	for _, s := range rows {
-		if session.IsTerminal(s.State) {
-			continue
-		}
-		_, _, transitioned, terr := r.sessionAdmin.ForceTerminate(ctx, s.ID)
-		if terr != nil {
-			if errors.Is(terr, sessionstore.ErrNotFound) {
-				continue
-			}
-			return drained, terr
-		}
-		if transitioned {
-			drained++
-		}
-	}
-	return drained, nil
+	return DrainSessions(ctx, r.sessions, r.sessionAdmin, r.userPods, tenantID, "")
 }
 
 // decodeSuspendReason reads the optional {"reason": "..."} suspend body.
@@ -220,13 +241,17 @@ func decodeSuspendReason(w http.ResponseWriter, req *http.Request) (string, bool
 	return strings.TrimSpace(body.Reason), true
 }
 
-func newTenantSuspendPayload(t tenantstore.Tenant, drained int) tenantSuspendPayload {
+func newTenantSuspendPayload(t tenantstore.Tenant, res DrainResult) tenantSuspendPayload {
+	failed := make([]string, 0, len(res.Failed)+len(res.Remaining))
+	failed = append(failed, res.Failed...)
+	failed = append(failed, res.Remaining...)
 	return tenantSuspendPayload{
 		TenantID:        t.ID,
 		Suspended:       t.Suspended,
 		Reason:          t.SuspendedReason,
 		SuspendedAt:     rfc3339Nano(t.SuspendedAt),
 		SuspendedBy:     t.SuspendedBy,
-		DrainedSessions: drained,
+		DrainedSessions: res.Terminated,
+		FailedSessions:  failed,
 	}
 }

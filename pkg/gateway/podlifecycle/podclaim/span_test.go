@@ -16,7 +16,7 @@ import (
 
 // installSpanRecorder swaps the global OTel TracerProvider for an
 // SDK-backed recorder so a test can read the spans Claim emitted.
-// spec: §16.3 line 337.
+// spec: §16.3.
 func installSpanRecorder(t *testing.T) (*tracetest.SpanRecorder, func()) {
 	t.Helper()
 	rec := tracetest.NewSpanRecorder()
@@ -38,10 +38,11 @@ func claimSpan(rec *tracetest.SpanRecorder) (sdktrace.ReadOnlySpan, bool) {
 // TestClaimEmitsClaimPodSpan_spec_16_3 asserts a successful claim emits
 // the §16.3 session.claim_pod span tagged with the pool.
 func TestClaimEmitsClaimPodSpan_spec_16_3(t *testing.T) {
+	ns := testNamespace(t)
 	rec, restore := installSpanRecorder(t)
 	defer restore()
 
-	claimer, _ := claimerFor(t, sandboxIn(testPool, "sbx-1", "idle"))
+	claimer, _ := claimerFor(t, sandboxIn(ns, testPool, "sbx-1", "idle"))
 	if _, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
 	}); err != nil {

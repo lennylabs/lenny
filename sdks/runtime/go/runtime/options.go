@@ -28,8 +28,7 @@ type config struct {
 	socketTransport bool
 	dialTimeout     time.Duration
 
-	manifestPath    string
-	credentialsPath string
+	manifestPath string
 
 	reader io.Reader
 	writer io.Writer
@@ -40,15 +39,14 @@ type config struct {
 }
 
 // defaultConfig is the Basic-level configuration: stdin/stdout with
-// socket-transport fallback, the standard §4.7 manifest and credential
-// paths, and stderr diagnostics.
+// socket-transport fallback, the standard §4.7 manifest path, and stderr
+// diagnostics.
 func defaultConfig() config {
 	return config{
 		level:           levelBasic,
 		socketTransport: true,
 		dialTimeout:     5 * time.Second,
 		manifestPath:    envOr(manifestEnvVar, defaultManifestPath),
-		credentialsPath: defaultCredentialsPath,
 		logger:          func(f string, a ...any) { log.Printf(f, a...) },
 	}
 }
@@ -78,7 +76,7 @@ func WithStandardLevel() Option {
 }
 
 // WithFullLevel runs the SDK at the §15.4.3 Full level. It implies
-// Standard level and additionally opens the lifecycle channel,
+// Standard level and additionally opens the CH-RUNTIMEOPS,
 // completing the lifecycle_capabilities / lifecycle_support handshake
 // and surfacing checkpoint, interrupt, credential rotation, and deadline
 // events.
@@ -100,12 +98,6 @@ func WithManifestPath(path string) Option {
 	return func(c *config) { c.manifestPath = path }
 }
 
-// WithCredentialsPath overrides the §4.7 runtime credential file path.
-// The default is /run/lenny/credentials.json.
-func WithCredentialsPath(path string) Option {
-	return func(c *config) { c.credentialsPath = path }
-}
-
 // WithLogger sets the diagnostic sink for SDK-internal messages
 // (unknown frame types, handler errors). The default writes to the
 // standard logger. Pass nil to silence diagnostics.
@@ -113,7 +105,7 @@ func WithLogger(logf func(format string, args ...any)) Option {
 	return func(c *config) { c.logger = logf }
 }
 
-// WithStreams overrides the §15.4.1 byte transport with explicit
+// WithStreams overrides the §28.5.3 byte transport with explicit
 // streams. It is intended for in-process testing; production runtimes
 // use the default stdin/stdout or socket transport.
 func WithStreams(r io.Reader, w io.Writer) Option {

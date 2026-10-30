@@ -13,24 +13,23 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// handleLogs implements GET /v1/sessions/{id}/logs per §15.1 line 673
-// ("Get session logs (paginated, streamable via SSE)") and §24.17 line
-// 220 (the target of `lenny session logs <sessionId> [--since <time>]`).
+// handleLogs implements GET /v1/sessions/{id}/logs per §15.1
+// ("Get session logs (paginated, streamable via SSE)") and §24.17.
 //
 // Session logs are sourced from the durable session event store — the
 // same §7.2 stream the /events endpoint exposes — so the operational
 // record a session produced is reachable through the spec-named logs
 // surface. The endpoint is content-negotiated exactly like /events:
-// `Accept: application/json` returns the §15.1 line 1228 paginated
+// `Accept: application/json` returns the §15.1 paginated
 // `{items, cursor, hasMore}` envelope; any other Accept returns the
 // Server-Sent Events tail. `?since=<RFC3339>` filters the JSON envelope
 // to entries at or after the timestamp (the §24.17 `--since` flag).
 //
 // 404 RESOURCE_NOT_FOUND when the session does not exist or belongs to
-// another tenant, matching the §15.1 line 661 terminal-session contract
+// another tenant, matching the §15.1 terminal-session contract
 // that /logs returns 404 once no record exists.
 //
-// spec: §15.1 line 673; §24.17 line 220; §15.1 line 1228 (pagination).
+// spec: §15.1; §24.17; §15.1.
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if s.events == nil {
 		s.writeError(w, http.StatusServiceUnavailable, "EVENT_STREAM_UNAVAILABLE",
@@ -55,7 +54,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	s.streamLogsSSE(w, r, tenantID, id)
 }
 
-// serveLogsJSON renders the §15.1 line 1228 canonical envelope
+// serveLogsJSON renders the §15.1 canonical envelope
 // `{items, cursor, hasMore}` over the retained session event log. It
 // mirrors serveEventsJSON and adds the §24.17 `?since=<RFC3339>` filter:
 // only entries whose timestamp is at or after `since` appear, applied
@@ -131,7 +130,7 @@ func (s *Server) serveLogsJSON(w http.ResponseWriter, r *http.Request, tenantID,
 	_ = json.NewEncoder(w).Encode(envelope)
 }
 
-// streamLogsSSE serves the §15.1 line 673 Server-Sent Events tail of the
+// streamLogsSSE serves the §15.1 Server-Sent Events tail of the
 // session log. It replays the retained backlog from the reconnect cursor
 // (Last-Event-ID / ?afterSeq=) and then switches to live delivery,
 // reusing writeSSEEvent and the resumeCursor / gap-marker helpers the

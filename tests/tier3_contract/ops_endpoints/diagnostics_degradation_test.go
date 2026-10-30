@@ -119,7 +119,7 @@ func containsString(arr []any, want string) bool {
 
 // bothUnreachableSessionSource is a §25.6 DataSource standing in for a
 // data source that could not serve a session record from either
-// Postgres or the Kubernetes fallback. §25.6 line 2922 requires this
+// Postgres or the Kubernetes fallback. §25.6 requires this
 // path to return HTTP 503, carrying a catalogued error code and
 // category rather than falling through to the generic INTERNAL
 // mapping.
@@ -136,9 +136,8 @@ func (d bothUnreachableSessionSource) Session(context.Context, string) (diagnost
 // serve a session diagnosis, the endpoint must return HTTP 503 carrying
 // the canonical error code and category §25.6 assigns to that case.
 //
-// spec: §25.6 line 2922 ("Both Postgres and K8s API unreachable: Session
-// and pool diagnostics return 503.")
-// diagnosis: The §25.6 Error Codes table (lines 2936-2941) catalogues no
+// spec: §25.6
+// diagnosis: The §25.6 Error Codes table catalogues no
 // code or category for this 503, so a both-down diagnostics error falls
 // through opsserver's diagnosticsErrorMap default branch and reaches the
 // agent as 500 INTERNAL instead of the documented 503. An agent that

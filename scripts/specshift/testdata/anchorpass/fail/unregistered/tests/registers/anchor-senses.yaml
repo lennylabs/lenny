@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT
+#
+# The destination of each bare section citation the anchor-move map
+# alone cannot decide, keyed by file and by the citation's position in
+# that file.
+kind: anchor-senses
+version: 1
+entries:
+  # The first citation of this carrier names the message format the
+  # carve-out keeps in place, so it resolves to the surviving heading
+  # rather than to the channel contract card the map names.
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  # The second names the framing, which moved with the channel.
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2851-ch-adapterbinary

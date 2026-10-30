@@ -4,6 +4,7 @@ package playground
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/common/scopes"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 )
 
 // playgroundAllowedScope is the §27.3 / §10.2 playground_allowed_scope
@@ -99,7 +101,7 @@ func (h *Handler) mintOIDC(w http.ResponseWriter, r *http.Request) {
 			"the playground session store is not configured", nil)
 		return
 	}
-	// §27.3.1 line 81: recover the tenant from the fan-in index since the
+	// §27.3.1: recover the tenant from the fan-in index since the
 	// cookie carries only the opaque id. A store error fails closed (503);
 	// a missing entry is an expired session (401). F-27.3.8.
 	tenant, found, terr := h.sessions.TenantForSession(r.Context(), id)
@@ -125,13 +127,18 @@ func (h *Handler) mintOIDC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// §27.3.1: the subject is the validated OIDC principal backing the
-	// session record, normalized to typ = user_bearer.
+	// session record, normalized to typ = user_bearer. Its Expiry is the
+	// record's fixed expiry (IssuedAt + oidcSessionTtlSeconds, the instant
+	// completeMint keeps as the record TTL), so bearerExpiry clamps the
+	// bearer to it and the bearer cannot outlive its session record.
+	// spec: §10.2 (Authentication) "JWT claims" expiry.
 	subject := jwt.Claims{
 		Subject:    rec.UserID,
 		TenantID:   rec.TenantID,
 		CallerType: rec.CallerType,
 		Scope:      rec.Scope,
 		Typ:        auth.TokenUserBearer,
+		Expiry:     h.sessionRecordExpiry(rec).Unix(),
 	}
 	h.completeMint(w, r, subject, &recordRef{tenant: tenant, id: id, rec: rec})
 }
@@ -164,7 +171,7 @@ func (h *Handler) mintAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 	// §10.2 tenant-claim extraction. In multi-tenant mode the tenant
 	// claim is required and must name a provisioned tenant. Each
-	// rejection emits the §10.2 line 243
+	// rejection emits the §10.2
 	// `playground.bearer_mint_rejected` audit event + metric.
 	if h.cfg.MultiTenant {
 		if claims.TenantID == "" {
@@ -197,12 +204,15 @@ func (h *Handler) mintAPIKey(w http.ResponseWriter, r *http.Request) {
 	// MUST be user_bearer. A session_capability, a2a_delegation, or
 	// service_token is rejected so a narrowly-scoped capability JWT
 	// cannot be re-minted into a broader playground JWT.
-	// spec: §10.2 lines 235-243 (invariant 1 + reject-audit contract).
+	// spec: §10.2.
 	if claims.Typ != auth.TokenUserBearer {
 		h.emitMintRejected(r, claims.TenantID, claims.JWTID, string(claims.Typ), "subject_typ_invalid")
 		writeError(w, http.StatusUnauthorized, "LENNY_PLAYGROUND_BEARER_TYPE_REJECTED",
 			"the pasted bearer token typ must be user_bearer, got "+string(claims.Typ),
-			map[string]any{"presentedTyp": string(claims.Typ)})
+			map[string]any{"subjectTyp": string(claims.Typ)})
+		return
+	}
+	if !h.admitSubjectRow(w, r, claims) {
 		return
 	}
 	subject := jwt.Claims{
@@ -213,8 +223,58 @@ func (h *Handler) mintAPIKey(w http.ResponseWriter, r *http.Request) {
 		Roles:      claims.Roles,
 		Groups:     claims.Groups,
 		Typ:        auth.TokenUserBearer,
+		// spec: §10.2 (Authentication) "JWT claims" expiry — the
+		// minted bearer's exp never passes the pasted subject's exp.
+		Expiry: claims.Expiry,
 	}
 	h.completeMint(w, r, subject, nil)
+}
+
+// admitSubjectRow applies §13.3 "Write-before-issue ordering" step (1a)
+// to the pasted subject: it reads the subject's issued_tokens row and
+// refuses a revoked token or a platform-admin impersonation bearer, so a
+// playground JWT is never minted from a token that would otherwise outlive
+// its own revocation or the end of an impersonation session. A token with
+// no row passes. A refusal emits playground.bearer_mint_rejected with the
+// step (1a) reason and returns the invariant 1 response; any other read
+// error fails the mint closed with 500. Both paths return before signing.
+// It returns true when the mint may proceed. A nil reader skips the read.
+//
+// spec: §10.2 (Playground mint invariants, invariant 1), §13.3 (Credential
+// Flow: Write-before-issue ordering, step (1a); Platform-admin
+// impersonation, rule 5).
+func (h *Handler) admitSubjectRow(w http.ResponseWriter, r *http.Request, claims jwt.Claims) bool {
+	if h.issued == nil {
+		return true
+	}
+	row, err := h.issued.Get(r.Context(), claims.TenantID, claims.JWTID)
+	if errors.Is(err, issuedtokenstore.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"the pasted bearer token's issued-token record could not be read", nil)
+		return false
+	}
+	refusal := row.SourceRefusal(issuedtokenstore.SourceSubjectToken)
+	if refusal == nil {
+		return true
+	}
+	reason := refusalReason(refusal)
+	h.emitMintRejected(r, claims.TenantID, claims.JWTID, string(claims.Typ), reason)
+	writeError(w, http.StatusUnauthorized, "LENNY_PLAYGROUND_BEARER_TYPE_REJECTED",
+		"the pasted bearer token is refused by the write-before-issue re-read: "+reason,
+		map[string]any{"subjectTyp": string(claims.Typ)})
+	return false
+}
+
+// refusalReason returns the step (1a) reason a SourceRefusal error
+// carries.
+func refusalReason(err error) string {
+	if rr, ok := err.(interface{ Reason() string }); ok {
+		return rr.Reason()
+	}
+	return err.Error()
 }
 
 // devCallerType is the §13.3 caller_type the synthetic dev-mode
@@ -251,12 +311,11 @@ type recordRef struct {
 // event, and writes the response.
 func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject jwt.Claims, ref *recordRef) {
 	if h.signer == nil {
-		writeError(w, http.StatusServiceUnavailable, "KMS_SIGNING_UNAVAILABLE",
-			"the playground JWT signer is not configured", nil)
+		writeSigningUnavailable(w, nil, "the playground JWT signer is not configured")
 		return
 	}
 	now := h.now().UTC()
-	exp := now.Add(h.cfg.BearerTTL)
+	exp := h.bearerExpiry(now, subject)
 	jti := newJTI(now)
 
 	// §27.3 / §10.2 invariant: scope is the intersection of the
@@ -283,10 +342,9 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 		Typ:        auth.TokenSessionCapability,
 		Origin:     PlaygroundOrigin,
 	}
-	signed, err := h.signer.Sign(out)
+	signed, err := h.signer.Sign(r.Context(), out)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "KMS_SIGNING_UNAVAILABLE",
-			"the playground JWT mint failed: "+err.Error(), nil)
+		writeSigningUnavailable(w, err, "the playground JWT mint failed: "+err.Error())
 		return
 	}
 
@@ -297,11 +355,11 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 		updated := ref.rec
 		updated.BearerJTIs = appendBoundedJTI(updated.BearerJTIs, jti, h.maxTrackedJTIs())
 		updated.CurrentExp = exp.Unix()
-		// §27.6 line 201: a bearer mint is the playground session's
+		// §27.6: a bearer mint is the playground session's
 		// activity heartbeat; refresh the idle clock so the sweep does not
 		// reclaim a session the user is actively re-minting against.
 		updated.LastActivityAt = h.now()
-		ttl := time.Unix(updated.IssuedAt.Add(h.cfg.OIDCSessionTTL).Unix(), 0).Sub(h.now())
+		ttl := h.sessionRecordExpiry(updated).Sub(h.now())
 		if ttl < 0 {
 			ttl = 0
 		}
@@ -317,7 +375,7 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 	writeJSON(w, http.StatusOK, tokenResponse{
 		BearerToken:      signed,
 		TokenType:        "Bearer",
-		ExpiresInSeconds: int64(h.cfg.BearerTTL / time.Second),
+		ExpiresInSeconds: exp.Unix() - now.Unix(),
 		Reusable:         true,
 		IssuedAt:         now.Format(time.RFC3339),
 		// spec: §27.3.1 — EffectiveScope carries the same narrowed value
@@ -327,14 +385,39 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 	})
 }
 
+// bearerExpiry returns the exp of a playground bearer minted at now:
+// now + auth.capabilityTokenTtlSeconds, clamped to the subject token's exp
+// when the subject carries one. The bearer is truncated to whole seconds
+// because exp is a Unix-seconds claim. The gateway applies no per-dialect
+// cap of its own to this mint, and every lenny-gateway cap exceeds the
+// 3600s upper bound of the lifetime.
+//
+// spec: §10.2 (Authentication) "JWT claims" expiry, §27.3.1.
+func (h *Handler) bearerExpiry(now time.Time, subject jwt.Claims) time.Time {
+	exp := now.Add(h.cfg.CapabilityTokenTTL).Truncate(time.Second)
+	if subject.Expiry > 0 {
+		if subjectExp := time.Unix(subject.Expiry, 0); subjectExp.Before(exp) {
+			exp = subjectExp
+		}
+	}
+	return exp
+}
+
+// sessionRecordExpiry returns the fixed expiry of an oidc-mode session
+// record, IssuedAt + oidcSessionTtlSeconds truncated to whole seconds. A
+// mint does not reset it. spec: §27.3.1.
+func (h *Handler) sessionRecordExpiry(rec SessionRecord) time.Time {
+	return time.Unix(rec.IssuedAt.Add(h.cfg.OIDCSessionTTL).Unix(), 0)
+}
+
 // maxTrackedJTIs returns the §27.3.1 bound on the number of bearer
 // jtis a session record tracks: ⌈oidcSessionTtlSeconds /
-// bearerTtlSeconds⌉ + 1.
+// auth.capabilityTokenTtlSeconds⌉ + 1.
 func (h *Handler) maxTrackedJTIs() int {
-	if h.cfg.BearerTTL <= 0 {
+	if h.cfg.CapabilityTokenTTL <= 0 {
 		return 2
 	}
-	n := int((h.cfg.OIDCSessionTTL + h.cfg.BearerTTL - 1) / h.cfg.BearerTTL)
+	n := int((h.cfg.OIDCSessionTTL + h.cfg.CapabilityTokenTTL - 1) / h.cfg.CapabilityTokenTTL)
 	return n + 1
 }
 
@@ -386,7 +469,7 @@ func intersectScope(subjectScope string, allowed []string) string {
 		return ""
 	}
 	narrowed := subjectSet.Intersect(allowedSet)
-	// spec: §10.2 line 250 — "If the intersection is empty, the mint
+	// spec: §10.2 — "If the intersection is empty, the mint
 	// proceeds with an empty scope claim." Intersect carries a sentinel
 	// Raw for the both-present-but-disjoint case to keep Matches
 	// fail-closed for its other callers; the playground mint translates

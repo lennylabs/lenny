@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// poolListSortFields / poolListDefaultSort pin the §15.1 line 1228 sort
+// poolListSortFields / poolListDefaultSort pin the §15.1 sort
 // contract for GET /v1/pools: created_at (default) and updated_at,
 // descending by default — matching the other §15.1 list surfaces.
 var (
@@ -28,7 +28,7 @@ var (
 // the public discovery list — those live on the platform-admin
 // GET /v1/admin/pools surface.
 //
-// spec: §15.1 line 703 ("List pools and warm pod counts").
+// spec: §15.1.
 type PoolDiscoveryEntry struct {
 	Name          string `json:"name"`
 	RuntimeRef    string `json:"runtimeRef"`
@@ -40,8 +40,8 @@ type PoolDiscoveryEntry struct {
 	UpdatedAt     string `json:"updatedAt"`
 }
 
-// handleListPools implements GET /v1/pools — the §15.1 line 703
-// session-facing pool-discovery surface. It lists warm pools and their
+// handleListPools implements GET /v1/pools — the §15.1 session-facing
+// pool-discovery surface. It lists warm pools and their
 // configured warm replica counts, filtered to the pools that warm a
 // runtime the caller can already discover through GET /v1/runtimes (the
 // §10.6 transparent environment filter). A pool whose runtimeRef the
@@ -49,7 +49,7 @@ type PoolDiscoveryEntry struct {
 // visibility, and a runtime store read failure fails closed to an empty
 // list. The response uses the canonical §15.1 cursor-paginated envelope.
 //
-// spec: §15.1 line 703; line 1228 (cursor pagination).
+// spec: §15.1 (REST API: GET /v1/pools, cursor-based pagination)
 func (s *Server) handleListPools(w http.ResponseWriter, r *http.Request) {
 	params, ferr := pagination.ParseRequest(r, poolListSortFields, poolListDefaultSort, s.clock())
 	if ferr != nil {
@@ -91,7 +91,7 @@ func (s *Server) handleListPools(w http.ResponseWriter, r *http.Request) {
 // store read error yields an empty set so the pool list it scopes is
 // empty rather than unfiltered.
 //
-// spec: §10.6 environment resolver; §15.1 line 703.
+// spec: §10.6 environment resolver; §15.1.
 func (s *Server) visibleRuntimeNames(r *http.Request) map[string]bool {
 	names := map[string]bool{}
 	if s.runtimes == nil {

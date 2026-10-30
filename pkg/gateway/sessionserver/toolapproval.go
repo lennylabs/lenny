@@ -37,7 +37,7 @@ const approvalPollInterval = 25 * time.Millisecond
 // shared interaction store (the cross-replica fallback for an approve POSTed
 // to a non-coordinator replica, which updates the store but not this
 // replica's in-memory registry). It implements executor.ApprovalGate.
-// spec: §7.2 lines 124-134. F-7.2.9, F-7.2.18, F-IA1.
+// spec: §7.2. F-7.2.9, F-7.2.18, F-IA1.
 type ToolApprovalGate struct {
 	store        sessionstore.Store
 	interactions interactionstore.Store
@@ -94,12 +94,14 @@ func (g *ToolApprovalGate) AwaitApproval(ctx context.Context, tenantID, sessionI
 		return executor.ApprovalDecision{}, fmt.Errorf("toolapproval: register waiter for %s: %w", call.ID, err)
 	}
 
+	// The detail carries no slot address. Every session is bound to a slot
+	// on every pod and a session-mode slot's identifier is its session's
+	// identifier, so the enclosing interaction's SessionID below already
+	// names the slot the call belongs to. spec: §5.2 (identity invariant);
+	// §7.2.
 	detail := map[string]any{"tool": call.Name}
 	if len(call.Arguments) > 0 {
 		detail["args"] = json.RawMessage(call.Arguments)
-	}
-	if call.SlotID != "" {
-		detail["slotId"] = call.SlotID
 	}
 	if err := g.interactions.Put(ctx, interactionstore.Interaction{
 		ID:        call.ID,
@@ -115,7 +117,7 @@ func (g *ToolApprovalGate) AwaitApproval(ctx context.Context, tenantID, sessionI
 		return executor.ApprovalDecision{}, fmt.Errorf("toolapproval: record interaction %s: %w", call.ID, err)
 	}
 
-	// spec: §7.2 line 134 — tool_use_requested(tool_call_id, tool, args).
+	// spec: §7.2 — tool_use_requested(tool_call_id, tool, args).
 	g.publishRequested(tenantID, sessionID, call)
 
 	var timeoutC <-chan time.Time
@@ -203,22 +205,23 @@ func (g *ToolApprovalGate) pollResolution(ctx context.Context, tenantID, session
 	}
 }
 
-// publishRequested emits the §7.2 line 134 tool_use_requested SSE event
+// publishRequested emits the §7.2 tool_use_requested SSE event
 // on the session's stream. A nil bus is a no-op (the dev posture).
 func (g *ToolApprovalGate) publishRequested(tenantID, sessionID string, call executor.PendingToolCall) {
 	if g.events == nil {
 		return
 	}
+	// The payload carries no slot address: the stream is per session and a
+	// session-mode slot's identifier is its session's identifier.
+	// spec: §5.2 (identity invariant); §7.2.
 	payload := struct {
 		ToolCallID string          `json:"tool_call_id"`
 		Tool       string          `json:"tool"`
 		Args       json.RawMessage `json:"args,omitempty"`
-		SlotID     string          `json:"slotId,omitempty"`
 	}{
 		ToolCallID: call.ID,
 		Tool:       call.Name,
 		Args:       json.RawMessage(call.Arguments),
-		SlotID:     call.SlotID,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {

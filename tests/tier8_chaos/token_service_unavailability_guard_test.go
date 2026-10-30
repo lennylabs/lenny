@@ -20,9 +20,7 @@
 // connection so the credential-file deletion at the capped deadline is
 // observed on the real enforcement point.
 //
-// spec: §4.9 line 1470 (Token Service unavailability guard; keeps the session
-// alive until recovery; cumulative extension capped at one leaseTTLSeconds;
-// terminal teardown at the cap); §8.8 (expired:lease surfacing).
+// spec: §4.9; §8.8 (expired:lease surfacing).
 package tier8_chaos_test
 
 import (
@@ -41,7 +39,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
-	"github.com/lennylabs/lenny/pkg/adapter/credfile"
+	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
 	sessionapi "github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
@@ -54,7 +52,7 @@ const guardProvider = "anthropic_direct"
 
 // guardDirectPayload is a direct-mode lease payload; a direct-mode lease with a
 // positive expiry arms the adapter expiry timer the guard re-arms.
-// spec: §4.9 line 1149.
+// spec: §4.9.
 const guardDirectPayload = `{"deliveryMode":"direct","materializedConfig":{"apiKey":"sk-ant-x"}}`
 
 // scriptedRenewer injects a Token Service breaker-open outage window into the
@@ -99,8 +97,7 @@ func (r *scriptedRenewer) Renew(_ context.Context, _ credrenewal.Lease) (credren
 // the next sweep renews normally onto a fresh credential with no lingering
 // extension state, so the reset budget is available again.
 //
-// spec: §4.9 (line 1470, keeps the session alive until the Token Service
-// recovers)
+// spec: §4.9
 //
 // diagnosis: the guard did not bridge the outage (a still-valid session was
 // exhausted mid-outage) or did not resume normal renewal on recovery. The
@@ -273,11 +270,18 @@ func serveGuardAdapter(t *testing.T) (*adapterclient.Client, string) {
 	return cl, credsDir
 }
 
-// credentialFileHasProvider reports whether the adapter credential file under
-// dir still carries an entry for provider.
-func credentialFileHasProvider(t *testing.T, dir, provider string) bool {
+// credentialFileHasProvider reports whether the named session's own §6.1
+// credential file under root still carries an entry for provider. Every
+// session is bound to a slot on every pod, so the file sits at
+// root/slots/{sessionId}/credentials.json rather than at a pod-global
+// path. spec: §6.1.
+func credentialFileHasProvider(t *testing.T, root, sessionID, provider string) bool {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, credfile.FileName))
+	paths, err := slotlayout.Resolve(slotlayout.Roots{Credentials: root}, sessionID)
+	if err != nil {
+		t.Fatalf("resolve session %s credential path: %v", sessionID, err)
+	}
+	data, err := os.ReadFile(paths.CredentialsFile)
 	if os.IsNotExist(err) {
 		return false
 	}
@@ -297,8 +301,7 @@ func credentialFileHasProvider(t *testing.T, dir, provider string) bool {
 // the key does not outlive the capped lease, and no further renewal is
 // attempted after the cap.
 //
-// spec: §4.9 (line 1470, cumulative extension capped at one leaseTTLSeconds;
-// terminal teardown at the cap, no re-mint); §8.8 (expired:lease surfacing)
+// spec: §4.9; §8.8 (expired:lease surfacing)
 //
 // diagnosis: the cap did not bound the key's usable life (a permanently-open
 // breaker extended it without limit) or re-entered the Fallback restart loop at
@@ -316,6 +319,8 @@ func TestGuardProlongedOutageReachesCapAndTerminates_spec_4_9(t *testing.T) {
 	// and the third breaker-open sweep reaches the cap.
 	leaseTTL := 2 * buffer
 
+	// The assignment is a bind attempt's credential stage, so it carries a
+	// non-empty bind attempt token. spec: §4.7.1 (role and gateway RPC contract).
 	if err := adapterCli.AssignCredentials(ctx, "run-cap", map[string]*adapterv1.CredentialLease{
 		guardProvider: {
 			LeaseId:         "cl-cap",
@@ -323,8 +328,19 @@ func TestGuardProlongedOutageReachesCapAndTerminates_spec_4_9(t *testing.T) {
 			Payload:         []byte(guardDirectPayload),
 			ExpiresAtUnixMs: origExpiry.UnixMilli(),
 		},
-	}); err != nil {
+	}, "attempt-guard"); err != nil {
 		t.Fatalf("assign direct lease to adapter: %v", err)
+	}
+	// The assignment binds run-cap's slot on the pod, so its bundle lands
+	// under that session's own slot tree and nowhere else. That file is the
+	// one the extension keeps alive and the capped deadline deletes.
+	// spec: §6.1; §6.4.
+	if !credentialFileHasProvider(t, credsDir, "run-cap", guardProvider) {
+		t.Fatal("the assignment did not write run-cap's own slot credential file: the session took no bound slot")
+	}
+	if _, err := os.Stat(filepath.Join(credsDir, slotlayout.CredentialsFileName)); !os.IsNotExist(err) {
+		t.Fatalf("a pod-global credential file exists at %s: the assignment must land under the session's slot tree",
+			filepath.Join(credsDir, slotlayout.CredentialsFileName))
 	}
 
 	leases := credleasestore.New()
@@ -352,7 +368,9 @@ func TestGuardProlongedOutageReachesCapAndTerminates_spec_4_9(t *testing.T) {
 			mu.Lock()
 			extendCount++
 			mu.Unlock()
-			// Direct-mode enforcement point: re-arm the adapter expiry timer.
+			// Direct-mode enforcement point: re-arm the adapter expiry timer
+			// on the rotating session's own bound slot, so only that
+			// session's enforced deadline moves (§6.1).
 			rc, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			return adapterCli.ExtendCredentialLease(rc, lease.SessionID, guardProvider, lease.LeaseID, newExpiresAt)
@@ -428,18 +446,18 @@ func TestGuardProlongedOutageReachesCapAndTerminates_spec_4_9(t *testing.T) {
 	// The credential file survived past the original expiry (the extension
 	// moved the enforced deadline), then the adapter timer armed at the capped
 	// deadline (origExpiry + 2*buffer) deletes the entry when it fires.
-	if !credentialFileHasProvider(t, credsDir, guardProvider) {
+	if !credentialFileHasProvider(t, credsDir, "run-cap", guardProvider) {
 		t.Fatal("credential file lost the provider entry before the capped deadline: the extension did not move the enforced deadline")
 	}
 	cappedDeadline := origExpiry.Add(2 * buffer)
 	waitDeadline := cappedDeadline.Add(2 * time.Second)
 	for time.Now().Before(waitDeadline) {
-		if !credentialFileHasProvider(t, credsDir, guardProvider) {
+		if !credentialFileHasProvider(t, credsDir, "run-cap", guardProvider) {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if credentialFileHasProvider(t, credsDir, guardProvider) {
+	if credentialFileHasProvider(t, credsDir, "run-cap", guardProvider) {
 		t.Fatal("credential file still carries the provider entry past the capped deadline: the key outlived the capped lease")
 	}
 }

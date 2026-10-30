@@ -2,7 +2,7 @@
 
 package eventsubscription
 
-// §25.5 lines 2731, 2804-2806 subscription audit event types. The
+// §25.5 subscription audit event types. The
 // opsserver Service emits these through the AuditSink; the deps wiring
 // maps them onto the §16.7 hash-chained audit store (logged until the
 // lenny-ops audit-store client lands, matching the drift/backup/
@@ -17,15 +17,14 @@ const (
 // AuditEvent is one §25.5 subscription audit event. Type is one of the
 // EventXxx constants; Actor is the OIDC sub of the caller; Details
 // carries the per-event payload (the secret fingerprint, never the
-// secret). spec: §25.5 lines 2731-2733.
+// secret). spec: §25.5.
 type AuditEvent struct {
 	Type    string
 	Actor   string
 	Details map[string]any
 }
 
-// AuditSink receives §25.5 subscription audit events. spec: §25.5 lines
-// 2804-2806.
+// AuditSink receives §25.5 subscription audit events. spec: §25.5.
 type AuditSink interface {
 	Emit(ev AuditEvent)
 }

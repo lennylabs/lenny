@@ -138,9 +138,7 @@ func (r *Router) WithTenantAccess(s tenantaccessstore.Store) *Router {
 // path accepts any non-empty resource string (the Postgres path is
 // FK-protected); a pre-mutate existence check converts the silent
 // dangling-grant into a 404 with the resource kind named in the
-// detail map. F-24.3.6. spec: §15.1 line 769 (platform-global
-// runtime/pool records; tenant-access tables reference them as
-// foreign keys).
+// detail map. F-24.3.6. spec: §15.1.
 func (r *Router) resourceExists(ctx context.Context, kind tenantaccessstore.ResourceKind, name string) (bool, error) {
 	switch kind {
 	case tenantaccessstore.KindRuntime:
@@ -185,7 +183,7 @@ func (r *Router) grantAccessHandler(kind tenantaccessstore.ResourceKind) http.Ha
 				map[string]any{"field": "tenantId"})
 			return
 		}
-		// spec: §15.1 line 779 — the join-table row is FK-referenced;
+		// spec: §15.1 — the join-table row is FK-referenced;
 		// a Memory deployment must mirror that constraint so the
 		// list endpoint never returns a dangling grant. F-24.3.6.
 		exists, err := r.resourceExists(req.Context(), kind, resource)

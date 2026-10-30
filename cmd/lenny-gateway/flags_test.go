@@ -4,9 +4,14 @@ package main
 
 import (
 	"flag"
+	"io"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 )
 
 // spec: 4.1 (gateway subsystem seams)
@@ -52,7 +57,7 @@ func TestParseFlagsPopulatesEveryField(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1671 (credential_leases expired-lease sweep cadence)
+// spec: §4.9
 //
 // TestRegisterArtifactFlagsBindsCredentialLeaseGCInterval pins that
 // registerArtifactFlags binds the --credential-lease-gc-interval-seconds
@@ -80,5 +85,71 @@ func TestRegisterArtifactFlagsBindsCredentialLeaseGCInterval(t *testing.T) {
 	}
 	if flag.CommandLine.Lookup("credential-lease-gc-interval-seconds") == nil {
 		t.Error("--credential-lease-gc-interval-seconds is not registered on the flag set")
+	}
+}
+
+// spec: §12.4 (Redis failure behavior)
+//
+// TestRegisterStorageFlagsBindsSlotCounterRecoveryProbeInterval pins that
+// registerStorageFlags binds --slot-counter-recovery-probe-interval, the
+// operator-tunable cadence of the slot-set recovery probe, defaulting to
+// slotcounter.DefaultRecoveryProbeInterval (2s), and that a supplied value
+// overrides it.
+func TestRegisterStorageFlagsBindsSlotCounterRecoveryProbeInterval(t *testing.T) {
+	savedCmdLine := flag.CommandLine
+	savedArgs := os.Args
+	t.Cleanup(func() {
+		flag.CommandLine = savedCmdLine
+		os.Args = savedArgs
+	})
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	os.Args = []string{savedArgs[0]}
+
+	f := &gatewayFlags{}
+	f.registerStorageFlags()
+	if f.slotCounterRecoveryProbeInterval == nil {
+		t.Fatal("registerStorageFlags did not bind --slot-counter-recovery-probe-interval")
+	}
+	if got := *f.slotCounterRecoveryProbeInterval; got != slotcounter.DefaultRecoveryProbeInterval {
+		t.Errorf("default = %v, want %v", got, slotcounter.DefaultRecoveryProbeInterval)
+	}
+	if err := flag.CommandLine.Parse([]string{"--slot-counter-recovery-probe-interval=5s"}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := *f.slotCounterRecoveryProbeInterval; got != 5*time.Second {
+		t.Errorf("overridden value = %v, want 5s", got)
+	}
+}
+
+// spec: §10.2 (Authentication, "Verifier key set and rotation")
+// diagnosis: the gateway still accepted --jwks-publish, the opt-in for a
+// published JWK Set that no spec section defines and no verifier reads.
+// Every verifier loads its key set from the KMS at startup, so the flag
+// must be unknown: parsing it fails with the flag package's
+// undefined-flag error instead of configuring a route.
+func TestJWKSPublishFlagIsUndefined(t *testing.T) {
+	savedCmdLine := flag.CommandLine
+	savedArgs := os.Args
+	t.Cleanup(func() {
+		flag.CommandLine = savedCmdLine
+		os.Args = savedArgs
+	})
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	flag.CommandLine.SetOutput(io.Discard)
+	os.Args = []string{savedArgs[0]}
+
+	f := &gatewayFlags{}
+	f.registerCoreFlags()
+	f.registerStorageFlags()
+	f.registerPolicyFlags()
+	f.registerSessionFlags()
+	f.registerArtifactFlags()
+	f.registerOpsFlags()
+
+	for _, arg := range []string{"--jwks-publish", "--jwks-publish=true", "--jwks-publish=false"} {
+		err := flag.CommandLine.Parse([]string{arg})
+		if err == nil || !strings.Contains(err.Error(), "flag provided but not defined: -jwks-publish") {
+			t.Errorf("Parse(%q) error = %v, want the undefined-flag error", arg, err)
+		}
 	}
 }

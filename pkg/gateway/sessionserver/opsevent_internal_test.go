@@ -34,7 +34,7 @@ func hasSessionFailed(buf *eventbuffer.EventBuffer) bool {
 func TestRecordSessionCompletedEmitsSessionFailed(t *testing.T) {
 	// §16.6: a session reaching the failed state emits session_failed.
 	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
-	srv := New(memstore.New(), Options{OpsEmitter: emitter})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, OpsEmitter: emitter})
 
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 		ID: "s1", TenantID: "acme", RuntimeRef: "echo",
@@ -69,7 +69,7 @@ func TestRecordSessionCompletedEmitsTerminalLifecycleEvents(t *testing.T) {
 	}
 	for _, tc := range cases {
 		emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
-		srv := New(memstore.New(), Options{OpsEmitter: emitter})
+		srv := New(memstore.New(), Options{DevTenantHeader: true, OpsEmitter: emitter})
 		srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 			ID: "s", TenantID: "acme", RuntimeRef: "echo", State: tc.state,
 		})
@@ -87,7 +87,7 @@ func TestRecordSessionCompletedNoEmitForNonTerminal(t *testing.T) {
 	// A non-terminal state reaching recordSessionCompleted emits no
 	// lifecycle event.
 	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
-	srv := New(memstore.New(), Options{OpsEmitter: emitter})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, OpsEmitter: emitter})
 
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 		ID: "s2", TenantID: "acme", State: session.StateRunning,
@@ -99,7 +99,7 @@ func TestRecordSessionCompletedNoEmitForNonTerminal(t *testing.T) {
 
 func TestRecordSessionCompletedNoEmitterIsSafe(t *testing.T) {
 	// The emit is best-effort: a nil OpsEmitter must not panic.
-	srv := New(memstore.New(), Options{})
+	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 		ID: "s3", TenantID: "acme", State: session.StateFailed,
 	})

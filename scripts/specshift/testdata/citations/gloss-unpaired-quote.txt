@@ -1,0 +1,7 @@
+	t.Errorf("want 5s per §8.6 line 675", x)
+}
+
+// per §15.1 line 1080.
+func g() {
+	y := "z"
+}

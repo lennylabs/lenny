@@ -109,7 +109,9 @@ func assertFields(t *testing.T, md protoreflect.MessageDescriptor, want []wantFi
 // and adapter select these arms by wire number, so a renumber breaks binary
 // compatibility silently without this pin.
 //
-// spec: 10.1 lines 130-132, 11.2 line 35, 4.7, 5.2 (per-slot addressing)
+// spec: 10.1.7 (preStop Hook Drain, "Intent-row-first ordering (orphan prevention)"),
+// 11.2 (Budgets and Quotas, "Storage quota enforcement mechanism"), 4.7, 5.2 (per-slot
+// addressing)
 // diagnosis: The streaming Checkpoint wire contract diverged from the
 // gateway-driven grant/confirm protocol. An arm was renumbered, renamed, or
 // dropped, CheckpointGrant.headers stopped being a map, or CheckpointStart
@@ -140,20 +142,21 @@ func TestCheckpointStreamMessageContract(t *testing.T) {
 		{name: "chunk_size_bytes", number: 3},
 		{name: "chunk_encoding", number: 4},
 		{name: "deadline_ms", number: 5},
-		{name: "slot_id", number: 6},
+		{name: "session_id", number: 7},
 	})
 	// assertFields iterates only its want slice and never asserts the total
-	// field count, so a coordinated proto+regen renumber of the slot-routing
-	// field would pass unpinned. Assert CheckpointStart has exactly six fields
-	// and that slot_id is a SlotId message field, so the gateway-to-adapter
-	// slot addressing cannot silently break.
+	// field count, so a coordinated proto+regen renumber of the addressing
+	// field would pass unpinned. Assert CheckpointStart has exactly six
+	// fields and that session_id is a SessionId message field: neither the
+	// CheckpointRequest envelope nor the RPC signature carries a session, so
+	// the opening frame is the stream's only address.
 	if got := startMD.Fields().Len(); got != 6 {
 		t.Errorf("CheckpointStart has %d fields, want 6", got)
 	}
-	if sf := startMD.Fields().ByName("slot_id"); sf == nil {
-		t.Error("CheckpointStart.slot_id field missing")
-	} else if sf.Kind() != protoreflect.MessageKind || sf.Message().FullName() != (&adapterv1.SlotId{}).ProtoReflect().Descriptor().FullName() {
-		t.Errorf("CheckpointStart.slot_id must be a SlotId message field, got kind %v message %v", sf.Kind(), sf.Message())
+	if sf := startMD.Fields().ByName("session_id"); sf == nil {
+		t.Error("CheckpointStart.session_id field missing")
+	} else if sf.Kind() != protoreflect.MessageKind || sf.Message().FullName() != (&adapterv1.SessionId{}).ProtoReflect().Descriptor().FullName() {
+		t.Errorf("CheckpointStart.session_id must be a SessionId message field, got kind %v message %v", sf.Kind(), sf.Message())
 	}
 	assertFields(t, (&adapterv1.ChunkReady{}).ProtoReflect().Descriptor(), []wantField{
 		{name: "index", number: 1},
@@ -180,7 +183,8 @@ func TestCheckpointStreamMessageContract(t *testing.T) {
 // dropped case) would deliver the adapter a different trigger than the
 // gateway intended.
 //
-// spec: 10.1 lines 130-132, 11.2 line 35, 4.7
+// spec: 10.1.7 (preStop Hook Drain, "Intent-row-first ordering (orphan prevention)"),
+// 11.2 (Budgets and Quotas, "Storage quota enforcement mechanism"), 4.7
 // diagnosis: The CheckpointStart.trigger enum no longer round-trips through
 // checkpoint.Trigger. The gateway's duration-histogram label and the
 // adapter's retry-budget selection would key on different triggers. Re-check
@@ -263,16 +267,28 @@ func (r *recordingTransport) putCount() int {
 	return len(r.puts)
 }
 
+// contractSession is the session the contract cases address. Every session
+// is bound to a slot on every pod, so the stream's opening frame names it
+// and the adapter resolves that session's own tree from it.
+const contractSession = "sess-contract"
+
 // realAdapterClient serves a real adapter Server with the given transport
-// and a seeded one-file workspace over bufconn, returning a connected
-// Adapter client.
+// and a seeded one-file per-session workspace over bufconn, returning a
+// connected Adapter client.
 func realAdapterClient(t *testing.T, transport adapter.CheckpointTransport) adapterv1.AdapterClient {
 	t.Helper()
 	s := adapter.New("checkpoint-stream-contract")
-	s.WorkspaceRoot = t.TempDir()
-	s.StagingDir = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.CheckpointTransport = transport
-	if err := os.WriteFile(filepath.Join(s.WorkspaceRoot, "state.txt"), []byte("agent workspace state"), 0o644); err != nil {
+	s.Runtime = noopRuntime{}
+	if _, err := s.StartSession(context.Background(), &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: contractSession},
+		Runtime:   "echo",
+	}); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	current := filepath.Join(s.WorkspaceBase, "slots", contractSession, "current")
+	if err := os.WriteFile(filepath.Join(current, "state.txt"), []byte("agent workspace state"), 0o644); err != nil {
 		t.Fatalf("seed workspace: %v", err)
 	}
 	lis := bufconn.Listen(1 << 20)
@@ -302,7 +318,8 @@ var t4SignedHeaders = map[string]string{
 // before the gateway grants, replays every signed header byte-for-byte on
 // the PUT, and closes with Summary as the terminal frame.
 //
-// spec: 10.1 lines 130-132, 11.2 line 35, 4.7
+// spec: 10.1.7 (preStop Hook Drain, "Intent-row-first ordering (orphan prevention)"),
+// 11.2 (Budgets and Quotas, "Storage quota enforcement mechanism"), 4.7
 // diagnosis: The adapter side of the Checkpoint stream broke a §10.1
 // protocol invariant: it emitted a ChunkReady before the Probe, PUT a chunk
 // before receiving its grant, dropped a signed SigV4 header on the PUT (which
@@ -321,9 +338,10 @@ func TestCheckpointStreamFrameOrderAndHeaderReplay(t *testing.T) {
 	if err := stream.Send(&adapterv1.CheckpointRequest{
 		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-order",
+			SessionId:      &adapterv1.SessionId{Value: contractSession},
 			Trigger:        checkpoint.TriggerPreScaleDown.Proto(),
 			ChunkSizeBytes: 1 << 20,
-			ChunkEncoding:  "tar",
+			ChunkEncoding:  "tar.gz",
 		}},
 	}); err != nil {
 		t.Fatalf("send start: %v", err)
@@ -408,7 +426,8 @@ loop:
 // surfaces as a terminal CheckpointFailed carrying that HTTP status and error
 // code. This is the failure a dropped SigV4 header produces on a T4 backend.
 //
-// spec: 10.1 lines 130-132, 11.2 line 35, 4.7
+// spec: 10.1.7 (preStop Hook Drain, "Intent-row-first ordering (orphan prevention)"),
+// 11.2 (Budgets and Quotas, "Storage quota enforcement mechanism"), 4.7
 // diagnosis: A checkpoint PUT missing a signed SigV4 header did not surface
 // the store's SignatureDoesNotMatch through a CheckpointFailed frame, so the
 // gateway cannot classify the rejection. Re-check pkg/adapter uploadChunk /
@@ -427,6 +446,7 @@ func TestCheckpointStreamDroppedSignedHeaderFails(t *testing.T) {
 	if err := stream.Send(&adapterv1.CheckpointRequest{
 		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   "gw-ckpt-drophdr",
+			SessionId:      &adapterv1.SessionId{Value: contractSession},
 			Trigger:        checkpoint.TriggerPeriodic.Proto(),
 			ChunkSizeBytes: 1 << 20,
 		}},
@@ -711,7 +731,8 @@ func newGatewayHarness(t *testing.T, sa *scriptedAdapter) *gatewayHarness {
 // gateway sent in Start aborts the attempt with stream_truncated before any
 // capability is signed and before any chunk quota is consumed.
 //
-// spec: 10.1 lines 130-132, 11.2 line 35, 4.7
+// spec: 10.1.7 (preStop Hook Drain, "Intent-row-first ordering (orphan prevention)"),
+// 11.2 (Budgets and Quotas, "Storage quota enforcement mechanism"), 4.7
 // diagnosis: The gateway upload driver signed a capability for, or ran quota
 // arithmetic against, an out-of-range chunk declaration instead of aborting
 // with stream_truncated first. A pod could then present a chunk larger than
@@ -769,7 +790,8 @@ func TestCheckpointStreamRejectsOutOfRangeChunk(t *testing.T) {
 // a larger object, and aborts the attempt rather than finalising a manifest
 // whose byte accounting the pod inflated past its signed capability.
 //
-// spec: 10.1 lines 130-132, 11.2 line 35, 4.7
+// spec: 10.1.7 (preStop Hook Drain, "Intent-row-first ordering (orphan prevention)"),
+// 11.2 (Budgets and Quotas, "Storage quota enforcement mechanism"), 4.7
 // diagnosis: The gateway upload driver accepted a committed chunk whose
 // Stat-confirmed size exceeded the Content-Length it signed, so a pod could
 // write more bytes than its capability granted without aborting. Re-check
@@ -805,7 +827,8 @@ func TestCheckpointStreamAbortsOnLengthMismatch(t *testing.T) {
 // path dead, so a slow-object-store retry hits an expired-signature 403 rather
 // than requesting a fresh grant.
 //
-// spec: 4.4 lines 261-264 (grant re-mint on expiry), 13.2 (capability expiry)
+// spec: 4.4.5 (Checkpoint Storage Failure and Eviction Fallback, "Checkpoint
+// storage failure": grant re-mint on expiry), 13.2 (capability expiry)
 // diagnosis: The gateway upload driver minted a CheckpointGrant without
 // expires_at, so the adapter cannot tell when the presigned PUT capability has
 // expired and never re-mints. A checkpoint PUT retried past the capability TTL
@@ -841,5 +864,74 @@ func TestCheckpointStreamGrantCarriesCapabilityExpiry(t *testing.T) {
 		if got := ts.AsTime(); !got.Equal(want) {
 			t.Errorf("chunk %d grant expires_at = %s, want the signed capability expiry %s", g.GetIndex(), got, want)
 		}
+	}
+}
+
+// noopRuntime is a RuntimeProcess that starts and closes without spawning
+// anything, so the contract cases can bind the session whose slot tree the
+// checkpoint captures without a real agent process.
+type noopRuntime struct{}
+
+func (noopRuntime) Start(context.Context, string) error           { return nil }
+func (noopRuntime) WriteEnvelope(string, []byte) error            { return nil }
+func (noopRuntime) Interrupt(context.Context, string, bool) error { return nil }
+func (noopRuntime) Close(context.Context, string) error           { return nil }
+
+func (noopRuntime) Output(ctx context.Context, _ string) (<-chan []byte, error) {
+	ch := make(chan []byte)
+	go func() {
+		<-ctx.Done()
+		close(ch)
+	}()
+	return ch, nil
+}
+
+// TestCheckpointStreamRejectsAnUnaddressedStart pins the inbound rule for
+// the session-scoped Checkpoint stream on the wire: the opening frame's
+// session_id is the whole stream's address, so a stream that opens without
+// a usable one is refused with InvalidArgument before any probe frame is
+// sent.
+//
+// spec: 4.1, 5.2, 6.4
+// diagnosis: The adapter served a Checkpoint stream whose opening frame
+// named no session. The gateway reads the FailedPrecondition a bare
+// registry miss returns as "the pod lost this session" and re-places it,
+// and the unvalidated address reached the pod-level op lock and the slot
+// layout on the way there. Re-check the boundary guard at the top of
+// pkg/adapter Checkpoint.
+func TestCheckpointStreamRejectsAnUnaddressedStart(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		session *adapterv1.SessionId
+	}{
+		{name: "absent session_id", session: nil},
+		{name: "empty session_id", session: &adapterv1.SessionId{Value: ""}},
+		{name: "path-traversal session_id", session: &adapterv1.SessionId{Value: "../escape"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := realAdapterClient(t, &recordingTransport{})
+			stream, err := client.Checkpoint(context.Background())
+			if err != nil {
+				t.Fatalf("open Checkpoint stream: %v", err)
+			}
+			if err := stream.Send(&adapterv1.CheckpointRequest{
+				Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
+					CheckpointId:   "gw-ckpt-unaddressed",
+					SessionId:      tc.session,
+					Trigger:        checkpoint.TriggerPreScaleDown.Proto(),
+					ChunkSizeBytes: 1 << 20,
+					ChunkEncoding:  "tar.gz",
+				}},
+			}); err != nil {
+				t.Fatalf("send start: %v", err)
+			}
+			msg, err := stream.Recv()
+			if err == nil {
+				t.Fatalf("the adapter answered an unaddressed Checkpoint stream with %T, want InvalidArgument", msg.GetMsg())
+			}
+			if status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("code = %v, want InvalidArgument for %s", status.Code(err), tc.name)
+			}
+		})
 	}
 }

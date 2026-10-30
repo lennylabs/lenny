@@ -11,12 +11,12 @@ import (
 	"time"
 )
 
-// defaultHeartbeatAckTimeout is the §15.4.1 line 1826 window the runtime
-// has to answer a heartbeat before the adapter treats it as hung and
-// sends SIGTERM. spec: §15.4.1 line 1826.
+// defaultHeartbeatAckTimeout is the §28.5.3 window the runtime has to
+// answer a heartbeat before the adapter treats it as hung and ends the
+// session's stream. spec: §28.5.3.
 const defaultHeartbeatAckTimeout = 10 * time.Second
 
-// jsonlFrameType returns the top-level `type` discriminant of a §15.4.1
+// jsonlFrameType returns the top-level `type` discriminant of a §28.5.3
 // JSONL frame, or the empty string when the frame does not parse as a
 // JSON object with a string `type`. It is the cheap classifier the
 // Attach loop uses to recognize protocol-level frames (`heartbeat_ack`,
@@ -31,57 +31,101 @@ func jsonlFrameType(line []byte) string {
 	return probe.Type
 }
 
-// heartbeatMonitor implements the §15.4.1 adapter-side liveness probe:
-// it sends a `{type:heartbeat,ts}` frame to the runtime every interval
-// and expects a `heartbeat_ack` within ackTimeout. When an ack does not
-// arrive in time the runtime is considered hung and onHung fires once
-// (the Attach loop SIGTERMs the runtime and ends the stream). spec:
-// §15.4.1 lines 1442, 1826, 2061.
+// heartbeatMonitor implements the §28.5.3 adapter-side liveness probe for
+// one session: it sends a `{type:heartbeat,ts,sessionId}` frame to the
+// runtime every interval and expects a `heartbeat_ack` within ackTimeout.
+// When an ack does not arrive in time the runtime is considered hung for
+// the session: hung closes and onHung runs once.
+//
+// A monitor belongs to its session's registry entry rather than to an
+// Attach stream. markSessionStartWritten starts it when the session's
+// session_start is written, writeSessionEnd stops and joins it before the
+// session's session_end, and deregisterSlotLocked cancels it when the entry
+// is removed, so it runs whether or not the gateway holds an Attach stream
+// for the session. The goroutine never takes the server's mutex: its write
+// is the runtime's WriteEnvelope, and onHung takes no lock.
+//
+// spec: §28.5.3 (CH-MSGSOCK), §4.7.1 (Role and Gateway RPC Contract)
 type heartbeatMonitor struct {
 	interval   time.Duration
 	ackTimeout time.Duration
+	// sessionID is the session the heartbeat frame names.
+	sessionID string
 	// write sends one heartbeat frame to the runtime. It is
 	// Runtime.WriteEnvelope bound to the session.
 	write func([]byte) error
+	// onHung runs once, on the monitor's own context, after hung closes.
+	onHung func(context.Context)
 	// nowUnix returns the heartbeat `ts` value. A seam so tests assert a
 	// deterministic timestamp; production uses time.Now().Unix.
 	nowUnix func() int64
 
+	// ctx is the monitor's own context; cancelFn cancels it.
+	ctx      context.Context
+	cancelFn context.CancelFunc
+	// done closes when run returns.
+	done chan struct{}
 	// acks carries a signal per observed heartbeat_ack. Buffered so the
-	// Attach loop never blocks delivering one.
+	// activity tap never blocks delivering one.
 	acks chan struct{}
 	// hung closes once when the ack deadline elapses with no ack.
 	hung     chan struct{}
 	hungOnce sync.Once
 }
 
-// newHeartbeatMonitor builds a monitor for one Attach session. interval
-// must be > 0 (the caller gates on s.HeartbeatInterval); ackTimeout falls
-// back to the §15.4.1 line 1826 10s default when non-positive.
-func newHeartbeatMonitor(interval, ackTimeout time.Duration, write func([]byte) error) *heartbeatMonitor {
+// newHeartbeatMonitor builds a monitor for one session. interval must be > 0
+// (the caller gates on heartbeatsReachRuntime); ackTimeout falls back to the
+// §28.5.3 10s default when non-positive. A nil onHung runs nothing.
+func newHeartbeatMonitor(interval, ackTimeout time.Duration, sessionID string, write func([]byte) error, onHung func(context.Context)) *heartbeatMonitor {
 	if ackTimeout <= 0 {
 		ackTimeout = defaultHeartbeatAckTimeout
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &heartbeatMonitor{
 		interval:   interval,
 		ackTimeout: ackTimeout,
+		sessionID:  sessionID,
 		write:      write,
+		onHung:     onHung,
 		nowUnix:    func() int64 { return time.Now().Unix() },
+		ctx:        ctx,
+		cancelFn:   cancel,
+		done:       make(chan struct{}),
 		acks:       make(chan struct{}, 1),
 		hung:       make(chan struct{}),
 	}
 }
 
-// frame builds the §15.4.1 line 1823 inbound heartbeat
-// `{"type":"heartbeat","ts":<unix>}`.
-func (m *heartbeatMonitor) frame() []byte {
-	return []byte(`{"type":"heartbeat","ts":` + strconv.FormatInt(m.nowUnix(), 10) + `}`)
+// start launches the monitor's goroutine.
+func (m *heartbeatMonitor) start() {
+	go m.run()
 }
 
-// ack records that the runtime answered the outstanding heartbeat. It is
-// called from the Attach loop on a `heartbeat_ack` frame and never
-// blocks: a full buffer means an ack is already queued, which is enough
-// to clear the pending beat.
+// cancel ends the monitor's context and returns at once. It is safe under
+// the server's mutex and idempotent.
+func (m *heartbeatMonitor) cancel() {
+	m.cancelFn()
+}
+
+// stop cancels the monitor and waits for its goroutine to return, so a
+// heartbeat write in flight when stop is called has returned when stop
+// returns. Never call it with the server's mutex held.
+func (m *heartbeatMonitor) stop() {
+	m.cancel()
+	<-m.done
+}
+
+// frame builds the §28.5.3 inbound heartbeat
+// `{"type":"heartbeat","ts":<unix>,"sessionId":"<id>"}`.
+func (m *heartbeatMonitor) frame() []byte {
+	id, _ := json.Marshal(m.sessionID)
+	return []byte(`{"type":"heartbeat","ts":` + strconv.FormatInt(m.nowUnix(), 10) + `,"sessionId":` + string(id) + `}`)
+}
+
+// ack records that the runtime answered the outstanding heartbeat. The
+// activity tap calls it on a `heartbeat_ack` naming the session, or on one
+// naming no session, and it never blocks: a full buffer means an ack is
+// already queued, which is enough to clear the pending beat.
 func (m *heartbeatMonitor) ack() {
 	select {
 	case m.acks <- struct{}{}:
@@ -89,13 +133,14 @@ func (m *heartbeatMonitor) ack() {
 	}
 }
 
-// run drives the send/ack/deadline loop until ctx is cancelled (the
-// Attach RPC ended) or the runtime misses the ack deadline. A single
+// run drives the send/ack/deadline loop until the monitor is cancelled, a
+// heartbeat write fails, or the runtime misses the ack deadline. A single
 // ack deadline is armed on the first unacked beat and held until an ack
 // arrives, so a runtime that goes silent is caught within ackTimeout of
 // the first beat it failed to answer rather than being granted a fresh
 // window every interval.
-func (m *heartbeatMonitor) run(ctx context.Context) {
+func (m *heartbeatMonitor) run() {
+	defer close(m.done)
 	ticker := time.NewTicker(m.interval)
 	defer ticker.Stop()
 
@@ -109,12 +154,11 @@ func (m *heartbeatMonitor) run(ctx context.Context) {
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-m.ctx.Done():
 			return
 		case <-ticker.C:
 			if err := m.write(m.frame()); err != nil {
-				// The transport is gone; the Attach loop's own error
-				// handling tears the session down. Stop probing.
+				// The transport is gone; stop probing.
 				return
 			}
 			if !pending {
@@ -132,37 +176,111 @@ func (m *heartbeatMonitor) run(ctx context.Context) {
 				}
 			}
 		case <-ackTimer.C:
-			// spec: §15.4.1 line 1826 — no ack within the window; the
-			// process is hung. Signal the Attach loop once.
+			// spec: §28.5.3 — no ack within the window; the runtime is
+			// hung for this session. Close hung, then escalate once.
 			m.hungOnce.Do(func() { close(m.hung) })
+			if m.onHung != nil {
+				m.onHung(m.ctx)
+			}
 			return
 		}
 	}
 }
 
-// startHeartbeat launches the §15.4.1 heartbeat monitor for an Attach
-// session when s.HeartbeatInterval is configured, returning the monitor
-// (nil when heartbeats are disabled). The monitor goroutine exits when
-// ctx is cancelled — the Attach RPC's stream context — so it is bounded
-// by the session it probes. spec: §15.4.1 lines 1442, 1826.
-func (s *Server) startHeartbeat(ctx context.Context, sessionID string, rt RuntimeProcess) *heartbeatMonitor {
-	if s.HeartbeatInterval <= 0 {
-		return nil
-	}
-	mon := newHeartbeatMonitor(s.HeartbeatInterval, s.HeartbeatAckTimeout, func(frame []byte) error {
-		return rt.WriteEnvelope(sessionID, frame)
-	})
-	go mon.run(ctx)
-	return mon
+// heartbeatsReachRuntime reports whether the adapter runs heartbeat
+// monitors: heartbeats are enabled, the adapter reads the runtime's output
+// through the activity tap (an untapped runtime's acks would reach no
+// monitor, so every session would read as hung), and the runtime exchanges
+// CH-MSGSOCK frames (a type: mcp runtime drops heartbeat). With no monitor
+// SealSession decides on frames and platform and connector calls alone.
+// spec: §28.5.3 (CH-MSGSOCK), §4.7.1 (Role and Gateway RPC Contract)
+func (s *Server) heartbeatsReachRuntime() bool {
+	return s.HeartbeatInterval > 0 && s.activityTapped && s.RuntimeKind != RuntimeKindMCP
 }
 
-// onHeartbeatHung performs the §15.4.1 line 1826 unresponsive-agent
-// escalation: it sends SIGTERM (the clean Interrupt) to the hung runtime
-// and logs the escalation. The Attach loop calls it once when the
-// monitor's hung channel closes, then ends the stream.
+// startHeartbeatLocked starts entry's heartbeat monitor for sessionID when
+// heartbeats reach the runtime and the entry holds no running monitor. A
+// stopped monitor that did not find the runtime hung is replaced, so a
+// session whose session_start is written again on the same entry is probed
+// again; a hung monitor stays, so hung stays closed until the entry is
+// removed. It is the only start site. Callers hold s.mu.
+// spec: §28.5.3 (CH-MSGSOCK)
+func (s *Server) startHeartbeatLocked(sessionID string, entry *slotState) {
+	if !s.heartbeatsReachRuntime() || s.Runtime == nil {
+		return
+	}
+	if entry.hb != nil && !entry.hb.replaceable() {
+		return
+	}
+	rt := s.Runtime
+	mon := newHeartbeatMonitor(s.HeartbeatInterval, s.HeartbeatAckTimeout, sessionID,
+		func(frame []byte) error { return rt.WriteEnvelope(sessionID, frame) },
+		func(ctx context.Context) { s.onHeartbeatHung(ctx, sessionID, rt) })
+	entry.hb = mon
+	mon.start()
+}
+
+// replaceable reports whether the monitor has stopped without finding the
+// runtime hung.
+func (m *heartbeatMonitor) replaceable() bool {
+	select {
+	case <-m.hung:
+		return false
+	default:
+	}
+	select {
+	case <-m.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// stopEntryHeartbeat stops and joins entry's monitor, read under s.mu and
+// stopped with s.mu released. writeSessionEnd calls it before it writes the
+// session_end, so no heartbeat for the session follows that frame.
+func (s *Server) stopEntryHeartbeat(entry *slotState) {
+	if entry == nil {
+		return
+	}
+	s.mu.Lock()
+	hb := entry.hb
+	s.mu.Unlock()
+	if hb != nil {
+		hb.stop()
+	}
+}
+
+// entryHeartbeatHung returns the hung channel of the named session's
+// monitor, nil when the entry has none.
+func (s *Server) entryHeartbeatHung(sessionID string) <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.slotStateLocked(sessionID)
+	if !ok || st.hb == nil {
+		return nil
+	}
+	return st.hb.hung
+}
+
+// onHeartbeatHung performs the §28.5.3 unresponsive-agent escalation:
+// it calls the clean Runtime.Interrupt for the session and logs the
+// escalation. The session's heartbeat monitor calls it once, after its hung
+// channel closes; an open Attach stream for the session then ends.
+// Interrupt signals a process only on the developer-loop executor; the
+// sidecar transport ends nothing, because no heartbeat escalation signals
+// the runtime process.
+// spec: §28.5.3; §4.7.10 (Runtime process lifetime).
+//
+// On a supervised pod the escalation is the hang cause of the not-live
+// state, on every pod kind, so no later start joins the hung process.
+// spec: §4.7.10 (Runtime supervisor, Liveness).
 func (s *Server) onHeartbeatHung(ctx context.Context, sessionID string, rt RuntimeProcess) {
-	log.Printf("lenny-adapter: runtime for session %s missed the heartbeat ack deadline; sending SIGTERM (§15.4.1 line 1826)", sessionID)
+	log.Printf("lenny-adapter: runtime for session %s missed the heartbeat ack deadline; ending the session's stream (§28.5.3)", sessionID)
+	if sr := s.supervisedRuntime(); sr != nil {
+		sr.MarkNotLive(CauseHang)
+	}
 	if err := rt.Interrupt(ctx, sessionID, false); err != nil {
-		log.Printf("lenny-adapter: SIGTERM of hung runtime for session %s failed: %v", sessionID, err)
+		log.Printf("lenny-adapter: interrupt of hung runtime for session %s failed: %v", sessionID, err)
 	}
 }

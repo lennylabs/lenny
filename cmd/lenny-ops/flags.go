@@ -4,14 +4,18 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/deployenv"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/pkg/ops/auditrate"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/driftservice"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
+	"github.com/lennylabs/lenny/pkg/tierpromotion"
 	"github.com/lennylabs/lenny/pkg/webhookdelivery"
 )
 
@@ -37,6 +41,7 @@ type opsFlags struct {
 	redisSentinelPassword            *string
 	redisTLS                         *bool
 	redisAllowInsecure               *bool
+	redisCachePubSubURL              *string
 	gatewayURL                       *string
 	leaderElectNS                    *string
 	agentNamespace                   *string
@@ -61,7 +66,7 @@ type opsFlags struct {
 	webhookRetentionDays             *int
 	webhookFailuresRetentionDays     *int
 	memoryLimitBytes                 *int64
-	production                       *bool
+	devMode                          *bool
 	releaseChannelKeyPath            *string
 	releaseChannelKeyID              *string
 	releaseChannelPrevKeyPath        *string
@@ -92,38 +97,43 @@ type opsFlags struct {
 	escalationReconcileWPS           *int
 	oidcIssuerURL                    *string
 	bearerTrustHMACKeyFile           *string
-	authMultiTenant                  *bool
-	rateLimitRPS                     *float64
-	rateLimitBurst                   *int
-	locksMemoryTier                  *string
-	opsServiceName                   *string
-	locksMinTTL                      *int
-	locksDefaultTTL                  *int
-	locksMaxTTL                      *int
-	idempotencyKeyTTL                *int
-	idempotencyLongRunningTTL        *int
-	leaderLeaseDuration              *int
-	leaderRenewDeadline              *int
-	leaderRetryPeriod                *int
-	webhookAllowHTTP                 *bool
-	webhookBlockedCIDRs              *string
-	webhookDomainAllowlist           *string
-	installationID                   *string
-	platformTier                     *string
-	opsServiceURL                    *string
-	gatewayInternalTLS               *bool
-	gatewayHeadlessSvc               *string
-	gatewayTLSPort                   *int
-	gatewayPlaintextPort             *int
-	gatewayFanOutTimeout             *time.Duration
-	gatewayBreakerThreshold          *int
-	gatewayBreakerResetAfter         *time.Duration
-	gatewaySATokenFile               *string
-	gatewayTokenRefreshBefore        *time.Duration
-	gatewayTokenMinTTL               *time.Duration
-	gatewayCABundleFile              *string
-	alertingBundleFormats            *string
-	alertingOverrideCount            *int
+	// kmsOpts and kmsFinalize are the §4 / §17.5 KMS provider options and
+	// the post-parse alias hook providerflags.Bind returns. lenny-ops
+	// resolves the provider only to load the §10.2 verifier key set.
+	kmsOpts                   *providerflags.Options
+	kmsFinalize               func() error
+	authMultiTenant           *bool
+	rateLimitRPS              *float64
+	rateLimitBurst            *int
+	locksMemoryTier           *string
+	opsServiceName            *string
+	locksMinTTL               *int
+	locksDefaultTTL           *int
+	locksMaxTTL               *int
+	idempotencyKeyTTL         *int
+	idempotencyLongRunningTTL *int
+	leaderLeaseDuration       *int
+	leaderRenewDeadline       *int
+	leaderRetryPeriod         *int
+	webhookAllowHTTP          *bool
+	webhookBlockedCIDRs       *string
+	webhookDomainAllowlist    *string
+	installationID            *string
+	platformTier              *string
+	opsServiceURL             *string
+	gatewayInternalTLS        *bool
+	gatewayHeadlessSvc        *string
+	gatewayTLSPort            *int
+	gatewayPlaintextPort      *int
+	gatewayFanOutTimeout      *time.Duration
+	gatewayBreakerThreshold   *int
+	gatewayBreakerResetAfter  *time.Duration
+	gatewaySATokenFile        *string
+	gatewayTokenRefreshBefore *time.Duration
+	gatewayTokenMinTTL        *time.Duration
+	gatewayCABundleFile       *string
+	alertingBundleFormats     *string
+	alertingOverrideCount     *int
 }
 
 // parseFlags defines every lenny-ops flag on flag.CommandLine, parses the
@@ -145,6 +155,7 @@ func parseFlags() *opsFlags {
 	f.registerLockFlags()
 	f.registerWebhookFlags()
 	f.registerGatewayClientFlags()
+	f.registerKMSFlags()
 	flag.Parse()
 	return f
 }
@@ -173,13 +184,17 @@ func (f *opsFlags) registerCoreFlags() {
 		"§12.8 Redis Sentinel monitored master name (e.g., lenny-master). Required when "+
 			"--redis-sentinel-addrs is set.")
 	f.redisPassword = flag.String("redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
-		"Redis AUTH password applied to both direct and Sentinel modes. §12.4 requires AUTH; an empty password fails startup unless --redis-allow-insecure is set. Override via LENNY_REDIS_PASSWORD.")
+		"Redis AUTH password applied to the direct, Sentinel, and Cluster modes. §12.4 requires AUTH; an empty password fails startup unless --redis-allow-insecure is set. Override via LENNY_REDIS_PASSWORD.")
 	f.redisSentinelPassword = flag.String("redis-sentinel-password", os.Getenv("LENNY_REDIS_SENTINEL_PASSWORD"),
 		"AUTH password for the sentinels themselves. Optional; sentinels typically run unauthenticated.")
 	f.redisTLS = flag.Bool("redis-tls", envBool("LENNY_REDIS_TLS", false),
-		"§12.4 request TLS on the Sentinel path. The direct-URL path derives TLS from the rediss:// scheme instead. TLS is mandatory unless --redis-allow-insecure is set. Override via LENNY_REDIS_TLS.")
+		"§12.4 request TLS on the Sentinel and Cluster paths. The direct-URL path derives TLS from the rediss:// scheme instead. TLS is mandatory unless --redis-allow-insecure is set. Override via LENNY_REDIS_TLS.")
 	f.redisAllowInsecure = flag.Bool("redis-allow-insecure", envBool("LENNY_REDIS_ALLOW_INSECURE", false),
 		"§12.4 opt out of the mandatory Redis AUTH-and-TLS startup invariant. Defaults off; set only for a dev or local Redis. Override via LENNY_REDIS_ALLOW_INSECURE.")
+	f.redisCachePubSubURL = flag.String("redis-cache-pubsub-url", os.Getenv("LENNY_REDIS_CACHE_PUBSUB_URL"),
+		"§12.4 dedicated Redis URL for the Cache/Pub-Sub concern, on which the gateway publishes "+
+			"token.revoked events (§13.3). lenny-ops subscribes there to keep its §25.4 revocation set "+
+			"current. Empty uses the base Redis client. Override via LENNY_REDIS_CACHE_PUBSUB_URL.")
 	f.gatewayURL = flag.String("gateway-url", os.Getenv("LENNY_GATEWAY_URL"),
 		"§25.4 gateway admin API base URL (the internal ClusterIP Service). Used for the "+
 			"connectivity probe and gateway-backed diagnostics. Override via LENNY_GATEWAY_URL.")
@@ -253,8 +268,14 @@ func (f *opsFlags) registerEventFlags() {
 	f.memoryLimitBytes = flag.Int64("memory-limit-bytes", envInt64("LENNY_MEMORY_LIMIT_BYTES", 0),
 		"§25.4 container memory limit in bytes for the memory_pressure self-health check; "+
 			"0 disables the check. Override via LENNY_MEMORY_LIMIT_BYTES.")
-	f.production = flag.Bool("production", envBool("LENNY_PRODUCTION", false),
-		"§25.11: when set, a full backup requires confirm:true. Override via LENNY_PRODUCTION.")
+	// spec: §17.4 "Dev mode guard rails" item 3 — LENNY_DEV_MODE is the
+	// single gate for every dev-mode security relaxation, on lenny-ops as
+	// on the gateway, which reads the same variable through --dev-mode.
+	f.devMode = flag.Bool("dev-mode", envDevMode(),
+		"§17.4: enable the lenny-ops dev-mode relaxations: the dev bearer-trust hook, the "+
+			"X-Lenny-* identity headers and dev roles, and the unauthenticated surface when no "+
+			"trust hook is configured. Ignored in production mode (--environment=prod). "+
+			"Override via LENNY_DEV_MODE.")
 }
 
 // registerUpgradeFlags registers the §25.8 release-channel, registry, and
@@ -316,7 +337,7 @@ func (f *opsFlags) registerUpgradeFlags() {
 			"full image reference. Override via LENNY_PLATFORM_REGISTRY_OVERRIDES.")
 	f.registryPullCheckTimeout = flag.Int("registry-pull-check-timeout-seconds",
 		envInt("LENNY_PLATFORM_REGISTRY_PULL_CHECK_TIMEOUT_SECONDS", 10),
-		"§25.8 line 3500 timeout for the upgrade-preflight image-pullability HEAD request "+
+		"§25.8 timeout for the upgrade-preflight image-pullability HEAD request "+
 			"(including any anonymous Bearer-token exchange) against the target registry, per image. "+
 			"Override via LENNY_PLATFORM_REGISTRY_PULL_CHECK_TIMEOUT_SECONDS.")
 	// §25.8 platform.upgrade.* roll timeouts for the OpsRoll watchdog.
@@ -339,7 +360,7 @@ func (f *opsFlags) registerUpgradeFlags() {
 // Prometheus, §25.9 diagnostics-audit, and §25.10 drift flags.
 // spec: §4.4, §11.7, §25.9, §25.10, §25.16.
 func (f *opsFlags) registerObservabilityFlags() {
-	// §4.4 line 232 / §11.7 pgaudit sink consumer wiring.
+	// §4.4 / §11.7 pgaudit sink consumer wiring.
 	f.pgauditLogFile = flag.String("pgaudit-log-file", os.Getenv("LENNY_PGAUDIT_LOG_FILE"),
 		"§4.4 / §11.7 pgaudit log file path. When set, lenny-ops tails the file, "+
 			"translates each pgaudit record to OCSF, and delivers it to the configured "+
@@ -347,7 +368,7 @@ func (f *opsFlags) registerObservabilityFlags() {
 	f.pgauditTenantID = flag.String("pgaudit-tenant-id", envOr("LENNY_PGAUDIT_TENANT_ID", "platform"),
 		"Tenant stamped on every pgaudit-sourced OCSF record (defaults to 'platform' for the "+
 			"regulated-Postgres-instance case). Override via LENNY_PGAUDIT_TENANT_ID.")
-	// spec: §25.16 Production "Prometheus (BYO)" block (lines 5124-5132).
+	// spec: §25.16 Production "Prometheus (BYO)" block.
 	// When set, lenny-ops uses the supplied HTTP API endpoint as the
 	// §25.13 ExprEvaluator backend and the §25.4 cross-replica health
 	// aggregator. When empty (the §25.16 Minimal default) lenny-ops
@@ -357,7 +378,7 @@ func (f *opsFlags) registerObservabilityFlags() {
 		"§25.16 BYO Prometheus HTTP API base URL (e.g. http://prometheus.monitoring.svc:9090). "+
 			"When empty the §25.4 cross-replica health aggregator falls back to per-replica fan-out. "+
 			"Override via LENNY_PROMETHEUS_URL.")
-	// spec: §25.9 line 3700. ops.audit.diagnosticsRatePerMinute caps the
+	// spec: §25.9. ops.audit.diagnosticsRatePerMinute caps the
 	// distinct diagnostic audit events a service account may emit per
 	// minute before excess is dropped; repeated calls for one resource
 	// coalesce into a single event. Default 60. F-25.9.15.
@@ -366,7 +387,7 @@ func (f *opsFlags) registerObservabilityFlags() {
 		"§25.9 ops.audit.diagnosticsRatePerMinute — per-service-account cap on distinct "+
 			"diagnostic audit events per minute. Default 60. Override via "+
 			"LENNY_OPS_DIAGNOSTICS_AUDIT_RATE_PER_MINUTE.")
-	// spec: §25.10 line 3809. ops.drift.snapshotStaleWarningDays sets the
+	// spec: §25.10. ops.drift.snapshotStaleWarningDays sets the
 	// threshold at which a stored desired-state snapshot is flagged stale
 	// in the GET /v1/admin/drift report. Default 7 days; 0 disables the
 	// warning entirely. F-25.10.9.
@@ -375,7 +396,7 @@ func (f *opsFlags) registerObservabilityFlags() {
 		"§25.10 ops.drift.snapshotStaleWarningDays — threshold (in days) for the "+
 			"bootstrap_seed_snapshot staleness warning on GET /v1/admin/drift. Default 7; "+
 			"0 disables the warning. Override via LENNY_DRIFT_SNAPSHOT_STALE_WARNING_DAYS.")
-	// spec: §25.10 line 3824. ops.drift.runningStateCacheTTLSeconds caps
+	// spec: §25.10. ops.drift.runningStateCacheTTLSeconds caps
 	// how long the §25.10 running-state cache holds the gateway-aggregated
 	// running state. ?fresh=true on the drift report bypasses the cache.
 	// Default 60s; 0 disables caching entirely. F-25.10.7.
@@ -386,7 +407,7 @@ func (f *opsFlags) registerObservabilityFlags() {
 			"line 3822 running-state cache that backs GET /v1/admin/drift. Default 60; "+
 			"0 disables caching (every report reads fresh). "+
 			"Override via LENNY_DRIFT_RUNNING_STATE_CACHE_TTL_SECONDS.")
-	// spec: §25.10 line 3788. ops.drift.helmValuesConfigMap names the chart-
+	// spec: §25.10. ops.drift.helmValuesConfigMap names the chart-
 	// rendered ConfigMap the new lenny-ops binary reads its own rendered
 	// Helm values from to write bootstrap_seed_snapshot_target early in
 	// OpsRoll. An empty name leaves the source unconfigured, so the new pod
@@ -406,7 +427,7 @@ func (f *opsFlags) registerObservabilityFlags() {
 // registerAuthFlags registers the §25.4 escalation, OIDC authentication,
 // and rate-limit flags. spec: §25.4, §17.
 func (f *opsFlags) registerAuthFlags() {
-	// spec: §25.4 line 2396. ops.escalation.requireDurable rejects an
+	// spec: §25.4. ops.escalation.requireDurable rejects an
 	// escalation create with ESCALATION_NO_DURABLE_STORE when neither
 	// Postgres nor Redis accepts it, instead of buffering in memory — the
 	// conservative posture for deployers who prefer an explicit failure
@@ -417,7 +438,7 @@ func (f *opsFlags) registerAuthFlags() {
 		"§25.4 ops.escalation.requireDurable — reject an escalation create with "+
 			"ESCALATION_NO_DURABLE_STORE when both Postgres and Redis are unavailable "+
 			"instead of buffering in memory. Override via LENNY_OPS_ESCALATION_REQUIRE_DURABLE.")
-	// spec: §25.4 line 2414. ops.escalation.reconciliationWritesPerSecond
+	// spec: §25.4. ops.escalation.reconciliationWritesPerSecond
 	// paces the leader-only flush that promotes buffered escalations to a
 	// recovered durable tier, so a large recovery does not spike Postgres.
 	// Default 20. F-25.4.7.
@@ -426,37 +447,39 @@ func (f *opsFlags) registerAuthFlags() {
 		"§25.4 ops.escalation.reconciliationWritesPerSecond — flush rate cap for the "+
 			"leader-only escalation reconciliation loop. Default 20. "+
 			"Override via LENNY_OPS_ESCALATION_RECONCILIATION_WRITES_PER_SECOND.")
-	// spec: §25.4 lines 1562-1564 + §17 security.oidc.issuerUrl (line 916).
-	// lenny-ops validates bearer JWTs with the same OIDC issuer the gateway
-	// admin API trusts and requires platform-admin or tenant-admin on every
-	// endpoint. The v1 verify key is the shared HMAC signing key (the same
-	// --bearer-trust-hmac-key-file mechanism the §17.4 embedded gateway
-	// uses); --oidc-issuer-url pins the expected iss claim. F-25.4.1,
-	// F-25.4.20.
+	// spec: §25.4 (The lenny-ops Service: Authentication) + §17
+	// security.oidc.issuerUrl. lenny-ops verifies Lenny-issued tokens
+	// against the §10.2 verifier key set and requires platform-admin or
+	// tenant-admin on every endpoint. In dev mode it also trusts
+	// the §17.4 embedded OIDC provider's HMAC key from
+	// --bearer-trust-hmac-key-file, and --oidc-issuer-url pins the iss
+	// claim of tokens signed with that key. F-25.4.1, F-25.4.20.
 	f.oidcIssuerURL = flag.String("oidc-issuer-url", os.Getenv("LENNY_OIDC_ISSUER_URL"),
 		"§25.4/§17 security.oidc.issuerUrl: the OIDC issuer whose tokens lenny-ops trusts. "+
-			"When set, a bearer whose iss claim differs is rejected. Override via LENNY_OIDC_ISSUER_URL.")
+			"When set, a dev trust-hook bearer whose iss claim differs is rejected. Override via LENNY_OIDC_ISSUER_URL.")
 	f.bearerTrustHMACKeyFile = flag.String("bearer-trust-hmac-key-file", os.Getenv("LENNY_BEARER_TRUST_HMAC_KEY_FILE"),
-		"§25.4 line 1562: path to the shared HMAC signing key (the gateway Token Service / "+
-			"embedded OIDC key file) lenny-ops verifies bearer JWTs against. Required when "+
-			"--production is set; when empty in dev the operability surface is unauthenticated. "+
+		"§17.4: path to the embedded OIDC provider's HMAC key file, the dev trust hook "+
+			"lenny-ops accepts bearers from alongside the §10.2 key set. Refused when "+
+			"production mode (--environment=prod) or without --dev-mode. Without it, under "+
+			"--dev-mode and outside production mode (--environment=prod), the operability "+
+			"surface is unauthenticated. "+
 			"Override via LENNY_BEARER_TRUST_HMAC_KEY_FILE.")
 	f.authMultiTenant = flag.Bool("auth-multi-tenant", envBool("LENNY_AUTH_MULTI_TENANT", false),
 		"§10.2: when true, lenny-ops extracts the tenant identifier from the JWT tenant claim "+
 			"(so tenant-admin scoping resolves to the bearer's tenant); when false every caller "+
 			"resolves to the built-in default tenant. Override via LENNY_AUTH_MULTI_TENANT.")
 	f.rateLimitRPS = flag.Float64("rate-limit-rps", envFloat("LENNY_OPS_RATE_LIMIT_RPS", opsserver.DefaultRateLimitRPS),
-		"§25.4 line 2001 ops.rateLimiting.requestsPerSecond: per-service-account token-bucket "+
+		"§25.4 ops.rateLimiting.requestsPerSecond: per-service-account token-bucket "+
 			"refill rate. Override via LENNY_OPS_RATE_LIMIT_RPS.")
 	f.rateLimitBurst = flag.Int("rate-limit-burst", envInt("LENNY_OPS_RATE_LIMIT_BURST", opsserver.DefaultRateLimitBurst),
-		"§25.4 line 2001 ops.rateLimiting.burst: per-service-account token-bucket depth. "+
+		"§25.4 ops.rateLimiting.burst: per-service-account token-bucket depth. "+
 			"Override via LENNY_OPS_RATE_LIMIT_BURST.")
 }
 
 // registerLockFlags registers the §25.4 remediation-lock tier, TTL,
 // idempotency, and leader-election flags. spec: §25.4.
 func (f *opsFlags) registerLockFlags() {
-	// spec: §25.4 lines 2206-2212 ops.locks.memoryTier. Governs whether the
+	// spec: §25.4 ops.locks.memoryTier. Governs whether the
 	// in-memory (Tier-3) remediation-lock store grants an acquisition when
 	// both Postgres and Redis are down. "single-replica-only" (default)
 	// rejects acquisitions in a multi-replica deployment (detected via the
@@ -467,7 +490,7 @@ func (f *opsFlags) registerLockFlags() {
 		"§25.4 ops.locks.memoryTier: in-memory lock-tier policy — "+
 			"single-replica-only | always | never. Override via LENNY_OPS_LOCKS_MEMORY_TIER.")
 	f.opsServiceName = flag.String("ops-service-name", envOr("LENNY_OPS_SERVICE_NAME", "lenny-ops"),
-		"§25.4 line 2208: name of the lenny-ops Service whose Endpoints the single-replica-only "+
+		"§25.4: name of the lenny-ops Service whose Endpoints the single-replica-only "+
 			"lock policy reads to count ready replicas. Override via LENNY_OPS_SERVICE_NAME.")
 	// spec: §25.4 ops.locks.{minTTLSeconds,defaultTTLSeconds,maxTTLSeconds} —
 	// the deployment-wide remediation-lock TTL policy. A request omitting
@@ -502,7 +525,7 @@ func (f *opsFlags) registerLockFlags() {
 // registerWebhookFlags registers the §25.5 webhook SSRF policy and the
 // §25.4 GET /v1/admin/me platform-context flags. spec: §25.4, §25.5.
 func (f *opsFlags) registerWebhookFlags() {
-	// spec: §25.5 lines 2735-2745 ops.webhooks.{allowHTTP,blockedCIDRs,
+	// spec: §25.5 ops.webhooks.{allowHTTP,blockedCIDRs,
 	// domainAllowlist} — the callback-URL SSRF policy the subscription
 	// validator enforces at create/update and at each delivery. F-25.4.9.
 	f.webhookAllowHTTP = flag.Bool("webhook-allow-http", envBool("LENNY_OPS_WEBHOOK_ALLOW_HTTP", false),
@@ -511,14 +534,20 @@ func (f *opsFlags) registerWebhookFlags() {
 		"§25.5 ops.webhooks.blockedCIDRs: comma-separated CIDRs rejected in addition to the built-in private/reserved set (e.g. the cluster pod/service CIDRs).")
 	f.webhookDomainAllowlist = flag.String("webhook-domain-allowlist", os.Getenv("LENNY_OPS_WEBHOOK_DOMAIN_ALLOWLIST"),
 		"§25.5 ops.webhooks.domainAllowlist: comma-separated hosts (exact or *.suffix) callbacks are restricted to. Empty allows any non-blocked host.")
-	// spec: §25.4 lines 1596-1601 — the GET /v1/admin/me platform context.
+	// spec: §25.4 — the GET /v1/admin/me platform context.
 	// installationId is the stable per-install UUID; tier is the §25.16
 	// deployment tier; opsServiceURL is the external lenny-ops entry point.
 	// F-25.4.2.
 	f.installationID = flag.String("installation-id", os.Getenv("LENNY_INSTALLATION_ID"),
 		"§25.4: stable installation UUID surfaced in GET /v1/admin/me.platform.installationId. Override via LENNY_INSTALLATION_ID.")
-	f.platformTier = flag.String("platform-tier", envOr("LENNY_PLATFORM_TIER", ""),
-		"§25.16 deployment tier (tier1/tier2/tier3) surfaced in GET /v1/admin/me.platform.tier. Override via LENNY_PLATFORM_TIER.")
+	// spec: §16.1.1 (Attribute Naming) deployment_tier; §25.4 (The
+	// lenny-ops Service) Idempotency-Key. The value is one of tier1,
+	// tier2, or tier3, and validatePlatformTier refuses any other value
+	// at startup. Unset defaults to tier1, the chart default for
+	// global.deploymentTier, so an unset flag stays inside the closed set.
+	f.platformTier = flag.String("platform-tier", envOr("LENNY_PLATFORM_TIER", string(tierpromotion.Tier1)),
+		"§25.16 deployment tier (tier1 | tier2 | tier3; default tier1) surfaced in GET /v1/admin/me.platform.tier. "+
+			"tier2 and tier3 also select the §25.4 required Idempotency-Key. Any other value refuses startup. Override via LENNY_PLATFORM_TIER.")
 	f.opsServiceURL = flag.String("ops-service-url", os.Getenv("LENNY_OPS_SERVICE_URL"),
 		"§25.4: external lenny-ops URL surfaced in GET /v1/admin/me.platform.opsServiceURL. Override via LENNY_OPS_SERVICE_URL.")
 }
@@ -527,7 +556,7 @@ func (f *opsFlags) registerWebhookFlags() {
 // (headless Service fan-out, TLS, breaker, token) and the §25.13 alerting
 // bundle-format flags. spec: §25.4, §25.13.
 func (f *opsFlags) registerGatewayClientFlags() {
-	// spec: §25.4 lines 1740-1974 ("Calling the Gateway" + GatewayClient).
+	// spec: §25.4.
 	// The headless Service and TLS posture drive the per-replica fan-out
 	// discovery and the NET-070 admin-API transport; the breaker and
 	// fan-out timeout bound the §25.4 fallback path. F-25.4.8.
@@ -554,7 +583,52 @@ func (f *opsFlags) registerGatewayClientFlags() {
 	f.gatewayCABundleFile = flag.String("gateway-ca-bundle-file", envOr("LENNY_OPS_GATEWAY_CA_BUNDLE_FILE", ""),
 		"§25.4 ops.tls.caBundleConfigMap: PEM CA bundle augmenting the system trust store for the gateway admin-API TLS link. Empty uses system roots.")
 	f.alertingBundleFormats = flag.String("alerting-bundle-formats", envOr("LENNY_ALERTING_BUNDLE_FORMATS", "prometheusrule"),
-		"§25.13 line 4833 Helm value monitoring.format: comma-separated list of the formats the chart bundled the §16.5 alert catalogue into. The §25.4 line 1339 bundleRules reconciler re-stamps lenny_ops /metrics' lenny_alerting_rules_bundled{format} from it. Override via LENNY_ALERTING_BUNDLE_FORMATS.")
+		"§25.13 Helm value monitoring.format: comma-separated list of the formats the chart bundled the §16.5 alert catalogue into. The §25.4 bundleRules reconciler re-stamps lenny_ops /metrics' lenny_alerting_rules_bundled{format} from it. Override via LENNY_ALERTING_BUNDLE_FORMATS.")
 	f.alertingOverrideCount = flag.Int("alerting-override-count", envInt("LENNY_ALERTING_OVERRIDE_COUNT", 0),
-		"§25.13 line 4834 Helm value len(monitoring.alertOverrides): count of operator-customized §16.5 rules. The §25.4 bundleRules reconciler re-stamps lenny_alerting_rule_overrides from it. Override via LENNY_ALERTING_OVERRIDE_COUNT.")
+		"§25.13 Helm value len(monitoring.alertOverrides): count of operator-customized §16.5 rules. The §25.4 bundleRules reconciler re-stamps lenny_alerting_rule_overrides from it. Override via LENNY_ALERTING_OVERRIDE_COUNT.")
+}
+
+// registerKMSFlags binds the §4 / §17.5 KMS provider selector flags. lenny-ops
+// resolves the provider only to load the §10.2 verifier key set, so an unset
+// --kms-provider resolves to the local provider and derives the key from
+// --kms-master-key-file, as the gateway and the Token Service do.
+//
+// spec: §10.2 (Authentication) "Verifier key set and rotation"; §4; §17.5.
+func (f *opsFlags) registerKMSFlags() {
+	f.kmsOpts, f.kmsFinalize = providerflags.Bind(flag.CommandLine, os.Getenv, providerflags.Options{
+		Provider: providerflags.ProviderLocal,
+	})
+}
+
+// productionMode reports §17.9.1 production mode from the finalized
+// --environment value. Call it only after kmsFinalize has returned nil.
+//
+// spec: §17.9.1 (Composition Dimensions) "Production mode"; §25.11; §17.4
+// "Dev mode guard rails".
+func (f *opsFlags) productionMode() bool { return deployenv.IsProduction(f.kmsOpts.Environment) }
+
+// validatePlatformTier refuses a --platform-tier value outside the §16.1.1
+// closed set tier1, tier2, and tier3, including the empty value. The
+// comparison is exact, so a case variant such as TIER2 is refused. Without
+// the refusal an off-set value would read as Tier 1 in
+// idempotencyKeyRequired and drop the §25.4 Tier 2/3 required
+// Idempotency-Key, and would surface an off-set platform.tier.
+//
+// spec: §16.1.1 (Attribute Naming) deployment_tier; §25.4 (The lenny-ops
+// Service) Idempotency-Key.
+func validatePlatformTier(tier string) error {
+	if tierpromotion.Tier(tier).IsValid() {
+		return nil
+	}
+	return fmt.Errorf("--platform-tier %q is not one of tier1, tier2, or tier3 (§16.1.1, §25.4)", tier)
+}
+
+// idempotencyKeyRequired reports the §25.4 Tier 2/3 required-key posture
+// from --platform-tier. main refuses an off-set tier at startup through
+// validatePlatformTier, so only tier1, tier2, and tier3 reach it.
+//
+// spec: §25.4 (The lenny-ops Service) Idempotency-Key.
+func (f *opsFlags) idempotencyKeyRequired() bool {
+	t := *f.platformTier
+	return t == "tier2" || t == "tier3"
 }

@@ -14,11 +14,11 @@ func fixedNow() func() time.Time {
 	return func() time.Time { return t }
 }
 
-// spec: §10.1 lines 165-166, 393 — the gateway writes one row per
+// spec: §10.1 — the gateway writes one row per
 // session after BarrierAck; a later barrier overwrites it. Upsert then
 // Get round-trips the retained fields (barrier_id, checkpoint_ref,
 // workspace_recovery_fraction) including the nullable
-// workspace-recovery fraction (§10.1 line 393).
+// workspace-recovery fraction (§10.1).
 func TestMemoryStoreUpsertGetRoundTrip_spec_10_1(t *testing.T) {
 	m := NewMemoryStore(fixedNow())
 	ctx := context.Background()
@@ -50,7 +50,7 @@ func TestMemoryStoreUpsertGetRoundTrip_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 lines 165-166 — a barrier on a session that already has a
+// spec: §10.1 — a barrier on a session that already has a
 // row replaces the prior generation's metadata.
 func TestMemoryStoreUpsertOverwrites_spec_10_1(t *testing.T) {
 	m := NewMemoryStore(fixedNow())
@@ -86,7 +86,7 @@ func TestMemoryStoreUpsertRequiresIDs(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 / §12.8 — the mandatory erasure pair removes a
+// spec: §12.1 / §12.8 — the mandatory erasure pair removes a
 // user's session rows and a whole tenant's rows.
 func TestMemoryStoreErasure_spec_12_8(t *testing.T) {
 	m := NewMemoryStore(fixedNow())

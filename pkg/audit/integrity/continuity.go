@@ -30,7 +30,7 @@ type ChainContinuityResult struct {
 	Result audit.VerifyResult
 
 	// gap boundary fields populated by the windowed startup check when
-	// Result is ChainBroken (§12.3 line 101 WARN message inputs).
+	// Result is ChainBroken (§12.3 WARN message inputs).
 	gapLowSeq  uint64
 	gapHighSeq uint64
 	gapStart   time.Time
@@ -47,7 +47,7 @@ func (r ChainContinuityResult) Broken() bool {
 // sequence number and the first sequence number past the break); the
 // timestamps bracket the approximate range of the missing entries.
 // They are populated only on a broken windowed check and feed the
-// §12.3 line 101 WARN message. spec: §12.3 line 101. F-12.3.9.
+// §12.3 WARN message. spec: §12.3. F-12.3.9.
 func (r ChainContinuityResult) GapLowSeq() uint64   { return r.gapLowSeq }
 func (r ChainContinuityResult) GapHighSeq() uint64  { return r.gapHighSeq }
 func (r ChainContinuityResult) GapStart() time.Time { return r.gapStart }
@@ -69,7 +69,7 @@ func (r ChainContinuityResult) GapEnd() time.Time   { return r.gapEnd }
 // billing/audit Postgres when configured, otherwise the primary); ctrlDB
 // is the control-plane Postgres where the tenants.state column is
 // authoritative. When no separate billing/audit instance is configured
-// auditDB and ctrlDB are the same pool. spec: §12.3 line 103.
+// auditDB and ctrlDB are the same pool. spec: §12.3.
 func CheckChainContinuity(ctx context.Context, auditDB, ctrlDB Querier) ([]ChainContinuityResult, error) {
 	tenants, err := auditTenants(ctx, auditDB, ctrlDB)
 	if err != nil {
@@ -91,7 +91,7 @@ func CheckChainContinuity(ctx context.Context, auditDB, ctrlDB Querier) ([]Chain
 	return out, nil
 }
 
-// CheckChainContinuityRecent runs the §12.3 line 101 startup chain-
+// CheckChainContinuityRecent runs the §12.3 startup chain-
 // continuity check over the most recent lastN entries of every tenant's
 // audit chain. lastN is the audit.startupChainCheckEntries bound
 // (default 1000 at the call site); lastN <= 0 walks each chain in full
@@ -112,7 +112,7 @@ func CheckChainContinuity(ctx context.Context, auditDB, ctrlDB Querier) ([]Chain
 // control-plane Postgres where the tenants.state deletion skip-set is
 // authoritative (see auditTenants). When no separate billing/audit
 // instance is configured auditDB and ctrlDB are the same pool. spec:
-// §12.3 line 103.
+// §12.3.
 func CheckChainContinuityRecent(ctx context.Context, auditDB, ctrlDB Querier, lastN int) ([]ChainContinuityResult, error) {
 	tenants, err := auditTenants(ctx, auditDB, ctrlDB)
 	if err != nil {
@@ -224,7 +224,7 @@ func FirstBroken(results []ChainContinuityResult) *ChainContinuityResult {
 // MUST be read from ctrlDB. A join on the ledger connection would read
 // an unpopulated tenants table and exclude nothing. When no separate
 // instance is configured auditDB and ctrlDB are the same pool.
-// spec: §12.3 line 103 (split billing/audit Postgres), §12.8 (post-teardown
+// spec: §12.3, §12.8 (post-teardown
 // remnant exempt from chain verification).
 func auditTenants(ctx context.Context, auditDB, ctrlDB Querier) ([]string, error) {
 	// Skip-set: tenants in state='deleting' (Phases 4, 4a, and 5 per
@@ -306,7 +306,7 @@ func loadChainRows(ctx context.Context, db Querier, tenantID string) ([]audit.Ro
 }
 
 // loadRecentChainRows reads the most recent lastN rows of a tenant's
-// chain (the §12.3 line 101 audit.startupChainCheckEntries window) and
+// chain (the §12.3 audit.startupChainCheckEntries window) and
 // returns them in ascending sequence order. lastN <= 0 loads the chain
 // in full.
 func loadRecentChainRows(ctx context.Context, db Querier, tenantID string, lastN int) ([]audit.Row, error) {

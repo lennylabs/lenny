@@ -3,7 +3,10 @@
 // Package rediskeys is the §12.4 Redis wrapper layer that enforces the
 // tenant-key isolation convention at the point every command leaves the
 // gateway. The §12.4 key table mandates that all Redis keys lead with the
-// `t:{tenant_id}:` prefix. §12.4 groups the remaining keys into two
+// `t:{tenant_id}:` prefix. The braces are written literally (TenantPrefix
+// builds the prefix), so they form a Redis Cluster hash tag and all of a
+// tenant's keys share one hash slot; the wrapper admits only that braced
+// form. §12.4 groups the remaining keys into two
 // exception categories: keys that carry no tenant component by design, and
 // keys that are tenant-scoped but not tenant-leading. The wrapper enforces
 // the leading prefix only for the exception prefixes it recognizes:
@@ -23,10 +26,10 @@
 // `cb:`, or `{root_session_id}:dlg:`, where the wrapper additionally
 // validates the calling tenant owns the `root_session_id`). Keys that carry
 // no leading prefix the wrapper recognizes (`rl:`, `sq:`, `pg:sess-tenant:`,
-// `conn:oauth:state:`, `derive_lock:`, `lenny:events:`) are issued on
-// unscoped or platform-scoped command paths the wrapper passes through
-// unvalidated; their isolation is structural rather than leading-prefix
-// enforcement.
+// `conn:oauth:state:`, `derive_lock:`, `lenny:events:`, and
+// `lenny:session:terminate`) are issued on unscoped or platform-scoped
+// command paths the wrapper passes through unvalidated; their isolation is
+// structural rather than leading-prefix enforcement.
 //
 // Enforcement is a go-redis Hook (Guard) installed on the shared client.
 // The hook validates the key arguments of every command against the Scope
@@ -40,10 +43,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
 var (
@@ -143,11 +147,43 @@ func ValidateKey(scope Scope, key string) error {
 	return fmt.Errorf("%w: %q", ErrNoPrefix, key)
 }
 
+// tenantKeyOpen and tenantKeyClose bracket the tenant id in every
+// tenant-scoped key: `t:{` + tenant + `}:`.
+const (
+	tenantKeyOpen  = "t:{"
+	tenantKeyClose = "}:"
+)
+
+// TenantPrefix returns the §12.4 `t:{tenant_id}:` key prefix for tenantID,
+// with the braces written literally. The braces are a Redis Cluster hash
+// tag, so every key a tenant owns hashes to the slot of tenantID and a
+// script, transaction, or multi-key command over one tenant's keys stays in
+// one slot. Every store builds its tenant keys, tenant SCAN patterns, and
+// tenant pub/sub channel names from this prefix.
+//
+// spec: §12.4 Redis HA and Failure Modes ("Tenant key isolation"; the
+// Redis Cluster pre-plan: the `t:{tenant_id}:` prefix hashes all keys for
+// a tenant to the same slot); §17.8.2.
+func TenantPrefix(tenantID string) string {
+	return tenantKeyOpen + tenantID + tenantKeyClose
+}
+
+// TenantOf returns the tenant id a `t:{tenant_id}:...` key or channel
+// carries. It accepts only the braced form TenantPrefix writes: a key
+// without the braces, or with an empty tenant segment, returns false.
+func TenantOf(key string) (string, bool) {
+	return tenantOf(key)
+}
+
 // tenantOf extracts the tenant id from a `t:{tenant_id}:...` key. It
-// requires a non-empty tenant segment terminated by a second colon.
+// requires the literal `t:{` opener, a non-empty tenant segment, and the
+// `}:` closer, so an unbraced `t:<tenant>:` key is rejected.
 func tenantOf(key string) (string, bool) {
-	rest := key[len("t:"):]
-	idx := strings.IndexByte(rest, ':')
+	if !strings.HasPrefix(key, tenantKeyOpen) {
+		return "", false
+	}
+	rest := key[len(tenantKeyOpen):]
+	idx := strings.Index(rest, tenantKeyClose)
 	if idx <= 0 {
 		return "", false
 	}
@@ -211,92 +247,10 @@ func (g *Guard) check(ctx context.Context, cmd redis.Cmder) error {
 	if !ok {
 		return nil
 	}
-	for _, key := range commandKeys(cmd) {
+	for _, key := range redisconn.CommandKeys(cmd) {
 		if err := ValidateKey(scope, key); err != nil {
 			return fmt.Errorf("rediskeys: command %q rejected: %w", cmd.Name(), err)
 		}
 	}
 	return nil
-}
-
-// keylessCommands carry no key in argument position 1 (or carry a cursor /
-// subcommand there). The Guard does not validate these; the keys they
-// eventually touch are validated on the per-key commands that follow.
-var keylessCommands = map[string]struct{}{
-	"ping": {}, "echo": {}, "select": {}, "auth": {}, "hello": {},
-	"scan": {}, "cluster": {}, "info": {}, "client": {}, "command": {},
-	"dbsize": {}, "flushdb": {}, "flushall": {}, "script": {}, "wait": {},
-	"multi": {}, "exec": {}, "discard": {}, "unwatch": {}, "swapdb": {},
-}
-
-// multiKeyCommands take an unbounded run of keys starting at argument 1.
-var multiKeyCommands = map[string]struct{}{
-	"del": {}, "unlink": {}, "mget": {}, "watch": {}, "exists": {},
-	"sunion": {}, "sinter": {}, "sdiff": {}, "pfcount": {},
-}
-
-// commandKeys returns the key arguments the Guard must validate for cmd.
-func commandKeys(cmd redis.Cmder) []string {
-	args := cmd.Args()
-	if len(args) < 2 {
-		return nil
-	}
-	name := cmd.Name()
-	if _, ok := keylessCommands[name]; ok {
-		return nil
-	}
-	switch name {
-	case "eval", "evalsha", "eval_ro", "evalsha_ro", "fcall", "fcall_ro":
-		// [name, script|sha|fn, numkeys, key1, key2, ..., arg1, ...]
-		if len(args) < 3 {
-			return nil
-		}
-		n := toInt(args[2])
-		keys := make([]string, 0, n)
-		for i := 0; i < n && 3+i < len(args); i++ {
-			keys = append(keys, toString(args[3+i]))
-		}
-		return keys
-	case "mset", "msetnx":
-		// [name, key1, val1, key2, val2, ...]
-		keys := make([]string, 0, (len(args)-1)/2)
-		for i := 1; i < len(args); i += 2 {
-			keys = append(keys, toString(args[i]))
-		}
-		return keys
-	}
-	if _, ok := multiKeyCommands[name]; ok {
-		keys := make([]string, 0, len(args)-1)
-		for i := 1; i < len(args); i++ {
-			keys = append(keys, toString(args[i]))
-		}
-		return keys
-	}
-	return []string{toString(args[1])}
-}
-
-func toString(v interface{}) string {
-	switch s := v.(type) {
-	case string:
-		return s
-	case []byte:
-		return string(s)
-	default:
-		return fmt.Sprint(v)
-	}
-}
-
-func toInt(v interface{}) int {
-	switch n := v.(type) {
-	case int:
-		return n
-	case int64:
-		return int(n)
-	case string:
-		i, _ := strconv.Atoi(n)
-		return i
-	default:
-		i, _ := strconv.Atoi(fmt.Sprint(v))
-		return i
-	}
 }

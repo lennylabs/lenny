@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §15.1 lines 864-865 — the GET /v1/admin/legal-holds list reports
+// spec: §15.1 — the GET /v1/admin/legal-holds list reports
 // each active hold's provenance (setBy, setAt, note), and the POST note is
 // required when hold is true. Migration 0145 adds the legal_hold_set_by /
 // legal_hold_set_at / legal_hold_note columns to both the sessions and

@@ -106,6 +106,7 @@ func newCredPoolExhaustionFixture(t *testing.T) (*mcp.Server, sessionstore.Store
 	// wired as the §8.3 delegation-time availability checker. It reads the
 	// tenant policy, runtime registry, credential pools, and session store.
 	credChecker := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader: true,
 		Tenants:         tenants,
 		Runtimes:        runtimes,
 		CredentialPools: credPools,
@@ -113,9 +114,10 @@ func newCredPoolExhaustionFixture(t *testing.T) (*mcp.Server, sessionstore.Store
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Executor: executor.NewEchoExecutor(),
-		Runtimes: runtimes,
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc:   childIDCounter(),
 			Runtimes: runtimes,
@@ -138,7 +140,7 @@ func newCredPoolExhaustionFixture(t *testing.T) (*mcp.Server, sessionstore.Store
 	return srv, store
 }
 
-// spec: 8.3 (spec/08_recursive-delegation.md line 470: delegation-time
+// spec: 8.3 (§8.3: delegation-time
 // pre-claim credential-availability check; CREDENTIAL_POOL_EXHAUSTED)
 // diagnosis: the §8.3 delegation-time credential-availability pre-check
 // diverged. A lenny/delegate_task delegation whose prospective child has no

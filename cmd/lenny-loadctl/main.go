@@ -6,7 +6,7 @@
 // lenny-loadrunner pool; ingests metrics; renders the per-run HTML
 // report; and serves the small operator UI.
 //
-// TESTING.md §12.12 and §24.1 (Wave 6 control plane).
+// Wave 6 control plane (see spec §24.1).
 package main
 
 import (

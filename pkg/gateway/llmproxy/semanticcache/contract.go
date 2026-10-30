@@ -12,7 +12,7 @@ import (
 // and must pass it: it is exported (not a local _test.go helper) so a
 // third-party implementation in another module can call it.
 //
-// spec: §4.9 lines 1554-1556 — the helper verifies that (a)
+// spec: §4.9 — the helper verifies that (a)
 // DeleteByUser removes every cached entry for the specified user, (b) a
 // subsequent Get for the deleted user returns no hit, and (c) entries
 // for another user in the same tenant are unaffected. A pluggable

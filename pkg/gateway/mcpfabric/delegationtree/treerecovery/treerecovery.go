@@ -13,13 +13,16 @@
 // package is pure and never touches the store, so this package is the
 // production driver the §8.10 audit found missing — it enumerates the
 // tree's failed nodes from the SessionStore, builds the recovery.Node
-// set (depth from the immutable DelegationDepth, the per-node resume
-// window from ResumeEligibleUntil), invokes the traversal with a
-// concrete reattach action, marks the nodes that exhaust their budget
-// terminally failed, and emits the §16.1 tree-recovery metrics.
+// set (depth from the immutable DelegationDepth), invokes the traversal
+// with a concrete reattach action, hands each unrecovered node to the
+// terminal marker as soon as the traversal decides it, so each level is
+// failed before the traversal continues upward, and emits the §16.1
+// tree-recovery metrics. The traversal reads no per-node resume window:
+// the §6.2 resume_pending wall-clock cap owns that window, and a node it
+// moves to awaiting_client_action is counted unrecovered here.
 //
-// spec: §8.10 lines 1014-1027 (bottom-up recovery, level/tree timeouts,
-// maxResumeWindowSeconds interaction).
+// spec: §8.10 (Delegation Tree Recovery), §6.2 (resume_pending
+// wall-clock cap).
 package treerecovery
 
 import (
@@ -37,25 +40,29 @@ type TreeLister interface {
 	ListByRoot(ctx context.Context, tenantID, rootSessionID string) ([]sessionstore.Session, error)
 }
 
-// NodeReattacher brings one orphaned non-terminal node back onto a
-// fresh pod — the §7.3 resume action the recovery traversal calls per
-// node, leaves-first. A nil error means the node was reattached; a
-// non-nil error fails the node, exactly as an elapsed recovery budget
-// does. spec: §8.10 line 1016.
+// NodeReattacher drives and waits for the restore of one node of a
+// delegation tree. StartNode starts the node's restore and returns at once;
+// the traversal calls it for every selected node of a level before it waits
+// on any of them. ReattachNode waits until the node's restore has an
+// outcome: a nil error means the restore committed; a non-nil error fails
+// the node, exactly as an elapsed recovery budget does. The context passed
+// to ReattachNode carries the node's recovery deadline. spec: §8.10.
 type NodeReattacher interface {
+	StartNode(ctx context.Context, node sessionstore.Session)
 	ReattachNode(ctx context.Context, node sessionstore.Session) error
 }
 
 // TerminalMarker transitions an unrecovered node to a terminal state.
-// It is called for every node the traversal could not recover — a
-// reattach error, an exhausted per-node resume window, or an exhausted
-// level/tree budget. spec: §8.10 line 1025 ("marked as terminally
-// failed").
+// It is called for every node the traversal could not recover, a
+// reattach error or an exhausted level or tree budget, before the
+// traversal starts the next level. The marker decides whether the node's
+// row may still be written; a node that already left resume_pending is
+// left as it is. spec: §8.10.
 type TerminalMarker interface {
 	FailNode(ctx context.Context, node sessionstore.Session, reason string)
 }
 
-// Metrics records the §16.1 line 144-145 tree-recovery telemetry.
+// Metrics records the §16.1 tree-recovery telemetry.
 // *gatewaymetrics.Metrics satisfies it.
 type Metrics interface {
 	ObserveTreeRecoveryDuration(pool, outcome string, seconds float64)
@@ -70,11 +77,11 @@ const (
 )
 
 // recovery.Recover failure reasons the traversal returns. The driver
-// maps the two budget-exhaustion reasons onto the §16.1 line 145
+// maps the two budget-exhaustion reasons onto the §16.1
 // timeout_type label.
 const (
-	reasonLevelTimeout = "level recovery deadline exceeded"
-	reasonTreeTimeout  = "tree recovery deadline exceeded"
+	reasonLevelTimeout = recovery.ReasonLevelTimeout
+	reasonTreeTimeout  = recovery.ReasonTreeTimeout
 )
 
 // Config builds an Orchestrator. Lister, Reattacher, and Terminal are
@@ -85,11 +92,10 @@ type Config struct {
 	Terminal   TerminalMarker
 	Metrics    Metrics
 	// Recoverable selects which non-terminal descendant nodes need
-	// §8.10 recovery. The caller scopes the recovery to genuinely
-	// orphaned nodes (no live pod binding) so a root that resumed for
-	// its own reasons does not tear down descendants still running on
-	// their pods. When nil, every non-terminal descendant is treated as
-	// recoverable.
+	// §8.10 recovery. The gateway selects a node by its row state, so a
+	// root that resumed for its own reasons does not drive descendants
+	// still running on their pods. When nil, every non-terminal
+	// descendant is treated as recoverable.
 	Recoverable func(sessionstore.Session) bool
 	// LevelTimeout and TreeTimeout are the §8.10
 	// maxLevelRecoverySeconds / maxTreeRecoverySeconds budgets. A
@@ -142,20 +148,23 @@ type Summary struct {
 	Recoverable int
 	// Recovered is the number reattached successfully.
 	Recovered int
-	// Failed is the number marked terminally failed (Recoverable -
-	// Recovered).
+	// Failed is the number not recovered (Recoverable - Recovered). The
+	// terminal marker writes only those still in resume_pending, so a node
+	// that already left resume_pending is counted here without being
+	// marked failed.
 	Failed int
 }
 
 // RecoverTree runs the §8.10 bottom-up recovery for the tree rooted at
 // rootID. It enumerates the tree, selects the orphaned non-terminal
 // descendants, recovers them leaves-first under the level/tree budgets,
-// marks the unrecovered ones terminally failed, and records the §16.1
+// hands each unrecovered node to the terminal marker as the traversal
+// decides it, before the next level starts, and records the §16.1
 // metrics. A tree with no recoverable node is a no-op and emits no
 // metric. The traversal is bounded by the configured budgets, so the
 // call returns within maxTreeRecoverySeconds.
 //
-// spec: §8.10 lines 1014-1027.
+// spec: §8.10.
 func (o *Orchestrator) RecoverTree(ctx context.Context, tenantID, rootID string) (Summary, error) {
 	if o == nil || rootID == "" {
 		return Summary{}, nil
@@ -171,7 +180,6 @@ func (o *Orchestrator) RecoverTree(ctx context.Context, tenantID, rootID string)
 	var pool string
 	byID := make(map[string]sessionstore.Session, len(rows))
 	nodes := make([]recovery.Node, 0, len(rows))
-	now := o.clock()
 	for _, row := range rows {
 		if row.ID == rootID {
 			pool = poolLabel(row)
@@ -184,49 +192,58 @@ func (o *Orchestrator) RecoverTree(ctx context.Context, tenantID, rootID string)
 			continue
 		}
 		byID[row.ID] = row
-		nodes = append(nodes, recovery.Node{
-			SessionID:    row.ID,
-			Depth:        int(row.DelegationDepth),
-			ResumeWindow: remainingResumeWindow(row, now),
-		})
+		nodes = append(nodes, recovery.Node{SessionID: row.ID, Depth: int(row.DelegationDepth)})
 	}
 	if len(nodes) == 0 {
 		return Summary{}, nil
 	}
 
 	start := o.clock()
-	results := recovery.Recover(nodes, func(n recovery.Node) error {
-		return o.reattacher.ReattachNode(ctx, byID[n.SessionID])
+	summary := Summary{Recoverable: len(nodes)}
+	treeTimedOut := false
+	recovery.Recover(ctx, nodes, func(n recovery.Node) {
+		o.reattacher.StartNode(ctx, byID[n.SessionID])
+	}, func(nctx context.Context, n recovery.Node) error {
+		return o.reattacher.ReattachNode(nctx, byID[n.SessionID])
 	}, recovery.Config{
 		LevelTimeout: o.levelTimeout,
 		TreeTimeout:  o.treeTimeout,
 		Now:          o.clock,
+		OnResult: func(res recovery.NodeResult) {
+			if o.settleNode(ctx, pool, byID[res.Node.SessionID], res, &summary) {
+				treeTimedOut = true
+			}
+		},
 	})
-
-	summary := Summary{Recoverable: len(nodes)}
-	treeTimedOut := false
-	for _, res := range results {
-		if res.Outcome == recovery.OutcomeRecovered {
-			summary.Recovered++
-			continue
-		}
-		summary.Failed++
-		row := byID[res.Node.SessionID]
-		o.terminal.FailNode(ctx, row, res.Reason)
-		switch res.Reason {
-		case reasonLevelTimeout:
-			o.incTimeout(pool, "level")
-		case reasonTreeTimeout:
-			treeTimedOut = true
-			o.incTimeout(pool, "tree")
-		}
-	}
 
 	o.observeDuration(pool, outcomeFor(summary, treeTimedOut), o.clock().Sub(start).Seconds())
 	return summary, nil
 }
 
-// outcomeFor maps a pass summary to the §16.1 line 144 outcome label.
+// settleNode accounts one node's result as the traversal decides it: it
+// counts the node in the summary and, for an unrecovered node, calls the
+// terminal marker and increments the §16.1 level or tree timeout counter.
+// It reports whether the node was lost to the tree budget. spec: §8.10.
+func (o *Orchestrator) settleNode(ctx context.Context, pool string, row sessionstore.Session,
+	res recovery.NodeResult, summary *Summary,
+) bool {
+	if res.Outcome == recovery.OutcomeRecovered {
+		summary.Recovered++
+		return false
+	}
+	summary.Failed++
+	o.terminal.FailNode(ctx, row, res.Reason)
+	switch res.Reason {
+	case reasonLevelTimeout:
+		o.incTimeout(pool, "level")
+	case reasonTreeTimeout:
+		o.incTimeout(pool, "tree")
+		return true
+	}
+	return false
+}
+
+// outcomeFor maps a pass summary to the §16.1 outcome label.
 // A tree-budget exhaustion is the strongest signal (total_timeout); any
 // other partial loss is partial_failure; a clean sweep is full_success.
 func outcomeFor(s Summary, treeTimedOut bool) string {
@@ -250,24 +267,6 @@ func poolLabel(root sessionstore.Session) string {
 		return root.Pool
 	}
 	return "unknown"
-}
-
-// remainingResumeWindow is the §8.10 line 1027 per-node
-// maxResumeWindowSeconds budget that runs concurrently with tree
-// recovery: the wall-clock left until the node's ResumeEligibleUntil. A
-// zero or past deadline yields zero, which the traversal reads as "no
-// individual bound" — a node already past its resume window is caught by
-// the level/tree budgets instead (and a node with no recorded window is
-// likewise governed by them).
-func remainingResumeWindow(row sessionstore.Session, now time.Time) time.Duration {
-	if row.ResumeEligibleUntil.IsZero() {
-		return 0
-	}
-	d := row.ResumeEligibleUntil.Sub(now)
-	if d <= 0 {
-		return 0
-	}
-	return d
 }
 
 func (o *Orchestrator) incTimeout(pool, kind string) {

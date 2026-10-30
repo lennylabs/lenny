@@ -14,7 +14,7 @@ import (
 )
 
 // slowAncestorStore satisfies sessionstore.Store but blocks Get on the
-// designated parent id past the caller's deadline so the §11.3 line 211
+// designated parent id past the caller's deadline so the §11.3
 // per-hop forwarding timeout can be exercised deterministically. Other
 // store methods are not used by the elicitation chain walk and panic if
 // reached so a future refactor that depends on them surfaces here.
@@ -46,6 +46,30 @@ func (s *slowAncestorStore) Create(context.Context, sessionstore.Session) error 
 	panic("unused")
 }
 
+func (s *slowAncestorStore) CreateIfGeneration(context.Context, sessionstore.Session, string, string, int64) error {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) Reserve(context.Context, string, string, string, bool) error {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) ReleaseReservation(context.Context, string, string) error {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) ReservedSessionIDs(context.Context, string, string) ([]string, error) {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) CreateReserved(context.Context, sessionstore.Session) error {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) CreateWithTranscript(context.Context, sessionstore.Session, string) error {
+	panic("unused")
+}
+
 func (s *slowAncestorStore) Update(context.Context, string, string, func(*sessionstore.Session) error) (sessionstore.Session, error) {
 	panic("unused")
 }
@@ -66,7 +90,19 @@ func (s *slowAncestorStore) DeleteByTenant(context.Context, string) (int, error)
 	panic("unused")
 }
 
-func (s *slowAncestorStore) GetActiveSlotsByPod(context.Context, string) (int, error) {
+func (s *slowAncestorStore) GetActiveSlotsByPod(context.Context, string) ([]string, error) {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) ListPodsWithActiveSlots(context.Context) ([]string, error) {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) ListStaleTerminalSessions(context.Context, []string, time.Time) ([]string, error) {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) ListAbsentSessions(context.Context, []string) ([]string, error) {
 	panic("unused")
 }
 
@@ -103,12 +139,12 @@ func (s *slowAncestorStore) CountActiveDelegatedChildrenByUser(context.Context, 
 }
 
 // TestElicitationPerHopForwardingTimeoutDefaultConstant_spec_11_3_211
-// pins the §11.3 line 211 / §9.1 line 104 hard-coded 30s default.
+// pins the §11.3 / §9.1 hard-coded 30s default.
 // F-11.3.16: changing the constant requires a spec edit, so guard it
 // with a literal-value assertion at the test layer.
 func TestElicitationPerHopForwardingTimeoutDefaultConstant_spec_11_3_211(t *testing.T) {
 	if ElicitationPerHopForwardingTimeout != 30*time.Second {
-		t.Fatalf("ElicitationPerHopForwardingTimeout = %s, want 30s per §11.3 line 211",
+		t.Fatalf("ElicitationPerHopForwardingTimeout = %s, want 30s per §11.3",
 			ElicitationPerHopForwardingTimeout)
 	}
 }
@@ -182,7 +218,7 @@ func TestBuildHopsFastAncestorLookupSucceeds_spec_11_3_211(t *testing.T) {
 }
 
 // TestEffectivePerHopTimeoutDefaultsToConstant_spec_11_3_211 proves
-// the dispatcher applies the §11.3 line 211 30s default when the test
+// the dispatcher applies the §11.3 30s default when the test
 // override is unset.
 func TestEffectivePerHopTimeoutDefaultsToConstant_spec_11_3_211(t *testing.T) {
 	d := &elicitationDispatcher{}

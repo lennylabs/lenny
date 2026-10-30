@@ -4,8 +4,11 @@ package impersonation_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -13,6 +16,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation/impersonationtest"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+)
+
+const (
+	callAppendStarted = "audit.append:admin.impersonation_started"
+	callAppendEnded   = "audit.append:admin.impersonation_ended"
+	callSign          = "signer.sign"
 )
 
 // recordedAppend is one audit row a fakeAppender captured.
@@ -20,22 +31,25 @@ type recordedAppend struct {
 	tenantID  string
 	eventType string
 	payload   map[string]any
+	at        time.Time
 }
 
-// fakeAppender captures audit writes and can inject a per-call error to
-// exercise the §11.7 CMP-058 fail-closed path.
+// fakeAppender captures audit writes and returns errFor[eventType] when
+// set, which exercises the §11.7 CMP-058 fail-closed path per event.
 type fakeAppender struct {
-	rows []recordedAppend
-	err  error
+	log    *impersonationtest.CallLog
+	rows   []recordedAppend
+	errFor map[string]error
 }
 
-func (a *fakeAppender) Append(_ context.Context, tenantID, eventType string, payload json.RawMessage, _ time.Time) (audit.Row, error) {
-	if a.err != nil {
-		return audit.Row{}, a.err
+func (a *fakeAppender) Append(_ context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
+	a.log.Add("audit.append:" + eventType)
+	if err := a.errFor[eventType]; err != nil {
+		return audit.Row{}, err
 	}
 	var p map[string]any
 	_ = json.Unmarshal(payload, &p)
-	a.rows = append(a.rows, recordedAppend{tenantID: tenantID, eventType: eventType, payload: p})
+	a.rows = append(a.rows, recordedAppend{tenantID: tenantID, eventType: eventType, payload: p, at: at})
 	return audit.Row{ID: "row-" + eventType}, nil
 }
 
@@ -48,15 +62,22 @@ func (a *fakeAppender) byType(t string) (recordedAppend, bool) {
 	return recordedAppend{}, false
 }
 
-// fakeSigner records the claims it signed and returns a fixed token.
+// fakeSigner records the claims it signed and returns a fixed token, or
+// err when set.
 type fakeSigner struct {
+	log    *impersonationtest.CallLog
 	calls  int
 	claims jwt.Claims
+	err    error
 }
 
-func (s *fakeSigner) Sign(c jwt.Claims) (string, error) {
+func (s *fakeSigner) Sign(_ context.Context, c jwt.Claims) (string, error) {
+	s.log.Add(callSign)
 	s.calls++
 	s.claims = c
+	if s.err != nil {
+		return "", s.err
+	}
 	return "signed-token", nil
 }
 
@@ -68,32 +89,46 @@ func (regionUnresolvable) Error() string   { return "platform audit region unres
 func (regionUnresolvable) Code() string    { return "PLATFORM_AUDIT_REGION_UNRESOLVABLE" }
 func (regionUnresolvable) HTTPStatus() int { return 422 }
 
-func newService(t *testing.T, app *fakeAppender, signer *fakeSigner, clock func() time.Time) *impersonation.Service {
+// harness bundles a Service with its fakes and one shared call log.
+type harness struct {
+	log    *impersonationtest.CallLog
+	tokens *impersonationtest.IssuedTokens
+	cache  *impersonationtest.RevocationCache
+	reads  *impersonationtest.CrossTenantReads
+	app    *fakeAppender
+	signer *fakeSigner
+	svc    *impersonation.Service
+}
+
+func newHarness(t *testing.T, clock func() time.Time, maxDuration time.Duration) *harness {
 	t.Helper()
+	log := &impersonationtest.CallLog{}
+	h := &harness{
+		log:    log,
+		tokens: &impersonationtest.IssuedTokens{Log: log},
+		cache:  &impersonationtest.RevocationCache{Log: log},
+		reads:  &impersonationtest.CrossTenantReads{Log: log},
+		app:    &fakeAppender{log: log},
+		signer: &fakeSigner{log: log},
+	}
 	ids := 0
-	return impersonation.New(impersonation.NewMemStore(), app, signer, impersonation.Config{
+	h.svc = impersonation.New(h.tokens, h.cache, h.reads, h.app, h.signer, impersonation.Config{
 		PlatformTenantID: "platform",
-		MaxDuration:      time.Hour,
+		MaxDuration:      maxDuration,
 		Issuer:           "https://lenny.test",
 		Audience:         []string{"lenny-gateway"},
 		Clock:            clock,
 		NewID:            func() string { ids++; return "imp-" + string(rune('0'+ids)) },
 	})
+	return h
 }
 
 func fixedClock(at time.Time) func() time.Time { return func() time.Time { return at } }
 
-// TestIssue_EmitsStartedAndMints_spec_16_7 covers the happy path: a
-// confirmed issue writes admin.impersonation_started under the platform
-// tenant carrying target_tenant_id, mints the bearer, and records the
-// session.
-func TestIssue_EmitsStartedAndMints_spec_16_7(t *testing.T) {
-	app := &fakeAppender{}
-	signer := &fakeSigner{}
-	at := time.Unix(1700000000, 0).UTC()
-	svc := newService(t, app, signer, fixedClock(at))
+var t0 = time.Unix(1700000000, 0).UTC()
 
-	ticket, bearer, err := svc.Issue(context.Background(), impersonation.IssueRequest{
+func issueReq() impersonation.IssueRequest {
+	return impersonation.IssueRequest{
 		AdminSub:       "admin@acme.com",
 		TargetTenantID: "acme",
 		TargetUserID:   "alice@acme.com",
@@ -101,197 +136,457 @@ func TestIssue_EmitsStartedAndMints_spec_16_7(t *testing.T) {
 		TicketRef:      "SUP-42",
 		Duration:       30 * time.Minute,
 		TargetRoles:    []auth.Role{auth.RoleUser},
-	})
+		CallerTenantID: "platform",
+		CallerJTI:      "caller-jti",
+	}
+}
+
+// TestIssue_RecordsImpersonationRowAfterStartedAndSign_spec_13_3 covers
+// the rule 1 happy path: the caller check reads the caller's bearer in the
+// caller's tenant, then the started event, the sign, and the record run in
+// that order, and the recorded row carries the session jti, the target,
+// act_sub set to the admin, no parent, the bearer hash, and the exp the
+// started event's time fixes.
+//
+// spec: 13.3 (Credential Flow: Platform-admin impersonation), 16.7 (Section 25 audit events)
+func TestIssue_RecordsImpersonationRowAfterStartedAndSign_spec_13_3(t *testing.T) {
+	// The clock advances on every read, so an exp taken from a later
+	// reading than the started event's would differ.
+	now := t0
+	h := newHarness(t, func() time.Time { now = now.Add(time.Second); return now }, time.Hour)
+
+	ticket, bearer, err := h.svc.Issue(context.Background(), issueReq())
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
-	if bearer != "signed-token" || signer.calls != 1 {
-		t.Fatalf("expected one mint, got bearer=%q calls=%d", bearer, signer.calls)
+	if bearer != "signed-token" || h.signer.calls != 1 {
+		t.Fatalf("expected one mint, got bearer=%q calls=%d", bearer, h.signer.calls)
 	}
-	row, ok := app.byType("admin.impersonation_started")
-	if !ok {
-		t.Fatalf("admin.impersonation_started not emitted")
+	wantOrder := []string{impersonationtest.CallGet, callAppendStarted, callSign, impersonationtest.CallRecord}
+	if got := h.log.Entries(); !reflect.DeepEqual(got, wantOrder) {
+		t.Fatalf("call order = %v, want %v", got, wantOrder)
 	}
-	if row.tenantID != "platform" {
-		t.Fatalf("started event tenant = %q, want platform", row.tenantID)
+	if got := h.tokens.Gets(); len(got) != 1 || got[0] != [2]string{"platform", "caller-jti"} {
+		t.Fatalf("caller check read %v, want the caller's tenant and jti", got)
 	}
-	// §11.7 CMP-058 routing keys on a top-level target_tenant_id field.
-	if row.payload["target_tenant_id"] != "acme" {
-		t.Fatalf("started payload target_tenant_id = %v, want acme", row.payload["target_tenant_id"])
+	recs := h.tokens.Records()
+	if len(recs) != 1 || recs[0].CallerTenantID != "platform" {
+		t.Fatalf("RecordImpersonation calls = %+v, want one with the caller's tenant", recs)
 	}
-	for _, f := range []string{"admin_sub", "admin_tenant_id", "target_user_id", "impersonation_reason", "impersonation_duration_seconds", "ticket_id"} {
-		if _, present := row.payload[f]; !present {
-			t.Fatalf("started payload missing §16.7 field %q: %v", f, row.payload)
+	row := recs[0].Token
+	sum := sha256.Sum256([]byte("signed-token"))
+	if row.JTI != ticket.ID || row.TenantID != "acme" || row.Subject != "alice@acme.com" ||
+		row.ActSubject != "admin@acme.com" || row.ParentJTI != "" || string(row.TokenHash) != string(sum[:]) {
+		t.Fatalf("recorded row = %+v", row)
+	}
+	if !row.ExpiresAt.Equal(ticket.IssuedAt.Add(30*time.Minute)) || !row.IssuedAt.Equal(ticket.IssuedAt) {
+		t.Fatalf("row window %s..%s, want issued %s + 30m", row.IssuedAt, row.ExpiresAt, ticket.IssuedAt)
+	}
+	if h.signer.claims.Expiry != row.ExpiresAt.Unix() || h.signer.claims.JWTID != ticket.ID ||
+		h.signer.claims.Typ != auth.TokenUserBearer || h.signer.claims.TenantID != "acme" {
+		t.Fatalf("minted claims = %+v", h.signer.claims)
+	}
+	started, ok := h.app.byType("admin.impersonation_started")
+	if !ok || started.tenantID != "platform" || started.payload["target_tenant_id"] != "acme" ||
+		started.payload["impersonation_session_id"] != ticket.ID || started.payload["ticket_id"] != "SUP-42" {
+		t.Fatalf("started event = %+v", started)
+	}
+}
+
+// TestIssue_RowWindowMatchesBearerWholeSecondClaims_spec_13_3 pins the
+// row to the bearer: with a clock carrying a fractional second, the
+// recorded issued_at and exp equal the minted iat and exp, so the active
+// predicate (revoked_at IS NULL AND exp > now) stops counting the session
+// at the instant every verifier starts refusing the bearer.
+//
+// spec: 13.3 (Credential Flow: Platform-admin impersonation, rule 1 (c); `exp` granularity)
+func TestIssue_RowWindowMatchesBearerWholeSecondClaims_spec_13_3(t *testing.T) {
+	h := newHarness(t, fixedClock(t0.Add(750*time.Millisecond)), time.Hour)
+
+	ticket, _, err := h.svc.Issue(context.Background(), issueReq())
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	recs := h.tokens.Records()
+	if len(recs) != 1 {
+		t.Fatalf("RecordImpersonation calls = %d, want 1", len(recs))
+	}
+	row := recs[0].Token
+	if want := time.Unix(h.signer.claims.Expiry, 0); !row.ExpiresAt.Equal(want) {
+		t.Fatalf("row exp = %s, want the bearer exp %s", row.ExpiresAt, want)
+	}
+	if want := time.Unix(h.signer.claims.IssuedAt, 0); !row.IssuedAt.Equal(want) || !ticket.IssuedAt.Equal(want) {
+		t.Fatalf("row issued_at = %s, ticket issued = %s, want the bearer iat %s", row.IssuedAt, ticket.IssuedAt, want)
+	}
+	if !ticket.ExpiresAt.Equal(row.ExpiresAt) {
+		t.Fatalf("ticket exp = %s, want the row exp %s", ticket.ExpiresAt, row.ExpiresAt)
+	}
+	started, ok := h.app.byType("admin.impersonation_started")
+	if !ok || !started.at.Equal(row.IssuedAt) {
+		t.Fatalf("started event = %+v, want its time at the row issued_at %s", started, row.IssuedAt)
+	}
+}
+
+// TestIssue_FailureStopsLaterSteps_spec_13_3 covers the rule 1 order on
+// each failure: a started-event failure signs and records nothing, a sign
+// failure records nothing, and a record failure returns no bearer.
+//
+// spec: 13.3 (Credential Flow: Platform-admin impersonation), 11.7 (Audit Logging)
+func TestIssue_FailureStopsLaterSteps_spec_13_3(t *testing.T) {
+	t.Run("started append fails closed", func(t *testing.T) {
+		h := newHarness(t, fixedClock(t0), time.Hour)
+		h.app.errFor = map[string]error{"admin.impersonation_started": regionUnresolvable{}}
+		_, bearer, err := h.svc.Issue(context.Background(), issueReq())
+		var unresolvable interface{ Code() string }
+		if !errors.As(err, &unresolvable) || bearer != "" {
+			t.Fatalf("got bearer=%q err=%v, want the CMP-058 error", bearer, err)
 		}
-	}
-	if row.payload["ticket_id"] != "SUP-42" {
-		t.Fatalf("ticket_id = %v, want SUP-42 (external ref)", row.payload["ticket_id"])
-	}
-	// The minted bearer is a user_bearer for the target user, bounded by
-	// the requested duration.
-	if signer.claims.Subject != "alice@acme.com" || signer.claims.TenantID != "acme" {
-		t.Fatalf("minted claims subject/tenant = %q/%q", signer.claims.Subject, signer.claims.TenantID)
-	}
-	if signer.claims.Typ != auth.TokenUserBearer {
-		t.Fatalf("minted typ = %v, want user_bearer", signer.claims.Typ)
-	}
-	if signer.claims.Expiry != at.Add(30*time.Minute).Unix() {
-		t.Fatalf("minted exp = %d, want %d", signer.claims.Expiry, at.Add(30*time.Minute).Unix())
-	}
-	if !ticket.Active() || ticket.ExpiresAt != at.Add(30*time.Minute) {
-		t.Fatalf("unexpected ticket: %+v", ticket)
-	}
-}
-
-// TestIssue_AuditBeforeMint_FailClosed_spec_11_7 covers the §16.7
-// audit-must-be-durable-first contract: when the CMP-058 gate fails the
-// started write closed, NO bearer is minted and NO session is recorded.
-func TestIssue_AuditBeforeMint_FailClosed_spec_11_7(t *testing.T) {
-	app := &fakeAppender{err: regionUnresolvable{}}
-	signer := &fakeSigner{}
-	svc := newService(t, app, signer, fixedClock(time.Unix(1700000000, 0).UTC()))
-
-	_, _, err := svc.Issue(context.Background(), impersonation.IssueRequest{
-		AdminSub: "admin@acme.com", TargetTenantID: "eu-tenant", TargetUserID: "bob@eu", Duration: time.Minute,
+		if h.signer.calls != 0 || len(h.tokens.Records()) != 0 {
+			t.Fatalf("sign calls=%d records=%d, want none", h.signer.calls, len(h.tokens.Records()))
+		}
 	})
-	var unresolvable interface{ Code() string }
-	if !errors.As(err, &unresolvable) || unresolvable.Code() != "PLATFORM_AUDIT_REGION_UNRESOLVABLE" {
-		t.Fatalf("expected CMP-058 fail-closed, got %v", err)
-	}
-	if signer.calls != 0 {
-		t.Fatalf("bearer must not be minted when the started audit fails closed (calls=%d)", signer.calls)
-	}
-	active, _ := svc.ListActive(context.Background())
-	if len(active) != 0 {
-		t.Fatalf("no session must be recorded on fail-closed, got %d", len(active))
-	}
+	t.Run("sign fails", func(t *testing.T) {
+		h := newHarness(t, fixedClock(t0), time.Hour)
+		h.signer.err = errors.New("kms down")
+		if _, bearer, err := h.svc.Issue(context.Background(), issueReq()); err == nil || bearer != "" {
+			t.Fatalf("got bearer=%q err=%v, want error", bearer, err)
+		}
+		if len(h.tokens.Records()) != 0 {
+			t.Fatalf("a sign failure must record no row")
+		}
+	})
+	t.Run("record fails", func(t *testing.T) {
+		h := newHarness(t, fixedClock(t0), time.Hour)
+		h.tokens.RecordErr = errors.New("postgres down")
+		_, bearer, err := h.svc.Issue(context.Background(), issueReq())
+		if err == nil || bearer != "" || errors.Is(err, impersonation.ErrIssuanceRefused) {
+			t.Fatalf("got bearer=%q err=%v, want a non-refusal error and no bearer", bearer, err)
+		}
+	})
+	t.Run("record fence refuses an invalidated user", func(t *testing.T) {
+		h := newHarness(t, fixedClock(t0), time.Hour)
+		h.tokens.RecordErr = &issuedtokenstore.UserInvalidatedError{TenantID: "acme", Subject: "alice@acme.com"}
+		_, bearer, err := h.svc.Issue(context.Background(), issueReq())
+		var inv *issuedtokenstore.UserInvalidatedError
+		if !errors.Is(err, impersonation.ErrIssuanceRefused) || !errors.As(err, &inv) || bearer != "" {
+			t.Fatalf("got bearer=%q err=%v, want ErrIssuanceRefused wrapping UserInvalidatedError", bearer, err)
+		}
+	})
 }
 
-// TestIssue_Validation_spec_13_3 covers the issue input guards.
-func TestIssue_Validation_spec_13_3(t *testing.T) {
-	svc := newService(t, &fakeAppender{}, &fakeSigner{}, fixedClock(time.Unix(1700000000, 0).UTC()))
+// TestIssue_CallerCheckRefusesImpersonationOrRevokedCaller_spec_13_3 covers
+// the rule 1 caller check: a caller bearer that step (1a) would reject as a
+// subject_token is refused before any audit write, sign, or record, while
+// a caller with no row or no jti passes and a read error aborts.
+//
+// spec: 13.3 (Credential Flow: Platform-admin impersonation; Write-before-issue ordering)
+func TestIssue_CallerCheckRefusesImpersonationOrRevokedCaller_spec_13_3(t *testing.T) {
+	impersonationRow := issuedtokenstore.IssuedToken{JTI: "caller-jti", TenantID: "platform", Subject: "admin@acme.com", ActSubject: "root@acme.com", ExpiresAt: t0.Add(time.Hour)}
+	revokedRow := issuedtokenstore.IssuedToken{JTI: "caller-jti", TenantID: "platform", Subject: "admin@acme.com", RevokedAt: t0, ExpiresAt: t0.Add(time.Hour)}
 	cases := []struct {
-		name string
-		req  impersonation.IssueRequest
-		want error
+		name       string
+		row        *issuedtokenstore.IssuedToken
+		getErr     error
+		callerJTI  string
+		wantRefuse bool
+		wantErr    bool
 	}{
-		{"missing admin", impersonation.IssueRequest{TargetTenantID: "acme", TargetUserID: "a", Duration: time.Minute}, impersonation.ErrMissingField},
-		{"missing target tenant", impersonation.IssueRequest{AdminSub: "x", TargetUserID: "a", Duration: time.Minute}, impersonation.ErrMissingField},
-		{"zero duration", impersonation.IssueRequest{AdminSub: "x", TargetTenantID: "acme", TargetUserID: "a", Duration: 0}, impersonation.ErrInvalidDuration},
-		{"over max duration", impersonation.IssueRequest{AdminSub: "x", TargetTenantID: "acme", TargetUserID: "a", Duration: 2 * time.Hour}, impersonation.ErrInvalidDuration},
+		{name: "impersonation caller bearer", row: &impersonationRow, callerJTI: "caller-jti", wantRefuse: true},
+		{name: "revoked caller bearer", row: &revokedRow, callerJTI: "caller-jti", wantRefuse: true},
+		{name: "caller bearer without a row", callerJTI: "caller-jti"},
+		{name: "caller without a jti", callerJTI: ""},
+		{name: "read error", getErr: errors.New("postgres down"), callerJTI: "caller-jti", wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, _, err := svc.Issue(context.Background(), tc.req); !errors.Is(err, tc.want) {
-				t.Fatalf("got %v, want %v", err, tc.want)
+			h := newHarness(t, fixedClock(t0), time.Hour)
+			if tc.row != nil {
+				h.tokens.Put(*tc.row)
+			}
+			h.tokens.GetErr = tc.getErr
+			req := issueReq()
+			req.CallerJTI = tc.callerJTI
+			_, bearer, err := h.svc.Issue(context.Background(), req)
+			if tc.wantRefuse != errors.Is(err, impersonation.ErrIssuanceRefused) {
+				t.Fatalf("err = %v, want refusal=%v", err, tc.wantRefuse)
+			}
+			if tc.wantRefuse || tc.wantErr {
+				if err == nil || bearer != "" || len(h.app.rows) != 0 || h.signer.calls != 0 || len(h.tokens.Records()) != 0 {
+					t.Fatalf("a refused or failed caller check must write nothing: err=%v appends=%d signs=%d records=%d",
+						err, len(h.app.rows), h.signer.calls, len(h.tokens.Records()))
+				}
+				return
+			}
+			if err != nil || bearer == "" {
+				t.Fatalf("got bearer=%q err=%v, want issuance", bearer, err)
+			}
+			if tc.callerJTI == "" && len(h.tokens.Gets()) != 0 {
+				t.Fatalf("a caller without a jti must not be read")
 			}
 		})
 	}
 }
 
-// TestEnd_EmitsEnded_spec_16_7 covers the explicit end: it emits
-// admin.impersonation_ended (reason=explicit) and marks the session.
-func TestEnd_EmitsEnded_spec_16_7(t *testing.T) {
-	app := &fakeAppender{}
-	at := time.Unix(1700000000, 0).UTC()
-	svc := newService(t, app, &fakeSigner{}, fixedClock(at))
-	ticket, _, err := svc.Issue(context.Background(), impersonation.IssueRequest{
-		AdminSub: "admin@acme.com", TargetTenantID: "acme", TargetUserID: "alice@acme.com",
-		Reason: "r", TicketRef: "SUP-1", Duration: 10 * time.Minute,
-	})
+// TestIssue_DurationBoundsAndClamp_spec_15_1 covers the §15.1 range: 59
+// seconds is rejected, 60 is accepted, and 3601 is rejected even when the
+// configured maximum is two hours, because New clamps it to one hour.
+//
+// spec: 15.1 (REST API), 13.3 (Credential Flow: Platform-admin impersonation)
+func TestIssue_DurationBoundsAndClamp_spec_15_1(t *testing.T) {
+	cases := []struct {
+		seconds int
+		wantErr bool
+	}{{59, true}, {60, false}, {3600, false}, {3601, true}}
+	for _, tc := range cases {
+		h := newHarness(t, fixedClock(t0), 2*time.Hour)
+		req := issueReq()
+		req.Duration = time.Duration(tc.seconds) * time.Second
+		_, _, err := h.svc.Issue(context.Background(), req)
+		if tc.wantErr != errors.Is(err, impersonation.ErrInvalidDuration) {
+			t.Fatalf("durationSeconds %d: err = %v, want invalid=%v", tc.seconds, err, tc.wantErr)
+		}
+	}
+}
+
+// TestIssue_Validation_spec_13_3 covers the required-field guards.
+//
+// spec: 13.3 (Credential Flow: Platform-admin impersonation)
+func TestIssue_Validation_spec_13_3(t *testing.T) {
+	h := newHarness(t, fixedClock(t0), time.Hour)
+	for name, mutate := range map[string]func(*impersonation.IssueRequest){
+		"missing admin":         func(r *impersonation.IssueRequest) { r.AdminSub = "" },
+		"missing target tenant": func(r *impersonation.IssueRequest) { r.TargetTenantID = "" },
+		"missing target user":   func(r *impersonation.IssueRequest) { r.TargetUserID = "" },
+		"missing caller tenant": func(r *impersonation.IssueRequest) { r.CallerTenantID = "" },
+	} {
+		req := issueReq()
+		mutate(&req)
+		if _, _, err := h.svc.Issue(context.Background(), req); !errors.Is(err, impersonation.ErrMissingField) {
+			t.Fatalf("%s: got %v, want ErrMissingField", name, err)
+		}
+	}
+}
+
+// issueOne establishes a session through the service and resets the log.
+func issueOne(t *testing.T, h *harness) impersonation.Ticket {
+	t.Helper()
+	ticket, _, err := h.svc.Issue(context.Background(), issueReq())
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
-	ended, err := svc.End(context.Background(), ticket.ID, "admin2@acme.com")
+	*h.log = impersonationtest.CallLog{}
+	h.app.rows = nil
+	return ticket
+}
+
+// TestEnd_RevokesThenCachesThenAuditsThenEmits_spec_13_3 covers the rule 3
+// order and the §16.7 ended payload: the store end, the cache push, the
+// ended append, and cross_tenant_read run in that order, and the payload
+// has exactly the §16.7 fields with no ticket_id or end_reason.
+//
+// spec: 13.3 (Credential Flow: Platform-admin impersonation), 16.7 (Section 25 audit events), 12.3 (Postgres HA Requirements)
+func TestEnd_RevokesThenCachesThenAuditsThenEmits_spec_13_3(t *testing.T) {
+	h := newHarness(t, fixedClock(t0), time.Hour)
+	ticket := issueOne(t, h)
+
+	res, err := h.svc.End(context.Background(), ticket.ID, "admin2@acme.com")
 	if err != nil {
 		t.Fatalf("End: %v", err)
 	}
-	if ended.Active() || ended.EndReason != impersonation.EndReasonExplicit || ended.EndedBy != "admin2@acme.com" {
-		t.Fatalf("unexpected ended ticket: %+v", ended)
+	if res.SessionID != ticket.ID || !res.EndedAt.Equal(t0) {
+		t.Fatalf("EndResult = %+v", res)
 	}
-	row, ok := app.byType("admin.impersonation_ended")
-	if !ok {
-		t.Fatalf("admin.impersonation_ended not emitted")
+	want := []string{impersonationtest.CallEnd, impersonationtest.CallRevoke, callAppendEnded, impersonationtest.CallEmit}
+	if got := h.log.Entries(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("call order = %v, want %v", got, want)
 	}
-	if row.tenantID != "platform" || row.payload["target_tenant_id"] != "acme" {
-		t.Fatalf("ended event mis-routed: tenant=%q target=%v", row.tenantID, row.payload["target_tenant_id"])
+	if got := h.cache.Revoked(); !reflect.DeepEqual(got, []string{ticket.ID}) {
+		t.Fatalf("cache pushes = %v", got)
 	}
-	if row.payload["end_reason"] != "explicit" {
-		t.Fatalf("end_reason = %v, want explicit", row.payload["end_reason"])
+	ended, _ := h.app.byType("admin.impersonation_ended")
+	keys := make([]string, 0, len(ended.payload))
+	for k := range ended.payload {
+		keys = append(keys, k)
 	}
-	// A second end is rejected — the audit pair never duplicates.
-	if _, err := svc.End(context.Background(), ticket.ID, "x"); !errors.Is(err, impersonation.ErrAlreadyEnded) {
-		t.Fatalf("double-end got %v, want ErrAlreadyEnded", err)
+	sort.Strings(keys)
+	wantKeys := []string{"admin_sub", "admin_tenant_id", "ended_at", "ended_by", "impersonation_session_id", "started_at", "target_tenant_id", "target_user_id"}
+	if !reflect.DeepEqual(keys, wantKeys) {
+		t.Fatalf("ended payload fields = %v, want %v", keys, wantKeys)
+	}
+	if ended.tenantID != "platform" || ended.payload["admin_sub"] != "admin@acme.com" ||
+		ended.payload["target_tenant_id"] != "acme" || ended.payload["ended_by"] != "admin2@acme.com" {
+		t.Fatalf("ended event = %+v", ended)
+	}
+	ev := h.reads.Events()
+	if len(ev) != 1 || ev[0].Category != "impersonation_session" || ev[0].RowCount != 1 ||
+		ev[0].Endpoint != "DELETE /v1/admin/impersonation/{id}" || ev[0].CallerSubject != "admin2@acme.com" {
+		t.Fatalf("cross_tenant_read events = %+v", ev)
 	}
 }
 
-// TestEnd_NotFound_spec_13_3 covers ending an unknown session.
-func TestEnd_NotFound_spec_13_3(t *testing.T) {
-	svc := newService(t, &fakeAppender{}, &fakeSigner{}, fixedClock(time.Unix(1700000000, 0).UTC()))
-	if _, err := svc.End(context.Background(), "nope", "x"); !errors.Is(err, impersonation.ErrNotFound) {
-		t.Fatalf("got %v, want ErrNotFound", err)
-	}
-}
-
-// TestSweepExpired_EndsExpiredOnly_spec_16_7 covers the expiry sweep:
-// only sessions at/past their bearer expiry are ended, each emitting
-// admin.impersonation_ended (reason=expired).
-func TestSweepExpired_EndsExpiredOnly_spec_16_7(t *testing.T) {
-	app := &fakeAppender{}
-	at := time.Unix(1700000000, 0).UTC()
-	clk := at
-	svc := newService(t, app, &fakeSigner{}, func() time.Time { return clk })
-
-	short, _, _ := svc.Issue(context.Background(), impersonation.IssueRequest{
-		AdminSub: "admin", TargetTenantID: "acme", TargetUserID: "a", Reason: "r", TicketRef: "T1", Duration: 1 * time.Minute,
-	})
-	_, _, _ = svc.Issue(context.Background(), impersonation.IssueRequest{
-		AdminSub: "admin", TargetTenantID: "acme", TargetUserID: "b", Reason: "r", TicketRef: "T2", Duration: 30 * time.Minute,
-	})
-
-	// Advance past the short session's expiry but not the long one's.
-	n, err := svc.SweepExpired(context.Background(), at.Add(5*time.Minute))
-	if err != nil {
-		t.Fatalf("SweepExpired: %v", err)
-	}
-	if n != 1 {
-		t.Fatalf("swept %d, want 1", n)
-	}
-	active, _ := svc.ListActive(context.Background())
-	if len(active) != 1 || active[0].TargetUserID != "b" {
-		t.Fatalf("expected only the long session active, got %+v", active)
-	}
-	// The expired session's ended event is reason=expired, ended_by=system.
-	var expiredEnd bool
-	for _, r := range app.rows {
-		if r.eventType == "admin.impersonation_ended" && r.payload["impersonation_session_id"] == short.ID {
-			expiredEnd = r.payload["end_reason"] == "expired" && r.payload["ended_by"] == "system"
+// TestEnd_AppendAndEmitFailuresAreIndependent_spec_13_3 covers rules 3 and
+// 7: an ended-append failure after the revoke still pushes the cache and
+// emits cross_tenant_read and returns the append error, and a
+// cross_tenant_read failure never suppresses the ended event.
+//
+// spec: 13.3 (Credential Flow: Platform-admin impersonation), 11.7 (Audit Logging)
+func TestEnd_AppendAndEmitFailuresAreIndependent_spec_13_3(t *testing.T) {
+	t.Run("ended append fails", func(t *testing.T) {
+		h := newHarness(t, fixedClock(t0), time.Hour)
+		ticket := issueOne(t, h)
+		h.app.errFor = map[string]error{"admin.impersonation_ended": regionUnresolvable{}}
+		res, err := h.svc.End(context.Background(), ticket.ID, "admin@acme.com")
+		var unresolvable interface{ Code() string }
+		if !errors.As(err, &unresolvable) || res.SessionID != ticket.ID {
+			t.Fatalf("got res=%+v err=%v, want the append error with the result", res, err)
 		}
+		if len(h.cache.Revoked()) != 1 || len(h.reads.Events()) != 1 {
+			t.Fatalf("cache=%v emits=%d, want the cache push and the emit", h.cache.Revoked(), len(h.reads.Events()))
+		}
+		if row, _ := h.tokens.Row(ticket.ID); row.RevokedAt.IsZero() {
+			t.Fatalf("the bearer must stay revoked after an ended-append failure")
+		}
+	})
+	t.Run("cross_tenant_read fails", func(t *testing.T) {
+		h := newHarness(t, fixedClock(t0), time.Hour)
+		ticket := issueOne(t, h)
+		emitErr := errors.New("audit chain down")
+		h.reads.Err = emitErr
+		_, err := h.svc.End(context.Background(), ticket.ID, "admin@acme.com")
+		if !errors.Is(err, emitErr) {
+			t.Fatalf("err = %v, want the emit error", err)
+		}
+		if _, ok := h.app.byType("admin.impersonation_ended"); !ok {
+			t.Fatalf("a cross_tenant_read failure must not suppress the ended event")
+		}
+	})
+}
+
+// TestEnd_MissesEmitZeroRowRead_spec_13_3 covers the rule 3 misses: an
+// unknown id returns ErrNotFound, a revoked or expired row returns
+// ErrAlreadyEnded with the state recoverable, each emits cross_tenant_read
+// with a row count of zero, and none pushes the cache or writes the ended
+// event.
+//
+// spec: 13.3 (Credential Flow: Platform-admin impersonation), 15.1 (REST API), 12.3 (Postgres HA Requirements)
+func TestEnd_MissesEmitZeroRowRead_spec_13_3(t *testing.T) {
+	clock := t0
+	h := newHarness(t, func() time.Time { return clock }, time.Hour)
+	ended := issueOne(t, h)
+	if _, err := h.svc.End(context.Background(), ended.ID, "x"); err != nil {
+		t.Fatalf("first End: %v", err)
 	}
-	if !expiredEnd {
-		t.Fatalf("expired session must end with reason=expired ended_by=system")
+	expiring := issueOne(t, h)
+	clock = t0.Add(2 * time.Hour)
+
+	cases := []struct {
+		name      string
+		id        string
+		wantState string
+	}{
+		{"unknown id", "imp-missing", ""},
+		{"revoked", ended.ID, issuedtokenstore.StateRevoked},
+		{"expired", expiring.ID, issuedtokenstore.StateExpired},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			*h.log = impersonationtest.CallLog{}
+			before := len(h.reads.Events())
+			cachedBefore := len(h.cache.Revoked())
+			h.app.rows = nil
+			_, err := h.svc.End(context.Background(), tc.id, "admin@acme.com")
+			if tc.wantState == "" {
+				if !errors.Is(err, impersonation.ErrNotFound) {
+					t.Fatalf("err = %v, want ErrNotFound", err)
+				}
+			} else {
+				var na *issuedtokenstore.NotActiveError
+				if !errors.Is(err, impersonation.ErrAlreadyEnded) || !errors.As(err, &na) || na.State != tc.wantState {
+					t.Fatalf("err = %v, want ErrAlreadyEnded with state %q", err, tc.wantState)
+				}
+			}
+			ev := h.reads.Events()
+			if len(ev) != before+1 || ev[len(ev)-1].RowCount != 0 {
+				t.Fatalf("want one cross_tenant_read with RowCount 0, got %+v", ev[before:])
+			}
+			if len(h.cache.Revoked()) != cachedBefore || len(h.app.rows) != 0 {
+				t.Fatalf("a miss must not push the cache or append the ended event")
+			}
+		})
 	}
 }
 
-// TestSweepExpired_FailClosedRetries_spec_11_7 covers that a CMP-058
-// fail-closed on the ended write leaves the expired session due for the
-// next sweep rather than silently dropping the terminal record.
-func TestSweepExpired_FailClosedRetries_spec_11_7(t *testing.T) {
-	app := &fakeAppender{}
-	at := time.Unix(1700000000, 0).UTC()
-	svc := newService(t, app, &fakeSigner{}, fixedClock(at))
-	_, _, _ = svc.Issue(context.Background(), impersonation.IssueRequest{
-		AdminSub: "admin", TargetTenantID: "acme", TargetUserID: "a", Reason: "r", TicketRef: "T1", Duration: 1 * time.Minute,
-	})
-	app.err = regionUnresolvable{} // ended write now fails closed
-	if n, _ := svc.SweepExpired(context.Background(), at.Add(5*time.Minute)); n != 0 {
-		t.Fatalf("fail-closed sweep ended %d, want 0", n)
+// TestEnd_StoreErrorReturned_spec_13_3 covers a store failure on the end:
+// the error is returned and nothing is pushed or appended.
+//
+// spec: 13.3 (Credential Flow: Platform-admin impersonation)
+func TestEnd_StoreErrorReturned_spec_13_3(t *testing.T) {
+	h := newHarness(t, fixedClock(t0), time.Hour)
+	storeErr := errors.New("postgres down")
+	h.tokens.EndErr = storeErr
+	if _, err := h.svc.End(context.Background(), "imp-1", "x"); !errors.Is(err, storeErr) {
+		t.Fatalf("err = %v, want the store error", err)
 	}
-	if active, _ := svc.ListActive(context.Background()); len(active) != 1 {
-		t.Fatalf("session must remain due for retry, got %d active", len(active))
+	if len(h.cache.Revoked()) != 0 || len(h.app.rows) != 0 {
+		t.Fatalf("a store failure must not push the cache or append")
 	}
-	app.err = nil // the next sweep succeeds
-	if n, _ := svc.SweepExpired(context.Background(), at.Add(6*time.Minute)); n != 1 {
-		t.Fatalf("retry sweep ended %d, want 1", n)
+}
+
+// TestListActive_EmitsBeforeReading_spec_13_3 covers rule 7 for the
+// listing: cross_tenant_read is emitted before the store is read, an emit
+// failure returns no list without reading, and the sessions carry the
+// issued_tokens fields.
+//
+// spec: 13.3 (Credential Flow: Platform-admin impersonation), 12.3 (Postgres HA Requirements), 15.1 (REST API)
+func TestListActive_EmitsBeforeReading_spec_13_3(t *testing.T) {
+	h := newHarness(t, fixedClock(t0), time.Hour)
+	ticket := issueOne(t, h)
+
+	sessions, err := h.svc.ListActive(context.Background(), "admin@acme.com")
+	if err != nil {
+		t.Fatalf("ListActive: %v", err)
 	}
+	if got := h.log.Entries(); !reflect.DeepEqual(got, []string{impersonationtest.CallEmit, impersonationtest.CallList}) {
+		t.Fatalf("call order = %v, want emit then list", got)
+	}
+	want := impersonation.Session{
+		ID: ticket.ID, AdminSub: "admin@acme.com", TargetTenantID: "acme", TargetUserID: "alice@acme.com",
+		IssuedAt: ticket.IssuedAt, ExpiresAt: ticket.ExpiresAt,
+	}
+	if len(sessions) != 1 || sessions[0] != want {
+		t.Fatalf("sessions = %+v, want %+v", sessions, want)
+	}
+	ev := h.reads.Events()
+	if len(ev) != 1 || ev[0].Endpoint != "GET /v1/admin/impersonation" || ev[0].CallerSubject != "admin@acme.com" {
+		t.Fatalf("cross_tenant_read = %+v", ev)
+	}
+
+	*h.log = impersonationtest.CallLog{}
+	h.reads.Err = errors.New("audit chain down")
+	if sessions, err := h.svc.ListActive(context.Background(), "admin@acme.com"); err == nil || sessions != nil {
+		t.Fatalf("got %v, %v; want no list on an emit failure", sessions, err)
+	}
+	if got := h.log.Entries(); !reflect.DeepEqual(got, []string{impersonationtest.CallEmit}) {
+		t.Fatalf("the store must not be read after an emit failure, calls = %v", got)
+	}
+
+	h.reads.Err = nil
+	h.tokens.ListErr = errors.New("postgres down")
+	if _, err := h.svc.ListActive(context.Background(), "admin@acme.com"); err == nil {
+		t.Fatalf("want the store error")
+	}
+}
+
+// TestNew_PanicsOnMissingCollaborator_spec_13_3 covers the wiring guard:
+// a missing collaborator is a wiring error.
+//
+// spec: 13.3 (Credential Flow: Platform-admin impersonation)
+func TestNew_PanicsOnMissingCollaborator_spec_13_3(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatalf("New with a nil collaborator must panic")
+		}
+	}()
+	impersonation.New(nil, &impersonationtest.RevocationCache{}, &impersonationtest.CrossTenantReads{}, &fakeAppender{}, &fakeSigner{},
+		impersonation.Config{NewID: func() string { return "x" }})
 }

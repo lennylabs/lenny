@@ -34,7 +34,7 @@ Similar to A2A — the IETF Agent Protocol working group's surface is not yet st
 
 ### Pluggable storage backends
 
-§12.2.1 names MemoryStore + SemanticCache as pluggable in v1, but the rest of the stores (SessionStore, etc.) are Postgres-only. The Store interfaces are designed so v2 can swap backends without rewriting the test surface.
+TESTING.md §12.2.1 names MemoryStore + SemanticCache as pluggable in v1, but the rest of the stores (SessionStore, etc.) are Postgres-only. The Store interfaces are designed so v2 can swap backends without rewriting the test surface.
 
 ### Future scaling interfaces
 

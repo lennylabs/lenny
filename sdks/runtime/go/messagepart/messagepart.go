@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: MIT
 
-// Package messagepart converts MCP content blocks to the §15.4.1
+// Package messagepart converts MCP content blocks to the §28.5.3
 // MessagePart array, so a runtime author who produces output using
 // MCP-familiar content block objects does not have to perform the
 // field mapping by hand.
 //
-// The spec (§15.4.1, "Optional SDK helper from_mcp_content") names this
+// The spec (§28.5.3, "Optional SDK helper from_mcp_content") names this
 // sub-package and the FromMCPContent entry point as the Go home of the
-// helper. The conversion follows the §15.4.1 "MCP content block →
+// helper. The conversion follows the §28.5.3 "MCP content block →
 // MessagePart mapping (inbound translation)" table.
 package messagepart
 
 import "github.com/lennylabs/lenny/sdks/runtime/go/runtime"
 
 // MCPContent is one MCP content block. The fields are the union across
-// the §15.4.1 inbound-translation table; an absent field is the zero
+// the §28.5.3 inbound-translation table; an absent field is the zero
 // value. Resource holds the EmbeddedResource sub-object.
 type MCPContent struct {
 	// Type is the MCP block type: text, image, or resource.
@@ -46,7 +46,7 @@ type MCPResource struct {
 	Blob     string `json:"blob,omitempty"`
 }
 
-// FromMCPContent converts a slice of MCP content blocks to a §15.4.1
+// FromMCPContent converts a slice of MCP content blocks to a §28.5.3
 // MessagePart array, applying the inbound-translation mapping: a
 // TextContent block becomes a text part, an ImageContent block becomes
 // an image part (inline base64 or a ref for the URL form), and an
@@ -96,7 +96,7 @@ func fromBlock(b MCPContent) runtime.MessagePart {
 		}
 	default:
 		// Unknown block types collapse to text with the original block
-		// type preserved, matching the §15.4.1 custom-type fallback.
+		// type preserved, matching the §28.5.3 custom-type fallback.
 		p.Type = "text"
 		p.MimeType = "text/plain"
 		p.Inline = b.Text

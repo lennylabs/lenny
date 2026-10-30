@@ -51,7 +51,7 @@ func (h *echoHandler) OnMessage(ctx context.Context, m Message) (Reply, error) {
 	return Reply{Parts: parts, Final: true}, nil
 }
 
-func (h *echoHandler) OnTerminate(_ context.Context, r TerminationReason) error {
+func (h *echoHandler) OnTerminate(_ context.Context, _ string, r TerminationReason) error {
 	h.mu.Lock()
 	h.terminated++
 	h.lastTermin = r
@@ -124,20 +124,29 @@ func TestRunNilHandler(t *testing.T) {
 	}
 }
 
-// TestMessageRoundTrip confirms a message frame produces a response
-// frame carrying the echoed parts (§15.4.1 message/response).
+// spec: 28.5.3 (CH-MSGSOCK, Inbound: session_start, Outbound:
+// session_started), 15.7 (Runtime Author SDKs)
+//
+// A message frame for an open session produces a response frame
+// carrying the echoed parts, after the session_started that answers the
+// session's session_start. OnCreate and OnTerminate each run once for the
+// session.
 func TestMessageRoundTrip(t *testing.T) {
 	h := &echoHandler{}
 	frames := runSDK(t, h, []string{
-		`{"type":"message","id":"msg_1","input":[{"type":"text","inline":"ping"}]}`,
+		startFrame("sess_a", "st_1"),
+		msgFrame("sess_a", "msg_1", "ping"),
 	})
-	if len(frames) != 1 {
-		t.Fatalf("got %d frames, want 1", len(frames))
+	if len(frames) != 2 {
+		t.Fatalf("got %d frames, want session_started and response: %v", len(frames), frames)
 	}
-	if frames[0]["type"] != "response" {
-		t.Fatalf("frame type = %v, want response", frames[0]["type"])
+	if frames[0]["type"] != "session_started" || frames[0]["sessionId"] != "sess_a" || frames[0]["startId"] != "st_1" {
+		t.Fatalf("first frame = %v, want session_started for sess_a / st_1", frames[0])
 	}
-	out, _ := frames[0]["output"].([]any)
+	if frames[1]["type"] != "response" || frames[1]["sessionId"] != "sess_a" {
+		t.Fatalf("second frame = %v, want the session's response", frames[1])
+	}
+	out, _ := frames[1]["output"].([]any)
 	if len(out) != 1 {
 		t.Fatalf("output has %d parts, want 1", len(out))
 	}
@@ -145,7 +154,7 @@ func TestMessageRoundTrip(t *testing.T) {
 	if part["inline"] != "ping" {
 		t.Fatalf("echoed inline = %v, want ping", part["inline"])
 	}
-	// §15.4.1 producer obligation: schemaVersion is stamped.
+	// §28.5.3 producer obligation: schemaVersion is stamped.
 	if part["schemaVersion"] != float64(1) {
 		t.Fatalf("schemaVersion = %v, want 1", part["schemaVersion"])
 	}
@@ -158,7 +167,7 @@ func TestMessageRoundTrip(t *testing.T) {
 }
 
 // TestHeartbeatAck confirms a heartbeat frame is answered with a
-// heartbeat_ack within the loop (§15.4.1 heartbeat).
+// heartbeat_ack within the loop (§28.5.3 heartbeat).
 func TestHeartbeatAck(t *testing.T) {
 	frames := runSDK(t, &echoHandler{}, []string{`{"type":"heartbeat","ts":1717430400}`})
 	if len(frames) != 1 || frames[0]["type"] != "heartbeat_ack" {
@@ -167,7 +176,7 @@ func TestHeartbeatAck(t *testing.T) {
 }
 
 // TestUnknownTypeIgnored confirms an unknown frame type is dropped and
-// the loop keeps running (§15.4.1 forward compatibility).
+// the loop keeps running (§28.5.3 forward compatibility).
 func TestUnknownTypeIgnored(t *testing.T) {
 	frames := runSDK(t, &echoHandler{}, []string{
 		`{"type":"some_future_frame","x":1}`,
@@ -178,69 +187,71 @@ func TestUnknownTypeIgnored(t *testing.T) {
 	}
 }
 
-// TestShutdownInvokesTerminate confirms a shutdown frame ends the loop
-// and OnTerminate sees the shutdown reason (§15.4.1 shutdown).
+// spec: 28.5.3 (CH-MSGSOCK, shutdown), 15.7 (Runtime Author SDKs)
+//
+// A shutdown frame ends the loop and every open session's OnTerminate
+// sees the shutdown reason. A process that holds no session runs no
+// OnTerminate.
 func TestShutdownInvokesTerminate(t *testing.T) {
 	h := &echoHandler{}
-	runSDK(t, h, []string{`{"type":"shutdown","reason":"drain","deadline_ms":5000}`})
+	runSDK(t, h, []string{startFrame("sess_a", "st_1"), `{"type":"shutdown","reason":"drain","deadline_ms":5000}`})
 	if h.terminated != 1 {
 		t.Fatalf("OnTerminate called %d times, want 1", h.terminated)
 	}
 	if h.lastTermin.Reason != "drain" || h.lastTermin.DeadlineMS != 5000 {
 		t.Fatalf("termination reason = %+v, want {drain 5000}", h.lastTermin)
 	}
+
+	idle := &echoHandler{}
+	runSDK(t, idle, []string{`{"type":"shutdown","reason":"drain","deadline_ms":5000}`})
+	if idle.terminated != 0 || idle.created != 0 {
+		t.Fatalf("a process holding no session ran OnCreate %d and OnTerminate %d times, want 0 and 0", idle.created, idle.terminated)
+	}
 }
 
-// TestSequentialMessages confirms multiple messages each produce a
-// response, the SDK assigns increasing sequence numbers, and OnCreate is
-// invoked once for the whole session regardless of message count. The
-// session has exactly one execution, so the SDK does not re-invoke
-// OnCreate between messages.
-// spec: §15.7 (single OnCreate per session), §7.2 (one execution per session)
+// spec: 15.7 (Runtime Author SDKs), 28.5.3 (CH-MSGSOCK)
+//
+// Multiple messages for one session each produce a response, the SDK
+// assigns the session increasing sequence numbers starting at 1, and
+// OnCreate runs once for the session regardless of message count.
 func TestSequentialMessages(t *testing.T) {
 	var seqs []uint64
 	h := &echoHandler{onMessageFn: func(_ context.Context, m Message) {
 		seqs = append(seqs, m.Sequence)
 	}}
 	frames := runSDK(t, h, []string{
-		`{"type":"message","id":"m1","input":[{"type":"text","inline":"one"}]}`,
-		`{"type":"message","id":"m2","input":[{"type":"text","inline":"two"}]}`,
-		`{"type":"message","id":"m3","input":[{"type":"text","inline":"three"}]}`,
+		startFrame("sess_a", "st_1"),
+		msgFrame("sess_a", "m1", "one"),
+		msgFrame("sess_a", "m2", "two"),
+		msgFrame("sess_a", "m3", "three"),
 	})
-	if len(frames) != 3 {
-		t.Fatalf("got %d response frames, want 3", len(frames))
+	if len(frames) != 4 {
+		t.Fatalf("got %d frames, want session_started and three responses", len(frames))
 	}
-	if len(seqs) != 3 || seqs[0] == 0 {
-		t.Fatalf("sequence numbers = %v, want three increasing non-zero values", seqs)
+	if len(seqs) != 3 || seqs[0] != 1 || seqs[1] != 2 || seqs[2] != 3 {
+		t.Fatalf("sequence numbers = %v, want [1 2 3]", seqs)
 	}
-	for i := 1; i < len(seqs); i++ {
-		if seqs[i] <= seqs[i-1] {
-			t.Fatalf("sequence not increasing: %v", seqs)
-		}
-	}
-	// §7.2: the session has one execution, so OnCreate fires once for
-	// the whole session regardless of how many messages arrive.
 	if h.created != 1 {
 		t.Fatalf("OnCreate called %d times across three messages, want 1", h.created)
 	}
 }
 
 // TestHandlerErrorReportedAsResponseError confirms an OnMessage error
-// becomes a structured response error (§15.4.1 error via response).
+// becomes a structured response error (§28.5.3 error via response).
 func TestHandlerErrorReportedAsResponseError(t *testing.T) {
 	h := &echoHandler{replyErr: errors.New("boom")}
 	frames := runSDK(t, h, []string{
-		`{"type":"message","id":"m1","input":[{"type":"text","inline":"x"}]}`,
+		startFrame("sess_a", "st_1"),
+		msgFrame("sess_a", "m1", "x"),
 	})
-	if len(frames) != 1 {
-		t.Fatalf("got %d frames, want 1", len(frames))
+	if len(frames) != 2 {
+		t.Fatalf("got %d frames, want 2", len(frames))
 	}
-	errObj, ok := frames[0]["error"].(map[string]any)
-	if !ok {
-		t.Fatalf("response carries no error object: %v", frames[0])
+	if code := errorCode(frames[1]); code != "RUNTIME_ERROR" {
+		t.Fatalf("error code = %q, want RUNTIME_ERROR (frame %v)", code, frames[1])
 	}
-	if errObj["code"] != "RUNTIME_ERROR" {
-		t.Fatalf("error code = %v, want RUNTIME_ERROR", errObj["code"])
+	if frames[1]["sessionId"] != "sess_a" {
+		t.Fatalf("error response sessionId = %v, want sess_a", frames[1]["sessionId"])
 	}
 }
 
@@ -278,23 +289,24 @@ func TestShorthandPartsAreCanonical(t *testing.T) {
 		return []MessagePart{Text("hello")}
 	}}
 	frames := runSDK(t, h, []string{
-		`{"type":"message","id":"m1","input":[{"type":"text","inline":"x"}]}`,
+		startFrame("sess_a", "st_1"),
+		msgFrame("sess_a", "m1", "x"),
 	})
-	out := frames[0]["output"].([]any)
+	out := frames[1]["output"].([]any)
 	part := out[0].(map[string]any)
 	if part["type"] != "text" || part["inline"] != "hello" {
 		t.Fatalf("text part = %v, want {text hello}", part)
 	}
 }
 
-// TestMessageEnvelopeAnnotationsRoundTrip asserts the §15.4.1 wire
-// MessageEnvelope carries the §15.5 line 2461 degradation-annotation
+// TestMessageEnvelopeAnnotationsRoundTrip asserts the §28.5.3 wire
+// MessageEnvelope carries the §15.5 degradation-annotation
 // map verbatim. A runtime author reading
 // `env.Annotations[degradation.AnnotationSchemaVersionAhead]` must
 // see the producer's `{knownVersion, encounteredVersion}` body without
 // custom decoding.
 //
-// spec: §15.5 line 2461. F-15.5.5.
+// spec: §15.5. F-15.5.5.
 func TestMessageEnvelopeAnnotationsRoundTrip_spec_15_5_2461(t *testing.T) {
 	wire := []byte(`{
 		"type": "message",
@@ -310,7 +322,7 @@ func TestMessageEnvelopeAnnotationsRoundTrip_spec_15_5_2461(t *testing.T) {
 		t.Fatalf("decodeMessage: %v", err)
 	}
 	if env.Annotations == nil {
-		t.Fatal("Annotations is nil; spec §15.5 line 2461 catalog dropped")
+		t.Fatal("Annotations is nil; spec §15.5 catalog dropped")
 	}
 	body, ok := env.Annotations["schema_version_ahead"].(map[string]any)
 	if !ok {
@@ -339,8 +351,8 @@ func TestMessageEnvelopeAnnotationsRoundTrip_spec_15_5_2461(t *testing.T) {
 // catalog is opt-in: an unannotated envelope must not appear with an
 // empty `annotations: {}` object.
 //
-// spec: §15.4.1 / §15.5 line 2461. F-15.5.5.
-func TestMessageEnvelopeAnnotationsOmitEmpty_spec_15_4_1(t *testing.T) {
+// spec: §28.5.3 / §15.5. F-15.5.5.
+func TestMessageEnvelopeAnnotationsOmitEmpty_spec_15_5(t *testing.T) {
 	env := MessageEnvelope{Type: "message", ID: "m1"}
 	out, err := json.Marshal(env)
 	if err != nil {
@@ -348,5 +360,55 @@ func TestMessageEnvelopeAnnotationsOmitEmpty_spec_15_4_1(t *testing.T) {
 	}
 	if strings.Contains(string(out), "annotations") {
 		t.Errorf("annotations rendered when empty: %s", out)
+	}
+}
+
+// spec: 15.7 (Runtime Author SDKs), 28.5.3 (CH-MSGSOCK, shutdown), 4.7.10
+// (Runtime process lifetime)
+//
+// A shutdown frame drains every live session as EOF does: each session
+// dispatches the messages it queued, including one queued behind a
+// handler still running when the frame arrived, before its OnTerminate,
+// which receives the shutdown frame's reason, and Run returns only after
+// every session's release.
+func TestShutdownDrainsEverySessionWithItsReason(t *testing.T) {
+	g := newGate()
+	h := &recorder{messageGate: func(_ context.Context, m Message) {
+		if m.Envelope.ID == "a1" {
+			g.wait("a1")
+		}
+	}}
+	l := startLiveSDK(t, h)
+	for _, id := range []string{"sess_a", "sess_b"} {
+		l.send(startFrame(id, "st_"+id))
+		_ = l.next(3 * time.Second)
+	}
+	l.send(msgFrame("sess_a", "a1", "a"))
+	g.awaitEntry(t)
+	l.send(msgFrame("sess_a", "a2", "a"))
+	l.send(`{"type":"shutdown","reason":"drain","deadline_ms":5000}`)
+	select {
+	case <-l.done:
+		t.Fatal("Run returned while a session handler was still running")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(g.release)
+	var answered []string
+	for f := range l.frames {
+		if f["type"] == "response" {
+			answered = append(answered, firstOutput(f))
+		}
+	}
+	<-l.done
+	if l.err != nil {
+		t.Fatalf("Run returned %v", l.err)
+	}
+	if len(answered) != 2 {
+		t.Fatalf("responses after shutdown = %v, want the answers to a1 and a2", answered)
+	}
+	for _, id := range []string{"sess_a", "sess_b"} {
+		if r := h.terminations(id); len(r) != 1 || r[0].Reason != "drain" {
+			t.Fatalf("%s terminations = %+v, want one carrying the shutdown reason", id, r)
+		}
 	}
 }

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// spec: §12.8 lines 810-827; §16.5 line 467 — a deployment with no
+// spec: §12.8; §16.5 — a deployment with no
 // redaction-marked orphans reports nothing, so the periodic check never
 // touches lenny_audit_redaction_receipt_missing_total. F-11.7.15.
 func TestCheckRedactionReceiptsClean(t *testing.T) {
@@ -21,7 +21,7 @@ func TestCheckRedactionReceiptsClean(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 810 — a redaction-marked row without a
+// spec: §12.8 — a redaction-marked row without a
 // signature-verifying receipt is a compliance incident. The detector
 // returns the per-tenant orphan count, sorted by tenant, dropping any
 // zero count the aggregate query might surface. F-11.7.15.
@@ -48,7 +48,7 @@ func TestCheckRedactionReceiptsOrphans(t *testing.T) {
 	}
 }
 
-// spec: §11.7 line 370 — a scan error (for example the
+// spec: §11.7 — a scan error (for example the
 // audit_redaction_receipts relation absent on a partial migration) is
 // surfaced to the caller, which treats it as a non-fatal skipped cycle
 // rather than drift. F-11.7.15.
@@ -60,7 +60,7 @@ func TestCheckRedactionReceiptsQueryError(t *testing.T) {
 	}
 }
 
-// spec: §16.5 line 467 — the periodic check turns each orphaned-redaction
+// spec: §16.5 — the periodic check turns each orphaned-redaction
 // tenant into one OnRedactionReceiptMissing call carrying the count, the
 // gateway adapter for lenny_audit_redaction_receipt_missing_total. An
 // orphaned redaction is a compliance page, not a chain-tamper hard-fail,
@@ -87,7 +87,7 @@ func TestPeriodicCheckRedactionReceiptMissing(t *testing.T) {
 	}
 }
 
-// spec: §11.7 line 370 — a clean redaction scan fires no observer, so the
+// spec: §11.7 — a clean redaction scan fires no observer, so the
 // receipt-missing series stays at its steady-state zero. F-11.7.15.
 func TestPeriodicCheckRedactionReceiptClean(t *testing.T) {
 	fired := false

@@ -15,8 +15,8 @@ import (
 // counters; the EventBuffer maintains the buffer gauge and query
 // counters. All methods are nil-safe so an emitter or buffer wired
 // without metrics is a no-op.
-// spec: §25.3 lines 705-710 (emission) / lines 766-772 (buffer);
-// §16.8 line 702.
+// spec: §25.3;
+// §16.8.
 type Metrics struct {
 	emitted    *prometheus.CounterVec
 	emitFailed *prometheus.CounterVec
@@ -26,7 +26,7 @@ type Metrics struct {
 }
 
 // NewMetrics registers the §25.3 event metrics against reg and returns
-// the emitter. spec: §25.3 lines 705-710, 766-772.
+// the emitter. spec: §25.3.
 func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 	emitted, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_ops_events_emitted_total",
@@ -79,7 +79,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 }
 
 // IncEmitted increments lenny_ops_events_emitted_total for the event's
-// type. spec: §25.3 line 709.
+// type. spec: §25.3.
 func (m *Metrics) IncEmitted(eventType string) {
 	if m == nil {
 		return
@@ -88,7 +88,7 @@ func (m *Metrics) IncEmitted(eventType string) {
 }
 
 // IncEmitFailed increments lenny_ops_events_emit_failed_total for the
-// event's type. spec: §25.3 lines 703, 710.
+// event's type. spec: §25.3.
 func (m *Metrics) IncEmitFailed(eventType string) {
 	if m == nil {
 		return
@@ -96,8 +96,7 @@ func (m *Metrics) IncEmitFailed(eventType string) {
 	m.emitFailed.WithLabelValues(shortType(eventType)).Inc()
 }
 
-// SetBufferLength sets lenny_events_buffer_length to n. spec: §25.3
-// line 770.
+// SetBufferLength sets lenny_events_buffer_length to n. spec: §25.3.
 func (m *Metrics) SetBufferLength(n int) {
 	if m == nil {
 		return
@@ -105,8 +104,7 @@ func (m *Metrics) SetBufferLength(n int) {
 	m.bufferLen.Set(float64(n))
 }
 
-// IncQuery increments lenny_events_buffer_queries_total. spec: §25.3
-// line 771.
+// IncQuery increments lenny_events_buffer_queries_total. spec: §25.3.
 func (m *Metrics) IncQuery() {
 	if m == nil {
 		return
@@ -114,8 +112,7 @@ func (m *Metrics) IncQuery() {
 	m.queries.Inc()
 }
 
-// IncGap increments lenny_events_buffer_gaps_total. spec: §25.3
-// line 772.
+// IncGap increments lenny_events_buffer_gaps_total. spec: §25.3.
 func (m *Metrics) IncGap() {
 	if m == nil {
 		return

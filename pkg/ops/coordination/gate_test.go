@@ -13,7 +13,7 @@ type fakeReplicas int
 
 func (f fakeReplicas) ReplicaCount() int { return int(f) }
 
-// spec: §25.4 line 2212 — the empty string and "single-replica-only"
+// spec: §25.4 — the empty string and "single-replica-only"
 // both resolve to the default; "always" and "never" are honored; a typo
 // is rejected so the binary can fail fast.
 func TestParseMemoryTier(t *testing.T) {
@@ -37,7 +37,7 @@ func TestParseMemoryTier(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2206-2212 — the single-replica-only default grants a
+// spec: §25.4 — the single-replica-only default grants a
 // Tier-3 acquire only when the deployment is a single replica.
 func TestGateSingleReplicaOnly(t *testing.T) {
 	t.Run("single replica grants without warning", func(t *testing.T) {
@@ -60,7 +60,7 @@ func TestGateSingleReplicaOnly(t *testing.T) {
 	})
 }
 
-// spec: §25.4 line 2215 — "always" grants every acquire but attaches a
+// spec: §25.4 — "always" grants every acquire but attaches a
 // replica-local warning, regardless of replica count.
 func TestGateAlwaysGrantsWithWarning(t *testing.T) {
 	for _, replicas := range []fakeReplicas{1, 5} {
@@ -75,7 +75,7 @@ func TestGateAlwaysGrantsWithWarning(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2210 — "never" disables Tier 3, rejecting every
+// spec: §25.4 — "never" disables Tier 3, rejecting every
 // acquire even on a single replica.
 func TestGateNeverRejects(t *testing.T) {
 	g := coordination.NewCoordinationGate(coordination.MemoryTierNever, fakeReplicas(1))

@@ -7,11 +7,11 @@ import (
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1alpha1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // runtimeApplyImage is the digest-pinned reference a runtime reaching
@@ -43,13 +43,22 @@ const runtimeApplyImage = "ghcr.io/acme/my-agent@sha256:" +
 // Sandbox controller resolves by name), §5.2 (ResolvePool lists the applied
 // SandboxWarmPool), §4.6.2 (direct pool materialization).
 func TestApplyRuntimeSetFromConfigMaterializesRuntimeAndPool_spec_17_4(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
 
 	// The agent namespace the verb materializes the pool CRDs into must exist
-	// first, exactly as the bring-up creates it before placement.
+	// first, exactly as the bring-up creates it before placement. The verb
+	// fixes the namespace, so this test owns the Runtime and pool pair it
+	// names there on the package's shared control plane.
 	const ns = "lenny-agents"
+	poolName := stack.RuntimePoolName("my-agent")
+	claimFixedObjects(
+		t, cfg,
+		&lennyv1alpha1.Runtime{ObjectMeta: metav1.ObjectMeta{Name: "my-agent"}},
+		&lennyv1alpha1.SandboxTemplate{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: poolName}},
+		&lennyv1alpha1.SandboxWarmPool{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: poolName}},
+	)
 	if err := stack.EnsureAgentNamespaceFromConfigForTest(ctx, cfg, ns); err != nil {
 		t.Fatalf("ensure agent namespace: %v", err)
 	}
@@ -59,6 +68,9 @@ func TestApplyRuntimeSetFromConfigMaterializesRuntimeAndPool_spec_17_4(t *testin
 	rt.Spec.Image = runtimeApplyImage
 	rt.Spec.IntegrationLevel = "basic"
 	rt.Spec.DeploymentModel = "sidecar"
+	// spec: §5.1 (command) — the Runtime CRD requires command on a sidecar
+	// agent runtime, which runtimeCRFromFile defaults this one to.
+	rt.Spec.Command = []string{"/usr/local/bin/my-agent"}
 
 	if err := stack.ApplyRuntimeSetFromConfig(ctx, cfg, rt); err != nil {
 		t.Fatalf("ApplyRuntimeSetFromConfig: %v", err)
@@ -82,7 +94,6 @@ func TestApplyRuntimeSetFromConfigMaterializesRuntimeAndPool_spec_17_4(t *testin
 
 	// The pool pair is named for the runtime and lands in the agent namespace,
 	// so the WarmPoolController reconciles it independently of any other pool.
-	poolName := stack.RuntimePoolName("my-agent")
 	var tmpl lennyv1alpha1.SandboxTemplate
 	if err := cl.Get(ctx, ctrlclient.ObjectKey{Namespace: ns, Name: poolName}, &tmpl); err != nil {
 		t.Fatalf("get SandboxTemplate after apply: %v", err)
@@ -134,13 +145,19 @@ func TestApplyRuntimeSetFromConfigMaterializesRuntimeAndPool_spec_17_4(t *testin
 //
 // spec: §5.3 (digest-pinned image references enforced at the API server).
 func TestApplyRuntimeSetFromConfigRejectsTagOnlyImage_spec_5_3(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	ctx := context.Background()
 	cfg := env.RESTConfig()
+
+	// The rejected Runtime's cluster-scoped name belongs to this test on the
+	// shared control plane, so the NotFound assertion below sees only this
+	// test's apply.
+	claimFixedObjects(t, cfg, &lennyv1alpha1.Runtime{ObjectMeta: metav1.ObjectMeta{Name: "tag-agent"}})
 
 	rt := &lennyv1alpha1.Runtime{}
 	rt.Name = "tag-agent"
 	rt.Spec.Image = "ghcr.io/acme/my-agent:dev"
+	rt.Spec.Command = []string{"/usr/local/bin/my-agent"}
 
 	err := stack.ApplyRuntimeSetFromConfig(ctx, cfg, rt)
 	if err == nil {

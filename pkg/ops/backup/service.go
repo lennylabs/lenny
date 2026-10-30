@@ -60,7 +60,7 @@ const (
 	// failure, Postgres unavailability mid-reconcile, enumeration error,
 	// or the legal-hold ledger freshness gate blocking replay). The
 	// restore is aborted without a gateway restart and the restore:platform
-	// lock is retained. spec: §25.11 line 4147, line 4334.
+	// lock is retained. spec: §25.11.
 	ErrCodeRestoreErasureReconcile = "RESTORE_ERASURE_RECONCILE_FAILED"
 	// ErrCodeBackupRegionUnresolvable is the §25.11 / §12.8 fail-closed
 	// backup abort (PERMANENT, HTTP 422): a Postgres shard resolved to a
@@ -70,12 +70,11 @@ const (
 	// control for the backup pipeline; the aborted backup row is marked
 	// failed and a DataResidencyViolationAttempt audit event is emitted
 	// (operation: backup, counter lenny_data_residency_violation_total).
-	// There is no silent fallback to a default backup bucket. spec: §25.11
-	// line 4336, §12.8 line 936.
+	// There is no silent fallback to a default backup bucket. spec: §25.11, §12.8.
 	ErrCodeBackupRegionUnresolvable = "BACKUP_REGION_UNRESOLVABLE"
 )
 
-// §25.11 restore_failed failure_phase values (line 4147): the phase a
+// §25.11 restore_failed failure_phase values: the phase a
 // restore failed in, carried on the restore.failed audit event.
 const (
 	// FailurePhaseRestore is a per-shard pg_restore failure.
@@ -85,13 +84,13 @@ const (
 	FailurePhaseErasureReconcile = "erasure_reconcile"
 )
 
-// BlockReasonLedgerStale is the §25.11 line 4147 restore.failed
+// BlockReasonLedgerStale is the §25.11 restore.failed
 // block_reason carried when the erasure-reconcile failure was the
 // legal-hold ledger freshness gate firing (ledger restored in lockstep,
 // most recent write timestamp <= backupTakenAt).
 const BlockReasonLedgerStale = "legal_hold_ledger_stale"
 
-// ReconcileMetrics receives the §25.11 line 4320
+// ReconcileMetrics receives the §25.11
 // lenny_backup_reconcile_blocked_total{reason} increment when the
 // post-restore GDPR erasure reconciler blocks replay. A nil sink drops
 // the metric (the gdpr.backup_reconcile_blocked audit event still fires
@@ -168,7 +167,7 @@ type Backup struct {
 // BackupComponent is one element of a backup: the §25.11 Response Types
 // BackupComponent. In the §12.8 per-region dispatch path, one component
 // is recorded per region covered (Name is the region) so verification,
-// retention, and restore all operate per-region. spec: §25.11 line 4004.
+// retention, and restore all operate per-region. spec: §25.11.
 type BackupComponent struct {
 	Name      string `json:"name"`
 	Status    string `json:"status"`
@@ -179,7 +178,7 @@ type BackupComponent struct {
 	Region string `json:"region,omitempty"`
 	// JobID is the Kubernetes Job that dumped this region, set only on the
 	// per-region dispatch path so the reconciler can track each region's
-	// Job independently. spec: §12.8 line 935.
+	// Job independently. spec: §12.8.
 	JobID string `json:"jobId,omitempty"`
 }
 
@@ -364,7 +363,7 @@ type RestoreState struct {
 	// JobID is the §25.11 restore Kubernetes Job the orchestrator launched.
 	// It is recorded so the restore-completion reconciler can poll the Job
 	// to completion and drive steps 5-8 (events, GDPR erasure reconciler,
-	// gateway restart, lock release). spec: §25.11 line 4145.
+	// gateway restart, lock release). spec: §25.11.
 	JobID string `json:"jobId,omitempty"`
 
 	// LedgerConfirmedAt is the §12.8 post-restore reconciler ledger

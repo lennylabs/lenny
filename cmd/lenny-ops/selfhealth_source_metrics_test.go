@@ -8,7 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-// spec: §25.4 lines 2491-2497 — the self-health source gauges report the
+// spec: §25.4 — the self-health source gauges report the
 // raw inputs behind the self-health statuses. sampleSelfHealthSourceGauges
 // sets the redis-consumer-lag and webhook-backlog gauges from the supplied
 // functions; a nil function reports 0 (no source wired) rather than
@@ -33,7 +33,7 @@ func TestSampleSelfHealthSourceGauges_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2491-2497 — a nil lag/backlog function (no source
+// spec: §25.4 — a nil lag/backlog function (no source
 // wired) reports 0 rather than panicking, matching the redis-lag
 // self-health check's nil-lag treatment.
 func TestSampleSelfHealthSourceGauges_NilSources_spec_25_4(t *testing.T) {

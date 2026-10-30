@@ -54,14 +54,14 @@ func TestClassifyPoolBottleneck(t *testing.T) {
 			ok:   true,
 		},
 		{
-			// spec: §25.6 line 2865 — SETUP_FAILURE bottleneck category.
+			// spec: §25.6 — SETUP_FAILURE bottleneck category.
 			name:    "setup failure_spec_25_6_2865",
 			signals: diagnostics.PoolSignals{SetupFailures: 2},
 			want:    diagnostics.BottleneckSetupFailure,
 			ok:      true,
 		},
 		{
-			// spec: §25.6 line 2865 — CRD_SYNC_LAG bottleneck category.
+			// spec: §25.6 — CRD_SYNC_LAG bottleneck category.
 			name:    "crd sync lag_spec_25_6_2865",
 			signals: diagnostics.PoolSignals{CRDSyncLag: true},
 			want:    diagnostics.BottleneckCRDSyncLag,

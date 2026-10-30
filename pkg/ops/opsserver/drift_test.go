@@ -51,8 +51,7 @@ func TestDriftReportReturnsDrift(t *testing.T) {
 	}
 }
 
-// TestDriftReportStoreDownReturns503_spec_25_10_3866 pins the §25.10
-// line 3866 503 path: a SnapshotStore.Get error (Postgres down)
+// TestDriftReportStoreDownReturns503_spec_25_10_3866 pins the §25.10 503 path: a SnapshotStore.Get error (Postgres down)
 // surfaces as DRIFT_DESIRED_STATE_MISSING with HTTP 503, distinct from
 // the cold-start 404 path. F-25.10.10.
 func TestDriftReportStoreDownReturns503_spec_25_10_3866(t *testing.T) {
@@ -60,12 +59,12 @@ func TestDriftReportStoreDownReturns503_spec_25_10_3866(t *testing.T) {
 	srv := opsserver.New(opsserver.Options{Drift: svc})
 	rec, _ := doJSON(t, srv, http.MethodGet, "/v1/admin/drift", nil, nil)
 	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503 (§25.10 line 3866 store-down)", rec.Code)
+		t.Fatalf("status = %d, want 503 (§25.10 store-down)", rec.Code)
 	}
 }
 
 // failingStore is a SnapshotStore that always returns an error — used to
-// pin the §25.10 line 3866 Postgres-down case at the HTTP layer.
+// pin the §25.10 Postgres-down case at the HTTP layer.
 type failingStore struct{}
 
 func (failingStore) Get(context.Context, string) (driftservice.Snapshot, bool, error) {
@@ -221,8 +220,7 @@ func TestDriftUnavailableWithoutService(t *testing.T) {
 	}
 }
 
-// TestDriftReportColdStartReturns404_spec_25_10_3866 pins the §25.10
-// line 3866 table: with no snapshot in the store and no caller-supplied
+// TestDriftReportColdStartReturns404_spec_25_10_3866 pins the §25.10 table: with no snapshot in the store and no caller-supplied
 // body, the §25.10 cold-start case returns 404 rather than the 503
 // "Postgres down" path. F-25.10.10.
 func TestDriftReportColdStartReturns404_spec_25_10_3866(t *testing.T) {
@@ -231,7 +229,7 @@ func TestDriftReportColdStartReturns404_spec_25_10_3866(t *testing.T) {
 	srv := opsserver.New(opsserver.Options{Drift: svc})
 	rec, body := doJSON(t, srv, http.MethodGet, "/v1/admin/drift", nil, nil)
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404 (§25.10 line 3866 cold-start); body=%v", rec.Code, body)
+		t.Fatalf("status = %d, want 404 (§25.10 cold-start); body=%v", rec.Code, body)
 	}
 	errObj, _ := body["error"].(map[string]any)
 	if errObj["code"] != "DRIFT_DESIRED_STATE_MISSING" {
@@ -240,7 +238,7 @@ func TestDriftReportColdStartReturns404_spec_25_10_3866(t *testing.T) {
 }
 
 // TestDriftValidateColdStartReturns404_spec_25_10_3866 pins the same
-// §25.10 line 3866 contract for the validate endpoint. F-25.10.10.
+// §25.10 contract for the validate endpoint. F-25.10.10.
 func TestDriftValidateColdStartReturns404_spec_25_10_3866(t *testing.T) {
 	svc := driftservice.NewService(driftservice.NewMemSnapshotStore(),
 		fixedRunning{state: map[string]any{}})
@@ -275,7 +273,7 @@ func TestDriftValidateAcceptsStoredBody_spec_25_10_3782(t *testing.T) {
 }
 
 // TestDriftSnapshotRefreshExposesByteSize_spec_25_10_3871 pins the
-// §25.10 line 3871 drift.snapshot_refreshed audit-event detail: the
+// §25.10 drift.snapshot_refreshed audit-event detail: the
 // HTTP response (which the audit emitter consumes verbatim) carries
 // byteSize. F-25.10.8.
 func TestDriftSnapshotRefreshExposesByteSize_spec_25_10_3871(t *testing.T) {
@@ -293,8 +291,7 @@ func TestDriftSnapshotRefreshExposesByteSize_spec_25_10_3871(t *testing.T) {
 	}
 }
 
-// TestDriftReportFreshBypassesCache_spec_25_10_3762 pins the §25.10
-// line 3762 ?fresh=true contract: the HTTP layer parses the parameter
+// TestDriftReportFreshBypassesCache_spec_25_10_3762 pins the §25.10 ?fresh=true contract: the HTTP layer parses the parameter
 // and threads Fresh=true into the service so the running-state cache is
 // bypassed. F-25.10.7.
 func TestDriftReportFreshBypassesCache_spec_25_10_3762(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 )
 
 // tree fixture: root → mid → leaf, plus a sibling of mid under root.
-// All rows share root_session_id == "root". spec: §8.9 line 1010.
+// All rows share root_session_id == "root". spec: §8.9.
 func visTree() (root, mid, leaf, sib sessionstore.Session, all []sessionstore.Session) {
 	root = sessionstore.Session{ID: "root", RootSessionID: "root"}
 	mid = sessionstore.Session{ID: "mid", ParentSessionID: "root", RootSessionID: "root"}
@@ -61,7 +61,7 @@ func TestVisibleTreeParentAndSelf_spec_8_5_540(t *testing.T) {
 }
 
 // TestVisibleTreeParentAndSelfAtRoot_spec_8_3_315 — at the tree root
-// (no parent) parent-and-self degenerates to self-only. spec: §8.3 line 315.
+// (no parent) parent-and-self degenerates to self-only. spec: §8.3.
 func TestVisibleTreeParentAndSelfAtRoot_spec_8_3_315(t *testing.T) {
 	root, _, _, _, all := visTree()
 	got, allowed := sessionstore.VisibleTree(root, all, session.VisibilityParentAndSelf)

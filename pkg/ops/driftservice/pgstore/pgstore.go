@@ -12,7 +12,7 @@
 // run inside a tenant-scoped transaction and the table carries no RLS
 // policy and no tenant column.
 //
-// spec: §25.10 lines 3811-3820.
+// spec: §25.10.
 package pgstore
 
 import (
@@ -39,7 +39,7 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 // Get returns the bootstrap_seed_snapshot row of the given id ("live" or
 // "target"). ok is false when no such row exists (the §25.10 cold-start
 // condition). A transport error is returned so the caller surfaces the
-// §25.10 line 3866 503 Postgres-down case.
+// §25.10 503 Postgres-down case.
 func (s *Store) Get(ctx context.Context, id string) (driftservice.Snapshot, bool, error) {
 	var (
 		snap    driftservice.Snapshot
@@ -94,8 +94,7 @@ func (s *Store) Put(ctx context.Context, snap driftservice.Snapshot) error {
 	return err
 }
 
-// Delete removes the bootstrap_seed_snapshot row of the given id. §25.8
-// line 3551 deletes the target row on rollback; a DELETE that matches
+// Delete removes the bootstrap_seed_snapshot row of the given id. §25.8 deletes the target row on rollback; a DELETE that matches
 // zero rows (rollback during Preflight, when no target was written) is
 // not an error.
 func (s *Store) Delete(ctx context.Context, id string) error {
@@ -104,7 +103,7 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 }
 
 // PromoteTargetToLive atomically promotes the target row into the live
-// row at §25.10 Verification-phase completion (spec line 3789). The whole
+// row at §25.10 Verification-phase completion. The whole
 // swap runs in one transaction so a concurrent GET reads either the old
 // live row or the new one, never a torn state: the live row's desired
 // state, source, upgrade id, and provenance are replaced from the target
@@ -112,8 +111,7 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 // live row untouched (the UPDATE matches zero rows) and is not an error,
 // so a defensive double-promote is harmless.
 //
-// spec: §25.10 line 3789 (target → live promotion at Verification
-// completion).
+// spec: §25.10.
 func (s *Store) PromoteTargetToLive(ctx context.Context, _ string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

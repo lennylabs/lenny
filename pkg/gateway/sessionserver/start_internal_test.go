@@ -31,7 +31,7 @@ func TestExperimentContextToProtoMapsFields(t *testing.T) {
 	}
 }
 
-// spec: §6.4 line 260 / §26.2 reference catalog — F-7.5.12.
+// spec: §6.4 / §26.2 reference catalog — F-7.5.12.
 // runtimeSetupPolicy applies the 300s aggregate-cap default when the
 // runtime declares no setupPolicy block.
 func TestRuntimeSetupPolicyDefaults300sWhenUnset(t *testing.T) {
@@ -72,7 +72,7 @@ func TestRuntimeSetupPolicyHonorsExplicitTimeout(t *testing.T) {
 // runtimeSetupPolicy plumbs setupCommandPolicy.shell onto the adapter
 // SetupPolicy.shell field so argv-mode can be selected per-runtime. The
 // default (no policy declared) keeps shell=true (legacy behaviour). spec:
-// §7.5 line 490 — F-7.5.2.
+// §7.5 — F-7.5.2.
 func TestRuntimeSetupPolicyShellFromSetupCommandPolicy(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{

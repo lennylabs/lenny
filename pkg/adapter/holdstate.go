@@ -17,12 +17,12 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// defaultCoordinatorHoldTimeout is the §10.1 line 50
+// defaultCoordinatorHoldTimeout is the §10.1.4
 // coordinatorHoldTimeoutSeconds default: the window the adapter holds a
 // session after losing its coordinator before it self-terminates.
 const defaultCoordinatorHoldTimeout = 120 * time.Second
 
-// reasonCoordinatorLost is the §10.1 line 50 AdapterTerminating /
+// reasonCoordinatorLost is the §10.1.4 AdapterTerminating /
 // session.terminated reason the adapter reports when the hold times out
 // without a new coordinator.
 const reasonCoordinatorLost = "coordinator_lost"
@@ -35,40 +35,38 @@ const reasonCoordinatorLost = "coordinator_lost"
 // coordinator fences within coordinatorHoldTimeoutSeconds the adapter
 // self-terminates the session.
 //
-// spec: §10.1 lines 47-52.
+// spec: §10.1.
 type holdState struct {
-	mu      sync.Mutex
-	active  bool
-	timer   expiryTimerHandle
-	session string
-	gen     int64
+	mu     sync.Mutex
+	active bool
+	timer  TimerHandle
 }
 
-// coordinatorHoldAllowedMethods is the §10.1 line 49 allowlist: the only
+// coordinatorHoldAllowedMethods is the §10.1.4 allowlist: the only
 // inbound gRPC methods the adapter still serves while in hold state. A
 // new coordinator negotiates, opens the control stream, and fences;
 // health probes keep the pod live. Every other RPC is rejected with the
 // coordinator_hold detail until the fence lands.
 //
-// spec: §10.1 line 49.
+// spec: §10.1.
 var coordinatorHoldAllowedMethods = map[string]bool{
 	"/lenny.adapter.v1.Adapter/CoordinatorFence": true,
 	"/lenny.adapter.v1.Adapter/NegotiateVersion": true,
-	"/lenny.adapter.v1.Adapter/LifecycleChannel": true,
+	"/lenny.adapter.v1.Adapter/AdapterEvents":    true,
 	"/grpc.health.v1.Health/Check":               true,
 	"/grpc.health.v1.Health/Watch":               true,
 }
 
 // holdAfter schedules f to run after d through the injected test seam
 // when set and time.AfterFunc otherwise.
-func (s *Server) holdAfter(d time.Duration, f func()) expiryTimerHandle {
+func (s *Server) holdAfter(d time.Duration, f func()) TimerHandle {
 	if s.HoldAfterFunc != nil {
 		return s.HoldAfterFunc(d, f)
 	}
 	return time.AfterFunc(d, f)
 }
 
-// coordinatorHoldTimeout returns the configured §10.1 line 50 hold
+// coordinatorHoldTimeout returns the configured §10.1.4 hold
 // timeout, or the 120s spec default.
 func (s *Server) coordinatorHoldTimeout() time.Duration {
 	if s.CoordinatorHoldTimeout > 0 {
@@ -78,34 +76,49 @@ func (s *Server) coordinatorHoldTimeout() time.Duration {
 }
 
 // onCoordinatorChannelClosed is invoked when the gateway control stream
-// (LifecycleChannel) ends. When the pod still holds an active session the
+// (AdapterEvents) ends. When the pod still holds an active session the
 // closed stream is the §10.1 coordinator-loss signal: the coordinating
 // gateway replica crashed or partitioned (the gRPC keepalive at
-// 10s/5s — §11.3 lines 205-206 — surfaces the dead connection within one
+// 10s/5s — §11.3 — surfaces the dead connection within one
 // interval plus one timeout), so the adapter enters hold state and waits
 // coordinatorHoldTimeoutSeconds for a new coordinator to fence. A closed
 // stream on an idle pod, or one whose session a clean teardown already
 // released, is not a loss.
 //
-// spec: §10.1 lines 47-52.
+// spec: §10.1.
 func (s *Server) onCoordinatorChannelClosed() {
-	session := s.currentSession()
-	if session == "" {
+	// spec: §10.1 — the hold arms on the sessions the adapter has
+	// started on this pod, read from the slot registry. Every session is
+	// bound to a slot on every pod, so a pod-global session field would
+	// name no session on a pod whose sessions all take the slot path and
+	// the hold would never arm.
+	if !s.hasStartedSession() {
 		return
 	}
-	s.enterHoldState(session)
+	s.enterHoldState()
 }
 
-// enterHoldState arms the §10.1 hold for session: it raises the
-// coordinator-hold gauge, logs coordinator_connection_lost with the last
-// known generation, and starts the hold-timeout timer. It is idempotent —
-// a second close while already held is a no-op.
+// enterHoldState arms the §10.1 hold: it raises the coordinator-hold
+// gauge, logs coordinator_connection_lost with the number of sessions the
+// pod has started, and starts the hold-timeout timer. It is idempotent — a
+// second close while already held is a no-op.
 //
-// spec: §10.1 lines 47-52.
-func (s *Server) enterHoldState(session string) {
-	// Read the generation through the accessor (which takes coord.mu)
-	// before locking hold.mu so the two locks are never held together.
-	gen := s.LastFencedGeneration()
+// The hold names no session. Its unit is the pod, and the set it
+// terminates is read from the slot registry when the timeout fires rather
+// than recorded here, because a session admitted between this arming and
+// the timeout starts after the read and would be missing from a recorded
+// set while still running when the timeout fires.
+//
+// The arming line carries no coordination generation. The pod records one
+// generation per bound session, so no single value describes a pod-scoped
+// event; each terminated session's own value is reported on its
+// coordinator_lost record instead. spec: §10.1.2; §10.1.4.
+//
+// spec: §10.1.
+func (s *Server) enterHoldState() {
+	// Read the started-session count through its accessor (which takes
+	// s.mu) before locking hold.mu so no two locks are ever held together.
+	started := s.startedSessionCount()
 
 	s.hold.mu.Lock()
 	defer s.hold.mu.Unlock()
@@ -113,12 +126,9 @@ func (s *Server) enterHoldState(session string) {
 		return
 	}
 	s.hold.active = true
-	s.hold.session = session
-	s.hold.gen = gen
 	setCoordinatorHold(true)
 	slog.Warn("coordinator_connection_lost",
-		"session_id", session,
-		"last_generation", gen)
+		"started_sessions", started)
 	s.hold.timer = s.holdAfter(s.coordinatorHoldTimeout(), s.onHoldTimeout)
 }
 
@@ -126,7 +136,7 @@ func (s *Server) enterHoldState(session string) {
 // CoordinatorFence lands: it stops the timeout timer and lowers the
 // coordinator-hold gauge. It is a no-op when no hold is active.
 //
-// spec: §10.1 line 49 — a successful CoordinatorFence is the only way to
+// spec: §10.1.4 — a successful CoordinatorFence is the only way to
 // exit hold state.
 func (s *Server) exitHoldState() {
 	s.hold.mu.Lock()
@@ -140,17 +150,43 @@ func (s *Server) exitHoldState() {
 		s.hold.timer = nil
 	}
 	setCoordinatorHold(false)
-	slog.Info("coordinator_hold_resolved", "session_id", s.hold.session)
+	// The resolved line carries no structured fields: the hold names no
+	// session, and the pod records a coordination generation per bound
+	// session rather than one for the hold.
+	slog.Info("coordinator_hold_resolved")
 }
 
 // onHoldTimeout runs when no new coordinator fenced within
-// coordinatorHoldTimeoutSeconds. It lowers the gauge, notifies the
-// gateway via AdapterTerminating (which drops to the disk post-mortem
-// when the control stream is gone, the usual case since the coordinator
-// is exactly what was lost), and best-effort terminates the runtime so
-// the agent process does not run unsupervised.
+// coordinatorHoldTimeoutSeconds. It lowers the gauge, ends the sidecar
+// runtime through the pod-scope teardown, and self-terminates every session
+// the adapter has started on this pod, so no agent process is left running
+// with live provider credentials and no coordinator. No per-session close
+// ends the runtime process, which on a keep pod lives as long as the pod
+// and on a restart pod lives until the next whole-pod scrub, so the
+// pod-scope teardown is what ends it here; the pod then serves no later
+// session and is retired.
 //
-// spec: §10.1 line 50.
+// The teardown runs after the hold is cleared and before pass 1, with no
+// lock held. It sets the transport's ended state before pass 1 reads the
+// registry, so a Start admitted once the hold cleared fails at once rather
+// than confirming against an entry pass 1 never collected, and it closes
+// the connection before pass 2 removes any credential file. No
+// CH-RUNTIMEOPS frame is written on this path.
+//
+// The termination runs as two passes. Pass 1 is one critical section that
+// deregisters every started entry, which is what makes the termination and
+// a concurrent gateway Shutdown mutually exclusive: that handler decides
+// on the outcome of its own locked cancel-deregister step, so its step and
+// pass 1's are two acquisitions of one lock and one of them is first.
+// Pass 2 then terminates each collected member in turn.
+//
+// The set is read here rather than recorded when the hold armed, because
+// the hold-state interceptor gates admission rather than binding: a
+// StartSession admitted before the arming can claim and start afterwards,
+// and a recorded set would leave that session running unsupervised.
+//
+// spec: §10.1; §10.1.4 (Hold state timeout); §4.7; §4.7.10 (Runtime process
+// lifetime).
 func (s *Server) onHoldTimeout() {
 	s.hold.mu.Lock()
 	if !s.hold.active {
@@ -160,26 +196,176 @@ func (s *Server) onHoldTimeout() {
 	}
 	s.hold.active = false
 	s.hold.timer = nil
-	session := s.hold.session
-	gen := s.hold.gen
 	setCoordinatorHold(false)
 	s.hold.mu.Unlock()
 
-	slog.Warn(reasonCoordinatorLost,
-		"session_id", session,
-		"last_generation", gen)
+	s.endRuntimeForHoldTimeout()
 
-	// §10.1 line 50 — notify the gateway so it can transition the session
-	// without waiting for the 60s orphan-session reconciler.
-	s.EmitAdapterTerminating(reasonCoordinatorLost)
-	s.writeHoldPostMortem(session, gen)
-
-	// Best-effort graceful runtime termination.
-	if s.Runtime != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		_ = s.Runtime.Close(ctx, session)
-		cancel()
+	// Pass 1.
+	members := s.deregisterStartedSessions()
+	if len(members) == 0 {
+		// Every started session was released between the arming and the
+		// firing, so there is nothing to terminate and nothing to report.
+		return
 	}
+
+	// Pass 2. One context bounds the pass's per-slot guard acquisitions and
+	// nothing else: a member whose guard a section still holds costs the
+	// pass at most this one deadline, and a later member whose guard is free
+	// still takes it, because the acquisition tries the guard before it
+	// consults the context. Each member's close runs on its own
+	// ten-second context, minted after its acquisition returns, so no
+	// member's close is spent on another member's guard wait.
+	// spec: §5.2 (slot-identifier reclaim hold).
+	guardCtx, cancel := context.WithTimeout(context.Background(), heldSessionCloseWindow)
+	defer cancel()
+	for _, m := range members {
+		s.terminateHeldSession(guardCtx, m)
+	}
+}
+
+// podScopeRuntime is a runtime whose transport has a pod-scope teardown
+// that ends the runtime process's connection. The sidecar
+// SocketRuntimeProcess implements it; the embedded runtimes, the MCP
+// runtime, and the developer-loop executor do not, and the hold timeout
+// leaves them to their per-session Close.
+type podScopeRuntime interface {
+	CloseListener() error
+}
+
+// endRuntimeForHoldTimeout runs the runtime's pod-scope teardown at the
+// coordinator hold timeout. No per-session close ends the sidecar runtime
+// process, so without this teardown it would go
+// on holding the terminated sessions' credentials with no coordinator. A
+// teardown error is logged and does not stop the termination.
+// spec: §10.1.4 (Hold state timeout); §4.7.10 (Runtime process lifetime).
+//
+// On a supervised pod the close sets the holdTimeout disposition and hands
+// the current generation's end to the Runtime exits handling before it
+// returns, so the end takes the holdTimeout row: no session fails with
+// runtime_crash, and the not-live state is set with the no-connection cause,
+// also when no generation is live, before pass 1 reads the registry.
+// spec: §4.7.10 (Runtime supervisor, Runtime exits).
+func (s *Server) endRuntimeForHoldTimeout() {
+	if sr := s.supervisedRuntime(); sr != nil {
+		sr.CloseForHoldTimeout()
+		return
+	}
+	rt, ok := s.Runtime.(podScopeRuntime)
+	if !ok {
+		return
+	}
+	if err := rt.CloseListener(); err != nil {
+		slog.Warn("runtime_teardown_failed", "reason", reasonCoordinatorLost, "error", err)
+	}
+}
+
+// heldSessionCloseWindow is the graceful window §5.2 fixes for the close of
+// a session the §10.1.4 hold-timeout termination reclaims, which runs under
+// no request. The pass's guard-acquisition deadline takes the same value.
+// spec: §5.2 (slot-identifier reclaim hold); §10.1.4.
+const heldSessionCloseWindow = 10 * time.Second
+
+// terminateHeldSession runs the §10.1.4 coordinator-lost termination for
+// one member of the set the hold timeout deregistered.
+//
+// The final usage flush is here rather than left to the gateway's later
+// terminal Shutdown, because pass 1 removed the entry that request's own
+// locked step would have had to remove for its teardown to run, so that
+// request skips the teardown that carries the flush.
+//
+// The loop sends no CH-RUNTIMEOPS drain signal, and no adapter path sends
+// one. It reports no §5.2 session scrub, because the scrub report is the
+// record of a scrub a Shutdown teardown performed and this path performs
+// none.
+//
+// The generation the records carry is the member's own last fenced value,
+// read off the registry entry pass 1 deregistered, and zero for a session
+// no coordinator fenced on this pod. A single value stamped for the whole
+// hold would report one session's generation on every session the hold
+// terminates. spec: §10.1.2.
+//
+// guardCtx bounds the acquisition of the member's per-slot guard alone.
+// The member's own close context, minted once that acquisition returns,
+// carries the final usage flush, the runtime close and every later call.
+// An acquisition that outlives guardCtx is logged as
+// slot_guard_not_acquired and the termination still runs, unguarded.
+//
+// The member's §5.2 reclaim hold, opened by pass 1, ends only when the
+// cleanup this call owes the slot completed: it ran under its guard, and
+// the runtime close and the tree removal both returned without error. Each
+// failure is logged and keeps the identifier held for the life of the pod,
+// and none aborts the termination, so the usage flush, the removal, the
+// pod-surface cancellation and the AdapterTerminating event run on every
+// arm. The hold release is deferred after the guard's, so it runs first
+// and the guard outlives the hold, and a panic out of the cleanup is a
+// cleanup that did not complete.
+//
+// spec: §10.1.4; §4.7; §5.2 (slot-identifier reclaim hold); §6.4.
+func (s *Server) terminateHeldSession(guardCtx context.Context, m heldSession) {
+	unlock, guarded := s.lockSlotGuard(guardCtx, m.sessionID)
+	defer unlock()
+	if !guarded {
+		warnSlotGuardNotAcquired(m.sessionID, "terminateHeldSession")
+	}
+	completed := false
+	defer func() {
+		if completed && m.release != nil {
+			m.release()
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(guardCtx), heldSessionCloseWindow)
+	defer cancel()
+	gen := m.state.lastFencedGeneration()
+	slog.Warn(reasonCoordinatorLost,
+		"session_id", m.sessionID,
+		"last_generation", gen)
+	s.writeHoldPostMortem(m.sessionID, gen)
+	// §4.7 — flush this member's final usage report so the gateway can run
+	// budget_return.lua (§8.3) with its complete token totals.
+	s.emitFinalUsage(ctx, m.sessionID)
+
+	// The close takes the session off the pod's runtime process, so the
+	// generation state moves with it: a terminated session must not keep
+	// naming the process's sole occupant, or the intra-pod MCP surface would
+	// keep forwarding a tool call under a principal whose session has ended
+	// and the pod surface could never be cancelled for the next claim. On
+	// the sidecar transport the close ends nothing: the pod-scope teardown
+	// that onHoldTimeout ran before pass 1 has already ended that runtime.
+	// spec: §10.1; §15.4.3; §4.7.10 (Runtime process lifetime).
+	closeErr := error(nil)
+	if s.Runtime != nil {
+		closeErr = s.Runtime.Close(ctx, m.sessionID)
+	}
+	if closeErr != nil {
+		slog.Warn("runtime_close_failed", "slot_id", m.sessionID, "error", closeErr)
+	}
+	s.noteRuntimeClosed(m.sessionID)
+	// The second release step. It follows the close so the agent process is
+	// not reading a credential file the teardown has already removed.
+	treeErr := s.removeSlotTreeVia(m.state)
+	if treeErr != nil {
+		slog.Warn("slot_tree_removal_failed", "slot_id", m.sessionID, "error", treeErr)
+	}
+	completed = guarded && closeErr == nil && treeErr == nil
+	// The third release step, on the same terms as every other release that
+	// ends the pod's occupancy: the pod-wide platform and per-connector MCP
+	// servers are cancelled once this member's close leaves the shared
+	// runtime process serving no session and the arming session holds no
+	// slot. On a pod still holding a co-tenant the predicate fails closed
+	// and cancels nothing, so the surviving member keeps the surface it is
+	// using. Without it, an ended session's manifest nonce would keep
+	// authenticating the pod's tool surface for the life of a pod that no
+	// coordinator is left to reclaim.
+	// spec: §4.7; §15.4.3.
+	s.cancelPodMCPIfRuntimeIdle()
+
+	// §10.1.4 — notify the gateway so it can transition this session
+	// without waiting for the 60s orphan-session reconciler. The event
+	// names the member the loop is terminating: leaving the stamp to the
+	// pod-global accessor would emit an empty session on exactly the
+	// concurrent pods this path reaches.
+	s.EmitAdapterTerminating(m.sessionID, reasonCoordinatorLost)
 }
 
 // inHoldState reports whether the adapter is currently in §10.1 hold
@@ -190,7 +376,7 @@ func (s *Server) inHoldState() bool {
 	return s.hold.active
 }
 
-// writeHoldPostMortem records a §10.1 line 50 coordinator_lost
+// writeHoldPostMortem records a §10.1.4 coordinator_lost
 // post-mortem to PostMortemDir so the terminal cause survives even when
 // no coordinator ever returns to receive the AdapterTerminating event.
 // Best-effort: an empty dir skips the write, and an encode/write failure
@@ -241,7 +427,7 @@ func sanitizeSessionFilename(session string) string {
 // state. CoordinatorFence, NegotiateVersion, and health checks pass
 // through so a new coordinator can re-establish coordination.
 //
-// spec: §10.1 line 49.
+// spec: §10.1.
 func (s *Server) holdStateUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	if s.inHoldState() && !coordinatorHoldAllowedMethods[info.FullMethod] {
 		return nil, coordinatorHoldError(info.FullMethod)
@@ -250,11 +436,11 @@ func (s *Server) holdStateUnaryInterceptor(ctx context.Context, req any, info *g
 }
 
 // holdStateStreamInterceptor is the streaming counterpart of
-// holdStateUnaryInterceptor. The LifecycleChannel is allowlisted so a new
+// holdStateUnaryInterceptor. The AdapterEvents is allowlisted so a new
 // coordinator can re-attach the control stream; Attach and
 // PrepareWorkspace are rejected like any other operational RPC.
 //
-// spec: §10.1 line 49.
+// spec: §10.1.
 func (s *Server) holdStateStreamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	if s.inHoldState() && !coordinatorHoldAllowedMethods[info.FullMethod] {
 		return coordinatorHoldError(info.FullMethod)
@@ -262,7 +448,7 @@ func (s *Server) holdStateStreamInterceptor(srv any, ss grpc.ServerStream, info 
 	return handler(srv, ss)
 }
 
-// coordinatorHoldError builds the §10.1 line 49 rejection carrying the
+// coordinatorHoldError builds the §10.1.4 rejection carrying the
 // coordinator_hold detail in its message.
 func coordinatorHoldError(fullMethod string) error {
 	return status.Errorf(codes.Unavailable,

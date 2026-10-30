@@ -18,7 +18,7 @@ import (
 // high-water mark in siem_delivery_state once the SIEM acknowledges the
 // record.
 //
-// spec: §12.3 line 97.
+// spec: §12.3.
 type ForwardRow struct {
 	TenantID  string
 	Sequence  uint64
@@ -34,7 +34,7 @@ type ForwardRow struct {
 // mark in siem_delivery_state, so a forwarder restart replays from the
 // last confirmed delivery point without duplication or gap.
 //
-// spec: §12.3 line 97 — "checkpoint its delivery position durably
+// spec: §12.3 — "checkpoint its delivery position durably
 // (e.g., a siem_delivery_state table)".
 type DeliveryStore interface {
 	// PendingForward returns up to limit committed audit rows whose
@@ -59,7 +59,7 @@ type DeliveryStore interface {
 // lenny_audit_siem_delivery_lag_seconds. A nil LagGauge is a valid
 // no-op.
 //
-// spec: §16.1 line 228.
+// spec: §16.1.
 type LagGauge interface {
 	SetSIEMDeliveryLagSeconds(seconds float64)
 }
@@ -134,7 +134,7 @@ type OutboxCycleResult struct {
 // AuditSIEMDeliveryLag alert fires, and the next cycle re-delivers from
 // the same position. Every return path refreshes the lag gauge.
 //
-// spec: §12.3 line 97.
+// spec: §12.3.
 func (o *Outbox) RunCycle(ctx context.Context) (OutboxCycleResult, error) {
 	var res OutboxCycleResult
 	rows, err := o.store.PendingForward(ctx, o.cfg.BatchSize)

@@ -41,13 +41,13 @@ type Counter interface {
 	Used(ctx context.Context, tenantID string) (int64, error)
 
 	// Set overwrites the tenant's counter with value, clamped at zero.
-	// It is the §11 line 37 rehydration primitive: on a Redis restart the
+	// It is the §11 rehydration primitive: on a Redis restart the
 	// counter is reconstructed from the authoritative sum of
 	// `artifact_size_bytes` across the tenant's active (non-deleted)
 	// artifacts in Postgres, which is an absolute write rather than a
 	// relative Adjust.
 	//
-	// spec: §11 line 37 — rehydrate per-tenant storage counters on Redis
+	// spec: §11 — rehydrate per-tenant storage counters on Redis
 	// restart.
 	Set(ctx context.Context, tenantID string, value int64) error
 }
@@ -77,7 +77,7 @@ type LiveBytesSource func(ctx context.Context, tenantID string) (int64, error)
 // SumOutstandingReservations satisfy the two arguments. A nil component
 // degrades to the other alone.
 //
-// spec: §11.2 reservation-aware rebuild; §12.4 line 222.
+// spec: §11.2 reservation-aware rebuild; §12.4.
 func ReservationAwareLiveBytes(liveBytes, outstandingReservations LiveBytesSource) LiveBytesSource {
 	switch {
 	case liveBytes == nil:

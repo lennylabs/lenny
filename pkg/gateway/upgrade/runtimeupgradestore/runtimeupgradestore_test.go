@@ -11,7 +11,7 @@ import (
 
 func fixedClock(t time.Time) func() time.Time { return func() time.Time { return t } }
 
-// spec: §10.5 lines 466-540 — the first write registers the row at
+// spec: §10.5 — the first write registers the row at
 // version 1; a re-read returns the stored phase and knobs verbatim.
 func TestMemory_putGetRoundTrip_spec_10_5(t *testing.T) {
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -60,7 +60,7 @@ func TestMemory_getMissing(t *testing.T) {
 	}
 }
 
-// spec: §10.5 line 468 — the version column serializes concurrent phase
+// spec: §10.5 — the version column serializes concurrent phase
 // transitions; a stale expectVersion is rejected with ErrConflict.
 func TestMemory_versionGuard_spec_10_5(t *testing.T) {
 	s := runtimeupgradestore.NewMemory()

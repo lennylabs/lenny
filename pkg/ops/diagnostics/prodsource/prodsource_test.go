@@ -65,7 +65,7 @@ func (f *fakeConn) Probe(context.Context) ([]diagnostics.ConnectivityDependency,
 }
 
 // TestSourceSessionNotFound — an unknown session id surfaces Found=false
-// so the Service maps it to SESSION_NOT_FOUND. spec: §25.6 line 2885.
+// so the Service maps it to SESSION_NOT_FOUND. spec: §25.6.
 func TestSourceSessionNotFound_spec_25_6_2885(t *testing.T) {
 	s := &Source{PG: &fakePG{session: SessionRow{Found: false}}}
 	rec, err := s.Session(context.Background(), "abc")
@@ -79,7 +79,7 @@ func TestSourceSessionNotFound_spec_25_6_2885(t *testing.T) {
 
 // TestSourceSessionPodSignals — a session with an assigned pod enriches
 // the cause signals from the Kubernetes API and carries no degradation.
-// spec: §25.6 lines 2899-2906.
+// spec: §25.6.
 func TestSourceSessionPodSignals_spec_25_6_2899(t *testing.T) {
 	s := &Source{
 		PG: &fakePG{session: SessionRow{
@@ -106,7 +106,7 @@ func TestSourceSessionPodSignals_spec_25_6_2899(t *testing.T) {
 
 // TestSourceSessionNoKubernetes — a session with a pod but no Kubernetes
 // connection degrades: the pod-signal fields are unavailable, but the
-// session record is still served. spec: §25.6 lines 2908-2920.
+// session record is still served. spec: §25.6.
 func TestSourceSessionNoKubernetes_spec_25_6_2908(t *testing.T) {
 	s := &Source{PG: &fakePG{session: SessionRow{
 		SessionID: "s1", State: "failed", PodID: "pod-1", Found: true,
@@ -124,7 +124,7 @@ func TestSourceSessionNoKubernetes_spec_25_6_2908(t *testing.T) {
 }
 
 // TestSourceSessionK8sError — a Kubernetes API error degrades the
-// session diagnosis rather than failing it. spec: §25.6 lines 2908-2920.
+// session diagnosis rather than failing it. spec: §25.6.
 func TestSourceSessionK8sError_spec_25_6_2908(t *testing.T) {
 	s := &Source{
 		PG:   &fakePG{session: SessionRow{SessionID: "s1", PodID: "pod-1", Found: true}},
@@ -142,7 +142,7 @@ func TestSourceSessionK8sError_spec_25_6_2908(t *testing.T) {
 // TestSourceSessionNoPodNoDegradation — a session that failed for a
 // budget reason and was never assigned a pod has no missing pod signals,
 // so no degradation is set; the budget cause comes from session state.
-// spec: §25.6 line 2890.
+// spec: §25.6.
 func TestSourceSessionNoPodNoDegradation_spec_25_6_2890(t *testing.T) {
 	s := &Source{PG: &fakePG{session: SessionRow{
 		SessionID: "s1", State: "failed", FailureReason: "budget_exceeded", Found: true,
@@ -206,7 +206,7 @@ func TestSourceSessionSetupCommandFailed_spec_25_6(t *testing.T) {
 }
 
 // TestSourceSessionNilPG — with no Postgres the session diagnosis reports
-// not-found (cold start) rather than panicking. spec: §25.6 line 2885.
+// not-found (cold start) rather than panicking. spec: §25.6.
 func TestSourceSessionNilPG_spec_25_6_2885(t *testing.T) {
 	s := &Source{}
 	rec, err := s.Session(context.Background(), "s1")
@@ -216,8 +216,7 @@ func TestSourceSessionNilPG_spec_25_6_2885(t *testing.T) {
 }
 
 // TestSourcePoolFound — a pool with pod counts and gateway config is
-// served; only the demand-rate fields are degraded. spec: §25.6 lines
-// 2861-2867.
+// served; only the demand-rate fields are degraded. spec: §25.6.
 func TestSourcePoolFound_spec_25_6_2861(t *testing.T) {
 	s := &Source{
 		PG:    &fakePG{counts: diagnostics.PodCountBreakdown{Idle: 2, Failed: 1}, countsFound: true},
@@ -236,7 +235,7 @@ func TestSourcePoolFound_spec_25_6_2861(t *testing.T) {
 }
 
 // TestSourcePoolNotFound — a pool with no pod rows and no gateway config
-// reports not-found. spec: §25.6 line 2885 (POOL_NOT_FOUND).
+// reports not-found. spec: §25.6.
 func TestSourcePoolNotFound_spec_25_6_2885(t *testing.T) {
 	s := &Source{
 		PG:    &fakePG{countsFound: false},
@@ -255,7 +254,7 @@ func TestSourcePoolNotFound_spec_25_6_2885(t *testing.T) {
 // unreadable the pool is still served from Postgres pod counts, the
 // config/sync fields are degraded, and CRDSynced stays true so the
 // Service does not falsely classify a CRD_SYNC_LAG bottleneck. spec:
-// §25.6 lines 2865, 2908-2920.
+// §25.6.
 func TestSourcePoolGatewayUnavailable_spec_25_6_2865(t *testing.T) {
 	s := &Source{
 		PG:    &fakePG{counts: diagnostics.PodCountBreakdown{Idle: 3}, countsFound: true},
@@ -307,7 +306,7 @@ func TestSourceCredentialPoolHotKeys_spec_25_6(t *testing.T) {
 }
 
 // TestSourceCredentialPoolNotFound — a credential pool with no leases is
-// not visible in the platform-global lease table. spec: §25.6 line 2885.
+// not visible in the platform-global lease table. spec: §25.6.
 func TestSourceCredentialPoolNotFound_spec_25_6_2885(t *testing.T) {
 	s := &Source{PG: &fakePG{load: CredentialPoolLoad{Found: false}}}
 	rec, err := s.CredentialPool(context.Background(), "cp1")
@@ -320,7 +319,7 @@ func TestSourceCredentialPoolNotFound_spec_25_6_2885(t *testing.T) {
 }
 
 // TestSourceConnectivity — the connectivity report comes from the probe
-// reader. spec: §25.6 line 2906.
+// reader. spec: §25.6.
 func TestSourceConnectivity_spec_25_6_2906(t *testing.T) {
 	s := &Source{Conn: &fakeConn{deps: []diagnostics.ConnectivityDependency{
 		{Name: "postgres", Reachable: true},
@@ -336,7 +335,7 @@ func TestSourceConnectivity_spec_25_6_2906(t *testing.T) {
 }
 
 // TestSourceSessionPGError — a Postgres error on the session read
-// propagates (it is not a not-found). spec: §25.6 line 2885.
+// propagates (it is not a not-found). spec: §25.6.
 func TestSourceSessionPGError(t *testing.T) {
 	s := &Source{PG: &fakePG{sessionErr: errors.New("db down")}}
 	if _, err := s.Session(context.Background(), "s1"); err == nil {
@@ -361,10 +360,7 @@ func TestSourceSessionPGError(t *testing.T) {
 // the pod in a running cluster. Un-skip once the platform records the
 // session→pod mapping the K8s fallback keys on.
 //
-// spec: §25.6 lines 2918-2922 (Postgres unreachable → 207
-// DIAGNOSTICS_PARTIAL, degradation.actualSource="kubernetes",
-// primarySource="postgres"; both Postgres and Kubernetes unreachable →
-// 503).
+// spec: §25.6.
 func TestSourceSessionPostgresUnreachableKubernetesFallback_spec_25_6_2918(t *testing.T) {
 	t.Skip("Postgres-unreachable Kubernetes fallback is unimplemented: spec locates the pod by the lenny.dev/session-id label that no product code stamps; blocked on the session→pod recovery decision")
 
@@ -418,10 +414,7 @@ func TestSourceSessionPostgresUnreachableKubernetesFallback_spec_25_6_2918(t *te
 // reconstruct the four buckets. Un-skip once the platform records a pod-state
 // label vocabulary the K8s fallback can key on to rebuild the breakdown.
 //
-// spec: §25.6 lines 2899 (K8s fallback: list pods by lenny.dev/pool={name},
-// derive the state breakdown from .status.phase and lenny.dev/pod-state),
-// 2918 (Postgres unreachable → 207 DIAGNOSTICS_PARTIAL,
-// degradation.actualSource="kubernetes", primarySource="postgres"), 2922
+// spec: §25.6
 // (both Postgres and Kubernetes unreachable → 503).
 func TestSourcePoolPostgresUnreachableKubernetesFallback_spec_25_6_2899(t *testing.T) {
 	t.Skip("Postgres-unreachable Kubernetes fallback for the pool pod-count breakdown is unimplemented: the spec derives the breakdown from a lenny.dev/pod-state label that no product code stamps (the platform stamps only the coarse lenny.dev/state, which cannot reconstruct the Warming/Idle/Claimed/Failed buckets); blocked on the pod-state label-vocabulary reconciliation")

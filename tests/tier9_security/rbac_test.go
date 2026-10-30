@@ -2,7 +2,7 @@
 
 //go:build security
 
-// Tier-9 security tests for §12.9.7 RBAC. The e2e gateway runs in dev
+// Tier-9 security tests for TESTING.md §12.9.7 RBAC. The e2e gateway runs in dev
 // mode (global.devMode: true), which enables the dev-header auth path
 // with AllowDevRoles: a request carries its §10.2 RBAC roles in the
 // X-Lenny-Roles header and the gateway's role-gate middleware
@@ -50,7 +50,7 @@ type rbacGrant struct {
 	body   string
 }
 
-// rbacDenial is one §12.9.7 escalation assertion: a role that the
+// rbacDenial is one TESTING.md §12.9.7 escalation assertion: a role that the
 // permission matrix does NOT grant access to an endpoint. The gate
 // must reject the request with 403 FORBIDDEN.
 type rbacDenial struct {
@@ -62,7 +62,7 @@ type rbacDenial struct {
 }
 
 // spec: 12.9.7
-// diagnosis: §12.9.7 RBAC positive access did not hold — the §10.2
+// diagnosis: TESTING.md §12.9.7 RBAC positive access did not hold — the §10.2
 // role-gate middleware rejected a role the permission matrix grants.
 // The test drives the live gateway admin API with each documented
 // role against an endpoint the matrix permits it (platform-admin →
@@ -129,18 +129,18 @@ func TestRBACRolePositiveAccess(t *testing.T) {
 					g.method, g.path, res.curlExit, res.body)
 			}
 			if res.statusCode == 401 || res.statusCode == 403 {
-				t.Fatalf("§12.9.7 violation: role %q was rejected (status %d) by %s %s, but the §10.2 "+
+				t.Fatalf("TESTING.md §12.9.7 violation: role %q was rejected (status %d) by %s %s, but the §10.2 "+
 					"permission matrix grants it access; the RBAC gate is over-restrictive (body %q)",
 					g.role.roles, res.statusCode, g.method, g.path, res.body)
 			}
-			t.Logf("§12.9.7 positive: role %q admitted to %s %s (status %d)",
+			t.Logf("TESTING.md §12.9.7 positive: role %q admitted to %s %s (status %d)",
 				g.role.roles, g.method, g.path, res.statusCode)
 		})
 	}
 }
 
 // spec: 12.9.7
-// diagnosis: §12.9.7 RBAC escalation rejection did not hold — the
+// diagnosis: TESTING.md §12.9.7 RBAC escalation rejection did not hold — the
 // §10.2 role-gate middleware admitted a role the permission matrix
 // does not grant. The test drives the live gateway admin API with each
 // escalation vector (tenant-admin → platform-admin-only tenant CRUD,
@@ -211,17 +211,17 @@ func TestRBACEscalationDenied(t *testing.T) {
 					d.method, d.path, res.curlExit, res.body)
 			}
 			if res.statusCode != 403 {
-				t.Errorf("§12.9.7 violation: escalation vector %q (role %q → %s %s) returned status %d, "+
+				t.Errorf("TESTING.md §12.9.7 violation: escalation vector %q (role %q → %s %s) returned status %d, "+
 					"expected 403 FORBIDDEN; the §10.2 role gate leaked a privilege boundary (body %q)",
 					d.name, d.role.roles, d.method, d.path, res.statusCode, res.body)
 				return
 			}
 			if code := res.errorCode(); code != "FORBIDDEN" {
-				t.Errorf("§12.9.7: escalation %q was rejected with status 403 but error code %q, "+
+				t.Errorf("TESTING.md §12.9.7: escalation %q was rejected with status 403 but error code %q, "+
 					"expected \"FORBIDDEN\" (body %q)", d.name, code, res.body)
 				return
 			}
-			t.Logf("§12.9.7 escalation denied: role %q rejected by %s %s with 403 FORBIDDEN",
+			t.Logf("TESTING.md §12.9.7 escalation denied: role %q rejected by %s %s with 403 FORBIDDEN",
 				d.role.roles, d.method, d.path)
 		})
 	}

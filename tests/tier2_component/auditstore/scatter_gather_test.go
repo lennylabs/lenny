@@ -2,11 +2,11 @@
 
 // SPDX-License-Identifier: MIT
 
-// Tier-2 component coverage for the §25.9 line 3668 platform-admin
+// Tier-2 component coverage for the §25.9 platform-admin
 // cross-tenant audit scatter-gather read (ScatterGatherRows): it reads
 // every tenant's §11.7 chain across all audit shards under the
 // pgtenant.InAllTenants (`__all__`) transaction, merged and ordered by
-// (tenant_id, sequence_number), and emits one §12.3 line 141
+// (tenant_id, sequence_number), and emits one §12.3
 // cross_tenant_read receipt per invocation. F-25.9.11.
 package auditstore_test
 
@@ -36,7 +36,7 @@ func startMultiTenantAuditStore(t *testing.T) *auditstore.Store {
 	return auditstore.New(pg.Router(t))
 }
 
-// spec: §25.9 line 3668 / line 3709 / §12.3 line 141.
+// spec: §25.9 / §12.3.
 // diagnosis: ScatterGatherRows must surface every tenant's rows merged
 // and grouped by tenant_id (so each per-tenant chain stays contiguous),
 // and emit exactly one cross_tenant_read receipt for the invocation.

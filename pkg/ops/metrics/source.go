@@ -71,7 +71,7 @@ type PrometheusClient struct {
 // production adapter observes lenny_prometheus_query_duration_seconds
 // {kind}; tests pass a recording stub or the Noop.
 //
-// spec: §25.4 lines 1914-1916.
+// spec: §25.4.
 type QueryMetrics interface {
 	// ObserveQuery records the wall-clock duration of one query. kind
 	// is one of "instant", "range", or "alerts".

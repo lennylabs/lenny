@@ -10,7 +10,7 @@ package mcp
 // forwarder and the adapter both reference it without an import cycle,
 // mirroring how the platform-tool path shares Tool.
 //
-// spec: §9.3 line 142. F-9.1.2.
+// spec: §9.3. F-9.1.2.
 type ConnectorRef struct {
 	ID          string
 	DisplayName string

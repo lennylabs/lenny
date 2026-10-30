@@ -22,8 +22,7 @@ import (
 // tools/call layer enforces keeps the REST and MCP scope gates in lockstep
 // and prevents drift from the REST surface the tools mirror.
 //
-// spec: §25.1 lines 92-94 (Admin API middleware checks scopes before
-// routing to the handler), §15.1 (x-lenny-scope per operation).
+// spec: §25.1, §15.1 (x-lenny-scope per operation).
 type opsRouteScopes struct {
 	mux *http.ServeMux
 }
@@ -72,7 +71,7 @@ func sharedOpsRouteScopes() *opsRouteScopes {
 // requiredScope returns the §25.1 scope the (method, path) route requires
 // and whether the registry declares one. An unmatched route, or a route
 // with no declared scope, returns ("", false): the caller defers to the
-// §25.4 role ceiling, matching the §25.1 line 90 absent-scope semantics.
+// §25.4 role ceiling, matching the §25.1 absent-scope semantics.
 func (rs *opsRouteScopes) requiredScope(method, path string) (string, bool) {
 	if rs == nil || rs.mux == nil {
 		return "", false
@@ -99,12 +98,10 @@ func (rs *opsRouteScopes) requiredScope(method, path string) (string, bool) {
 // a present-but-narrower claim with 403 SCOPE_FORBIDDEN before any handler
 // runs. An absent scope claim (Principal.Scopes.Present() == false) or a
 // route with no declared scope defers to the role ceiling, matching the
-// §25.1 line 90 absent-claim semantics. It runs inside the OIDC auth
+// §25.1 absent-claim semantics. It runs inside the OIDC auth
 // wrapper so the Principal (and its parsed Scopes) is already attached.
 //
-// spec: §25.1 lines 89 (403 SCOPE_FORBIDDEN listing the caller's active
-// scopes), 90 (absent claim defers to the role ceiling), 92-94 (Admin API
-// middleware checks scopes before routing to the handler).
+// spec: §25.1.
 func (s *Server) scopeEnforce(inner http.Handler) http.Handler {
 	rs := sharedOpsRouteScopes()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -122,13 +119,13 @@ func (s *Server) scopeEnforce(inner http.Handler) http.Handler {
 	})
 }
 
-// writeOpsScopeForbidden emits the §25.1 line 89 SCOPE_FORBIDDEN envelope
+// writeOpsScopeForbidden emits the §25.1 SCOPE_FORBIDDEN envelope
 // carrying details.requiredScope and details.activeScope so an agent sees
 // exactly which scope its token lacks and which scopes it does carry. The
 // AUTH category and the details keys match the §25.12 MCP tools/call
 // scope-rejection payload so the two operability surfaces speak one shape.
 //
-// spec: §25.1 line 89, §25.2 (error category), §25.12 (MCP scope
+// spec: §25.1, §25.2 (error category), §25.12 (MCP scope
 // rejection payload).
 func writeOpsScopeForbidden(w http.ResponseWriter, requiredScope, activeScope string) {
 	conventions.WriteErrorWithDetails(w, http.StatusForbidden, "SCOPE_FORBIDDEN",

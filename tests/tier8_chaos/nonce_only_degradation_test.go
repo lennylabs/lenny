@@ -53,6 +53,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -81,7 +82,7 @@ const (
 // nonceOnlyRuntimeClass is the RuntimeClass the §5.3 `standard` isolation
 // profile maps to (`standard` → runc). The WarmPoolController marks a pool
 // Degraded and suppresses all pod creation when the pool's RuntimeClass is
-// absent (§5.3 line 675), so a pool can render a nonce-only member only on a
+// absent (§5.3), so a pool can render a nonce-only member only on a
 // cluster where this RuntimeClass exists. The runc RuntimeClass is part of
 // the e2e install (tests/testinfra/kind/agent-workload.yaml); the test skips
 // cleanly when it is absent rather than reporting a spurious §4.7 failure on
@@ -147,16 +148,6 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 		t.Skipf("precondition not met: %s Deployment is not Ready (%s) before the chaos scenario",
 			controllerDeployment, deploymentReadyState(t, c, controllerDeployment))
 	}
-	// The WarmPoolController suppresses pod creation (marks the pool
-	// Degraded, RuntimeClassNotFound) when the pool's RuntimeClass is
-	// absent, so it can never render a nonce-only member without it. The runc
-	// RuntimeClass (the §5.3 `standard` → runc mapping) ships with the e2e
-	// agent workload (tests/testinfra/kind/agent-workload.yaml). Ensure it is
-	// present as a test precondition: when the test creates it, the cleanup
-	// removes it again so a control-plane-only install is left exactly as it
-	// was found; when the agent workload already provided it, the test leaves
-	// it in place.
-	ensureNonceOnlyRuntimeClass(t, c)
 
 	// Build a unique pool + Runtime name for this run. A pool name is the
 	// PRIMARY KEY of the Postgres sandbox_warm_pools table and a soft-deleted
@@ -167,6 +158,31 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 	// block prevents teardown) from colliding with this run.
 	pool := uniqueNonceOnlyName(t, nonceOnlyPoolPrefix)
 	runtimeName := uniqueNonceOnlyName(t, nonceOnlyRuntimePrefix)
+
+	// Drive the admin API from the test host through an API-server-mediated
+	// port-forward to the gateway Service, so the admin requests need no
+	// in-cluster probe pod (and therefore no probe-pod image preloaded on the
+	// node). The forward terminates at the gateway pod through the API
+	// server, so the request is not subject to the in-cluster ingress
+	// NetworkPolicy; the cluster runs --dev-mode, so the gateway trusts the
+	// X-Lenny-* headers as the authenticated platform-admin principal.
+	gatewayURL, stopGateway := c.PortForward(t, "svc/lenny-gateway", lennySystemNamespace, gatewayHTTPPort)
+	t.Cleanup(stopGateway)
+
+	// Reclaim everything a killed earlier run left behind, before this run
+	// creates anything (check 6 of the environment preflight).
+	sweepStaleNonceOnlyFixtures(t, c, gatewayURL, pool)
+
+	// The WarmPoolController suppresses pod creation (marks the pool
+	// Degraded, RuntimeClassNotFound) when the pool's RuntimeClass is
+	// absent, so it can never render a nonce-only member without it. The runc
+	// RuntimeClass (the §5.3 `standard` → runc mapping) ships with the e2e
+	// agent workload (tests/testinfra/kind/agent-workload.yaml). Ensure it is
+	// present as a test precondition: when the test creates it, the cleanup
+	// removes it again so a control-plane-only install is left exactly as it
+	// was found; when the agent workload already provided it, the test leaves
+	// it in place.
+	ensureNonceOnlyRuntimeClass(t, c)
 
 	// Register the §4.7 activating runtime through its only modeling surface,
 	// the Runtime CR. requireSoPeercred: false is valid only on the sidecar
@@ -193,16 +209,6 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 	}
 	t.Logf("registered: Runtime %s (sidecar, requireSoPeercred=false) is Registered=True", runtimeName)
 
-	// Drive the admin API from the test host through an API-server-mediated
-	// port-forward to the gateway Service, so the admin requests need no
-	// in-cluster probe pod (and therefore no probe-pod image preloaded on the
-	// node). The forward terminates at the gateway pod through the API
-	// server, so the request is not subject to the in-cluster ingress
-	// NetworkPolicy; the cluster runs --dev-mode, so the gateway trusts the
-	// X-Lenny-* headers as the authenticated platform-admin principal.
-	gatewayURL, stopGateway := c.PortForward(t, "svc/lenny-gateway", lennySystemNamespace, gatewayHTTPPort)
-	t.Cleanup(stopGateway)
-
 	// Create the pool through the Postgres-authoritative admin API. warmCount
 	// 1 makes the WarmPoolController render exactly one warm member (minWarm =
 	// maxWarm = warmCount), which is what carries the §4.7 nonce-only signal;
@@ -210,7 +216,7 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 	// a requireSoPeercred=false runtime; standard isolation + the explicit
 	// allowStandardIsolation opt-in match the dev-mode runc RuntimeClass on
 	// this cluster so the pool is not RuntimeClass-Degraded.
-	t.Cleanup(func() { deleteNonceOnlyPool(t, gatewayURL, pool) })
+	t.Cleanup(func() { deleteNonceOnlyPool(t, c, gatewayURL, pool) })
 	createNonceOnlyPool(t, gatewayURL, pool, runtimeName)
 	t.Logf("created: Postgres-authoritative pool %s (warmCount=1, acknowledgeNonceOnlyAuth=true, runtimeRef=%s)",
 		pool, runtimeName)
@@ -434,6 +440,7 @@ metadata:
 spec:
   type: agent
   image: ghcr.io/lennylabs/chaos-nonce-only@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: full
   deploymentModel: sidecar
   isolationProfile: standard
@@ -461,15 +468,28 @@ func createNonceOnlyPool(t *testing.T, gatewayURL, pool, runtimeName string) {
 	}
 }
 
-// deleteNonceOnlyPool soft-deletes the pool through the admin API
-// (DELETE /v1/admin/pools/{name}); the PoolScalingController then removes the
-// SandboxWarmPool/SandboxTemplate CRD pair and garbage-collects the member
-// Sandboxes. It is the test's recovery action and its t.Cleanup body, so it
-// tolerates a 404 (pool already gone) and a failed request: leaving a
-// permanently-degraded nonce-only pool behind would keep the
-// PoolSecurityDegraded alert firing and affect later tests, so cleanup is
-// best-effort but logged.
-func deleteNonceOnlyPool(t *testing.T, gatewayURL, pool string) {
+// deleteNonceOnlyPool removes a nonce-only pool from both of the places it
+// lives. It soft-deletes the Postgres row through the admin API
+// (DELETE /v1/admin/pools/{name}), then deletes the SandboxWarmPool and the
+// SandboxTemplate the PoolScalingController derived from the row.
+//
+// The second step exists because a soft delete leaves the CRD pair in place:
+// the PoolScalingController reconciles only active pool rows and has no path
+// that removes the pair of a row that left the active set, so every run of
+// this test used to leave its SandboxTemplate (and, when the run was killed
+// before the recovery leg, a SandboxWarmPool with a warm member) on the
+// cluster. The warm pool goes first and the template second, because the
+// sandboxtemplate-deletion-guard admits a template delete without probing the
+// gateway only once no SandboxWarmPool references the template; the probe is
+// blocked on this cluster (F-13.2.24). The member Sandboxes are owned by the
+// SandboxWarmPool and are garbage-collected with it.
+//
+// It is the t.Cleanup body and the start-time sweep's per-pool action, so it
+// is best-effort: it tolerates a 404 (pool already gone) and logs every other
+// failure. Leaving a nonce-only pool behind keeps the PoolSecurityDegraded
+// alert firing and parks a never-Ready lenny.dev/managed=true pod that later
+// readiness waits time out on.
+func deleteNonceOnlyPool(t *testing.T, c *kind.Cluster, gatewayURL, pool string) {
 	t.Helper()
 	status, respBody, err := adminPoolRequest(http.MethodDelete, gatewayURL+"/v1/admin/pools/"+pool, "")
 	switch {
@@ -480,6 +500,91 @@ func deleteNonceOnlyPool(t *testing.T, gatewayURL, pool string) {
 	default:
 		t.Logf("cleanup: admin DELETE /v1/admin/pools/%s returned status %d: %s",
 			pool, status, respBody)
+	}
+	for _, resource := range nonceOnlyPoolCRDs {
+		if err := kind.DeleteNamed(t, c, agentNamespace, resource, pool); err != nil {
+			t.Logf("cleanup: %v", err)
+		}
+	}
+}
+
+// nonceOnlyPoolCRDs lists the CRD kinds the PoolScalingController derives
+// from a pool row, each named after the pool, in the order they are deleted:
+// the SandboxWarmPool before the SandboxTemplate it references.
+var nonceOnlyPoolCRDs = []string{"sandboxwarmpools", "sandboxtemplates"}
+
+// nonceOnlyPoolNamePattern matches exactly the names uniqueNonceOnlyName
+// mints from nonceOnlyPoolPrefix: the prefix, a hyphen, and the 8-character
+// lowercase-hex run suffix. The start-time sweep selects by this pattern, so
+// it cannot select a pool, template, or warm pool another suite owns.
+var nonceOnlyPoolNamePattern = regexp.MustCompile(regexp.QuoteMeta(nonceOnlyPoolPrefix) + `-[0-9a-f]{8}`)
+
+// nonceOnlyFixtureLabel is the label nonceOnlyRuntimeManifest stamps on the
+// fixture's Runtime CRs. The start-time sweep selects leaked Runtimes by it.
+const nonceOnlyFixtureLabel = "lenny.dev/test=chaos-nonce-only"
+
+// sweepStaleNonceOnlyFixtures reclaims every object a PRIOR run of this test
+// left behind, before this run creates its own (check 6 of the environment
+// preflight in .claude/rules/test-coverage.md).
+//
+// Teardown here is t.Cleanup and therefore best-effort by construction: it
+// does not run when the process is killed, which the harness watchdog, the
+// wall-clock timeout wrappers around a tier, and an interrupted run all do
+// routinely. Each run mints fresh suffixed names because the pool name is the
+// Postgres primary key and a soft-deleted row keeps it occupied, so a killed
+// run does not leak a name that the next run reclaims by reusing it: it leaks
+// whole objects that nothing will ever collect. Before the CRD half of this
+// sweep existed, 24 SandboxTemplates and a SandboxWarmPool had accumulated on
+// the long-lived e2e cluster.
+//
+// A leaked pool is not inert. Its warm member's pod carries the platform's
+// lenny.dev/managed=true label and never becomes Ready, because the Runtime's
+// image digest is deliberately unpullable (see nonceOnlyRuntimeManifest), so
+// every later test that waits on that label waits on it until the wait times
+// out.
+//
+// The sweep runs in three steps, each best-effort and never fatal:
+//
+//  1. Pools still active in Postgres (the run was killed before its cleanup)
+//     are removed through deleteNonceOnlyPool, which soft-deletes the row
+//     first so the PoolScalingController stops re-applying the CRD pair.
+//  2. SandboxWarmPool and SandboxTemplate objects whose pool row was already
+//     soft-deleted are removed by name. The admin listing omits soft-deleted
+//     rows, so step 1 cannot see them; this is the leak that accumulated.
+//  3. Runtime CRs carrying the fixture's label are deleted. The
+//     RuntimeReconciler's finalizer soft-deletes each Runtime's gateway
+//     registry row (runtime_definitions) before the CR leaves etcd, so the
+//     CR delete reclaims the registry side as well.
+//
+// keepPool is this run's own pool name, which does not exist yet when the
+// sweep runs; it is excluded as a guard. The Runtime label sweep needs no
+// such guard because it runs once per process, before this run applies its
+// own Runtime.
+func sweepStaleNonceOnlyFixtures(t *testing.T, c *kind.Cluster, gatewayURL, keepPool string) {
+	t.Helper()
+	sweepStaleNonceOnlyPools(t, c, gatewayURL, keepPool)
+	kind.SweepNamedOnce(t, c, agentNamespace, nonceOnlyPoolNamePattern, []string{keepPool}, nonceOnlyPoolCRDs...)
+	kind.SweepLabeledOnce(t, c, "", nonceOnlyFixtureLabel, "runtimes")
+}
+
+// sweepStaleNonceOnlyPools removes every nonce-only pool row a prior run left
+// active in Postgres, together with its CRD pair (step 1 of
+// sweepStaleNonceOnlyFixtures). Best-effort and logged, never fatal.
+func sweepStaleNonceOnlyPools(t *testing.T, c *kind.Cluster, gatewayURL, keep string) {
+	t.Helper()
+	status, body, err := adminPoolRequest(http.MethodGet, gatewayURL+"/v1/admin/pools", "")
+	if err != nil || status != http.StatusOK {
+		t.Logf("sweep: could not list pools to reclaim earlier runs (status %d): %v", status, err)
+		return
+	}
+	// Candidate names are extracted with the pattern rather than by decoding
+	// the listing, so the sweep does not depend on the admin listing's
+	// envelope. StaleNames then keeps only whole-name matches and drops this
+	// run's own pool.
+	candidates := nonceOnlyPoolNamePattern.FindAllString(body, -1)
+	for _, name := range kind.StaleNames(candidates, nonceOnlyPoolNamePattern, keep) {
+		t.Logf("sweep: deleting nonce-only pool %s left by an earlier run", name)
+		deleteNonceOnlyPool(t, c, gatewayURL, name)
 	}
 }
 

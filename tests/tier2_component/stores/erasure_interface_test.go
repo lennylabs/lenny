@@ -2,8 +2,8 @@
 
 // SPDX-License-Identifier: MIT
 
-// Component-tier compile-time assertion for the §12.2.1 /
-// §14.10 mandatory-erasure interface. Every tenant-scoped store
+// Component-tier compile-time assertion for the TESTING.md §12.2.1 /
+// TESTING.md §14.10 mandatory-erasure interface. Every tenant-scoped store
 // MUST expose DeleteByUser(ctx, tenantID, userID) and
 // DeleteByTenant(ctx, tenantID) so the §12.8 GDPR-erasure
 // orchestrator can route a per-user erasure or a per-tenant
@@ -34,7 +34,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// tenantEraser is the §12.2.1 / §14.10 mandatory-erasure interface.
+// tenantEraser is the TESTING.md §12.2.1 / TESTING.md §14.10 mandatory-erasure interface.
 // Every tenant-scoped store must satisfy it so the §12.8 erasure
 // orchestrator can fan out without a hand-maintained type switch.
 type tenantEraser interface {
@@ -69,7 +69,7 @@ var (
 	_ userEraserNoCount = (*semanticcache.InMemory)(nil)
 )
 
-// spec: §12.2.1 / §14.10 (mandatory-erasure interface)
+// spec: TESTING.md §12.2.1 / TESTING.md §14.10 (mandatory-erasure interface)
 // diagnosis: a tenant-scoped store stopped exposing DeleteByUser or
 // DeleteByTenant. The static assertions above already fail the
 // build in that case; this test exists so the failure is also

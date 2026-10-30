@@ -41,12 +41,12 @@ func withPrincipal(p authmw.Principal) func(*http.Request) {
 // TestServiceCall_PassthroughAndError_spec_15_2_3 verifies the §15.2.1
 // rule-1 in-process dispatcher returns the REST 2xx body verbatim and
 // projects a non-2xx onto a typed ServiceError carrying the §16.3 code.
-// spec: §15.2.1 rule 1 line 1380. F-15.2.3.
+// spec: §15.2.1 rule 1. F-15.2.3.
 func TestServiceCall_PassthroughAndError_spec_15_2_3(t *testing.T) {
 	store := memstore.New()
 	ctx := context.Background()
 	_ = store.Create(ctx, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	res, svcErr := srv.ServiceCall(ctx, "acme", http.MethodGet, "/v1/sessions/s1", nil, "", nil)
 	if svcErr != nil {
@@ -77,10 +77,10 @@ func TestServiceCall_PassthroughAndError_spec_15_2_3(t *testing.T) {
 // router's plain-text 404) is projected to a synthetic INTERNAL_ERROR
 // ServiceError carrying the raw body and the transport status, rather than
 // panicking or returning an empty code. This pins the decode-fallback branch
-// the envelope-shaped error paths never reach. spec: §15.2.1 rule 3 line 1384
+// the envelope-shaped error paths never reach. spec: §15.2.1 rule 3
 // (shared error envelope).
 func TestServiceCall_NonEnvelopeBodyFallback(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 
 	_, svcErr := srv.ServiceCall(context.Background(), "acme", http.MethodGet, "/no/such/route", nil, "", nil)
 	if svcErr == nil {
@@ -99,7 +99,7 @@ func TestServiceCall_NonEnvelopeBodyFallback(t *testing.T) {
 
 // TestListArtifacts_spec_15_2_3 verifies GET /v1/sessions/{id}/artifacts
 // lists only live catalog rows, 404s a missing session, and returns an
-// empty envelope when no catalog is wired. spec: §15.1 line 598; F-15.2.3.
+// empty envelope when no catalog is wired. spec: §15.1; F-15.2.3.
 func TestListArtifacts_spec_15_2_3(t *testing.T) {
 	store := memstore.New()
 	ctx := context.Background()
@@ -108,7 +108,7 @@ func TestListArtifacts_spec_15_2_3(t *testing.T) {
 		{URI: "lenny-blob://acme/workspace/s1/p1", SessionID: "s1", State: artifactcatalog.StateLive, SizeBytes: 12, ArtifactType: artifactcatalog.ArtifactTypeWorkspace},
 		{URI: "lenny-blob://acme/workspace/s1/gone", SessionID: "s1", State: artifactcatalog.StateSoftDeleted, ArtifactType: artifactcatalog.ArtifactTypeWorkspace},
 	}}
-	srv := sessionserver.New(store, sessionserver.Options{Artifacts: cat})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Artifacts: cat})
 	h := srv.Handler()
 
 	// Happy path: only the live row is surfaced.
@@ -143,7 +143,7 @@ func TestListArtifacts_spec_15_2_3(t *testing.T) {
 	}
 
 	// No catalog wired → empty list, not an error.
-	srvNoCat := sessionserver.New(store, sessionserver.Options{})
+	srvNoCat := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	rr = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/v1/sessions/s1/artifacts", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -164,7 +164,7 @@ func TestSessionUsage_spec_15_2_3(t *testing.T) {
 	billing := billingstore.NewMemory()
 	_, _ = billing.Append(ctx, billingstore.Event{TenantID: "acme", SessionID: "s1", EventType: billingstore.EventSessionCreated, TokensInput: 30, TokensOutput: 7})
 	_, _ = billing.Append(ctx, billingstore.Event{TenantID: "acme", SessionID: "s1", EventType: billingstore.EventSessionCompleted, TokensInput: 20, TokensOutput: 3})
-	srv := sessionserver.New(store, sessionserver.Options{Billing: billing})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Billing: billing})
 	h := srv.Handler()
 
 	// view_usage principal: totals returned.
@@ -210,7 +210,7 @@ func TestSessionUsage_spec_15_2_3(t *testing.T) {
 	}
 }
 
-// TestSessionUsageTreeAggregated_spec_15_1_676 covers §15.1 line 676:
+// TestSessionUsageTreeAggregated_spec_15_1_676 covers §15.1:
 // GET /v1/sessions/{id}/usage "Returns tree-aggregated usage (including
 // all descendant tasks) when the session has a delegation tree". The
 // subtree mixes a live grandchild (resident in the session store) with a
@@ -239,7 +239,7 @@ func TestSessionUsageTreeAggregated_spec_15_1_676(t *testing.T) {
 		_, _ = billing.Append(ctx, e)
 	}
 
-	srv := sessionserver.New(store, sessionserver.Options{Billing: billing, TreeArchive: archive})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Billing: billing, TreeArchive: archive})
 	h := srv.Handler()
 
 	type usageRep struct {

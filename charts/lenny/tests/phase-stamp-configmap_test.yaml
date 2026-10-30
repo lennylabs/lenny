@@ -2,7 +2,7 @@ suite: §17.2/§16.5 phase-stamp ConfigMap feature-flag downgrade labels
 templates:
   - phase-stamp-configmap.yaml
 tests:
-  # spec: §16.5 line 487; §17.2 line 80 — the per-flag label must be the
+  # spec: §16.5; §17.2 — the per-flag label must be the
   # kebab-case slug with an -enabled suffix so kube-state-metrics surfaces
   # label_lenny_dev_flag_<slug>_enabled, the series the
   # AdmissionPlaneFeatureFlagDowngrade alert matches on. F-17.2.5.
@@ -48,7 +48,7 @@ tests:
       - notExists:
           path: metadata.labels["lenny.dev/flag-compliance-enabled"]
 
-  # spec: §17.2 line 76, layer 2 — the fail-closed render-time downgrade
+  # spec: §17.2, layer 2 — the fail-closed render-time downgrade
   # guard reads the prior phase-stamp via `lookup`, which returns nil
   # under `helm template`/helm-unittest (no live cluster). The guard is
   # therefore a no-op here and the no-prior render must always succeed,

@@ -7,7 +7,7 @@
 // across replicas, preventing torn reads of a snapshot reference that
 // is being updated by a concurrent checkpoint.
 //
-// Spec semantics (§7.1 line 92):
+// Spec semantics (§7.1):
 //
 //   - Key: derive_lock:{source_session_id}.
 //   - TTL: 30 seconds. The lock auto-expires if the holder crashes
@@ -18,8 +18,7 @@
 //   - Release: the lock is released as soon as the gateway has read the
 //     snapshot reference. Holding it across the full copy is not
 //     required because checkpoint writes always produce new MinIO
-//     objects (§7.1 line 92 "Why releasing the lock before the copy is
-//     safe"), so the read reference resolves to an immutable object key.
+//     objects (§7.1), so the read reference resolves to an immutable object key.
 //
 // Two implementations:
 //
@@ -30,11 +29,11 @@
 //   - In-process (default fallback): a per-source-session sync.Mutex
 //     map. The minimal gateway and single-replica deployments fall back
 //     to this so the test suite and the dev-mode gateway need no Redis;
-//     the in-memory store mutex described in §7.1 line 119 (derive.go)
+//     the in-memory store mutex described in §7.1
 //     stays the only serialization, which is correct on a single
 //     replica and matches the documented v1 posture.
 //
-// spec: §7.1 line 92 — derive concurrent-serialization.
+// spec: §7.1 — derive concurrent-serialization.
 package derivelock
 
 import (
@@ -52,15 +51,15 @@ import (
 // derive lock within the spec's 5-second budget. The session-server
 // handler maps this to `429 DERIVE_LOCK_CONTENTION`.
 //
-// spec: §7.1 line 92.
+// spec: §7.1.
 var ErrContended = errors.New("derivelock: per-source-session lock is contended")
 
-// DefaultTTL is the §7.1 line 92 lock TTL (30 seconds). A holder that
+// DefaultTTL is the §7.1 lock TTL (30 seconds). A holder that
 // crashes mid-derive releases its lock implicitly when this fires so a
 // downed replica cannot block subsequent derives.
 const DefaultTTL = 30 * time.Second
 
-// DefaultWait is the §7.1 line 92 caller wait budget (5 seconds). A
+// DefaultWait is the §7.1 caller wait budget (5 seconds). A
 // caller that does not acquire within this window receives ErrContended
 // and the session-server returns 429 DERIVE_LOCK_CONTENTION.
 const DefaultWait = 5 * time.Second
@@ -199,7 +198,7 @@ func (m *Memory) releaserFor(sourceSessionID string, e *memEntry) Releaser {
 	}
 }
 
-// Redis is the §7.1 line 92 Redis-backed Lock. SETNX writes a per-
+// Redis is the §7.1 Redis-backed Lock. SETNX writes a per-
 // acquire token under the spec key with a 30-second TTL; release runs
 // a Lua compare-and-delete so an expired holder cannot accidentally
 // release the next acquirer's lock.

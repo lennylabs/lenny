@@ -69,7 +69,7 @@ func TestApplyPlaygroundCaps_NonPlaygroundNoOp_spec_27_6(t *testing.T) {
 }
 
 // TestApplyPlaygroundCaps_LabelAndCounterWithoutResolver_spec_27_6 — even with
-// no cap resolver wired, the origin=playground label (§27.6 line 203) is
+// no cap resolver wired, the origin=playground label (§27.6) is
 // stamped and the §27.8 counter fires. F-27.6.8 / F-27.6.11.
 func TestApplyPlaygroundCaps_LabelAndCounterWithoutResolver_spec_27_6(t *testing.T) {
 	count := 0
@@ -93,7 +93,7 @@ func TestApplyPlaygroundCaps_LabelAndCounterWithoutResolver_spec_27_6(t *testing
 }
 
 // TestApplyPlaygroundCaps_StampsCapsNoRuntimeLimit_spec_27_6 — with no runtime
-// cap declared, the §27.6 playground idle (line 201) and duration (line 200)
+// cap declared, the §27.6 playground idle-timeout override and hard duration
 // caps are stamped onto the row unchanged. F-27.6.1 / F-27.6.2.
 func TestApplyPlaygroundCaps_StampsCapsNoRuntimeLimit_spec_27_6(t *testing.T) {
 	s := &Server{playgroundCaps: fakePlaygroundCaps{idleSeconds: 300, sessionMins: 30}}
@@ -111,8 +111,7 @@ func TestApplyPlaygroundCaps_StampsCapsNoRuntimeLimit_spec_27_6(t *testing.T) {
 }
 
 // TestApplyPlaygroundCaps_RuntimeDurationTighter_spec_27_6 — when the runtime's
-// own limits.maxSessionAge is tighter than the playground cap, the §27.6 line
-// 200 min() keeps the runtime bound. F-27.6.2.
+// own limits.maxSessionAge is tighter than the playground cap, the §27.6 min() keeps the runtime bound. F-27.6.2.
 func TestApplyPlaygroundCaps_RuntimeDurationTighter_spec_27_6(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
@@ -156,7 +155,7 @@ func TestApplyPlaygroundCaps_SubMinuteRuntimeNotLoosened_spec_27_6(t *testing.T)
 // sessionPolicy.maxClientIdleSeconds, not the removed limits.maxIdleTimeSeconds
 // knob. A runtime declaring a maxClientIdleSeconds tighter than the playground
 // cap keeps the runtime bound: min(maxClientIdleSeconds,
-// playground.maxIdleTimeSeconds). spec: §6.84, §3.1 (maxClientIdleSeconds
+// playground.maxIdleTimeSeconds). spec: §27.6 (maxClientIdleSeconds
 // supersedes maxIdleTimeSeconds). F-27.6.1.
 func TestApplyPlaygroundCaps_IdleResolvesAgainstClientIdleBound_spec_27_6(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
@@ -178,13 +177,14 @@ func TestApplyPlaygroundCaps_IdleResolvesAgainstClientIdleBound_spec_27_6(t *tes
 	}
 }
 
-// TestApplyPlaygroundCaps_IdleDefaultsToSessionAge_spec_27_6 — when the runtime
-// declares no sessionPolicy.maxClientIdleSeconds, the idle override resolves
-// against the runtime's effective maxSessionAgeSeconds (the §6.2 idle-clock
-// default). A maxSessionAgeSeconds tighter than the playground cap keeps the
-// session-age bound. spec: §6.84, §3.1 (idle defaults to effective
-// maxSessionAgeSeconds). F-27.6.1.
-func TestApplyPlaygroundCaps_IdleDefaultsToSessionAge_spec_27_6(t *testing.T) {
+// TestApplyPlaygroundCaps_IdleIgnoresSessionAge_spec_27_6 — when the runtime
+// declares no sessionPolicy.maxClientIdleSeconds, the playground idle stamp is
+// the playground cap: the runtime's session-age cap is not an idle default,
+// even when it is tighter than the playground cap.
+//
+// spec: 27.6 (Session lifecycle and cleanup), 6.2 (maxClientIdleSeconds clock
+// behavior across states)
+func TestApplyPlaygroundCaps_IdleIgnoresSessionAge_spec_27_6(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
 		Name:   "age-only",
@@ -199,8 +199,8 @@ func TestApplyPlaygroundCaps_IdleDefaultsToSessionAge_spec_27_6(t *testing.T) {
 	if row.Timeouts == nil {
 		t.Fatal("timeouts not stamped")
 	}
-	if row.Timeouts.MaxIdleSeconds != 200 {
-		t.Errorf("MaxIdleSeconds = %d, want 200 (idle defaults to effective maxSessionAgeSeconds)", row.Timeouts.MaxIdleSeconds)
+	if row.Timeouts.MaxIdleSeconds != 300 {
+		t.Errorf("MaxIdleSeconds = %d, want 300 (the playground cap; the age cap is no idle default)", row.Timeouts.MaxIdleSeconds)
 	}
 }
 

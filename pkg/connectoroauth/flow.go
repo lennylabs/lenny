@@ -215,8 +215,8 @@ func ExchangeCode(ctx context.Context, httpClient HTTPDoer, r TokenExchangeReque
 // RefreshTokenRequest carries the inputs for the §9.3 / RFC 6749 §6
 // refresh-token grant against a provider's token endpoint.
 //
-// spec: §4.3 line 200 "Refresh tokens stored encrypted at rest";
-// §9.3 lines 152–155 (connector token lifecycle).
+// spec: §4.3;
+// §9.3.
 type RefreshTokenRequest struct {
 	// TokenEndpoint is the connector's auth.tokenEndpoint.
 	TokenEndpoint string
@@ -247,7 +247,7 @@ type RefreshTokenRequest struct {
 // new value on the response's `refresh_token` field; callers MUST persist
 // it and the access token under one transaction.
 //
-// spec: §4.3 line 200, §9.3 connector OAuth flow.
+// spec: §4.3, §9.3 connector OAuth flow.
 func RefreshAccessToken(ctx context.Context, httpClient HTTPDoer, r RefreshTokenRequest) (TokenResponse, error) {
 	switch {
 	case r.TokenEndpoint == "":

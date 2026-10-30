@@ -33,7 +33,7 @@ func TestRegistryRegisterResolve_spec_7_2(t *testing.T) {
 	}
 }
 
-// TestRegistryResolveDeny_spec_7_2 covers the §7.2 line 125 deny verdict
+// TestRegistryResolveDeny_spec_7_2 covers the §7.2 deny verdict
 // carrying a reason.
 func TestRegistryResolveDeny_spec_7_2(t *testing.T) {
 	r := NewRegistry()

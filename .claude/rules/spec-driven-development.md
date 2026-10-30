@@ -28,6 +28,44 @@ Never let code lead the spec. A spec change lands and is verified before the cod
 - A behavior is not done until a test pins it to its spec section and that test passes. Run the tests; writing them is half the work.
 - Tests are first-class spec artifacts. Every test carries a `// spec:` annotation mapping it to the sections it verifies, and every behavioral spec section has at least one test. The harness maps tests to sections through that annotation.
 
+## A proposal is a directory
+
+A proposal is a directory under `proposals/` holding its problem statement,
+summary, status, implementation checklist, spec changes, non-spec changes,
+review log, and deviations, each prefixed with the directory's own name. A
+proposal written before that layout is a single markdown file, and it migrates
+the first time `change-proposal` or `implement-proposal` touches it. There is no
+batch migration: a proposal nobody is working on stays as it is.
+
+Read and write the status with `.claude/tools/proposal-status.mjs`, never by
+parsing prose. The four states are Draft, Reviewed, Approved, and Implemented.
+Progress through an implementation is recorded per deliverable, by the ticked
+boxes in the implementation checklist, rather than as a state the proposal is
+in.
+
+## A landed proposal is not edited
+
+A proposal whose status records it as implemented is a historical record of
+what was decided and done at the time. That applies to every file in its
+directory, and it is why an implemented proposal never migrates: splitting one
+into role-scoped files is an edit. It is not edited afterwards, and that
+includes adding a pointer recording that a later proposal retired or reverted
+part of its deliverable.
+
+The codebase evolves, and a change proposal 0001 landed may be undone by
+proposal 0100. That is expected. The earlier proposal keeps the words it was
+written with, because its value is as evidence of what was true when it
+landed. Amending it to track later reversals turns it into a running summary
+of current state, which `spec/` and the tree already are.
+
+A proposal that reverts or retires part of an earlier implemented proposal's
+deliverable records that in its own text, and lands it in `spec/`, in the
+code, and in `BUILD-GAPS.md`. Do not stage an edit to the earlier proposal
+file, and do not list it under "Files touched on application".
+
+A proposal that has not landed is different. A draft is still being written,
+so editing it, or dropping a section a later proposal supersedes, is fine.
+
 ## Where this rule applies
 
 - All Go under `pkg/`, `cmd/`, `sdks/`, and `migrations/`, the chart under `charts/`, and the tests under `tests/`.

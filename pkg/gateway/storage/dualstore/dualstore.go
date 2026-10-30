@@ -67,7 +67,7 @@ const PlatformDegradedData = `{"reason":"dual_store_unavailable","retry_after":1
 // down).
 type Probe func(ctx context.Context) bool
 
-// GaugeSetter receives the §10.1 line 45 `lenny_dual_store_unavailable`
+// GaugeSetter receives the §10.1
 // gauge transitions. gatewaymetrics.Metrics satisfies it.
 type GaugeSetter interface {
 	SetDualStoreUnavailable(unavailable bool)

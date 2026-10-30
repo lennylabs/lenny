@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/externaladapterstore"
 )
 
-// spec: §15.1 lines 1207-1224 — ETag-based optimistic concurrency for the
+// spec: §15.1 — ETag-based optimistic concurrency for the
 // external-adapters admin resource.
 
 // putAdapterRaw issues a PUT carrying the given If-Match header verbatim,
@@ -56,7 +56,7 @@ func seedEtagAdapter(t *testing.T) (*admin.Router, *externaladapterstore.Memory)
 func TestExternalAdapterETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) {
 	rename := admin.ExternalAdapterPayload{DisplayName: "Acme Renamed"}
 
-	// spec: §15.1 line 1209 — GET carries the ETag header and per-item etag.
+	// spec: §15.1 — GET carries the ETag header and per-item etag.
 	t.Run("GetCarriesETag", func(t *testing.T) {
 		router, _ := seedEtagAdapter(t)
 		g := withAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/external-adapters/acme-a2a", nil))
@@ -75,7 +75,7 @@ func TestExternalAdapterETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) {
 		}
 	})
 
-	// spec: §15.1 line 1209 — list responses include a per-item ETag.
+	// spec: §15.1 — list responses include a per-item ETag.
 	t.Run("ListCarriesPerItemETag", func(t *testing.T) {
 		router, _ := seedEtagAdapter(t)
 		g := withAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/external-adapters", nil))
@@ -95,7 +95,7 @@ func TestExternalAdapterETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) {
 		}
 	})
 
-	// spec: §15.1 line 1210 — a PUT with no If-Match returns 428 ETAG_REQUIRED.
+	// spec: §15.1 — a PUT with no If-Match returns 428 ETAG_REQUIRED.
 	t.Run("PutMissingIfMatch", func(t *testing.T) {
 		router, _ := seedEtagAdapter(t)
 		rr := putAdapterRaw(t, router.Handler(), "acme-a2a", "", rename)
@@ -105,7 +105,7 @@ func TestExternalAdapterETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) {
 		assertErrorCode(t, rr, "ETAG_REQUIRED")
 	})
 
-	// spec: §15.1 line 1210 — a malformed If-Match is 400 VALIDATION_ERROR.
+	// spec: §15.1 — a malformed If-Match is 400 VALIDATION_ERROR.
 	t.Run("PutMalformedIfMatch", func(t *testing.T) {
 		for _, bad := range []string{"3", "abc", "W/\"3\"", "*", `"1.5"`} {
 			router, _ := seedEtagAdapter(t)
@@ -118,7 +118,7 @@ func TestExternalAdapterETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) {
 		}
 	})
 
-	// spec: §15.1 line 1210 — a stale If-Match is 412 with details.currentEtag.
+	// spec: §15.1 — a stale If-Match is 412 with details.currentEtag.
 	t.Run("PutStaleIfMatch", func(t *testing.T) {
 		router, _ := seedEtagAdapter(t)
 		rr := putAdapterRaw(t, router.Handler(), "acme-a2a", `"999"`, rename)
@@ -137,7 +137,7 @@ func TestExternalAdapterETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) {
 		}
 	})
 
-	// spec: §15.1 line 1211 — a matching If-Match succeeds and returns the
+	// spec: §15.1 — a matching If-Match succeeds and returns the
 	// bumped ETag; a retried PUT with the now-stale tag loses with 412.
 	t.Run("PutMatchingIfMatchBumpsETag", func(t *testing.T) {
 		router, store := seedEtagAdapter(t)
@@ -158,7 +158,7 @@ func TestExternalAdapterETagOptimisticConcurrency_spec_15_1_1207(t *testing.T) {
 		}
 	})
 
-	// spec: §15.1 line 1213 — DELETE honours If-Match only when present.
+	// spec: §15.1 — DELETE honours If-Match only when present.
 	t.Run("DeleteStaleIfMatchIs412", func(t *testing.T) {
 		router, store := seedEtagAdapter(t)
 		rr := deleteAdapterRaw(t, router.Handler(), "acme-a2a", `"999"`)

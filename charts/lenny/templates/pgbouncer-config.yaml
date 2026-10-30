@@ -1,28 +1,40 @@
 {{/*
-The §4.2 / §12.3 PgBouncer connect_query sentinel ConfigMap.
+The §12.3 PgBouncer configuration ConfigMap, carrying the §4.2
+connect_query sentinel.
 
-The chart does not deploy a PgBouncer Deployment or Service. Production
-deployments either run PgBouncer as a sidecar of an operator-managed
-workload outside this chart or rely on a managed pooler (AWS RDS Proxy,
-Cloud SQL Auth Proxy with PgBouncer profile, Crunchy Postgres for
-Kubernetes pgBouncer, etc.). What the chart owns is the connect_query
-sentinel string the §4.2 line 163 spec requires on every fresh server
-connection — operators mount the ConfigMap below on whatever PgBouncer
-workload they run.
+It holds a complete pgbouncer.ini. The [pgbouncer] section listens on TCP
+at pgbouncer.port on every address (PgBouncer listens on no TCP address
+unless listen_addr is set), disables the Unix socket so the pooler runs
+on a read-only root filesystem, sets the §12.3 pool mode, and reads its
+credentials from the auth file the PgBouncer image writes from
+DATABASE_URL. The [databases] section routes every database name to the
+upstream Postgres and carries the connect_query, because PgBouncer
+accepts connect_query only on a database entry and refuses to start when
+it appears under [pgbouncer].
 
-Rendering is gated on `pgbouncer.enabled` (default true). Operators who
-manage their pooler's configuration entirely out-of-band can set
-`pgbouncer.enabled: false` to suppress the ConfigMap; the SQL string
-remains in values.yaml as the authoritative reference.
+The upstream is pgbouncer.upstream.host, or the CloudNativePG
+lenny-postgres-rw Service when postgres.deploy is true. With neither, the
+[databases] entry is rendered as a comment that an operator who runs
+their own PgBouncer completes with their Postgres host.
 
-spec: §4.2 line 163 (PgBouncer connect_query sentinel)
+With pgbouncer.deploy the chart runs PgBouncer on this ConfigMap
+(pgbouncer-deployment.yaml). Rendering is gated on `pgbouncer.enabled`
+(default true); operators who manage their pooler's configuration
+entirely out-of-band set it false to suppress the ConfigMap.
+
+spec: §4.2
 spec: §12.3 (transaction-mode pooler leak prevention)
+spec: §13.2 (PgBouncer clients connect on TCP 5432)
 */}}
 {{- if .Values.pgbouncer.enabled }}
+{{- $pb := .Values.pgbouncer }}
+{{- $host := include "lenny.pgbouncer.upstreamHost" . }}
+{{- $upPort := (($pb.upstream | default dict).port | default 5432) }}
+{{- $connectQuery := $pb.connectQuery | replace "'" "''" }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Values.pgbouncer.configMapName }}
+  name: {{ $pb.configMapName }}
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: lenny
@@ -30,19 +42,29 @@ metadata:
     app.kubernetes.io/component: pgbouncer
     lenny.dev/component: pgbouncer
 data:
-  # pgbouncer.ini fragment carrying the §4.2 connect_query sentinel
-  # and the §12.3 transaction-mode setting. Operators mount this at
-  # the PgBouncer pod's /etc/pgbouncer/pgbouncer.ini path (or
-  # equivalent) so every fresh server connection runs the
-  # connect_query before being handed to a client transaction.
+  # The §12.3 pgbouncer.ini. The deployed PgBouncer copies it into its
+  # writable config directory; operators who run their own PgBouncer
+  # mount it at /etc/pgbouncer/pgbouncer.ini.
   pgbouncer.ini: |
-    [pgbouncer]
-    pool_mode = {{ .Values.pgbouncer.poolMode }}
-    # spec: §4.2 line 163 — fresh server connections begin with the
+    [databases]
+    # spec: §4.2 — every fresh server connection begins with the
     # SET sentinel so an unclaimed pooled connection is rejected by
     # the lenny_tenant_guard trigger and by RLS before tenant data
-    # could leak. The pgbouncer.ini INI parser wraps the value in
-    # single quotes and doubles any embedded single quote, so we
-    # transform `'` -> `''` from the values.yaml literal here.
-    connect_query = '{{ .Values.pgbouncer.connectQuery | replace "'" "''" }}'
+    # could leak. The connection-string parser takes a single-quoted
+    # value and a doubled embedded single quote, so `'` becomes `''`
+    # from the values.yaml literal here.
+    {{- if $host }}
+    * = host={{ $host }} port={{ $upPort }} connect_query='{{ $connectQuery }}'
+    {{- else }}
+    ; * = host=<postgres-host> port={{ $upPort }} connect_query='{{ $connectQuery }}'
+    {{- end }}
+
+    [pgbouncer]
+    listen_addr = 0.0.0.0
+    listen_port = {{ $pb.port }}
+    unix_socket_dir =
+    auth_type = {{ $pb.authType }}
+    auth_file = /etc/pgbouncer/userlist.txt
+    pool_mode = {{ $pb.poolMode }}
+    ignore_startup_parameters = extra_float_digits
 {{- end }}

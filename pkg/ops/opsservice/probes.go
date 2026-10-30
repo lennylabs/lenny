@@ -89,7 +89,7 @@ func GatewayProbe(client *http.Client, healthURL string) probe.Func {
 }
 
 // MinIOProbe returns the §25.2 / §25.11 MinIO dependency probe: it GETs
-// the MinIO liveness endpoint (`/minio/health/live`). §25.2 line 169
+// the MinIO liveness endpoint (`/minio/health/live`). §25.2
 // lists MinIO among the dependencies lenny-ops connects to, and §25.11
 // streams backup archives to it. An endpoint without a scheme is
 // assumed plain HTTP. An empty endpoint yields a probe that reports
@@ -105,8 +105,7 @@ func MinIOProbe(client *http.Client, endpoint string) probe.Func {
 }
 
 // PrometheusProbe returns the §25.2 / §25.16 Prometheus dependency
-// probe: it GETs the Prometheus health endpoint (`/-/healthy`). §25.2
-// line 169 lists Prometheus among the dependencies lenny-ops connects
+// probe: it GETs the Prometheus health endpoint (`/-/healthy`). §25.2 lists Prometheus among the dependencies lenny-ops connects
 // to, and §25.6 queries it for diagnostic time-series. An empty URL
 // yields a probe that reports Prometheus not configured, the §25.16
 // Minimal-block degraded posture.

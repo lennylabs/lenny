@@ -8,13 +8,13 @@ import (
 	"sync"
 )
 
-// DefaultCacheEntries is the §8.10 line 129 per-replica LRU cache size:
+// DefaultCacheEntries is the §8.10 per-replica LRU cache size:
 // "the gateway fetches it from Postgres on demand (with a per-replica
 // LRU cache, default 128 entries)."
 const DefaultCacheEntries = 128
 
 // Cached fronts a durable Store with a per-replica LRU read cache. It
-// implements the §8.10 line 129 / §8.2 line 129 caching model: the
+// implements the §8.10 / §8.2 caching model: the
 // inner Store (Postgres in production) is the authoritative record, and
 // this wrapper keeps the hot set of recently-read settled nodes in
 // memory so a parent re-reading a child's result does not hit Postgres
@@ -168,22 +168,44 @@ func (c *Cached) DeleteBySession(ctx context.Context, tenantID, rootSessionID st
 	return n, nil
 }
 
-// evictRoot drops every cached entry whose node belongs to the tree
-// rooted at rootSessionID within tenantID. The cache is keyed by
-// (tenant, node), so the eviction walks the LRU list and matches on the
-// node's RootSessionID rather than the cache key.
-func (c *Cached) evictRoot(tenantID, rootSessionID string) {
+// DeleteByTenant writes through to the inner store and evicts every
+// cached node of the tenant, so a read after tenant deletion cannot
+// serve a settled-child result from memory. A write-through failure
+// leaves the cache untouched.
+//
+// spec: §12.8 (Compliance Interfaces, tenant deletion Phase 4).
+func (c *Cached) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	n, err := c.inner.DeleteByTenant(ctx, tenantID)
+	if err != nil {
+		return 0, err
+	}
+	c.evictMatching(func(node ArchivedNode) bool { return node.TenantID == tenantID })
+	return n, nil
+}
+
+// evictMatching drops every cached entry whose node satisfies match.
+func (c *Cached) evictMatching(match func(ArchivedNode) bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for el := c.ll.Front(); el != nil; {
 		next := el.Next()
 		e := el.Value.(*entry)
-		if e.node.TenantID == tenantID && e.node.RootSessionID == rootSessionID {
+		if match(e.node) {
 			c.ll.Remove(el)
 			delete(c.items, e.key)
 		}
 		el = next
 	}
+}
+
+// evictRoot drops every cached entry whose node belongs to the tree
+// rooted at rootSessionID within tenantID. The cache is keyed by
+// (tenant, node), so the eviction walks the LRU list and matches on the
+// node's RootSessionID rather than the cache key.
+func (c *Cached) evictRoot(tenantID, rootSessionID string) {
+	c.evictMatching(func(n ArchivedNode) bool {
+		return n.TenantID == tenantID && n.RootSessionID == rootSessionID
+	})
 }
 
 // Len returns the number of entries currently cached. It exists for

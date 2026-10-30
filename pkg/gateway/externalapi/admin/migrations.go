@@ -18,7 +18,7 @@ import (
 // seam. *schemamigrate.Manager satisfies it. Nil leaves the
 // `/v1/admin/schema/migrations` endpoints unregistered.
 //
-// spec: §15.1 lines 891-892; §24.13 lines 150-151.
+// spec: §15.1; §24.13.
 type MigrationManager interface {
 	// Status returns the expand-contract migration state per
 	// `GET /v1/admin/schema/migrations/status`.
@@ -37,7 +37,7 @@ func (r *Router) WithMigrationManager(m MigrationManager) *Router {
 }
 
 // handleMigrationStatus implements
-// GET /v1/admin/schema/migrations/status per §15.1 line 891. Requires
+// GET /v1/admin/schema/migrations/status per §15.1. Requires
 // platform-admin (the route is gated by requireAdmin).
 func (r *Router) handleMigrationStatus(w http.ResponseWriter, req *http.Request) {
 	rep, err := r.migrations.Status(req.Context())
@@ -50,7 +50,7 @@ func (r *Router) handleMigrationStatus(w http.ResponseWriter, req *http.Request)
 }
 
 // handleMigrationDown implements
-// POST /v1/admin/schema/migrations/{version}/down per §15.1 line 892.
+// POST /v1/admin/schema/migrations/{version}/down per §15.1.
 // The body `{"confirm": true, "reason": "<free text>"}` is required;
 // the call is rejected with 422 CONFIRMATION_REQUIRED when confirm is
 // absent or false. On success the §16.6 `platform.schema_migration_
@@ -75,7 +75,7 @@ func (r *Router) handleMigrationDown(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	if !body.Confirm {
-		// spec: §15.1 line 892 — destructive rollback requires explicit
+		// spec: §15.1 — destructive rollback requires explicit
 		// confirmation.
 		writeError(w, http.StatusUnprocessableEntity, "CONFIRMATION_REQUIRED",
 			`down-migration requires {"confirm": true}`, nil)

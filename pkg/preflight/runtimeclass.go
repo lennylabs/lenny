@@ -40,9 +40,7 @@ type RuntimeClassRequirement struct {
 // profile rather than to a pool name. The core "RuntimeClass '<name>' not
 // found" wording from §17.9 is preserved.
 //
-// spec: §5.3 line 676 ("checks for required RuntimeClasses and all other
-// infrastructure dependencies before installation proceeds"); §17.9
-// line 478 (fail-closed before any Lenny component is deployed).
+// spec: §5.3; §17.9.
 func CheckRuntimeClasses(required []RuntimeClassRequirement, existing map[string]bool) Decision {
 	var missing []string
 	seen := map[string]bool{}

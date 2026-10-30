@@ -54,7 +54,7 @@ type Runtime struct {
 
 	// WorkspaceTier is the §12.9 / §5.2 data-classification tier this
 	// runtime processes (`T3` default, `T4` Restricted). A T4 runtime
-	// cannot back a cross-tenant-reuse pool (§5.2 line 396). Empty is
+	// cannot back a cross-tenant-reuse pool (§5.2). Empty is
 	// treated as T3.
 	WorkspaceTier WorkspaceTier
 
@@ -69,6 +69,17 @@ type Runtime struct {
 	// classifies it Inherited: a derived runtime takes the base posture.
 	// spec: §4.7.
 	RequireSoPeercred *bool
+
+	// Restartable is the §5.1 derived flag the RuntimeReconciler mirrors
+	// from the Runtime CRD: true for a runtime that carries `command`, has
+	// executionMode session, and does not declare capabilities.preConnect.
+	// Gateway pool admission refuses recycle.runtimeProcess: restart on a
+	// runtime whose flag is false (§5.2). Only the reconciler writes it; the
+	// admin registration payload does not model `command`, so a runtime
+	// registered only through the admin API stays false, matching the
+	// migration column's NOT NULL DEFAULT false, and refuses restart. The
+	// §5.1 merge takes it from the base runtime. spec: §5.1 (command).
+	Restartable bool
 
 	// AllowedResourceClasses is the §5.1 set of resource classes the
 	// runtime permits (for example small, medium, large). The §5.1 merge
@@ -94,7 +105,7 @@ type Runtime struct {
 	// the runtime declares no credentialCapabilities block.
 	CredentialCapabilities *CredentialCapabilities
 
-	// AllowSelfRecursion is the §5.1 line 69 runtime-layer opt-in for the
+	// AllowSelfRecursion is the §5.1 runtime-layer opt-in for the
 	// §8.2 cycle-detection three-layer AND gate (LayerRuntime). When
 	// false this runtime rejects every self-recursive delegation hop. The
 	// §5.1 merge table classifies it Override (restrict-only): a derived
@@ -157,8 +168,7 @@ type Runtime struct {
 	// block: the AllowSymlinks toggle the gateway delivers to the adapter
 	// on FinalizeWorkspace so uploadArchive symlink entries are admitted
 	// (and target-validated) only for runtimes that explicitly opt in. A
-	// nil block means platform defaults (symlinks rejected). spec: §7.4
-	// lines 458, 462; §13.4 lines 663-672 — F-7.4.4.
+	// nil block means platform defaults (symlinks rejected). spec: §7.4; §13.4 — F-7.4.4.
 	ArchivePolicy *ArchivePolicy
 
 	// DefaultPoolConfig is the §5.1 defaultPoolConfig block: the
@@ -236,7 +246,7 @@ type Runtime struct {
 	// starts at 1 and increments on every successful write (Update and
 	// SoftDelete). The quoted decimal version is the runtime's strong
 	// entity tag, enforced on PUT via the If-Match precondition and
-	// exposed on GET/list. spec: §15.1 lines 1207-1213.
+	// exposed on GET/list. spec: §15.1.
 	Version int64
 }
 
@@ -375,20 +385,21 @@ type RuntimeCapabilities struct {
 	Injection InjectionCapability `json:"injection,omitempty"`
 
 	// PreConnect is the §5.1 capabilities.preConnect flag. When true the
-	// §6.1 warm-pool controller pre-connects the agent SDK process during
-	// the warm phase so every pod in the pool is SDK-warm, and the
-	// runtime's adapter must implement DemoteSDK. Default false. The
+	// pod's adapter starts the agent SDK process during warm-up, before the
+	// pod becomes idle (through the runtime supervisor in the sidecar
+	// model), so every pod in the pool is SDK-warm, and the runtime's
+	// adapter must implement DemoteSDK (§6.1). Default false. The
 	// companion runtime-level SDKWarmBlockingPaths governs the demotion
-	// decision (§5.1 lines 22-24).
+	// decision (§5.1).
 	PreConnect bool `json:"preConnect,omitempty"`
 
-	// MidSessionUpload is the §7.4 line 433 capabilities.midSessionUpload
+	// MidSessionUpload is the §7.4 capabilities.midSessionUpload
 	// flag. When true (and the deployer policy permits it) clients may
 	// upload files into the workspace of an already-running session via
 	// the mid-session upload surface; the adapter overlays the files onto
-	// /workspace/current and signals the runtime once promotion completes.
+	// the session's current tree and signals the runtime once promotion completes.
 	// Clients discover the flag through the GET /v1/runtimes capabilities
-	// block. Default false. spec: §7.4 line 433 — F-7.4.6.
+	// block. Default false. spec: §7.4 — F-7.4.6.
 	MidSessionUpload bool `json:"midSessionUpload,omitempty"`
 }
 
@@ -478,9 +489,9 @@ func (a *AgentInterface) Clone() *AgentInterface {
 
 // MetadataVisibility is the §5.1 publishedMetadata visibility class. It
 // governs which meta-fetch endpoint serves an entry and how the gateway
-// filters it: a public entry needs no auth, an internal entry needs a
-// valid session JWT, and a tenant entry is additionally scoped to the
-// JWT's tenant.
+// filters it: a public entry needs no auth, an internal entry needs an
+// authenticated caller, and a tenant entry is additionally filtered by the
+// caller's tenant_id.
 type MetadataVisibility string
 
 const (
@@ -605,8 +616,7 @@ func (d SetupTimeoutDisposition) IsValid() bool {
 type SetupPolicy struct {
 	// TimeoutSeconds is the aggregate cap on the setup phase in seconds.
 	// Zero means the runtime declares no aggregate cap and the setup
-	// phase waits indefinitely (§5.1 line 260). In the §5.1 derived
-	// Maximum merge (line 195) zero is the largest possible bound: it
+	// phase waits indefinitely (§5.1). In the §5.1 derived Maximum merge zero is the largest possible bound: it
 	// wins max() over any finite value, so a base's "no cap" floor cannot
 	// be shortened by a derived runtime. The registration validator
 	// enforces the line-195 note "neither can be zero if the other is
@@ -633,8 +643,10 @@ func (p *SetupPolicy) Clone() *SetupPolicy {
 // lenny/request_input wait timeout. A zero field declares no per-runtime
 // cap for that dimension; the gateway falls back to its platform default.
 type Limits struct {
-	// MaxSessionAgeSeconds caps a session's lifetime in seconds. Zero
-	// declares no per-runtime session-age cap.
+	// MaxSessionAgeSeconds caps a session's active-time age in seconds:
+	// time counts while the session is starting, running, or input_required
+	// and is paused in suspended and the recovery states (§6.2 maxSessionAge
+	// timer behavior across states). Zero declares no per-runtime cap.
 	MaxSessionAgeSeconds int `json:"maxSessionAgeSeconds,omitempty"`
 
 	// MaxUploadSizeBytes caps a single client upload in bytes. Zero
@@ -646,16 +658,16 @@ type Limits struct {
 	// default.
 	MaxRequestInputWaitSeconds int `json:"maxRequestInputWaitSeconds,omitempty"`
 
-	// MaxElicitationWaitSeconds is the §11.3 line 202 human-facing
+	// MaxElicitationWaitSeconds is the §11.3 human-facing
 	// lenny/request_elicitation wait timeout in seconds, configurable per
 	// pool in the `limits:` block of the RuntimeDefinition (same placement
 	// as maxRequestInputWaitSeconds). Zero selects the platform default
-	// (600s). spec: §11.3 line 202.
+	// (600s). spec: §11.3.
 	MaxElicitationWaitSeconds int `json:"maxElicitationWaitSeconds,omitempty"`
 
-	// MaxElicitationsPerSession is the §11.3 line 203 per-session lifetime
+	// MaxElicitationsPerSession is the §11.3 per-session lifetime
 	// elicitation budget, configurable per pool in the `limits:` block.
-	// Zero selects the platform default (50). spec: §11.3 line 203.
+	// Zero selects the platform default (50). spec: §11.3.
 	MaxElicitationsPerSession int `json:"maxElicitationsPerSession,omitempty"`
 }
 
@@ -670,8 +682,7 @@ func (l *Limits) Clone() *Limits {
 
 // SetupCommandMode is the §5.1 / §7.5 setupCommandPolicy.mode enum: whether
 // the runtime restricts setup commands to an explicit allowlist (deny-by-
-// default) or to an explicit blocklist (allow-by-default). spec: §7.5 lines
-// 483-486 — F-7.5.1.
+// default) or to an explicit blocklist (allow-by-default). spec: §7.5 — F-7.5.1.
 type SetupCommandMode string
 
 const (
@@ -701,8 +712,8 @@ func (m SetupCommandMode) IsValid() bool {
 // SetupCommandPolicy is the §5.1 / §7.5 setupCommandPolicy block on a
 // runtime: the command allow/block list, the shell-execution flag, and the
 // per-session command cap the gateway enforces against the client-supplied
-// workspace plan at create-time (§7.5 line 488). The §5.1 merge table
-// classifies it Override. spec: §7.5 lines 481-490 — F-7.5.1.
+// workspace plan at create-time (§7.5). The §5.1 merge table
+// classifies it Override. spec: §7.5 — F-7.5.1.
 type SetupCommandPolicy struct {
 	// Mode selects allowlist (deny-by-default) or blocklist (allow-by-
 	// default) prefix matching.
@@ -710,7 +721,7 @@ type SetupCommandPolicy struct {
 
 	// Shell selects shell-vs-argv execution: true wraps commands in
 	// `/bin/sh -c`; false splits on whitespace and execs the argv directly,
-	// neutering shell metacharacters per §7.5 line 490. F-7.5.2.
+	// neutering shell metacharacters per §7.5. F-7.5.2.
 	Shell bool `json:"shell,omitempty"`
 
 	// Allowlist is the set of permitted §7.5 command prefixes when Mode is
@@ -744,7 +755,7 @@ func (p *SetupCommandPolicy) Clone() *SetupCommandPolicy {
 // command, preserving the pre-F-7.5.1 behaviour. An empty Mode also admits
 // (the policy declares no mode, so neither list is consulted). When Mode is
 // allowlist the empty Allowlist denies everything; when Mode is blocklist
-// the empty Blocklist allows everything. spec: §7.5 line 488 — F-7.5.1.
+// the empty Blocklist allows everything. spec: §7.5 — F-7.5.1.
 func (p *SetupCommandPolicy) PermitsCommand(cmd string) bool {
 	if p == nil || p.Mode == "" {
 		return true
@@ -787,11 +798,11 @@ func hasCommandPrefix(cmd, prefix string) bool {
 }
 
 // ArchivePolicy is the §13.4 per-Runtime archive-extraction opt-in
-// block. AllowSymlinks lifts the §7.4 line 458 default-deny on symlink
+// block. AllowSymlinks lifts the §7.4 default-deny on symlink
 // entries; even when true, the adapter still resolves the target through
 // pkg/upload.ValidateSymlinkTarget (target must canonicalize under the
 // runtime's workspace root and must not traverse /proc, /sys, /dev, or
-// /run/lenny). spec: §7.4 lines 458, 462; §13.4 — F-7.4.4.
+// /run/lenny). spec: §7.4; §13.4 — F-7.4.4.
 type ArchivePolicy struct {
 	AllowSymlinks bool `json:"allowSymlinks,omitempty"`
 }
@@ -829,24 +840,25 @@ func (c *DefaultPoolConfig) Clone() *DefaultPoolConfig {
 }
 
 // WorkspaceFile is one §5.1 workspaceDefaults.files entry: a default
-// workspace file the §14 path materializes into /workspace/current
-// before client uploads. Small files carry inline Content; large files
-// carry a Ref (a lenny-blob:// reference materialized in its place).
+// workspace file the gateway composes into every session's bound plan as an
+// inlineFile source ahead of the client's sources (§14.1 Runtime workspace
+// defaults). Each entry carries its content inline.
 type WorkspaceFile struct {
-	// Path is the destination path, relative to /workspace/current.
+	// Path is the destination path, relative to the session's workspace root.
 	Path string `json:"path"`
 
-	// Content is the inline file content. Empty when the file is
-	// materialized from Ref.
+	// Content is the inline file content.
 	Content string `json:"content,omitempty"`
 
-	// Ref names a large-file reference materialized in place of inline
-	// Content. Empty when Content is inline.
+	// Ref is not a valid field on a workspace default file: registration
+	// rejects an entry that sets it, and ComposeInto fails on a row stored
+	// before that check rather than binding a plan without the file.
+	// spec: §5.1 Derived Runtime Instantiation.
 	Ref string `json:"ref,omitempty"`
 }
 
 // WorkspaceSetupCommand is one §5.1 workspaceDefaults.setupCommands
-// entry. Per §5.1 line 198 the per-command TimeoutSeconds is preserved
+// entry. Per §5.1 the per-command TimeoutSeconds is preserved
 // from each source through the merge. The §5.1 YAML accepts a bare
 // command string or a {cmd, timeoutSeconds} object; UnmarshalJSON
 // admits both forms.
@@ -1012,6 +1024,39 @@ func (d CleanupFailureDisposition) IsValid() bool {
 	return false
 }
 
+// RuntimeProcessLifetime is the §5.2 sessionPolicy.recycle.runtimeProcess
+// enum: the runtime-process lifetime of the pods a reusing recycling pool
+// creates. A `keep` pod keeps its runtime process across the recycle
+// boundary; a `restart` pod ends it in each whole-pod scrub and launches a
+// new process for the next session. The WarmPoolController records the value
+// in the pod label lenny.dev/runtime-process when it creates the pod.
+// spec: §5.2 (Runtime-process lifetime).
+type RuntimeProcessLifetime string
+
+const (
+	// RuntimeProcessKeep keeps the runtime process across the recycle
+	// boundary.
+	RuntimeProcessKeep RuntimeProcessLifetime = "keep"
+	// RuntimeProcessRestart ends the runtime process in each whole-pod scrub
+	// and launches a new one for the next session.
+	RuntimeProcessRestart RuntimeProcessLifetime = "restart"
+)
+
+// AllRuntimeProcessLifetimes returns the closed enum.
+func AllRuntimeProcessLifetimes() []RuntimeProcessLifetime {
+	return []RuntimeProcessLifetime{RuntimeProcessKeep, RuntimeProcessRestart}
+}
+
+// IsValid reports whether l is a known runtime-process lifetime.
+func (l RuntimeProcessLifetime) IsValid() bool {
+	for _, v := range AllRuntimeProcessLifetimes() {
+		if l == v {
+			return true
+		}
+	}
+	return false
+}
+
 // SessionPolicy is the §5.1 / §5.2 sessionPolicy block: the session-mode
 // pod-reuse, concurrency, and workspace-cleanup policy for a runtime. The
 // former task and concurrent modes collapse into presets of this block:
@@ -1025,9 +1070,17 @@ type SessionPolicy struct {
 	MaxConcurrentSessions int `json:"maxConcurrentSessions,omitempty"`
 
 	// AcknowledgeProcessLevelIsolation is the §5.2 deployer acknowledgment
-	// that concurrent slots share the pod process namespace, /tmp, cgroup
-	// memory, network stack, and credential group-read access. Required
-	// when MaxConcurrentSessions > 1.
+	// that sessions on one pod share its runtime process: concurrent slots
+	// share the pod process namespace, /tmp, cgroup memory, network stack,
+	// and credential group-read access, and a recycled pod carries the
+	// state the whole-pod scrub does not reach into its next session.
+	// Required when MaxConcurrentSessions > 1, and on a pool with
+	// Recycle.Enabled, Recycle.MaxSessionsPerPod > 1, a
+	// Recycle.ScrubProfile other than `vm-restart`, and
+	// Recycle.RuntimeProcess `keep`, because a `keep` pod keeps one runtime
+	// process across its sessions. Pool admission
+	// refuses the pool without it. spec: §5.2 (Deployer acknowledgment
+	// (runtime process kept across sessions)).
 	AcknowledgeProcessLevelIsolation bool `json:"acknowledgeProcessLevelIsolation,omitempty"`
 
 	// Recycle is the §5.2 sequential pod-reuse policy. It is nil when the
@@ -1042,16 +1095,18 @@ type SessionPolicy struct {
 	// CleanupTimeoutSeconds bounds the cleanup-command phase (§5.2).
 	CleanupTimeoutSeconds int `json:"cleanupTimeoutSeconds,omitempty"`
 
-	// MaxSessionRetries is the §5.2 / §6.6 crash re-dispatch budget. A nil
-	// value takes the §6.6 default of 1; an explicit 0 disables retries.
-	MaxSessionRetries *int `json:"maxSessionRetries,omitempty"`
-
-	// MaxSessionAgeSeconds is the §5.2 wall-clock session-age cap. Zero
-	// declares no per-runtime cap and falls back to the platform default.
+	// MaxSessionAgeSeconds is the §5.2 active-time session age cap: time
+	// counts while the session is starting, running, or input_required and
+	// is paused in suspended and the recovery states (§6.2 maxSessionAge
+	// timer behavior across states). Zero declares no per-runtime cap and
+	// falls back to the platform default.
 	MaxSessionAgeSeconds int `json:"maxSessionAgeSeconds,omitempty"`
 
-	// MaxClientIdleSeconds is the §5.2 / §6.2 client-inactivity bound.
-	// Zero defaults to the effective MaxSessionAgeSeconds.
+	// MaxClientIdleSeconds is the §5.2 / §6.2 client-inactivity bound on a
+	// `running` session: an idle session is suspended and its pod released,
+	// and a session that cannot be idle-suspended (service mode or an MCP
+	// runtime) expires. Zero selects the platform default of 900 seconds.
+	// spec: §6.2 (maxClientIdleSeconds clock behavior across states).
 	MaxClientIdleSeconds int `json:"maxClientIdleSeconds,omitempty"`
 
 	// SlotRetries is the §5.2 per-slot retry budget when
@@ -1078,16 +1133,21 @@ type RecyclePolicy struct {
 	// the workspace scrub is best-effort. Required when Enabled is true.
 	AcknowledgeBestEffortScrub bool `json:"acknowledgeBestEffortScrub,omitempty"`
 
-	// AllowCrossTenantReuse permits a recycling pod to serve sessions from
-	// more than one tenant on the sequential-reuse path. §5.2 permits it
-	// only with microvm isolation and only when MaxConcurrentSessions is 1.
+	// AllowCrossTenantReuse is the §5.2 cross-tenant sequential-reuse
+	// request. §5.2 admits it only with microvm isolation,
+	// MaxConcurrentSessions 1, a `vm-restart` or `in-place` ScrubProfile,
+	// and a non-T4 runtime. A recycled pod stays pinned to its first
+	// tenant because the tenant pin applies on every pool, so the field
+	// does not change which tenant a pod serves.
 	AllowCrossTenantReuse bool `json:"allowCrossTenantReuse,omitempty"`
 
 	// ScrubProfile is the §5.2 whole-pod scrub variant: `standard` (the
-	// default, in-guest scrub steps), `vm-restart` (boot a fresh guest
-	// between tenants on a microvm cross-tenant-reuse pool), or `in-place`
-	// (reuse the running guest with documented residual state). The store
-	// enum matches the CRD `scrubProfile` enum value-for-value.
+	// default, in-guest scrub steps), `vm-restart` (retire the pod at every
+	// recycle boundary and reprovision a fresh guest), or `in-place` (keep
+	// the running guest across the pinned tenant's sessions with documented
+	// residual state). Neither microvm variant reuses a pod across tenants.
+	// The store enum matches the CRD `scrubProfile` enum value-for-value.
+	// spec: §5.2 (Kata/microvm scrub variant).
 	ScrubProfile MicrovmScrubMode `json:"scrubProfile,omitempty"`
 
 	// AcknowledgeMicrovmResidualState is the §5.2 acknowledgment that
@@ -1110,6 +1170,12 @@ type RecyclePolicy struct {
 
 	// MaxPodUptimeSeconds optionally retires a pod after this uptime.
 	MaxPodUptimeSeconds int `json:"maxPodUptimeSeconds,omitempty"`
+
+	// RuntimeProcess is the §5.2 runtime-process lifetime (`keep` or
+	// `restart`) of the pods the pool creates. It is required with no
+	// default on a reusing recycling pool and rejected on every other pool.
+	// spec: §5.2 (Runtime-process lifetime).
+	RuntimeProcess RuntimeProcessLifetime `json:"runtimeProcess,omitempty"`
 }
 
 // Clone returns a deep copy of the recycle policy. A nil receiver clones
@@ -1132,10 +1198,6 @@ func (p *SessionPolicy) Clone() *SessionPolicy {
 	cp := *p
 	cp.CleanupCommands = append([]string(nil), p.CleanupCommands...)
 	cp.Recycle = p.Recycle.Clone()
-	if p.MaxSessionRetries != nil {
-		n := *p.MaxSessionRetries
-		cp.MaxSessionRetries = &n
-	}
 	if p.SlotRetries != nil {
 		n := *p.SlotRetries
 		cp.SlotRetries = &n
@@ -1251,7 +1313,7 @@ func (l IntegrationLevel) IsValid() bool {
 // WorkspaceTier is the §12.9 / §5.2 data-classification tier a runtime
 // is configured for. Workspace data defaults to T3 (Confidential);
 // runtimes that process Restricted data (PHI, credentials) are
-// configured with T4. §5.2 line 396 forbids cross-tenant pod reuse on a
+// configured with T4. §5.2 forbids cross-tenant pod reuse on a
 // pool whose runtime is T4 because T4 requires dedicated node pools for
 // per-tenant key isolation (§6.4). The empty value is treated as T3.
 type WorkspaceTier string
@@ -1261,12 +1323,12 @@ const (
 	// (Confidential).
 	WorkspaceTierT3 WorkspaceTier = "T3"
 	// WorkspaceTierT4 is the §12.9 Restricted classification. A T4
-	// runtime cannot back a cross-tenant-reuse pool (§5.2 line 396).
+	// runtime cannot back a cross-tenant-reuse pool (§5.2).
 	WorkspaceTierT4 WorkspaceTier = "T4"
 )
 
 // AllWorkspaceTiers returns the closed set of workspace tiers a runtime
-// may declare. §12.9 line 1025 scopes workspace classification to T3
+// may declare. §12.9 scopes workspace classification to T3
 // (default) and T4; lower tiers describe non-workspace data.
 func AllWorkspaceTiers() []WorkspaceTier {
 	return []WorkspaceTier{WorkspaceTierT3, WorkspaceTierT4}
@@ -1332,7 +1394,7 @@ func ValidateName(name string) error {
 // ApplyDefaults fills in the §5.1 default values for unset Runtime
 // fields: type defaults to agent, execution mode to session, and
 // isolation profile to the platform default. The isolation default
-// honors the §5.3 line 677 dev-mode fallback: when devMode is true an
+// honors the §5.3 dev-mode fallback: when devMode is true an
 // unset profile defaults to `standard` (runc) rather than `sandboxed`.
 // Integration level defaults to basic for agent runtimes only — §5.1
 // specifies that integrationLevel is meaningful solely on type: agent
@@ -1364,7 +1426,7 @@ func ApplyDefaults(r *Runtime, devMode bool) {
 		t := true
 		r.RequireSoPeercred = &t
 	}
-	// §5.1 line 24: sdkWarmBlockingPaths defaults to ["CLAUDE.md",
+	// §5.1: sdkWarmBlockingPaths defaults to ["CLAUDE.md",
 	// ".claude/*"] when capabilities.preConnect is true and the runtime
 	// declares no list. The field is ignored when preConnect is false, so
 	// no default is seeded there.
@@ -1446,7 +1508,7 @@ func (m *Memory) Create(_ context.Context, r Runtime) error {
 	if r.UpdatedAt.IsZero() {
 		r.UpdatedAt = r.CreatedAt
 	}
-	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	// spec: §15.1 — a new resource is born at version 1.
 	if r.Version == 0 {
 		r.Version = 1
 	}
@@ -1483,7 +1545,7 @@ func (m *Memory) Update(_ context.Context, name string, mutate func(*Runtime) er
 		now = prev.Add(time.Nanosecond)
 	}
 	row.UpdatedAt = now
-	// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+	// spec: §15.1 — bump the entity-tag version on every write.
 	row.Version++
 	m.runtimes[name] = cloneRuntime(row)
 	return cloneRuntime(row), nil
@@ -1520,7 +1582,7 @@ func (m *Memory) SoftDelete(_ context.Context, name string, at time.Time) error 
 	}
 	row.DeletedAt = at
 	row.UpdatedAt = at
-	// spec: §15.1 line 1207 — a soft-delete is a write, so it bumps the tag.
+	// spec: §15.1 — a soft-delete is a write, so it bumps the tag.
 	row.Version++
 	m.runtimes[name] = row
 	return nil

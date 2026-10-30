@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// spec: §8.10 lines 1044-1049 — the persisted delegation lease record
+// spec: §8.10 — the persisted delegation lease record
 // carries the lease-scoped policy reference alongside the resource
 // slice. IsZero must treat a record carrying only policy fields as
 // non-empty so the store does not drop it to NULL, otherwise the

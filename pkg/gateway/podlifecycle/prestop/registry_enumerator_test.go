@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §7.3 line 397 / §10.1 — the RegistryEnumerator surfaces
+// spec: §7.3 / §10.1 — the RegistryEnumerator surfaces
 // last_checkpoint_workspace_bytes when a SessionStore is wired, and
 // falls back to the postgres_null path otherwise. F-7.3.21.
 

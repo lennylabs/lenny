@@ -8,7 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-// TestCertExpirySetAndClear_spec_10_3 verifies the §10.3 line 342/343
+// TestCertExpirySetAndClear_spec_10_3 verifies the §10.3
 // lenny_cert_expiry_seconds gauge records a pod's remaining certificate
 // validity and that Clear removes the series so a deleted pod's value
 // cannot pin the CertExpiryImminent alert.

@@ -1,6 +1,6 @@
 {{- /*
 The §25.4 lenny-ops authorization bindings beyond leader election
-(§25.4 lines 1066-1115). lenny-ops drives platform operations through
+(§25.4). lenny-ops drives platform operations through
 the Kubernetes API: it patches Deployments for upgrades, scales them,
 reads pod logs and events for diagnostics, creates and deletes backup
 Jobs, reads ConfigMaps for runtime config, reads the release namespace's
@@ -24,7 +24,7 @@ metadata:
   labels:
     {{- include "lenny.labels" . | nindent 4 }}
 rules:
-  # §25.4 lines 1075-1080 — Deployment patching and scaling for the
+  # §25.4 — Deployment patching and scaling for the
   # §25.9 upgrade orchestration (OpsRoll / GatewayRoll / ControllerRoll).
   - apiGroups: ["apps"]
     resources: ["deployments"]
@@ -32,23 +32,23 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments/scale"]
     verbs: ["get", "patch"]
-  # §25.4 lines 1082-1084 — pod, pod-log, and event reads for the §25.6
-  # diagnostics surface and the §25.4 log-proxy endpoint (lines 2528-2534).
+  # §25.4 — pod, pod-log, and event reads for the §25.6
+  # diagnostics surface and the §25.4 log-proxy endpoint.
   - apiGroups: [""]
     resources: ["pods", "pods/log", "events"]
     verbs: ["get", "list", "watch"]
-  # §25.4 line 2208 — Endpoints reads so the single-replica-only lock
+  # §25.4 — Endpoints reads so the single-replica-only lock
   # policy can count ready lenny-ops replicas from the lenny-ops Service
   # Endpoints at startup and re-check every 30s.
   - apiGroups: [""]
     resources: ["endpoints"]
     verbs: ["get", "list", "watch"]
-  # §25.4 lines 1086-1088 — backup, restore, and verify Job lifecycle
+  # §25.4 — backup, restore, and verify Job lifecycle
   # (§25.11). lenny-ops creates and deletes the lenny-backup Jobs.
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "watch", "create", "delete"]
-  # §25.4 lines 1090-1092 — ConfigMap reads for runtime configuration
+  # §25.4 — ConfigMap reads for runtime configuration
   # (the bundled alerting-rules ConfigMap and platform config).
   - apiGroups: [""]
     resources: ["configmaps"]
@@ -72,7 +72,7 @@ rules:
   - apiGroups: ["cert-manager.io"]
     resources: ["certificates"]
     verbs: ["get", "list", "watch", "patch"]
-  # §25.4 lines 1094-1096 — Lease reads for leader-election visibility.
+  # §25.4 — Lease reads for leader-election visibility.
   # The mutating lease lifecycle lives on the lenny-ops-leader-election
   # Role (ops-deployment.yaml); this read grant matches the spec rule.
   - apiGroups: ["coordination.k8s.io"]
@@ -102,18 +102,18 @@ metadata:
   labels:
     {{- include "lenny.labels" . | nindent 4 }}
 rules:
-  # §25.4 lines 1104-1106 — CRD reads for version introspection and the
+  # §25.4 — CRD reads for version introspection and the
   # §25.10 drift detection that compares installed CRDs against the
   # bootstrap seed snapshot.
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "watch"]
-  # §25.4 lines 1108-1110 — lenny.dev custom resources (Runtime,
+  # §25.4 — lenny.dev custom resources (Runtime,
   # SandboxWarmPool, etc.) for drift detection and inventory.
   - apiGroups: ["lenny.dev"]
     resources: ["*"]
     verbs: ["get", "list", "watch"]
-  # §25.4 lines 1112-1114 — Node reads for the §25.6 node diagnostics.
+  # §25.4 — Node reads for the §25.6 node diagnostics.
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list"]

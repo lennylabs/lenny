@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Rotator drives the §7.1 line 67 uploadToken signing-key rotation.
+// Rotator drives the §7.1 uploadToken signing-key rotation.
 // On the configured cadence it generates a fresh 256-bit secret, calls
 // KeyRing.Rotate to install it as the active signing key, and schedules
 // the just-displaced key for expiry after the §7.1 overlap window so
@@ -24,7 +24,7 @@ import (
 // holds no mutable state outside the ring itself plus an in-process
 // queue of pending expirations.
 //
-// spec: §7.1 line 67 — "Signing keys are rotated on a deployer-
+// spec: §7.1 — "Signing keys are rotated on a deployer-
 // configurable schedule (default: 24 hours); the gateway keeps the
 // previous key valid during a short overlap window (default: 5
 // minutes)."

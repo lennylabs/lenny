@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/platformassets"
 )
 
-// spec: §25.8 line 3425 — the CRD manifests and migration SQL are compiled
+// spec: §25.8 — the CRD manifests and migration SQL are compiled
 // into the lenny-ops binary so an air-gapped CRDUpdate/SchemaMigration
 // needs no release-channel asset fetch. F-25.8.12 item 5.
 func TestEmbeddedAssetsPresent_spec_25_8(t *testing.T) {

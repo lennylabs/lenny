@@ -11,18 +11,18 @@ import (
 
 // SchemaID is the published, versioned URL the chart's values.schema.json
 // advertises for IDE integration (the yaml-language-server $schema
-// reference). spec: §17.6 line 660.
+// reference). spec: §17.6.
 const SchemaID = "https://schemas.lenny.dev/helm/values/v1.json"
 
 // MetaSchema is the JSON Schema dialect the generated document declares.
-// spec: §17.6 line 653 (Draft 2020-12).
+// spec: §17.6.
 const MetaSchema = "https://json-schema.org/draft/2020-12/schema"
 
 // Generate returns the canonical values.schema.json bytes for the chart,
 // reflected from Root. Output is deterministic — json.Marshal sorts
 // object keys, and constraint slices are built in tag order — so the
 // build-time drift check (cmd/lenny-chart-schema-gen -check) is stable.
-// spec: §17.6 line 655.
+// spec: §17.6.
 func Generate() ([]byte, error) {
 	schema := schemaForStruct(reflect.TypeOf(Root{}))
 	schema["$schema"] = MetaSchema
@@ -90,6 +90,15 @@ func schemaForType(t reflect.Type, tag reflect.StructTag) map[string]any {
 		}
 	case reflect.Struct:
 		s = schemaForStruct(t)
+		// A struct is strict by default. `open:"true"` reopens it, for a
+		// block where the schema needs to constrain one nested path while
+		// leaving its siblings free-form. Without it, constraining a single
+		// key of a large permissive block means declaring every sibling, and
+		// a sibling added to values.yaml later fails the chart at install
+		// with no schema change to point at.
+		if tag.Get("open") == "true" {
+			delete(s, "additionalProperties")
+		}
 	default:
 		s = map[string]any{}
 	}

@@ -12,15 +12,14 @@ import (
 	"strings"
 )
 
-// install_detect.go implements the §17.6 install-wizard detection phase
-// (spec lines 671-697). Before the wizard asks any question, it probes the
+// install_detect.go implements the §17.6 install-wizard detection phase. Before the wizard asks any question, it probes the
 // target cluster for the capabilities the spec enumerates: cert-manager
 // CRDs and at least one Ready ClusterIssuer, Prometheus Operator CRDs
 // (ServiceMonitor, PrometheusRule), available RuntimeClass objects (gVisor,
 // Kata), the NetworkPolicy-supporting CNI surface, and the Kubernetes
 // version. The findings are presented as a summary and feed detection-driven
 // defaults so the question phase can skip a question whose answer is
-// unambiguous (§17.6 line 689). The datastore-reachability half of the
+// unambiguous (§17.6). The datastore-reachability half of the
 // detection (Postgres/Redis/MinIO) is the wizard's separate preflight phase
 // (runInstallPreflight), which reuses the lenny-preflight probes. F-17.6.9.
 
@@ -58,7 +57,7 @@ type clusterDetection struct {
 	// suggestedAnswerFile is the §17.9.2 catalog answer-file base the
 	// detected cluster type maps to (e.g. eks-small-team.yaml for EKS). The
 	// wizard records it on the Profile field so a captured answer file
-	// documents the suggestion. spec: §17.9.2 line 1376. F-17.9.8.
+	// documents the suggestion. spec: §17.9.2. F-17.9.8.
 	suggestedAnswerFile string
 	// notes carries per-probe diagnostics (absences, parse failures) so the
 	// summary explains why a capability reads as missing.
@@ -75,7 +74,7 @@ type clusterDetector interface {
 // resolved kubeconfig context. The command runner is injectable so the
 // probe-parsing logic is unit-testable without a cluster.
 type kubectlDetector struct {
-	// kubeContext overrides the current kubeconfig context (§17.6 line 673
+	// kubeContext overrides the current kubeconfig context (§17.6
 	// "--context").
 	kubeContext string
 	// run executes kubectl with the given args and returns stdout. A
@@ -172,7 +171,7 @@ func (d *kubectlDetector) detectWithoutLookup(ctx context.Context) clusterDetect
 		res.notes = append(res.notes, "NetworkPolicy API not detected; §13.2 isolation requires a NetworkPolicy-supporting CNI")
 	}
 
-	// spec: §17.9.2 line 1376 — infer the §17.9.1 cluster-type dimension and
+	// spec: §17.9.2 — infer the §17.9.1 cluster-type dimension and
 	// suggest the matching §17.9.2 catalog answer-file base. F-17.9.8.
 	res.clusterType, res.suggestedAnswerFile = d.detectClusterType(ctx, res.kubernetesVersion)
 	if res.clusterType == "vanilla" {
@@ -184,7 +183,7 @@ func (d *kubectlDetector) detectWithoutLookup(ctx context.Context) clusterDetect
 
 // clusterTypeAnswerFiles maps each §17.9.1 cluster-type dimension to the
 // §17.9.2 catalog answer-file base the wizard suggests for it. EKS maps to
-// the entry-level eks-small-team.yaml per the §17.9.2 line 1376 example.
+// the entry-level eks-small-team.yaml per the §17.9.2 example.
 var clusterTypeAnswerFiles = map[string]string{
 	"openshift": "openshift-self-managed.yaml",
 	"eks":       "eks-small-team.yaml",
@@ -201,7 +200,7 @@ var clusterTypeAnswerFiles = map[string]string{
 // map to the openshift self-managed answer file. A cloud provider is read
 // from the node providerID prefix; k3s is recognized from its version
 // build suffix even when the providerID is empty. An unrecognized cluster
-// falls back to vanilla. spec: §17.9.1 line 1351, §17.9.2 line 1376.
+// falls back to vanilla. spec: §17.9.1, §17.9.2.
 func (d *kubectlDetector) detectClusterType(ctx context.Context, k8sVersion string) (clusterType, answerFile string) {
 	if out, err := d.run(ctx, d.kubectlArgs("get", "crd", "clusterversions.config.openshift.io", "-o", "name")...); err == nil && strings.TrimSpace(string(out)) != "" {
 		return "openshift", clusterTypeAnswerFiles["openshift"]
@@ -370,7 +369,7 @@ func printDetectionSummary(w io.Writer, d clusterDetection) {
 	fmt.Fprintln(w)
 }
 
-// tlsDefaults derives the §17.6 line 689 TLS-strategy default from
+// tlsDefaults derives the §17.6 TLS-strategy default from
 // detection: cert-manager when a Ready ClusterIssuer exists (prefilling the
 // issuer name when exactly one is Ready, in which case the strategy question
 // is unambiguous and the wizard skips it), bring-your-own otherwise. When

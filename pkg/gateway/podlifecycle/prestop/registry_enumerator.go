@@ -22,7 +22,7 @@ import (
 type RegistryEnumerator struct {
 	// Registry is the per-replica pod binding registry.
 	Registry *podsession.Registry
-	// Sessions, when set, supplies the §7.3 line 397
+	// Sessions, when set, supplies the §7.3
 	// last_checkpoint_workspace_bytes value for each enumerated
 	// session. Nil keeps the legacy postgres_null fallback for every
 	// session. F-7.3.21.
@@ -51,7 +51,7 @@ func (e *RegistryEnumerator) Snapshot(ctx context.Context) ([]SessionInfo, error
 		bytes, ok := e.lookupCheckpointBytes(ctx, b.TenantID, b.SessionID)
 		switch {
 		case ok && bytes > 0:
-			// spec: §7.3 line 397 — the persisted size feeds the
+			// spec: §7.3 — the persisted size feeds the
 			// §10.1 tiered-cap selection directly; the postgres_null
 			// fallback no longer fires for this session. F-7.3.21.
 			info.LastCheckpointWorkspaceBytes = bytes
@@ -66,7 +66,7 @@ func (e *RegistryEnumerator) Snapshot(ctx context.Context) ([]SessionInfo, error
 	return out, nil
 }
 
-// lookupCheckpointBytes returns the §7.3 line 397
+// lookupCheckpointBytes returns the §7.3
 // last_checkpoint_workspace_bytes value for the (tenant, session) when
 // the store is wired and the row carries a non-zero size. A nil store,
 // a missing row, or a store error all degrade to (0, false) so the

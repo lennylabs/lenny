@@ -7,7 +7,7 @@
 // committed file drifts from the generated output (see
 // pkg/audit/ocsf TestMappingYAMLInSync).
 //
-// spec: 11_security-trust-model.md line 414.
+// spec: §11.7 (audit logging), Lenny to OCSF field mapping.
 package main
 
 import (

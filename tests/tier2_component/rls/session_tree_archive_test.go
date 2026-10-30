@@ -15,7 +15,7 @@
 //   - pgstore Replay returns a tree's nodes in original-settlement
 //     order, and GetByNode resolves a settled child by its node id.
 //
-// spec: §8.10 lines 129, 1062; §7.1 lines 426-433; §12.7 line 783.
+// spec: §8.10; §7.1; §12.7.
 package rls_test
 
 import (
@@ -48,7 +48,7 @@ func seedArchiveSession(t *testing.T, ctx context.Context, pg *containers.Postgr
 	return id
 }
 
-// spec: §8.10 line 129 — the lenny_tenant_guard trigger rejects an
+// spec: §8.10 — the lenny_tenant_guard trigger rejects an
 // insert whose row tenant_id does not match app.current_tenant.
 // diagnosis: a failure means the lenny_tenant_guard trigger on the
 // session-tree archive does not reject a cross-tenant insert, allowing
@@ -73,11 +73,11 @@ func TestSessionTreeArchiveTriggerRejectsMismatchedTenant(t *testing.T) {
 		return err
 	})
 	if err == nil {
-		t.Errorf("mismatched-tenant archive insert succeeded; trigger must reject (§8.10 line 129)")
+		t.Errorf("mismatched-tenant archive insert succeeded; trigger must reject (§8.10)")
 	}
 }
 
-// spec: §8.10 line 129 — RLS isolates archive rows by tenant under the
+// spec: §8.10 — RLS isolates archive rows by tenant under the
 // lenny_app role; alice never sees bob's tree.
 // diagnosis: a failure means RLS on the session-tree archive does not
 // isolate rows per tenant, so one tenant could read another tenant's
@@ -122,7 +122,7 @@ func TestSessionTreeArchiveRLSIsolatesPerTenant(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 129 — re-archiving the same (root, node) is an
+// spec: §8.10 — re-archiving the same (root, node) is an
 // idempotent upsert: a node settles once, and a cascade re-archive
 // overwrites rather than duplicating.
 // diagnosis: a failure means re-archiving the same (root, node) is not
@@ -168,7 +168,7 @@ func TestSessionTreeArchiveUpsertIsIdempotent(t *testing.T) {
 	}
 }
 
-// spec: §8.10 lines 1062-1063 — Replay returns a tree's settled nodes
+// spec: §8.10 — Replay returns a tree's settled nodes
 // in original-settlement order; GetByNode resolves a child by its
 // globally-unique node id without the tree root.
 // diagnosis: a failure means Replay returns settled nodes out of

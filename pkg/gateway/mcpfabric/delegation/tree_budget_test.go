@@ -20,7 +20,7 @@ import (
 )
 
 // newServiceWithBudget builds a delegation Service whose §12.4 Redis
-// budget gate is wired to a fresh miniredis. spec: §8.2 lines 57, 127.
+// budget gate is wired to a fresh miniredis. spec: §8.2.
 func newServiceWithBudget(t *testing.T, store sessionstore.Store, idFn func() string) (*delegation.Service, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
@@ -43,7 +43,7 @@ func delegateOnce(svc *delegation.Service) (delegation.Result, error) {
 	})
 }
 
-// spec: §8.2 line 127 / §12.4 line 213 — once the live tree node count
+// spec: §8.2 / §12.4 — once the live tree node count
 // reaches the parent's maxTreeSize the next delegation is rejected with
 // BUDGET_EXHAUSTED, even though each child's static slice is within
 // budget. This is the axis the per-call ValidateChildSlice cannot
@@ -68,7 +68,7 @@ func TestDelegate_TreeBudget_TreeSizeExhausted_spec_8_2_127(t *testing.T) {
 	}
 }
 
-// spec: §8.2 line 127 — the per-parent maxParallelChildren counter is
+// spec: §8.2 — the per-parent maxParallelChildren counter is
 // enforced from the live Redis counter; a parent at its concurrent
 // ceiling is rejected with BUDGET_EXHAUSTED.
 func TestDelegate_TreeBudget_ParallelChildrenExhausted_spec_8_2_127(t *testing.T) {
@@ -89,7 +89,7 @@ func TestDelegate_TreeBudget_ParallelChildrenExhausted_spec_8_2_127(t *testing.T
 	}
 }
 
-// spec: §12.4 line 213 — a Redis outage fails the admission path closed:
+// spec: §12.4 — a Redis outage fails the admission path closed:
 // Delegate returns delegation.ErrBudgetUnavailable (mapped to the
 // retryable DELEGATION_BUDGET_UNAVAILABLE) rather than admitting an
 // unbudgeted child. F-8.2.18.
@@ -108,7 +108,7 @@ func TestDelegate_TreeBudget_FailsClosedOnRedisOutage_spec_12_4_213(t *testing.T
 	}
 }
 
-// spec: §8.2 line 127 — a parent with no granted lease (every axis zero)
+// spec: §8.2 — a parent with no granted lease (every axis zero)
 // imposes no tree-size cap, so the maxTreeMemoryBytes default still
 // applies but structural axes are unbounded; delegations are admitted.
 func TestDelegate_TreeBudget_UnboundedParentAdmitted_spec_8_2_127(t *testing.T) {

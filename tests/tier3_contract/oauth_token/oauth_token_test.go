@@ -21,14 +21,29 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
+
+// mustNewServer builds a Token Service handler through
+// tokenservice.NewServer and fails the test when NewServer refuses the
+// options.
+func mustNewServer(t *testing.T, opts tokenservice.Options) *tokenservice.Server {
+	t.Helper()
+	srv, err := tokenservice.NewServer(opts)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	return srv
+}
 
 func newTestServer(t *testing.T) (*httptest.Server, *jwt.HMACSigner) {
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	srv := tokenservice.NewServer(tokenservice.Options{
-		Signer: signer,
-		Issuer: "https://lenny.dev.test/token",
+	srv := mustNewServer(t, tokenservice.Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
 		PerDialectCap: map[string]time.Duration{
 			"lenny-gateway": 24 * time.Hour,
 		},
@@ -197,7 +212,7 @@ func TestCrossTenantExchangeRejected(t *testing.T) {
 	}
 }
 
-// spec: 13.3 + 8.2 (actor_token present → a2a_delegation, depth = actor.depth + 1)
+// spec: 13.3 (actor_token present → a2a_delegation, depth = actor.depth + 1)
 // diagnosis: The issued typ was wrong or depth did not increment.
 //
 //	Inspect the actor-token branch of tokenexchange.Validate.
@@ -367,7 +382,7 @@ func TestPerDialectCapCapsExp(t *testing.T) {
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
 		Scope:            "sessions:read",
 		Audience:         "lenny-gateway",
-		ExpiresIn:        int64((48 * time.Hour).Seconds()),
+		ExpiresIn:        expiresInPtr(int64((48 * time.Hour).Seconds())),
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("cap rotation: want 200, got %d", resp.StatusCode)
@@ -387,9 +402,11 @@ func TestPerDialectCapCapsExp(t *testing.T) {
 // must cap at 1h.
 func TestPerDialectCapCapsExpForMultiValueAudience(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	srv := tokenservice.NewServer(tokenservice.Options{
-		Signer: signer,
-		Issuer: "https://lenny.dev.test/token",
+	srv := mustNewServer(t, tokenservice.Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
 		PerDialectCap: map[string]time.Duration{
 			"lenny-gateway": 24 * time.Hour,
 			"lenny-ops":     1 * time.Hour,
@@ -409,7 +426,7 @@ func TestPerDialectCapCapsExpForMultiValueAudience(t *testing.T) {
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
 		Scope:            "sessions:read",
 		Audience:         "lenny-gateway lenny-ops",
-		ExpiresIn:        int64((48 * time.Hour).Seconds()),
+		ExpiresIn:        expiresInPtr(int64((48 * time.Hour).Seconds())),
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("multi-value cap rotation: want 200, got %d (body %v)", resp.StatusCode, body)

@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Contract test for the §12.2.1 SessionStore, exercising the
+// Contract test for the TESTING.md §12.2.1 SessionStore, exercising the
 // Postgres-backed pkg/gateway/sessionstore/pgstore against a real
 // container with the production migrations applied. Covers CRUD, the
 // sentinel errors, cross-tenant isolation, the SELECT ... FOR UPDATE
@@ -17,12 +17,14 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/common/seqname"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -79,13 +81,82 @@ func startStore(t *testing.T) (*pgstore.Store, *containers.Postgres) {
 	return pgstore.New(pg.Pool), pg
 }
 
+// rowLockWaitDeadline bounds how long a serialization test waits for a
+// concurrent Update to reach the Postgres row-lock wait.
+const rowLockWaitDeadline = 30 * time.Second
+
+// awaitSessionRowLockWaiter polls pg_stat_activity through the pool's
+// own connection until another backend in this test's database is
+// blocked on a lock while holding the tuple lock of a sessions row,
+// which is where the store's SELECT ... FOR UPDATE waits.
+// It fails the test when the deadline passes or when the waiting
+// Update returns on done before ever blocking, which means the store
+// ran the second mutation without waiting for the row lock. The
+// datname filter keeps a backend of another database on the same
+// server from matching.
+func awaitSessionRowLockWaiter[T any](t *testing.T, ctx context.Context, pg *containers.Postgres, done <-chan T) {
+	t.Helper()
+	// pg_stat_activity.query is cut at track_activity_query_size
+	// (1024 bytes by default), and the sessions select list is longer
+	// than that, so the FOR UPDATE clause never appears in the text.
+	// The waiter is identified by its locks instead: a backend blocked
+	// on another transaction's row lock holds the tuple lock on the
+	// sessions row it is waiting for.
+	const q = `SELECT count(*) FROM pg_stat_activity a
+		WHERE a.datname = current_database()
+		  AND a.pid <> pg_backend_pid()
+		  AND a.wait_event_type = 'Lock'
+		  AND EXISTS (
+			SELECT 1 FROM pg_locks l
+			WHERE l.pid = a.pid
+			  AND l.locktype = 'tuple'
+			  AND l.relation = 'sessions'::regclass)`
+	deadline := time.Now().Add(rowLockWaitDeadline)
+	for {
+		var waiting int
+		if err := pg.Pool.QueryRow(ctx, q).Scan(&waiting); err != nil {
+			t.Fatalf("poll pg_stat_activity: %v", err)
+		}
+		if waiting > 0 {
+			return
+		}
+		select {
+		case r := <-done:
+			t.Fatalf("concurrent Update returned without waiting on the row lock: %+v", r)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no backend waited on the sessions row lock within %s", rowLockWaitDeadline)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// awaitUpdateResult receives one goroutine's Update result, failing the
+// test when it does not arrive within rowLockWaitDeadline.
+func awaitUpdateResult[T any](t *testing.T, name string, done <-chan T) T {
+	t.Helper()
+	select {
+	case r := <-done:
+		return r
+	case <-time.After(rowLockWaitDeadline):
+		t.Fatalf("%s: Update did not return within %s", name, rowLockWaitDeadline)
+	}
+	var zero T
+	return zero
+}
+
 // spec: 12.2.1
 // diagnosis: the Postgres-backed SessionStore in
 // pkg/gateway/sessionstore/pgstore did not behave as specified. Create
 // and Get must round-trip a session including its jsonb workspace
 // plan, the sentinel errors and cross-tenant isolation must hold, the
 // SELECT ... FOR UPDATE mutate path must strictly advance UpdatedAt,
-// List filters must apply, and Delete must cascade to session_messages.
+// List filters must apply, Update must persist the workspace plan, and
+// Delete must cascade to session_messages.
+// A guarded Update that runs concurrently with another Update on the
+// same row must block on the row lock, see the committed state, and
+// refuse without writing.
 func TestSessionStoreContract(t *testing.T) {
 	t.Parallel()
 	store, pg := startStore(t)
@@ -144,7 +215,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §24.11 lines 135-136 — GetByID resolves a session by its
+	// spec: §24.11 — GetByID resolves a session by its
 	// global id under the platform-admin cross-tenant context
 	// (app.current_tenant = '__all__'), backing the admin
 	// session-investigation surface where the operator supplies only the
@@ -217,6 +288,110 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 		if !reflect.DeepEqual(gotDoc, wantDoc) {
 			t.Errorf("WorkspacePlan mismatch:\n got %s\nwant %s", got.WorkspacePlan, want.WorkspacePlan)
+		}
+	})
+
+	// spec: §7.1, 15.1 (finalize precondition) — POST /finalize binds
+	// its workspace plan into the row inside the Update that commits
+	// `finalizing`, and /start reads the plan back from the row. The
+	// Update must therefore persist a plan the mutation sets, and keep
+	// the stored plan when the mutation leaves it alone.
+	t.Run("update persists the workspace plan", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateCreated, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		plan := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"out/"}]}`)
+		if _, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+			row.State = session.StateFinalizing
+			row.WorkspacePlan = plan
+			return nil
+		}); err != nil {
+			t.Fatalf("Update setting the plan: %v", err)
+		}
+		if _, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+			row.State = session.StateReady
+			return nil
+		}); err != nil {
+			t.Fatalf("Update leaving the plan alone: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		var gotDoc, wantDoc any
+		if err := json.Unmarshal(got.WorkspacePlan, &gotDoc); err != nil {
+			t.Fatalf("stored plan %q is not valid JSON: %v", got.WorkspacePlan, err)
+		}
+		if err := json.Unmarshal(plan, &wantDoc); err != nil {
+			t.Fatalf("source plan is not valid JSON: %v", err)
+		}
+		if !reflect.DeepEqual(gotDoc, wantDoc) {
+			t.Errorf("stored WorkspacePlan = %s, want %s", got.WorkspacePlan, plan)
+		}
+	})
+
+	// spec: §7.1, 15.1 (finalize precondition) — Update rewrites the
+	// workspace_plan column from the row it read under FOR UPDATE, so
+	// every mutation that does not touch the plan must carry the stored
+	// plan through unchanged. This pins the write-set half of that
+	// contract: a plan fixed at Create survives an unrelated Update, and
+	// a nil plan stays NULL rather than becoming a JSON null document.
+	t.Run("update that leaves the plan alone preserves the stored plan", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		plan := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"in/"}]}`)
+		withPlan := sessionstore.Session{
+			ID: newUUID(t), TenantID: tenant, State: session.StateCreated,
+			RuntimeRef: "echo", WorkspacePlan: plan,
+		}
+		withoutPlan := sessionstore.Session{
+			ID: newUUID(t), TenantID: tenant, State: session.StateCreated, RuntimeRef: "echo",
+		}
+		for _, s := range []sessionstore.Session{withPlan, withoutPlan} {
+			if err := store.Create(ctx, s); err != nil {
+				t.Fatalf("Create %s: %v", s.ID, err)
+			}
+			if _, err := store.Update(ctx, tenant, s.ID, func(row *sessionstore.Session) error {
+				row.State = session.StateFinalizing
+				return nil
+			}); err != nil {
+				t.Fatalf("Update %s: %v", s.ID, err)
+			}
+		}
+
+		got, err := store.Get(ctx, tenant, withPlan.ID)
+		if err != nil {
+			t.Fatalf("Get with plan: %v", err)
+		}
+		var gotDoc, wantDoc any
+		if err := json.Unmarshal(got.WorkspacePlan, &gotDoc); err != nil {
+			t.Fatalf("stored plan %q is not valid JSON: %v", got.WorkspacePlan, err)
+		}
+		if err := json.Unmarshal(plan, &wantDoc); err != nil {
+			t.Fatalf("source plan is not valid JSON: %v", err)
+		}
+		if !reflect.DeepEqual(gotDoc, wantDoc) {
+			t.Errorf("stored WorkspacePlan = %s, want the Create-time plan %s", got.WorkspacePlan, plan)
+		}
+
+		got, err = store.Get(ctx, tenant, withoutPlan.ID)
+		if err != nil {
+			t.Fatalf("Get without plan: %v", err)
+		}
+		if got.WorkspacePlan != nil {
+			t.Errorf("WorkspacePlan = %s, want nil after an Update on a session created without a plan", got.WorkspacePlan)
+		}
+		var isNull bool
+		if err := pg.Pool.QueryRow(ctx,
+			`SELECT workspace_plan IS NULL FROM sessions WHERE id = $1::uuid AND tenant_id = $2`,
+			withoutPlan.ID, tenant).Scan(&isNull); err != nil {
+			t.Fatalf("read workspace_plan column: %v", err)
+		}
+		if !isNull {
+			t.Error("workspace_plan column is non-NULL after an Update that left a nil plan alone")
 		}
 	})
 
@@ -332,6 +507,199 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
+	t.Run("guarded mutation serializes on the locked row", func(t *testing.T) {
+		// spec: 15.1 (finalize precondition) — the created → finalizing
+		// admission re-checks the precondition inside the Update
+		// mutation, so two overlapping finalize calls serialize on the
+		// SELECT ... FOR UPDATE row lock and the second one reads the
+		// first one's committed state and refuses. This subtest pins the
+		// store half of that compare-and-swap: B's mutation must not run
+		// until A commits, and B's refusal must leave A's write intact.
+		// The guard is inlined because the handler's helper is
+		// unexported in another package.
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateCreated, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		admitCreated := func(row *sessionstore.Session) error {
+			if row.State != session.StateCreated {
+				return &session.PreconditionError{CurrentState: row.State}
+			}
+			return nil
+		}
+		planA := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"a/"}]}`)
+		planB := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"b/"}]}`)
+
+		type updateResult struct {
+			sess sessionstore.Session
+			err  error
+		}
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseA := func() { releaseOnce.Do(func() { close(release) }) }
+		// A fatal exit below must still unblock A so its transaction
+		// ends and the container cleanup does not wait on it.
+		defer releaseA()
+
+		aDone := make(chan updateResult, 1)
+		go func() {
+			s, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+				if err := admitCreated(row); err != nil {
+					return err
+				}
+				row.State = session.StateFinalizing
+				row.WorkspacePlan = planA
+				close(entered)
+				<-release
+				return nil
+			})
+			aDone <- updateResult{s, err}
+		}()
+		select {
+		case <-entered:
+		case r := <-aDone:
+			t.Fatalf("A returned before entering its mutation: %v", r.err)
+		case <-time.After(30 * time.Second):
+			t.Fatal("A did not enter its mutation within 30s")
+		}
+
+		bDone := make(chan updateResult, 1)
+		go func() {
+			s, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+				if err := admitCreated(row); err != nil {
+					return err
+				}
+				row.State = session.StateFinalizing
+				row.WorkspacePlan = planB
+				return nil
+			})
+			bDone <- updateResult{s, err}
+		}()
+		awaitSessionRowLockWaiter(t, ctx, pg, bDone)
+		releaseA()
+
+		a := awaitUpdateResult(t, "A", aDone)
+		if a.err != nil {
+			t.Fatalf("A: Update: %v", a.err)
+		}
+		b := awaitUpdateResult(t, "B", bDone)
+		var pe *session.PreconditionError
+		if !errors.As(b.err, &pe) {
+			t.Fatalf("B: want *session.PreconditionError, got %v", b.err)
+		}
+		if pe.CurrentState != session.StateFinalizing {
+			t.Errorf("B: PreconditionError.CurrentState = %q, want %q", pe.CurrentState, session.StateFinalizing)
+		}
+
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.State != session.StateFinalizing {
+			t.Errorf("stored state = %q, want %q", got.State, session.StateFinalizing)
+		}
+		var gotDoc, wantDoc any
+		if err := json.Unmarshal(got.WorkspacePlan, &gotDoc); err != nil {
+			t.Fatalf("stored plan is not valid JSON: %v", err)
+		}
+		if err := json.Unmarshal(planA, &wantDoc); err != nil {
+			t.Fatalf("plan A is not valid JSON: %v", err)
+		}
+		if !reflect.DeepEqual(gotDoc, wantDoc) {
+			t.Errorf("stored WorkspacePlan = %s, want A's plan %s", got.WorkspacePlan, planA)
+		}
+		// B's refusal must write nothing, so the stored UpdatedAt is
+		// exactly the value A's commit returned.
+		if !got.UpdatedAt.Equal(a.sess.UpdatedAt) {
+			t.Errorf("stored UpdatedAt = %v, want A's %v (B wrote the row)", got.UpdatedAt, a.sess.UpdatedAt)
+		}
+	})
+
+	t.Run("terminal write racing the finalize entry write keeps the bound plan", func(t *testing.T) {
+		// spec: 15.1 (finalize precondition), 7.1 — the finalize entry
+		// write binds the request's WorkspacePlan in the same Update that
+		// moves the session to finalizing, and /start later reads that
+		// plan back from the row. Update rewrites workspace_plan from the
+		// row it read under FOR UPDATE for every caller, so a terminal
+		// write (DELETE, terminate, or the watchdog) queued behind the
+		// entry write must read the committed plan and carry it through.
+		// A store that did not persist the plan on Update, or that wrote
+		// it from a read taken before the lock, would leave the
+		// Create-time plan in the row.
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		createPlan := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"create/"}]}`)
+		entryPlan := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"mkdir","path":"entry/"}]}`)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateCreated, RuntimeRef: "echo",
+			WorkspacePlan: createPlan,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+
+		type updateResult struct {
+			sess sessionstore.Session
+			err  error
+		}
+		entered := make(chan struct{})
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseEntry := func() { releaseOnce.Do(func() { close(release) }) }
+		// A fatal exit below must still unblock the entry write so its
+		// transaction ends and the container cleanup does not wait on it.
+		defer releaseEntry()
+
+		entryDone := make(chan updateResult, 1)
+		go func() {
+			s, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+				row.State = session.StateFinalizing
+				row.WorkspacePlan = entryPlan
+				close(entered)
+				<-release
+				return nil
+			})
+			entryDone <- updateResult{s, err}
+		}()
+		select {
+		case <-entered:
+		case r := <-entryDone:
+			t.Fatalf("entry write returned before entering its mutation: %v", r.err)
+		case <-time.After(rowLockWaitDeadline):
+			t.Fatalf("entry write did not enter its mutation within %s", rowLockWaitDeadline)
+		}
+
+		terminalDone := make(chan updateResult, 1)
+		go func() {
+			s, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+				row.State = session.StateCancelled
+				return nil
+			})
+			terminalDone <- updateResult{s, err}
+		}()
+		awaitSessionRowLockWaiter(t, ctx, pg, terminalDone)
+		releaseEntry()
+
+		if r := awaitUpdateResult(t, "entry", entryDone); r.err != nil {
+			t.Fatalf("entry write: Update: %v", r.err)
+		}
+		if r := awaitUpdateResult(t, "terminal", terminalDone); r.err != nil {
+			t.Fatalf("terminal write: Update: %v", r.err)
+		}
+
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.State != session.StateCancelled {
+			t.Errorf("stored state = %q, want %q", got.State, session.StateCancelled)
+		}
+		assertStoredPlan(t, got.WorkspacePlan, entryPlan)
+	})
+
 	t.Run("list orders newest-first and applies filters", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		base := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Hour)
@@ -418,7 +786,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §4.4 line 258 — `last_successful_checkpoint_at` round-trips
+	// spec: §4.4 — `last_successful_checkpoint_at` round-trips
 	// through Postgres and is nullable so a session that has never
 	// been checkpointed reads as zero rather than the UNIX epoch.
 	t.Run("last_successful_checkpoint_at round-trip", func(t *testing.T) {
@@ -454,7 +822,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §6.2 lines 273-300 — `last_agent_activity_at` round-trips
+	// spec: §6.2 — `last_agent_activity_at` round-trips
 	// through Postgres and is nullable so a session with no recorded
 	// qualifying activity reads as zero (the idle watchdog then anchors on
 	// updated_at). F-11.3.7.
@@ -504,7 +872,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §6.49, §7.1 line 74, §7.2 line 230, §8.8 — the §7.1
+	// spec: §7.1, §7.2, §8.8 — the §7.1
 	// conversation_continuity envelope half and the §7.2 / §8.8
 	// Terminated/Suspended session-condition facts relocated off
 	// Sandbox.status.conditions must round-trip through pgstore's
@@ -597,7 +965,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §4.4 line 258 — never-checkpointed sessions read NULL on
+	// spec: §4.4 — never-checkpointed sessions read NULL on
 	// the column, which the sessionstore maps to the zero time.Time
 	// so the `FreshnessCheck` helper can treat them as stale.
 	t.Run("last_successful_checkpoint_at defaults to zero when unset", func(t *testing.T) {
@@ -617,7 +985,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §8.2 line 52 / §8.3 line 286 — the gateway copies the
+	// spec: §8.2 / §8.3 — the gateway copies the
 	// parent's registered tracingContext onto every delegated child so
 	// child traces stitch into the parent's trace tree. A pod restart
 	// that triggers a Postgres reload must round-trip the context.
@@ -664,7 +1032,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §8.2 line 52 — a session registered with no tracingContext
+	// spec: §8.2 — a session registered with no tracingContext
 	// reads back as a nil map (the "no context registered" case). The
 	// pgstore stores SQL NULL for that case. F-8.2.14.
 	t.Run("tracing_context absent reads as nil F_8_2_14", func(t *testing.T) {
@@ -684,7 +1052,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §8.3 line 266 / §8.10 — cascadeOnFailure persists per-tree
+	// spec: §8.3 / §8.10 — cascadeOnFailure persists per-tree
 	// so a Postgres-backed reload returns the same policy the lease
 	// declared. F-8.2.15.
 	t.Run("cascade_on_failure round-trip through pgstore F_8_2_15", func(t *testing.T) {
@@ -748,7 +1116,8 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: 8.3 line 472, 488 — credential_origin_session_id records the
+	// spec: 8.3 (Delegation Policy and Lease, Delegation Lease: "Credential
+	// pool identity in multi-hop `inherit` chains") — credential_origin_session_id records the
 	// origin credential pool a `credentialPropagation: inherit` hop draws
 	// from. The delegation Service stamps the origin (an ancestor id) on an
 	// inherited child; the value must survive a Postgres reload so a later
@@ -773,7 +1142,8 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: 8.3 line 472, 474 — a self-origin session (independent, deny,
+	// spec: 8.3 (Delegation Policy and Lease, Delegation Lease: "Credential
+	// pool identity in multi-hop `inherit` chains") — a self-origin session (independent, deny,
 	// root, or top-level) carries no explicit origin. The delegation Service
 	// leaves CredentialOriginSessionID empty, which persists as SQL NULL and
 	// the read path COALESCEs back to the empty string. The finalize path
@@ -843,7 +1213,7 @@ func TestSessionStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §14.1 line 311 (request-envelope bundle), §15 (built-in adapter
+	// spec: §14.1, §15 (built-in adapter
 	// single-shot compute model) — the OpenResponsesAdapter
 	// previous_response_id lineage rides the §14.1 request-envelope JSONB
 	// bundle rather than a dedicated column. A session carrying only a
@@ -890,6 +1260,210 @@ func TestSessionStoreContract(t *testing.T) {
 	})
 }
 
+// spec: 4.2 (a newly created session row carries
+// coordination_generation = 1), 10.1 (the first coordinator handoff's
+// compare-and-swap mints a generation strictly above the value a replica
+// already holds for the session)
+// diagnosis: pgstore.Create did not floor an unset CoordinationGeneration to
+//
+//	the §4.2 baseline. Create names coordination_generation in its insert
+//	column list, so the column default set by migration 0181 baselines nothing
+//	and this floor is the whole enforcement on the Postgres path. A row written
+//	at 0 is fenced on resume at the gateway's floor of 1 while its row still
+//	reads 0, so the first crash takeover's compare-and-swap mints 1 as well and
+//	the pod refuses that fence as coordinator_handoff_stale.
+func TestSessionStoreCreateBaselinesCoordinationGeneration_spec_4_2(t *testing.T) {
+	t.Parallel()
+	store, pg := startStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+
+	unset := sessionstore.Session{
+		ID:         newUUID(t),
+		TenantID:   tenant,
+		State:      session.StateCreated,
+		RuntimeRef: "echo",
+	}
+	if err := store.Create(ctx, unset); err != nil {
+		t.Fatalf("Create with an unset CoordinationGeneration: %v", err)
+	}
+	got, err := store.Get(ctx, tenant, unset.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.CoordinationGeneration != 1 {
+		t.Errorf("CoordinationGeneration = %d, want 1 (the §4.2 baseline)", got.CoordinationGeneration)
+	}
+
+	// An explicit value above the baseline is written through unchanged, so
+	// the floor cannot lower a generation a caller already advanced.
+	explicit := sessionstore.Session{
+		ID:                     newUUID(t),
+		TenantID:               tenant,
+		State:                  session.StateCreated,
+		RuntimeRef:             "echo",
+		CoordinationGeneration: 5,
+	}
+	if err := store.Create(ctx, explicit); err != nil {
+		t.Fatalf("Create with an explicit CoordinationGeneration: %v", err)
+	}
+	gotExplicit, err := store.Get(ctx, tenant, explicit.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if gotExplicit.CoordinationGeneration != 5 {
+		t.Errorf("CoordinationGeneration = %d, want the explicit 5 preserved", gotExplicit.CoordinationGeneration)
+	}
+}
+
+// spec: 6.2 (maxSessionAge timer behavior across states)
+// diagnosis: the Postgres session store did not accrue
+//
+//	accumulated_session_age_seconds in Update the way the §6.2 maxSessionAge
+//	timer requires. Either a write in a counting state (starting, running,
+//	input_required) did not add the interval since the previous write, a write
+//	in a paused state (suspended, resume_pending, resuming,
+//	awaiting_client_action) or a pre-running or terminal state added one, the
+//	column did not round-trip through Create, Get, and List, or a mutator's
+//	own write to the field was persisted. The watchdog then expires sessions
+//	on time they spent paused, or never expires them.
+func TestSessionStoreAccruesActiveAge_spec_6_2(t *testing.T) {
+	t.Parallel()
+	store, pg := startStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+
+	counting := map[session.State]bool{
+		session.StateStarting:      true,
+		session.StateRunning:       true,
+		session.StateInputRequired: true,
+	}
+	const (
+		seeded = 10.0
+		gap    = time.Hour
+		// The store stamps updated_at from its own clock, so the accrued
+		// interval exceeds gap by the test's own run time.
+		slack = 60.0
+	)
+	states := append(session.AllStates(), session.StateResuming)
+	for _, st := range states {
+		t.Run(string(st), func(t *testing.T) {
+			id := newUUID(t)
+			prev := time.Now().UTC().Add(-gap).Truncate(time.Microsecond)
+			if err := store.Create(ctx, sessionstore.Session{
+				ID: id, TenantID: tenant, State: st, RuntimeRef: "echo",
+				CreatedAt: prev.Add(-24 * time.Hour), UpdatedAt: prev,
+				AccumulatedSessionAgeSeconds: seeded,
+			}); err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			got, err := store.Get(ctx, tenant, id)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got.AccumulatedSessionAgeSeconds != seeded {
+				t.Fatalf("Create round-trip: accumulated %v, want %v", got.AccumulatedSessionAgeSeconds, seeded)
+			}
+			// A write that keeps the state, with a mutator that tries to
+			// reset the age budget.
+			updated, err := store.Update(ctx, tenant, id, func(r *sessionstore.Session) error {
+				r.AccumulatedSessionAgeSeconds = 0
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("Update: %v", err)
+			}
+			want := seeded
+			if counting[st] {
+				want += gap.Seconds()
+			}
+			if d := updated.AccumulatedSessionAgeSeconds - want; d < 0 || d > slack {
+				t.Fatalf("accumulated after an hour in %q = %v, want %v (within %vs)", st, updated.AccumulatedSessionAgeSeconds, want, slack)
+			}
+			reread, err := store.Get(ctx, tenant, id)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if reread.AccumulatedSessionAgeSeconds != updated.AccumulatedSessionAgeSeconds {
+				t.Fatalf("persisted accumulated %v, returned %v", reread.AccumulatedSessionAgeSeconds, updated.AccumulatedSessionAgeSeconds)
+			}
+			listed, err := store.List(ctx, tenant, sessionstore.ListFilter{State: st})
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			found := false
+			for _, r := range listed {
+				if r.ID == id {
+					found = true
+					if r.AccumulatedSessionAgeSeconds != updated.AccumulatedSessionAgeSeconds {
+						t.Fatalf("List accumulated %v, want %v", r.AccumulatedSessionAgeSeconds, updated.AccumulatedSessionAgeSeconds)
+					}
+				}
+			}
+			if !found {
+				t.Fatalf("List did not return %s", id)
+			}
+		})
+	}
+}
+
+// spec: 6.2 (maxSessionAge timer behavior across states)
+// diagnosis: a transition out of a counting state did not accrue the
+//
+//	interval up to the transition on the Postgres store, or a transition into
+//	a counting state accrued the paused interval before it. The §6.2 timer
+//	pauses on entry to suspended and the recovery states and resumes on entry
+//	to running, so the column must carry exactly the counting intervals.
+func TestSessionStoreAgeAccruesAcrossTransitions_spec_6_2(t *testing.T) {
+	t.Parallel()
+	store, pg := startStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+	setState := func(id string, st session.State) sessionstore.Session {
+		t.Helper()
+		row, err := store.Update(ctx, tenant, id, func(r *sessionstore.Session) error {
+			r.State = st
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("Update to %s: %v", st, err)
+		}
+		return row
+	}
+
+	// Running for an hour, then suspended: the transition accrues the hour.
+	running := newUUID(t)
+	if err := store.Create(ctx, sessionstore.Session{
+		ID: running, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		UpdatedAt: time.Now().UTC().Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	row := setState(running, session.StateSuspended)
+	if a := row.AccumulatedSessionAgeSeconds; a < 3600 || a > 3660 {
+		t.Fatalf("accumulated on running → suspended = %v, want about 3600", a)
+	}
+
+	// Paused for an hour in each paused state, then running: the transition
+	// accrues nothing, because the timer resumes only on entry to running.
+	for _, paused := range []session.State{
+		session.StateSuspended, session.StateResumePending,
+		session.StateResuming, session.StateAwaitingClientAction,
+	} {
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: paused, RuntimeRef: "echo",
+			UpdatedAt:                    time.Now().UTC().Add(-time.Hour),
+			AccumulatedSessionAgeSeconds: 5,
+		}); err != nil {
+			t.Fatalf("Create %s: %v", paused, err)
+		}
+		if a := setState(id, session.StateRunning).AccumulatedSessionAgeSeconds; a != 5 {
+			t.Fatalf("accumulated on %s → running = %v, want the paused row's 5", paused, a)
+		}
+	}
+}
+
 // insertMessage writes one session_messages row under the tenant
 // context required by lenny_tenant_guard.
 func insertMessage(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant, sessionID string) {
@@ -924,4 +1498,110 @@ func messageCount(t *testing.T, ctx context.Context, pg *containers.Postgres, se
 		t.Fatalf("messageCount: %v", err)
 	}
 	return n
+}
+
+// assertStoredPlan fails the test when the stored workspace plan is not
+// the same JSON document as want. The comparison is on the decoded
+// value because the jsonb column normalizes key order and whitespace.
+func assertStoredPlan(t *testing.T, got, want json.RawMessage) {
+	t.Helper()
+	var gotDoc, wantDoc any
+	if err := json.Unmarshal(got, &gotDoc); err != nil {
+		t.Fatalf("stored plan %q is not valid JSON: %v", got, err)
+	}
+	if err := json.Unmarshal(want, &wantDoc); err != nil {
+		t.Fatalf("expected plan %q is not valid JSON: %v", want, err)
+	}
+	if !reflect.DeepEqual(gotDoc, wantDoc) {
+		t.Errorf("stored WorkspacePlan = %s, want %s", got, want)
+	}
+}
+
+// spec: 11.1 (Concurrent-session count)
+// diagnosis: a pgstore concurrent-session count disagrees with
+//
+//	session.CountsTowardConcurrencyCaps or with the memstore count for the
+//	same rows. The SQL predicate and the Go predicate have diverged: either a
+//	suspended row (with or without its pod) is counted, so an idle session
+//	holds an admission slot, or a resuming, resume_pending, or
+//	awaiting_client_action row is not counted, so a cap can be exceeded.
+func TestSessionStoreConcurrencyCountsMatchPredicate_spec_11_1(t *testing.T) {
+	t.Parallel()
+	store, pg := startStore(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+	mem := memstore.New()
+
+	rows := []sessionstore.Session{}
+	states := append(session.AllStates(), session.StateResuming)
+	for _, st := range states {
+		for _, user := range []string{"alice", "bob"} {
+			rows = append(rows, sessionstore.Session{
+				ID: newUUID(t), TenantID: tenant, UserID: user, State: st,
+				RuntimeRef: "echo", PodAssignment: "pod-" + user,
+			})
+		}
+	}
+	// A podless suspended row and a row on another runtime.
+	rows = append(
+		rows,
+		sessionstore.Session{ID: newUUID(t), TenantID: tenant, UserID: "alice", State: session.StateSuspended, RuntimeRef: "echo"},
+		sessionstore.Session{ID: newUUID(t), TenantID: tenant, UserID: "alice", State: session.StateRunning, RuntimeRef: "other"},
+	)
+	wantTenant, wantAlice, wantEcho := 0, 0, 0
+	for _, r := range rows {
+		if err := store.Create(ctx, r); err != nil {
+			t.Fatalf("pgstore Create %s: %v", r.State, err)
+		}
+		if err := mem.Create(ctx, r); err != nil {
+			t.Fatalf("memstore Create %s: %v", r.State, err)
+		}
+		if !session.CountsTowardConcurrencyCaps(r.State) {
+			continue
+		}
+		wantTenant++
+		if r.UserID == "alice" {
+			wantAlice++
+		}
+		if r.RuntimeRef == "echo" {
+			wantEcho++
+		}
+	}
+
+	type count func(sessionstore.Store) (int, error)
+	scopes := []struct {
+		name string
+		fn   count
+		want int
+	}{
+		{"tenant", func(s sessionstore.Store) (int, error) { return s.CountActiveSessions(ctx, tenant) }, wantTenant},
+		{"user", func(s sessionstore.Store) (int, error) { return s.CountActiveSessionsByUser(ctx, tenant, "alice") }, wantAlice},
+		{"runtime", func(s sessionstore.Store) (int, error) { return s.CountActiveSessionsByRuntime(ctx, tenant, "echo") }, wantEcho},
+		// The container holds only this test's rows, so the global count
+		// equals the tenant count.
+		{"global", func(s sessionstore.Store) (int, error) { return s.CountActiveSessionsGlobal(ctx) }, wantTenant},
+	}
+	for _, sc := range scopes {
+		pgGot, err := sc.fn(store)
+		if err != nil {
+			t.Fatalf("pgstore %s count: %v", sc.name, err)
+		}
+		memGot, err := sc.fn(mem)
+		if err != nil {
+			t.Fatalf("memstore %s count: %v", sc.name, err)
+		}
+		if pgGot != sc.want || memGot != sc.want {
+			t.Errorf("%s count: pgstore %d, memstore %d, want %d", sc.name, pgGot, memGot, sc.want)
+		}
+	}
+
+	// The recovery count, the §16.5 numerator, is unchanged and stays a
+	// subset of the global count.
+	recovery, err := store.CountActiveSessionsInRecoveryGlobal(ctx)
+	if err != nil {
+		t.Fatalf("recovery count: %v", err)
+	}
+	if want := 2 * len(session.RecoveryStates()); recovery != want {
+		t.Errorf("recovery count = %d, want %d", recovery, want)
+	}
 }

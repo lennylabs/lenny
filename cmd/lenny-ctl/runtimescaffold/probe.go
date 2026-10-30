@@ -50,16 +50,17 @@ var checkLevel = map[string]compliance.Level{
 	"empty_stdin_exits_cleanly":      compliance.LevelBasic,
 	"message_emits_response":         compliance.LevelBasic,
 	"heartbeat_emits_ack":            compliance.LevelBasic,
+	"heartbeat_busy":                 compliance.LevelBasic,
 	"unknown_type_ignored":           compliance.LevelBasic,
 	"shutdown_exits_within_deadline": compliance.LevelBasic,
-	"sequential_messages_handled":    compliance.LevelBasic,
+	"session_lifetime":               compliance.LevelBasic,
 	// Standard categories (§15.4.6).
 	"mcp_nonce_handshake":               compliance.LevelStandard,
 	"platform_mcp_tool_invocation":      compliance.LevelStandard,
 	"connector_mcp_server_reachability": compliance.LevelStandard,
 	"tool_call_tool_result_correlation": compliance.LevelStandard,
 	// Full categories (§15.4.6).
-	"lifecycle_channel_opening":         compliance.LevelFull,
+	"runtime_ops_handshake":             compliance.LevelFull,
 	"checkpoint_quiesce_resume":         compliance.LevelFull,
 	"interrupt_acknowledgement":         compliance.LevelFull,
 	"credential_rotation_no_disruption": compliance.LevelFull,
@@ -92,7 +93,7 @@ func deriveObservedLevel(checks []compliance.Check) compliance.Level {
 	for _, c := range checks {
 		pass[c.Name] = c.Pass
 	}
-	if pass["lifecycle_channel_opening"] {
+	if pass["runtime_ops_handshake"] {
 		return compliance.LevelFull
 	}
 	if pass["mcp_nonce_handshake"] {

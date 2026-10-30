@@ -29,7 +29,7 @@ func contains(ss []string, want string) bool {
 	return false
 }
 
-// spec: §16.4 line 378 — the maintainer provisions the current partition
+// spec: §16.4 — the maintainer provisions the current partition
 // and a few ahead so a write never races partition creation.
 func TestPlan_CreatesCurrentAndAhead_spec_16_4_378(t *testing.T) {
 	spec := Spec{Table: "session_logs", Granularity: Daily, Retention: SessionLogRetention, Ahead: 2}
@@ -75,7 +75,7 @@ func TestPlan_SkipsExistingPartitions(t *testing.T) {
 	}
 }
 
-// spec: §16.4 line 378 — a background job drops partitions beyond the
+// spec: §16.4 — a background job drops partitions beyond the
 // retention window (30 days for session logs).
 func TestPlan_DropsExpiredPartitions_spec_16_4_378(t *testing.T) {
 	spec := Spec{Table: "session_logs", Granularity: Daily, Retention: SessionLogRetention, Ahead: 1}
@@ -93,7 +93,7 @@ func TestPlan_DropsExpiredPartitions_spec_16_4_378(t *testing.T) {
 	}
 }
 
-// spec: §16.4 line 378 — a partition is dropped only when its entire
+// spec: §16.4 — a partition is dropped only when its entire
 // range is expired (exclusive upper bound at or before the cutoff).
 func TestPlan_RetentionBoundary(t *testing.T) {
 	spec := Spec{Table: "stream_cursors", Granularity: Daily, Retention: StreamCursorRetention}
@@ -135,7 +135,7 @@ func TestPlan_RetentionDisabledNeverDrops(t *testing.T) {
 	}
 }
 
-// spec: §16.4 line 378 — audit's 365-day window uses coarser monthly
+// spec: §16.4 — audit's 365-day window uses coarser monthly
 // partitions; verify the maintainer's monthly arithmetic and naming.
 func TestPlan_Monthly(t *testing.T) {
 	spec := Spec{Table: "audit_log", Granularity: Monthly, Retention: AuditRetention, Ahead: 1}
@@ -252,7 +252,7 @@ func (g holdGuard) HoldDrop(_ context.Context, _, child string) (bool, error) {
 	return g.hold[child], nil
 }
 
-// spec: §16.4 line 378 — one Tick provisions ahead and reclaims expired
+// spec: §16.4 — one Tick provisions ahead and reclaims expired
 // partitions; creation precedes dropping.
 func TestMaintainerTick_CreatesThenDrops(t *testing.T) {
 	d := newFakeDriver()
@@ -287,7 +287,7 @@ func TestMaintainerTick_CreatesThenDrops(t *testing.T) {
 	}
 }
 
-// spec: §16.4 line 378 — the SIEM delivery guard holds a past-TTL
+// spec: §16.4 — the SIEM delivery guard holds a past-TTL
 // partition that still has undelivered events instead of dropping it.
 func TestMaintainerTick_DropGuardHolds(t *testing.T) {
 	d := newFakeDriver()
@@ -329,7 +329,7 @@ func TestMaintainerTick_DropGuardErrorHoldsConservatively(t *testing.T) {
 	}
 }
 
-// spec: §16.4 line 378 — rows in the never-dropped DEFAULT partition
+// spec: §16.4 — rows in the never-dropped DEFAULT partition
 // escape the retention DROP; the maintainer surfaces the catch-all
 // occupancy so an operator notices a write path lagging partition
 // creation before the catch-all grows unbounded.

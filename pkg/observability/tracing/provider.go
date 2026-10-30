@@ -8,13 +8,13 @@ package tracing
 // Tracer.Start lands on otel.GetTracerProvider()'s default no-op provider
 // and is silently dropped.
 //
-// §16.3 line 359 fixes the platform-side sampling posture: "The gateway
+// §16.3 fixes the platform-side sampling posture: "The gateway
 // emits 100% of traces to the OpenTelemetry Collector; the Collector applies
 // tail-based sampling to decide which traces to export." So the in-process
 // sampler is AlwaysSample (head sampling is 100%); the 10% probabilistic rate
 // (global.traceSamplingRate) is a Collector concern, not a gateway one.
 //
-// Exporter selection follows §16.3 line 359 as well: an OTLP/HTTP exporter
+// Exporter selection follows §16.3 as well: an OTLP/HTTP exporter
 // when an OTLP endpoint is configured, and a stdout exporter otherwise ("a
 // stdout exporter for `make run`"), which also covers dev mode.
 
@@ -50,8 +50,7 @@ type ProviderConfig struct {
 // func flushes the batch processor; callers defer or invoke it during
 // graceful shutdown so buffered spans are not lost.
 //
-// spec: §16.3 line 359 (100% head sampling, OTLP to the Collector, stdout in
-// dev / `make run`); §16.3 "Tier 1 trace context flows through" propagation
+// spec: §16.3; §16.3 "Tier 1 trace context flows through" propagation
 // chain.
 func InitProvider(ctx context.Context, cfg ProviderConfig) (func(context.Context) error, error) {
 	exporter, err := newExporter(ctx, cfg)
@@ -72,7 +71,7 @@ func InitProvider(ctx context.Context, cfg ProviderConfig) (func(context.Context
 
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exporter),
-		// §16.3 line 359: the gateway emits 100% of traces; the Collector
+		// §16.3: the gateway emits 100% of traces; the Collector
 		// tail-samples. ParentBased keeps a delegation tree intact when an
 		// upstream already made the sampling decision.
 		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.AlwaysSample())),
@@ -87,7 +86,7 @@ func InitProvider(ctx context.Context, cfg ProviderConfig) (func(context.Context
 }
 
 // newExporter returns the OTLP/HTTP exporter when an endpoint is configured
-// and dev mode is off, otherwise the stdout exporter. spec: §16.3 line 359.
+// and dev mode is off, otherwise the stdout exporter. spec: §16.3.
 func newExporter(ctx context.Context, cfg ProviderConfig) (sdktrace.SpanExporter, error) {
 	if cfg.OTLPEndpoint == "" || cfg.DevMode {
 		exp, err := stdouttrace.New()

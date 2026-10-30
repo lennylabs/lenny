@@ -8,7 +8,7 @@
 // pkg/gateway/delegation/export; this package keeps the infra coupling out
 // of that package so the orchestrator stays unit-testable.
 //
-// spec: §8.7 (file export model); §8.2 lines 91-95 (steps 3, 4);
+// spec: §8.7 (file export model); §8.2;
 // §4.5 (blob store); §6.3 (pod binder reads the persisted blobs).
 package exportwire
 
@@ -53,7 +53,7 @@ func NewPodExporter(reg *podsession.Registry) *PodExporter {
 }
 
 // ErrParentUnbound reports that the parent session has no pod binding on
-// this gateway replica, so its /workspace/current cannot be reached for
+// this gateway replica, so its workspace root cannot be reached for
 // the §8.2-step-3 export.
 var ErrParentUnbound = fmt.Errorf("exportwire: parent session has no bound pod adapter on this replica")
 

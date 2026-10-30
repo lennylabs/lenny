@@ -13,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 // fakeFallback is a test FallbackSource that gates intra-pod capacity on a
@@ -73,13 +74,13 @@ func (f *fakeFallback) callCount(podID string) int {
 func downedCounter(t *testing.T, opts ...slotcounter.Option) *slotcounter.Counter {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	cl := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	cl := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = cl.Close() })
 	mr.Close() // simulate a Redis outage: the client can no longer connect.
 	return slotcounter.New(cl, opts...)
 }
 
-// spec: §12.4 line 208 — during a Redis outage the counter gates intra-pod
+// spec: §12.4 — during a Redis outage the counter gates intra-pod
 // capacity on the Postgres fallback under a per-pod advisory lock.
 // diagnosis: a Redis outage rejected all slot admission instead of
 // degrading to the Postgres-fallback gate.
@@ -87,7 +88,7 @@ func TestReserveFallsBackToPostgresOnRedisOutage(t *testing.T) {
 	fb := newFakeFallback()
 	c := downedCounter(t, slotcounter.WithFallbackSource(fb))
 
-	count, _, err := c.Reserve(context.Background(), "pod-1", 4)
+	count, _, err := c.Reserve(context.Background(), "pod-1", "s1", 4)
 	if err != nil {
 		t.Fatalf("Reserve under Redis outage: %v", err)
 	}
@@ -99,7 +100,7 @@ func TestReserveFallsBackToPostgresOnRedisOutage(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 208 — the fallback caps at maxConcurrent.
+// spec: §12.4 — the fallback caps at maxConcurrent.
 // diagnosis: the Postgres-fallback gate admitted a slot past the per-pod
 // bound during a Redis outage.
 func TestReserveFallbackCapsAtBound(t *testing.T) {
@@ -107,25 +108,25 @@ func TestReserveFallbackCapsAtBound(t *testing.T) {
 	fb.active["pod-1"] = 2 // already at the cap of 2.
 	c := downedCounter(t, slotcounter.WithFallbackSource(fb))
 
-	_, _, err := c.Reserve(context.Background(), "pod-1", 2)
+	_, _, err := c.Reserve(context.Background(), "pod-1", "s1", 2)
 	if !errors.Is(err, slotcounter.ErrSlotsExhausted) {
 		t.Errorf("error = %v, want ErrSlotsExhausted when the pod is at its bound in the fallback gate", err)
 	}
 }
 
-// spec: §12.4 line 208 — no Postgres fallback wired fails closed
+// spec: §12.4 — no Postgres fallback wired fails closed
 // immediately.
 // diagnosis: a Redis outage with no fallback silently admitted slots
 // rather than failing closed.
 func TestReserveFailsClosedWithoutFallback(t *testing.T) {
 	c := downedCounter(t) // no WithFallbackSource.
-	_, _, err := c.Reserve(context.Background(), "pod-1", 4)
+	_, _, err := c.Reserve(context.Background(), "pod-1", "s1", 4)
 	if !errors.Is(err, slotcounter.ErrFailClosed) {
 		t.Errorf("error = %v, want ErrFailClosed when no Postgres fallback is wired", err)
 	}
 }
 
-// spec: §12.4 line 208 — dual-store outage (Postgres also unavailable)
+// spec: §12.4 — dual-store outage (Postgres also unavailable)
 // fails closed.
 // diagnosis: when both Redis and Postgres are unavailable the gate admitted
 // a slot instead of failing closed.
@@ -134,13 +135,13 @@ func TestReserveFailsClosedOnDualStoreOutage(t *testing.T) {
 	fb.failWith = errors.New("postgres unavailable")
 	c := downedCounter(t, slotcounter.WithFallbackSource(fb))
 
-	_, _, err := c.Reserve(context.Background(), "pod-1", 4)
+	_, _, err := c.Reserve(context.Background(), "pod-1", "s1", 4)
 	if !errors.Is(err, slotcounter.ErrFailClosed) {
 		t.Errorf("error = %v, want ErrFailClosed on a dual-store outage", err)
 	}
 }
 
-// spec: §12.4 line 208 — the fallback window is bounded; after
+// spec: §12.4 — the fallback window is bounded; after
 // slotCounterPostgresFallbackMaxSeconds with Redis still down the gate
 // fails closed.
 // diagnosis: a sustained Redis outage kept degrading to Postgres latency
@@ -158,12 +159,12 @@ func TestReserveFailsClosedAfterOutageWindow(t *testing.T) {
 
 	// First reservation during the outage stamps the window start and is
 	// admitted.
-	if _, _, err := c.Reserve(context.Background(), "pod-1", 4); err != nil {
+	if _, _, err := c.Reserve(context.Background(), "pod-1", "s1", 4); err != nil {
 		t.Fatalf("Reserve at outage start: %v", err)
 	}
 	// Advance past the bounded window: the next reservation fails closed.
 	clock.advance(61 * time.Second)
-	_, _, err := c.Reserve(context.Background(), "pod-1", 4)
+	_, _, err := c.Reserve(context.Background(), "pod-1", "s1", 4)
 	if !errors.Is(err, slotcounter.ErrFailClosed) {
 		t.Errorf("error = %v, want ErrFailClosed after the bounded outage window", err)
 	}

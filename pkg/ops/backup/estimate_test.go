@@ -71,7 +71,7 @@ func newServiceWith(t *testing.T, repl backup.ReplicationLagSource, dl backup.Da
 	return svc, store
 }
 
-// spec: §25.11 line 4094 — the preview populates
+// spec: §25.11 — the preview populates
 // artifactReplicationLagSeconds and estimatedOrphanArtifactRows from the
 // replication-lag source. F-17.3.12 / F-25.11.14.
 func TestPreviewRestorePopulatesReplicationLag(t *testing.T) {
@@ -96,7 +96,7 @@ func TestPreviewRestorePopulatesReplicationLag(t *testing.T) {
 	}
 }
 
-// spec: §25.11 line 4094 — a source error leaves the fields zero and
+// spec: §25.11 — a source error leaves the fields zero and
 // flags the uncertainty rather than reporting a bare 0. F-17.3.12.
 func TestPreviewRestoreReplicationSourceErrorWarns(t *testing.T) {
 	repl := &fakeReplication{err: errors.New("prometheus unreachable")}
@@ -116,7 +116,7 @@ func TestPreviewRestoreReplicationSourceErrorWarns(t *testing.T) {
 	}
 }
 
-// spec: §25.11 line 4094 — with no replication source the preview
+// spec: §25.11 — with no replication source the preview
 // reports zero lag and no warning (degraded in-memory deployment).
 func TestPreviewRestoreNoReplicationSource(t *testing.T) {
 	svc, store := newServiceWith(t, nil, nil)
@@ -136,7 +136,7 @@ func TestPreviewRestoreNoReplicationSource(t *testing.T) {
 	}
 }
 
-// spec: §25.11 line 3957 — the preview's downtime is computed, not the
+// spec: §25.11 — the preview's downtime is computed, not the
 // former "PT15M" constant. F-17.3.16.
 func TestPreviewRestoreComputesDowntime(t *testing.T) {
 	svc, store := newServiceWith(t, nil, nil)
@@ -156,7 +156,7 @@ func TestPreviewRestoreComputesDowntime(t *testing.T) {
 	}
 }
 
-// spec: §25.11 line 4225 — the safety check populates the data-loss
+// spec: §25.11 — the safety check populates the data-loss
 // estimate from the estimator. F-17.3.15.
 func TestSafetyCheckPopulatesDataLoss(t *testing.T) {
 	dl := &fakeDataLoss{est: backup.DataLossEstimate{
@@ -188,7 +188,7 @@ func TestSafetyCheckPopulatesDataLoss(t *testing.T) {
 	}
 }
 
-// spec: §25.11 line 4227 — a backup with zero mutations since means the
+// spec: §25.11 — a backup with zero mutations since means the
 // platform has been idle, so the restore is safe regardless of age.
 // F-17.3.15.
 func TestSafetyCheckIdlePlatformIsSafe(t *testing.T) {
@@ -209,7 +209,7 @@ func TestSafetyCheckIdlePlatformIsSafe(t *testing.T) {
 	}
 }
 
-// spec: §25.11 line 4225 — an estimator error flags the uncertainty in
+// spec: §25.11 — an estimator error flags the uncertainty in
 // the compatibility warnings rather than reporting a zero estimate as
 // fact. F-17.3.15.
 func TestSafetyCheckDataLossErrorWarns(t *testing.T) {

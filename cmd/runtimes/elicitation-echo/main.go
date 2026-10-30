@@ -15,7 +15,7 @@
 //  2. Calls `lenny/request_elicitation` with the inbound input as
 //     the prompt; blocks until the §9.1 timeout or a human
 //     response arrives via §15.1 respond/dismiss.
-//  3. Emits the response payload back through the §15.4.1 stdout
+//  3. Emits the response payload back through the §28.5.3 stdout
 //     `response` frame.
 //
 // elicitation-echo is the §9.2 Standard-level exemplar runtime: it

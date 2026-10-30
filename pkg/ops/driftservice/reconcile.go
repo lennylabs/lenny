@@ -17,30 +17,29 @@ import (
 
 // ErrCodeReconcileUnavailable is DRIFT_RECONCILE_UNAVAILABLE: a confirm
 // reconcile was requested but no gateway-side resource applier is
-// configured, so the platform cannot apply the desired state. §25.10
-// line 3842 — reconciliation calls the gateway admin API; without that
+// configured, so the platform cannot apply the desired state. §25.10 — reconciliation calls the gateway admin API; without that
 // client the service can preview (dry-run) but not apply.
 const ErrCodeReconcileUnavailable = "DRIFT_RECONCILE_UNAVAILABLE"
 
 // ResourceApplier applies one drifted resource's desired state through
-// the gateway admin API (§25.10 line 3842: "calls admin API PUT
+// the gateway admin API (§25.10: "calls admin API PUT
 // endpoints via GatewayClient"). resourceType is the resource
 // collection (pools, runtimes, tenants, credential-pools, ...);
 // resourceID is the resource name (empty for a singleton like the
 // controller config). desired is the desired-state subtree to PUT. A
-// non-nil error records the resource as a §25.10 line 3852 reconcile
+// non-nil error records the resource as a §25.10 reconcile
 // failure. F-25.10.1.
 type ResourceApplier interface {
 	Apply(ctx context.Context, resourceType, resourceID string, desired map[string]any) error
 }
 
-// ProgressEmitter emits the §25.10 line 3844 operation_progressed event
+// ProgressEmitter emits the §25.10 operation_progressed event
 // on each resource reconciliation. F-25.10.1.
 type ProgressEmitter interface {
 	Progressed(ctx context.Context, info ProgressInfo)
 }
 
-// ProgressInfo is one §25.10 line 3844 operation_progressed payload.
+// ProgressInfo is one §25.10 operation_progressed payload.
 type ProgressInfo struct {
 	OperationID    string
 	Kind           string
@@ -62,7 +61,7 @@ type ReconcileParams struct {
 	// preview, true applies the desired state.
 	Confirm bool
 	// Desired, when non-nil, is the caller-supplied desired state used in
-	// place of the stored live snapshot — the §25.10 line 3852 Postgres-
+	// place of the stored live snapshot — the §25.10 Postgres-
 	// outage reconcile path.
 	Desired map[string]any
 	// StartedBy is the caller identity recorded on the operation and the
@@ -122,12 +121,12 @@ func resourceLabel(rtype, rid string) string {
 //
 // Following the §25.2 dry-run/confirm pattern, an unconfirmed call
 // returns a preview without applying anything. A confirmed call emits
-// the §25.10 line 3871 reconciliation_started / resource_reconciled /
+// the §25.10 reconciliation_started / resource_reconciled /
 // reconciliation_completed audit events, increments lenny_drift_-
 // reconciled_total per resource, fires operation_progressed on each
 // reconciliation, and surfaces the in-flight operation in the §25.4
 // Operations Inventory. Any per-resource apply failure yields the
-// §25.10 line 3852 partial result (DRIFT_RECONCILE_PARTIAL → HTTP 207).
+// §25.10 partial result (DRIFT_RECONCILE_PARTIAL → HTTP 207).
 // F-25.10.1.
 func (s *Service) Reconcile(ctx context.Context, p ReconcileParams) (*ReconcileResult, error) {
 	scope := p.Scope
@@ -145,7 +144,7 @@ func (s *Service) Reconcile(ctx context.Context, p ReconcileParams) (*ReconcileR
 	if err != nil {
 		return nil, err
 	}
-	// §25.10 line 3824: reconciliation always reads fresh running state so
+	// §25.10: reconciliation always reads fresh running state so
 	// it never acts on a stale cache entry.
 	running, err := s.collectRunning(ctx, "all", true)
 	if err != nil {
@@ -176,7 +175,7 @@ func (s *Service) Reconcile(ctx context.Context, p ReconcileParams) (*ReconcileR
 		return result, nil
 	}
 
-	// §25.10 line 3842: a confirmed reconcile applies the desired state
+	// §25.10: a confirmed reconcile applies the desired state
 	// through the gateway admin API. Without that client the platform
 	// cannot apply — fail closed rather than report a clean no-op.
 	if s.applier == nil {
@@ -227,7 +226,7 @@ func (s *Service) runConfirmedReconcile(ctx context.Context, operationID, scope,
 		rr.Outcome = outcome
 		result.Resources = append(result.Resources, rr)
 
-		// §25.10 line 3859: lenny_drift_reconciled_total{resource_type,
+		// §25.10: lenny_drift_reconciled_total{resource_type,
 		// outcome}.
 		s.metrics.Reconciled(t.rtype, outcome)
 		s.audit.Emit(AuditEvent{
@@ -241,7 +240,7 @@ func (s *Service) runConfirmedReconcile(ctx context.Context, operationID, scope,
 			},
 		})
 
-		// §25.10 line 3844: the operation advances by one resource and the
+		// §25.10: the operation advances by one resource and the
 		// operation_progressed event fires on every reconciliation.
 		completed := i + 1
 		s.reconciles.progress(operationID, completed, step)
@@ -414,7 +413,7 @@ func (t *ReconcileTracker) start(operationID, scope, startedBy string, total int
 		Progress: &conventions.Progress{
 			TotalSteps:     &totalSteps,
 			CompletedSteps: &completed,
-			// §25.10 line 3844: drift reconciliation uses linear
+			// §25.10: drift reconciliation uses linear
 			// extrapolation over the resources-to-reconcile count.
 			EtaMethod: conventions.EtaLinearExtrapolation,
 		},

@@ -18,14 +18,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// requireEnvironmentTierOverride enforces the §12.9 line 1033
+// requireEnvironmentTierOverride enforces the §12.9
 // environment-level workspaceTier override: a non-empty override must be
 // a tenant-settable §12.9 tier (T3 or T4) and may only tighten the parent
 // tenant's tier, never loosen it. An empty value inherits the tenant tier
 // and is always admitted. When the parent tenant cannot be resolved the
 // enum-valid override is admitted (the §10.2 tenant path governs unknown
 // tenants). It returns true when the write may proceed; when it returns
-// false it has already written the response. spec: §12.9 line 1033.
+// false it has already written the response. spec: §12.9.
 func (r *Router) requireEnvironmentTierOverride(w http.ResponseWriter, req *http.Request, tenant, envTier string) bool {
 	if envTier == "" {
 		return true
@@ -138,7 +138,7 @@ type MCPRuntimeFilterPayload struct {
 // ConnectorSelectorPayload is the wire shape of a §10.6
 // connectorSelector: the tag-based selector fields plus the capability
 // allow/deny lists that govern what the selected connectors may do.
-// spec: §10.6 lines 595-599. F-10.6.3.
+// spec: §10.6. F-10.6.3.
 type ConnectorSelectorPayload struct {
 	MatchLabels         map[string]string    `json:"matchLabels,omitempty"`
 	MatchExpressions    []RequirementPayload `json:"matchExpressions,omitempty"`
@@ -150,7 +150,7 @@ type ConnectorSelectorPayload struct {
 }
 
 // CrossEnvOutboundRulePayload is one §10.6 outbound cross-environment
-// delegation rule. spec: §10.6 lines 613-625 — the outbound declaration
+// delegation rule. spec: §10.6 — the outbound declaration
 // names the permitted delegation target under `targetEnvironment`. The
 // bilateral field names carry the direction semantics, so the wire shape
 // keeps them distinct from the inbound `sourceEnvironment` rather than
@@ -161,7 +161,7 @@ type CrossEnvOutboundRulePayload struct {
 }
 
 // CrossEnvInboundRulePayload is one §10.6 inbound cross-environment
-// delegation rule. spec: §10.6 lines 613-625 — the inbound declaration
+// delegation rule. spec: §10.6 — the inbound declaration
 // names the permitted delegation source under `sourceEnvironment` ("*"
 // matches any source). F-10.6.4.
 type CrossEnvInboundRulePayload struct {
@@ -192,7 +192,7 @@ type EnvironmentPayload struct {
 	UpdatedAt                  string                    `json:"updatedAt,omitempty"`
 	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
 	// decimal version. A list consumer reads it per item to supply
-	// If-Match on a later PUT without a follow-up GET. spec: §15.1 line 1209.
+	// If-Match on a later PUT without a follow-up GET. spec: §15.1.
 	ETag string `json:"etag,omitempty"`
 }
 
@@ -351,7 +351,7 @@ func fromEnvironment(e environmentstore.Environment) EnvironmentPayload {
 		},
 		CreatedAt: rfc3339Nano(e.CreatedAt),
 		UpdatedAt: rfc3339Nano(e.UpdatedAt),
-		// spec: §15.1 line 1207 — the ETag is the quoted decimal version.
+		// spec: §15.1 — the ETag is the quoted decimal version.
 		ETag: formatETag(e.Version),
 	}
 }
@@ -367,7 +367,7 @@ type EnvironmentDryRunPreview struct {
 }
 
 // EnvironmentDryRunResponse is the §15.1 environments dry-run body: the
-// computed resource alongside the selector preview. spec: §15.1 line 1140.
+// computed resource alongside the selector preview. spec: §15.1.
 type EnvironmentDryRunResponse struct {
 	Resource EnvironmentPayload       `json:"resource"`
 	Preview  EnvironmentDryRunPreview `json:"preview"`
@@ -418,7 +418,7 @@ func formatRequirement(req environment.Requirement) string {
 
 // environmentDryRunPreview evaluates the environment's §10.6 selectors
 // against the current runtime and connector registries for the §15.1
-// dry-run preview. It performs no writes. spec: §15.1 line 1140.
+// dry-run preview. It performs no writes. spec: §15.1.
 func (r *Router) environmentDryRunPreview(ctx context.Context, env environmentstore.Environment) EnvironmentDryRunPreview {
 	preview := EnvironmentDryRunPreview{
 		MatchedRuntimes:        []string{},
@@ -483,7 +483,7 @@ func (r *Router) handleCreateEnvironment(w http.ResponseWriter, req *http.Reques
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 		return
 	}
-	// spec: §10.6 line 562 — admin caller asserts a tenantId on the
+	// spec: §10.6 — admin caller asserts a tenantId on the
 	// body. When the asserted value disagrees with the authorized
 	// tenant, fail loudly rather than silently rewrite the row.
 	// F-10.6.12.
@@ -493,7 +493,7 @@ func (r *Router) handleCreateEnvironment(w http.ResponseWriter, req *http.Reques
 			map[string]any{"bodyTenantId": body.TenantID, "authorizedTenantId": tenant})
 		return
 	}
-	// spec: §11.7 line 449 — environment creation under a regulated
+	// spec: §11.7 — environment creation under a regulated
 	// tenant re-checks audit.siem.endpoint presence on every request and
 	// rejects with COMPLIANCE_SIEM_REQUIRED when SIEM has become absent
 	// since the tenant was created. The parent tenant's complianceProfile
@@ -505,7 +505,7 @@ func (r *Router) handleCreateEnvironment(w http.ResponseWriter, req *http.Reques
 			map[string]any{"tenantId": tenant, "complianceProfile": row.ComplianceProfile})
 		return
 	}
-	// spec: §11.7 line 377 — environment creation under a regulated tenant
+	// spec: §11.7 — environment creation under a regulated tenant
 	// also re-checks pgaudit configuration on every request and rejects
 	// with COMPLIANCE_PGAUDIT_REQUIRED when pgaudit has become absent.
 	if row, gErr := r.tenants.Get(req.Context(), tenant); gErr == nil && r.requirePgauditForProfile(row.ComplianceProfile) {
@@ -518,7 +518,7 @@ func (r *Router) handleCreateEnvironment(w http.ResponseWriter, req *http.Reques
 		return
 	}
 	env := toEnvironment(body, tenant)
-	// spec: §15.1 line 1140 — ?dryRun=true validates the definition and
+	// spec: §15.1 — ?dryRun=true validates the definition and
 	// returns the selector preview without persisting or auditing.
 	if req.URL.Query().Get("dryRun") == "true" {
 		if err := env.Validate(); err != nil {
@@ -533,7 +533,7 @@ func (r *Router) handleCreateEnvironment(w http.ResponseWriter, req *http.Reques
 	}
 	if err := r.environments.Create(req.Context(), env); err != nil {
 		if errors.Is(err, environmentstore.ErrAlreadyExists) {
-			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			// spec: §15.1 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
 			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"environment with this name already exists in tenant", nil)
 			return
@@ -564,7 +564,7 @@ func (r *Router) handleListEnvironments(w http.ResponseWriter, req *http.Request
 	for _, e := range rows {
 		out = append(out, fromEnvironment(e))
 	}
-	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope. F-15.1.6.
+	// spec: §15.1 — canonical cursor-paginated envelope. F-15.1.6.
 	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
 		func(x EnvironmentPayload, s pagination.Sort) (string, string) {
 			switch s.Field {
@@ -593,7 +593,7 @@ func (r *Router) handleGetEnvironment(w http.ResponseWriter, req *http.Request) 
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1209 — GET responses carry the ETag header so the
+	// spec: §15.1 — GET responses carry the ETag header so the
 	// client can use it as the next PUT's If-Match.
 	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -612,7 +612,7 @@ func (r *Router) handleUpdateEnvironment(w http.ResponseWriter, req *http.Reques
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 		return
 	}
-	// spec: §10.6 line 562 — body tenantId must match the authorized
+	// spec: §10.6 — body tenantId must match the authorized
 	// tenant on Update too; a silent rewrite would let an admin re-tag
 	// a row to look like it belonged to a different tenant. F-10.6.12.
 	if body.TenantID != "" && body.TenantID != tenant {
@@ -625,7 +625,7 @@ func (r *Router) handleUpdateEnvironment(w http.ResponseWriter, req *http.Reques
 		return
 	}
 	desired := toEnvironment(body, tenant)
-	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match.
+	// spec: §15.1 — every admin PUT requires If-Match.
 	// Resolve the current environment first so the entity tag (its version)
 	// is known before applying the mutation. This runs before the dry-run
 	// branch so a dry-run with a stale If-Match still returns 412 and one
@@ -643,7 +643,7 @@ func (r *Router) handleUpdateEnvironment(w http.ResponseWriter, req *http.Reques
 	if !enforceIfMatch(w, req, current.Version) {
 		return
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true validates the merged definition
+	// spec: §15.1 — ?dryRun=true validates the merged definition
 	// and returns the selector preview without persisting or auditing. The
 	// preview reflects the real (unchanged) name and creation time.
 	if req.URL.Query().Get("dryRun") == "true" {
@@ -662,7 +662,7 @@ func (r *Router) handleUpdateEnvironment(w http.ResponseWriter, req *http.Reques
 	updated, err := r.environments.Update(req.Context(), tenant, name, func(e *environmentstore.Environment) error {
 		desired.Name = e.Name
 		desired.CreatedAt = e.CreatedAt
-		// spec: §15.1 line 1207 — a full-replace PUT must carry the stored
+		// spec: §15.1 — a full-replace PUT must carry the stored
 		// entity-tag version forward so the store's increment is monotonic.
 		desired.Version = e.Version
 		*e = desired
@@ -678,7 +678,7 @@ func (r *Router) handleUpdateEnvironment(w http.ResponseWriter, req *http.Reques
 	}
 	principal, _ := authmw.FromContext(req.Context())
 	r.emit(req.Context(), principal, "admin.environment.updated", name, map[string]any{"tenantId": tenant})
-	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so
+	// spec: §15.1 — a successful PUT carries the bumped ETag so
 	// the client can chain a subsequent write without a refresh GET.
 	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -692,7 +692,7 @@ func (r *Router) handleDeleteEnvironment(w http.ResponseWriter, req *http.Reques
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1213 — DELETE honours If-Match when present. Resolve
+	// spec: §15.1 — DELETE honours If-Match when present. Resolve
 	// the current environment so the precondition reads the stored entity
 	// tag; a missing environment 404s ahead of the precondition.
 	current, gErr := r.environments.Get(req.Context(), tenant, name)

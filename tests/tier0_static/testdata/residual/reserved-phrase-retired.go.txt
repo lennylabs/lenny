@@ -1,0 +1,14 @@
+package carrier
+
+// Client dials the pod.
+//
+// The lifecycle-channel handshake is documented here, which is the
+// position inside a Go carrier the naming law governs.
+type Client struct{}
+
+// run opens the stream.
+func (c *Client) run() {
+	// The runtime opens CH-RUNTIMEOPS before the first frame, and this
+	// comment sits inside a function body.
+	_ = c
+}

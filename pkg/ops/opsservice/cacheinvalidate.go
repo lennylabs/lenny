@@ -19,7 +19,7 @@ import (
 )
 
 // CacheInvalidateHeader is the HTTP header the §25.5
-// subscription_cache_invalidate RPC carries. spec: §25.5 line 2751.
+// subscription_cache_invalidate RPC carries. spec: §25.5.
 const CacheInvalidateHeader = "X-Lenny-Cache-Invalidate"
 
 // cacheInvalidateMessage is the fixed message the invalidate token
@@ -33,8 +33,7 @@ const cacheInvalidateMessage = "subscription_cache_invalidate"
 // Token Service / embedded OIDC signing key). Deriving the token from a
 // key both replicas hold avoids a separate Secret and lets a peer
 // authenticate the idempotent refresh kick without an OIDC bearer. An
-// empty key yields an empty token, which disables the RPC. spec: §25.5
-// line 2751.
+// empty key yields an empty token, which disables the RPC. spec: §25.5.
 func InvalidateToken(sharedKey []byte) string {
 	if len(sharedKey) == 0 {
 		return ""
@@ -68,7 +67,7 @@ type HTTPDoer interface {
 // EndpointsPeerLister resolves peer replica base URLs from the lenny-ops
 // Service Endpoints, reusing the same Endpoints object the §25.4 replica
 // counter reads. It excludes the local replica by its own pod IP so a
-// replica does not broadcast to itself. spec: §25.5 line 2751 — "over
+// replica does not broadcast to itself. spec: §25.5 — "over
 // the lenny-ops headless Service".
 type EndpointsPeerLister struct {
 	endpoints corev1client.EndpointsGetter
@@ -132,7 +131,7 @@ func (l *EndpointsPeerLister) Peers(ctx context.Context) ([]string, error) {
 // RPC out to peer lenny-ops replicas so a subscription change made on one
 // replica reaches every replica's delivery-worker cache within a few
 // hundred milliseconds, regardless of the periodic refresh interval.
-// spec: §25.5 lines 2751, 2756.
+// spec: §25.5.
 type CacheInvalidateBroadcaster struct {
 	peers   PeerLister
 	doer    HTTPDoer

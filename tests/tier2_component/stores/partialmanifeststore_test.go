@@ -8,7 +8,7 @@
 // applied. Covers the intent-row Put + Get round-trip on the
 // (tenant_id, checkpoint_id) key, the supersede-on-write and fencing
 // invariants under the real partial_manifest_active_uniq index, the
-// §10.1 line 131 monotonic ConfirmChunk counter, Finalise, the
+// §10.1.7 monotonic ConfirmChunk counter, Finalise, the
 // exactly-once ReleaseReservation guard, SumOutstandingReservations,
 // the §12.5 ListReclaimable backstop predicate with its terminal-state
 // join, the soft-delete idempotency guard, and cross-tenant RLS
@@ -90,9 +90,6 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		if got.ChunkEncoding != partialmanifeststore.ChunkEncodingTarGz {
 			t.Errorf("chunk_encoding = %q, want tar.gz", got.ChunkEncoding)
 		}
-		if got.SlotID != partialmanifeststore.SlotDefault {
-			t.Errorf("slot_id = %q, want default", got.SlotID)
-		}
 		if !got.Partial || got.ManifestReason != partialmanifeststore.ReasonInProgress {
 			t.Errorf("intent row = partial %v reason %q, want true/in_progress", got.Partial, got.ManifestReason)
 		}
@@ -107,6 +104,26 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		}
 	})
 
+	// spec: §10.1 (Chunked-object storage model) — an empty encoding takes
+	// tar.gz, the encoding the only producer writes, so the recorded value
+	// matches the chunk bytes (F-4.4.34).
+	t.Run("put with an empty chunk_encoding records tar.gz", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		checkpointID := newUUID(t)
+		row := manifestRow(time.Now().UTC(), tenant, checkpointID, newUUID(t), 1)
+		row.ChunkEncoding = ""
+		if err := store.Put(ctx, row); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, checkpointID)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.ChunkEncoding != partialmanifeststore.ChunkEncodingTarGz {
+			t.Errorf("chunk_encoding = %q, want tar.gz", got.ChunkEncoding)
+		}
+	})
+
 	t.Run("get missing returns ErrNotFound", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		if _, err := store.Get(ctx, tenant, newUUID(t)); !errors.Is(err, partialmanifeststore.ErrNotFound) {
@@ -114,7 +131,7 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §10.1 lines 137, 143-151, 155 — supersede-on-write collapses
+	// spec: §10.1 — supersede-on-write collapses
 	// the active partial set to one row under the real
 	// partial_manifest_active_uniq index (two same-generation attempts on
 	// one coordinator), and a fenced strictly-lower write is rejected.
@@ -151,44 +168,94 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §10.1 line 137 — LatestActiveForSlot returns the active partial
-	// row for the exact (session, slot) the supersede path scopes on, not the
-	// session-wide highest-generation winner LatestActive returns.
-	t.Run("latest active is scoped to the slot", func(t *testing.T) {
+	// spec: §10.1.7, §12.5 — the active-partial invariant and its selector
+	// are keyed on the session alone. partial_manifest_active_uniq is a
+	// unique index on session_id where partial and not deleted, so a second
+	// active partial row for one session supersedes the first, and
+	// LatestActive resolves the survivor.
+	t.Run("the session-keyed selector resolves the surviving active partial row", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		session := newUUID(t)
-		target := newUUID(t)
-		other := newUUID(t)
-		targetRow := manifestRow(time.Now().UTC(), tenant, target, session, 0)
-		targetRow.SlotID = "slot-0"
-		if err := store.Put(ctx, targetRow); err != nil {
-			t.Fatalf("Put slot-0: %v", err)
+		first := newUUID(t)
+		second := newUUID(t)
+		if err := store.Put(ctx, manifestRow(time.Now().UTC(), tenant, first, session, 0)); err != nil {
+			t.Fatalf("Put first: %v", err)
 		}
-		otherRow := manifestRow(time.Now().UTC(), tenant, other, session, 9)
-		otherRow.SlotID = "slot-1"
-		if err := store.Put(ctx, otherRow); err != nil {
-			t.Fatalf("Put slot-1: %v", err)
+		if err := store.Put(ctx, manifestRow(time.Now().UTC(), tenant, second, session, 1)); err != nil {
+			t.Fatalf("Put second: %v", err)
 		}
-		// The session-wide selector returns the higher-generation slot-1 row.
-		if latest, err := store.LatestActive(ctx, tenant, session); err != nil {
-			t.Fatalf("LatestActive: %v", err)
-		} else if latest.CheckpointID != other {
-			t.Fatalf("LatestActive = %q, want the higher-generation slot-1 row", latest.CheckpointID)
+		// The re-keyed unique index admits one active partial row per
+		// session, so the first is superseded rather than left beside it.
+		if f, err := store.Get(ctx, tenant, first); err != nil {
+			t.Fatalf("Get first: %v", err)
+		} else if f.DeletedAt.IsZero() {
+			t.Error("first row still active; the session-keyed supersede did not fire")
 		}
-		// The slot-scoped selector returns slot-0's own row.
-		got, err := store.LatestActiveForSlot(ctx, tenant, session, "slot-0")
+		got, err := store.LatestActive(ctx, tenant, session)
 		if err != nil {
-			t.Fatalf("LatestActiveForSlot slot-0: %v", err)
+			t.Fatalf("LatestActive: %v", err)
 		}
-		if got.CheckpointID != target {
-			t.Errorf("LatestActiveForSlot(slot-0) = %q, want the slot-0 row", got.CheckpointID)
+		if got.CheckpointID != second {
+			t.Errorf("LatestActive = %q, want the surviving row %q", got.CheckpointID, second)
 		}
-		if _, err := store.LatestActiveForSlot(ctx, tenant, session, "slot-2"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
-			t.Errorf("LatestActiveForSlot(empty slot): got %v, want ErrNotFound", err)
+		// A session holding no active partial row returns ErrNotFound.
+		if _, err := store.LatestActive(ctx, tenant, newUUID(t)); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+			t.Errorf("LatestActive(unknown session): got %v, want ErrNotFound", err)
 		}
 	})
 
-	// spec: §10.1 line 154 — LatestActiveAny is the resume-reassembly
+	// spec: §10.1.7, §10.1 — the surviving active-partial selector is the
+	// one the checkpoint upload driver supersedes on, so its scope is the
+	// whole (tenant_id, session_id) key against real Postgres. A second
+	// session in the same tenant must be invisible to it, and reading the
+	// same session identifier under another tenant must resolve nothing.
+	// The re-keyed partial_manifest_active_uniq is scoped on session_id
+	// alone, so one session identifier cannot hold an active partial row in
+	// two tenants; the tenant half of the selector's key is pinned by the
+	// cross-tenant read returning ErrNotFound rather than by a second row.
+	t.Run("the session-keyed selector is scoped to the tenant and the session", func(t *testing.T) {
+		a := freshTenant(t, ctx, pg)
+		b := freshTenant(t, ctx, pg)
+		session := newUUID(t)
+		neighbour := newUUID(t)
+		own := newUUID(t)
+		neighbourCheckpoint := newUUID(t)
+		now := time.Now().UTC()
+		if err := store.Put(ctx, manifestRow(now, a, own, session, 1)); err != nil {
+			t.Fatalf("Put own: %v", err)
+		}
+		// A different session in the same tenant, at a higher generation so
+		// a selector that dropped the session predicate would prefer it.
+		if err := store.Put(ctx, manifestRow(now, a, neighbourCheckpoint, neighbour, 9)); err != nil {
+			t.Fatalf("Put neighbouring session: %v", err)
+		}
+		got, err := store.LatestActive(ctx, a, session)
+		if err != nil {
+			t.Fatalf("LatestActive: %v", err)
+		}
+		if got.CheckpointID != own {
+			t.Errorf("LatestActive(tenant a, session) = %q, want %q; the neighbouring session carries the higher generation and must not be selected", got.CheckpointID, own)
+		}
+		other, err := store.LatestActive(ctx, a, neighbour)
+		if err != nil {
+			t.Fatalf("LatestActive for the neighbouring session: %v", err)
+		}
+		if other.CheckpointID != neighbourCheckpoint {
+			t.Errorf("LatestActive(tenant a, neighbour) = %q, want %q", other.CheckpointID, neighbourCheckpoint)
+		}
+		// The same session identifier read under another tenant resolves
+		// nothing, so the supersede path can never reach a foreign row.
+		if _, err := store.LatestActive(ctx, b, session); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+			t.Errorf("LatestActive(tenant b, session): got %v, want ErrNotFound", err)
+		}
+		// A session with no row of its own resolves nothing, even though
+		// its tenant holds active partial rows for other sessions.
+		if _, err := store.LatestActive(ctx, a, newUUID(t)); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+			t.Errorf("LatestActive for a session with no row: got %v, want ErrNotFound", err)
+		}
+	})
+
+	// spec: §10.1.7 — LatestActiveAny is the resume-reassembly
 	// selector: the highest-coordination_generation active row regardless of
 	// partial. A completed checkpoint is returned when it is the only active
 	// row (unlike LatestActive, which is partial-scoped), and a newer partial
@@ -202,7 +269,7 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 			t.Fatalf("Put full intent: %v", err)
 		}
 		// A confirmed chunk keeps the completed row active (a zero-chunk row
-		// is soft-deleted by Finalise, §10.1 line 132).
+		// is soft-deleted by Finalise, §10.1.7).
 		if err := store.ConfirmChunk(ctx, tenant, full, 0, 4096); err != nil {
 			t.Fatalf("ConfirmChunk full: %v", err)
 		}
@@ -234,7 +301,7 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §10.1 line 131 — ConfirmChunk advances the counters
+	// spec: §10.1.7 — ConfirmChunk advances the counters
 	// monotonically under the `chunk_count < n + 1` guard.
 	t.Run("confirm chunk is monotonic", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
@@ -255,7 +322,7 @@ func TestCheckpointManifestStoreContract(t *testing.T) {
 		}
 	})
 
-	// spec: §10.1 line 141 — Finalise stamps the terminal disposition.
+	// spec: §10.1.7 — Finalise stamps the terminal disposition.
 	t.Run("finalise flips partial and reason", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		checkpointID := newUUID(t)

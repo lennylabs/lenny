@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 )
 
-// spec: §12.1 line 5 — the erasure primitives are mandatory methods on
+// spec: §12.1 — the erasure primitives are mandatory methods on
 // the Store interface, enforced at compile time. The bare ledger must
 // satisfy billingstore.Store including the erasure pair.
 func TestMemorySatisfiesStore_spec_12_1(t *testing.T) {
@@ -45,7 +45,7 @@ func TestMemoryCountUser_spec_12_8(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5, §12.8 — billing user erasure pseudonymizes rather
+// spec: §12.1, §12.8 — billing user erasure pseudonymizes rather
 // than deletes, so DeleteByUser is a no-op that returns (0, nil) and
 // leaves the events in place for financial reconciliation.
 func TestMemoryDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
@@ -66,7 +66,7 @@ func TestMemoryDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5, §12.8 Phase 4 — DeleteByTenant removes every event
+// spec: §12.1, §12.8 Phase 4 — DeleteByTenant removes every event
 // the tenant owns on teardown and leaves other tenants untouched.
 func TestMemoryDeleteByTenant_spec_12_1(t *testing.T) {
 	store := billingstore.NewMemory()

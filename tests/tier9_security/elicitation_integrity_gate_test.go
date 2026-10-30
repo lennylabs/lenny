@@ -2,7 +2,7 @@
 
 //go:build security
 
-// Tier-9 security test for the §15.1 line 823,824 own-tenant gate and
+// Tier-9 security test for the §15.1 own-tenant gate and
 // provenance body on the admin elicitation-content-integrity
 // sub-resource (proposal 0019 finding ADM-3). The endpoints
 //
@@ -13,7 +13,7 @@
 // grant. The pre-fix code gated both platform-admin-only, so a
 // tenant-admin could not manage its own tenant's integrity posture, and
 // the GET body omitted the platformFloor, justification, changedAt, and
-// changedBy fields the §15.1 line 824 body defines. The handler must now
+// changedBy fields the §15.1 body defines. The handler must now
 // admit a tenant-admin confined to its own {id}, persist the provenance
 // on the tenant row, and return the full body.
 //
@@ -25,9 +25,8 @@
 // provenance round-trip are the properties under test, independent of the
 // JWT-parsing front door.
 //
-// spec: §15.1 (tenant-admin gate, line 823,824; full GET body, line 824),
-// §9.2 (elicitation content integrity), §10.2 (tenant-admin cannot access
-// other tenants' data, line 261).
+// spec: §15.1,
+// §9.2 (elicitation content integrity), §10.2.
 
 package tier9_security_test
 
@@ -46,7 +45,7 @@ import (
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
-// elicitGateBody mirrors the §15.1 line 824 GET/PUT response body.
+// elicitGateBody mirrors the §15.1 GET/PUT response body.
 type elicitGateBody struct {
 	TenantID      string `json:"tenantId"`
 	StoredMode    string `json:"storedMode"`
@@ -163,7 +162,7 @@ func TestElicitationIntegrityGate_TenantAdminOwnTenant_ADM3(t *testing.T) {
 		t.Error("persisted changedAt is zero; the write must stamp the change instant on the row")
 	}
 
-	// 4. The own-tenant tenant-admin GET returns the full §15.1 line 824
+	// 4. The own-tenant tenant-admin GET returns the full §15.1
 	//    body, including the provenance the pre-fix handler omitted.
 	get := elicitTenantAdminReq(httptest.NewRequest(http.MethodGet,
 		"/v1/admin/tenants/acme/elicitation-content-integrity", nil), "acme")

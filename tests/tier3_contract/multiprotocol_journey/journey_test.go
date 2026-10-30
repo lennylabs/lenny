@@ -47,7 +47,7 @@ const journeyTenant = "acme"
 // against one shared session store, one shared EchoExecutor, and one
 // shared §15.1 session-event bus, mirroring the single-gateway,
 // multi-adapter deployment the spec describes (ExternalAdapterRegistry,
-// §15 line 12): "simultaneously active adapters route by path prefix"
+// §15): "simultaneously active adapters route by path prefix"
 // over one dispatcher rather than one server per protocol.
 type journeyGateway struct {
 	rest            *httptest.Server
@@ -72,17 +72,18 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 	mem := memorystore.NewInMemory(0, nil)
 
 	restHandler := sessionserver.New(store, sessionserver.Options{
-		Executor: exec,
-		Events:   bus,
-		Memory:   mem,
-		Clock:    clock,
-		IDFunc:   func() string { return idSeed },
+		DevTenantHeader: true,
+		Executor:        exec,
+		Events:          bus,
+		Memory:          mem,
+		Clock:           clock,
+		IDFunc:          func() string { return idSeed },
 	})
 	tsREST := httptest.NewServer(restHandler.Handler())
 	t.Cleanup(tsREST.Close)
 
 	mcpSrv := mcp.NewServer()
-	// spec: §15.2 line 1331 — the Streamable HTTP SSE channel replays
+	// spec: §15.2 — the Streamable HTTP SSE channel replays
 	// from the same §15.1 event bus REST publishes to, so a client
 	// attached over MCP observes the lifecycle transitions the shared
 	// §15.2.1 rule-1 service layer produces on the REST-proxied tools
@@ -98,29 +99,32 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 		Now: clock,
 	})
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Store:          store,
-		SessionCreator: restHandler,
-		SessionService: restHandler,
-		Executor:       exec,
-		Memory:         mem,
-		Events:         bus,
-		Clock:          clock,
-		IDFunc:         func() string { return idSeed },
-		TenantID:       journeyTenant,
+		DevTenantFallback: true,
+		Store:             store,
+		SessionCreator:    restHandler,
+		SessionService:    restHandler,
+		Executor:          exec,
+		Memory:            mem,
+		Events:            bus,
+		Clock:             clock,
+		IDFunc:            func() string { return idSeed },
+		TenantID:          journeyTenant,
 	})
 	tsMCP := httptest.NewServer(mcpSrv.Handler())
 	t.Cleanup(tsMCP.Close)
 
 	chatHandler := translator.NewOpenAIChatHandler(store, exec, translator.OpenAIChatOptions{
-		Clock:  clock,
-		IDFunc: func() string { return idSeed },
+		DevTenantHeader: true,
+		Clock:           clock,
+		IDFunc:          func() string { return idSeed },
 	})
 	tsChat := httptest.NewServer(chatHandler.Handler())
 	t.Cleanup(tsChat.Close)
 
 	respHandler := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
-		Clock:  clock,
-		IDFunc: func() string { return idSeed },
+		DevTenantHeader: true,
+		Clock:           clock,
+		IDFunc:          func() string { return idSeed },
 	})
 	tsResponses := httptest.NewServer(respHandler.Handler())
 	t.Cleanup(tsResponses.Close)
@@ -134,14 +138,10 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 	}
 }
 
-// spec: §15 line 6 (README.md:75 "One gateway, four protocols. REST,
+// spec: §15 (README.md:75 "One gateway, four protocols. REST,
 // MCP (Streamable HTTP), OpenAI Chat Completions, and Open Responses
 // all terminate at the same gateway and share one auth, policy,
-// routing, and audit path."); spec/15_external-api-surface.md §15.2
-// line 6 ("Session flows — MCP. Creating and interacting with
-// sessions ... flows through the MCP API"), lines 1289-1298 (the
-// create_session / send_message / attach_session / interrupt tool
-// list this test's MCP cell drives).
+// routing, and audit path."); spec/15_external-api-surface.md §15.2.
 // diagnosis: each cell drives the full create -> prompt -> stream ->
 // terminate session journey over one protocol against a gateway that
 // wires all four adapters against a shared store, executor, and event
@@ -234,11 +234,11 @@ func runRESTJourney(t *testing.T, gw *journeyGateway, sessionID, prompt string) 
 		t.Fatalf("REST terminate status: %d, body=%s", resp.StatusCode, raw)
 	}
 
-	// spec: §7.2 line 137 (status_change(state)) / line 141
-	// (session_complete(result)) — stream the retained backlog and
-	// confirm the "response" event carries the same echoed prompt the
-	// synchronous call above returned, and that the session's terminal
-	// transition is the last frame the backlog replays.
+	// spec: §7.2 status_change(state) and session_complete(result) —
+	// stream the retained backlog and confirm the "response" event carries
+	// the same echoed prompt the synchronous call above returned, and that
+	// the session's terminal transition is the last frame the backlog
+	// replays.
 	req, err := http.NewRequest(http.MethodGet, gw.rest.URL+"/v1/sessions/"+sessionID+"/events", nil)
 	if err != nil {
 		t.Fatalf("build events request: %v", err)
@@ -357,9 +357,7 @@ func runMCPJourney(t *testing.T, gw *journeyGateway, sessionID, prompt string) {
 		t.Errorf("MCP session state after terminate_session: got %q, want completed", got)
 	}
 
-	// spec: §15.2 line 1289 (attach_session "returns streaming task"),
-	// line 1331 (Streamable HTTP SSE channel replays the retained
-	// backlog before live delivery) — attach after the journey
+	// spec: §15.2 — attach after the journey
 	// completes and confirm the backlog's final frame is the §8.8
 	// terminal task-status projection (final:true, status:"completed")
 	// the shared §15.2.1 rule-1 REST-proxied terminate_session produced

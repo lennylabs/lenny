@@ -1,4 +1,4 @@
--- §5.2 line 396 / §12.9: the runtime's data-classification tier,
+-- §5.2 / §12.9: the runtime's data-classification tier,
 -- previously dropped at the gateway boundary.
 --
 -- workspace_tier records the §12.9 data classification a runtime

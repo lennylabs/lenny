@@ -10,8 +10,7 @@ import (
 )
 
 // TestSeverityName_spec_25_9_3659 confirms the OCSF severity_id → name
-// map the §25.9 ?severity= filter matches against. spec: §25.9 line
-// 3659; OCSF v1.1.0 severity_id dictionary.
+// map the §25.9 ?severity= filter matches against. spec: §25.9; OCSF v1.1.0 severity_id dictionary.
 func TestSeverityName_spec_25_9_3659(t *testing.T) {
 	cases := map[int]string{
 		severityInformational: "informational",
@@ -33,8 +32,7 @@ func TestSeverityName_spec_25_9_3659(t *testing.T) {
 // TestLookupClassArtifactReplication_spec_16_7_690 pins the OCSF class
 // for the two §16.7 ArtifactStore cross-region replication audit
 // events. Before F-16.7.3 neither resolved, so both dead-lettered at
-// translation even when their emit sites were wired. spec: §16.7 line
-// 690; §25.11. F-16.7.3.
+// translation even when their emit sites were wired. spec: §16.7; §25.11. F-16.7.3.
 func TestLookupClassArtifactReplication_spec_16_7_690(t *testing.T) {
 	cases := map[string]ClassMapping{
 		"artifact.cross_region_replication_verified": apiActivity(ActivityCreate),
@@ -65,8 +63,7 @@ func TestLookupClassArtifactReplication_spec_16_7_690(t *testing.T) {
 // severity_id table. Before F-16.7.9 every event was emitted at
 // severity_id 1 (Informational), so a SIEM rule filtering on
 // severity_id >= 5 (Critical) never matched a critical event such as a
-// legal-hold override or a tamper detection. spec: §16.7 lines
-// 670-694. F-16.7.9.
+// legal-hold override or a tamper detection. spec: §16.7. F-16.7.9.
 func TestTranslateSeverity_spec_16_7(t *testing.T) {
 	cases := []struct {
 		name      string

@@ -104,7 +104,7 @@ func newTestCoordinator(now time.Time, del claimDeleter, reb claimRebinder) (*Ho
 	return c, &timers
 }
 
-// TestHoldArmsTimerAndDeletesOnExpiry verifies the §3.2 hold-TTL timer fires
+// TestHoldArmsTimerAndDeletesOnExpiry verifies the §4.6.1 hold-TTL timer fires
 // the precondition-guarded DELETE at holdExpiresAt plus the grace, returning
 // the pod to idle when no rebind raced.
 // spec: 3.2 (reserved hold, precondition-guarded expiry DELETE), 4.6.1 (claimHoldTTLSeconds)
@@ -301,7 +301,7 @@ func TestNewHoldCoordinatorRequiresClientAndNamespace(t *testing.T) {
 	}
 }
 
-// TestExpiryDeleteErrorIsLoggedNotPanicked pins the §3.2 expiry-DELETE error
+// TestExpiryDeleteErrorIsLoggedNotPanicked pins the §4.6.1 expiry-DELETE error
 // branch: when the precondition-guarded DELETE fails for a reason other than a
 // rebind abort, the coordinator logs the failure and drops the hold entry
 // rather than panicking or retrying, so a transient API error during expiry
@@ -326,7 +326,7 @@ func TestExpiryDeleteErrorIsLoggedNotPanicked(t *testing.T) {
 }
 
 // realTimerCoordinator wires a coordinator with real (very short) timers and
-// recording seams, for the §3.2 concurrency stress test. The DELETE is
+// recording seams, for the §4.6.1 concurrency stress test. The DELETE is
 // scripted to abort (a cross-replica rebind always wins), mirroring the
 // precondition race the stress run exercises.
 func realTimerCoordinator(del claimDeleter, reb claimRebinder) *HoldCoordinator {
@@ -341,7 +341,7 @@ func realTimerCoordinator(del claimDeleter, reb claimRebinder) *HoldCoordinator 
 	}
 }
 
-// TestConcurrentRebindVsExpiryIsRaceClean exercises the §3.2 reserved-hold
+// TestConcurrentRebindVsExpiryIsRaceClean exercises the §4.6.1 reserved-hold
 // coordinator under concurrent Hold / Rebind / expire across many claims with
 // real short-lived timers. It is the tier-7a stress companion to the unit
 // tests: it asserts the map-guarded timer state is -race clean and that no

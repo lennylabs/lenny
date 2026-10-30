@@ -41,9 +41,8 @@ func (okCheckpointTransport) GetChunk(context.Context, string, map[string]string
 func barrierServer(t *testing.T) (*adapter.Server, *adapterclient.Client) {
 	t.Helper()
 	srv := adapter.New("adapter-test-build")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.ManifestDir = t.TempDir()
-	srv.StagingDir = t.TempDir()
 	srv.CheckpointTransport = okCheckpointTransport{}
 	srv.Runtime = &fakeRuntime{}
 	cl := dialAdapter(t, srv)
@@ -71,6 +70,7 @@ func driveBarrierCheckpointStream(t *testing.T, cl *adapterclient.Client, ctx co
 	if err := stream.Send(&adapterv1.CheckpointRequest{
 		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
 			CheckpointId:   checkpointID,
+			SessionId:      &adapterv1.SessionId{Value: "s1"},
 			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
 			ChunkSizeBytes: 1 << 20,
 		}},
@@ -101,7 +101,7 @@ func driveBarrierCheckpointStream(t *testing.T, cl *adapterclient.Client, ctx co
 	}
 }
 
-// spec: §10.1 lines 163-181 — the gateway-side CheckpointBarrier client
+// spec: §10.1 — the gateway-side CheckpointBarrier client
 // drives the graceful-drain barrier against a fenced, matched-generation
 // pod. The adapter quiesces and holds the barrier open, the gateway drives
 // the Checkpoint stream against the held pod, and the ack the client maps
@@ -153,14 +153,15 @@ func TestCheckpointBarrierMapsAck_spec_10_1(t *testing.T) {
 	}
 }
 
-// waitBarrierGateOpen spins until the adapter's CheckpointBarrier RPC has
-// opened its quiesce-and-hold gate, so the caller can drive the Checkpoint
-// stream and know the stream's CheckpointStart will link into the barrier.
+// waitBarrierGateOpen spins until the adapter's CheckpointBarrier RPC for
+// session s1 has opened that session's quiesce-and-hold gate, so the
+// caller can drive the Checkpoint stream and know the stream's
+// CheckpointStart will link into the barrier.
 func waitBarrierGateOpen(t *testing.T, srv *adapter.Server) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if srv.BarrierWaiting() {
+		if srv.BarrierWaiting("s1") {
 			return
 		}
 		time.Sleep(time.Millisecond)
@@ -168,7 +169,7 @@ func waitBarrierGateOpen(t *testing.T, srv *adapter.Server) {
 	t.Fatal("CheckpointBarrier never opened its quiesce-and-hold gate")
 }
 
-// spec: §10.1 line 165 — a generation-stale barrier is rejected with
+// spec: §10.1.8 — a generation-stale barrier is rejected with
 // FailedPrecondition so the gateway can record it as a false-positive
 // without aborting the drain.
 func TestCheckpointBarrierGenerationStale_spec_10_1(t *testing.T) {

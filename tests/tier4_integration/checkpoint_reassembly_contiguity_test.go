@@ -2,7 +2,7 @@
 
 //go:build integration
 
-// Tier-4 integration coverage for the §10.1 line 155 reassembly contiguity
+// Tier-4 integration coverage for the §10.1.7 reassembly contiguity
 // check, driven against a live MinIO container. Before minting any GET
 // capability, the gateway lists the objects under a checkpoint's chunk
 // prefix and verifies the prefix [0, chunk_count) is contiguous: every
@@ -12,7 +12,7 @@
 // reassembly atomically before any chunk body is fetched, and the resume
 // falls back to the last successful full checkpoint.
 //
-// spec: §10.1 line 155.
+// spec: §10.1.
 
 package tier4_integration_test
 
@@ -25,13 +25,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 )
 
-// spec: §10.1 line 155 — an extra object at index N with chunk_count = N is
+// spec: §10.1.7 — an extra object at index N with chunk_count = N is
 // expected residue; reassembly consumes exactly the contiguous prefix
 // [0, N) and ignores the residue.
 // diagnosis: reassembly consumed residue beyond chunk_count or rejected a
 // valid checkpoint, so an expected extra object corrupts or blocks a
 // resume.
 func TestReassemblyToleratesResidueBeyondChunkCount(t *testing.T) {
+	t.Parallel()
 	const (
 		tenant = "acme"
 		sessID = "sess_residue"
@@ -71,7 +72,7 @@ func TestReassemblyToleratesResidueBeyondChunkCount(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — a missing intermediate index below chunk_count
+// spec: §10.1.7 — a missing intermediate index below chunk_count
 // fails reassembly atomically before any chunk body is fetched; the resume
 // falls back to the last successful full checkpoint.
 //
@@ -79,6 +80,7 @@ func TestReassemblyToleratesResidueBeyondChunkCount(t *testing.T) {
 // pipeline, corrupting the stream, instead of failing over to the full
 // checkpoint.
 func TestReassemblyFailsOnGapAndFallsBackToFullCheckpoint(t *testing.T) {
+	t.Parallel()
 	const (
 		tenant  = "acme"
 		sessID  = "sess_gap"
@@ -127,7 +129,7 @@ func TestReassemblyFailsOnGapAndFallsBackToFullCheckpoint(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — an out-of-order index below chunk_count fails the
+// spec: §10.1.7 — an out-of-order index below chunk_count fails the
 // same way as a gap, before any chunk body is fetched. A stray
 // non-zero-padded chunk-1 sorts after chunk-00002 in lexicographic list
 // order, reintroducing index 1 out of ascending order below chunk_count.
@@ -135,6 +137,7 @@ func TestReassemblyFailsOnGapAndFallsBackToFullCheckpoint(t *testing.T) {
 // instead of failing closed to a full checkpoint, so a resume could splice
 // chunks in the wrong order.
 func TestReassemblyFailsOnOutOfOrderIndex(t *testing.T) {
+	t.Parallel()
 	const (
 		tenant = "acme"
 		sessID = "sess_ooo"

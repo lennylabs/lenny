@@ -1,5 +1,5 @@
 {{- /*
-OTLP-068 plaintext opt-in guard (§13.2 lines 176-178).
+OTLP-068 plaintext opt-in guard (§13.2).
 
 Trace payloads carry session metadata, tenant/operation identifiers, and
 occasional error bodies, so the OTLP collector hop is in-scope for the

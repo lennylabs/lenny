@@ -14,7 +14,7 @@ import (
 // FreshnessGauge is the surface the freshness reaper writes to. The
 // gateway's gatewaymetrics.Metrics implements it via
 // SetCheckpointStaleSessions.
-// spec: §4.4 line 256 — "the `lenny_checkpoint_stale_sessions` gauge
+// spec: §4.4 — "the `lenny_checkpoint_stale_sessions` gauge
 // (per pool/level, reported by the gateway) counts the number of
 // active sessions whose last checkpoint age exceeds the interval".
 type FreshnessGauge interface {
@@ -47,7 +47,7 @@ type TenantLister interface {
 // sessions rather than mutating them, and a stuck reaper does not
 // stall periodic checkpoints. The Sweep method is exported so tests
 // can drive it directly without a wall-clock dependency.
-// spec: §4.4 line 256.
+// spec: §4.4.
 type FreshnessReaper struct {
 	// Tenants enumerates the tenant ids to scan. The reaper sweeps
 	// every tenant's active sessions because the freshness gauge is
@@ -65,7 +65,7 @@ type FreshnessReaper struct {
 	// checkpoint within the last interval" definition.
 	Interval time.Duration
 	// SweepInterval is the cadence Run ticks on. Zero selects
-	// DefaultFreshnessSweepInterval (60 s) per the §4.4 line 256
+	// DefaultFreshnessSweepInterval (60 s) per the §4.4
 	// "the gateway enforces this by scheduling periodic checkpoints
 	// for active sessions" and §16.5 CheckpointStale alert's "for >
 	// 60 s" trigger.
@@ -85,7 +85,7 @@ type FreshnessReaper struct {
 // DefaultFreshnessSweepInterval is the default cadence the reaper
 // runs at. 60 s mirrors the §16.5 CheckpointStale alert's `for: 60s`
 // hold time so the gauge changes within one alert-evaluation cycle.
-// spec: §4.4 line 256 / §16.5 CheckpointStale alert.
+// spec: §4.4 / §16.5 CheckpointStale alert.
 const DefaultFreshnessSweepInterval = 60 * time.Second
 
 // Run drives the periodic freshness loop until ctx is cancelled. Each
@@ -138,7 +138,7 @@ func (r *FreshnessReaper) Sweep(ctx context.Context) {
 		}
 		for i := range sessions {
 			s := &sessions[i]
-			if !isActiveForFreshness(s.State) {
+			if !isActiveForFreshness(*s) {
 				continue
 			}
 			pool, level := resolve(s)
@@ -198,17 +198,23 @@ func (r *FreshnessReaper) reportError(tenantID string, err error) {
 }
 
 // isActiveForFreshness reports whether the §4.4 freshness SLO applies
-// to a session in the given state. The SLO covers active sessions
-// only: terminal sessions cannot be checkpointed and their lack of
-// `last_successful_checkpoint_at` should not skew the gauge.
-// spec: §4.4 line 256 — "Every active session MUST have a successful
-// checkpoint recorded within the last periodicCheckpointIntervalSeconds".
-func isActiveForFreshness(state session.State) bool {
-	switch state {
-	case session.StateRunning, session.StateStarting,
-		session.StateAwaitingClientAction, session.StateResumePending,
-		session.StateSuspended:
+// to a session row. The SLO covers active sessions only: terminal sessions
+// cannot be checkpointed and their lack of `last_successful_checkpoint_at`
+// should not skew the gauge. A `suspended` session counts only while it
+// names a pod: a podless suspended session was checkpointed at its
+// suspension release and holds no pod whose workspace an eviction can lose.
+// spec: §4.4 (Event / Checkpoint Store) — "Every active session MUST have a
+// successful checkpoint recorded within the last
+// periodicCheckpointIntervalSeconds"; §6.2 (Pod State Machine). input_required
+// is a §7.2 sub-state of running, so a session waiting in lenny/request_input
+// counts as running does (§7.2 Session state machine).
+func isActiveForFreshness(row sessionstore.Session) bool {
+	switch row.State {
+	case session.StateRunning, session.StateInputRequired, session.StateStarting,
+		session.StateAwaitingClientAction, session.StateResumePending:
 		return true
+	case session.StateSuspended:
+		return row.PodAssignment != ""
 	default:
 		return false
 	}

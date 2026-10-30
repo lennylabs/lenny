@@ -34,25 +34,30 @@ stateDiagram-v2
     created --> finalizing: FinalizeWorkspace
     finalizing --> ready: Workspace materialized
     ready --> starting: StartSession
-    starting --> running: Agent binary started
-    running --> suspended: Interrupt
+    starting --> running: Agent runtime reaches ready
+    running --> suspended: Interrupt or idle suspension
     running --> input_required: Agent calls request_input
     running --> completed: Agent finishes
-    running --> failed: Crash / unrecoverable error
+    running --> failed: Non-retryable failure
     running --> cancelled: Client cancels
     running --> expired: Budget or deadline exhausted
-    running --> resume_pending: Pod failure (retries remain)
+    running --> resume_pending: Retryable failure (retries remain)
+    running --> awaiting_client_action: Retryable failure (retries exhausted)
     input_required --> running: Input provided
     input_required --> cancelled: Parent cancels
     input_required --> expired: Deadline reached
-    input_required --> resume_pending: Pod failure (retries remain)
-    input_required --> failed: Retries exhausted
-    suspended --> running: Resume
+    input_required --> resume_pending: Retryable failure (retries remain)
+    input_required --> awaiting_client_action: Retryable failure (retries exhausted)
+    input_required --> failed: Non-retryable failure
+    input_required --> completed: Terminate
+    suspended --> running: Message or resume (pod still held)
+    suspended --> resume_pending: Message or resume (pod released)
     suspended --> completed: Terminate
     suspended --> cancelled: Client cancels
-    suspended --> expired: Lease expiry
-    suspended --> resume_pending: Pod failure while suspended
-    suspended --> failed: Budget keys expired
+    suspended --> expired: Suspended-session lifetime or lease expiry
+    suspended --> resume_pending: Retryable failure, pod still held (retries remain)
+    suspended --> awaiting_client_action: Retryable failure, pod still held (retries exhausted)
+    suspended --> failed: Non-retryable failure or budget keys expired
     resume_pending --> resuming: Pod allocated
     resume_pending --> awaiting_client_action: Resume window elapsed
     resuming --> running: Checkpoint restored
@@ -60,29 +65,29 @@ stateDiagram-v2
 
 ### What happens at each state
 
-**created** -- The gateway has authenticated the client, evaluated policy, checked credential availability, claimed an idle warm pod from the pool, persisted the session record, assigned credential leases, and returned a `session_id` with an upload token to the client. The pod is reserved for this session but the agent binary has not started. The client can now upload workspace files. If the session remains in `created` beyond `maxCreatedStateTimeoutSeconds` (default: 300s), it is automatically failed.
+**created** -- The gateway has authenticated the client, evaluated policy, checked credential availability, claimed an idle warm pod from the pool, persisted the session record, assigned credential leases, and returned a `session_id` with an upload token to the client. The pod is reserved for this session. The client can now upload workspace files. If the session remains in `created` beyond `maxCreatedStateTimeoutSeconds` (default: 300s), it is automatically failed.
 
-**finalizing** -- The client has called `FinalizeWorkspace`. The gateway instructs the pod's adapter to validate the staging area and atomically move files from `/workspace/staging` to `/workspace/current`. Any [setup commands](#setup-commands) defined on the runtime (such as `npm ci` or `pip install`) then run, bounded by `setupPolicy.timeoutSeconds`. Workspace _content_ — files, archives, cloned repositories — is materialized from [workspace sources](#workspace-sources), not from setup commands.
+**finalizing** -- The client has called `FinalizeWorkspace`. The gateway instructs the pod's adapter to validate the staging area and atomically move files from the session's `/workspace/slots/{sessionId}/staging` to `/workspace/slots/{sessionId}/current`. Any [setup commands](#setup-commands) defined on the runtime (such as `npm ci` or `pip install`) then run, bounded by `setupPolicy.timeoutSeconds`. Workspace _content_ — files, archives, cloned repositories — is materialized from [workspace sources](#workspace-sources), not from setup commands.
 
-**ready** -- Workspace materialization and setup commands have completed successfully. The session is ready for the agent binary to start.
+**ready** -- Workspace materialization and setup commands have completed successfully.
 
-**starting** -- The gateway has called `StartSession` on the adapter. The adapter is spawning the runtime binary with the finalized workspace as its working directory.
+**starting** -- The gateway has called `StartSession` on the adapter, and the runtime process becomes live for the session with the finalized workspace as its working directory. In the sidecar model, when the pod has launched no runtime process since its creation or since the platform last ended one, and the adapter has not marked the runtime not live, the runtime supervisor in the runtime container launches the runtime's configured `command` after the adapter writes the manifest, and the binary dials the adapter. A session that starts while a process is live reaches that process.
 
 **running** -- The agent binary is active and processing messages. The client can send messages, and the agent produces streaming output. This is the main interactive state.
 
-**input_required** -- A sub-state of `running`. The agent has called `lenny/request_input` to request clarification or additional information from its parent or the client. The pod is live, the runtime process is active, but the agent is blocked waiting for a response. The `maxIdleTime` timer is paused during this state, replaced by a separate `maxRequestInputWaitSeconds` timeout. All failure transitions that apply to `running` also apply to `input_required`.
+**input_required** -- A sub-state of `running`. The agent has called `lenny/request_input` to request clarification or additional information from its parent or the client. The pod is live, the runtime process is active, but the agent is blocked waiting for a response. The `maxClientIdleSeconds` idle clock is not evaluated during this state, because the runtime is waiting for a response; the separate `maxRequestInputWaitSeconds` timeout bounds the wait. All failure transitions that apply to `running` also apply to `input_required`.
 
-**suspended** -- The session has been interrupted (by the client, by an interrupt signal, or by the agent itself). The pod is still held for a configurable duration (`maxSuspendedPodHoldSeconds`), allowing a fast resume without re-claiming a pod. If the hold duration elapses, the pod is released and a resume transitions through `resume_pending`.
+**suspended** -- The session has been interrupted (by the client, by an interrupt signal, or by the agent itself), or it has been idle-suspended. After an interrupt, the pod is still held for a configurable duration (`maxSuspendedPodHoldSeconds`), allowing a fast resume without re-claiming a pod; when the hold elapses, the gateway checkpoints the workspace and releases the pod. Idle suspension happens when a `running` session has no activity for `maxClientIdleSeconds` (default: 900s) and the runtime adapter also observed none in that window; the gateway checkpoints the workspace and releases the pod or slot as it suspends the session. A session that cannot be idle-suspended, because its runtime is `type: mcp` or its pool runs `executionMode: service`, expires with the `max_idle_time` reason when `maxClientIdleSeconds` elapses instead. Any message, `resume_session` call, or `POST /v1/sessions/{id}/resume` resumes a suspended session; a session whose pod was released transitions through `resume_pending`. A suspended session does not count toward the concurrent-session limits, and it expires after `gateway.maxSuspendedSessionSeconds` (default: 7 days) in this state.
 
-**resume_pending** -- The session needs to resume but does not currently have a pod. This happens after a pod crash (when retries remain) or after a suspended session's pod hold expires. The gateway attempts to claim a new warm pod and restore the session from the last checkpoint.
+**resume_pending** -- The session needs to resume but does not currently have a pod. This happens after a retryable pod or runtime failure while retries remain, or when a message or resume call reaches a suspended session whose pod was released. The gateway's resume driver claims a new warm pod and restores the session onto it. While the warm pool or the session's credential pool is exhausted, the session waits in this state.
 
-**resuming** -- A new pod has been claimed and the session is being restored from a checkpoint. The workspace snapshot is materialized on the new pod, and the agent binary is restarted from the checkpointed state.
+**resuming** -- A new pod has been claimed and the session is being restored from a checkpoint. The workspace snapshot is materialized on the new pod, and the `Resume` RPC restores the session from the checkpoint into the runtime process that the runtime supervisor launches on the new pod, as [Runtime Supervisor](../runtime-author-guide/lifecycle.md#runtime-supervisor) states.
 
-**awaiting_client_action** -- The resume window (`maxResumeWindowSeconds`) has elapsed without a pod becoming available. The session is waiting for the client to take action (retry, cancel, or wait longer).
+**awaiting_client_action** -- Automatic recovery has stopped. Either the session's automatic retries were exhausted after a pod or runtime failure, or the resume window (`maxResumeWindowSeconds`) elapsed. The session is waiting for the client to take action (retry, cancel, or wait longer).
 
-**completed** -- The agent has finished its work normally. The workspace has been sealed (exported to durable storage). This is a terminal state.
+**completed** -- The agent has finished its work normally. The gateway then exports the final workspace to durable storage. When the export does not finish within `maxWorkspaceSealDurationSeconds`, the gateway records the session as `failed` with reason `workspace_seal_timeout`. This is a terminal state.
 
-**failed** -- The session encountered an unrecoverable error: the runtime crashed and retries were exhausted, an internal error occurred, or all credential keys expired. This is a terminal state.
+**failed** -- The session encountered an unrecoverable error: a non-retryable failure occurred, an internal error occurred, or all credential keys expired. This is a terminal state.
 
 **cancelled** -- The client or a parent session explicitly cancelled the session. This is a terminal state.
 
@@ -93,12 +98,12 @@ stateDiagram-v2
 When a session is resumed (after pod failure or suspended pod release), the gateway:
 
 1. Claims a new warm pod from the pool.
-2. Materializes the workspace from the last successful checkpoint snapshot.
-3. Restarts the agent binary via the `Resume` RPC with the checkpointed session state.
+2. Assigns the session new credential leases on the new pod.
+3. Materializes the workspace from the last successful checkpoint snapshot and restores the session from the checkpoint on the new pod via the `Resume` RPC, into the runtime process that the runtime supervisor launches on the new pod. A session that has neither a checkpoint nor a minimal eviction state record is rebuilt instead: the gateway materializes its workspace from the session's workspace plan, runs the plan's setup commands, and starts the runtime with no carried conversation state.
 4. Emits a `session.resumed` event to the client with `resumeMode` (either `full` for a normal checkpoint restore, or `conversation_only` if only the minimal eviction state was preserved) and `workspaceLost` (boolean indicating whether workspace files were lost).
 5. Increments `recovery_generation` on the session record. Clients can observe this counter to track how many times a session has been recovered.
 
-The `recovery_generation` counter tracks pod recoveries. A separate `coordination_generation` counter tracks gateway replica handoffs (when a different gateway replica takes over as session coordinator). These are independent: a coordinator handoff does not increment `recovery_generation`, and a pod recovery does not reset `coordination_generation`.
+The `recovery_generation` counter tracks pod recoveries. A separate `coordination_generation` counter fences stale gateway replicas. It advances when a different gateway replica takes over as session coordinator and each time a restore onto a replacement pod begins. A coordinator handoff does not increment `recovery_generation`, and neither counter decreases.
 
 ---
 
@@ -111,7 +116,7 @@ A **runtime** defines a type of agent that can run on Lenny. It specifies the co
 Lenny is runtime-agnostic. Every agent meets the same contract, a documented interface that a binary in any language can implement. The contract has two sides:
 
 - **The platform talks to the pod** over a private, authenticated internal protocol. This handles infrastructure plumbing: preparing the workspace, starting the session, taking checkpoints, delivering credentials, tearing down. The sidecar in each pod handles this side; your code never touches it.
-- **The pod talks to your agent** through a stdin/stdout contract (one JSON object per line). At higher integration levels, it also opens a local tool server and a lifecycle channel, both of which are opt-in.
+- **The pod talks to your agent** through a stdin/stdout contract (one JSON object per line). At higher integration levels, it also opens a local tool server and a CH-RUNTIMEOPS, both of which are opt-in.
 
 ### Runtime types
 
@@ -125,13 +130,15 @@ Lenny defines three integration levels for `type: agent` runtimes. You can ship 
 
 #### Basic
 
-The floor: enough to get a custom runtime working without knowing anything Lenny-specific:
+The floor: enough to get a custom runtime working with a small Lenny-specific protocol surface:
 
 - **Protocol:** stdin/stdout, one JSON object per line.
 - **Input:** reads `{type: "message"}` objects from stdin.
+- **Sessions:** one long-lived process serves every session on the pod. A `{type: "session_start"}` frame opens each session and carries its own context, such as its credential file path, and a `{type: "session_end"}` frame releases it. A runtime that keeps no per-session context may ignore both.
 - **Output:** writes `{type: "response"}` and `{type: "tool_call"}` objects to stdout.
-- **Heartbeat:** must respond to `{type: "heartbeat"}` with `{type: "heartbeat_ack"}` within 10 seconds, or SIGTERM.
+- **Heartbeat:** must respond to each `{type: "heartbeat"}`, which the adapter sends for each session and which names that session in `sessionId`, with `{type: "heartbeat_ack"}` within 10 seconds. While the runtime does any work for the session, the acknowledgement carries the heartbeat's `sessionId` and `busy: true`, which keeps the session from idle suspension. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../reference/glossary#slot); each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. If no acknowledgment is received, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy.
 - **Shutdown:** must handle `{type: "shutdown"}` by exiting within the specified `deadline_ms`.
+- **Connection handshake:** when the runtime dials the message channel as a socket rather than reading stdin, it waits for the adapter manifest and sends the manifest's `mcpNonce` as its first line, `{"_lennyNonce": "..."}`. It answers a nonce-only `_lennyChallenge` that arrives before the first protocol frame, and reads the manifest again and redials when the adapter closes the connection before that frame. See the [Adapter Contract](../reference/adapter-contract.md#connection-handshake).
 - **No MCP, no checkpointing, no lifecycle signals.**
 - **Credential rotation:** if the credential needs to change mid-session, Lenny checkpoints the session and restarts it on a new pod. Basic-level runtimes that do not checkpoint lose the in-flight context.
 
@@ -149,14 +156,14 @@ Everything in Basic, plus a local connection to a tool server that the platform 
 
 #### Full
 
-Everything in Standard, plus a lifecycle channel: a second local connection that carries operational signals:
+Everything in Standard, plus a CH-RUNTIMEOPS: a second local connection that carries operational signals:
 
-- Opens a bidirectional JSON-lines stream over an abstract Unix socket (`@lenny-lifecycle`).
+- Opens a bidirectional JSON-lines stream over an abstract Unix socket (`@lenny-runtime-ops`), sending the manifest's nonce as the connection's first line.
+- Answers each `session_start` with `session_started`. Each operational signal names its session by `sessionId`, and the [Adapter Contract](../reference/adapter-contract.md#ch-runtimeops-full-level-only) states how the signals are ordered against the acknowledgement.
 - Supports cooperative checkpoints: the platform asks the runtime to quiesce, the runtime replies when it's at a safe point, the snapshot is captured, and the platform signals completion.
 - Survives pod failures with consistent checkpoints.
 - Handles interrupts cleanly via `interrupt_request` / `interrupt_acknowledged`.
 - **Rotates credentials without restarting:** the platform sends `credentials_rotated`, the runtime rebinds its LLM provider in place, and replies `credentials_acknowledged`. The session keeps going.
-- Coordinates graceful shutdown via a `DRAINING` state when the pool is being drained.
 
 ### Runtime capabilities
 
@@ -166,11 +173,11 @@ Runtimes declare capabilities that affect platform behavior. `capabilities.inter
 
 Each runtime is configured with an **execution mode** that determines how pods are used:
 
-**`session`** -- A managed session is bound to a claimed pod for the session's lifetime. This is the default mode. Session mode is parameterized by a `sessionPolicy` block that controls how the pod is shared across sessions:
+**`session`** -- A managed session is bound to a claimed pod for the session's lifetime. This is the default mode. Every session is bound to a [slot](../reference/glossary#slot) on every pod, whatever the pool's concurrency: each session gets its own workspace tree at `/workspace/slots/{sessionId}/current/` and its own credential lease. Session mode is parameterized by a `sessionPolicy` block that controls how the pod is shared across sessions:
 
 - In the default configuration (`maxConcurrentSessions: 1`, `recycle.enabled: false`) each pod is exclusive to one session and terminates when the session ends. This prevents cross-session data leakage through residual workspace files, cached DNS, or runtime memory.
-- With `recycle.enabled: true` the pod is reused across sequential sessions. A fresh credential lease is assigned per session, and a whole-pod scrub runs when occupancy reaches zero (`kill -9 -1` as the sandbox user, workspace directory removal, scratch cleanup, `/tmp` flush). Deployers must acknowledge the residual state risk with `recycle.acknowledgeBestEffortScrub: true`.
-- With `maxConcurrentSessions > 1` the pod serves multiple simultaneous sessions, each in its own workspace directory (`/workspace/slots/{slotId}/current/`) with an independent credential lease. Deployers must acknowledge process-level co-tenancy with `acknowledgeProcessLevelIsolation: true`.
+- With `recycle.enabled: true` the pod is reused across sequential sessions. A fresh credential lease is assigned per session, and a whole-pod scrub (`kill -9 -1` as the sandbox user, workspace directory removal, scratch cleanup, and `/tmp` flush) runs when occupancy reaches zero, unless the release ends the occupancy without reuse ([Recycle lifecycle](../reference/execution-modes#recycle-lifecycle)). Deployers must acknowledge the residual state risk with `recycle.acknowledgeBestEffortScrub: true`. When `recycle.maxSessionsPerPod` is above 1 and `recycle.scrubProfile` is not `vm-restart`, `recycle.runtimeProcess` selects whether the pod keeps its runtime process across sessions (`keep`) or ends it in each scrub so the next session runs in a newly launched process (`restart`). Under `keep`, `acknowledgeProcessLevelIsolation: true` is also required, because a later session can run in the process that served an earlier one; pool admission refuses the pool without it.
+- With `maxConcurrentSessions > 1` the pod serves multiple sessions simultaneously. Those sessions share the pod's process namespace, `/tmp`, cgroup memory, and network stack, so isolation between them is process-level and filesystem-level only. Deployers must acknowledge process-level co-tenancy with `acknowledgeProcessLevelIsolation: true`.
 
 **`service`** -- The gateway routes each message to any ready replica rather than binding a session to a pod. Pods serve successive requests with no scrub and share process space, network stack, `/tmp`, and page cache across same-tenant concurrent requests. Service mode provides no cross-message conversation continuity: every message is self-contained. Service-mode pools are pinned to a single tenant by the tenant-affinity routing layer. Useful for high-throughput stateless workloads. See [Execution Modes and Pod Lifecycle](../reference/execution-modes.md) for the full settings matrix.
 
@@ -182,7 +189,7 @@ Derived runtimes exist so you can have per-team, per-environment, or per-purpose
 
 A derived runtime can customize:
 
-- **`workspaceDefaults` and `setupCommands`** — appended to the base's (execution order: base → derived → client).
+- **[`workspaceDefaults`](../runtime-author-guide/runtime-configuration.md#workspace-and-pool-defaults) and `setupCommands`** — appended to the base's (execution order: base → derived → client).
 - **`setupPolicy.timeoutSeconds`** — the gateway uses the maximum of base and derived, so a derived runtime cannot shorten a base-defined safety margin.
 - **`agentInterface`, `limits`, `supportedProviders`, `credentialCapabilities`, `labels`, `sessionPolicy`, `publishedMetadata`**.
 - **`delegationPolicyRef`** — restrict-only; the derived policy must be a subset of the base's.
@@ -220,7 +227,7 @@ Pools are configured with:
 - **Warm count range:** `minWarm` and `maxWarm` bounds for the number of idle pods.
 - **Scaling policy:** Optional time-of-day schedules (e.g., scale to zero overnight), demand-based rules, and safety factors.
 - **Egress profile:** Network policy applied to pods (`restricted`, `internet`, or custom).
-- **Setup command policy:** Allowlisted commands that may run during workspace finalization.
+- **Setup command policy:** The allowlist and limits that apply to the setup commands a client's workspace plan submits.
 
 ### SDK-warm pools
 
@@ -357,29 +364,31 @@ A **workspace** is the pod-local filesystem area where an agent operates. Lenny 
 
 ### Workspace lifecycle
 
-**Staging:** When a client uploads files, they are streamed through the gateway into the pod's staging area (`/workspace/staging`). Files are staged but not yet visible to the runtime.
+**Uploading:** While the session is in `created`, a client can upload files and archives through the gateway. The gateway stores each upload and returns an `uploadRef` that identifies it. An upload is not yet part of the workspace and is not visible to the runtime.
 
-**Materialization:** When the client calls `FinalizeWorkspace`, all declarative [workspace sources](#workspace-sources) are materialized into `/workspace/current` (client uploads flow through `/workspace/staging` for atomicity). Any [setup commands](#setup-commands) then execute. The workspace is now the runtime's working directory.
+**Materialization:** When the client calls `FinalizeWorkspace`, the gateway materializes the [workspace sources](#workspace-sources) of the session's workspace plan into `/workspace/slots/{sessionId}/current`. Upload content flows through the session's `/workspace/slots/{sessionId}/staging` for atomicity. Any [setup commands](#setup-commands) then execute. The workspace is now the runtime's working directory.
 
-**Runtime operation:** The agent reads and writes files in `/workspace/current` during its session. All filesystem access is local to the pod; no shared NFS mounts, no distributed filesystem.
+**Runtime operation:** The agent reads and writes files in `/workspace/slots/{sessionId}/current` during its session. All filesystem access is local to the pod; no shared NFS mounts, no distributed filesystem.
 
-**Checkpointing:** The gateway periodically snapshots the workspace (tar of `/workspace/current`) and uploads it to the artifact store as a checkpoint. Runtimes integrated at the Full level participate in cooperative quiescence: the platform pauses the runtime at a safe point before the snapshot. At Basic and Standard levels the snapshot is taken without pausing, so it is best-effort.
+**Checkpointing:** The gateway periodically snapshots the workspace (tar of `/workspace/slots/{sessionId}/current`) and uploads it to the artifact store as a checkpoint. Runtimes integrated at the Full level participate in cooperative quiescence: the platform pauses the runtime at a safe point before the snapshot. At Basic and Standard levels the snapshot is taken without pausing, so it is best-effort.
 
 **Sealing:** When the session completes, the workspace is exported to durable storage as a sealed, immutable snapshot. This snapshot is the session's final artifact and can be used to derive new sessions.
 
 ### Workspace sources
 
-A workspace is populated from a declarative `sources[]` list in the `WorkspacePlan`. Each source is materialized by the gateway at session creation time, before the agent runtime starts. Lenny ships five source types:
+A workspace is populated from a declarative `sources[]` list in the `WorkspacePlan`. A session binds one workspace plan, either in the session creation request or, when creation carried none, in the body of the finalize request. A plan that names uploads binds at finalize, because the client uploads content after the session is created and receives the `uploadRef` of each upload in the upload response. A session created without a plan and finalized without one binds the empty plan.
+
+The gateway materializes the bound plan's sources before the agent runtime starts: at finalize for a session created with `POST /v1/sessions`, and at start for a session created with `POST /v1/sessions/start` or served by a concurrent-workspace pool. The gateway materializes only the uploads that an `uploadFile` or `uploadArchive` source of the bound plan names. An upload that no source names stays out of the workspace. Lenny ships the following source types:
 
 | Source          | Purpose                                                                                                            |
 | --------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `inlineFile`    | Write a small file whose content is embedded directly in the request (e.g., `CLAUDE.md`, `.claude/settings.json`). |
-| `uploadFile`    | Materialize a single file previously uploaded via `POST /v1/sessions/{id}/upload`.                                 |
-| `uploadArchive` | Extract a `tar`, `tar.gz`, or `zip` archive into the workspace.                                                    |
+| `uploadFile`    | Materialize a single file uploaded to the same session via `POST /v1/sessions/{id}/upload`, named by its `uploadRef`. |
+| `uploadArchive` | Extract a `tar`, `tar.gz`, or `zip` archive uploaded to the same session via `POST /v1/sessions/{id}/upload-archive`, named by its `uploadRef`. |
 | `mkdir`         | Create an empty directory (useful for output collection).                                                          |
 | `gitClone`      | Clone a Git repository at a specified ref (branch, tag, or commit SHA).                                            |
 
-`gitClone` is the canonical way to populate a workspace from a repository. The gateway performs the clone over its own network path — the pod itself has no network access during setup and never sees raw credentials. Lenny accepts HTTPS URLs only; authentication for private repositories is via credential-lease scopes (`vcs.github.read`, `vcs.github.write`), and the clone flow installs an in-pod HTTPS credential helper that fetches short-lived tokens from the gateway for follow-up `git pull` / `git push` operations. The gateway resolves `ref` to an immutable commit SHA at session creation and persists it as `resolvedCommitSha`, so retries and resumes within the same session always materialize the same tree even if the branch moves.
+`gitClone` is the canonical way to populate a workspace from a repository. The gateway performs the clone over its own network path — the pod itself has no network access during setup and never sees raw credentials. Lenny accepts HTTPS URLs only; authentication for private repositories is via credential-lease scopes (`vcs.github.read`, `vcs.github.write`), and the clone flow installs an in-pod HTTPS credential helper that fetches short-lived tokens from the gateway for follow-up `git pull` / `git push` operations. The gateway resolves `ref` to an immutable commit SHA when the plan binds, at session creation or at finalize, and persists it as `resolvedCommitSha`, so retries and resumes within the same session always materialize the same tree even if the branch moves.
 
 ```json
 {
@@ -395,9 +404,9 @@ For the full schema — including `depth`, `submodules`, per-provider auth, and 
 
 ### Setup commands
 
-After sources are materialized, the runtime can run **setup commands** against the workspace — dependency installs, native compilation, permission fixups. They execute inside the pod, as the sandbox user, with `/workspace/current` as the working directory, during the session's `finalizing` state. Setup completes (or fails) before the agent binary starts.
+After sources are materialized, the runtime can run **setup commands** against the workspace — dependency installs, native compilation, permission fixups. They execute inside the pod, as the sandbox user, with `/workspace/slots/{sessionId}/current` as the working directory. Setup completes (or fails) before the agent binary starts.
 
-Setup commands are strictly scoped by the runtime's `setupCommandPolicy`:
+The runtime's `setupCommandPolicy` checks the setup commands that a client's workspace plan submits. The setup commands from the runtime's own `workspaceDefaults` are exempt from the allowlist and from the command count. The following limits apply:
 
 - **Prefix-matched allowlist.** `npm ci` permits `npm ci --no-audit` but not `npm install`.
 - **Exec mode** (`shell: false`): commands run as an argv list, not `sh -c`, so shell metacharacters do not expand.
@@ -422,7 +431,7 @@ setupPolicy:
 
 ### Gateway-mediated file delivery
 
-All session inputs and outputs enter and exit pods through the gateway. There are no shared volume mounts and no git-based workspace population. Checkpoint chunk objects are the one exception: the agent pod `PUT`s them to, and on resume `GET`s them from, object storage against a gateway-minted presigned capability (single key, single method, short expiry). The gateway remains the sole authority that resolves the key, validates the tenant prefix, and signs; the pod holds no object-store credential. This design enforces:
+All session inputs and outputs enter and exit pods through the gateway. There are no shared volume mounts and no git-based workspace population. Checkpoint chunk objects are the one exception: the agent pod `PUT`s them to, and on resume and at a derived or replayed session's first bind `GET`s them from, object storage against a gateway-minted presigned capability (single key, single method, short expiry). The gateway remains the sole authority that resolves the key, validates the tenant prefix, and signs; the pod holds no object-store credential. This design enforces:
 
 - **Least privilege:** Pods have no credentials to access the artifact store directly.
 - **Tenant isolation:** The gateway validates tenant ownership on every file operation, including when it signs a checkpoint-chunk presigned capability against the session's `checkpoint_id` prefix.
@@ -433,8 +442,8 @@ All session inputs and outputs enter and exit pods through the gateway. There ar
 
 Checkpoints are the mechanism by which Lenny survives pod failures. A checkpoint is an atomic unit comprising:
 
-- A workspace snapshot (tar of `/workspace/current`).
-- A session file snapshot (copy of `/sessions/` contents).
+- A workspace snapshot (tar of the session's `/workspace/slots/{sessionId}/current`).
+- A session file snapshot (copy of the session's own `/sessions/{sessionId}` contents; a checkpoint captures no co-tenant's session files).
 - Checkpoint metadata (generation, timestamp, pod state).
 
 If either snapshot fails, the entire checkpoint is discarded; partial checkpoints are never stored. Periodic checkpoints run at a configurable interval (default: 600 seconds), with jitter to prevent thundering-herd storms across sessions.
@@ -545,15 +554,16 @@ A credential can change during a session for two distinct reasons; Lenny handles
 
 Both kinds of rotation deliver the new lease via the `RotateCredentials` RPC. What the runtime does with it depends on its [integration level](#integration-levels):
 
-- **Full:** the adapter waits for any in-flight LLM request to drain (complete or error out), then sends a `credentials_rotated` message on the lifecycle channel. The runtime rebinds its provider in place, replies `credentials_acknowledged`, and the session continues without interruption. Subsequent LLM requests use the new credential.
+- **Full:** the adapter waits for any in-flight LLM request to drain (complete or error out), then sends a `credentials_rotated` message on the CH-RUNTIMEOPS. The runtime rebinds its provider in place, replies `credentials_acknowledged`, and the session continues without interruption. Subsequent LLM requests use the new credential.
 - **Basic / Standard:** the session is checkpointed and restarted on a new pod. Basic runtimes that do not participate in checkpointing lose their in-flight context.
 
 ### Pool exhaustion
 
-A pool can be exhausted in two distinct ways, each with a distinct error:
+A pool can be exhausted at session creation, mid-session, or at a restore:
 
 - **At session creation:** no eligible credential is available in the policy-selected pool (all at `maxConcurrentSessions`, all in cooldown, or none match the request's hints). The gateway returns `CREDENTIAL_POOL_EXHAUSTED`; clients retry after the pool drains.
 - **Mid-session:** every credential in the fallback chain has been tried, or the session has already consumed `maxRotationsPerSession`. The session terminates with `CREDENTIAL_FALLBACK_EXHAUSTED`.
+- **At restore:** a restore onto a replacement pod, after a pod failure or a resume of a suspended session whose pod was released, assigns the session new credential leases. While no eligible credential is available, the session waits in `resume_pending` until one frees or the resume window (`maxResumeWindowSeconds`) elapses.
 
 Operators diagnose exhaustion via pool-status counters (`availableCount`, `leasedCount`, `coolingDownCount`, `disabledCount`) and the `lenny_credential_provider_rate_limit_total` / `lenny_gateway_credential_fallback_exhausted_total` metrics. The [credential-pool-exhaustion runbook](../runbooks/credential-pool-exhaustion.md) covers remediation — adding credentials, raising per-key concurrency, extending cooldown, or reducing session pressure.
 
@@ -581,7 +591,7 @@ sequenceDiagram
     CredentialPool-->>Gateway: Credentials available
     Gateway->>Gateway: Assign lease from pool
     Gateway->>Pod: AssignCredentials(lease)
-    Pod->>Pod: Write credentials to /run/lenny/credentials.json
+    Pod->>Pod: Write credentials to /run/lenny/slots/{sessionId}/credentials.json
     Note over Pod: Runtime starts, uses credentials
     Pod->>Gateway: RATE_LIMITED event
     Gateway->>CredentialPool: Get alternate credential
@@ -602,7 +612,7 @@ Each credential has a `maxConcurrentSessions` limit and a configurable `cooldown
 
 ### Credential routing
 
-The `CredentialRouter` interface is the pluggable extension point that the gateway calls at session creation and at every rotation. The default implementation applies the pool's `assignmentStrategy` to the candidate credentials; custom implementations can consume `hints` (model, cost_tier, region) to route cost-aware, latency-based, or intent-based — for example, small models to a cheaper pool and large models to a premium pool, or EU traffic to EU-region credentials.
+The `CredentialRouter` interface is the pluggable extension point that the gateway calls at session creation, when a session is restored onto a replacement pod, and at every rotation. The default implementation applies the pool's `assignmentStrategy` to the candidate credentials; custom implementations can consume `hints` (model, cost_tier, region) to route cost-aware, latency-based, or intent-based — for example, small models to a cheaper pool and large models to a premium pool, or EU traffic to EU-region credentials.
 
 ---
 
@@ -630,13 +640,13 @@ Platform operators can partition a tenant's resources into logical project bound
 
 ## Experimentation
 
-Lenny provides **infrastructure primitives** for rolling runtime versions: pools of pod variants, deterministic request routing to a variant, and propagation of the chosen variant into the adapter manifest. These are the parts every experimentation flow needs and that are awkward to build anywhere else.
+Lenny provides **infrastructure primitives** for rolling runtime versions: pools of pod variants, deterministic request routing to a variant, and delivery of the chosen variant to the runtime in each session's `session_start` frame. These are the parts every experimentation flow needs and that are awkward to build anywhere else.
 
 Lenny also ships a **basic built-in variant assigner**. `ExperimentDefinition` is an admin API resource with three lifecycle states (`active`, `paused`, `concluded`), and the `ExperimentRouter` uses deterministic HMAC-SHA256 bucketing with sticky assignment (per-user, per-session, or none) to route sessions to variant pools. Variant pools are sized automatically by the `PoolScalingController` proportional to traffic weight. This built-in path is intentionally limited — enough for simple runtime-version rollouts, not a replacement for a real experimentation platform.
 
 For anything beyond simple rollouts, most teams plug in an **external experimentation platform** (LaunchDarkly, Statsig, Unleash, or any OpenFeature-compatible provider). Lenny integrates via OpenFeature and generic webhook targeting, so assignment decisions, targeting rules, rollout curves, and statistical analysis live where your team already runs them. See [OpenFeature integration](../operator-guide/openfeature-integration.md).
 
-**Variant context delivery.** When a session is routed to a variant — by the built-in assigner or by an external platform — the gateway includes an `experimentContext` object (`experimentId`, `variantId`, `inherited`) in the adapter manifest. Runtimes use this to tag traces with variant metadata for filtering and grouping in their eval platform.
+**Variant context delivery.** When a session is routed to a variant — by the built-in assigner or by an external platform — the gateway includes an `experimentContext` object (`experimentId`, `variantId`, `inherited`) in the session's `session_start` frame (see the [Adapter Contract](../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin)). Runtimes use this to tag traces with variant metadata for filtering and grouping in their eval platform.
 
 Delegation propagation modes (`inherit`, `control`, `independent`) control whether child sessions inherit, are forced to control, or are independently assigned variant groups. All variant-pool lifecycle transitions are operator-initiated or driven by the external platform; Lenny does not implement automatic winner declaration, statistical significance testing, or multi-armed bandits. See SPEC Section 10.7.
 
@@ -644,7 +654,7 @@ Delegation propagation modes (`inherit`, `control`, `independent`) control wheth
 
 ## Evaluation
 
-**Lenny is not an eval platform.** Runtime builders choose whichever eval framework fits their workflow — LangSmith, Braintrust, Weights & Biases, Arize, Langfuse, or a home-grown pipeline — and Lenny stays out of the way. The gateway propagates `tracingContext` through delegation for cross-runtime trace stitching in those external platforms. When a session is routed to a variant, `experimentContext` is also available in the adapter manifest; runtimes can use it to tag traces with variant metadata for filtering and grouping.
+**Lenny is not an eval platform.** Runtime builders choose whichever eval framework fits their workflow — LangSmith, Braintrust, Weights & Biases, Arize, Langfuse, or a home-grown pipeline — and Lenny stays out of the way. The gateway propagates `tracingContext` through delegation for cross-runtime trace stitching in those external platforms. When a session is routed to a variant, `experimentContext` is also available in the session's `session_start` frame; runtimes can use it to tag traces with variant metadata for filtering and grouping.
 
 **Basic score storage (`/eval` endpoint).** For teams that want to persist scores alongside session state without standing up another system, Lenny exposes a basic mechanism to store and retrieve scores. It is a database table with an API in front of it — not an eval runner, not a judge, not a scoring model. Scorers submit scores via `POST /v1/sessions/{id}/eval` with multi-dimensional scoring: an aggregate `score` plus a `scores` breakdown (e.g., `{"coherence": 0.9, "relevance": 0.7, "safety": 1.0}`). When a session is routed to a variant, the gateway auto-populates `experiment_id` and `variant_id` on the stored record. The Results API (`GET /v1/admin/experiments/{name}/results`) provides per-variant aggregation over stored scores with mean, p50, p95, and per-dimension breakdowns. Session replay (`POST /v1/sessions/{id}/replay`) supports regression testing across runtime versions.
 

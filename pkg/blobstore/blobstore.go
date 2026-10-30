@@ -43,16 +43,6 @@ const Scheme = "lenny-blob"
 // Encoding is the only encryption marker §4.5 v1 understands.
 const Encoding = "aes256gcm"
 
-// DerivedSnapshotTTL is the §4.5 ll. 311 TTL stamped on a derived
-// session's workspace-snapshot copy. The derive handler reuses the
-// 7-day default that the §7.1 retention window applies to a
-// completed session: the derived session owns its workspace
-// independent of the parent, so 7 days lines up with the §7.1
-// `extend-retention` adjustable budget.
-//
-// spec: §4.5 ll. 311; §7.1 retention.
-const DerivedSnapshotTTL = 7 * 24 * time.Hour
-
 // Sentinel errors.
 var (
 	// ErrNotFound — the blob does not exist or has expired.
@@ -66,8 +56,7 @@ var (
 	// ErrInvalidURI — the URI does not match the §4.5 shape.
 	ErrInvalidURI = errors.New("blobstore: invalid lenny-blob URI")
 
-	// ErrClassificationControlViolation is the §12.5 line 303 / §12.9
-	// line 1046 fail-closed write sentinel: a T4 tenant whose per-tenant
+	// ErrClassificationControlViolation is the §12.5 / §12.9 fail-closed write sentinel: a T4 tenant whose per-tenant
 	// KMS key is unavailable at write time. Every §4.5 ArtifactStore
 	// backend (MinIO, S3, Azure, GCS) returns it — wrapped with the
 	// offending tenant id — so a Put never silently downgrades a T4
@@ -76,10 +65,10 @@ var (
 	// gateway counts each rejection in
 	// lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}.
 	//
-	// spec: §12.5 line 303; §12.9 line 1046.
+	// spec: §12.5; §12.9.
 	ErrClassificationControlViolation = errors.New("blobstore: T4 tenant KMS key unavailable; CLASSIFICATION_CONTROL_VIOLATION")
 
-	// ErrTierStoreMismatch is the §12.9 line 1048
+	// ErrTierStoreMismatch is the §12.9
 	// `details.reason="tier_store_mismatch"` sentinel: a tenant whose
 	// `workspaceTier` requires envelope encryption at rest (T4) wrote to
 	// a backend that is not configured for it (the in-memory store or the
@@ -92,7 +81,7 @@ var (
 	// mapping still resolves the CLASSIFICATION_CONTROL_VIOLATION family
 	// while `details.reason` distinguishes the two.
 	//
-	// spec: §12.9 line 1048; §15.1 line 1078.
+	// spec: §12.9; §15.1.
 	ErrTierStoreMismatch = errors.New("blobstore: tier_store_mismatch — store not configured for envelope encryption")
 )
 
@@ -106,11 +95,11 @@ var (
 // backend (MinIO, S3, GCS, Azure with an SSE-KMS resolver) enforces the
 // T4 contract through its own key resolver and does not install a guard.
 //
-// spec: §12.9 line 1048 — "Each store method receives the applicable
+// spec: §12.9 — "Each store method receives the applicable
 // tier as context ... Tier mismatches ... are rejected at write time".
 type TierGuardFunc func(tenantID string) (requireEnvelope bool, err error)
 
-// checkTierStoreMismatch returns the §12.9 line 1048
+// checkTierStoreMismatch returns the §12.9
 // CLASSIFICATION_CONTROL_VIOLATION / tier_store_mismatch error when guard
 // reports the writing tenant requires envelope encryption. A nil guard
 // (the production envelope-capable path, or a dev deployment with no
@@ -120,7 +109,7 @@ type TierGuardFunc func(tenantID string) (requireEnvelope bool, err error)
 // filesystem dev path, and the envelope-capable backends carry their own
 // fail-closed posture independent of this guard.
 //
-// spec: §12.9 line 1048.
+// spec: §12.9.
 func checkTierStoreMismatch(guard TierGuardFunc, backend, tenantID string, onMismatch func(string)) error {
 	if guard == nil {
 		return nil
@@ -136,7 +125,7 @@ func checkTierStoreMismatch(guard TierGuardFunc, backend, tenantID string, onMis
 		ErrClassificationControlViolation, tenantID, backend, ErrTierStoreMismatch)
 }
 
-// ObjectType is the §12.5 line 295 / §4.5 line 309 object-class tag
+// ObjectType is the §12.5 / §4.5 object-class tag
 // embedded into every blob URI and into every object key (path
 // segment between {tenant_id} and {session_id}). The closed enum
 // matches the spec's §4.5 artifact-kinds list.
@@ -149,32 +138,30 @@ const (
 	// copies) per §4.5 ll. 301-303.
 	ObjectTypeWorkspace ObjectType = "workspace"
 	// ObjectTypeCheckpoint — periodic / eviction / pre-drain
-	// checkpoints per §4.4 line 234, §12.5 ll. 311-313. The key segment
+	// checkpoints per §4.4, §12.5 ll. 311-313. The key segment
 	// is `checkpoints` (plural) so the object key matches the §10.1
 	// chunked-checkpoint prefix `/{tenant_id}/checkpoints/{session_id}/`.
 	ObjectTypeCheckpoint ObjectType = "checkpoints"
 	// ObjectTypeTranscript — session conversation transcripts per
-	// §4.4 line 226.
+	// §4.4.
 	ObjectTypeTranscript ObjectType = "transcript"
 	// ObjectTypeUpload — uploaded files (POST
 	// /v1/sessions/{id}/upload), the canonical initial workspace per
 	// §4.5 ll. 301.
 	ObjectTypeUpload ObjectType = "upload"
 	// ObjectTypeEviction — eviction fallback context objects keyed
-	// at `/{tenant_id}/eviction/{session_id}/context` per §4.4 line
-	// 291 and §12.5 line 315.
+	// at `/{tenant_id}/eviction/{session_id}/context` per §4.4 and §12.5.
 	ObjectTypeEviction ObjectType = "eviction"
 	// ObjectTypeExport — exported file subsets for delegation per
 	// §4.5 ll. 303, §8.7.
 	ObjectTypeExport ObjectType = "export"
-	// ObjectTypeSessionLog — runtime stderr session logs at
-	// `/{tenant_id}/sessions/{session_id}/stderr.log` per §4.4
-	// line 226.
+	// ObjectTypeSessionLog — session logs at
+	// `/{tenant_id}/sessions/{session_id}/stderr.log` per §4.4.
 	ObjectTypeSessionLog ObjectType = "sessions"
 )
 
 // IsValidObjectType reports whether t is a recognised §4.5/§12.5
-// object-type segment. The §12.5 line 295 path format requires
+// object-type segment. The §12.5 path format requires
 // every object key to embed one of these values.
 func IsValidObjectType(t ObjectType) bool {
 	switch t {
@@ -204,7 +191,7 @@ type URI struct {
 // are accepted:
 //
 //   - `lenny-blob://{tenant_id}/{object_type}/{session_id}/{part_id}?ttl=...`
-//     — the §12.5 line 295 canonical 4-segment path that carries the
+//     — the §12.5 canonical 4-segment path that carries the
 //     object-type tag.
 //   - `lenny-blob://{tenant_id}/{session_id}/{part_id}?ttl=...` — the
 //     pre-{object_type} 3-segment legacy form. The parser stamps
@@ -260,6 +247,21 @@ func ParseURI(raw string) (URI, error) {
 	if session == "" || part == "" {
 		return URI{}, fmt.Errorf("%w: empty path segment", ErrInvalidURI)
 	}
+	// A relative segment must not survive the parse. The path is used to
+	// build a store key, so `lenny-blob://acme/upload/../../../etc/passwd`
+	// would otherwise be accepted with session ".." and part
+	// "../../etc/passwd" and be answered by the store rather than refused
+	// here. Every element is checked, including the ones inside part, which
+	// legitimately carries slashes for a nested checkpoint key, and the
+	// tenant, which is a store-key element like the rest.
+	//
+	// spec: §13.1 (tenant isolation: a reference names its own tenant's
+	// objects and nothing above them)
+	for _, seg := range append([]string{tenant}, parts...) {
+		if seg == "." || seg == ".." {
+			return URI{}, fmt.Errorf("%w: relative path segment %q", ErrInvalidURI, seg)
+		}
+	}
 	ttlStr := u.Query().Get("ttl")
 	if ttlStr == "" {
 		return URI{}, fmt.Errorf("%w: missing ttl query parameter", ErrInvalidURI)
@@ -282,7 +284,7 @@ func ParseURI(raw string) (URI, error) {
 	}, nil
 }
 
-// String serialises u back to the §12.5 line 295 4-segment wire
+// String serialises u back to the §12.5 4-segment wire
 // format. A URI with an empty ObjectType is stamped with
 // ObjectTypeUpload before serialisation so the wire output stays
 // well-formed; callers should always set ObjectType explicitly.
@@ -338,7 +340,7 @@ type Store interface {
 	Stat(u URI) (BlobInfo, error)
 }
 
-// Copier extends Store with the §4.5 line 311 / §7.1 derive
+// Copier extends Store with the §4.5 / §7.1 derive
 // byte-copy primitive. The gateway invokes Copy when a derived
 // session must own its workspace snapshot bytes independently of
 // the parent (so the §12.5 GC of the parent's artifacts cannot
@@ -437,7 +439,7 @@ type Tombstoner interface {
 	// scales with the Postgres-supplied set rather than with the
 	// bucket-wide object count.
 	//
-	// spec: §12.5 line 320 — the GC job queries Postgres for artifacts
+	// spec: §12.5 — the GC job queries Postgres for artifacts
 	// past their TTL and deletes exactly that set.
 	HardDeleteObject(u URI) error
 
@@ -487,7 +489,7 @@ type TenantPrefixDeleter interface {
 // sessions, not through a whole-user call. The method is present to
 // satisfy the §12.1 compile-time contract.
 //
-// spec: §12.1 line 5 — every store role interface MUST expose
+// spec: §12.1 — every store role interface MUST expose
 // DeleteByUser and DeleteByTenant; §12.8 step 7 (artifact erasure is
 // session-scoped).
 type Eraser interface {
@@ -534,7 +536,7 @@ type MemoryStore struct {
 	blobs map[string]memBlob
 	clock func() time.Time
 
-	// tierGuard, when set, enforces the §12.9 line 1048 storage-boundary
+	// tierGuard, when set, enforces the §12.9 storage-boundary
 	// classification check: a T4 tenant's write is rejected because the
 	// in-memory store cannot envelope-encrypt at rest. onTierMismatch is
 	// the optional metrics/log hook the gateway wires to the §12.5
@@ -544,13 +546,13 @@ type MemoryStore struct {
 	onTierMismatch func(tenantID string)
 }
 
-// SetTierGuard installs the §12.9 line 1048 storage-boundary tier check.
+// SetTierGuard installs the §12.9 storage-boundary tier check.
 // The in-memory store is not envelope-capable, so a tenant whose
 // `workspaceTier` requires envelope encryption (T4) is rejected at Put /
 // Copy with CLASSIFICATION_CONTROL_VIOLATION / tier_store_mismatch
 // instead of silently persisting restricted data in the clear.
 //
-// spec: §12.9 line 1048.
+// spec: §12.9.
 func (s *MemoryStore) SetTierGuard(g TierGuardFunc) { s.tierGuard = g }
 
 // SetOnTierStoreMismatch registers the hook fired on every
@@ -576,7 +578,7 @@ func NewMemoryStore(clock func() time.Time) *MemoryStore {
 	return &MemoryStore{blobs: map[string]memBlob{}, clock: clock}
 }
 
-// key returns the §12.5 line 295 4-segment object key
+// key returns the §12.5 4-segment object key
 // `{tenant_id}/{object_type}/{session_id}/{part_id}`. An empty
 // ObjectType is normalised to ObjectTypeUpload so callers under the
 // legacy 3-segment URI form keep working until they are rewritten.
@@ -592,7 +594,7 @@ func (s *MemoryStore) key(u URI) string {
 
 // Put implements Store.
 func (s *MemoryStore) Put(u URI, mimeType string, data io.Reader) (string, error) {
-	// spec: §12.9 line 1048 — reject a T4 write before reading the body
+	// spec: §12.9 — reject a T4 write before reading the body
 	// because the in-memory store cannot envelope-encrypt at rest.
 	if err := checkTierStoreMismatch(s.tierGuard, "in-memory", u.TenantID, s.onTierMismatch); err != nil {
 		return "", err
@@ -698,7 +700,7 @@ func (s *MemoryStore) HardPrune(now time.Time, retention time.Duration) int {
 
 // HardDeleteObject implements Tombstoner. It physically removes the
 // single object named by u, whether live or tombstoned. A missing
-// object is a no-op. spec: §12.5 line 320.
+// object is a no-op. spec: §12.5.
 func (s *MemoryStore) HardDeleteObject(u URI) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -796,7 +798,7 @@ func (s *MemoryStore) DeleteBySession(_ context.Context, tenantID, sessionID str
 // sessions (§12.8 step 7); this whole-user call is a no-op returning
 // (0, nil).
 //
-// spec: §12.1 line 5 (mandatory primitive); §12.8 step 7 (session-
+// spec: §12.1; §12.8 step 7 (session-
 // scoped artifact erasure).
 func (s *MemoryStore) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
@@ -827,7 +829,9 @@ func (s *MemoryStore) DeleteByTenant(_ context.Context, tenantID string) (int, e
 }
 
 // Copy implements Copier. It duplicates src into a new in-memory
-// blob at dst with a freshly minted ExpiresAt; returns
+// blob at dst with a freshly minted ExpiresAt, measured from the copy's
+// write with dst's TTL, or with the source's TTL when dst names none
+// (copyTTL); returns
 // ErrCrossTenant when src and dst name different tenants,
 // ErrNotFound when src is absent or tombstoned, and ErrConflict
 // when dst already names a live blob.
@@ -837,7 +841,7 @@ func (s *MemoryStore) Copy(src, dst URI) error {
 	if src.TenantID != dst.TenantID {
 		return ErrCrossTenant
 	}
-	// spec: §12.9 line 1048 — the derive byte-copy is a write; a T4
+	// spec: §12.9 — the derive byte-copy is a write; a T4
 	// destination is rejected for the same reason a Put is.
 	if err := checkTierStoreMismatch(s.tierGuard, "in-memory", dst.TenantID, s.onTierMismatch); err != nil {
 		return err
@@ -856,17 +860,41 @@ func (s *MemoryStore) Copy(src, dst URI) error {
 	}
 	now := s.clock()
 	body := append([]byte(nil), from.body...)
+	ttl := copyTTL(dst.TTL, from.info.StoredAt, from.info.ExpiresAt)
+	dst.TTL = ttl
 	s.blobs[s.key(dst)] = memBlob{
 		info: BlobInfo{
 			URI:       dst,
 			MimeType:  from.info.MimeType,
 			Size:      int64(len(body)),
 			StoredAt:  now,
-			ExpiresAt: now.Add(dst.TTL),
+			ExpiresAt: now.Add(ttl),
 		},
 		body: body,
 	}
 	return nil
+}
+
+// copyTTL returns the lifetime a Copy destination is stored with. A
+// destination URI that names a TTL keeps it. A destination that names none,
+// such as a §10.1 checkpoint chunk URI the derive and replay copies build
+// with resumechunks.ChunkObjectURI, keeps the source blob's own TTL (its
+// ExpiresAt minus its StoredAt), measured from the copy's write. Without
+// this a zero TTL stamped ExpiresAt at the write instant, so the copy
+// expired as it was written and every later Get returned ErrNotFound. The
+// S3-compatible stores apply no per-object TTL, so a copy there never
+// expired early (BUILD-GAPS F-4.5.24).
+//
+// spec: §7.1 (Derive copy semantics: the derived session owns a full copy
+// of the parent's checkpoint); §15.1 (Session Replay Semantics); §4.5.
+func copyTTL(dstTTL time.Duration, srcStoredAt, srcExpiresAt time.Time) time.Duration {
+	if dstTTL > 0 {
+		return dstTTL
+	}
+	if src := srcExpiresAt.Sub(srcStoredAt); src > 0 {
+		return src
+	}
+	return dstTTL
 }
 
 // NewPartID returns a fresh §4.5 part identifier — 16 random bytes

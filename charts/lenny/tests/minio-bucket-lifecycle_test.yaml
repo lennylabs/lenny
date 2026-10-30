@@ -29,6 +29,52 @@ tests:
           path: metadata.annotations["helm.sh/hook"]
           value: post-install,post-upgrade
 
+  # spec: §17.9.4 — the post-install Job runs `mc ilm add`; its default
+  # image is the maintained, anonymously pullable mc fork pinned by tag and
+  # index digest, so the hook can pull it on a fresh install.
+  - it: defaults the lifecycle Job image to pgsty/mc pinned by tag and digest
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8"
+
+  - it: falls back to the pinned mc image when minio.lifecycle.image is empty
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        lifecycle:
+          image: ""
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8"
+
+  - it: honours an operator-supplied lifecycle Job image
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        lifecycle:
+          image: "registry.acme.com/mirror/mc:RELEASE.2026-10-26T00-00-00Z"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: "registry.acme.com/mirror/mc:RELEASE.2026-10-26T00-00-00Z"
+
   - it: emits the post-install hook with the §12.5 versioning + lifecycle commands
     template: minio-bucket-lifecycle-job.yaml
     set:
@@ -163,7 +209,66 @@ tests:
             name: SSL_CERT_DIR
             value: /etc/lenny/minio-ca
 
-  - it: §12.5 line 279 — render fails when minio.tls.enabled=false with a regulated complianceProfile
+  # spec: §17.9.4 — the post-install Job runs `mc ilm add` as uid 1000 on a
+  # read-only root filesystem with no home directory, so mc's config directory
+  # must sit on a writable emptyDir in every mode. Without it, a production
+  # render fails at `mkdir /.mc` and the lifecycle rules are never applied.
+  - it: gives mc a writable config directory outside dev mode
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      global:
+        devMode: false
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MC_CONFIG_DIR
+            value: /tmp/.mc
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: mc-config
+            mountPath: /tmp
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: mc-config
+            emptyDir: {}
+
+  - it: keeps the mc config directory alongside the MinIO CA bundle mount
+    template: minio-bucket-lifecycle-job.yaml
+    set:
+      global:
+        devMode: true
+      minio:
+        endpoint: "minio.lenny-system:9000"
+        bucket: "lenny-artifacts"
+        accessKey: "access"
+        secretKey: "secret"
+        tls:
+          caBundleConfigMap: lenny-minio-ca
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MC_CONFIG_DIR
+            value: /tmp/.mc
+      - lengthEqual:
+          path: spec.template.spec.containers[0].volumeMounts
+          count: 2
+      - lengthEqual:
+          path: spec.template.spec.volumes
+          count: 2
+
+  - it: §12.5 — render fails when minio.tls.enabled=false with a regulated complianceProfile
     template: gateway-deployment.yaml
     set:
       complianceProfile: "soc2"
@@ -178,13 +283,13 @@ tests:
           enabled: false
     asserts:
       - failedTemplate:
-          errorMessage: "§12.5 line 279: minio.tls.enabled MUST be true when complianceProfile is \"soc2\" (regulated)."
+          errorMessage: "§12.5: minio.tls.enabled MUST be true when complianceProfile is \"soc2\" (regulated)."
 
-  # spec: §12.5 line 280 — "All other backends enforce TLS." The
+  # spec: §12.5 — "All other backends enforce TLS." The
   # plaintext-MinIO exception is bound to backends: embedded ONLY; there is
   # no devMode qualifier. A non-embedded backend with tls.enabled=false fails
   # the render regardless of global.devMode.
-  - it: §12.5 line 280 — render fails when minio.tls.enabled=false outside embedded mode
+  - it: §12.5 — render fails when minio.tls.enabled=false outside embedded mode
     template: gateway-deployment.yaml
     set:
       backends: "selfManaged"
@@ -199,13 +304,13 @@ tests:
           enabled: false
     asserts:
       - failedTemplate:
-          errorMessage: "§12.5 line 280: minio.tls.enabled may default to false only when backends: embedded; all other backends enforce TLS — set tls.enabled: true."
+          errorMessage: "§12.5: minio.tls.enabled may default to false only when backends: embedded; all other backends enforce TLS — set tls.enabled: true."
 
-  # spec: §12.5 line 280 — the exception is bound to backends: embedded, NOT
+  # spec: §12.5 — the exception is bound to backends: embedded, NOT
   # to dev mode. global.devMode does NOT sanction plaintext MinIO on a
   # non-embedded backend; the guard must still fail. This pins the Fix #1
   # alignment: a devMode clause on this guard would be a §12.5 misalignment.
-  - it: §12.5 line 280 — global.devMode does not relax the TLS mandate on a non-embedded backend
+  - it: §12.5 — global.devMode does not relax the TLS mandate on a non-embedded backend
     template: gateway-deployment.yaml
     set:
       global.devMode: true
@@ -221,9 +326,9 @@ tests:
           enabled: false
     asserts:
       - failedTemplate:
-          errorMessage: "§12.5 line 280: minio.tls.enabled may default to false only when backends: embedded; all other backends enforce TLS — set tls.enabled: true."
+          errorMessage: "§12.5: minio.tls.enabled may default to false only when backends: embedded; all other backends enforce TLS — set tls.enabled: true."
 
-  - it: §12.5 line 280 — embedded backends permits minio.tls.enabled=false
+  - it: §12.5 — embedded backends permits minio.tls.enabled=false
     template: gateway-deployment.yaml
     set:
       backends: "embedded"

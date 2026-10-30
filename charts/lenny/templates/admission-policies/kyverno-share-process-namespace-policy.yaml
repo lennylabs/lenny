@@ -1,6 +1,6 @@
 {{- /*
 Kyverno ClusterPolicy that rejects `shareProcessNamespace: true` on any
-pod in an agent namespace, satisfying the spec §6.4 line 420 enforcement
+pod in an agent namespace, satisfying the spec §6.4 enforcement
 clause:
 
   "shareProcessNamespace: false is not enforceable via Pod Security
@@ -41,7 +41,7 @@ metadata:
     policies.kyverno.io/severity: "high"
     policies.kyverno.io/subject: "Pod"
     policies.kyverno.io/description: >-
-      Spec §6.4 line 420: a Kyverno or Gatekeeper policy must reject pods
+      Spec §6.4: a Kyverno or Gatekeeper policy must reject pods
       in agent namespaces that set shareProcessNamespace: true. The
       in-tree lenny-pod-security webhook performs the same rejection; this
       policy is the named second line of defense.

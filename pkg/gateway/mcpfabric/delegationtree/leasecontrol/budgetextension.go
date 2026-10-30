@@ -15,7 +15,7 @@ import (
 // bounds the proxy's in-path decision: continue the session, terminate
 // it, or leave it denying-per-request while the elicitation resolves
 // out-of-band.
-// spec: §8.6 line 629 (proxy trigger); proposal 0023.
+// spec: §8.6; proposal 0023.
 type Outcome int
 
 const (
@@ -58,7 +58,7 @@ func (o Outcome) String() string {
 // (fail closed) on a terminal outcome. A nil reclaimer leaves the
 // episode fan-out with nothing to reclaim, which is the pre-wiring
 // posture; tests inject a fake to assert the fan-out.
-// spec: §8.6 line 629, line 719; proposal 0023 S4.
+// spec: §8.6; proposal 0023 S4.
 type SessionReclaimer interface {
 	// RaiseBudget raises sessionID's budget by delta and clears its
 	// deny-next-request state so the pre-flight budget gate admits its
@@ -82,7 +82,7 @@ type SessionReclaimer interface {
 // sessions batch onto one elicitation prompt: a first exhausting session
 // in a tree starts the episode on a single tracked goroutine keyed per
 // tree, and concurrent (and mid-episode) exhausting sessions join that
-// one in-flight episode (§8.6 line 719 batching) rather than starting a
+// one in-flight episode (§8.6 batching) rather than starting a
 // second one. The episode goroutine dispatches every member of a batch
 // concurrently so their ExtendLease -> requestConsent calls overlap and
 // batch onto the one live tc.pending prompt; a session that joins after a
@@ -103,20 +103,20 @@ type SessionReclaimer interface {
 // waitCtx it returns OutcomeGranted or OutcomeTerminal. On a deferred
 // resolution after a Pending return, the episode's per-session fan-out
 // raises or terminates the session through the SessionReclaimer.
-// spec: §8.6 line 629; proposal 0023 S3.
-func (s *Service) ExtendForBudget(reqCtx, waitCtx context.Context, sessionID string) (Outcome, error) {
+// spec: §8.6; proposal 0023 S3.
+func (s *Service) ExtendForBudget(reqCtx, waitCtx context.Context, tenantID, sessionID string) (Outcome, error) {
 	if sessionID == "" {
 		return OutcomeTerminal, errors.New("leasecontrol: ExtendForBudget requires a session id")
+	}
+	// spec: §8.6 (Extension state) — the caller threads the tenant it
+	// holds; a request without one is refused, fail closed.
+	if tenantID == "" {
+		return OutcomeTerminal, errors.New("leasecontrol: ExtendForBudget requires a tenant id")
 	}
 	if s.episodes == nil {
 		return OutcomeTerminal, errors.New("leasecontrol: ExtendForBudget requires an initialized episode manager")
 	}
 
-	tenantID, err := s.tenants.TenantOf(reqCtx, sessionID)
-	if err != nil {
-		// Fail closed: an unresolvable session cannot be extended.
-		return OutcomeTerminal, fmt.Errorf("leasecontrol: ExtendForBudget resolve tenant for %s: %w", sessionID, err)
-	}
 	budget, err := s.budgets.TreeBudget(reqCtx, tenantID, sessionID)
 	if err != nil {
 		return OutcomeTerminal, fmt.Errorf("leasecontrol: ExtendForBudget load tree budget for %s: %w", sessionID, err)
@@ -126,11 +126,10 @@ func (s *Service) ExtendForBudget(reqCtx, waitCtx context.Context, sessionID str
 	// for as much token headroom as the §8.6 ceiling allows. Requesting
 	// the full effective ceiling makes leaseextension.Grant cap the grant
 	// to the remaining headroom (min(requested, ceiling-current)), so a
-	// session extends up to but never past its ceiling. spec: §8.6 line
-	// 643, line 676.
+	// session extends up to but never past its ceiling. spec: §8.6.
 	requested := Dimensions{Tokens: budget.EffectiveMax.Tokens}
 
-	mem := s.episodes.join(budget.RootSessionID, sessionID, requested)
+	mem := s.episodes.join(tenantID, budget.RootSessionID, sessionID, requested)
 
 	// Block on this session's resolution up to the caller's in-path wait.
 	select {
@@ -174,7 +173,7 @@ func (s *Service) ExtendForBudget(reqCtx, waitCtx context.Context, sessionID str
 // raise for a session that detached at the in-path deadline (fanOut). The
 // in-path caller (this method) and the fan-out are mutually exclusive
 // appliers per member (member.resolve/detach), so RaiseBudget fires exactly
-// once for a granted session. spec: §8.6 line 629, line 719; proposal 0023
+// once for a granted session. spec: §8.6; proposal 0023
 // S3/S4.
 func (s *Service) applyInPathResolution(sessionID string, res sessionResult) (Outcome, error) {
 	if res.err != nil {
@@ -222,7 +221,7 @@ type sessionResult struct {
 // episode is one per-tree §8.6 extension episode. A first exhausting
 // session opens it and starts the one tracked episode goroutine
 // (runEpisode); concurrent exhausting sessions in the same tree join it
-// (§8.6 line 719 batching) rather than opening a second elicitation. The
+// (§8.6 batching) rather than opening a second elicitation. The
 // episode goroutine dispatches each joined member's ExtendLease
 // concurrently the moment it joins, so an in-flight elicitation and a
 // mid-episode joiner overlap inside requestConsent and batch onto the one
@@ -234,7 +233,7 @@ type sessionResult struct {
 // resolution out to every member exactly once before exiting. The fan-out
 // is per session because a tree holds multiple proxy-mode sessions that
 // resolve independently (one may be GRANTED while another is
-// CEILING_REACHED). spec: §8.6 line 719, line 737-741.
+// CEILING_REACHED). spec: §8.6.
 type episode struct {
 	rootSessionID string
 
@@ -249,7 +248,7 @@ type episode struct {
 	// goroutine has not yet started. The goroutine drains it and spawns
 	// each member's concurrent dispatch; a joiner arriving while an
 	// elicitation is in flight is dispatched immediately so it overlaps
-	// and batches onto the one live prompt (§8.6 line 719). Guarded by mu.
+	// and batches onto the one live prompt (§8.6). Guarded by mu.
 	pending []*member
 	// inFlight counts member dispatches the episode goroutine has started
 	// but that have not yet recorded a resolution. The episode closes and
@@ -285,6 +284,9 @@ type member struct {
 	// sessionID identifies the joined session so the episode goroutine can
 	// dispatch and resolve it. It is immutable after the member is created.
 	sessionID string
+	// tenantID is the joined session's tenant, carried into its
+	// ExtendLease dispatch. It is immutable after the member is created.
+	tenantID  string
 	requested Dimensions
 	// result delivers the session's resolution to its in-path caller. It
 	// is buffered (size 1) so the fan-out never blocks on a detached
@@ -344,7 +346,7 @@ type episodeManager struct {
 	svc *Service
 	// episodeCtx supplies the session-scoped context each episode
 	// dispatches its ExtendLease elicitation on, decoupled from any
-	// caller's in-path wait. spec: §8.6 line 629.
+	// caller's in-path wait. spec: §8.6.
 	episodeCtx func() context.Context
 
 	mu        sync.Mutex
@@ -393,8 +395,8 @@ func (m *episodeManager) currentReclaimer() SessionReclaimer {
 // manager-lock and the episode-lock. The episode goroutine dispatches
 // this member with the rest of its batch concurrently, so a mid-episode
 // joiner still overlaps with the in-flight elicitation and batches onto
-// the one tc.pending prompt (§8.6 line 719).
-func (m *episodeManager) join(rootSessionID, sessionID string, requested Dimensions) *member {
+// the one tc.pending prompt (§8.6).
+func (m *episodeManager) join(tenantID, rootSessionID, sessionID string, requested Dimensions) *member {
 	for {
 		m.mu.Lock()
 		ep := m.trees[rootSessionID]
@@ -408,7 +410,7 @@ func (m *episodeManager) join(rootSessionID, sessionID string, requested Dimensi
 				// The dispatch context is bounded by the §8.6 elicitation
 				// lifecycle, decoupled from any caller's in-path wait, so a
 				// caller that detached at its deadline does not cancel the
-				// still-pending elicitation. spec: §8.6 line 629.
+				// still-pending elicitation. spec: §8.6.
 				dispatchCtx: m.episodeCtx(),
 			}
 			m.trees[rootSessionID] = ep
@@ -431,13 +433,13 @@ func (m *episodeManager) join(rootSessionID, sessionID string, requested Dimensi
 		}
 		mem := ep.members[sessionID]
 		if mem == nil {
-			mem = &member{sessionID: sessionID, requested: requested, result: make(chan sessionResult, 1)}
+			mem = &member{sessionID: sessionID, tenantID: tenantID, requested: requested, result: make(chan sessionResult, 1)}
 			ep.members[sessionID] = mem
 			// Queue the member for the episode goroutine to dispatch, and wake
 			// the goroutine if it is parked. Dispatching immediately (rather
 			// than after the in-flight elicitation resolves) is what makes a
 			// mid-episode joiner overlap inside requestConsent and batch onto
-			// the one live tc.pending prompt (§8.6 line 719).
+			// the one live tc.pending prompt (§8.6).
 			ep.pending = append(ep.pending, mem)
 			select {
 			case ep.notify <- struct{}{}:
@@ -460,12 +462,12 @@ func (m *episodeManager) join(rootSessionID, sessionID string, requested Dimensi
 // whole episode lifecycle: it starts each newly-joined member's ExtendLease
 // dispatch on an ephemeral helper goroutine it awaits, so concurrent and
 // mid-episode joiners overlap inside requestConsent and batch onto the one
-// tc.pending prompt (§8.6 line 719). When no member is pending and no
+// tc.pending prompt (§8.6). When no member is pending and no
 // dispatch is in flight it closes the episode to new joiners, runs the
 // single per-session fan-out exactly once, and exits, so no goroutine
 // outlives the episode. Dispatch uses the episode's session-scoped
 // context, not any caller's in-path wait, so the elicitation survives a
-// caller that detached at its deadline. spec: §8.6 line 629, line 719.
+// caller that detached at its deadline. spec: §8.6.
 func (m *episodeManager) runEpisode(ep *episode) {
 	// done receives one signal per completed member dispatch, so the episode
 	// goroutine can wake to check whether the episode has fully resolved.
@@ -490,7 +492,7 @@ func (m *episodeManager) runEpisode(ep *episode) {
 		// overlaps any in-flight elicitation and batches onto the one prompt.
 		for _, mem := range batch {
 			go func(mem *member) {
-				res := m.dispatchOne(ctx, mem.sessionID, mem.requested)
+				res := m.dispatchOne(ctx, mem.tenantID, mem.sessionID, mem.requested)
 				ep.mu.Lock()
 				ep.resolved[mem.sessionID] = res
 				ep.inFlight--
@@ -516,7 +518,7 @@ func (m *episodeManager) runEpisode(ep *episode) {
 
 // finish clears the resolved episode's per-tree slot and runs the single
 // per-session fan-out. It is called exactly once, by the episode
-// goroutine after it has drained every batch. spec: §8.6 line 719.
+// goroutine after it has drained every batch. spec: §8.6.
 func (m *episodeManager) finish(ep *episode) {
 	m.mu.Lock()
 	if m.trees[ep.rootSessionID] == ep {
@@ -542,12 +544,11 @@ func (m *episodeManager) finish(ep *episode) {
 // dispatchOne runs one joined session's §8.6 ExtendLease on the episode
 // context and maps the response to a sessionResult. The shared per-tree
 // elicitation consent resolves once inside ExtendLease's coordinator (a
-// concurrent second session batches onto the same prompt, §8.6 line
-// 719), while the grant math and terminal outcome are computed per
+// concurrent second session batches onto the same prompt, §8.6), while the grant math and terminal outcome are computed per
 // session against that session's own budget.Current and requested
 // amounts.
-func (m *episodeManager) dispatchOne(ctx context.Context, sessionID string, requested Dimensions) sessionResult {
-	resp, err := m.svc.ExtendLease(ctx, ExtendRequest{SessionID: sessionID, Requested: requested})
+func (m *episodeManager) dispatchOne(ctx context.Context, tenantID, sessionID string, requested Dimensions) sessionResult {
+	resp, err := m.svc.ExtendLease(ctx, ExtendRequest{TenantID: tenantID, SessionID: sessionID, Requested: requested})
 	if err != nil {
 		return sessionResult{err: err}
 	}
@@ -574,7 +575,7 @@ func (m *episodeManager) dispatchOne(ctx context.Context, sessionID string, requ
 // session's deny state) or TerminateSession on a terminal outcome (fail
 // closed). Every joined member is reclaimed, so a session that batched
 // on and detached is never left denied with nothing to clear it. spec:
-// §8.6 line 719, line 737-741; proposal 0023 S3.
+// §8.6; proposal 0023 S3.
 func (m *episodeManager) fanOut(members map[string]*member, resolved map[string]sessionResult, reclaimer SessionReclaimer) {
 	for id, mem := range members {
 		res := resolved[id]

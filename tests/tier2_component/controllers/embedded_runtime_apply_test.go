@@ -6,9 +6,9 @@ package controllers_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	nodev1 "k8s.io/api/node/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -21,7 +21,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // customRuntimeImage is a digest-pinned reference the Runtime CRD's §5.3
@@ -62,7 +61,7 @@ const customRuntimeImage = "ghcr.io/lennylabs/runtime-my-agent@sha256:" +
 // PoolScalingController), §5.2 (ResolvePool lists the applied SandboxWarmPool),
 // §4.6.2 (direct pool materialization), §5.3 (standard→runc RuntimeClass gate).
 func TestEmbeddedRuntimeApplyWarmsPod_spec_17_4(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -74,17 +73,26 @@ func TestEmbeddedRuntimeApplyWarmsPod_spec_17_4(t *testing.T) {
 	}
 	ctx := context.Background()
 
+	// The verb writes the pool pair into the agent namespace it fixes
+	// (`lenny-agents`), so this test claims that namespace on the shared
+	// control plane rather than working in a namespace of its own. The
+	// Runtime is cluster-scoped, so its name is unique to the test.
 	const ns = "lenny-agents"
-	mustCreate(t, ctx, c, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
+	ensureFixedNamespace(t, c, ns)
+	// The negative leg needs the `runc` RuntimeClass absent, and the
+	// positive leg creates it; the claim holds it for this test and deletes
+	// it at cleanup.
+	claimRuntimeClasses(t, c, "runc")
 
 	// The verb's input: a minimal sidecar-model Runtime, the §17.4 walkthrough
 	// default. The verb derives the SandboxTemplate/SandboxWarmPool from it and
 	// defaults the omitted §5.1 fields.
-	const runtimeName = "my-agent"
+	runtimeName := clusterName(t, "Runtime", "my-agent")
 	rt := &lennyv1.Runtime{
 		ObjectMeta: metav1.ObjectMeta{Name: runtimeName},
 		Spec: lennyv1.RuntimeSpec{
 			Image:            customRuntimeImage,
+			Command:          []string{"/usr/local/bin/lenny"},
 			IntegrationLevel: "basic",
 			DeploymentModel:  "sidecar",
 		},
@@ -145,12 +153,20 @@ func TestEmbeddedRuntimeApplyWarmsPod_spec_17_4(t *testing.T) {
 	if err := stack.ApplyRuntimeSetFromConfig(ctx, env.RESTConfig(), rt); err != nil {
 		t.Fatalf("re-apply runtime set: %v", err)
 	}
+	// Count only the pools derived from this test's Runtime: an earlier
+	// iteration under go test -count left its own pool in the namespace.
 	var pools lennyv1.SandboxWarmPoolList
 	if err := c.List(ctx, &pools, client.InNamespace(ns)); err != nil {
 		t.Fatalf("list warm pools after re-apply: %v", err)
 	}
-	if len(pools.Items) != 1 {
-		t.Fatalf("re-apply produced %d warm pools, want exactly 1 (reconverged in place)", len(pools.Items))
+	var ours int
+	for _, p := range pools.Items {
+		if strings.Contains(p.Name, runtimeName) || strings.Contains(p.Spec.TemplateRef, runtimeName) {
+			ours++
+		}
+	}
+	if ours != 1 {
+		t.Fatalf("re-apply produced %d warm pools for runtime %s, want exactly 1 (reconverged in place)", ours, runtimeName)
 	}
 
 	wpr := &warmpool.Reconciler{

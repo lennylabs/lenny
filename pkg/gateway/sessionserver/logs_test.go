@@ -24,7 +24,7 @@ func logsTestServer(t *testing.T, id string, publish func(bus *sessionevents.Bus
 	t.Helper()
 	store := memstore.New()
 	bus := sessionevents.NewBus(32)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
 		ID: id, TenantID: "acme", State: session.StateRunning,
@@ -39,7 +39,7 @@ func logsTestServer(t *testing.T, id string, publish func(bus *sessionevents.Bus
 }
 
 // TestLogsJSONReturnsCanonicalEnvelope_spec_15_1_673 confirms the
-// §24.17 line 220 `session logs` target serves the §15.1 line 1228
+// §24.17 target serves the §15.1
 // canonical `{items, cursor, hasMore}` envelope over the event store when
 // the caller negotiates JSON. F-24.17.6.
 func TestLogsJSONReturnsCanonicalEnvelope_spec_15_1_673(t *testing.T) {
@@ -104,7 +104,7 @@ func TestLogsJSONSinceFilter_spec_24_17_220(t *testing.T) {
 	base := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
 	store := memstore.New()
 	bus := sessionevents.NewBus(32)
-	srv := sessionserver.New(store, sessionserver.Options{Events: bus})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	if err := store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_since", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: base, UpdatedAt: base,
@@ -155,12 +155,12 @@ func TestLogsJSONRejectsBadSince_spec_24_17_220(t *testing.T) {
 	}
 }
 
-// TestLogsMissingSession404_spec_15_1_661 confirms the §15.1 line 661
+// TestLogsMissingSession404_spec_15_1_661 confirms the §15.1
 // contract that /logs returns 404 RESOURCE_NOT_FOUND when no session
 // record exists. F-24.17.6.
 func TestLogsMissingSession404_spec_15_1_661(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{Events: sessionevents.NewBus(0)})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: sessionevents.NewBus(0)})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/ghost/logs", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")

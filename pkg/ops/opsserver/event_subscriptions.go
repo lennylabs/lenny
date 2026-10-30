@@ -17,14 +17,14 @@ import (
 
 // CacheInvalidator forces an immediate refresh of the §25.5 subscription
 // delivery cache. The opsservice.SubscriptionCache satisfies it. spec:
-// §25.5 line 2751.
+// §25.5.
 type CacheInvalidator interface {
 	Invalidate(ctx context.Context) error
 }
 
 // eventSubscriptionErrorMap maps each §25.5 canonical event-subscription
 // error code to its documented HTTP status and §25.2 category. spec:
-// §25.5 lines 2795-2802, line 2763.
+// §25.5.
 var eventSubscriptionErrorMap = map[string]struct {
 	status   int
 	category conventions.ErrorCategory
@@ -50,7 +50,7 @@ func writeEventSubscriptionError(w http.ResponseWriter, err error) {
 
 // subscriptionCaller resolves the §25.5 authenticated principal from the
 // verified bearer (or the dev header fallbacks when no AuthConfig is
-// wired). spec: §25.5 lines 2758-2766.
+// wired). spec: §25.5.
 func subscriptionCaller(r *http.Request) eventsubscription.Caller {
 	c := eventsubscription.Caller{
 		Subject:  callerIdentity(r),
@@ -75,7 +75,7 @@ func subscriptionCaller(r *http.Request) eventsubscription.Caller {
 // registerEventSubscriptionRoutes wires the §25.5
 // /v1/admin/event-subscriptions endpoints onto the Server's mux. The
 // routes are registered only when the Server was constructed with an
-// EventSubscriptions service. spec: §25.5 lines 2562-2570.
+// EventSubscriptions service. spec: §25.5.
 func (s *Server) registerEventSubscriptionRoutes() {
 	if s.eventSubscriptions == nil {
 		return
@@ -93,7 +93,7 @@ func (s *Server) registerEventSubscriptionRoutes() {
 // subscription_cache_invalidate RPC. It registers only when both a
 // CacheInvalidator and a non-empty token are configured; otherwise the
 // path is unmapped and the cache degrades to periodic-refresh-only.
-// spec: §25.5 line 2751.
+// spec: §25.5.
 func (s *Server) registerCacheInvalidateRoute() {
 	if s.cacheInvalidator == nil || s.cacheInvalidateToken == "" {
 		return
@@ -105,7 +105,7 @@ func (s *Server) registerCacheInvalidateRoute() {
 // peer RPC: it authenticates the shared-secret-derived token and forces
 // an immediate cache refresh. The RPC injects no data — it only kicks a
 // refresh — so a mismatched token returns 401 and a matching one returns
-// 204. spec: §25.5 line 2751.
+// 204. spec: §25.5.
 func (s *Server) handleCacheInvalidate(w http.ResponseWriter, r *http.Request) {
 	if !opsservice.VerifyInvalidateToken(s.cacheInvalidateToken, r.Header.Get(opsservice.CacheInvalidateHeader)) {
 		conventions.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED",
@@ -122,8 +122,7 @@ func (s *Server) handleCacheInvalidate(w http.ResponseWriter, r *http.Request) {
 
 // handleCreateEventSubscription implements
 // POST /v1/admin/event-subscriptions. The secret is generated
-// server-side and returned once in the response. spec: §25.5 lines
-// 2702-2710.
+// server-side and returned once in the response. spec: §25.5.
 func (s *Server) handleCreateEventSubscription(w http.ResponseWriter, r *http.Request) {
 	var req eventsubscription.CreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -141,7 +140,7 @@ func (s *Server) handleCreateEventSubscription(w http.ResponseWriter, r *http.Re
 
 // handleListEventSubscriptions implements
 // GET /v1/admin/event-subscriptions. The redacted read-view omits the
-// secret. spec: §25.5 line 2713.
+// secret. spec: §25.5.
 func (s *Server) handleListEventSubscriptions(w http.ResponseWriter, r *http.Request) {
 	subs, err := s.eventSubscriptions.List(r.Context(), subscriptionCaller(r))
 	if err != nil {
@@ -163,7 +162,7 @@ func (s *Server) handleGetEventSubscription(w http.ResponseWriter, r *http.Reque
 }
 
 // handleUpdateEventSubscription implements
-// PUT /v1/admin/event-subscriptions/{id}. spec: §25.5 line 2568.
+// PUT /v1/admin/event-subscriptions/{id}. spec: §25.5.
 func (s *Server) handleUpdateEventSubscription(w http.ResponseWriter, r *http.Request) {
 	var req eventsubscription.UpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -191,7 +190,7 @@ func (s *Server) handleDeleteEventSubscription(w http.ResponseWriter, r *http.Re
 
 // handleRotateEventSubscriptionSecret implements
 // POST /v1/admin/event-subscriptions/{id}/rotate-secret. The new secret
-// is returned once. spec: §25.5 lines 2723-2733.
+// is returned once. spec: §25.5.
 func (s *Server) handleRotateEventSubscriptionSecret(w http.ResponseWriter, r *http.Request) {
 	reveal, err := s.eventSubscriptions.RotateSecret(r.Context(), r.PathValue("id"), subscriptionCaller(r))
 	if err != nil {

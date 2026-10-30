@@ -57,7 +57,7 @@ func (w *opsWiring) buildSelfHealthAndLocks() {
 		w.selfChecks[opsservice.CheckCertManager] = opsservice.CertManagerCheck(nil)
 	}
 
-	// §25.4 lines 2206-2212: the in-memory (Tier-3) lock policy. The mode
+	// §25.4: the in-memory (Tier-3) lock policy. The mode
 	// is validated at startup so an operator typo fails fast rather than
 	// silently selecting an unintended safety posture. Under the
 	// single-replica-only default, a multi-replica deployment rejects
@@ -72,7 +72,7 @@ func (w *opsWiring) buildSelfHealthAndLocks() {
 	if w.clientset != nil {
 		ns := envOr("POD_NAMESPACE", *w.f.leaderElectNS)
 		ep := opsservice.NewEndpointsReplicaCounter(w.clientset.CoreV1(), ns, *w.f.opsServiceName)
-		// §25.4 line 2208: the startup lookup runs synchronously so the
+		// §25.4: the startup lookup runs synchronously so the
 		// policy has a real count before the first acquire; the 30s
 		// re-check loop then keeps it current.
 		if err := ep.Refresh(w.ctx); err != nil {
@@ -86,7 +86,7 @@ func (w *opsWiring) buildSelfHealthAndLocks() {
 
 	// The §25.4 tiered remediation-lock service: the Postgres Tier 1 store
 	// (ops_remediation_locks, migration 0121) and the Redis Tier 2 store
-	// (ops:lock:{scope}) over the always-present in-memory Tier 3 store,
+	// (ops:{lock}:scope:<scope>) over the always-present in-memory Tier 3 store,
 	// with outage-epoch reconciliation and deterministic split-brain
 	// resolution. The gate enforces ops.locks.memoryTier on the Tier 3
 	// fall-through; the §25.4 lock metrics and audit events are emitted from
@@ -95,7 +95,7 @@ func (w *opsWiring) buildSelfHealthAndLocks() {
 	w.lockSvc, w.lockMetrics = buildLockService(w.pgPool, w.redisClient, w.lockCoordination,
 		prometheus.DefaultRegisterer, w.opsEmitter, w.auditRecorder, w.replicaID)
 
-	// §25.4 line 2280: the Postgres-Redis clock-skew sampler. It reads
+	// §25.4: the Postgres-Redis clock-skew sampler. It reads
 	// both dependency clocks and publishes the absolute skew on
 	// lenny_ops_clock_skew_seconds, the producer the OpsClockSkewExceeded
 	// alert needs. nil when either dependency is absent (single-process
@@ -118,7 +118,7 @@ func (w *opsWiring) buildOpsServices() {
 	if w.clientset != nil {
 		backupClientset = w.clientset
 	}
-	// §12.8 lines 932-936: the per-region backup endpoint map and the
+	// §12.8: the per-region backup endpoint map and the
 	// shard→region resolver. A parse failure (or a regions map with no
 	// shard map) is a fatal config error so lenny-ops fails fast rather
 	// than failing every backup at run time.
@@ -126,7 +126,7 @@ func (w *opsWiring) buildOpsServices() {
 	if err != nil {
 		log.Fatalf("lenny-ops: §12.8 per-region backup config: %v", err)
 	}
-	w.backupSvc, w.backupJobs = buildBackupService(*w.f.production, backupDeps{
+	w.backupSvc, w.backupJobs = buildBackupService(w.f.productionMode(), backupDeps{
 		Pool:            w.pgPool,
 		Clientset:       backupClientset,
 		Locks:           w.lockSvc,
@@ -192,7 +192,7 @@ func (w *opsWiring) buildOpsServices() {
 		AllowedFixes: splitCSV(*w.f.doctorAllowedFixes),
 		FixTimeout:   time.Duration(*w.f.doctorFixTimeout) * time.Second,
 		Helm:         newHelmRenderSource(*w.f.doctorRenderDir, releaseNS),
-		// The §25.6.1 pool-diagnosis service supplies warmPoolStuckReplenish
+		// The §25.6 pool-diagnosis service supplies warmPoolStuckReplenish
 		// its DEMAND_EXCEEDS_SUPPLY classification. buildDiagnosticService
 		// returns a non-nil *Service, so this never traps a typed nil.
 		PoolDiagnosis: w.diagnosticSvc,
@@ -234,7 +234,7 @@ func (w *opsWiring) buildUpgradeSubsystem() {
 	// phase machine and emits the §16.7 platform-upgrade lifecycle audit
 	// events; the checker queries the operator-supplied release manifest
 	// and emits platform_upgrade_available. The platform-upgrade-check
-	// cron (§25.4 line 1338) runs leader-only alongside the backup jobs.
+	// cron (§25.4) runs leader-only alongside the backup jobs.
 	// §25.2 historical baselines for the canonical Progress Envelope:
 	// Postgres-backed (ops_operation_baselines, migration 0128) when a pool
 	// is available, in-memory otherwise. The upgrade orchestrator records a
@@ -245,7 +245,7 @@ func (w *opsWiring) buildUpgradeSubsystem() {
 	// preflighter so both observe the same in-flight upgrade.
 	w.upgradeStore = buildUpgradeStore(w.pgPool)
 	w.upgradeSvc = buildUpgradeService(w.upgradeStore, w.driftSvc, w.opsEmitter, w.baselineStore, w.auditRecorder)
-	// §25.8 lines 3508,3511 + §25.10 line 3788: the new-pod OpsRoll startup
+	// §25.8 + §25.10: the new-pod OpsRoll startup
 	// path. When this binary started as the new lenny-ops pod during an
 	// upgrade's OpsRoll phase (current_phase==OpsRoll and the persisted
 	// target_version matches this binary's compiled-in version), it stamps
@@ -272,7 +272,7 @@ func (w *opsWiring) buildUpgradeSubsystem() {
 		manifestPath:   *w.f.releaseChannelManifestPath,
 		currentVersion: buildVersion,
 	}, w.pgPool, w.opsEmitter, w.auditRecorder)
-	// §25.8 air-gap item 5 (line 3425): the CRD manifests and migration SQL
+	// §25.8 air-gap item 5: the CRD manifests and migration SQL
 	// the upgrade's CRDUpdate/SchemaMigration phases need are compiled into
 	// this binary (pkg/ops/platformassets), so an air-gapped install pulls
 	// no schema/CRD assets from the release channel. Log the inventory so an
@@ -341,11 +341,11 @@ func (w *opsWiring) buildInventoryAndIdempotency() {
 		opsinventory.NewBackupSource(w.backupSvc, gatewayURL),
 		w.driftSvc.ReconcileSource(),
 	)
-	// §25.2 lines 357-396: enrich every in-progress operation's Progress
+	// §25.2: enrich every in-progress operation's Progress
 	// with the canonical ETA (historical_p50 from the baseline store) and
 	// the cadence-relative stalledForSeconds on each List/Get. F-25.2.7.
 	w.inventory.SetProgressBaselines(time.Now, w.baselineStore)
-	// §25.2 lines 399-401 operations-observe loop: maintain the
+	// §25.2 operations-observe loop: maintain the
 	// lenny_ops_operations_stalled gauge (OperationStalled alert backing)
 	// and emit operation_progressed on step transitions and percent-
 	// threshold crossings. Runs leader-only via Reconcilers. F-25.2.7 /

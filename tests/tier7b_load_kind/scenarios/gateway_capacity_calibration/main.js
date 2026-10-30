@@ -4,12 +4,12 @@
 //
 // Phase 2 calibration harness for the §4.1 gateway capacity budget and
 // the §4.1 subsystem extraction thresholds. spec/04_system-components.md
-// §4.1 lines 86-94 require this harness to replace the provisional
+// §4.1 require this harness to replace the provisional
 // `maxSessionsPerReplica` and the four `gateway.extractionThresholds.*`
 // defaults before any Tier 2 production deployment. spec/04 lines
 // 136-144 cite the same methodology for the extraction thresholds.
 //
-// Methodology (spec §4.1 lines 86-94):
+// Methodology (spec §4.1):
 //   1. Drive a single gateway replica from 0 to maxSessionsPerReplica
 //      × 1.5 concurrent sessions in 10% increments.
 //   2. At each step, record the per-subsystem key metrics:
@@ -40,7 +40,7 @@
 // gateway replica with the Tier 2 session target sized appropriately.
 // The companion baselines.json carries placeholder zero values that
 // the calibrator overwrites with the empirically measured per-step
-// percentile output. spec: §4.1 line 94 — "Provisional values must not
+// percentile output. spec: §4.1 — "Provisional values must not
 // remain in place for any Tier 2 production deployment."
 //
 // Operator workflow (see README.md in this directory):
@@ -78,7 +78,7 @@ const USER = __ENV.LENNY_USER || 'alice';
 const RUNTIME = __ENV.LENNY_RUNTIME || 'echo-runtime-sidecar';
 const TIER2_MAX = parseInt(__ENV.LENNY_TIER2_MAX || '200', 10);
 
-// spec: §4.1 line 86 step 1 — "0 to maxSessionsPerReplica × 1.5 in
+// spec: §4.1 step 1 — "0 to maxSessionsPerReplica × 1.5 in
 // 10% increments". The 10% increments are encoded as stage durations
 // against a constant ramp.
 const RAMP_PEAK = Math.ceil(TIER2_MAX * 1.5);
@@ -86,7 +86,7 @@ const RAMP_PEAK = Math.ceil(TIER2_MAX * 1.5);
 export const options = {
   // Emit p99 and p99.9 in the summary export so the calibrator can
   // identify the saturation inflection at the percentile the SLO is
-  // stated at (spec §4.1 line 88).
+  // stated at (spec §4.1).
   summaryTrendStats: ['avg', 'min', 'med', 'max', 'p(90)', 'p(95)', 'p(99)', 'p(99.9)'],
   // Stage-based ramp from 0 to RAMP_PEAK across the 10 deciles. Each
   // stage holds the VU level long enough for queue depth and latency
@@ -115,7 +115,7 @@ export const options = {
   // operator can identify the inflection; the thresholds are recorded
   // (abortOnFail=false) rather than enforced.
   thresholds: {
-    // spec §4.1 line 88 step 2 — saturation at p99 attach latency > 0.8s
+    // spec §4.1 step 2 — saturation at p99 attach latency > 0.8s
     // OR queue depth > 500. The k6 view here is the request latency at
     // the gateway's session-creation endpoint; the in-replica
     // `lenny_stream_proxy_p99_attach_latency_seconds` metric is the

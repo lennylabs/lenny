@@ -31,8 +31,9 @@ func TestUsageRecordsSessionCreation(t *testing.T) {
 	usage := usagestore.NewMemory()
 	var n int
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc: func() string { n++; return "sess_u" + string(rune('0'+n)) },
-		Usage:  usage,
+		DevTenantHeader: true,
+		IDFunc:          func() string { n++; return "sess_u" + string(rune('0'+n)) },
+		Usage:           usage,
 	})
 	handler := srv.Handler()
 
@@ -65,7 +66,7 @@ func TestUsageRecordsSessionCreation(t *testing.T) {
 	}
 }
 
-// TestUsageLabelFilter_spec_14_106 drives the §14 line 106 label-scoped
+// TestUsageLabelFilter_spec_14_106 drives the §14 label-scoped
 // usage report end to end: two sessions are created with distinct labels
 // and GET /v1/usage?label=team=search returns only the matching session's
 // usage. F-14.1.13.
@@ -73,8 +74,9 @@ func TestUsageLabelFilter_spec_14_106(t *testing.T) {
 	usage := usagestore.NewMemory()
 	var n int
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
-		IDFunc: func() string { n++; return "sess_ul" + string(rune('0'+n)) },
-		Usage:  usage,
+		DevTenantHeader: true,
+		IDFunc:          func() string { n++; return "sess_ul" + string(rune('0'+n)) },
+		Usage:           usage,
 	})
 	handler := srv.Handler()
 
@@ -117,7 +119,7 @@ func TestUsageLabelFilter_spec_14_106(t *testing.T) {
 func TestUsageRejectsCallerWithoutViewUsage(t *testing.T) {
 	// §10.2 grants the `user` role no view_usage permission, so a plain
 	// user cannot read the usage report.
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Usage: usagestore.NewMemory()})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Usage: usagestore.NewMemory()})
 	req := httptest.NewRequest(http.MethodGet, "/v1/usage", nil)
 	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{
 		Subject: "alice@acme.com", TenantID: "acme",
@@ -131,7 +133,7 @@ func TestUsageRejectsCallerWithoutViewUsage(t *testing.T) {
 }
 
 func TestUsageEmptyWhenUnwired(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	req := withUsageViewer(httptest.NewRequest(http.MethodGet, "/v1/usage", nil))
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
@@ -147,7 +149,7 @@ func TestUsageEmptyWhenUnwired(t *testing.T) {
 
 func TestUsageTenantScoped(t *testing.T) {
 	usage := usagestore.NewMemory()
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Usage: usage})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Usage: usage})
 
 	// Seed usage for two tenants directly.
 	_ = usage.Record(nil, usagestore.Record{TenantID: "acme", Sessions: 5})

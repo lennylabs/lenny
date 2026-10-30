@@ -25,7 +25,7 @@ import (
 // a not-yet-created namespace is skipped because the chart creates the
 // namespace and its governance objects together.
 //
-// spec: §17.6 lines 501-502; §17.2. F-17.6.1.
+// spec: §17.6; §17.2. F-17.6.1.
 type NamespaceGovernanceStatus struct {
 	Name             string
 	Exists           bool
@@ -33,12 +33,12 @@ type NamespaceGovernanceStatus struct {
 	HasLimitRange    bool
 }
 
-// CheckNamespaceResourceQuotas is the §17.6 line 501 ResourceQuota
+// CheckNamespaceResourceQuotas is the §17.6 ResourceQuota
 // presence audit. An existing agent namespace with no ResourceQuota
 // fails the install fail-closed so an unbounded agent namespace cannot
 // exhaust the cluster.
 //
-// spec: §17.6 line 501; §17.2.
+// spec: §17.6; §17.2.
 func CheckNamespaceResourceQuotas(statuses []NamespaceGovernanceStatus) Decision {
 	var missing []string
 	for _, s := range statuses {
@@ -53,12 +53,12 @@ func CheckNamespaceResourceQuotas(statuses []NamespaceGovernanceStatus) Decision
 	return Decision{Passed: true}
 }
 
-// CheckNamespaceLimitRanges is the §17.6 line 502 LimitRange presence
+// CheckNamespaceLimitRanges is the §17.6 LimitRange presence
 // audit. An existing agent namespace with no LimitRange fails the install
 // fail-closed because a container that omits resource requests would be
 // scheduled BestEffort.
 //
-// spec: §17.6 line 502; §17.2.
+// spec: §17.6; §17.2.
 func CheckNamespaceLimitRanges(statuses []NamespaceGovernanceStatus) Decision {
 	var missing []string
 	for _, s := range statuses {
@@ -78,7 +78,7 @@ func CheckNamespaceLimitRanges(statuses []NamespaceGovernanceStatus) Decision {
 // ResourceQuota and a LimitRange. A not-yet-created namespace is reported
 // with Exists=false so the checks skip it.
 //
-// spec: §17.6 lines 501-502; §17.2.
+// spec: §17.6; §17.2.
 func gatherNamespaceGovernance(ctx context.Context, reader client.Reader, namespaces []string) ([]NamespaceGovernanceStatus, error) {
 	out := make([]NamespaceGovernanceStatus, 0, len(namespaces))
 	for _, ns := range namespaces {

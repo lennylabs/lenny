@@ -24,7 +24,7 @@ import (
 // durable budget source, so leaving these rows behind would let a recovery
 // reconcile resurrect an erased user's usage.
 //
-// spec: §12.8 step 6 (Redis + Postgres); §12.1 line 5.
+// spec: §12.8 step 6 (Redis + Postgres); §12.1.
 func TestDeleteByUserAndTenant_ErasesCheckpoint_spec_12_8_step6(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads the PostgreSQL bundle; skipped under -short")

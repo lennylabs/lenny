@@ -28,7 +28,7 @@ type EventEmitOptions struct {
 	// Tests use it for deterministic timestamps.
 	Now func() time.Time
 	// OnRuleEvalDuration mirrors Options.OnRuleEvalDuration so the
-	// §25.13 line 4835 `lenny_alerting_rule_eval_duration_seconds`
+	// §25.13
 	// histogram can be wired through NewWithEmitter alongside the
 	// firing-edge event surface. F-25.13.3.
 	OnRuleEvalDuration func(rule string, d time.Duration)
@@ -56,7 +56,7 @@ func EmitCallbacks(opts EventEmitOptions) (onFired, onResolved func(Alert)) {
 			"summary":   a.Rule.Summary,
 			"sinceUnix": a.Since.Unix(),
 		}
-		// §25.7 line 3236 / §25.17 line 5172: the alert_fired payload's
+		// §25.7 / §25.17: the alert_fired payload's
 		// `runbook` field is the short slug (e.g. "warm-pool-exhaustion")
 		// the watchdog routes on, not the rendered runbook_url annotation.
 		// The full URL is carried separately as `runbookUrl`.
@@ -66,7 +66,7 @@ func EmitCallbacks(opts EventEmitOptions) (onFired, onResolved func(Alert)) {
 		if a.Rule.RunbookURL != "" {
 			payload["runbookUrl"] = a.Rule.RunbookURL
 		}
-		// §25.17 line 5172: carry the proposed remediation so a watchdog
+		// §25.17: carry the proposed remediation so a watchdog
 		// can act without a second diagnostic call.
 		if a.Rule.SuggestedAction != nil {
 			payload["suggestedAction"] = a.Rule.SuggestedAction

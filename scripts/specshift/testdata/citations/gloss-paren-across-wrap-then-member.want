@@ -1,0 +1,1 @@
+§10 line 437 ("`lenny.dev/schema-version` annotation on the CRD object") + line 443 ("preflight compares the annotation against the version the target chart release expects")

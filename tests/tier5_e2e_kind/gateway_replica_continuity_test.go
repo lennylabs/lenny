@@ -98,6 +98,9 @@ func TestSessionContinuesAfterCoordinatingGatewayReplicaLoss(t *testing.T) {
 	if err := driverB.BootstrapTenant(ctx, tenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
+	// spec: §10.6 — a bootstrapped tenant carries noEnvironmentPolicy
+	// deny-all, and this test creates sessions that name no environment.
+	ensureTenantAllowsSessionsWithNoEnvironment(t, driverB, tenant)
 
 	// Create and start the session through replica A. A becomes the
 	// coordinating replica for the session and claims its agent pod.
@@ -142,11 +145,15 @@ func TestSessionContinuesAfterCoordinatingGatewayReplicaLoss(t *testing.T) {
 		t.Fatalf("surviving replica B returned session id %q, want %q", got.ID, sess.ID)
 	}
 
-	// Drive the session's terminal transition through replica B. A
-	// terminate on B proves B can coordinate a session whose original
-	// coordinator is gone (coordinator handoff after replica loss) and
-	// advances the same durable per-session sequence.
-	terminateWithHandoffRetry(t, ctx, driverB, tenant, sess.ID)
+	// Drive the session's terminal transition through whichever Ready
+	// replica coordinates the session once the handoff after replica A's
+	// loss settles: replica B or replica A's replacement. The Kind install
+	// runs without CH-HOLDERFORWARD, so only the coordinating replica
+	// performs the terminate (§29.3 Forwarding rule 6). A terminate that
+	// lands proves a surviving replica took over coordination of a session
+	// whose original coordinator is gone and advances the same durable
+	// per-session sequence.
+	terminateWithHandoffRetry(t, ctx, c, tenant, sess.ID)
 
 	// Full backlog replayed from replica B, from the beginning. This is the
 	// same session's complete durable event chain served by the surviving
@@ -233,28 +240,29 @@ func deleteGatewayPodAndWait(t *testing.T, c *kind.Cluster, pod string) {
 	}
 }
 
-// terminateWithHandoffRetry issues Terminate through the surviving replica,
-// retrying while coordination handoff after the loss of the original
-// coordinator settles. After an abrupt or graceful loss of the coordinating
-// replica, the surviving replica acquires coordination via the §10.1 lease
-// path; a terminate issued before that settles can transiently fail. The
-// retry window covers the lease-TTL / handoff interval bounded by the
-// caller's context.
-func terminateWithHandoffRetry(t *testing.T, ctx context.Context, d *sessiondriver.Driver, tenant, sessionID string) {
+// terminateWithHandoffRetry issues Terminate through each Ready gateway pod
+// in turn, retrying while coordination handoff after the loss of the
+// original coordinator settles. After an abrupt or graceful loss of the
+// coordinating replica, a surviving replica acquires coordination via the
+// §10.1 lease path. The Kind install runs no CH-HOLDERFORWARD listener, so a
+// replica that does not coordinate the session refuses the terminate as not
+// delivered, and only the coordinating pod's terminate lands. The retry
+// window covers the lease-TTL / handoff interval bounded by the caller's
+// context.
+func terminateWithHandoffRetry(t *testing.T, ctx context.Context, c *kind.Cluster, tenant, sessionID string) {
 	t.Helper()
+	waitGatewayRollout(t, c)
 	deadline := time.Now().Add(2 * time.Minute)
 	var lastErr error
 	for {
-		if err := d.Terminate(ctx, tenant, sessionID); err == nil {
+		if lastErr = terminateOnEachReadyPod(t, ctx, c, tenant, sessionID); lastErr == nil {
 			return
-		} else {
-			lastErr = err
 		}
 		if time.Now().After(deadline) || ctx.Err() != nil {
 			// A terminate that never succeeds is itself the failure the
-			// invariant forbids: the surviving replica could not take over
+			// invariant forbids: no surviving replica could take over
 			// coordination after the original coordinator was lost.
-			t.Fatalf("surviving replica could not terminate session %s after the coordinating "+
+			t.Fatalf("no surviving replica could terminate session %s after the coordinating "+
 				"replica was deleted (coordination handoff after replica loss failed): %v",
 				sessionID, lastErr)
 		}
@@ -265,4 +273,35 @@ func terminateWithHandoffRetry(t *testing.T, ctx context.Context, d *sessiondriv
 		case <-time.After(3 * time.Second):
 		}
 	}
+}
+
+// waitGatewayRollout waits for the replacement of the deleted replica to
+// become Ready. A per-pod session driver gates on every control-plane pod
+// being Ready, so a driver opened while the replacement still starts skips
+// the test as environmental, and the tests that follow it in the package see
+// the same not-Ready replacement. A rollout that never completes is
+// environmental too, matching the InstallLenny precondition model.
+func waitGatewayRollout(t *testing.T, c *kind.Cluster) {
+	t.Helper()
+	if out, err := c.KubectlOut(t, "-n", "lenny-system", "rollout", "status", "deploy/lenny-gateway",
+		"--timeout=180s"); err != nil {
+		t.Skipf("precondition not met: the replacement gateway replica did not become Ready: %v\n%s", err, out)
+	}
+}
+
+// terminateOnEachReadyPod tries the terminate through each Ready gateway pod
+// and returns nil on the first that lands, or the last error.
+func terminateOnEachReadyPod(t *testing.T, ctx context.Context, c *kind.Cluster, tenant, sessionID string) error {
+	t.Helper()
+	lastErr := errors.New("no Ready gateway pod")
+	for _, pod := range readyGatewayPods(t, c) {
+		d := sessiondriver.NewKeptForTarget(t, "pod/"+pod)
+		err := d.Terminate(ctx, tenant, sessionID)
+		d.Close()
+		if err == nil {
+			return nil
+		}
+		lastErr = fmt.Errorf("terminate through %s: %w", pod, err)
+	}
+	return lastErr
 }

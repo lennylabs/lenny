@@ -13,7 +13,7 @@ const testProvider = credential.ProviderAnthropicDirect
 
 func fixedClock(t time.Time) func() time.Time { return func() time.Time { return t } }
 
-// spec: §4.9 lines 1383-1411 — a fault on a multi-pool chain selects the
+// spec: §4.9 — a fault on a multi-pool chain selects the
 // next available pool and records the faulted pool's cooldown.
 func TestControllerFaultSelectsNextPool(t *testing.T) {
 	t0 := time.Unix(1000, 0)
@@ -36,7 +36,7 @@ func TestControllerFaultSelectsNextPool(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1321 — maxRotationsPerSession is shared across
+// spec: §4.9 — maxRotationsPerSession is shared across
 // providers; exceeding it exhausts the chain.
 func TestControllerExhaustsOnRotationBudget(t *testing.T) {
 	t0 := time.Unix(1000, 0)
@@ -63,7 +63,7 @@ func TestControllerExhaustsOnRotationBudget(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1321 — the counter is shared across providers, so
+// spec: §4.9 — the counter is shared across providers, so
 // faults on different providers consume the same session budget.
 func TestControllerBudgetSharedAcrossProviders(t *testing.T) {
 	t0 := time.Unix(1000, 0)
@@ -80,7 +80,7 @@ func TestControllerBudgetSharedAcrossProviders(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1383 — fallback is per-provider; a fault on one
+// spec: §4.9 — fallback is per-provider; a fault on one
 // provider does not cool another provider's pools.
 func TestControllerFaultIsolatedPerProvider(t *testing.T) {
 	t0 := time.Unix(1000, 0)
@@ -95,7 +95,7 @@ func TestControllerFaultIsolatedPerProvider(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1411 — a single-pool deployment with no fallback
+// spec: §4.9 — a single-pool deployment with no fallback
 // order exhausts once its only pool faults (nothing left to select).
 func TestControllerSinglePoolExhaustsWithNoFallback(t *testing.T) {
 	t0 := time.Unix(1000, 0)
@@ -126,7 +126,7 @@ func TestControllerProactiveRenewalDoesNotConsumeBudget(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1383-1411 — after every pool in the chain is on
+// spec: §4.9 — after every pool in the chain is on
 // cooldown, the chain is exhausted even within the rotation budget.
 func TestControllerExhaustsWhenAllPoolsCooling(t *testing.T) {
 	t0 := time.Unix(1000, 0)

@@ -31,7 +31,7 @@ import (
 // distinction is a forensic nicety that the Redis backing does not
 // reproduce. The handler maps both to a 4xx caller error.
 //
-// spec: §9.3 line 157.
+// spec: §9.3.
 type RedisStateStore struct {
 	client redis.UniversalClient
 }

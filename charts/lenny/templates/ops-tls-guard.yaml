@@ -1,5 +1,5 @@
 {{- /*
-NET-070 plaintext admin-API opt-in guard (§25.4 lines 2538-2546).
+NET-070 plaintext admin-API opt-in guard (§25.4).
 
 Every GatewayClient request from lenny-ops carries a lenny-ops-sa JWT
 with platform-admin scope plus admin-API payloads (pool configs,

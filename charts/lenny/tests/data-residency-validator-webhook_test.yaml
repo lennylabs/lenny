@@ -86,6 +86,12 @@ tests:
       - equal:
           path: webhooks[0].rules[0].resources[0]
           value: sandboxclaims
+      # The SandboxClaim CRD serves v1alpha1 only. A rule naming any
+      # other version matches no request, which leaves the validator
+      # installed and never called.
+      - equal:
+          path: webhooks[0].rules[0].apiVersions[0]
+          value: v1alpha1
       - contains:
           path: webhooks[0].rules[0].operations
           content: CREATE

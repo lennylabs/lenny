@@ -22,7 +22,7 @@ const DefaultRedisEventSourceCount = 1000
 // RedisEventSource consumes the §25.5 ops:events:stream with.
 // redis.UniversalClient satisfies it; tests substitute a fake.
 //
-// spec: §25.5 lines 2592-2611 — the gateway, the controllers, and
+// spec: §25.5 — the gateway, the controllers, and
 // lenny-ops all XADD operational events to the platform-scoped Redis
 // stream ops:events:stream; the webhook fan-out worker reads the same
 // stream via XRANGE from a per-process cursor.
@@ -46,7 +46,7 @@ type StreamReader interface {
 // subscription; every subsequent Poll returns the entries appended
 // since the previous Poll via an exclusive XRANGE.
 //
-// spec: §25.3 lines 665-667; §25.5 lines 2552, 2590-2611.
+// spec: §25.3; §25.5.
 type RedisEventSource struct {
 	client StreamReader
 	stream string

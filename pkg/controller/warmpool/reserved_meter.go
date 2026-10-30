@@ -14,7 +14,8 @@ import (
 // reservedPods is the §16.1 lenny_warmpool_reserved_pods gauge: the
 // instantaneous count of pods whose occupancy claim is in the §6.2
 // reserved hold window (scrubbed, SDK-warm on preConnect pools, held for
-// the pinned tenant until the claim-hold TTL expires), labeled by pool.
+// the pinned tenant until the claim-hold TTL expires or an acquisition
+// ends the hold), labeled by pool.
 // Per §4.6.2 these pods are occupied: they are excluded from claimable
 // idle inventory and counted occupied for scaling, so a long
 // gateway.claimHoldTTLSeconds depresses apparent idle inventory. The

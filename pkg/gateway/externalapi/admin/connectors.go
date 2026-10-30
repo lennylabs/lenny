@@ -34,7 +34,7 @@ type ConnectorPayload struct {
 	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
 	// decimal version. List and GET responses carry it so a client can
 	// supply it as the If-Match header on a later PUT.
-	// spec: §15.1 lines 1207-1209.
+	// spec: §15.1.
 	ETag string `json:"etag,omitempty"`
 }
 
@@ -48,7 +48,7 @@ type ConnectorAuthPayload struct {
 	ClientID              string   `json:"clientId,omitempty"`
 	ClientSecretRef       string   `json:"clientSecretRef,omitempty"`
 	Scopes                []string `json:"scopes,omitempty"`
-	// ExpectedDomain is the §9.2 line 87 url-mode hard-boundary domain.
+	// ExpectedDomain is the §9.2 url-mode hard-boundary domain.
 	ExpectedDomain string `json:"expectedDomain,omitempty"`
 }
 
@@ -64,7 +64,7 @@ func fromConnector(c connectorstore.Connector) ConnectorPayload {
 		CreatedAt:    rfc3339Nano(c.CreatedAt),
 		UpdatedAt:    rfc3339Nano(c.UpdatedAt),
 		DeletedAt:    rfc3339Nano(c.DeletedAt),
-		// spec: §15.1 line 1207 — the ETag is the quoted decimal version,
+		// spec: §15.1 — the ETag is the quoted decimal version,
 		// carried per-item on list responses and in the GET header.
 		ETag: formatETag(c.Version),
 	}
@@ -139,7 +139,7 @@ func (r *Router) handleCreateConnector(w http.ResponseWriter, req *http.Request)
 		c.Visibility = "tenant"
 	}
 	c.UpdatedAt = c.CreatedAt
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// spec: §15.1 — ?dryRun=true validates without persisting or auditing.
 	if req.URL.Query().Get("dryRun") == "true" {
 		if err := c.Validate(); err != nil {
 			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
@@ -150,7 +150,7 @@ func (r *Router) handleCreateConnector(w http.ResponseWriter, req *http.Request)
 	}
 	if err := r.connectors.Create(req.Context(), c); err != nil {
 		if errors.Is(err, connectorstore.ErrAlreadyExists) {
-			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			// spec: §15.1 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
 			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"connector with this id already exists", nil)
 			return
@@ -159,7 +159,7 @@ func (r *Router) handleCreateConnector(w http.ResponseWriter, req *http.Request)
 		return
 	}
 	stored, _ := r.connectors.Get(req.Context(), tenantID, body.ID)
-	// spec: §16.7 / §9.3 line 116-164 — emit through the typed catalog
+	// spec: §16.7 / §9.3 — emit through the typed catalog
 	// so audit-sink validators recognize the event type. F-9.3.9.
 	r.emit(req.Context(), principal, audit.EventAdminConnectorCreated.String(), body.ID, map[string]any{
 		"tenant_id":  tenantID,
@@ -190,7 +190,7 @@ func (r *Router) handleListConnectors(w http.ResponseWriter, req *http.Request) 
 	for _, c := range rows {
 		out = append(out, fromConnector(c))
 	}
-	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope. F-15.1.6.
+	// spec: §15.1 — canonical cursor-paginated envelope. F-15.1.6.
 	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
 		func(x ConnectorPayload, s pagination.Sort) (string, string) {
 			switch s.Field {
@@ -222,7 +222,7 @@ func (r *Router) handleGetConnector(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1209 — GET responses for an admin resource carry the
+	// spec: §15.1 — GET responses for an admin resource carry the
 	// ETag header so the client can use it as the next PUT's If-Match.
 	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -284,13 +284,13 @@ func (r *Router) handleUpdateConnector(w http.ResponseWriter, req *http.Request)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
 		return
 	}
-	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match. Enforce
+	// spec: §15.1 — every admin PUT requires If-Match. Enforce
 	// the optimistic-concurrency precondition before the dry-run branch so a
 	// dryRun=true combined with a missing/stale If-Match still fails here.
 	if !enforceIfMatch(w, req, current.Version) {
 		return
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// spec: §15.1 — ?dryRun=true validates without persisting or auditing.
 	if req.URL.Query().Get("dryRun") == "true" {
 		applyConnectorUpdate(&current, body)
 		current.TenantID = tenantID
@@ -316,7 +316,7 @@ func (r *Router) handleUpdateConnector(w http.ResponseWriter, req *http.Request)
 	r.emit(req.Context(), principal, audit.EventAdminConnectorUpdated.String(), id, map[string]any{
 		"tenant_id": tenantID,
 	})
-	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so the
+	// spec: §15.1 — a successful PUT carries the bumped ETag so the
 	// client can chain a subsequent write without a refresh GET.
 	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -347,7 +347,7 @@ func (r *Router) handleDeleteConnector(w http.ResponseWriter, req *http.Request)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1213 — DELETE honours If-Match only when present: a
+	// spec: §15.1 — DELETE honours If-Match only when present: a
 	// stale tag returns 412 ETAG_MISMATCH, an absent header proceeds.
 	if !enforceIfMatchIfPresent(w, req, current.Version) {
 		return
@@ -373,7 +373,7 @@ func (r *Router) handleDeleteConnector(w http.ResponseWriter, req *http.Request)
 // query parameter selects the target; an empty value defaults to the
 // caller's tenant (the platform tenant for the platform-admin role).
 //
-// spec: §4.2 line 173 — connectors are tenant-scoped; the admin API
+// spec: §4.2 — connectors are tenant-scoped; the admin API
 // enforces that a tenant-admin cannot write across tenants.
 func resolveTargetTenant(p authmw.Principal, req *http.Request, bodyTenantID string) (string, error) {
 	requested := bodyTenantID
@@ -397,7 +397,7 @@ func resolveTargetTenant(p authmw.Principal, req *http.Request, bodyTenantID str
 // across tenants by default (AllTenantsSentinel) and may narrow to a
 // specific tenant via ?tenant_id=.
 //
-// spec: §4.2 line 173 / §10.6: tenant-admins see only their own
+// spec: §4.2 / §10.6: tenant-admins see only their own
 // tenant; platform-admins see all tenants with optional filter.
 func listTenantScope(p authmw.Principal, req *http.Request) string {
 	if !p.HasRole(auth.RolePlatformAdmin) {

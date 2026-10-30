@@ -2,7 +2,7 @@
 
 //go:build component
 
-// Tier-2 component scaffolds for §12.2.3 Gateway internal subsystems.
+// Tier-2 component scaffolds for TESTING.md §12.2.3 Gateway internal subsystems.
 // The gateway is internally partitioned into Session Orchestrator,
 // File Fabric, MCP Fabric, Admin Plane, and LLM Proxy. Each
 // subsystem has a component-tier suite that wires it to real stores
@@ -25,7 +25,7 @@ import "testing"
 // drives the create→attach→prompt→complete loop against real
 // Postgres+Redis+MinIO containers.
 func TestSessionOrchestrator(t *testing.T) {
-	t.Log("§12.2.3 Session Orchestrator coverage map:")
+	t.Log("TESTING.md §12.2.3 Session Orchestrator coverage map:")
 	t.Log("- create → attach → prompt → complete against real Postgres + " +
 		"Redis + MinIO: tests/tier4_integration/gateway_postgres_e2e_test.go " +
 		"and gateway_redis_e2e_test.go drive cmd/lenny-gateway end-to-end.")
@@ -51,7 +51,7 @@ func TestSessionOrchestrator(t *testing.T) {
 // "multipart, archive, gitClone" trio cannot exercise behaviors that
 // have no HTTP entry point.
 func TestFileFabric(t *testing.T) {
-	t.Log("§12.2.3 File Fabric coverage map:")
+	t.Log("TESTING.md §12.2.3 File Fabric coverage map:")
 	t.Log("- single-blob upload: pkg/gateway/sessionserver/upload.go handler " +
 		"plus its unit suite and the tier-3 REST contract test in " +
 		"tests/tier3_contract/rest_sessions/unexercised_endpoints_test.go.")
@@ -77,7 +77,7 @@ func TestFileFabric(t *testing.T) {
 // the Postgres-backed stores are covered by the stores contract
 // tests; a tier-2 MCP-on-Postgres wiring adds no new code path.
 func TestMCPFabricPlatformTools(t *testing.T) {
-	t.Log("§12.2.3 MCP Fabric platform-tools coverage map:")
+	t.Log("TESTING.md §12.2.3 MCP Fabric platform-tools coverage map:")
 	t.Log("- per-tool handler dispatch (lenny/output, " +
 		"lenny/request_elicitation, lenny/memory_write, " +
 		"lenny/memory_query, lenny/send_message, lenny/request_input, " +
@@ -89,7 +89,7 @@ func TestMCPFabricPlatformTools(t *testing.T) {
 	t.Log("An MCP-on-Postgres composite tier-2 fixture would re-run the " +
 		"same Postgres paths the stores suites already cover, so the " +
 		"split between dispatch (unit) and store contract (tier 2) " +
-		"covers the §12.2.3 MCP Fabric directly.")
+		"covers the TESTING.md §12.2.3 MCP Fabric directly.")
 }
 
 // TestAdminPlane — the full admin REST surface against real stores
@@ -105,7 +105,7 @@ func TestMCPFabricPlatformTools(t *testing.T) {
 // needs an OIDC stub and a role-ceiling middleware fixture that are
 // not in tests/testinfra today.
 func TestAdminPlane(t *testing.T) {
-	t.Log("§12.2.3 Admin Plane coverage map:")
+	t.Log("TESTING.md §12.2.3 Admin Plane coverage map:")
 	t.Log("- handler unit coverage: pkg/gateway/externalapi/admin per-resource suites " +
 		"(tenants, users, runtimes, pools, breakers, connectors, " +
 		"delegation-policies, credential-pools, custom-roles, " +
@@ -122,7 +122,7 @@ func TestAdminPlane(t *testing.T) {
 		"handler.")
 }
 
-// The §12.2.3 LLM Proxy subsystem now has a real component-tier suite in
+// The TESTING.md §12.2.3 LLM Proxy subsystem now has a real component-tier suite in
 // llm_proxy_test.go (TestLLMProxySubsystemOnRealStore): it wires the
 // llmproxy.Handler to a real Postgres-backed credential-lease store and
 // the mock LLM provider recorder, then drives lease-token validation, the

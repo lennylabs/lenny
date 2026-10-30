@@ -236,7 +236,7 @@ func cmdRuntimePublish(ctx context.Context, c *ctl.Client, args []string, stdout
 		return 2
 	}
 
-	// §24.18 line 232: publish requires --api-url and an admin token for
+	// §24.18: publish requires --api-url and an admin token for
 	// the platform-admin register step. Fail fast with a CLI-side
 	// diagnostic naming the target gateway when no credential is loaded,
 	// rather than pushing the image and then taking a server-side 401.
@@ -252,7 +252,7 @@ func cmdRuntimePublish(ctx context.Context, c *ctl.Client, args []string, stdout
 	// subprocess; a missing docker binary is a clear up-front error.
 	//
 	// registerImage is the reference the registration call below uses.
-	// It starts out equal to the pushed tag, but §5.1 line 690 requires
+	// It starts out equal to the pushed tag, but §5.1 requires
 	// every registered Runtime image to be digest-pinned
 	// (image@sha256:...), and `docker push` refuses to push a reference
 	// that already carries a digest ("cannot push a digest reference").
@@ -325,7 +325,7 @@ func resolveLocalImageID(ref string) (string, error) {
 }
 
 // digestPinnedImage appends id (a `sha256:<hex>` content id) to ref as
-// the §5.1 line 690 digest-pinned reference form
+// the §5.1 digest-pinned reference form
 // (`<ref>@sha256:<hex>`), the same `<image>@sha256:<id>` construction
 // tests/testinfra/kind/install.sh's resolve_digest shell function uses.
 func digestPinnedImage(ref, id string) string {
@@ -421,7 +421,7 @@ specification's repository expectations.
 
 When --binary names a locally-built adapter binary, the validator runs
 the §15.4.6 conformance battery against it and reconciles the declared
-integration level against the observed level (lifecycle-channel connect,
+integration level against the observed level (CH-RUNTIMEOPS connect,
 MCP nonce handshake). It exits non-zero when the runtime under-performs
 its declared level and prints a WARN when it under-declares. Without
 --binary the validator runs static checks only and reports the observed

@@ -71,7 +71,7 @@ func TestGatewayEventBufferCloudEventsConformance(t *testing.T) {
 
 	// Emit every §16.6 gateway-emitted operational-event type as a
 	// non-audit event (datacontenttype application/json, an event-specific
-	// JSON object in data). §25.3 line 649: "Non-audit operational events
+	// JSON object in data). §25.3: "Non-audit operational events
 	// use datacontenttype application/json and carry an event-specific
 	// JSON payload in data."
 	for _, et := range events.GatewayEventTypes() {
@@ -91,7 +91,7 @@ func TestGatewayEventBufferCloudEventsConformance(t *testing.T) {
 
 	// Emit an audit-bearing event: the §11.7 OCSF v1.1.0 record is carried
 	// directly in data with datacontenttype application/ocsf+json.
-	// §25.3 line 649: "Audit-bearing events carry the OCSF record directly
+	// §25.3: "Audit-bearing events carry the OCSF record directly
 	// in the CloudEvents data field with datacontenttype
 	// application/ocsf+json ... there is no intermediate container between
 	// them."
@@ -147,9 +147,7 @@ func TestGatewayEventBufferCloudEventsConformance(t *testing.T) {
 	// its wire datacontenttype and confirm the buffer returned exactly the
 	// mix that was emitted: one audit-bearing OCSF record and one non-audit
 	// JSON record per §16.6 gateway event type. A buffer that dropped,
-	// duplicated, or flipped a datacontenttype fails this tally. spec: §25.3
-	// line 649 (single-envelope model; audit-bearing application/ocsf+json,
-	// non-audit application/json).
+	// duplicated, or flipped a datacontenttype fails this tally. spec: §25.3.
 	var gotOCSF, gotJSON int
 	for _, be := range page.Events {
 		switch assertBufferedRecordConformant(t, sch, be.Event) {
@@ -199,27 +197,27 @@ func assertBufferedRecordConformant(t *testing.T, sch interface{ Validate(any) e
 		return s
 	}
 
-	// §25.3 line 652 / §12.6: the record is a CloudEvents v1.0.2 record.
+	// §25.3 / §12.6: the record is a CloudEvents v1.0.2 record.
 	// The specversion attribute value for this revision is "1.0".
 	if got := str("specversion"); got != "1.0" {
 		t.Errorf("specversion = %q, want \"1.0\"; raw=%s", got, raw)
 	}
-	// §25.3 line 646: the CloudEvents id is the canonical eventKey, always
+	// §25.3: the CloudEvents id is the canonical eventKey, always
 	// present.
 	if str("id") == "" {
 		t.Errorf("buffered record carries no CloudEvents id (eventKey); raw=%s", raw)
 	}
-	// §25.3 line 647: the CloudEvents type follows dev.lenny.<short_name>.
+	// §25.3: the CloudEvents type follows dev.lenny.<short_name>.
 	if typ := str("type"); len(typ) < len("dev.lenny.") || typ[:len("dev.lenny.")] != "dev.lenny." {
 		t.Errorf("type = %q, want a dev.lenny. prefix", typ)
 	}
-	// §25.3 line 649: the Lenny extensions flatten onto the top-level
+	// §25.3: the Lenny extensions flatten onto the top-level
 	// object; lennytenantid is present.
 	if _, ok := flat["lennytenantid"]; !ok {
 		t.Errorf("extension lennytenantid did not flatten into the buffered record: %s", raw)
 	}
 
-	// §25.3 line 649: single-envelope model. An audit-bearing record sets
+	// §25.3: single-envelope model. An audit-bearing record sets
 	// datacontenttype application/ocsf+json and carries the OCSF record
 	// inline in data as a JSON object (not a double-wrapped string). A
 	// non-audit record uses application/json and carries an event-specific

@@ -56,11 +56,11 @@ type IssuedToken struct {
 	// Audiences is the multi-value audience set captured per RFC 8693.
 	// The writer always populates this from the original list so a
 	// forensic reverse lookup can match individual audiences without
-	// re-splitting Audience. spec: §4.3 line 193, migration 0058.
+	// re-splitting Audience. spec: §4.3, migration 0058.
 	Audiences []string
 	// DialectCapAppliedSeconds records the §13.3 per-dialect lifetime
 	// cap that capped the issued exp. Zero means no per-dialect cap
-	// was configured for the audience. spec: §4.3 line 193, §13.3
+	// was configured for the audience. spec: §4.3, §13.3
 	// dialect-cap discipline.
 	DialectCapAppliedSeconds int
 	// IssuedAt and ExpiresAt bound the token's validity window.
@@ -72,7 +72,10 @@ type IssuedToken struct {
 	RevokedAt     time.Time
 	RevokedReason string
 	// ActSubject and ParentJTI are populated for delegation children
-	// (§8): the acting subject and the parent token's JTI.
+	// (§8): the acting subject and the parent token's JTI. A
+	// platform-admin impersonation bearer carries ActSubject (the
+	// impersonating admin) and no ParentJTI (§13.3 "Platform-admin
+	// impersonation" rule 2).
 	ActSubject string
 	ParentJTI  string
 }
@@ -99,7 +102,7 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 //
 // The lock is session-scoped (`pg_advisory_lock` / `pg_advisory_unlock` on
 // one acquired connection) rather than transaction-scoped
-// (`pg_advisory_xact_lock`, used by the §11.7 audit lock and the §12.2.1
+// (`pg_advisory_xact_lock`, used by the §11.7 audit lock and the
 // session-admission lock) because the protected sequence is not a single
 // Postgres transaction: it interleaves a K8s Secret read-modify-write with
 // several independent store transactions (Record, RecordWithAudit,
@@ -116,8 +119,8 @@ func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 // caller's protected rotation operates on (the §17.6 AdminTenant) and
 // keeps the calling convention parallel to the store's other methods.
 //
-// spec: §13.3 line 605 (advisory-locked concurrent-rotation discipline),
-// §13.3 line 597 (gateway-mediated admin-credential rotation ordering).
+// spec: §13.3,
+// §13.3.
 func (s *Store) WithSubjectLock(ctx context.Context, tenantID, subject string, fn func(context.Context) error) error {
 	_ = tenantID // Advisory lock is database-global; keyed on subject only.
 	conn, err := s.pool.Acquire(ctx)
@@ -152,7 +155,7 @@ func (s *Store) WithSubjectLock(ctx context.Context, tenantID, subject string, f
 // build. The full pluggable-backend role interface for the
 // interface-less §12.2 stores is tracked separately (F-12.1.3).
 //
-// spec: §12.1 line 5 — "enforced at compile time by Go interface
+// spec: §12.1 — "enforced at compile time by Go interface
 // satisfaction".
 type Eraser interface {
 	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
@@ -186,121 +189,180 @@ func (s *Store) Record(ctx context.Context, tok IssuedToken) error {
 //
 //  1. pgtenant.InTx opens one transaction and SETs app.current_tenant.
 //  2. The transaction acquires the §11.7 per-tenant audit advisory
-//     lock (via auditstore.AppendInTx).
-//  3. The issued_tokens row is INSERTed.
+//     lock (auditstore.AcquireLockInTx).
+//  3. Step (1a): the issued_tokens rows of the sources are re-read in
+//     one SELECT. A source whose row has revoked_at set returns a
+//     *SourceRevokedError naming its role; otherwise a source whose row
+//     is an impersonation row returns a *SourceImpersonationError naming
+//     its role. Either way no issuance statement runs. A source with no
+//     row passes.
 //  4. The audit_log row is INSERTed under the same advisory lock.
+//  5. The issued_tokens row is INSERTed.
+//
+// sources lists the exchange inputs to re-read: the subject_token jti
+// and, on a delegation child mint, the actor_token jti. The gateway's
+// in-process admin rotation passes an empty list, because it has no
+// subject token to re-read.
 //
 // Only after COMMIT does the caller surface the signed token to the
 // client. If any step fails, the transaction rolls back and neither the
-// issued-token row nor the audit row is persisted — the Token Service
-// then never returns the minted token to the caller. The auditEventType
-// and auditPayload come from the caller (the Token Service handler)
-// because the audit payload schema is owned by §16.7 / §25.4 and the
-// store should not bake that vocabulary in.
+// issued-token row nor the audit row is persisted, and the Token Service
+// never returns the minted token to the caller. The auditEventType and
+// auditPayload come from the caller (the Token Service handler) because
+// the audit payload schema is owned by §16.7 / §25.4 and the store does
+// not bake that vocabulary in.
 //
 // auditPayload is a JSON-encoded object. The sealed audit row is
 // returned to the caller for cross-checking and metric labelling; the
 // returned row carries the assigned sequence number and prev_hash so a
 // caller can trace the audit chain forward.
 //
-// spec: §13.3 line 589 — single Postgres transaction binding the
-// issued-token INSERT and the token.exchanged audit INSERT.
-func (s *Store) RecordWithAudit(ctx context.Context, tok IssuedToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error) {
+// spec: §13.3 (Credential Flow: Write-before-issue ordering),
+// §11.7.
+func (s *Store) RecordWithAudit(ctx context.Context, tok IssuedToken, sources []SourceToken, auditEventType string, auditPayload json.RawMessage, auditAt time.Time) (audit.Row, error) {
 	var committed audit.Row
 	err := pgtenant.InTx(ctx, s.pool, tok.TenantID, func(tx pgx.Tx) error {
-		// Step 1: acquire the §11.7 advisory lock + INSERT the audit
-		// row first so the chain prev_hash is stable; the issued_tokens
-		// INSERT below is bound to the same transaction and rolls back
-		// together on any failure.
+		if err := lockAndRecheck(ctx, tx, tok.TenantID, sources); err != nil {
+			return err
+		}
+		// INSERT the audit row first so the chain prev_hash is stable;
+		// the issued_tokens INSERT below is bound to the same transaction
+		// and rolls back together on any failure.
 		row, err := auditstore.AppendInTx(ctx, tx, tok.TenantID, auditEventType, auditPayload, auditAt)
 		if err != nil {
 			return err
 		}
 		committed = row
-		// Step 2: INSERT the issued_tokens row.
-		if err := insertIssued(ctx, tx, tok); err != nil {
-			return err
-		}
-		return nil
+		return insertIssued(ctx, tx, tok)
 	})
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return audit.Row{}, ErrAlreadyExists
-		}
-		return audit.Row{}, err
+		return audit.Row{}, mapUniqueViolation(err)
 	}
 	return committed, nil
 }
 
-// RecordWithRotationAudit performs the §13.3 line 597 atomic
+// RecordWithRotationAudit performs the §13.3 atomic
 // token-rotation write-before-issue. In one Postgres transaction it
-// writes the `token.exchanged` audit row, INSERTs the new issued_tokens
-// row, and stamps revoked_at/revoked_reason on the previous token
-// (prevJTI) when that token is still live. The revocation of the
-// previous token and the mint of its replacement therefore commit
-// together: there is no window in which both tokens validate, and none
-// in which the old token is revoked but the replacement was never
-// issued. Only after COMMIT does the Token Service hand the new token to
-// the caller.
+// takes the §11.7 lock, re-reads the sources (step 1a), writes the
+// `token.exchanged` audit row, INSERTs the new issued_tokens row, and
+// stamps revoked_at/revoked_reason on the previous token (prevJTI). The
+// revocation of the previous token and the mint of its replacement
+// therefore commit together: there is no window in which both tokens
+// validate, and none in which the old token is revoked but the
+// replacement was never issued. Only after COMMIT does the Token Service
+// hand the new token to the caller.
 //
-// The previous token is revoked only when its row exists in the tenant
-// and is not already revoked. revoked reports whether a row was revoked,
-// and revokedSub carries that row's subject so the caller can emit the
-// §16.7 token.revoked row with revocation_reason=rotation_replaced. A
-// missing or already-revoked previous token leaves the mint intact and
-// reports revoked=false, so a retried rotation does not double-revoke or
-// double-emit. The §16.7 token.revoked audit row itself is written by
-// the caller after COMMIT because its propagation_mode field records the
-// post-commit EventBus publish outcome.
+// The Token Service lists the subject token, which is prevJTI, in
+// sources. A rotation of a token that is already revoked, which is a
+// retried rotation or the loser of two concurrent rotations of one
+// subject, therefore fails the step (1a) re-read with a
+// *SourceRevokedError naming the subject, and commits no second mint.
+// The two concurrent rotations serialize on the §11.7 lock, so the
+// second one reads the first one's committed revoked_at stamp.
 //
-// spec: §13.3 line 597.
-func (s *Store) RecordWithRotationAudit(ctx context.Context, tok IssuedToken, prevJTI, revokedReason, exchangeEventType string, exchangePayload json.RawMessage, at time.Time) (revokedSub string, revoked bool, err error) {
+// A revocation that does not take the §11.7 lock (Store.Revoke,
+// RevokeBySubject, or RevokeCascade) can commit after the step (1a)
+// re-read and before the revoke UPDATE below. The UPDATE then matches no
+// live row, so revokePrevious re-reads prevJTI's row and, when it exists
+// with revoked_at set, returns a *SourceRevokedError naming the subject.
+// The transaction rolls back and no second mint commits.
+//
+// revoked reports whether a row was revoked, and revokedSub carries that
+// row's subject so the caller can emit the §16.7 token.revoked row with
+// revocation_reason=rotation_replaced. The rotation commits with revoked
+// false only when prevJTI has no issued_tokens row in the tenant, such
+// as an upstream IdP token that was never recorded. The §16.7 token.revoked audit row itself
+// is written by the caller after COMMIT because its propagation_mode
+// field records the post-commit EventBus publish outcome.
+//
+// spec: §13.3 (Credential Flow: Write-before-issue ordering, Token
+// rotation and revocation), §11.7.
+func (s *Store) RecordWithRotationAudit(ctx context.Context, tok IssuedToken, sources []SourceToken, prevJTI, revokedReason, exchangeEventType string, exchangePayload json.RawMessage, at time.Time) (revokedSub string, revoked bool, err error) {
 	err = pgtenant.InTx(ctx, s.pool, tok.TenantID, func(tx pgx.Tx) error {
-		// §11.7 advisory lock + token.exchanged audit row first so the
-		// chain prev_hash is stable; the issued_tokens INSERT and the
-		// previous-token revocation below are bound to the same
-		// transaction and roll back together on any failure.
+		if lerr := lockAndRecheck(ctx, tx, tok.TenantID, sources); lerr != nil {
+			return lerr
+		}
+		// The token.exchanged audit row goes first so the chain prev_hash
+		// is stable; the issued_tokens INSERT and the previous-token
+		// revocation below are bound to the same transaction and roll
+		// back together on any failure.
 		if _, aerr := auditstore.AppendInTx(ctx, tx, tok.TenantID, exchangeEventType, exchangePayload, at); aerr != nil {
 			return aerr
 		}
 		if ierr := insertIssued(ctx, tx, tok); ierr != nil {
 			return ierr
 		}
-		var sub string
-		rerr := tx.QueryRow(ctx,
-			`UPDATE issued_tokens SET revoked_at = $3, revoked_reason = $4
-			 WHERE jti = $1 AND tenant_id = $2 AND revoked_at IS NULL
-			 RETURNING sub`,
-			prevJTI, tok.TenantID, at, pgtenant.NullString(revokedReason)).Scan(&sub)
-		if errors.Is(rerr, pgx.ErrNoRows) {
-			// Previous token absent or already revoked: the mint still
-			// commits, but there is nothing to revoke and no token.revoked
-			// to emit.
-			return nil
-		}
-		if rerr != nil {
-			return rerr
-		}
-		revokedSub = sub
-		revoked = true
-		return nil
+		sub, ok, rerr := revokePrevious(ctx, tx, tok.TenantID, prevJTI, revokedReason, at)
+		revokedSub, revoked = sub, ok
+		return rerr
 	})
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return "", false, ErrAlreadyExists
-		}
-		return "", false, err
+		return "", false, mapUniqueViolation(err)
 	}
 	return revokedSub, revoked, nil
+}
+
+// revokePrevious stamps revoked_at/revoked_reason on the rotated token
+// when its row exists in the tenant and is live, and returns its subject.
+// A missing row reports revoked=false with no error. A row that is
+// already revoked returns a *SourceRevokedError naming the subject token,
+// so a revocation that committed after the step (1a) re-read still
+// refuses the rotation.
+//
+// spec: §13.3 (Credential Flow: Write-before-issue ordering, Token
+// rotation and revocation).
+func revokePrevious(ctx context.Context, tx pgx.Tx, tenantID, prevJTI, reason string, at time.Time) (string, bool, error) {
+	var sub string
+	err := tx.QueryRow(ctx,
+		`UPDATE issued_tokens SET revoked_at = $3, revoked_reason = $4
+		 WHERE jti = $1 AND tenant_id = $2 AND revoked_at IS NULL
+		 RETURNING sub`,
+		prevJTI, tenantID, at, pgtenant.NullString(reason)).Scan(&sub)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, previousRevokedError(ctx, tx, tenantID, prevJTI)
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("issuedtokenstore: revoke rotated token: %w", err)
+	}
+	return sub, true, nil
+}
+
+// previousRevokedError re-reads prevJTI's row after the revoke UPDATE
+// matched no live row. It returns nil when the tenant has no row for
+// prevJTI and a *SourceRevokedError naming the subject token when the row
+// exists with revoked_at set.
+func previousRevokedError(ctx context.Context, tx pgx.Tx, tenantID, prevJTI string) error {
+	var revokedAt *time.Time
+	err := tx.QueryRow(ctx,
+		`SELECT revoked_at FROM issued_tokens WHERE jti = $1 AND tenant_id = $2`,
+		prevJTI, tenantID).Scan(&revokedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("issuedtokenstore: re-read rotated token: %w", err)
+	}
+	if revokedAt == nil {
+		return fmt.Errorf("issuedtokenstore: rotated token %q is live but the revoke matched no row", prevJTI)
+	}
+	return &SourceRevokedError{Role: SourceSubjectToken, JTI: prevJTI, RevokedAt: *revokedAt}
+}
+
+// mapUniqueViolation maps a jti primary-key collision to ErrAlreadyExists
+// and returns every other error unchanged.
+func mapUniqueViolation(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		return ErrAlreadyExists
+	}
+	return err
 }
 
 // insertIssued runs the issued_tokens INSERT on tx. It assumes the
 // caller has already opened a pgtenant.InTx and acquired the §11.7
 // audit advisory lock when binding to an audit row.
 //
-// spec: §4.3 line 193 — audiences and dialect_cap_applied_seconds are
+// spec: §4.3 — audiences and dialect_cap_applied_seconds are
 // recorded alongside the legacy single-valued audience column so
 // forensic reverse lookups by individual audience and "why was the
 // exp this value" both have a durable source.
@@ -393,10 +455,7 @@ func (s *Store) Revoke(ctx context.Context, tenantID, jti, reason string, at tim
 // jti the durable store already stamped. The audit row is returned to the
 // caller for cross-checking and metric labelling.
 //
-// spec: §13.3 line 597 (gateway-mediated admin-credential rotation
-// ordering: mint-record-persist-revoke, distinct from the single-transaction
-// token-exchange rotation), §16.7 line 673 (token.revoked
-// revocation_reason=rotation_replaced).
+// spec: §13.3, §16.7.
 func (s *Store) RevokeWithAudit(ctx context.Context, tenantID, jti, revokedReason, auditEventType string, auditPayload json.RawMessage, at time.Time) (audit.Row, error) {
 	if at.IsZero() {
 		at = time.Now().UTC()
@@ -480,7 +539,7 @@ type RevokedToken struct {
 	IsRoot  bool
 }
 
-// RevokeCascade implements the §13.3 line 603 / §8.3 recursive
+// RevokeCascade implements the §13.3 / §8.3 recursive
 // revocation: it revokes rootJTI and every delegation descendant
 // reachable through the parent_jti edge, in one statement via a
 // recursive CTE. The root row is stamped with rootReason; each
@@ -492,7 +551,7 @@ type RevokedToken struct {
 // the tenant. Token lineage is acyclic (a child's parent_jti always
 // references a pre-existing token), so the recursive walk terminates.
 //
-// spec: §13.3 line 603 ("recursive child revocation"); §8.3.
+// spec: §13.3; §8.3.
 func (s *Store) RevokeCascade(ctx context.Context, tenantID, rootJTI, rootReason, childReason string, at time.Time) ([]RevokedToken, error) {
 	if at.IsZero() {
 		at = time.Now().UTC()
@@ -580,8 +639,9 @@ func (s *Store) ListRevoked(ctx context.Context, tenantID string) ([]IssuedToken
 
 // DeleteExpired removes the tenant's tokens whose exp is at or before
 // cutoff and returns the number of rows deleted. This is the §12.2
-// expired-row GC path; revoked rows past expiry are removed too,
-// since an expired token cannot be presented regardless.
+// expired-row GC path. Revoked rows are removed too, so the caller
+// passes a cutoff that precedes the §13.3 trailing hour: a row is kept,
+// revoked or not, while a buggy client can still present its token.
 func (s *Store) DeleteExpired(ctx context.Context, tenantID string, cutoff time.Time) (int, error) {
 	var deleted int
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
@@ -601,15 +661,17 @@ func (s *Store) DeleteExpired(ctx context.Context, tenantID string, cutoff time.
 }
 
 // DeleteByUser implements the §12.1 mandatory-erasure primitive for the
-// §12.2 TokenIssuanceStore role. It hard-deletes every issued-token row
-// whose subject is userID within tenantID and returns the count
-// removed. RevokeBySubject only marks rows revoked (the row, including
-// its token hash, survives); a GDPR erasure must remove the row
-// outright, so the §12.8 user-erasure path calls DeleteByUser rather
-// than RevokeBySubject. Deleting an erased user's tokens is safe
-// because a deleted token can no longer be presented for validation.
+// §12.2 TokenIssuanceStore role. It hard-deletes the issued-token rows whose
+// subject is userID within tenantID and whose exp precedes the trailing hour,
+// and returns the count removed. A row still inside the hour is kept, revoked
+// or not: the token behind it can still be presented, so a later revocation
+// or rotation must find its row and a restarted replica must load its
+// revocation. The §12.2 expired-row GC deletes the kept rows once they leave
+// the hour.
 //
-// spec: §12.1 line 5, §12.8 step `TokenStore`.
+// spec: §12.1, §12.8 (Compliance Interfaces: DeleteByUser
+// dependency-ordered deletion sequence, step 18), §13.3 (Credential Flow:
+// Authoritative durability for revocation).
 func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, errors.New("issuedtokenstore: DeleteByUser requires non-empty tenant_id and user_id")
@@ -617,7 +679,8 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 	var deleted int
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
-			`DELETE FROM issued_tokens WHERE tenant_id = $1 AND sub = $2`,
+			`DELETE FROM issued_tokens
+			  WHERE tenant_id = $1 AND sub = $2 AND exp <= now() - interval '1 hour'`,
 			tenantID, userID)
 		if err != nil {
 			return err
@@ -631,11 +694,14 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 	return deleted, nil
 }
 
-// DeleteByTenant implements the §12.1 mandatory-erasure primitive. It
-// hard-deletes every issued-token row owned by tenantID — the §12.8
-// Phase 4 tenant-teardown path for the TokenIssuanceStore role.
+// DeleteByTenant implements the §12.1 mandatory-erasure primitive for the
+// §12.8 Phase 4 tenant teardown. It hard-deletes the tenant's issued-token
+// rows whose exp precedes the trailing hour and keeps the rest, for the same
+// reason DeleteByUser does. The §12.2 expired-row GC, which visits deleted
+// tenants too, deletes the kept rows once they leave the hour.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 (Compliance Interfaces: Tenant deletion lifecycle),
+// §13.3 (Credential Flow: Authoritative durability for revocation).
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("issuedtokenstore: DeleteByTenant requires a concrete tenant_id")
@@ -643,7 +709,8 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 	var deleted int
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx,
-			`DELETE FROM issued_tokens WHERE tenant_id = $1`, tenantID)
+			`DELETE FROM issued_tokens
+			  WHERE tenant_id = $1 AND exp <= now() - interval '1 hour'`, tenantID)
 		if err != nil {
 			return err
 		}
@@ -658,7 +725,7 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 
 // scanToken reads one row in selectList order into an IssuedToken.
 //
-// spec: §4.3 line 193 — Audiences and DialectCapAppliedSeconds are
+// spec: §4.3 — Audiences and DialectCapAppliedSeconds are
 // populated alongside the legacy Audience column so callers prefer
 // the list form when present.
 func scanToken(row pgx.Row) (IssuedToken, error) {
@@ -705,7 +772,7 @@ func scopeArg(scope []string) []string {
 // audience like "lenny-gateway" arrives as ["lenny-gateway"] and a
 // joined value like "lenny-gateway lenny-ops" arrives as the matching
 // list. The text[] column is never written NULL.
-// spec: §4.3 line 193, migration 0058.
+// spec: §4.3, migration 0058.
 func audienceListArg(audiences []string, legacy string) []string {
 	if len(audiences) > 0 {
 		out := make([]string, 0, len(audiences))

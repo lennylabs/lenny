@@ -13,13 +13,12 @@
 //
 // This case drives the exported adapter.Server directly (the recycle-scrub and
 // concurrent-slot conformance cases establish the pattern) with a real
-// lifecycle channel and an external runtime peer that speaks the §4.7 JSONL
+// CH-RUNTIMEOPS and an external runtime peer that speaks the §4.7 JSONL
 // lifecycle protocol and advertises credential_rotation, so a non-conforming
 // adapter that mishandled the extension as a rotation would send
 // credentials_rotated over the wire the peer observes.
 //
-// spec: §4.9 (line 1470, adapter ExtendCredentialLease re-arms the direct-mode
-// timer without rewriting material), §4.7 (runtime adapter lifecycle).
+// spec: §4.9, §4.7 (runtime adapter lifecycle).
 package tier10_conformance_test
 
 import (
@@ -36,6 +35,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/credfile"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
 // guardLifecycleFrame is the subset of a §4.7 runtime<->adapter lifecycle JSONL
@@ -58,17 +58,26 @@ type guardRuntimePeer struct {
 	enc  *json.Encoder
 }
 
-// dialGuardRuntimePeer connects to the adapter lifecycle socket and completes
+// dialGuardRuntimePeer connects to the adapter lifecycle socket, writes the
+// nonce line carrying the mcpNonce of the manifest published beside the
+// socket (spec: 4.7.11, Runtime connection handshake), and completes
 // the lifecycle_capabilities / lifecycle_support handshake, advertising
 // credential_rotation so a rotation the adapter (wrongly) initiated would reach
 // this peer as credentials_rotated.
 func dialGuardRuntimePeer(t *testing.T, socketPath string) *guardRuntimePeer {
 	t.Helper()
+	nonce, err := runtimenonce.ReadNonce(filepath.Join(filepath.Dir(socketPath), runtimenonce.ManifestFilename))
+	if err != nil {
+		t.Fatalf("read the published nonce: %v", err)
+	}
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
 		t.Fatalf("dial lifecycle socket: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	if err := runtimenonce.Write(conn, nonce); err != nil {
+		t.Fatal(err)
+	}
 	p := &guardRuntimePeer{t: t, conn: conn, r: bufio.NewReader(conn), enc: json.NewEncoder(conn)}
 
 	cap := p.read()
@@ -99,7 +108,7 @@ func (p *guardRuntimePeer) read() guardLifecycleFrame {
 }
 
 // expectNoRotation asserts the adapter sends no frame within d. A conforming
-// ExtendCredentialLease sends nothing on the lifecycle channel; an adapter that
+// ExtendCredentialLease sends nothing on the CH-RUNTIMEOPS; an adapter that
 // mishandled it as a rotation would send credentials_rotated.
 func (p *guardRuntimePeer) expectNoRotation(d time.Duration) {
 	p.t.Helper()
@@ -135,7 +144,7 @@ func credentialFileBytes(t *testing.T, dir string) []byte {
 // credentials_rotated lifecycle event and leaving the credential-file contents
 // byte-for-byte unchanged.
 //
-// spec: §4.9 (line 1470, timer-only extension), §4.7 (runtime adapter)
+// spec: §4.9, §4.7 (runtime adapter)
 //
 // diagnosis: a conforming adapter mishandled a timer-only extension as a
 // material rotation — it re-delivered credential material (the file bytes
@@ -150,28 +159,33 @@ func TestExtendCredentialLeaseConformanceTimerOnly_spec_4_9(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 	socketPath := filepath.Join(sockDir, "lc.sock")
 
-	lc, err := adapter.NewLifecycleChannel(socketPath)
+	manifest := runtimenonce.PublishIn(t, sockDir, nil)
+	lc, err := adapter.NewRuntimeOps(socketPath, adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())}, adapter.PublishedManifestNonce(manifest.Dir))
 	if err != nil {
-		t.Fatalf("new lifecycle channel: %v", err)
+		t.Fatalf("new CH-RUNTIMEOPS socket: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go func() { _ = lc.Run(ctx) }()
 
 	base := t.TempDir()
-	credsDir := filepath.Join(base, "run", "lenny")
-	if err := os.MkdirAll(credsDir, 0o755); err != nil {
+	credsRoot := filepath.Join(base, "run", "lenny")
+	if err := os.MkdirAll(credsRoot, 0o755); err != nil {
 		t.Fatalf("make credentials dir: %v", err)
 	}
 	s := adapter.New("guard-conformance")
-	s.CredentialsDir = credsDir
+	s.CredentialsDir = credsRoot
+	s.WorkspaceBase = filepath.Join(base, "workspace")
 	s.Lifecycle = lc
+	// Every assignment lands on the session's own §6.1 credential file.
+	credsDir := filepath.Join(credsRoot, "slots", "sess-conformance")
 
 	// A direct-mode lease with a short expiry: without the extension its real
 	// adapter timer fires within the test window and deletes the file entry.
 	originalExpiry := time.Now().Add(time.Second)
 	if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-conformance"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-conformance"},
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic_direct": {
 				LeaseId:         "l-live",

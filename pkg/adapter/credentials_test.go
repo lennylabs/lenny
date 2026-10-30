@@ -15,13 +15,22 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/credfile"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/tests/testinfra/ackruntime"
 )
 
 func credServer(t *testing.T) *adapter.Server {
 	t.Helper()
 	s := adapter.New("cred-test")
 	s.CredentialsDir = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	return s
+}
+
+// sessionCredsDir is the named session's own §6.1 credential directory,
+// /run/lenny/slots/{sessionId}, which is where every assignment lands now
+// that the per-slot tree is the only layout. spec: §6.1.
+func sessionCredsDir(s *adapter.Server, sessionID string) string {
+	return filepath.Join(s.CredentialsDir, "slots", sessionID)
 }
 
 func credLease(id, provider, payload string) *adapterv1.CredentialLease {
@@ -32,25 +41,43 @@ func credLease(id, provider, payload string) *adapterv1.CredentialLease {
 	}
 }
 
-func TestRotateCredentialsNotifiesLifecycleChannel(t *testing.T) {
+// spec: §4.7, §28.5.3 (CH-RUNTIMEOPS, Messages)
+// A Full-level rotation sends credentials_rotated over CH-RUNTIMEOPS, and
+// with two sessions holding credentials on the pod the frame names the
+// session whose lease rotated, so the runtime routes the rotation without
+// parsing credentialsPath.
+func TestRotateCredentialsNotifiesRuntimeOps(t *testing.T) {
 	s := credServer(t)
 	ctx := context.Background()
-	if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		Leases: map[string]*adapterv1.CredentialLease{
-			"anthropic": credLease("l-anth-1", "anthropic", `{}`),
-		},
-	}); err != nil {
-		t.Fatalf("AssignCredentials: %v", err)
+	for _, id := range []string{"sess-1", "sess-2"} {
+		if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
+			BindAttempt: "attempt-" + id,
+			SessionId:   &adapterv1.SessionId{Value: id},
+			Leases: map[string]*adapterv1.CredentialLease{
+				"anthropic": credLease("l-anth-1-"+id, "anthropic", `{}`),
+			},
+		}); err != nil {
+			t.Fatalf("AssignCredentials(%s): %v", id, err)
+		}
 	}
 	lc := startLifecycle(t)
 	s.Lifecycle = lc
 	lr := dialLifecycle(t, lc)
+	// The runtime completed the CH-RUNTIMEOPS handshake, so the rotated
+	// session is started on a runtime that answers its session_start:
+	// credentials_rotated is written only after the adapter has read the
+	// session's session_started. spec: §28.5.3 (CH-RUNTIMEOPS, Messages).
+	s.Runtime = ackruntime.New(t)
+	if _, err := s.StartSession(ctx, &adapterv1.StartSessionRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-2"},
+	}); err != nil {
+		t.Fatalf("StartSession(sess-2): %v", err)
+	}
 
 	errc := make(chan error, 1)
 	go func() {
 		_, err := s.RotateCredentials(ctx, &adapterv1.RotateCredentialsRequest{
-			SessionId: &adapterv1.SessionId{Value: "sess-1"},
+			SessionId: &adapterv1.SessionId{Value: "sess-2"},
 			Leases: map[string]*adapterv1.CredentialLease{
 				"anthropic": credLease("l-anth-2", "anthropic", `{}`),
 			},
@@ -64,6 +91,12 @@ func TestRotateCredentialsNotifiesLifecycleChannel(t *testing.T) {
 	}
 	if req["provider"] != "anthropic" || req["leaseId"] != "l-anth-2" {
 		t.Errorf("credentials_rotated = %v, want provider anthropic leaseId l-anth-2", req)
+	}
+	if req["sessionId"] != "sess-2" {
+		t.Errorf("credentials_rotated sessionId = %v, want sess-2", req["sessionId"])
+	}
+	if want := filepath.Join(sessionCredsDir(s, "sess-2"), credfile.FileName); req["credentialsPath"] != want {
+		t.Errorf("credentials_rotated credentialsPath = %v, want %s", req["credentialsPath"], want)
 	}
 	lr.send(map[string]any{
 		"type":     "credentials_acknowledged",
@@ -102,7 +135,8 @@ func TestAssignCredentialsWritesTheCredentialFile(t *testing.T) {
 	s := credServer(t)
 
 	_, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic": credLease("l1", "anthropic", `{"deliveryMode":"direct"}`),
 		},
@@ -110,7 +144,7 @@ func TestAssignCredentialsWritesTheCredentialFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AssignCredentials: %v", err)
 	}
-	if _, ok := credProviders(t, s.CredentialsDir)["anthropic"]; !ok {
+	if _, ok := credProviders(t, sessionCredsDir(s, "sess-1"))["anthropic"]; !ok {
 		t.Error("the credential file has no anthropic entry after AssignCredentials")
 	}
 }
@@ -128,27 +162,43 @@ func TestAssignCredentialsRequiresACredentialsDir(t *testing.T) {
 	s := adapter.New("cred-test") // CredentialsDir left unset.
 
 	_, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
 	})
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("error code = %v, want FailedPrecondition", status.Code(err))
 	}
 }
 
-func TestAssignCredentialsRejectsADifferentSession(t *testing.T) {
+// spec: 6.1 (per-slot credential isolation), 5.2 (every session is bound
+// to a slot on every pod)
+//
+// A second session's assignment lands on that session's own slot rather
+// than overwriting a co-tenant's credential file. The adapter refuses
+// nothing here: the one-session-per-pod ceiling is the gateway's, which
+// allocates the slot and counts occupancy at the same site, and the
+// isolation is the per-session file rather than a refusal.
+func TestAssignCredentialsIsolatesASecondSessionsFile_spec_6_1(t *testing.T) {
 	s := credServer(t)
 	ctx := context.Background()
 
-	if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-A"},
-	}); err != nil {
-		t.Fatalf("first AssignCredentials: %v", err)
+	for _, sess := range []string{"sess-A", "sess-B"} {
+		if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
+			BindAttempt: "attempt-a",
+			SessionId:   &adapterv1.SessionId{Value: sess},
+			Leases: map[string]*adapterv1.CredentialLease{
+				"anthropic": credLease("l-"+sess, "anthropic", `{}`),
+			},
+		}); err != nil {
+			t.Fatalf("AssignCredentials(%s): %v", sess, err)
+		}
 	}
-	_, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-B"},
-	})
-	if status.Code(err) != codes.FailedPrecondition {
-		t.Errorf("error code = %v, want FailedPrecondition for a second session", status.Code(err))
+	for _, sess := range []string{"sess-A", "sess-B"} {
+		got := credProviders(t, sessionCredsDir(s, sess))
+		if got["anthropic"]["leaseId"] != "l-"+sess {
+			t.Errorf("%s credential file carries leaseId %v, want l-%s; the two sessions share a file",
+				sess, got["anthropic"]["leaseId"], sess)
+		}
 	}
 }
 
@@ -157,7 +207,8 @@ func TestRotateCredentialsMergesProviders(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic": credLease("l-anth-1", "anthropic", `{}`),
 			"openai":    credLease("l-oai-1", "openai", `{}`),
@@ -174,7 +225,7 @@ func TestRotateCredentialsMergesProviders(t *testing.T) {
 		t.Fatalf("RotateCredentials: %v", err)
 	}
 
-	got := credProviders(t, s.CredentialsDir)
+	got := credProviders(t, sessionCredsDir(s, "sess-1"))
 	if got["anthropic"]["leaseId"] != "l-anth-2" {
 		t.Errorf("anthropic leaseId = %v, want the rotated l-anth-2", got["anthropic"]["leaseId"])
 	}
@@ -183,31 +234,107 @@ func TestRotateCredentialsMergesProviders(t *testing.T) {
 	}
 }
 
+// spec: 6.1 (per-slot credential delivery), 4.9 (direct-mode lease expiry)
+//
+// A rotation for a session that holds a registered, bound slot but never
+// received AssignCredentials is refused before any file is written. The
+// registry lookup the handler opens with tests registration rather than
+// assignment, and every live session holds a registry entry, so without
+// the was-assigned marker the rotation would materialize a credential
+// file for a session the gateway never assigned credentials to.
 func TestRotateCredentialsRequiresAPriorAssignment(t *testing.T) {
-	s := credServer(t)
+	s, _ := concurrentServer(t)
+	ctx := context.Background()
 
-	_, err := s.RotateCredentials(context.Background(), &adapterv1.RotateCredentialsRequest{
+	if _, err := s.StartSession(ctx, slotStartReq("sess-1")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	_, err := s.RotateCredentials(ctx, &adapterv1.RotateCredentialsRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		Leases: map[string]*adapterv1.CredentialLease{
+			"anthropic": credLease("l-anth-1", "anthropic", `{}`),
+		},
 	})
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("error code = %v, want FailedPrecondition with no prior AssignCredentials", status.Code(err))
 	}
+	if _, err := os.Stat(filepath.Join(sessionCredsDir(s, "sess-1"), credfile.FileName)); !os.IsNotExist(err) {
+		t.Error("the refused rotation materialized the session's credential file")
+	}
 }
 
-func TestRotateCredentialsRejectsADifferentSession(t *testing.T) {
+// spec: 4.9 (the Token Service pushes a replacement lease over
+// RotateCredentials after a direct-mode expiry), 6.1
+//
+// The was-assigned marker is keyed on the assignment rather than on the
+// live lease set, so a session whose only direct-mode lease has already
+// expired still has its replacement lease admitted and its per-slot file
+// rewritten.
+func TestRotateCredentialsAdmitsAReplacementAfterTheLeaseExpired_spec_4_9(t *testing.T) {
+	s, _ := concurrentServer(t)
+	ctx := context.Background()
+
+	// §4.7.1 rule 6: the credential assignment precedes the start.
+	if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
+		Leases: map[string]*adapterv1.CredentialLease{
+			"anthropic": credLease("l-anth-1", "anthropic", `{}`),
+		},
+	}); err != nil {
+		t.Fatalf("AssignCredentials: %v", err)
+	}
+	if _, err := s.StartSession(ctx, slotStartReq("sess-1")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	// The expiry empties the slot's lease set while the session lives on.
+	if _, err := s.RevokeCredentials(ctx, &adapterv1.RevokeCredentialsRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		Providers: []string{"anthropic"},
+		Reason:    "lease expired",
+	}); err != nil {
+		t.Fatalf("RevokeCredentials: %v", err)
+	}
+	if got := credProviders(t, sessionCredsDir(s, "sess-1")); len(got) != 0 {
+		t.Fatalf("credential file entries after the expiry = %v, want none", got)
+	}
+
+	if _, err := s.RotateCredentials(ctx, &adapterv1.RotateCredentialsRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		Leases: map[string]*adapterv1.CredentialLease{
+			"anthropic": credLease("l-anth-2", "anthropic", `{}`),
+		},
+	}); err != nil {
+		t.Fatalf("RotateCredentials with the replacement lease: %v", err)
+	}
+	if got := credProviders(t, sessionCredsDir(s, "sess-1")); got["anthropic"]["leaseId"] != "l-anth-2" {
+		t.Errorf("anthropic leaseId = %v, want the replacement l-anth-2", got["anthropic"]["leaseId"])
+	}
+}
+
+// spec: 6.1 (per-slot credential isolation), 5.2
+//
+// A rotation for a session the registry holds no entry for is refused
+// before any file is written, so a rotation cannot materialize a
+// credential file for a session this pod never bound.
+func TestRotateCredentialsRefusesAnUnboundSession_spec_6_1(t *testing.T) {
 	s := credServer(t)
 	ctx := context.Background()
 
 	if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-A"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-A"},
 	}); err != nil {
 		t.Fatalf("AssignCredentials: %v", err)
 	}
 	_, err := s.RotateCredentials(ctx, &adapterv1.RotateCredentialsRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-B"},
 	})
-	if status.Code(err) != codes.NotFound {
-		t.Errorf("error code = %v, want NotFound for a mismatched session", status.Code(err))
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("error code = %v, want FailedPrecondition for a session the pod does not hold", status.Code(err))
+	}
+	if _, err := os.Stat(sessionCredsDir(s, "sess-B")); !os.IsNotExist(err) {
+		t.Error("the refused rotation materialized the session's credential directory")
 	}
 }
 
@@ -216,7 +343,8 @@ func TestRevokeCredentialsRemovesNamedProviders(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic": credLease("l-anth", "anthropic", `{}`),
 			"openai":    credLease("l-oai", "openai", `{}`),
@@ -232,7 +360,7 @@ func TestRevokeCredentialsRemovesNamedProviders(t *testing.T) {
 		t.Fatalf("RevokeCredentials: %v", err)
 	}
 
-	got := credProviders(t, s.CredentialsDir)
+	got := credProviders(t, sessionCredsDir(s, "sess-1"))
 	if _, present := got["openai"]; present {
 		t.Error("the openai entry remains after revocation")
 	}
@@ -241,14 +369,26 @@ func TestRevokeCredentialsRemovesNamedProviders(t *testing.T) {
 	}
 }
 
+// spec: 6.1 (per-slot credential delivery)
+//
+// A revocation for a session that holds a registered, bound slot but
+// never received AssignCredentials is refused before any file is
+// written, for the same reason the rotation is.
 func TestRevokeCredentialsRequiresAPriorAssignment(t *testing.T) {
-	s := credServer(t)
+	s, _ := concurrentServer(t)
+	ctx := context.Background()
 
-	_, err := s.RevokeCredentials(context.Background(), &adapterv1.RevokeCredentialsRequest{
+	if _, err := s.StartSession(ctx, slotStartReq("sess-1")); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	_, err := s.RevokeCredentials(ctx, &adapterv1.RevokeCredentialsRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
 		Providers: []string{"anthropic"},
 	})
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("error code = %v, want FailedPrecondition with no prior AssignCredentials", status.Code(err))
+	}
+	if _, err := os.Stat(filepath.Join(sessionCredsDir(s, "sess-1"), credfile.FileName)); !os.IsNotExist(err) {
+		t.Error("the refused revocation materialized the session's credential file")
 	}
 }

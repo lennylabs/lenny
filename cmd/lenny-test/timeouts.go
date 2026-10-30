@@ -38,11 +38,41 @@ const (
 
 var (
 	// tierLongTimeout caps how long a long-running tier (load,
-	// chaos, security) may take per invocation. Production CI
+	// chaos) may take per invocation. Production CI
 	// configures the surrounding workflow timeout to a larger
 	// value so a hung tier surfaces as a tier failure rather than
 	// a workflow timeout. Override: LENNY_TEST_LONG_TIMEOUT.
 	tierLongTimeout = tierTimeout("LENNY_TEST_LONG_TIMEOUT", 600*time.Second)
+
+	// tierSecurityTimeout caps the security tier. The tier-9 package is one
+	// binary of roughly two hundred top-level tests, several of which wait
+	// up to 120 seconds each for a Ready agent workload on the Kind
+	// cluster, so its runtime tracks cluster load rather than test count.
+	// Recorded whole-package runs on the development host range from about
+	// 70 seconds on an idle cluster to 1634 seconds under load (passing
+	// runs of 1616, 1631, and 1634 seconds), and runs under the shared
+	// 600-second long-tier budget were aborted at 600 seconds with no
+	// per-test failure. The default is a little over twice the slowest
+	// recorded passing run. Override: LENNY_TEST_SECURITY_TIMEOUT.
+	tierSecurityTimeout = securityTierTimeout()
+
+	// tierUnitTimeout caps each package in the unit tier. Without it Go's
+	// own ten-minute per-package default applies. The budget was raised to
+	// 1800 seconds because pkg/gateway/podlifecycle/podsession started a
+	// fresh envtest control plane per test and ran for 1700 to 1960 seconds
+	// under the race detector on a loaded host. That package, together with
+	// pkg/gateway/podlifecycle/podclaim, pkg/controller/warmpool,
+	// pkg/controller/sandbox, pkg/gateway/session/recycle, and
+	// pkg/embedded/stack, now shares one control plane per test binary
+	// (TEST-GAPS T-17.4.22, T-17.4.26, T-17.4.28, and T-17.4.23); podsession
+	// passes in under a minute, and sandbox, recycle, and stack in about 15
+	// to 20 seconds each. The slowest package measured since is
+	// pkg/gateway/sessionserver, which still starts a private control plane
+	// per test (TEST-GAPS T-17.4.27) and took 199 seconds inside a scoped
+	// unit-tier run. The budget stays at 1800 seconds because a whole
+	// `./...` run under load has not been measured since the change.
+	// Override: LENNY_TEST_UNIT_TIMEOUT.
+	tierUnitTimeout = tierTimeout("LENNY_TEST_UNIT_TIMEOUT", 1800*time.Second)
 
 	// tierComponentTimeout caps the component tier. Component tests
 	// stand up testcontainers (Postgres, Redis, MinIO) and run
@@ -51,17 +81,34 @@ var (
 	// LENNY_TEST_COMPONENT_TIMEOUT.
 	tierComponentTimeout = tierTimeout("LENNY_TEST_COMPONENT_TIMEOUT", 600*time.Second)
 
-	// tierIntegrationTimeout caps the integration tier. The suite
-	// boots cmd/lenny-gateway as a subprocess per test against the
-	// compose stack and runs end-to-end over HTTP; the full battery
-	// takes roughly four to five minutes on a developer host, so the
-	// budget sits at the long-tier cap with margin above that.
+	// tierIntegrationTimeout caps the integration tier. The suite boots
+	// cmd/lenny-gateway as a subprocess per test against the compose stack
+	// and runs end-to-end over HTTP.
+	//
+	// The earlier four-to-five-minute figure was measured while most of the
+	// suite was refused at session creation and returned in milliseconds.
+	// A passing tests/tier4_integration package took 2568 seconds before
+	// its lifecycle harnesses moved onto a shared control plane and a
+	// shared Postgres container (TEST-GAPS T-17.4.32), and 1679 seconds
+	// after, when it still ran nearly serially. Once each subprocess
+	// command was linked once per test binary, the remaining per-test
+	// Postgres containers moved onto the shared one, and the tests that own
+	// their fixtures ran in parallel (TEST-GAPS T-17.4.33), four
+	// consecutive runs on the 8-core developer host on 2026-10-28 took 351
+	// to 365 seconds at a load average of 5 to 9, against 1773 seconds for
+	// the run before the change on the same host. The budget stays at 1800
+	// seconds, which leaves room for a loaded host and for growth.
 	// Override: LENNY_TEST_INTEGRATION_TIMEOUT.
-	tierIntegrationTimeout = tierTimeout("LENNY_TEST_INTEGRATION_TIMEOUT", 600*time.Second)
+	tierIntegrationTimeout = tierTimeout("LENNY_TEST_INTEGRATION_TIMEOUT", 1800*time.Second)
 
-	// tierE2EKindTimeout caps the e2e_kind tier. Override:
+	// tierE2EKindTimeout caps the e2e_kind tier. The suite drives a live
+	// Kind cluster over kubectl and in-cluster probe pods, and one case
+	// stands up and tears down a second Kind cluster of its own to
+	// exercise etcd encryption at rest, so a whole-package run is tens of
+	// minutes. The ten-minute figure predated that case and aborted the
+	// package part-way through the first lifecycle test. Override:
 	// LENNY_TEST_E2E_KIND_TIMEOUT.
-	tierE2EKindTimeout = tierTimeout("LENNY_TEST_E2E_KIND_TIMEOUT", 600*time.Second)
+	tierE2EKindTimeout = tierTimeout("LENNY_TEST_E2E_KIND_TIMEOUT", 3600*time.Second)
 
 	// tierE2ECloudTimeout caps the e2e_cloud tier. Override:
 	// LENNY_TEST_E2E_CLOUD_TIMEOUT.
@@ -71,6 +118,20 @@ var (
 	// LENNY_TEST_DOCS_TIMEOUT.
 	tierDocsTimeout = tierTimeout("LENNY_TEST_DOCS_TIMEOUT", 60*time.Second)
 )
+
+// securityTimeoutEnv names the environment override for the security
+// tier's go-test budget, and defaultSecurityTimeout is the budget that
+// applies when the override is unset or unparseable.
+const (
+	securityTimeoutEnv     = "LENNY_TEST_SECURITY_TIMEOUT"
+	defaultSecurityTimeout = 3600 * time.Second
+)
+
+// securityTierTimeout resolves the security tier's go-test budget from
+// securityTimeoutEnv, falling back to defaultSecurityTimeout.
+func securityTierTimeout() time.Duration {
+	return tierTimeout(securityTimeoutEnv, defaultSecurityTimeout)
+}
 
 // tierTimeout resolves a per-tier go-test budget. It returns the
 // duration parsed from the named environment variable when that value

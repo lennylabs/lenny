@@ -10,7 +10,7 @@ import (
 // TestEnvironmentTotals_SumsPerEnvironment_spec_15_1_840 verifies the
 // environment billing rollup sums only the named environment's events,
 // isolates other environments, and excludes sessions that name no
-// environment. spec: §15.1 line 840; §10.6 line 663. F-15.1.3.
+// environment. spec: §15.1; §10.6. F-15.1.3.
 func TestEnvironmentTotals_SumsPerEnvironment_spec_15_1_840(t *testing.T) {
 	m := NewMemory()
 	ctx := context.Background()
@@ -51,7 +51,7 @@ func TestEnvironmentTotals_SumsPerEnvironment_spec_15_1_840(t *testing.T) {
 // production commit path does not stamp one). Reconciliation matches the
 // correction to the original by sequence, so the corrected original stays
 // in the environment rollup with the accurate figure. spec: §11.2.1;
-// §15.1 line 840. F-15.1.3.
+// §15.1. F-15.1.3.
 func TestEnvironmentTotals_AppliesCorrections_spec_11_2_1(t *testing.T) {
 	m := NewMemory()
 	ctx := context.Background()
@@ -87,7 +87,7 @@ func TestEnvironmentTotals_AppliesCorrections_spec_11_2_1(t *testing.T) {
 // empty environment id never aggregates the no-environment sessions: a
 // session not scoped to an environment carries an empty environment id,
 // and the rollup must not treat that as a real environment bucket.
-// spec: §10.6 line 663 (empty for sessions not scoped to an environment).
+// spec: §10.6.
 // F-15.1.3.
 func TestEnvironmentTotals_EmptyEnvironmentMatchesNothing(t *testing.T) {
 	m := NewMemory()

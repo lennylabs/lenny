@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// spec: §25.4 line 1668 — F-COV-1. When the MCP Management Server is
+// spec: §25.4 — F-COV-1. When the MCP Management Server is
 // unwired (s.mcp == nil), GET /v1/admin/me/authorized-tools returns 503
 // AUTHORIZED_TOOLS_UNAVAILABLE with a fallback hint that names the
 // gateway-hosted OpenAPI document absolute-to-gateway, so an agent that
@@ -45,7 +45,7 @@ func TestAuthorizedToolsHintAbsoluteToGateway_spec_25_4_1668(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 1668 — F-COV-1. On the dev / embedded path with no
+// spec: §25.4 — F-COV-1. On the dev / embedded path with no
 // gateway URL, the AUTHORIZED_TOOLS_UNAVAILABLE hint falls back to the
 // relative OpenAPI path rather than emitting a bare host.
 func TestAuthorizedToolsHintRelativeFallback_spec_25_4_1668(t *testing.T) {

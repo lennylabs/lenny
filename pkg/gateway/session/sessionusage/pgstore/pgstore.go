@@ -11,7 +11,7 @@
 // client-supplied value so a future staleness sweep compares against the
 // database clock.
 //
-// spec: §8.8 lines 897-917; §4.9 line 1468.
+// spec: §8.8; §4.9.
 package pgstore
 
 import (
@@ -28,9 +28,9 @@ import (
 // Store is the Postgres-backed sessionusage.Store. Construct with New.
 type Store struct {
 	pool *pgxpool.Pool
-	// read is the §12.3 line 146 read-replica pool for the read-heavy
+	// read is the §12.3 read-replica pool for the read-heavy
 	// rollup lookups. It is set to pool unless WithReadPool wires a
-	// separate reader; writes always use pool. spec: §12.3 line 146.
+	// separate reader; writes always use pool. spec: §12.3.
 	read *pgxpool.Pool
 }
 
@@ -39,7 +39,7 @@ type Option func(*Store)
 
 // WithReadPool routes the read paths (Get / GetMany) to a separate
 // read-replica pool. A nil pool keeps reads on the primary.
-// spec: §12.3 line 146.
+// spec: §12.3.
 func WithReadPool(read *pgxpool.Pool) Option {
 	return func(s *Store) {
 		if read != nil {

@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// spec: §5.1 lines 132-158 — the bootstrap upsert path applies the same
+// spec: §5.1 — the bootstrap upsert path applies the same
 // derived-runtime registration rules as POST /v1/admin/runtimes. A seed
 // referencing a missing base, setting a prohibited field, or chaining a
 // derivation is reported as a per-entry error instead of silently
@@ -53,7 +53,7 @@ func TestBootstrapRejectsInvalidDerivedRuntime(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 199 — the bootstrap path also enforces the derived
+// spec: §5.1 — the bootstrap path also enforces the derived
 // runtimeOptionsSchema property-subset rule.
 func TestBootstrapRejectsForbiddenOptionsSchemaProperty(t *testing.T) {
 	router, _, runtimes, _, _ := newBootstrapRouter(t)
@@ -78,7 +78,7 @@ func TestBootstrapRejectsForbiddenOptionsSchemaProperty(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 51 — the bootstrap upsert path enforces labels-required
+// spec: §5.1 — the bootstrap upsert path enforces labels-required
 // on a newly-registered runtime, mirroring POST /v1/admin/runtimes. An
 // update of an existing runtime may omit labels (the stored set persists).
 func TestBootstrapRejectsRuntimeWithoutLabels_spec_5_1_51(t *testing.T) {

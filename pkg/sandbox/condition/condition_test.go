@@ -48,7 +48,7 @@ func newClient(t *testing.T, sb *lennyv1.Sandbox) client.Client {
 	return c
 }
 
-// spec: §6.2 line 305 / §4.6.1 — distinct lifecycle condition types
+// spec: §6.2 / §4.6.1 — distinct lifecycle condition types
 // accumulate as history; they do not overwrite one another because each
 // Type is owned by its own SSA field manager.
 func TestApplyAccumulatesDistinctConditions_spec_6_2_305(t *testing.T) {
@@ -93,7 +93,7 @@ func TestApplyAccumulatesDistinctConditions_spec_6_2_305(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 305 — re-applying the same condition Type updates that
+// spec: §6.2 — re-applying the same condition Type updates that
 // entry in place (listType=map keyed by type) rather than duplicating it.
 func TestApplyUpdatesSameTypeInPlace_spec_6_2_305(t *testing.T) {
 	sb := &lennyv1.Sandbox{

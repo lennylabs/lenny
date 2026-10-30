@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// RetranscribeRow is one audit row the §12.3.7 retranscribe worker
+// RetranscribeRow is one audit row the retranscribe worker
 // re-publishes. The worker re-serializes a byte-identical CloudEvents
 // envelope from the canonical Postgres tuple — same id, source, time,
 // and OCSF data payload — so downstream de-duplication by CloudEvents
@@ -31,7 +31,7 @@ type RetranscribeRow struct {
 	RetryCount int
 }
 
-// RetranscribeStore is the §12.3.7 surface the retranscribe worker
+// RetranscribeStore is the surface the retranscribe worker
 // sweeps. It reads rows in (failed | retry_pending) state whose
 // retry_count is below the limit and writes back their publish state.
 type RetranscribeStore interface {
@@ -54,7 +54,7 @@ type RetranscribePublisher interface {
 	Publish(ctx context.Context, tenantID TenantID, topic EventTopic, event Event) error
 }
 
-// RetranscribeMetrics is the §12.3.7 retranscribe-worker metric
+// RetranscribeMetrics is the retranscribe-worker metric
 // surface. A nil value is a valid no-op.
 type RetranscribeMetrics interface {
 	// Attempt counts a retranscribe attempt, labeled by outcome
@@ -66,7 +66,7 @@ type RetranscribeMetrics interface {
 	FinalFailure(topic EventTopic)
 }
 
-// RetranscribeConfig pins the §12.3.7 retranscribe-worker parameters.
+// RetranscribeConfig pins the retranscribe-worker parameters.
 type RetranscribeConfig struct {
 	// RetryInterval is eventBus.retryInterval (default 60s): the sweep
 	// cadence.
@@ -82,7 +82,7 @@ type RetranscribeConfig struct {
 	BatchSize int
 }
 
-// DefaultRetranscribeConfig returns the §12.3.7 defaults.
+// DefaultRetranscribeConfig returns the retranscribe-worker defaults.
 func DefaultRetranscribeConfig() RetranscribeConfig {
 	return RetranscribeConfig{
 		RetryInterval:    60 * time.Second,
@@ -91,7 +91,7 @@ func DefaultRetranscribeConfig() RetranscribeConfig {
 	}
 }
 
-// Retranscriber is the §12.3.7 EventBus retranscribe worker. It is the
+// Retranscriber is the EventBus retranscribe worker. It is the
 // correctness layer that guarantees every `failed` audit row is
 // eventually re-published even when the in-memory replay buffer is
 // lost. Production runs it leader-elected (lock key
@@ -136,7 +136,7 @@ type SweepResult struct {
 	TerminalFailures int
 }
 
-// Sweep runs one §12.3.7 retranscribe pass. For each eligible row it
+// Sweep runs one retranscribe pass. For each eligible row it
 // re-invokes Publish with the byte-identical envelope and applies the
 // state transition:
 //
@@ -193,7 +193,7 @@ func (r *Retranscriber) Sweep(ctx context.Context) (SweepResult, error) {
 	return res, nil
 }
 
-// Run is the §12.3.7 retranscribe sweep loop. It drives Sweep every
+// Run is the retranscribe sweep loop. It drives Sweep every
 // RetryInterval until ctx is cancelled. Callers run it in a goroutine,
 // guarded by leader election in production.
 func (r *Retranscriber) Run(ctx context.Context) {
@@ -210,7 +210,7 @@ func (r *Retranscriber) Run(ctx context.Context) {
 	}
 }
 
-// classifyError maps a publish error to its §12.3.7 error_type. A
+// classifyError maps a publish error to its error_type. A
 // *PublishError carries the type directly; any other error is treated
 // as backend_unavailable.
 func classifyError(err error) PublishErrorType {

@@ -14,7 +14,7 @@ import (
 // RetryPolicyEvaluator. The §4.8 built-in interceptor table fixes it at
 // 600, above GuardrailsInterceptor (400) and every other built-in: at
 // PostRoute an external interceptor at priority > 600 is the only one
-// guaranteed to run after all built-ins. spec: §4.8 line 977.
+// guaranteed to run after all built-ins. spec: §4.8.
 const RetryPolicyEvaluatorPriority int32 = 600
 
 // RetryPolicyEvaluatorName identifies RetryPolicyEvaluator in audit rows
@@ -27,7 +27,7 @@ const RetryPolicyEvaluatorName = "RetryPolicyEvaluator"
 const DefaultMaxRetries = 2
 
 // RetryState is the §7.3 session retry state RetryPolicyEvaluator reads
-// at PostRoute. RetryCount is the §4.2 line 158 monotonic retry counter
+// at PostRoute. RetryCount is the §4.2 monotonic retry counter
 // the coordinator bumps on each automatic recovery attempt.
 type RetryState struct {
 	// RetryCount is how many times the watchdog/coordinator has retried
@@ -53,8 +53,7 @@ type RetryStateLookup interface {
 // per-DelegationPolicy RetryPolicy source layers on here as that field
 // set is modeled (v1 models only the retry counter, so the default
 // applies); this mirrors the MaxInputSizeResolver seam on
-// DelegationPolicyEvaluator. spec: §4.8 line 977 ("RetryPolicy from the
-// effective DelegationPolicy"), §7.3 retryPolicy.maxRetries.
+// DelegationPolicyEvaluator. spec: §4.8, §7.3 retryPolicy.maxRetries.
 type RetryPolicyResolver interface {
 	ResolveMaxRetries(ctx context.Context, tenantID, sessionID string) (maxRetries int, ok bool)
 }

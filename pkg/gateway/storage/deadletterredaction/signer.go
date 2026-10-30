@@ -34,8 +34,8 @@ func NewHMACReceiptSigner(keyID string, key []byte) *HMACReceiptSigner {
 
 // NewKMSReceiptSigner generates a fresh HMAC-SHA256 audit signing key,
 // envelope-seals it under the KEK named by kekAlias, and returns a signer
-// over the unwrapped key. The key never leaves the process in plaintext;
-// it is the redaction-receipt analog of jwt.NewKMSSigner.
+// over the unwrapped key. The key is persisted only in its envelope-
+// sealed form and exists in plaintext only in this process's memory.
 func NewKMSReceiptSigner(ctx context.Context, provider kms.Provider, kekAlias, keyID string) (*HMACReceiptSigner, error) {
 	if provider == nil {
 		return nil, errors.New("deadletterredaction: nil kms provider")

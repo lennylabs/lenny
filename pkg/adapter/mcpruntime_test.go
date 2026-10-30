@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
+
 	"github.com/lennylabs/lenny/pkg/adapter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -21,7 +23,9 @@ import (
 var mcpReferenceBinary string
 
 func TestMain(m *testing.M) {
-	tmp, err := os.MkdirTemp("", "mcp-reference-*")
+	// The fixture binary lives under the harness temp root rather than
+	// /tmp, which a host cleanup can empty mid-run (TEST-GAPS T-4.7.23).
+	tmp, err := testtmp.MkdirTemp("mcp-reference-*")
 	if err != nil {
 		panic("adapter TestMain: mkdtemp: " + err.Error())
 	}
@@ -30,6 +34,7 @@ func TestMain(m *testing.M) {
 	mcpReferenceBinary = filepath.Join(tmp, "mcp-reference")
 	cmd := exec.Command("go", "build", "-o", mcpReferenceBinary, "./cmd/runtimes/mcp-reference")
 	cmd.Dir = repoRootForTest()
+	cmd.Env = append(os.Environ(), testtmp.Env(filepath.Dir(tmp))...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		panic("adapter TestMain: build mcp-reference: " + err.Error())
@@ -49,7 +54,7 @@ func repoRootForTest() string {
 	return wd
 }
 
-// messageEnvelope builds a §15.4.1 `message` envelope that the type:
+// messageEnvelope builds a §28.5.3 `message` envelope that the type:
 // mcp adapter path maps onto an MCP tools/call: it names the tool and
 // carries the call arguments.
 func messageEnvelope(id, tool string, args map[string]any) []byte {
@@ -109,8 +114,8 @@ func TestMCPRuntimeMessageMapsToToolCall(t *testing.T) {
 		t.Fatalf("Output: %v", err)
 	}
 
-	// A §15.4.1 message naming the `echo` tool maps onto an MCP
-	// tools/call; the result comes back as a §15.4.1 `response` frame.
+	// A §28.5.3 message naming the `echo` tool maps onto an MCP
+	// tools/call; the result comes back as a §28.5.3 `response` frame.
 	env := messageEnvelope("msg-1", "echo", map[string]any{"text": "hello mcp"})
 	if err := rt.WriteEnvelope("sess-1", env); err != nil {
 		t.Fatalf("WriteEnvelope: %v", err)
@@ -253,7 +258,7 @@ func TestMCPRuntimeInterruptBeforeStartErrors(t *testing.T) {
 func TestAdapterServerDrivesMCPRuntime(t *testing.T) {
 	rt := &adapter.MCPRuntime{Command: mcpReferenceBinary}
 	s := adapter.New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.RuntimeKind = adapter.RuntimeKindMCP
 	s.Runtime = rt
 
@@ -271,7 +276,7 @@ func TestAdapterServerDrivesMCPRuntime(t *testing.T) {
 		t.Fatalf("Output: %v", err)
 	}
 
-	// SendMessage delivers a §15.4.1 message; the type: mcp path maps it
+	// SendMessage delivers a §28.5.3 message; the type: mcp path maps it
 	// onto an MCP tools/call against the agent's MCP server.
 	env := messageEnvelope("msg-1", "echo", map[string]any{"text": "round trip"})
 	if _, err := s.SendMessage(ctx, &adapterv1.SendMessageRequest{
@@ -288,7 +293,8 @@ func TestAdapterServerDrivesMCPRuntime(t *testing.T) {
 
 	// Shutdown terminates the runtime and releases the pod.
 	resp, err := s.Shutdown(ctx, &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-mcp"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-mcp"},
 	})
 	if err != nil {
 		t.Fatalf("Shutdown: %v", err)
@@ -305,7 +311,7 @@ func TestAdapterServerSkipsPlatformMCPForMCPRuntime(t *testing.T) {
 	// MCP runtime kind and an MCP socket left unset.
 	rt := &adapter.MCPRuntime{Command: mcpReferenceBinary}
 	s := adapter.New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.ManifestDir = t.TempDir()
 	s.RuntimeKind = adapter.RuntimeKindMCP
 	s.Runtime = rt
@@ -317,7 +323,8 @@ func TestAdapterServerSkipsPlatformMCPForMCPRuntime(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_, _ = s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-			SessionId: &adapterv1.SessionId{Value: "sess-mcp"},
+			UnconditionalTeardown: true,
+			SessionId:             &adapterv1.SessionId{Value: "sess-mcp"},
 		})
 	})
 }

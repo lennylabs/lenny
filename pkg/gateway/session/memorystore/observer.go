@@ -4,7 +4,7 @@ package memorystore
 
 import "log"
 
-// Operation labels enumerate the six §9.4 / §16.1 line 151
+// Operation labels enumerate the six §9.4 / §16.1
 // `lenny_memory_store_operation_duration_seconds` operation labels.
 // Every MemoryStore implementation records one observation per call
 // under exactly one of these. The whole-scope erasure labels
@@ -12,7 +12,7 @@ import "log"
 // MemoryStoreErasureDurationHigh alert and are distinct from the per-
 // record OpDelete (a Delete(ctx, scope, ids) call against a single id).
 //
-// spec: §9.4 line 200, §16.1 line 151.
+// spec: §9.4, §16.1.
 const (
 	OpWrite          = "write"
 	OpQuery          = "query"
@@ -22,7 +22,7 @@ const (
 	OpDeleteByTenant = "delete_by_tenant"
 )
 
-// ThresholdFraction is the §9.4 line 202 per-user headroom fraction.
+// ThresholdFraction is the §9.4 per-user headroom fraction.
 // A Write commit that leaves the writing user at >= ThresholdFraction
 // of memory.maxMemoriesPerUser increments the headroom counter.
 const ThresholdFraction = 0.8
@@ -37,7 +37,7 @@ const ThresholdFraction = 0.8
 // A nil Observer is permitted; the default backends short-circuit when
 // no Observer is wired. NoopObserver is the explicit no-op for unit
 // tests that exercise the instrumentation paths without surfacing
-// metrics. spec: §9.4 line 200.
+// metrics. spec: §9.4.
 type Observer interface {
 	ObserveOperation(operation string, seconds float64)
 	IncError(operation, errorType string)
@@ -61,7 +61,7 @@ func (NoopObserver) SetRecordCount(string, int) {}
 // IncUserOverThreshold implements Observer.
 func (NoopObserver) IncUserOverThreshold(string) {}
 
-// ThresholdCount returns the §9.4 line 202 80%-of-cap rounding-up
+// ThresholdCount returns the §9.4 80%-of-cap rounding-up
 // threshold for maxPerUser. A maxPerUser of 10000 yields 8000; a
 // small bound (used in tests) still allows the threshold to be reached
 // before the cap. A non-positive maxPerUser yields 0.
@@ -96,10 +96,10 @@ func ClassifyError(err error) string {
 
 // LogOverThreshold writes a structured log line that accompanies an
 // IncUserOverThreshold call, attributing the over-cap user to the
-// §9.4 line 202 "structured logs emitted alongside each increment"
+// §9.4
 // contract. The function is on the package so every backend that
 // satisfies the §9.4 contract emits the same line format.
 func LogOverThreshold(backend, tenantID, userID string, count, max int) {
-	log.Printf("memorystore: §9.4 line 202 user over threshold backend=%s tenant=%s user=%s count=%d max=%d threshold=%.2f",
+	log.Printf("memorystore: §9.4 user over threshold backend=%s tenant=%s user=%s count=%d max=%d threshold=%.2f",
 		backend, tenantID, userID, count, max, ThresholdFraction)
 }

@@ -20,7 +20,7 @@
 // circuits to ErrTokenServiceUnavailable without touching the Token Service
 // stub. The OnExtend dispatcher mirrors cmd/lenny-gateway's credRenewalWiring.
 //
-// spec: §4.9 line 1470 (Token Service unavailability guard).
+// spec: §4.9.
 package tier4_integration_test
 
 import (
@@ -60,7 +60,7 @@ const (
 	guardProvider = "anthropic_direct"
 	// guardDirectPayload is a direct-mode lease payload: a direct-mode
 	// lease with a positive expiry arms the adapter expiry timer the guard
-	// re-arms. spec: §4.9 line 1149.
+	// re-arms. spec: §4.9.
 	guardDirectPayload = `{"deliveryMode":"direct","materializedConfig":{"apiKey":"sk-ant-x"}}`
 )
 
@@ -101,7 +101,7 @@ type forcedOpenRenewer struct {
 }
 
 func (r *forcedOpenRenewer) Renew(_ context.Context, lease credrenewal.Lease) (credrenewal.Lease, error) {
-	_, err := r.client.Assign(r.pool, lease.SessionID, "", "acme")
+	_, err := r.client.Assign(r.pool, lease.SessionID, "", "acme", 0)
 	if errors.Is(err, credassign.ErrTokenServiceUnavailable) {
 		return credrenewal.Lease{}, fmt.Errorf("%w: %w", credrenewal.ErrRenewInfraUnavailable, err)
 	}
@@ -158,16 +158,16 @@ func guardOnExtend(leases *credleasestore.Store, adapterCli *adapterclient.Clien
 
 // serveGuardAdapter serves a real adapter.Server over an in-memory gRPC
 // connection and returns a gateway adapter client wired to it plus the
-// credentials directory the direct-mode file is written under.
+// credentials root the per-session direct-mode files are written under.
 func serveGuardAdapter(t *testing.T) (*adapterclient.Client, string) {
 	t.Helper()
 	base := t.TempDir()
-	credsDir := filepath.Join(base, "run", "lenny")
-	if err := os.MkdirAll(credsDir, 0o755); err != nil {
+	credsRoot := filepath.Join(base, "run", "lenny")
+	if err := os.MkdirAll(credsRoot, 0o755); err != nil {
 		t.Fatalf("make credentials dir: %v", err)
 	}
 	s := adapter.New("guard-integration")
-	s.CredentialsDir = credsDir
+	s.CredentialsDir = credsRoot
 	s.WorkspaceBase = filepath.Join(base, "workspace")
 	s.SessionsRoot = filepath.Join(base, "sessions")
 	s.ArtifactsRoot = filepath.Join(base, "artifacts")
@@ -186,10 +186,18 @@ func serveGuardAdapter(t *testing.T) (*adapterclient.Client, string) {
 		t.Fatalf("dial guard adapter: %v", err)
 	}
 	t.Cleanup(func() { _ = cl.Close() })
-	return cl, credsDir
+	return cl, credsRoot
 }
 
-// credentialFileHasProvider reports whether the adapter credential file under
+// guardSessionCredentialsDir names the session's own §6.1 credential
+// directory under the adapter's credentials root. Every session is bound to
+// a slot on every pod, so the file always lands under slots/{sessionId}.
+// spec: §6.1.
+func guardSessionCredentialsDir(credsRoot, sessionID string) string {
+	return filepath.Join(credsRoot, "slots", sessionID)
+}
+
+// credentialFileHasProvider reports whether the session credential file under
 // dir still carries an entry for provider. A missing file (the entry was
 // deleted) yields false.
 func credentialFileHasProvider(t *testing.T, dir, provider string) bool {
@@ -229,18 +237,21 @@ func guardDirectStoreRecord(leaseID, sessionID string, issuedAt, expiresAt time.
 // breaker-open worker sweep extends the enforced deadline far into the future,
 // so the file survives past the original deadline.
 //
-// spec: §4.9 (line 1470, direct-mode ExtendCredentialLease enforcement point)
+// spec: §4.9
 //
 // diagnosis: a transient Token Service outage terminated a still-valid direct-
 // mode session's credential at its original deadline instead of extending it,
 // or the extension path made a Token Service call. The worker did not
 // recognize the breaker-open sentinel, or OnExtend did not reach the adapter.
 func TestGuardDirectModeReArmsAdapterTimerNoTokenServiceCall_spec_4_9(t *testing.T) {
-	adapterCli, credsDir := serveGuardAdapter(t)
+	adapterCli, credsRoot := serveGuardAdapter(t)
+	credsDir := guardSessionCredentialsDir(credsRoot, "run-direct")
 	ctx := context.Background()
 
 	start := time.Now()
 	originalExpiry := start.Add(1500 * time.Millisecond)
+	// The assignment is a bind attempt's credential stage, so it carries a
+	// non-empty bind attempt token. spec: §4.7.1 (role and gateway RPC contract).
 	if err := adapterCli.AssignCredentials(ctx, "run-direct", map[string]*adapterv1.CredentialLease{
 		guardProvider: {
 			LeaseId:         "cl-direct",
@@ -248,7 +259,7 @@ func TestGuardDirectModeReArmsAdapterTimerNoTokenServiceCall_spec_4_9(t *testing
 			Payload:         []byte(guardDirectPayload),
 			ExpiresAtUnixMs: originalExpiry.UnixMilli(),
 		},
-	}); err != nil {
+	}, "attempt-guard"); err != nil {
 		t.Fatalf("assign direct lease to adapter: %v", err)
 	}
 	if !credentialFileHasProvider(t, credsDir, guardProvider) {
@@ -323,7 +334,7 @@ func (noopUsage) RecordUsage(context.Context, credential.Lease, llmproxy.Usage) 
 // expiry, so an un-extended request is rejected LEASE_EXPIRED while an extended
 // one forwards upstream.
 //
-// spec: §4.9 (line 1470, proxy-mode lease-store enforcement point)
+// spec: §4.9
 //
 // diagnosis: a still-valid proxy session was rejected LEASE_EXPIRED under a
 // transient Token Service outage instead of being extended, or the extension
@@ -347,7 +358,7 @@ func TestGuardProxyModeAdvancesLeaseStoreNoTokenServiceCall_spec_4_9(t *testing.
 		RenewBeforeSeconds: 60,
 		Credentials:        []credassign.PoolCredential{{ID: "cred-1", APIKey: "sk-upstream-secret", Healthy: true}},
 	})
-	lease, err := assign.Assign("claude-prod", "run-proxy", "", "acme")
+	lease, err := assign.Assign("claude-prod", "run-proxy", "", "acme", 0)
 	if err != nil {
 		t.Fatalf("mint proxy lease: %v", err)
 	}

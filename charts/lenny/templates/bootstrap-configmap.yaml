@@ -27,7 +27,7 @@ metadata:
 data:
   bootstrap-values.yaml: |
     {{- /*
-    §26.2 line 119 — when bootstrap.defaultGithubVcsPool.enabled, append
+    §26.2 — when bootstrap.defaultGithubVcsPool.enabled, append
     the v1 built-in `github` VCS credential pool to the seeded
     credentialPools so a private gitClone source resolves its
     vcs.github.read/.write lease out of the box. Gated on an
@@ -38,7 +38,7 @@ data:
     {{- $gh := .Values.bootstrap.defaultGithubVcsPool -}}
     {{- if and $gh $gh.enabled -}}
     {{- if not $gh.secretRef -}}
-    {{- fail "bootstrap.defaultGithubVcsPool.enabled is true but secretRef is empty; set secretRef to the name of a Secret holding a GitHub App installation token or PAT (§26.2 line 119)." -}}
+    {{- fail "bootstrap.defaultGithubVcsPool.enabled is true but secretRef is empty; set secretRef to the name of a Secret holding a GitHub App installation token or PAT (§26.2)." -}}
     {{- end -}}
     {{- $ghPool := dict "tenantId" ($gh.tenantId | default "default") "name" ($gh.name | default "github-default") "provider" "github" "hostPatterns" ($gh.hostPatterns | default (list "github.com")) "credentials" (list (dict "id" ($gh.credentialId | default "github-app") "secretRef" $gh.secretRef)) -}}
     {{- $pools = append $pools $ghPool -}}

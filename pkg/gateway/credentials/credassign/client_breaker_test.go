@@ -78,7 +78,7 @@ func newStubClient(t *testing.T, respond func(req *tokensv1.AssignCredentialsReq
 	return client, stub, closer
 }
 
-// spec: §4.3 line 211 — consecutive Unavailable failures trip the
+// spec: §4.3 — consecutive Unavailable failures trip the
 // breaker, and subsequent Assign calls fail fast with
 // ErrTokenServiceUnavailable rather than re-issuing the gRPC.
 func TestClientBreakerOpensOnConsecutiveUnavailable(t *testing.T) {
@@ -101,7 +101,7 @@ func TestClientBreakerOpensOnConsecutiveUnavailable(t *testing.T) {
 	// First three calls: gRPC reaches the server, which returns
 	// Unavailable. The breaker counts each failure.
 	for i := 0; i < 3; i++ {
-		_, err := client.Assign("any-pool", "s_1", "", "")
+		_, err := client.Assign("any-pool", "s_1", "", "", 0)
 		if err == nil {
 			t.Fatalf("call %d: Assign succeeded against an Unavailable server", i)
 		}
@@ -115,13 +115,13 @@ func TestClientBreakerOpensOnConsecutiveUnavailable(t *testing.T) {
 
 	// Fourth call: breaker is open; the Client must short-circuit with
 	// ErrTokenServiceUnavailable and never reach the stub server.
-	_, err := client.Assign("any-pool", "s_1", "", "")
+	_, err := client.Assign("any-pool", "s_1", "", "", 0)
 	if !errors.Is(err, credassign.ErrTokenServiceUnavailable) {
 		t.Fatalf("breaker-open call: got %v, want ErrTokenServiceUnavailable", err)
 	}
 }
 
-// spec: §4.3 line 211 — NotFound (user-classified) errors must not
+// spec: §4.3 — NotFound (user-classified) errors must not
 // count against the breaker.
 func TestClientBreakerSkipsNotFound(t *testing.T) {
 	sub := &subsystem.Subsystem{
@@ -138,7 +138,7 @@ func TestClientBreakerSkipsNotFound(t *testing.T) {
 	t.Cleanup(closer)
 
 	for i := 0; i < 5; i++ {
-		_, err := client.Assign("missing", "s_1", "", "")
+		_, err := client.Assign("missing", "s_1", "", "", 0)
 		if !errors.Is(err, credassign.ErrPoolNotFound) {
 			t.Fatalf("call %d: expected ErrPoolNotFound, got %v", i, err)
 		}
@@ -148,7 +148,7 @@ func TestClientBreakerSkipsNotFound(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 211 — a successful response resets consecutive
+// spec: §4.3 — a successful response resets consecutive
 // failure count so a transient blip does not cumulatively trip the
 // breaker.
 func TestClientBreakerResetsOnSuccess(t *testing.T) {
@@ -190,13 +190,13 @@ func TestClientBreakerResetsOnSuccess(t *testing.T) {
 
 	// Two consecutive failures, just under threshold.
 	for i := 0; i < 2; i++ {
-		if _, err := client.Assign("pool", "s_1", "", ""); err == nil {
+		if _, err := client.Assign("pool", "s_1", "", "", 0); err == nil {
 			t.Fatalf("call %d: expected failure, got nil", i)
 		}
 	}
 	failing.Store(false)
 	// Success resets the consecutive-fail counter.
-	if _, err := client.Assign("pool", "s_1", "", ""); err != nil {
+	if _, err := client.Assign("pool", "s_1", "", "", 0); err != nil {
 		t.Fatalf("post-blip Assign: %v", err)
 	}
 	if state := sub.State(); state != subsystem.StateClosed {
@@ -207,14 +207,14 @@ func TestClientBreakerResetsOnSuccess(t *testing.T) {
 	// reset the counter.
 	failing.Store(true)
 	for i := 0; i < 2; i++ {
-		_, _ = client.Assign("pool", "s_1", "", "")
+		_, _ = client.Assign("pool", "s_1", "", "", 0)
 	}
 	if state := sub.State(); state != subsystem.StateClosed {
 		t.Fatalf("after success+2 failures: breaker state = %s, want closed", state)
 	}
 }
 
-// spec: §4.3 line 211 — nil breaker is a no-op: tests/dev mode without
+// spec: §4.3 — nil breaker is a no-op: tests/dev mode without
 // the breaker continue to receive raw gRPC errors.
 func TestClientWithoutBreakerPassesRawErrors(t *testing.T) {
 	client, _, closer := newStubClient(
@@ -226,7 +226,7 @@ func TestClientWithoutBreakerPassesRawErrors(t *testing.T) {
 	)
 	t.Cleanup(closer)
 
-	_, err := client.Assign("pool", "s_1", "", "")
+	_, err := client.Assign("pool", "s_1", "", "", 0)
 	if err == nil {
 		t.Fatal("expected an error against an Unavailable server")
 	}

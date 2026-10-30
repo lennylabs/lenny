@@ -5,11 +5,11 @@
       {
         "hooks": [
           {
-            "command": "f=$(jq -r '(.tool_input.file_path // .tool_input.notebook_path) // empty'); case \"$f\" in /Users/joan/projects/lenny/spec/*|spec/*|./spec/*) if grep -q '^- \\*\\*Status:\\*\\* Approved' /Users/joan/projects/lenny/proposals/*.md 2\u003e/dev/null; then exit 0; fi; echo \"blocked: spec/ is read-only unless an approved spec proposal under proposals/ is pending application. Stage edits via the change-proposal skill, record approval, then apply with the implement-proposal skill. Path: $f\" \u003e\u00262; exit 2 ;; esac",
+            "command": "r=\"$CLAUDE_PROJECT_DIR\"; [ -n \"$r\" ] || r=$(git rev-parse --show-toplevel 2>/dev/null); [ -n \"$r\" ] || r=$PWD; p=$(cat); printf '%s' \"$p\" | node \"$r/.claude/tools/spec-lease.mjs\" hook; c=$?; [ \"$c\" = 0 ] || exit 2",
             "type": "command"
           }
         ],
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit"
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash"
       }
     ]
   },

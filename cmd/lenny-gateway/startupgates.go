@@ -4,17 +4,21 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"log/slog"
 	"os"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/delegation/recovery"
 	"github.com/lennylabs/lenny/pkg/gateway/deployment/devmode"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/pki/tlsprobe"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/observability/slo"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -61,7 +65,7 @@ func (w *gatewayWiring) buildStartupGates() {
 	delegationMaxOrphanTasksPerTenant := f.delegationMaxOrphanTasksPerTenant
 	claimHoldTTLSeconds := f.claimHoldTTLSeconds
 
-	// spec: §17.2 line 86 / §9.2 line 64 — the platform-wide elicitation
+	// spec: §17.2 / §9.2 — the platform-wide elicitation
 	// content-integrity floor is seeded from the
 	// --elicitation-content-integrity-floor flag and then kept live by the
 	// phase-stamp ConfigMap reconcile started below (when a cluster client
@@ -71,9 +75,9 @@ func (w *gatewayWiring) buildStartupGates() {
 	// without a gateway restart. F-17.2.9.
 	w.elicitationFloorProvider = elicitationfloor.NewProvider(*elicitationFloor)
 
-	// spec: §17.4 line 268 — dev-mode hard startup assertion. The
+	// spec: §17.4 — dev-mode hard startup assertion. The
 	// gateway's own listener is plain HTTP; production terminates TLS at
-	// the ingress (the §17 line 7 Deployment+Service+Ingress topology)
+	// the ingress (the §17 Deployment+Service+Ingress topology)
 	// and acknowledges that posture with --tls-terminated-upstream. With
 	// neither dev mode nor that acknowledgment the gateway refuses to
 	// start so a misconfigured staging or production deployment cannot
@@ -82,12 +86,12 @@ func (w *gatewayWiring) buildStartupGates() {
 		log.Fatalf("lenny-gateway: LENNY_TLS_REQUIRED: %v", err)
 	}
 
-	// spec: §5.3 line 677 — in dev mode the default isolation profile
+	// spec: §5.3 — in dev mode the default isolation profile
 	// falls back to runc. Log the mandated warning once at startup so an
 	// accidental production dev-mode install is visible in the logs.
 	if *devMode {
 		log.Printf("lenny-gateway: %s", isolation.DevModeIsolationWarning)
-		// spec: §17.4 line 269 — when dev mode relaxes TLS, log the
+		// spec: §17.4 — when dev mode relaxes TLS, log the
 		// warning at startup and re-broadcast it every minute while the
 		// process runs. F-17.4.6.
 		devmode.StartWarnTicker(context.Background(), devmode.WarnInterval, func(msg string) {
@@ -95,7 +99,7 @@ func (w *gatewayWiring) buildStartupGates() {
 		})
 	}
 
-	// spec: §16.3 line 359 — install the process-wide OpenTelemetry
+	// spec: §16.3 — install the process-wide OpenTelemetry
 	// TracerProvider and W3C trace-context propagator so the §16.3 span
 	// catalog has a real exporter behind it instead of the global no-op
 	// provider. The gateway emits 100% (head) and an OTLP/HTTP exporter
@@ -111,7 +115,7 @@ func (w *gatewayWiring) buildStartupGates() {
 	}
 	w.traceShutdown = traceShutdown
 
-	// spec: §16.5 lines 609, 623 — surface the provisional-SLO startup
+	// spec: §16.5 — surface the provisional-SLO startup
 	// warning unless the Phase 14.5 benchmark gate has set slo.validated,
 	// so a deployment running the unvalidated defaults cannot silently
 	// treat them as customer SLA commitments.
@@ -141,7 +145,7 @@ func (w *gatewayWiring) buildStartupGates() {
 	}
 	w.resolvedNoEnvPolicy = resolvedNoEnvPolicy
 
-	// spec: §10.3 lines 361-371 — startup configuration validation. Each
+	// spec: §10.3 — startup configuration validation. Each
 	// missing required platform key emits a structured LENNY_CONFIG_MISSING
 	// log entry (config_key/scope/remediation fields) and the gateway
 	// refuses to become ready by exiting non-zero so Kubernetes surfaces
@@ -149,7 +153,7 @@ func (w *gatewayWiring) buildStartupGates() {
 	// undefined semantics. noEnvironmentPolicy is gated just above;
 	// playground.devTenantId by playground.Config.Validate; this covers the
 	// OIDC and session-duration keys. The OIDC keys are exempt in dev mode
-	// (§10.3 line 373 / §17.4). F-10.3.14.
+	// (§10.3 / §17.4). F-10.3.14.
 	if missing := validatePlatformConfig(*devMode, *oidcIssuerURL, *oidcClientID, *maxSessionAgeSeconds); len(missing) > 0 {
 		for _, m := range missing {
 			slog.Error("LENNY_CONFIG_MISSING", "config_key", m.configKey, "scope", m.scope, "remediation", m.remediation)
@@ -157,7 +161,15 @@ func (w *gatewayWiring) buildStartupGates() {
 		log.Fatalf("lenny-gateway: %d required platform configuration key(s) missing or invalid (§10.3); see the LENNY_CONFIG_MISSING entries above", len(missing))
 	}
 
-	// spec: §10.3 line 359 — gateway startup TLS probe. Before the replica
+	// spec: §10.2 / §4.9 / §10.3 — the auth.multiTenant switch and the
+	// tenancy.mode value must agree, or the auth chain and the
+	// credential-delivery rejections would enforce different tenancy
+	// postures. A contradictory pair is fatal. T-10.2.11.
+	if err := validateTenancyConfig(*f.tenancyMode, *f.multiTenant); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+
+	// spec: §10.3 — gateway startup TLS probe. Before the replica
 	// is marked ready, verify a TLS handshake to Redis and PgBouncer
 	// succeeds and that a plaintext connection is refused, so a
 	// misconfigured backend (wrong port, missing cert) fails startup
@@ -179,25 +191,58 @@ func (w *gatewayWiring) buildStartupGates() {
 		log.Printf("lenny-gateway: §10.3 startup TLS probe passed (redis=%q pgbouncer=%q)", *startupProbeRedisAddr, *startupProbePgBouncerAddr)
 	}
 
-	// spec: §4.2 line 165 — LENNY_POOLER_MODE must be one of the two
+	if err := validatePrimaryReadTimeout(*f.sessionPrimaryReadTimeout); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+	if err := validateLifecycleTickBudget(*f.lifecycleTickBudget); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+	if err := validateCapabilityTokenTTLFlag(*f.capabilityTokenTTL); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+	if err := validateErasureMaxConcurrentJobs(*f.erasureMaxConcurrentJobs); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+	if err := validateSuspensionFlags(*f.maxSuspendedSessionSeconds, *f.delegationBudgetKeyTTLSeconds, *f.suspendedBacklogRecheckSeconds); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+	if err := validateSlotReaperFlags(slotReaperSettings{
+		interval:                   *f.slotReaperInterval,
+		rate:                       *f.slotReaperRate,
+		terminalAge:                *f.slotReaperTerminalAge,
+		maxFinalizingSeconds:       *f.maxFinalizingTimeoutSeconds,
+		maxResumingSeconds:         *f.maxResumingSeconds,
+		sealSeconds:                *f.workspaceSealMaxDurationSeconds,
+		streamFailureReportTimeout: *f.streamFailureReportTimeout,
+	}); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+	if err := validateBudgetStateSweepInterval(*f.budgetStateSweepInterval); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+	if err := validateUsageQuiescenceTimeout(*f.delegationUsageQuiescenceTimeoutSeconds, *f.workspaceSealMaxDurationSeconds); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+
+	// spec: §4.2 — LENNY_POOLER_MODE must be one of the two
 	// documented values. The trigger-level guard runs regardless of
 	// this check; failing at startup keeps a misconfigured deploy
 	// from running silently with the wrong assumed posture.
 	switch *poolerMode {
 	case "transactional", "external":
-		log.Printf("lenny-gateway: pooler-mode=%s (§4.2 line 165)", *poolerMode)
+		log.Printf("lenny-gateway: pooler-mode=%s (§4.2)", *poolerMode)
 	default:
-		log.Fatalf("lenny-gateway: --pooler-mode must be `transactional` or `external`, got %q (§4.2 line 165)", *poolerMode)
+		log.Fatalf("lenny-gateway: --pooler-mode must be `transactional` or `external`, got %q (§4.2)", *poolerMode)
 	}
 
-	// spec: §11.3 line 224 — surface the effective
+	// spec: §11.3 — surface the effective
 	// `delegation.usageQuiescenceTimeoutSeconds` at startup so operators
 	// see the value the §8.10 tree-recovery orchestrator will consume.
 	// The recovery package exposes the Config field; the gateway-side
 	// orchestrator threads `delegationQuiescenceCfg` to keep one source
 	// of truth. F-11.3.19.
 	//
-	// spec: §8.10 lines 1022-1023 / 1042 — extend the same Config to
+	// spec: §8.10 — extend the same Config to
 	// carry `maxLevelRecoverySeconds` / `maxTreeRecoverySeconds` so the
 	// recovery package consumes the live operator overrides. F-8.10.6.
 	delegationQuiescenceCfg := recovery.Config{
@@ -205,11 +250,11 @@ func (w *gatewayWiring) buildStartupGates() {
 		TreeTimeout:            time.Duration(*delegationMaxTreeRecoverySeconds) * time.Second,
 		UsageQuiescenceTimeout: time.Duration(*delegationUsageQuiescenceTimeoutSeconds) * time.Second,
 	}
-	log.Printf("lenny-gateway: delegation.usageQuiescenceTimeoutSeconds=%ds (§11.3 line 224)",
+	log.Printf("lenny-gateway: delegation.usageQuiescenceTimeoutSeconds=%ds (§11.3)",
 		int(delegationQuiescenceCfg.QuiescenceDeadline(time.Time{}).Sub(time.Time{}).Seconds()))
-	log.Printf("lenny-gateway: delegation.maxLevelRecoverySeconds=%ds delegation.maxTreeRecoverySeconds=%ds (§8.10 lines 1022-1023)",
+	log.Printf("lenny-gateway: delegation.maxLevelRecoverySeconds=%ds delegation.maxTreeRecoverySeconds=%ds (§8.10)",
 		*delegationMaxLevelRecoverySeconds, *delegationMaxTreeRecoverySeconds)
-	log.Printf("lenny-gateway: delegation.cascadeTimeoutSeconds=%ds delegation.maxOrphanTasksPerTenant=%d (§8.10 lines 1078, 1103)",
+	log.Printf("lenny-gateway: delegation.cascadeTimeoutSeconds=%ds delegation.maxOrphanTasksPerTenant=%d (§8.10)",
 		*delegationCascadeTimeoutSeconds, *delegationMaxOrphanTasksPerTenant)
 	_ = delegationQuiescenceCfg
 
@@ -223,4 +268,148 @@ func (w *gatewayWiring) buildStartupGates() {
 		log.Printf("lenny-gateway: WARNING: claimHoldTTLSeconds=%ds exceeds the advisory ceiling of %ds (§4.6.1); a long reserved hold depresses apparent idle inventory and delays retirement-limit evaluation",
 			*claimHoldTTLSeconds, recycle.HighClaimHoldTTLWarnSeconds)
 	}
+}
+
+// validatePrimaryReadTimeout rejects a non-positive
+// --session-primary-read-timeout: every primary session-row read carries a
+// deadline, so a non-positive bound is a configuration error rather than an
+// unbounded read. spec: §12.3 (Postgres HA Requirements).
+func validatePrimaryReadTimeout(d time.Duration) error {
+	if d <= 0 {
+		return fmt.Errorf("--session-primary-read-timeout must be positive, got %s (§12.3)", d)
+	}
+	return nil
+}
+
+// validateCapabilityTokenTTLFlag rejects a --capability-token-ttl-seconds
+// value outside the auth.capabilityTokenTtlSeconds bound. The gate runs whether
+// or not the playground is enabled, so a misrendered value fails at startup
+// rather than on the first playground mint.
+// spec: §10.2 (Authentication) "JWT claims" expiry.
+func validateCapabilityTokenTTLFlag(seconds int) error {
+	if err := jwt.ValidateCapabilityTokenTTL(time.Duration(seconds) * time.Second); err != nil {
+		return fmt.Errorf("--capability-token-ttl-seconds: %w", err)
+	}
+	return nil
+}
+
+// validateLifecycleTickBudget rejects a non-positive
+// --lifecycle-tick-budget, which would expire every lifecycle drain
+// before its first session and stall every tenant deletion at Phase 2.
+func validateLifecycleTickBudget(d time.Duration) error {
+	if d <= 0 {
+		return fmt.Errorf("--lifecycle-tick-budget must be positive, got %s (§12.8)", d)
+	}
+	return nil
+}
+
+// validateSuspensionFlags rejects a delegation budget key TTL that does not
+// exceed the suspended lifetime, so a suspended session's budget keys outlive
+// it, and a backlog re-check interval below the minimum. The TTL is compared
+// against the lifetime the watchdog enforces: a non-positive
+// --max-suspended-session-seconds resolves to the watchdog default before the
+// comparison, because the watchdog substitutes that default at runtime.
+// spec: §8.3 (Delegation Policy and Lease), §7.2 (Message delivery routing —
+// seven paths, path 6)
+func validateSuspensionFlags(maxSuspendedSessionSeconds, budgetKeyTTLSeconds, backlogRecheckSeconds int) error {
+	lifetime := watchdog.EffectiveMaxSuspendedSessionSeconds(maxSuspendedSessionSeconds)
+	if budgetKeyTTLSeconds <= lifetime {
+		return fmt.Errorf("--delegation-budget-key-ttl-seconds (%d) must exceed the effective --max-suspended-session-seconds (%d, configured %d) (§8.3)",
+			budgetKeyTTLSeconds, lifetime, maxSuspendedSessionSeconds)
+	}
+	if minimum := int(sessionserver.MinSuspendedBacklogRecheckInterval / time.Second); backlogRecheckSeconds < minimum {
+		return fmt.Errorf("--suspended-backlog-recheck-seconds must be at least %d, got %d (§7.2)", minimum, backlogRecheckSeconds)
+	}
+	return nil
+}
+
+// slotReaperSettings is the configuration the stale-slot reaper gate reads:
+// the reaper's own flags, the launch and resuming deadlines its terminal age
+// must exceed, and the seal window and release allowance whose sum is the
+// terminal pipeline budget it must also exceed.
+type slotReaperSettings struct {
+	interval                   time.Duration
+	rate                       int
+	terminalAge                time.Duration
+	maxFinalizingSeconds       int
+	maxResumingSeconds         int
+	sealSeconds                int
+	streamFailureReportTimeout time.Duration
+}
+
+// validateSlotReaperFlags rejects a non-positive reaper interval or rate,
+// and a --slot-reaper-terminal-age below the post-terminal slot activity
+// invariant: the terminal age (the gateway's copy of claimOrphanTimeout) must
+// be at least one second more than the largest of the launch bound
+// (--max-finalizing-state-timeout-seconds), the resuming deadline
+// (--max-resuming-seconds), and the terminal pipeline budget, which is the
+// seal window (--workspace-seal-max-duration-seconds) plus the release
+// allowance (--stream-failure-report-timeout), each taken as the value in
+// effect. A value in effect is the flag's value, or its default when the flag
+// is not positive, as the watchdog and the session server resolve it. A
+// shorter terminal age lets the reaper free a slot that a launch, a resume
+// restore, or the terminal pipeline still acts on.
+// spec: §5.2 (Slot assignment atomicity), §7.1 (Terminal pipeline context)
+func validateSlotReaperFlags(c slotReaperSettings) error {
+	if c.interval <= 0 {
+		return fmt.Errorf("--slot-reaper-interval must be positive, got %s (§5.2)", c.interval)
+	}
+	if c.rate <= 0 {
+		return fmt.Errorf("--slot-reaper-rate must be positive, got %d (§5.2)", c.rate)
+	}
+	finalizing := secondsInEffect(c.maxFinalizingSeconds, watchdog.DefaultMaxFinalizingStateSeconds)
+	resuming := secondsInEffect(c.maxResumingSeconds, watchdog.DefaultMaxResumingSeconds)
+	seal := sealSecondsInEffect(c.sealSeconds)
+	budget := terminalPipelineBudgetInEffect(c.sealSeconds, c.streamFailureReportTimeout)
+	floor := max(time.Duration(finalizing)*time.Second, time.Duration(resuming)*time.Second, budget) + time.Second
+	if c.terminalAge < floor {
+		return fmt.Errorf("--slot-reaper-terminal-age (%s) must be at least %s, one second more than the largest of --max-finalizing-state-timeout-seconds (%ds), --max-resuming-seconds (%ds), and the terminal pipeline budget (%s: --workspace-seal-max-duration-seconds %ds plus --stream-failure-report-timeout %s) (§5.2)",
+			c.terminalAge, floor, finalizing, resuming, budget, seal, budget-time.Duration(seal)*time.Second)
+	}
+	return nil
+}
+
+// validateUsageQuiescenceTimeout refuses a usage quiescence timeout in
+// effect that is not less than the seal window in effect. The timeout in
+// effect is resolved as the session server resolves
+// Options.UsageQuiescenceTimeout (a non-positive value selects the §11.3
+// default of 5 s), and the seal window as the session server resolves
+// --workspace-seal-max-duration-seconds. Holding the timeout below the seal
+// window keeps a delegated child's budget return, which waits that long from
+// the terminal transition, inside the terminal pipeline budget.
+// spec: §7.1 (Terminal pipeline context), §8.3 (Return on completion), §8.3
+// (Usage quiescence before budget return), §11.3
+func validateUsageQuiescenceTimeout(quiescenceSeconds, sealSeconds int) error {
+	timeout := sessionserver.UsageQuiescenceTimeoutFor(time.Duration(quiescenceSeconds) * time.Second)
+	seal := time.Duration(sealSecondsInEffect(sealSeconds)) * time.Second
+	if timeout >= seal {
+		return fmt.Errorf("the usage quiescence timeout in effect (%s, --delegation-usage-quiescence-timeout-seconds %d) must be less than the seal window in effect (%s, --workspace-seal-max-duration-seconds %d) (§8.3)",
+			timeout, quiescenceSeconds, seal, sealSeconds)
+	}
+	return nil
+}
+
+// sealSecondsInEffect is the seal window in seconds the session server runs
+// with for --workspace-seal-max-duration-seconds v.
+func sealSecondsInEffect(v int) int {
+	return secondsInEffect(v, int(sessionserver.DefaultWorkspaceSealMaxDuration/time.Second))
+}
+
+// terminalPipelineBudgetInEffect is the §7.1 terminal pipeline budget the
+// session server runs with for --workspace-seal-max-duration-seconds
+// sealSeconds and --stream-failure-report-timeout releaseAllowance, each
+// taken as the value in effect. The §5.2 startup gate and the post-terminal
+// window cap read it, so both take the server's budget.
+// spec: §7.1 (Terminal pipeline context), §7.1 (Post-terminal window)
+func terminalPipelineBudgetInEffect(sealSeconds int, releaseAllowance time.Duration) time.Duration {
+	seal := time.Duration(sealSecondsInEffect(sealSeconds)) * time.Second
+	return sessionserver.TerminalPipelineBudgetFor(seal, releaseAllowance)
+}
+
+// secondsInEffect is v when it is positive, and def otherwise.
+func secondsInEffect(v, def int) int {
+	if v > 0 {
+		return v
+	}
+	return def
 }

@@ -41,7 +41,7 @@ func (f fakeLockService) Steal(context.Context, string, coordination.StealReques
 	return nil, nil
 }
 
-// spec §25.4 lines 1697-1709: a held lock is remediation_lock/held with
+// spec §25.4: a held lock is remediation_lock/held with
 // the operationId == lock ID and the get/extend/release/steal resources.
 func TestLockSourceProjectsHeldLock(t *testing.T) {
 	now := time.Now()
@@ -133,7 +133,7 @@ func TestLockSourceAuditLinkRelativeFallback(t *testing.T) {
 	}
 }
 
-// spec §25.4 line 1750: a source whose backing store is unreachable
+// spec §25.4: a source whose backing store is unreachable
 // propagates the error so the Inventory turns it into a degradation
 // warning rather than failing the request.
 func TestLockSourcePropagatesError(t *testing.T) {

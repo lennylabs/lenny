@@ -51,6 +51,8 @@ const tailDrainBudget = 10 * time.Second
 // cadence; goroutines that never drain mean a disconnected connection leaks
 // its tail, because the tail is not closing the client its blocked read runs
 // on.
+//
+// spec: §25.5 (per-connection live tail, independent read cursor).
 func TestOpsEventStreamTailDeliversPromptlyAndExitsOnCancel(t *testing.T) {
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ctx := context.Background()

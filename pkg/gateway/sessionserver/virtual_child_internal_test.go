@@ -17,7 +17,7 @@ import (
 
 // virtualChildInterfaceFields is the closed set of keys the §8.2
 // virtual MCP child interface exposes to a parent on resume. The
-// spec's "What the parent never sees" guarantee (§8.2 lines 105-107:
+// spec's "What the parent never sees" guarantee (§8.2:
 // pod addresses, internal endpoints, raw credentials) is enforced by
 // keeping the re-injected child surface to this logical schema: session
 // id, state, the pending request handle, the §8.8 result body, and the
@@ -39,14 +39,12 @@ var virtualChildInterfaceFields = map[string]bool{
 // logical field set so a future field that leaks a pod IP, endpoint, or
 // credential into the virtual interface fails the build.
 //
-// spec: §8.2 lines 96-107 (virtual MCP child interface; "What the
-// parent never sees: Pod addresses, internal endpoints, raw
-// credentials"). F-8.2.11.
+// spec: §8.2. F-8.2.11.
 func TestEmitChildrenReattachedHidesInternalEndpoints_spec_8_2(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
 	archive := treearchive.NewMemory()
-	srv := New(store, Options{Events: bus, TreeArchive: archive})
+	srv := New(store, Options{DevTenantHeader: true, Events: bus, TreeArchive: archive})
 	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
 
 	mustCreate(t, store, sessionStoreRow("parent", "", session.StateAwaitingClientAction, now))
@@ -74,14 +72,12 @@ func TestEmitChildrenReattachedHidesInternalEndpoints_spec_8_2(t *testing.T) {
 // so the parent can answer it; without this a parent that fails
 // mid-elicitation resumes with no record of the pending request.
 //
-// spec: §8.2 lines 108-113 (pending elicitations held across parent
-// failure, replayed via the re-injected virtual child interface on
-// resume). F-8.2.11 / F-7.2.16.
+// spec: §8.2. F-8.2.11 / F-7.2.16.
 func TestEmitChildrenReattachedReplaysPendingElicitation_spec_8_2(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
 	waits := inputwait.NewRegistry()
-	srv := New(store, Options{Events: bus, InputWaits: waits})
+	srv := New(store, Options{DevTenantHeader: true, Events: bus, InputWaits: waits})
 	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
 
 	mustCreate(t, store, sessionStoreRow("parent", "", session.StateAwaitingClientAction, now))

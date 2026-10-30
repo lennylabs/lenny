@@ -43,6 +43,7 @@ func newUploadServer(t *testing.T) (*sessionserver.Server, *uploadtoken.Issuer, 
 	verifier := uploadtoken.NewVerifier(ring, tracker, clock)
 
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Clock:               clock,
 		IDFunc:              func() string { return "sess_upload" },
 		UploadTokenIssuer:   issuer,
@@ -109,7 +110,7 @@ func TestUploadHappyPath(t *testing.T) {
 	// well-known value:
 	const wantHash = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 	if resp.ContentHash != wantHash {
-		t.Errorf("contentHash: got %q, want %q (spec §4.5 line 311)", resp.ContentHash, wantHash)
+		t.Errorf("contentHash: got %q, want %q (spec §4.5)", resp.ContentHash, wantHash)
 	}
 
 	// Blob should be retrievable from the store.
@@ -144,7 +145,7 @@ func TestUploadRejectsInvalidToken(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 63 — "Clients MUST treat `uploadToken` as a secret
+// spec: §7.1 — "Clients MUST treat `uploadToken` as a secret
 // credential: it MUST NOT be logged, embedded in URLs, or included in
 // client-side error reports." The client-side rules bind the caller;
 // the gateway-side companion is that the server response never
@@ -161,12 +162,12 @@ func TestUploadResponseNeverEchoesToken_spec_7_1_15(t *testing.T) {
 	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", sentinel, []byte("data"), "text/plain")
 	body := rr.Body.String()
 	if strings.Contains(body, sentinel) {
-		t.Errorf("response body echoed the supplied uploadToken; §7.1 line 63 redaction violated. body=%s", body)
+		t.Errorf("response body echoed the supplied uploadToken; §7.1 redaction violated. body=%s", body)
 	}
 	for k, vs := range rr.Header() {
 		for _, v := range vs {
 			if strings.Contains(v, sentinel) {
-				t.Errorf("response header %s echoed the supplied uploadToken; §7.1 line 63 violation. value=%s", k, v)
+				t.Errorf("response header %s echoed the supplied uploadToken; §7.1 violation. value=%s", k, v)
 			}
 		}
 	}
@@ -228,7 +229,8 @@ func TestUploadDisabledWhenBlobsUnavailable(t *testing.T) {
 	store := memstore.New()
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	srv := sessionserver.New(store, sessionserver.Options{
-		IDFunc: func() string { return "sess_upload" },
+		DevTenantHeader: true,
+		IDFunc:          func() string { return "sess_upload" },
 	})
 	rr := uploadRequest(t, srv.Handler(), "sess_upload", "acme", "ignored", []byte("data"), "text/plain")
 	if rr.Code != http.StatusServiceUnavailable {

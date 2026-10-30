@@ -57,7 +57,7 @@ type PodState struct {
 // RecycleCounters is the pair of gateway-written per-pod recycle counters
 // read by the §5.2 recycle disposition. They are the exception to the
 // WarmPoolController-maintained mirror: the gateway increments
-// SessionsServed at each session release (ReportSessionScrub) and
+// SessionsServed on each cleanup-outcome report (ReportSessionScrub) and
 // ScrubFailureCount on each failed whole-pod scrub (ReportPodScrub), and
 // the disposition evaluates them against recycle.maxSessionsPerPod and
 // recycle.maxScrubFailures. Both columns are NULL until the gateway first
@@ -106,7 +106,7 @@ type Store interface {
 	// does not. This is the §10.1 orphan-session reconciler's read of
 	// the mirrored §6.2 phase for a session's bound pod, used to detect
 	// a pod that reached `terminated` without writing a terminal event
-	// back to Postgres. spec: §10.1 line 51.
+	// back to Postgres. spec: §10.1.
 	GetByPodID(ctx context.Context, podID string) (PodState, bool, error)
 
 	// ClaimIdle is the §4.6.1 Postgres-backed fallback claim. In one
@@ -119,14 +119,23 @@ type Store interface {
 	// locked. The mirror is a read-optimized copy, so a successful claim
 	// here is provisional until the caller flips the authoritative
 	// Sandbox CRD phase and creates the binding SandboxClaim.
-	ClaimIdle(ctx context.Context, poolID, sessionID, tenantID string) (PodState, bool, error)
+	//
+	// skip names pod_ids the call never selects, locks, or offers: the
+	// gateway passes the pods its Kubernetes-API idle scan already refused
+	// on the tenant pin. A nil skip skips nothing. admit is called for each
+	// selected row inside the transaction, after the row is locked and
+	// before it is updated, with the context ClaimIdle was given; a false
+	// result leaves the row unchanged and moves to the next idle row, and an
+	// error ends the call with the row unchanged. A nil admit admits every
+	// row. spec: §5.2 (Tenant pinning: the fallback claim reads the pin).
+	ClaimIdle(ctx context.Context, poolID, sessionID, tenantID string, skip []string, admit AdmitFunc) (PodState, bool, error)
 
 	// IncrementSessionsServed adds one to the pod's sessions_served recycle
 	// counter and returns the new value. A NULL counter (never written) is
 	// treated as 0, so the first increment returns 1. The bool reports
 	// whether the pod row exists; a missing row returns (0, false, nil)
-	// without writing. The gateway calls this at each session release on
-	// the ReportSessionScrub RPC; the §5.2 recycle disposition evaluates
+	// without writing. The gateway calls this on each cleanup-outcome report,
+	// on the ReportSessionScrub RPC; the §5.2 recycle disposition evaluates
 	// the returned value against recycle.maxSessionsPerPod.
 	// spec: §4.7 (ReportSessionScrub increments sessionsServed), §5.2.
 	IncrementSessionsServed(ctx context.Context, podID string) (int, bool, error)
@@ -148,6 +157,11 @@ type Store interface {
 	// spec: §12.6 (agent_pod_state schema), §5.2 (recycle disposition).
 	RecycleCounters(ctx context.Context, podID string) (RecycleCounters, bool, error)
 }
+
+// AdmitFunc decides, inside the ClaimIdle transaction, whether the row for
+// podID may be claimed. It returns false to pass over the row and an error to
+// end the claim. The gateway's callback reads the pod's §5.2 tenant pin.
+type AdmitFunc func(ctx context.Context, podID string) (bool, error)
 
 // ErrEmptyPoolID is returned by Sync, MirrorLagSeconds, and ClaimIdle
 // when poolID is empty. A pool-scoped operation with no pool key would

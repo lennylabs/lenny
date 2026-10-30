@@ -4,6 +4,7 @@ package orphancleanup_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,14 +15,56 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// seed inserts a session row with the given state and parent.
+// seed inserts a session row with the given state and parent under the
+// `detach` cascade policy. A row with a parent is a delegated session one
+// delegation level below its parent, and a terminal row records updatedAt as
+// its TerminatedAt, the instant the cascade window counts from.
 func seed(t *testing.T, store sessionstore.Store, id, parent string, state session.State, updatedAt time.Time) {
 	t.Helper()
-	if err := store.Create(context.Background(), sessionstore.Session{
+	row := sessionstore.Session{
 		ID: id, TenantID: "acme", State: state, ParentSessionID: parent,
-		CreatedAt: updatedAt, UpdatedAt: updatedAt,
+		CascadeOnFailure: session.CascadeDetach,
+		CreatedAt:        updatedAt, UpdatedAt: updatedAt,
+	}
+	if parent != "" {
+		p, err := store.Get(context.Background(), "acme", parent)
+		if err != nil {
+			t.Fatalf("seed %s: get parent %s: %v", id, parent, err)
+		}
+		row.DelegationDepth = p.DelegationDepth + 1
+	}
+	if session.IsTerminal(state) {
+		row.TerminatedAt = updatedAt
+	}
+	seedRow(t, store, row)
+}
+
+// seedRow inserts row as given. The store's creation fence refuses a
+// delegated row under a terminal parent, which lenny/delegate_task never
+// creates, so a terminal parent is put back in a live state for the insert
+// and then restored with its recorded termination. A test seeds the row
+// that a parent's later end leaves behind.
+func seedRow(t *testing.T, store sessionstore.Store, row sessionstore.Session) {
+	t.Helper()
+	ctx := context.Background()
+	if parent, err := store.Get(ctx, row.TenantID, row.ParentSessionID); err == nil && session.IsTerminal(parent.State) {
+		setState(t, store, parent.ID, session.StateRunning, time.Time{})
+		defer setState(t, store, parent.ID, parent.State, parent.TerminatedAt)
+	}
+	if err := store.Create(ctx, row); err != nil {
+		t.Fatalf("seed %s: %v", row.ID, err)
+	}
+}
+
+// setState rewrites a seeded row's state and TerminatedAt with a raw store
+// write, outside every production writer.
+func setState(t *testing.T, store sessionstore.Store, id string, state session.State, terminatedAt time.Time) {
+	t.Helper()
+	if _, err := store.Update(context.Background(), "acme", id, func(r *sessionstore.Session) error {
+		r.State, r.TerminatedAt = state, terminatedAt
+		return nil
 	}); err != nil {
-		t.Fatalf("seed %s: %v", id, err)
+		t.Fatalf("set %s to %s: %v", id, state, err)
 	}
 }
 
@@ -48,7 +91,7 @@ func TestTickTerminatesOrphanPastCascadeTimeout(t *testing.T) {
 }
 
 // TestTickStampsExpiredDeadlineReason_spec_8_8_867 verifies the
-// §8.8 line 867 expiry-reason prefix lands on the row when orphan
+// §8.8 expiry-reason prefix lands on the row when orphan
 // cleanup drives a child to `expired`. The MCP boundary's taskError
 // fallback then surfaces `expired:deadline` to clients. F-8.8.8.
 func TestTickStampsExpiredDeadlineReason_spec_8_8_867(t *testing.T) {
@@ -68,7 +111,7 @@ func TestTickStampsExpiredDeadlineReason_spec_8_8_867(t *testing.T) {
 		t.Fatalf("State = %q, want expired", row.State)
 	}
 	if row.FailureReason != string(session.FailureExpiredDeadline) {
-		t.Errorf("FailureReason = %q, want %q (§8.8 line 867)", row.FailureReason, session.FailureExpiredDeadline)
+		t.Errorf("FailureReason = %q, want %q (§8.8)", row.FailureReason, session.FailureExpiredDeadline)
 	}
 }
 
@@ -147,6 +190,7 @@ func TestTickArchivesTerminatedOrphan(t *testing.T) {
 	if _, err := sw.Tick(context.Background(), base.Add(2*time.Hour)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	sw.WaitDispatched()
 	got, err := archive.GetByNode(context.Background(), "acme", "sess_child")
 	if err != nil {
 		t.Fatalf("terminated orphan was not archived: %v", err)
@@ -160,13 +204,22 @@ func TestTickArchivesTerminatedOrphan(t *testing.T) {
 }
 
 // fakeTerminalHook captures terminal-pipeline invocations.
-type fakeTerminalHook struct{ calls []sessionstore.Session }
+type fakeTerminalHook struct {
+	// mu guards calls, which dispatched hook goroutines append to.
+	mu    sync.Mutex
+	calls []sessionstore.Session
+}
+
+// BeginTerminal opens no claim; the fake records only the terminal hook.
+func (*fakeTerminalHook) BeginTerminal(string) func() { return func() {} }
 
 func (f *fakeTerminalHook) OnSessionTerminal(_ context.Context, _ session.State, sess sessionstore.Session) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, sess)
 }
 
-// spec: §5.2 line 519 + §8.10 — F-5.2.26: an orphan terminated by the
+// spec: §5.2 + §8.10 — F-5.2.26: an orphan terminated by the
 // cascade sweep must run the gateway-side terminal pipeline so its
 // executor (concurrent-mode slot release + pod drain) is released.
 func TestTickInvokesTerminalHook_spec_5_2_519(t *testing.T) {
@@ -181,6 +234,7 @@ func TestTickInvokesTerminalHook_spec_5_2_519(t *testing.T) {
 	if _, err := sw.Tick(context.Background(), base.Add(2*time.Hour)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	sw.WaitDispatched()
 	if len(hook.calls) != 1 || hook.calls[0].ID != "sess_child" {
 		t.Fatalf("OnSessionTerminal invocations: %+v", hook.calls)
 	}
@@ -205,6 +259,7 @@ func TestTickWithTerminalHookSkipsInPackageArchive(t *testing.T) {
 	if _, err := sw.Tick(context.Background(), base.Add(2*time.Hour)); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	sw.WaitDispatched()
 	if _, err := archive.GetByNode(context.Background(), "acme", "sess_child"); err == nil {
 		t.Fatal("in-package archive must not fire when TerminalHook is wired")
 	}
@@ -232,7 +287,7 @@ func (m *fakeMetricsSink) SetOrphanTasksActivePerTenant(tenantID string, value i
 }
 
 // TestTickEmitsOrphanCleanupMetrics_spec_8_10_1091 covers the §8.10 /
-// §16.1 lines 146-149 orphan-cleanup observability surface — one
+// §16.1 orphan-cleanup observability surface — one
 // IncOrphanCleanupRun per Tick, terminated counter += per-sweep return,
 // fleet-wide active gauge sums the per-tenant remaining counts, and the
 // per-tenant gauge re-publishes a value for every tenant. F-8.10.7.
@@ -309,5 +364,110 @@ func TestTickIsIdempotent(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("second sweep terminated %d, want 0", n)
+	}
+}
+
+// spec: §8.10 (Orphan cleanup)
+//
+// The cascade window counts from the root's TerminatedAt. A write that lands
+// on the terminal root after its termination advances its UpdatedAt and does
+// not move the window, so the orphan is expired once the window measured from
+// the termination instant has elapsed.
+func TestOrphanCascadeWindowCountsFromRootTerminatedAt_spec_8_10(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	storeNow := base
+	store := memstore.NewWithClock(func() time.Time { return storeNow })
+	seed(t, store, "sess_root", "", session.StateCompleted, base)
+	seed(t, store, "sess_child", "sess_root", session.StateRunning, base)
+	// Ninety minutes after termination a write rewrites the root's UpdatedAt.
+	storeNow = base.Add(90 * time.Minute)
+	rewritten, err := store.Update(context.Background(), "acme", "sess_root", func(r *sessionstore.Session) error {
+		r.LastSeq++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("rewrite root: %v", err)
+	}
+	if !rewritten.UpdatedAt.After(base) || !rewritten.TerminatedAt.Equal(base) {
+		t.Fatalf("root UpdatedAt %v TerminatedAt %v, want UpdatedAt past %v and TerminatedAt at it",
+			rewritten.UpdatedAt, rewritten.TerminatedAt, base)
+	}
+	sw := orphancleanup.New(store, orphancleanup.StaticTenants{"acme"}, orphancleanup.Options{})
+
+	// The default 3600s window has elapsed from TerminatedAt and has not
+	// elapsed from the rewritten UpdatedAt.
+	n, err := sw.Tick(context.Background(), base.Add(2*time.Hour))
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("terminated count = %d, want 1: the window counts from TerminatedAt", n)
+	}
+	if row, _ := store.Get(context.Background(), "acme", "sess_child"); row.State != session.StateExpired {
+		t.Errorf("orphan state = %q, want expired", row.State)
+	}
+}
+
+// spec: §8.10 (Orphan cleanup)
+//
+// A terminal root with no recorded TerminatedAt opens no cascade window, so
+// its non-terminal child is left in place however old the root's UpdatedAt
+// is. The child still counts in the active-orphan gauge.
+func TestOrphanCleanupSkipsRootWithZeroTerminatedAt_spec_8_10(t *testing.T) {
+	store := memstore.New()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	seedRow(t, store, sessionstore.Session{
+		ID: "sess_root", TenantID: "acme", State: session.StateCompleted,
+		CascadeOnFailure: session.CascadeDetach, CreatedAt: base, UpdatedAt: base,
+	})
+	seed(t, store, "sess_child", "sess_root", session.StateRunning, base)
+	sink := &fakeMetricsSink{}
+	sw := orphancleanup.New(store, orphancleanup.StaticTenants{"acme"}, orphancleanup.Options{Metrics: sink})
+
+	n, err := sw.Tick(context.Background(), base.Add(10*time.Hour))
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("terminated count = %d, want 0: the root has no TerminatedAt", n)
+	}
+	if row, _ := store.Get(context.Background(), "acme", "sess_child"); row.State != session.StateRunning {
+		t.Errorf("orphan state = %q, want running", row.State)
+	}
+	if got := sink.perTenant["acme"]; got != 1 {
+		t.Errorf("SetOrphanTasksActivePerTenant[acme] = %d, want 1", got)
+	}
+}
+
+// spec: §8.10 (Orphan cleanup)
+//
+// The cascade window is inclusive of its end: a pass at exactly
+// cascadeTimeout after the root's TerminatedAt leaves the orphan, and a pass
+// one nanosecond later expires it.
+func TestOrphanCascadeWindowBoundary_spec_8_10(t *testing.T) {
+	const window = 30 * time.Minute
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name  string
+		at    time.Time
+		state session.State
+	}{
+		{name: "exactly cascadeTimeout", at: base.Add(window), state: session.StateRunning},
+		{name: "one nanosecond past cascadeTimeout", at: base.Add(window + time.Nanosecond), state: session.StateExpired},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := memstore.New()
+			seed(t, store, "sess_root", "", session.StateFailed, base)
+			seed(t, store, "sess_child", "sess_root", session.StateRunning, base)
+			sw := orphancleanup.New(store, orphancleanup.StaticTenants{"acme"},
+				orphancleanup.Options{CascadeTimeout: window})
+			if _, err := sw.Tick(context.Background(), tc.at); err != nil {
+				t.Fatalf("Tick: %v", err)
+			}
+			if row, _ := store.Get(context.Background(), "acme", "sess_child"); row.State != tc.state {
+				t.Errorf("orphan state = %q, want %q", row.State, tc.state)
+			}
+		})
 	}
 }

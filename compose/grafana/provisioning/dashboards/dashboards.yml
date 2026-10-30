@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 #
-# §17.4 line 258 Grafana dashboard provider for the Compose Mode
+# §17.4 Grafana dashboard provider for the Compose Mode
 # observability profile. Loads the pre-built Lenny dashboard from disk.
 apiVersion: 1
 

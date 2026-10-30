@@ -90,9 +90,13 @@ func applyBackupSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 // the call would hang, succeed against stale state, or return a
 // mis-classified error.
 func TestBackupCreationFailsWhenPostgresDown(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("starts a Postgres container; skipped under -short")
 	}
+	// A container of its own rather than sharedDatabase: the test stops
+	// Postgres to inject an outage, and a shared container cannot stop for
+	// one test (T-17.4.33).
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
 		Image:    "pgvector/pgvector:pg16",
 		Database: "lenny",
@@ -171,9 +175,12 @@ func TestBackupCreationFailsWhenPostgresDown(t *testing.T) {
 // code (HTTP 503), an unreachable control plane would not surface as the
 // documented 503.
 func TestBackupJobCreationFailsWhenKubernetesAPIDown(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("starts a Postgres container; skipped under -short")
 	}
+	// A container of its own rather than sharedDatabase: applyBackupSchema
+	// builds the backup tables on an unmigrated database (T-17.4.33).
 	pg := containers.StartPostgres(t, containers.PostgresOptions{
 		Image:    "pgvector/pgvector:pg16",
 		Database: "lenny",
@@ -273,6 +280,7 @@ func (r *captureBackupReporter) BackupFailed(_ context.Context, id, msg string) 
 // "retries 3 times with backoff" is the static backoffLimit:3 asserted in
 // pkg/ops/backup/k8slauncher.
 func TestBackupUploadFailsWhenMinIODown(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("starts a MinIO container; skipped under -short")
 	}

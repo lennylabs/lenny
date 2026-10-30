@@ -14,7 +14,7 @@ import (
 )
 
 // protocolError signals a non-recoverable inbound-format violation in the
-// slotId front loop. The entrypoint maps it to the §15.4 protocol-error
+// session front loop. The entrypoint maps it to the §15.4 protocol-error
 // exit code (2). A per-slot echocore.ProtocolError is surfaced through
 // this type too, so a malformed frame on any slot fails the whole runtime
 // rather than silently wedging one slot.
@@ -22,17 +22,21 @@ type protocolError struct{ msg string }
 
 func (e protocolError) Error() string { return "protocol error: " + e.msg }
 
-// run drives the slotId dispatch loop until in reaches EOF, a shutdown
+// run drives the session dispatch loop until in reaches EOF, a shutdown
 // frame arrives, or an unrecoverable error occurs.
 //
-// Each inbound frame's optional slotId selects a slot. The front loop
-// demultiplexes frames to per-slot workers keyed on slotId; a frame with
-// no slotId routes to the default whole-pod session (the empty-string
-// key). Every worker runs an independent §15.4.1 echocore loop, so the
-// per-frame message/heartbeat/shutdown behavior is reused unchanged and
-// each slot keeps its own sequence counter.
+// Each session-scoped frame's sessionId selects a session. The front loop
+// demultiplexes those frames to per-session workers keyed on the
+// identifier the adapter stamped, which it populates on every frame on
+// every pod, so a session-scoped frame carrying none is a protocol error
+// rather than a route to a pod-global session. Every worker runs an
+// independent §28.5.3 echocore loop, so the per-frame message behavior is
+// reused unchanged and each session keeps its own sequence counter. A
+// heartbeat naming a held session goes to that session's worker; shutdown
+// and a heartbeat naming no held session are answered by the front loop
+// itself.
 //
-// spec: §5.2 line 509, §15.4.1 line 1459 — dispatch loop keyed on slotId
+// spec: §5.2; §28.5.3 — dispatch loop keyed on sessionId
 // over a single stdin channel.
 func run(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer) (err error) {
 	ctx, cancel := context.WithCancel(ctx)
@@ -59,24 +63,52 @@ func run(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer) (er
 			continue
 		}
 		var env struct {
-			Type   string `json:"type"`
-			SlotID string `json:"slotId"`
+			Type      string `json:"type"`
+			SessionID string `json:"sessionId"`
 		}
 		if err := json.Unmarshal(line, &env); err != nil {
 			return protocolError{msg: fmt.Sprintf("malformed JSONL on input: %v", err)}
 		}
 
 		// A shutdown frame ends the loop for the whole pod. Forward it to
-		// every active slot so each echocore loop exits cleanly, then let
-		// the deferred drain wait for the workers. A shutdown carrying a
-		// slotId still tears the whole pod down: the §15.4.1 shutdown is a
-		// pod-level signal.
+		// every active session so each echocore loop exits cleanly, then
+		// let the deferred drain wait for the workers. The §28.5.3
+		// shutdown is a pod-level signal.
 		if env.Type == "shutdown" {
 			d.broadcast(line)
 			break
 		}
 
-		if err := d.route(env.SlotID, line); err != nil {
+		// spec: §28.5.3 (CH-MSGSOCK) — a heartbeat naming a session the
+		// runtime holds goes to that session's worker, whose echocore loop
+		// answers it after every frame queued ahead of it, so the ack that
+		// slotWriter stamps with the sessionId follows the session's
+		// response and the runtime never reports idle while a message is
+		// outstanding. A heartbeat naming no session, or one the runtime
+		// does not hold, is answered once by the front loop with the bare
+		// ack, never through rejectUnheld.
+		if env.Type == "heartbeat" {
+			if err := d.answerHeartbeat(env.SessionID, line); err != nil {
+				return err
+			}
+			continue
+		}
+
+		// spec: §28.5.3 — the adapter populates the per-session identifier
+		// on every session-scoped frame on every pod, so a session-scoped
+		// frame that carries none names no session this runtime may act
+		// for. The rule is scoped to the session-scoped inbound set: a
+		// frame of any other type keeps §15.4's unknown-type tolerance and
+		// is dropped with a diagnostic rather than failing the runtime.
+		if env.SessionID == "" {
+			if !sessionScopedInboundTypes[env.Type] {
+				fmt.Fprintf(stderr, "echo-concurrent: ignoring unaddressed %q frame\n", env.Type)
+				continue
+			}
+			return protocolError{msg: fmt.Sprintf("session-scoped %q frame carries no sessionId", env.Type)}
+		}
+
+		if err := d.dispatch(env.Type, env.SessionID, line); err != nil {
 			return err
 		}
 	}
@@ -89,21 +121,127 @@ func run(ctx context.Context, in io.Reader, out io.Writer, stderr io.Writer) (er
 	return nil
 }
 
-// demux owns the per-slot worker map and the single shared output writer.
-// It is the slotId multiplexer: one echocore loop per slotId, plus the
-// empty-string default session for no-slotId frames.
+// sessionScopedInboundTypes is the §28.5.3 session-scoped set on the
+// adapter-to-runtime direction: the inbound frame types that address a
+// session and therefore carry the per-session identifier. Every other
+// inbound type is protocol-level or unknown to this runtime, so it falls
+// under §15.4's unknown-type tolerance rather than under the addressing
+// rule. spec: §15.4; §28.5.3.
+var sessionScopedInboundTypes = map[string]bool{
+	"session_start": true,
+	"session_end":   true,
+	"message":       true,
+	"tool_result":   true,
+}
+
+// dispatch hands one addressed frame to the session it names. The session
+// boundary frames act on the worker map itself: session_start creates or
+// keeps the session's worker and acknowledges it, and session_end closes
+// and drains the worker and forgets it. Every other addressed frame goes
+// to the session's echocore loop when the runtime holds the session, and
+// is answered by rejectUnheld when it does not.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start, Inbound: session_end,
+// Outbound: session_started).
+func (d *demux) dispatch(frameType, sessionID string, line []byte) error {
+	switch frameType {
+	case "session_start":
+		return d.startSession(sessionID, line)
+	case "session_end":
+		d.endSession(sessionID)
+		return nil
+	default:
+		return d.route(frameType, sessionID, line)
+	}
+}
+
+// startSession creates the session's worker, or keeps the one a repeated
+// session_start finds, and then writes session_started echoing the frame's
+// sessionId and startId. The worker is the session's context, so the
+// acknowledgement follows its creation, and a repeated start is answered
+// again with its own startId.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_start rule 3, Outbound:
+// session_started rule 1).
+func (d *demux) startSession(sessionID string, line []byte) error {
+	var start struct {
+		StartID string `json:"startId"`
+	}
+	if err := json.Unmarshal(line, &start); err != nil {
+		return protocolError{msg: fmt.Sprintf("malformed session_start: %v", err)}
+	}
+	d.openWorker(sessionID)
+	ack, err := json.Marshal(map[string]string{
+		"type":      "session_started",
+		"sessionId": sessionID,
+		"startId":   start.StartID,
+	})
+	if err != nil {
+		return fmt.Errorf("encode session_started: %w", err)
+	}
+	if err := d.writeFrame(ack); err != nil {
+		return fmt.Errorf("write session_started: %w", err)
+	}
+	return nil
+}
+
+// endSession releases the session's worker. It first marks the worker
+// ended under the output lock, so no frame addressed to the session is
+// written from here on: a message delivered before session_end can still
+// be in echocore's buffer, and the response its drain produces is dropped
+// rather than written after the runtime read session_end. It then removes
+// the worker from the map, ends its inbound stream, and waits for its
+// echocore loop to drain, so the session's context is gone before the
+// front loop reads the next frame. A session_end for a session the runtime
+// does not hold is ignored. A per-session echocore error was already
+// recorded by the worker and surfaces from closeAll.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end rule 2).
+func (d *demux) endSession(sessionID string) {
+	d.mu.Lock()
+	w, ok := d.slots[sessionID]
+	d.mu.Unlock()
+	if !ok {
+		return
+	}
+	w.markEnded(d)
+	d.mu.Lock()
+	delete(d.slots, sessionID)
+	d.ended[sessionID] = struct{}{}
+	d.mu.Unlock()
+	w.close()
+	w.wait()
+}
+
+// demux owns the per-session worker map and the single shared output
+// writer. It is the sessionId multiplexer: one echocore loop per session
+// the pod has seen a frame for.
 type demux struct {
 	ctx    context.Context
 	stderr io.Writer
 
 	// outMu serialises writes to the real transport across all per-slot
 	// workers, since several echocore loops write the single connection
-	// concurrently.
+	// concurrently. It also guards every slotWorker.ended flag, so the
+	// ended check and the frame write are one critical section.
 	outMu sync.Mutex
 	out   io.Writer
 
-	mu       sync.Mutex
-	slots    map[string]*slotWorker
+	// sessionWriteGate, when non-nil, is called with the session's
+	// identifier before a worker's frame takes outMu. It is a test seam
+	// for ordering a worker's write against the front loop; production
+	// leaves it nil.
+	sessionWriteGate func(sessionID string)
+
+	mu    sync.Mutex
+	slots map[string]*slotWorker
+	// ended holds every session whose session_end released its worker and
+	// that no later session_start reopened. A frame for such a session is
+	// dropped rather than answered, because after session_end the runtime
+	// writes no frame addressed to the session. An entry is one sessionId,
+	// and the sessions one runtime process serves are bounded by its pool's
+	// per-pod session limit.
+	ended    map[string]struct{}
 	firstErr error
 }
 
@@ -113,18 +251,84 @@ func newDemux(ctx context.Context, out io.Writer, stderr io.Writer) *demux {
 		stderr: stderr,
 		out:    out,
 		slots:  make(map[string]*slotWorker),
+		ended:  make(map[string]struct{}),
 	}
 }
 
-// route delivers an inbound frame to the worker for slotID, creating the
-// worker on first use. slotID "" is the whole-pod default session.
-func (d *demux) route(slotID string, line []byte) error {
-	w := d.worker(slotID)
-	return w.deliver(line)
+// route delivers an inbound frame to the worker session_start created for
+// sessionID. It never creates a worker: the worker is the session's
+// context, and only session_start creates a session's context. A frame for
+// a session the runtime does not hold goes to rejectUnheld.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Session errors; Inbound: session_end rule 2).
+func (d *demux) route(frameType, sessionID string, line []byte) error {
+	d.mu.Lock()
+	w, held := d.slots[sessionID]
+	_, ended := d.ended[sessionID]
+	d.mu.Unlock()
+	if held {
+		return w.deliver(line)
+	}
+	return d.rejectUnheld(frameType, sessionID, ended)
+}
+
+// answerHeartbeat routes a heartbeat naming a held session to that
+// session's worker, and answers any other heartbeat with the front loop's
+// bare ack. spec: §28.5.3 (CH-MSGSOCK).
+func (d *demux) answerHeartbeat(sessionID string, line []byte) error {
+	if sessionID != "" {
+		d.mu.Lock()
+		w, held := d.slots[sessionID]
+		d.mu.Unlock()
+		if held {
+			return w.deliver(line)
+		}
+	}
+	if err := d.writeFrame([]byte(`{"type":"heartbeat_ack"}`)); err != nil {
+		return fmt.Errorf("write heartbeat_ack: %w", err)
+	}
+	return nil
+}
+
+// rejectUnheld answers a frame for a session the runtime does not hold and
+// keeps the runtime running. A frame for a session that session_end
+// released is dropped with a diagnostic, because after session_end the
+// runtime writes no frame addressed to the session. A message for a
+// session whose session_start the runtime never read is answered with a
+// response carrying error for that sessionId. Any other frame type, such
+// as a tool_result, has no response to carry the error and is dropped with
+// a diagnostic.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Session errors; Inbound: session_end rule 2).
+func (d *demux) rejectUnheld(frameType, sessionID string, ended bool) error {
+	if ended {
+		fmt.Fprintf(d.stderr, "echo-concurrent: dropping %q frame for session %q, which already ended\n", frameType, sessionID)
+		return nil
+	}
+	if frameType != "message" {
+		fmt.Fprintf(d.stderr, "echo-concurrent: dropping %q frame for session %q, which this runtime does not hold\n", frameType, sessionID)
+		return nil
+	}
+	frame, err := json.Marshal(map[string]any{
+		"type":      "response",
+		"sessionId": sessionID,
+		"output":    []any{},
+		"error": map[string]string{
+			"code":    "RUNTIME_ERROR",
+			"message": "no session " + sessionID + " is open on this runtime",
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("encode unheld-session response: %w", err)
+	}
+	if err := d.writeFrame(frame); err != nil {
+		return fmt.Errorf("write unheld-session response: %w", err)
+	}
+	return nil
 }
 
 // broadcast delivers a frame to every active worker. It is used for the
-// pod-level shutdown frame so each slot's echocore loop exits cleanly.
+// pod-level shutdown frame so each session's echocore loop exits cleanly.
 func (d *demux) broadcast(line []byte) {
 	d.mu.Lock()
 	workers := make([]*slotWorker, 0, len(d.slots))
@@ -139,15 +343,19 @@ func (d *demux) broadcast(line []byte) {
 	}
 }
 
-// worker returns the worker for slotID, starting it on first use.
-func (d *demux) worker(slotID string) *slotWorker {
+// openWorker returns the worker for sessionID, starting it when the
+// runtime does not hold the session, and clears any ended mark a previous
+// session_end left so the reopened session is served again. startSession
+// is its only caller.
+func (d *demux) openWorker(sessionID string) *slotWorker {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if w, ok := d.slots[slotID]; ok {
+	delete(d.ended, sessionID)
+	if w, ok := d.slots[sessionID]; ok {
 		return w
 	}
-	w := newSlotWorker(d.ctx, slotID, d, d.stderr)
-	d.slots[slotID] = w
+	w := newSlotWorker(d.ctx, sessionID, d, d.stderr)
+	d.slots[sessionID] = w
 	return w
 }
 
@@ -164,7 +372,7 @@ func (d *demux) recordErr(err error) {
 }
 
 // closeAll closes every worker's inbound pipe and waits for its echocore
-// loop to drain, returning the first per-slot error. It is idempotent so
+// loop to drain, returning the first per-session error. It is idempotent so
 // the deferred call after a mid-loop error is safe.
 func (d *demux) closeAll() error {
 	d.mu.Lock()
@@ -187,12 +395,40 @@ func (d *demux) closeAll() error {
 	return d.firstErr
 }
 
-// writeFrame serialises a single outbound JSONL frame onto the shared
-// transport. Per-slot workers call it after stamping slotId, so the one
-// connection carries the interleaved per-slot output.
+// writeSessionFrame writes one frame a session's worker produced, unless
+// the session's session_end has been dispatched. The ended check and the
+// write happen under the same outMu hold, so a frame is either written
+// before endSession marks the worker or dropped after it. A dropped frame
+// is not an error. The optional sessionWriteGate runs before the lock is
+// taken; production leaves it nil and tests use it to order a worker's
+// write against the front loop.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end rule 2).
+func (d *demux) writeSessionFrame(w *slotWorker, frame []byte) error {
+	if d.sessionWriteGate != nil {
+		d.sessionWriteGate(w.sessionID)
+	}
+	d.outMu.Lock()
+	defer d.outMu.Unlock()
+	if w.ended {
+		return nil
+	}
+	return d.writeLocked(frame)
+}
+
+// writeFrame serialises a single pod-level outbound JSONL frame onto the
+// shared transport. The front loop calls it for the heartbeat_ack and for
+// session_started, which the runtime writes itself rather than through a
+// session's worker.
 func (d *demux) writeFrame(frame []byte) error {
 	d.outMu.Lock()
 	defer d.outMu.Unlock()
+	return d.writeLocked(frame)
+}
+
+// writeLocked writes one frame and its terminating newline. The caller
+// holds outMu.
+func (d *demux) writeLocked(frame []byte) error {
 	if _, err := d.out.Write(frame); err != nil {
 		return err
 	}

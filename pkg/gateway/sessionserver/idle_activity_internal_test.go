@@ -2,9 +2,12 @@
 
 package sessionserver
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
-// spec: §6.2 lines 273-274 — only agent_output / tool_use events (published
+// spec: §6.2 — only agent_output / tool_use events (published
 // as response / response_degraded / tool_use*) reset the idle clock;
 // lifecycle, inbound, and warning events do not. F-11.3.7.
 func TestIsAgentActivityEvent_spec_6_2_273(t *testing.T) {
@@ -26,6 +29,10 @@ func TestIsAgentActivityEvent_spec_6_2_273(t *testing.T) {
 type recordingStamper struct{ calls []string }
 
 func (r *recordingStamper) Stamp(_, sessionID string) { r.calls = append(r.calls, sessionID) }
+
+func (r *recordingStamper) StampAt(_, sessionID string, _ time.Time) {
+	r.calls = append(r.calls, sessionID)
+}
 
 // publishEvent stamps idle activity only for qualifying event types, even
 // when no event bus is wired. F-11.3.7.

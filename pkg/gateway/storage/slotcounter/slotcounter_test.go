@@ -5,6 +5,8 @@ package slotcounter_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,38 +15,114 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 )
 
 func newCounter(t *testing.T) *slotcounter.Counter {
 	t.Helper()
-	mr := miniredis.RunT(t)
-	cl := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = cl.Close() })
-	return slotcounter.New(cl)
+	c, _, _ := newCounterNoSource(t)
+	return c
 }
 
-// fakeSource is a test SlotSource that records per-pod call counts and
-// returns a configured active-slot count (or a configured error).
+// newCounterNoSource returns a Counter with no SlotSource and its backing
+// miniredis and client.
+func newCounterNoSource(t *testing.T, opts ...slotcounter.Option) (*slotcounter.Counter, *miniredis.Miniredis, *redis.Client) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	cl := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
+	t.Cleanup(func() { _ = cl.Close() })
+	return slotcounter.New(cl, opts...), mr, cl
+}
+
+// fakeRow is one session row of fakeSource: the pod its pod_assignment
+// names and whether its state is terminal.
+type fakeRow struct {
+	pod      string
+	terminal bool
+}
+
+// fakeSource is a test SlotSource over a table of session rows. It applies
+// the slot-holder predicate: a session holds a slot on pod P exactly when its
+// row is non-terminal and names P. It records per-pod seed calls and listing
+// calls, and returns a configured error.
 type fakeSource struct {
-	mu     sync.Mutex
-	counts map[string]int
-	calls  map[string]int
-	err    error
+	mu        sync.Mutex
+	rows      map[string]fakeRow
+	calls     map[string]int
+	err       error
+	listErr   error
+	listCalls int
+	onList    func()
 }
 
 func newFakeSource() *fakeSource {
-	return &fakeSource{counts: map[string]int{}, calls: map[string]int{}}
+	return &fakeSource{rows: map[string]fakeRow{}, calls: map[string]int{}}
 }
 
-func (f *fakeSource) GetActiveSlotsByPod(_ context.Context, podID string) (int, error) {
+// set writes the row of session id.
+func (f *fakeSource) set(id, pod string, terminal bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rows[id] = fakeRow{pod: pod, terminal: terminal}
+}
+
+// holders adds n live rows named <pod>-live-<i> naming pod.
+func (f *fakeSource) holders(pod string, n int) {
+	for i := 0; i < n; i++ {
+		f.set(fmt.Sprintf("%s-live-%d", pod, i), pod, false)
+	}
+}
+
+func (f *fakeSource) setErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
+	f.listErr = err
+}
+
+func (f *fakeSource) GetActiveSlotsByPod(_ context.Context, podID string) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls[podID]++
 	if f.err != nil {
-		return 0, f.err
+		return nil, f.err
 	}
-	return f.counts[podID], nil
+	var ids []string
+	for id, row := range f.rows {
+		if row.pod == podID && !row.terminal {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
+func (f *fakeSource) ListPodsWithActiveSlots(_ context.Context) ([]string, error) {
+	f.mu.Lock()
+	f.listCalls++
+	hook := f.onList
+	listErr := f.listErr
+	seen := map[string]bool{}
+	for _, row := range f.rows {
+		if row.pod != "" && !row.terminal {
+			seen[row.pod] = true
+		}
+	}
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	if listErr != nil {
+		return nil, listErr
+	}
+	pods := make([]string, 0, len(seen))
+	for pod := range seen {
+		pods = append(pods, pod)
+	}
+	return pods, nil
 }
 
 func (f *fakeSource) callCount(podID string) int {
@@ -53,234 +131,374 @@ func (f *fakeSource) callCount(podID string) int {
 	return f.calls[podID]
 }
 
+func (f *fakeSource) listCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.listCalls
+}
+
 // newCounterWithSource returns a Counter wired to src and the backing
-// miniredis so a test can simulate a Redis restart.
+// miniredis so a test can simulate a Redis restart or outage.
 func newCounterWithSource(t *testing.T, src slotcounter.SlotSource, opts ...slotcounter.Option) (*slotcounter.Counter, *miniredis.Miniredis, *redis.Client) {
 	t.Helper()
-	mr := miniredis.RunT(t)
-	cl := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = cl.Close() })
 	all := append([]slotcounter.Option{slotcounter.WithSlotSource(src)}, opts...)
-	return slotcounter.New(cl, all...), mr, cl
+	return newCounterNoSource(t, all...)
 }
 
-// spec: §5.2 — Reserve atomically increments the slot count, returning
-// the new count, and rejects past maxConcurrent.
-func TestReserveIncrementsUntilCap(t *testing.T) {
-	c := newCounter(t)
+// members returns the sorted members of pod's slot set.
+func members(t *testing.T, cl *redis.Client, pod string) []string {
+	t.Helper()
+	got, err := cl.SMembers(context.Background(), "lenny:pod:{"+pod+"}:active_slots").Result()
+	if err != nil {
+		t.Fatalf("SMEMBERS %s: %v", pod, err)
+	}
+	sort.Strings(got)
+	return got
+}
+
+// flagSet reports whether pod's rehydrated flag exists.
+func flagSet(t *testing.T, cl *redis.Client, pod string) bool {
+	t.Helper()
+	n, err := cl.Exists(context.Background(), "lenny:pod:{"+pod+"}:rehydrated").Result()
+	if err != nil {
+		t.Fatalf("EXISTS flag %s: %v", pod, err)
+	}
+	return n == 1
+}
+
+func wantMembers(t *testing.T, cl *redis.Client, pod string, want ...string) {
+	t.Helper()
+	sort.Strings(want)
+	got := members(t, cl, pod)
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("members of %s = %v, want %v", pod, got, want)
+	}
+}
+
+// slotOp is one step of the keyed slot table: a reservation, a clean
+// release, or a leaked release of session id.
+type slotOp struct {
+	op          string // "reserve", "release", "leak"
+	id          string
+	cap         int32
+	wantErr     error
+	wantCount   int32
+	wantRemoved bool
+	wantRemain  int32
+}
+
+// TestSlotSetKeyedReleaseTable_spec_5_2 drives reservation and release
+// sequences for one and two sessions and asserts the returned removed and
+// remaining values and the resulting set members against the keyed-release
+// rules.
+//
+// spec: §5.2 (Slot assignment atomicity), §6.2 (leaked slot semantics)
+func TestSlotSetKeyedReleaseTable_spec_5_2(t *testing.T) {
+	cases := []struct {
+		name string
+		ops  []slotOp
+		want []string
+	}{
+		{"reserve then clean release empties the set", []slotOp{
+			{op: "reserve", id: "s1", cap: 2, wantCount: 1},
+			{op: "release", id: "s1", wantRemoved: true, wantRemain: 0},
+		}, nil},
+		{"a duplicate clean release removes nothing", []slotOp{
+			{op: "reserve", id: "s1", cap: 2, wantCount: 1},
+			{op: "release", id: "s1", wantRemoved: true, wantRemain: 0},
+			{op: "release", id: "s1", wantRemoved: false, wantRemain: 0},
+		}, nil},
+		{"clean then leaked release of one session leaves one leaked member", []slotOp{
+			{op: "reserve", id: "s1", cap: 2, wantCount: 1},
+			{op: "release", id: "s1", wantRemoved: true, wantRemain: 0},
+			{op: "leak", id: "s1", wantRemoved: false, wantRemain: 1},
+		}, []string{"leaked:s1"}},
+		{"a second leaked release changes nothing", []slotOp{
+			{op: "reserve", id: "s1", cap: 2, wantCount: 1},
+			{op: "leak", id: "s1", wantRemoved: true, wantRemain: 1},
+			{op: "leak", id: "s1", wantRemoved: false, wantRemain: 1},
+		}, []string{"leaked:s1"}},
+		{"a repeated reservation of a present member adds nothing, at the cap too", []slotOp{
+			{op: "reserve", id: "s1", cap: 2, wantCount: 1},
+			{op: "reserve", id: "s2", cap: 2, wantCount: 2},
+			{op: "reserve", id: "s1", cap: 2, wantCount: 2},
+			{op: "reserve", id: "s2", cap: 2, wantCount: 2},
+		}, []string{"s1", "s2"}},
+		{"a reservation at the cap is exhausted", []slotOp{
+			{op: "reserve", id: "s1", cap: 1, wantCount: 1},
+			{op: "reserve", id: "s2", cap: 1, wantErr: slotcounter.ErrSlotsExhausted},
+		}, []string{"s1"}},
+		{"a sibling keeps the set non-empty", []slotOp{
+			{op: "reserve", id: "s1", cap: 2, wantCount: 1},
+			{op: "reserve", id: "s2", cap: 2, wantCount: 2},
+			{op: "release", id: "s1", wantRemoved: true, wantRemain: 1},
+			{op: "release", id: "s1", wantRemoved: false, wantRemain: 1},
+		}, []string{"s2"}},
+		{"a leaked member counts toward the cap", []slotOp{
+			{op: "reserve", id: "s1", cap: 2, wantCount: 1},
+			{op: "leak", id: "s1", wantRemoved: true, wantRemain: 1},
+			{op: "reserve", id: "s2", cap: 2, wantCount: 2},
+			{op: "reserve", id: "s3", cap: 2, wantErr: slotcounter.ErrSlotsExhausted},
+		}, []string{"leaked:s1", "s2"}},
+		{"a release of a never-reserved session on a seeded pod removes nothing", []slotOp{
+			{op: "reserve", id: "s1", cap: 2, wantCount: 1},
+			{op: "release", id: "s9", wantRemoved: false, wantRemain: 1},
+		}, []string{"s1"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _, cl := newCounterNoSource(t)
+			ctx := context.Background()
+			for i, op := range tc.ops {
+				switch op.op {
+				case "reserve":
+					got, _, err := c.Reserve(ctx, "pod", op.id, op.cap)
+					if op.wantErr != nil {
+						if !errors.Is(err, op.wantErr) {
+							t.Fatalf("step %d reserve %s: err %v, want %v", i, op.id, err, op.wantErr)
+						}
+						continue
+					}
+					if err != nil || got != op.wantCount {
+						t.Fatalf("step %d reserve %s = (%d, %v), want %d", i, op.id, got, err, op.wantCount)
+					}
+				case "release", "leak":
+					removed, remain, _, err := c.Release(ctx, "pod", op.id, op.op == "leak")
+					if err != nil {
+						t.Fatalf("step %d %s %s: %v", i, op.op, op.id, err)
+					}
+					if removed != op.wantRemoved || remain != op.wantRemain {
+						t.Fatalf("step %d %s %s = (removed %v, remaining %d), want (%v, %d)",
+							i, op.op, op.id, removed, remain, op.wantRemoved, op.wantRemain)
+					}
+				}
+			}
+			wantMembers(t, cl, "pod", tc.want...)
+		})
+	}
+}
+
+// TestEmptySessionIDRunsNoScript_spec_5_2 pins that a reservation or release
+// without a session identifier is an error and touches no key, so a keyed
+// release with no key cannot report a false zero.
+//
+// spec: §5.2 (Slot assignment atomicity)
+func TestEmptySessionIDRunsNoScript_spec_5_2(t *testing.T) {
+	c, mr, _ := newCounterNoSource(t)
 	ctx := context.Background()
-	for i := int32(1); i <= 3; i++ {
-		got, _, err := c.Reserve(ctx, "pod-a", 3)
-		if err != nil {
-			t.Fatalf("Reserve %d: %v", i, err)
-		}
-		if got != i {
-			t.Errorf("Reserve %d returned count %d, want %d", i, got, i)
-		}
+	if _, _, err := c.Reserve(ctx, "pod", "", 2); err == nil {
+		t.Fatal("Reserve with an empty session identifier must fail")
 	}
-	// 4th reserve must fail.
-	if _, _, err := c.Reserve(ctx, "pod-a", 3); !errors.Is(err, slotcounter.ErrSlotsExhausted) {
-		t.Errorf("4th Reserve = %v, want ErrSlotsExhausted", err)
+	if _, _, _, err := c.Release(ctx, "pod", "", false); err == nil {
+		t.Fatal("Release with an empty session identifier must fail")
+	}
+	if keys := mr.Keys(); len(keys) != 0 {
+		t.Fatalf("keys after empty-identifier calls = %v, want none (no script ran)", keys)
 	}
 }
 
-// spec: §5.2 — atomic CAS prevents over-commit under racing reservers.
-// 50 goroutines try to reserve on a pod whose maxConcurrent is 10; only
-// 10 must succeed.
+// TestReleaseRehydratesWithOwnMember_spec_5_2 pins the release arm of the
+// §5.2 rehydration: a release that finds the rehydrated flag absent adds the
+// source's identifiers and its own member to the members already present,
+// removes its own member, and reports removed, rehydrated, and the remaining
+// cardinality.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
+func TestReleaseRehydratesWithOwnMember_spec_5_2(t *testing.T) {
+	src := newFakeSource()
+	src.set("live-1", "pod", false)
+	src.set("ended", "pod", true)
+	c, _, cl := newCounterWithSource(t, src)
+	ctx := context.Background()
+	if err := cl.SAdd(ctx, "lenny:pod:{pod}:active_slots", "leaked:old").Err(); err != nil {
+		t.Fatal(err)
+	}
+	removed, remain, reh, err := c.Release(ctx, "pod", "ended", false)
+	if err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if !removed || !reh || remain != 2 {
+		t.Fatalf("Release = (removed %v, remaining %d, rehydrated %v), want (true, 2, true)", removed, remain, reh)
+	}
+	wantMembers(t, cl, "pod", "leaked:old", "live-1")
+	if !flagSet(t, cl, "pod") {
+		t.Fatal("the release's rehydration must set the flag")
+	}
+}
+
+// TestReserveIsAtomicUnderRace pins that racing reservers for distinct
+// sessions never exceed the cap. Run under -race.
+//
+// spec: §5.2 (Slot assignment atomicity)
 func TestReserveIsAtomicUnderRace(t *testing.T) {
-	c := newCounter(t)
+	c, _, cl := newCounterNoSource(t)
 	ctx := context.Background()
 	const n = 50
 	const cap = int32(10)
 	var wg sync.WaitGroup
-	successes := int64(0)
-	exhausted := int64(0)
+	var successes, exhausted int64
 	for i := 0; i < n; i++ {
 		wg.Add(1)
-		go func() {
+		go func(i int) {
 			defer wg.Done()
-			if _, _, err := c.Reserve(ctx, "pod-r", cap); err == nil {
+			_, _, err := c.Reserve(ctx, "pod-r", fmt.Sprintf("s%d", i), cap)
+			switch {
+			case err == nil:
 				atomic.AddInt64(&successes, 1)
-			} else if errors.Is(err, slotcounter.ErrSlotsExhausted) {
+			case errors.Is(err, slotcounter.ErrSlotsExhausted):
 				atomic.AddInt64(&exhausted, 1)
-			} else {
+			default:
 				t.Errorf("unexpected error: %v", err)
 			}
-		}()
+		}(i)
 	}
 	wg.Wait()
-	if atomic.LoadInt64(&successes) != int64(cap) {
-		t.Errorf("got %d successful reserves, want exactly %d (cap)", successes, cap)
+	if successes != int64(cap) || exhausted != int64(n)-int64(cap) {
+		t.Errorf("successes %d exhausted %d, want %d and %d", successes, exhausted, cap, n-int(cap))
 	}
-	if atomic.LoadInt64(&exhausted) != int64(n-int(cap)) {
-		t.Errorf("got %d exhausted, want %d", exhausted, n-int(cap))
-	}
-}
-
-// spec: §5.2 — Release decrements; a release on a zero counter clamps
-// at zero (double-release-safe).
-func TestReleaseDecrementsAndClampsAtZero(t *testing.T) {
-	c := newCounter(t)
-	ctx := context.Background()
-	if _, _, err := c.Reserve(ctx, "pod-d", 5); err != nil {
-		t.Fatalf("Reserve: %v", err)
-	}
-	got, err := c.Release(ctx, "pod-d")
-	if err != nil {
-		t.Fatalf("Release: %v", err)
-	}
-	if got != 0 {
-		t.Errorf("Release returned %d, want 0", got)
-	}
-	// Double-release.
-	got, err = c.Release(ctx, "pod-d")
-	if err != nil {
-		t.Fatalf("double Release: %v", err)
-	}
-	if got != 0 {
-		t.Errorf("double Release returned %d, want 0 (clamped)", got)
+	if got := len(members(t, cl, "pod-r")); got != int(cap) {
+		t.Errorf("set cardinality %d, want %d", got, cap)
 	}
 }
 
-// Different pods have independent counters.
+// TestReserveScopesPerPod pins that different pods have independent sets.
+//
+// spec: §5.2 (Slot assignment atomicity)
 func TestReserveScopesPerPod(t *testing.T) {
 	c := newCounter(t)
 	ctx := context.Background()
-	if _, _, err := c.Reserve(ctx, "pod-x", 1); err != nil {
+	if _, _, err := c.Reserve(ctx, "pod-x", "s1", 1); err != nil {
 		t.Fatalf("Reserve pod-x: %v", err)
 	}
-	if _, _, err := c.Reserve(ctx, "pod-x", 1); !errors.Is(err, slotcounter.ErrSlotsExhausted) {
+	if _, _, err := c.Reserve(ctx, "pod-x", "s2", 1); !errors.Is(err, slotcounter.ErrSlotsExhausted) {
 		t.Errorf("second Reserve on pod-x = %v, want ErrSlotsExhausted", err)
 	}
-	if _, _, err := c.Reserve(ctx, "pod-y", 1); err != nil {
+	if _, _, err := c.Reserve(ctx, "pod-y", "s2", 1); err != nil {
 		t.Errorf("Reserve pod-y must succeed independently of pod-x: %v", err)
 	}
 }
 
-func TestResetClearsCounter(t *testing.T) {
-	c := newCounter(t)
+// TestResetClearsSet_spec_5_2 pins that Reset deletes the pod's set and
+// flag, so the next reservation rehydrates from the source identifiers.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
+func TestResetClearsSet_spec_5_2(t *testing.T) {
+	src := newFakeSource()
+	c, _, cl := newCounterWithSource(t, src)
 	ctx := context.Background()
-	if _, _, err := c.Reserve(ctx, "pod-z", 2); err != nil {
-		t.Fatalf("Reserve: %v", err)
+	if _, reh, err := c.Reserve(ctx, "pod-z", "s1", 2); err != nil || !reh {
+		t.Fatalf("Reserve = (_, %v, %v), want rehydrated", reh, err)
 	}
 	if err := c.Reset(ctx, "pod-z"); err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	// A fresh Reserve after Reset starts from zero.
-	got, _, err := c.Reserve(ctx, "pod-z", 2)
-	if err != nil {
-		t.Fatalf("Reserve after Reset: %v", err)
+	wantMembers(t, cl, "pod-z")
+	src.set("s1", "pod-z", false)
+	got, reh, err := c.Reserve(ctx, "pod-z", "s2", 2)
+	if err != nil || !reh || got != 2 {
+		t.Fatalf("Reserve after Reset = (%d, %v, %v), want (2, true, nil)", got, reh, err)
 	}
-	if got != 1 {
-		t.Errorf("Reserve after Reset returned %d, want 1", got)
-	}
+	wantMembers(t, cl, "pod-z", "s1", "s2")
 }
 
-// spec: §5.2 line 521 — the first reservation on a pod whose rehydrated
-// flag is absent seeds the counter from the SlotSource before
-// incrementing. A source reporting 2 live slots makes the first
-// reservation return 3 (seed 2 + INCR).
+// TestReserveRehydratesFromSource_spec_5_2_521 pins that the first
+// reservation on a pod whose flag is absent seeds the set from the source's
+// identifiers before reserving, and that a second reservation does not
+// re-query the source.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
 func TestReserveRehydratesFromSource_spec_5_2_521(t *testing.T) {
 	src := newFakeSource()
-	src.counts["pod-h"] = 2
+	src.holders("pod-h", 2)
 	c, _, cl := newCounterWithSource(t, src)
 	ctx := context.Background()
 
-	got, rehydrated, err := c.Reserve(ctx, "pod-h", 5)
-	if err != nil {
-		t.Fatalf("Reserve: %v", err)
+	got, rehydrated, err := c.Reserve(ctx, "pod-h", "new-1", 5)
+	if err != nil || got != 3 || !rehydrated {
+		t.Fatalf("first Reserve = (%d, %v, %v), want (3, true, nil)", got, rehydrated, err)
 	}
-	if got != 3 {
-		t.Errorf("first Reserve after rehydration returned %d, want 3 (seed 2 + INCR)", got)
+	if !flagSet(t, cl, "pod-h") {
+		t.Error("rehydrated flag must be set after rehydration")
 	}
-	if !rehydrated {
-		t.Error("first Reserve must report rehydrated=true")
+	got, rehydrated, err = c.Reserve(ctx, "pod-h", "new-2", 5)
+	if err != nil || got != 4 || rehydrated {
+		t.Fatalf("second Reserve = (%d, %v, %v), want (4, false, nil)", got, rehydrated, err)
 	}
 	if n := src.callCount("pod-h"); n != 1 {
 		t.Errorf("source queried %d times, want 1", n)
 	}
-	// The rehydrated flag persists (no TTL).
-	if n, _ := cl.Exists(ctx, "lenny:pod:pod-h:rehydrated").Result(); n != 1 {
-		t.Error("rehydrated flag must be set after rehydration")
-	}
-
-	// A second reservation does not re-query the source and reports
-	// rehydrated=false.
-	got, rehydrated, err = c.Reserve(ctx, "pod-h", 5)
-	if err != nil {
-		t.Fatalf("second Reserve: %v", err)
-	}
-	if got != 4 {
-		t.Errorf("second Reserve returned %d, want 4", got)
-	}
-	if rehydrated {
-		t.Error("second Reserve must report rehydrated=false")
-	}
-	if n := src.callCount("pod-h"); n != 1 {
-		t.Errorf("source queried %d times after second reserve, want 1", n)
-	}
 }
 
-// spec: §5.2 line 521 — when Postgres already shows the pod at its
-// maxConcurrent bound, rehydration seeds the counter to the cap and the
-// reservation is rejected (no over-commit), still reporting the
-// rehydration event.
+// TestReserveRehydratesToCapThenExhausted pins that a seed reaching the cap
+// refuses the reservation and still reports the rehydration.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
 func TestReserveRehydratesToCapThenExhausted(t *testing.T) {
 	src := newFakeSource()
-	src.counts["pod-f"] = 3
+	src.holders("pod-f", 3)
 	c, _, _ := newCounterWithSource(t, src)
-	ctx := context.Background()
-
-	_, reh, err := c.Reserve(ctx, "pod-f", 3)
-	if !errors.Is(err, slotcounter.ErrSlotsExhausted) {
-		t.Errorf("Reserve = %v, want ErrSlotsExhausted (seeded to cap)", err)
-	}
-	if !reh {
-		t.Error("Reserve must report rehydrated=true even when the seed reaches the cap")
+	_, reh, err := c.Reserve(context.Background(), "pod-f", "new", 3)
+	if !errors.Is(err, slotcounter.ErrSlotsExhausted) || !reh {
+		t.Errorf("Reserve = (_, %v, %v), want (_, true, ErrSlotsExhausted)", reh, err)
 	}
 }
 
-// spec: §5.2 line 521 — rehydration is per-pod scoped (no global lock):
-// each pod triggers its own seed exactly once.
+// TestRehydrationKeepsExistingMembers_spec_5_2 pins that the rehydration
+// adds the source's identifiers and removes no member: a leaked: member and
+// a reservation whose row does not yet name the pod stay.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
+func TestRehydrationKeepsExistingMembers_spec_5_2(t *testing.T) {
+	src := newFakeSource()
+	src.set("row-1", "pod", false)
+	c, _, cl := newCounterWithSource(t, src)
+	ctx := context.Background()
+	if err := cl.SAdd(ctx, "lenny:pod:{pod}:active_slots", "leaked:x", "creating").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.Reserve(ctx, "pod", "new", 8); err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+	wantMembers(t, cl, "pod", "creating", "leaked:x", "new", "row-1")
+}
+
+// TestReserveRehydrationIsPerPodScoped pins that each pod seeds once, with
+// no global lock.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
 func TestReserveRehydrationIsPerPodScoped(t *testing.T) {
 	src := newFakeSource()
-	src.counts["pod-1"] = 1
-	src.counts["pod-2"] = 0
+	src.holders("pod-1", 1)
 	c, _, _ := newCounterWithSource(t, src)
 	ctx := context.Background()
-
-	if _, reh, err := c.Reserve(ctx, "pod-1", 4); err != nil || !reh {
-		t.Fatalf("Reserve pod-1 = (_, %v, %v), want (_, true, nil)", reh, err)
-	}
-	if _, reh, err := c.Reserve(ctx, "pod-2", 4); err != nil || !reh {
-		t.Fatalf("Reserve pod-2 = (_, %v, %v), want (_, true, nil)", reh, err)
-	}
-	if n := src.callCount("pod-1"); n != 1 {
-		t.Errorf("pod-1 source calls = %d, want 1", n)
-	}
-	if n := src.callCount("pod-2"); n != 1 {
-		t.Errorf("pod-2 source calls = %d, want 1", n)
+	for _, pod := range []string{"pod-1", "pod-2"} {
+		if _, reh, err := c.Reserve(ctx, pod, "s", 4); err != nil || !reh {
+			t.Fatalf("Reserve %s = (_, %v, %v), want (_, true, nil)", pod, reh, err)
+		}
+		if n := src.callCount(pod); n != 1 {
+			t.Errorf("%s source calls = %d, want 1", pod, n)
+		}
 	}
 }
 
-// spec: §5.2 line 521 — concurrent reservations on the same un-rehydrated
-// pod within one replica must seed exactly once (in-process mutex) and
-// must not over-commit. Run under -race.
+// TestReserveRehydrationConcurrentSamePod pins that concurrent reservations
+// on an un-rehydrated pod seed once and never exceed the cap. Run under
+// -race.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
 func TestReserveRehydrationConcurrentSamePod(t *testing.T) {
 	src := newFakeSource()
-	src.counts["pod-c"] = 0
 	c, _, _ := newCounterWithSource(t, src)
 	ctx := context.Background()
-
 	const n = 40
 	const cap = int32(8)
 	var wg sync.WaitGroup
 	var successes, exhausted, rehydrations int64
 	for i := 0; i < n; i++ {
 		wg.Add(1)
-		go func() {
+		go func(i int) {
 			defer wg.Done()
-			_, reh, err := c.Reserve(ctx, "pod-c", cap)
+			_, reh, err := c.Reserve(ctx, "pod-c", fmt.Sprintf("s%d", i), cap)
 			if reh {
 				atomic.AddInt64(&rehydrations, 1)
 			}
@@ -292,45 +510,36 @@ func TestReserveRehydrationConcurrentSamePod(t *testing.T) {
 			default:
 				t.Errorf("unexpected error: %v", err)
 			}
-		}()
+		}(i)
 	}
 	wg.Wait()
-
-	if successes != int64(cap) {
-		t.Errorf("successes = %d, want %d (cap)", successes, cap)
-	}
-	if exhausted != int64(n)-int64(cap) {
-		t.Errorf("exhausted = %d, want %d", exhausted, int64(n)-int64(cap))
-	}
-	if rehydrations != 1 {
-		t.Errorf("rehydration events = %d, want exactly 1", rehydrations)
+	if successes != int64(cap) || exhausted != int64(n)-int64(cap) || rehydrations != 1 {
+		t.Errorf("successes %d exhausted %d rehydrations %d, want %d, %d, 1", successes, exhausted, rehydrations, cap, n-int(cap))
 	}
 	if got := src.callCount("pod-c"); got != 1 {
-		t.Errorf("source queried %d times, want exactly 1 (in-process mutex)", got)
+		t.Errorf("source queried %d times, want exactly 1", got)
 	}
 }
 
-// spec: §5.2 line 521 — two gateway replicas (two Counters) sharing one
-// Redis race to rehydrate the same pod. The cross-replica SET NX lock
-// ensures the source is queried exactly once cluster-wide. Run under
-// -race.
+// TestReserveRehydrationCrossReplicaSeedsOnce pins that two replicas racing
+// to rehydrate one pod query the source once (SET NX lock). Run under -race.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
 func TestReserveRehydrationCrossReplicaSeedsOnce(t *testing.T) {
 	src := newFakeSource()
-	src.counts["pod-x"] = 0
 	mr := miniredis.RunT(t)
 	newReplica := func() *slotcounter.Counter {
-		cl := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		cl := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 		t.Cleanup(func() { _ = cl.Close() })
 		return slotcounter.New(cl, slotcounter.WithSlotSource(src))
 	}
 	a, b := newReplica(), newReplica()
 	ctx := context.Background()
-
 	var wg sync.WaitGroup
 	var rehydrations int64
-	reserve := func(c *slotcounter.Counter) {
+	reserve := func(c *slotcounter.Counter, id string) {
 		defer wg.Done()
-		_, reh, err := c.Reserve(ctx, "pod-x", 4)
+		_, reh, err := c.Reserve(ctx, "pod-x", id, 4)
 		if err != nil {
 			t.Errorf("Reserve: %v", err)
 		}
@@ -339,188 +548,154 @@ func TestReserveRehydrationCrossReplicaSeedsOnce(t *testing.T) {
 		}
 	}
 	wg.Add(2)
-	go reserve(a)
-	go reserve(b)
+	go reserve(a, "sa")
+	go reserve(b, "sb")
 	wg.Wait()
-
-	if got := src.callCount("pod-x"); got != 1 {
-		t.Errorf("source queried %d times across replicas, want exactly 1 (SET NX lock)", got)
-	}
-	if rehydrations != 1 {
-		t.Errorf("rehydration events = %d, want exactly 1", rehydrations)
+	if got := src.callCount("pod-x"); got != 1 || rehydrations != 1 {
+		t.Errorf("source calls %d rehydrations %d, want 1 and 1", got, rehydrations)
 	}
 }
 
-// spec: §5.2 line 521 — a SlotSource error fails the reservation without
-// setting the rehydrated flag, so a later reservation retries the seed
-// and succeeds once the source recovers.
+// TestReserveRehydrationSourceErrorRetries pins that a source error leaves
+// the flag unset so the next reservation retries the seed.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
 func TestReserveRehydrationSourceErrorRetries(t *testing.T) {
 	src := newFakeSource()
 	src.err = errors.New("postgres unavailable")
 	c, _, cl := newCounterWithSource(t, src)
 	ctx := context.Background()
-
-	if _, _, err := c.Reserve(ctx, "pod-e", 3); err == nil {
+	if _, _, err := c.Reserve(ctx, "pod-e", "s1", 3); err == nil {
 		t.Fatal("Reserve must fail when the source errors")
 	}
-	// Flag must remain unset so the seed is retried.
-	if n, _ := cl.Exists(ctx, "lenny:pod:pod-e:rehydrated").Result(); n != 0 {
+	if flagSet(t, cl, "pod-e") {
 		t.Error("rehydrated flag must not be set on source error")
 	}
-
-	// Source recovers; the next reservation rehydrates and succeeds.
 	src.mu.Lock()
 	src.err = nil
-	src.counts["pod-e"] = 1
 	src.mu.Unlock()
-
-	got, reh, err := c.Reserve(ctx, "pod-e", 3)
-	if err != nil {
-		t.Fatalf("Reserve after recovery: %v", err)
-	}
-	if got != 2 {
-		t.Errorf("Reserve after recovery returned %d, want 2 (seed 1 + INCR)", got)
-	}
-	if !reh {
-		t.Error("recovered Reserve must report rehydrated=true")
+	src.set("live", "pod-e", false)
+	got, reh, err := c.Reserve(ctx, "pod-e", "s1", 3)
+	if err != nil || got != 2 || !reh {
+		t.Fatalf("Reserve after recovery = (%d, %v, %v), want (2, true, nil)", got, reh, err)
 	}
 }
 
-// spec: §5.2 line 521 — with no SlotSource wired, rehydration falls back
-// to seed-zero (the pre-rehydration behaviour) and is not reported as a
-// rehydration event.
-func TestReserveNilSourceSeedsZero(t *testing.T) {
-	c := newCounter(t) // nil source
-	ctx := context.Background()
-	got, reh, err := c.Reserve(ctx, "pod-n", 2)
-	if err != nil {
-		t.Fatalf("Reserve: %v", err)
-	}
-	if got != 1 {
-		t.Errorf("Reserve returned %d, want 1 (seed 0 + INCR)", got)
-	}
-	if reh {
-		t.Error("nil-source reservation must report rehydrated=false")
+// TestReserveNilSourceSeedsEmpty pins that with no SlotSource the seed adds
+// no member and is not a rehydration event.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
+func TestReserveNilSourceSeedsEmpty(t *testing.T) {
+	c := newCounter(t)
+	got, reh, err := c.Reserve(context.Background(), "pod-n", "s1", 2)
+	if err != nil || got != 1 || reh {
+		t.Fatalf("Reserve = (%d, %v, %v), want (1, false, nil)", got, reh, err)
 	}
 }
 
-// spec: §5.2 line 521 — after a Redis restart (counters and flags
-// cleared) the next reservation re-seeds from Postgres, restoring the
-// pre-restart slot count before allowing a new slot.
+// TestReserveRehydratesAfterRedisRestart pins that after a restart that loses
+// every key the next reservation re-seeds from the rows before admitting.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
 func TestReserveRehydratesAfterRedisRestart(t *testing.T) {
 	src := newFakeSource()
 	c, _, cl := newCounterWithSource(t, src)
 	ctx := context.Background()
-
-	// Pre-restart: fill two slots. Source reports 0 (fresh) so the seed
-	// is 0 and the count reaches 2 by INCR.
-	for i := 0; i < 2; i++ {
-		if _, _, err := c.Reserve(ctx, "pod-rr", 4); err != nil {
-			t.Fatalf("pre-restart Reserve %d: %v", i, err)
+	for _, id := range []string{"a", "b"} {
+		if _, _, err := c.Reserve(ctx, "pod-rr", id, 4); err != nil {
+			t.Fatalf("pre-restart Reserve %s: %v", id, err)
 		}
+		src.set(id, "pod-rr", false)
 	}
-
-	// Simulate a Redis restart: every key (counter + rehydrated flag) is
-	// gone. Postgres still shows the 2 live slots.
 	if err := cl.FlushAll(ctx).Err(); err != nil {
 		t.Fatalf("flush: %v", err)
 	}
-	src.mu.Lock()
-	src.counts["pod-rr"] = 2
-	src.calls["pod-rr"] = 0
-	src.mu.Unlock()
-
-	got, reh, err := c.Reserve(ctx, "pod-rr", 4)
-	if err != nil {
-		t.Fatalf("post-restart Reserve: %v", err)
+	got, reh, err := c.Reserve(ctx, "pod-rr", "c", 4)
+	if err != nil || got != 3 || !reh {
+		t.Fatalf("post-restart Reserve = (%d, %v, %v), want (3, true, nil)", got, reh, err)
 	}
-	if got != 3 {
-		t.Errorf("post-restart Reserve returned %d, want 3 (rehydrate to 2 + INCR)", got)
-	}
-	if !reh {
-		t.Error("post-restart Reserve must report rehydrated=true")
-	}
-	if n := src.callCount("pod-rr"); n != 1 {
-		t.Errorf("source queried %d times post-restart, want 1", n)
-	}
+	wantMembers(t, cl, "pod-rr", "a", "b", "c")
 }
 
-// spec: §5.2 line 521 — Reset clears the rehydrated flag so the next
-// reservation rehydrates again (a fresh pod with a recycled name does
-// not inherit a stale flag).
-func TestResetClearsRehydrationFlag(t *testing.T) {
-	src := newFakeSource()
-	c, _, _ := newCounterWithSource(t, src)
-	ctx := context.Background()
-
-	if _, reh, err := c.Reserve(ctx, "pod-rs", 2); err != nil || !reh {
-		t.Fatalf("first Reserve = (_, %v, %v), want rehydrated", reh, err)
-	}
-	if err := c.Reset(ctx, "pod-rs"); err != nil {
-		t.Fatalf("Reset: %v", err)
-	}
-	if _, reh, err := c.Reserve(ctx, "pod-rs", 2); err != nil || !reh {
-		t.Fatalf("Reserve after Reset = (_, %v, %v), want rehydrated again", reh, err)
-	}
-	if n := src.callCount("pod-rs"); n != 2 {
-		t.Errorf("source queried %d times, want 2 (once per rehydration)", n)
-	}
-}
-
-// spec: §5.2 line 521 — a peer replica holds the rehydrating lock and
-// never sets the flag; the spin-wait is bounded by the rehydration
-// timeout and the reservation stalls rather than blocking forever.
+// TestReserveStallsWhenLockHeldAndFlagNeverSet pins the bounded spin-wait
+// against a peer's lock that never sets the flag.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
 func TestReserveStallsWhenLockHeldAndFlagNeverSet(t *testing.T) {
 	src := newFakeSource()
 	c, _, cl := newCounterWithSource(t, src, slotcounter.WithRehydrationTimeout(40*time.Millisecond))
 	ctx := context.Background()
-
-	// A peer holds the rehydrating lock with no TTL and never seeds.
-	if err := cl.Set(ctx, "lenny:pod:pod-s:rehydrating", "peer-token", 0).Err(); err != nil {
+	if err := cl.Set(ctx, "lenny:pod:{pod-s}:rehydrating", "peer-token", 0).Err(); err != nil {
 		t.Fatalf("hold lock: %v", err)
 	}
-
-	_, _, err := c.Reserve(ctx, "pod-s", 2)
-	if !errors.Is(err, slotcounter.ErrRehydrationStalled) {
+	if _, _, err := c.Reserve(ctx, "pod-s", "s1", 2); !errors.Is(err, slotcounter.ErrRehydrationStalled) {
 		t.Errorf("Reserve = %v, want ErrRehydrationStalled", err)
 	}
-	// The source must never be queried while another replica holds the
-	// lock.
+	if _, _, _, err := c.Release(ctx, "pod-s", "s1", false); !errors.Is(err, slotcounter.ErrRehydrationStalled) {
+		t.Errorf("Release = %v, want ErrRehydrationStalled", err)
+	}
 	if n := src.callCount("pod-s"); n != 0 {
 		t.Errorf("source queried %d times, want 0 (peer holds the lock)", n)
 	}
 }
 
-// spec: §5.2 line 521 — a waiter blocked on a peer's rehydrating lock
-// resumes and reserves once the peer sets the flag mid-wait.
+// TestReserveWaitsForPeerFlagThenSucceeds pins that a waiter resumes once the
+// peer's rehydration sets the flag.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
 func TestReserveWaitsForPeerFlagThenSucceeds(t *testing.T) {
 	src := newFakeSource()
 	c, _, cl := newCounterWithSource(t, src, slotcounter.WithRehydrationTimeout(2*time.Second))
 	ctx := context.Background()
-
-	// A peer holds the rehydrating lock. After a short delay it seeds the
-	// counter to 1 and sets the flag (the peer's rehydration completing).
-	if err := cl.Set(ctx, "lenny:pod:pod-w:rehydrating", "peer-token", 0).Err(); err != nil {
+	if err := cl.Set(ctx, "lenny:pod:{pod-w}:rehydrating", "peer-token", 0).Err(); err != nil {
 		t.Fatalf("hold lock: %v", err)
 	}
 	go func() {
 		time.Sleep(40 * time.Millisecond)
-		_ = cl.Set(ctx, "lenny:pod:pod-w:active_slots", "1", 0).Err()
-		_ = cl.Set(ctx, "lenny:pod:pod-w:rehydrated", "1", 0).Err()
+		_ = cl.SAdd(ctx, "lenny:pod:{pod-w}:active_slots", "peer-seeded").Err()
+		_ = cl.Set(ctx, "lenny:pod:{pod-w}:rehydrated", "1", 0).Err()
 	}()
-
-	got, reh, err := c.Reserve(ctx, "pod-w", 3)
-	if err != nil {
-		t.Fatalf("Reserve: %v", err)
-	}
-	if got != 2 {
-		t.Errorf("Reserve returned %d, want 2 (peer seeded 1 + INCR)", got)
-	}
-	// This replica waited for the peer; it did not perform the seed.
-	if reh {
-		t.Error("waiting replica must report rehydrated=false (peer seeded)")
+	got, reh, err := c.Reserve(ctx, "pod-w", "s1", 3)
+	if err != nil || got != 2 || reh {
+		t.Fatalf("Reserve = (%d, %v, %v), want (2, false, nil)", got, reh, err)
 	}
 	if n := src.callCount("pod-w"); n != 0 {
 		t.Errorf("source queried %d times, want 0 (peer seeded)", n)
 	}
+}
+
+// TestRehydrationSeedKeepsAPostTerminalSlot_spec_5_2 pins the rehydration
+// seed against the session store's §7.1 pod-holder predicate: after a Redis
+// set loss, the seed for a pod whose only session is terminal with no
+// release recorded includes that session, so a reservation at
+// maxConcurrentSessions is refused; on the pre-fix seed the session is
+// omitted and the slot is reissued while its terminal pipeline still uses
+// it. Once PodReleasedAt is set and the set is lost again, the seed omits it
+// and the reservation is admitted.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity), §7.1 (Post-terminal window)
+func TestRehydrationSeedKeepsAPostTerminalSlot_spec_5_2(t *testing.T) {
+	ctx := context.Background()
+	store := memstore.New(memstore.WithPostTerminalCap(5 * time.Minute))
+	if err := store.Create(ctx, sessionstore.Session{
+		ID: "sealing", TenantID: "acme", State: session.StateCompleted, PodAssignment: "pod-pt",
+		ScrubPolicy: "best-effort-per-slot", TerminatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c, _, cl := newCounterWithSource(t, store)
+	if _, _, err := c.Reserve(ctx, "pod-pt", "next", 1); !errors.Is(err, slotcounter.ErrSlotsExhausted) {
+		t.Fatalf("Reserve at the bound with a sealing member = %v, want ErrSlotsExhausted", err)
+	}
+	wantMembers(t, cl, "pod-pt", "sealing")
+	if err := sessionstore.RecordPodRelease(ctx, store, "acme", "sealing", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := cl.FlushAll(ctx).Err(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if got, _, err := c.Reserve(ctx, "pod-pt", "next", 1); err != nil || got != 1 {
+		t.Fatalf("Reserve after the release = (%d, %v), want (1, nil)", got, err)
+	}
+	wantMembers(t, cl, "pod-pt", "next")
 }

@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 )
 
-// spec: §4.9 lines 1668-1673 — the startup deny-list rebuild constructs
+// spec: §4.9 — the startup deny-list rebuild constructs
 // the authoritative set via Reset.
 
 // TestResetSeedsAndReplaces confirms Reset installs exactly the given

@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/mtls/spiffe"
 )
 
-// spec: 16_observability.md line 50 — every handshake outcome maps to a
+// spec: §16.1 — every handshake outcome maps to a
 // distinct §16.1 result label. The classifier is the single point that
 // decides the bucket, so the matrix pins each path.
 func TestClassifyResult_spec_16_1_50(t *testing.T) {
@@ -87,7 +87,7 @@ func TestClassifyResult_spec_16_1_50(t *testing.T) {
 	}
 }
 
-// spec: §10.3 line 322/327 — only an in-cluster (.svc) endpoint carries a
+// spec: §10.3 — only an in-cluster (.svc) endpoint carries a
 // SPIFFE identity; external FQDNs and raw IPs are out of NET-063 scope.
 func TestInCluster_spec_10_3_322(t *testing.T) {
 	cases := map[string]bool{

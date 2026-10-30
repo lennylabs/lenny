@@ -2,8 +2,7 @@
 
 // Package spiffeid is the minimal SPIFFE-ID parser the Token Service
 // uses to extract a per-replica caller identity from an mTLS client
-// certificate's SAN field. Per-replica identity backs the §4.3 line
-// 205 attributability rule: each gateway replica has a distinct
+// certificate's SAN field. Per-replica identity backs the §4.3 attributability rule: each gateway replica has a distinct
 // SPIFFE identity so compromise of one replica is attributable and
 // revocable independently.
 //
@@ -11,7 +10,7 @@
 // package intentionally implements only the parsing the §4.3
 // auditor needs; it does not depend on github.com/spiffe/go-spiffe so
 // the gateway and Token Service stay free of cgo and external trust
-// domain libraries. spec: §4.3 line 205.
+// domain libraries. spec: §4.3.
 package spiffeid
 
 import (
@@ -22,7 +21,7 @@ import (
 )
 
 // ErrNoSPIFFEID is returned when no URI SAN in the certificate parses
-// as a SPIFFE ID. spec: §4.3 line 205.
+// as a SPIFFE ID. spec: §4.3.
 var ErrNoSPIFFEID = errors.New("spiffeid: no spiffe:// URI SAN on certificate")
 
 // ID is a parsed SPIFFE ID. Both fields are non-empty when Parse
@@ -57,7 +56,7 @@ func (id ID) String() string { return id.URI }
 // Parse is forgiving on cases the SPIFFE spec normalizes to lowercase
 // (trust domains are case-insensitive) — both inputs and outputs are
 // lower-cased on the trust domain.
-// spec: §4.3 line 205.
+// spec: §4.3.
 func Parse(uri string) (ID, error) {
 	u, err := url.Parse(uri)
 	if err != nil {
@@ -97,7 +96,7 @@ func Parse(uri string) (ID, error) {
 // FromCert returns the first SPIFFE-ID URI SAN on cert, or
 // ErrNoSPIFFEID when the certificate carries none. A certificate with
 // multiple SPIFFE-ID URI SANs is unusual; the first is returned and
-// the rest are ignored by this parser. spec: §4.3 line 205.
+// the rest are ignored by this parser. spec: §4.3.
 func FromCert(cert *x509.Certificate) (ID, error) {
 	if cert == nil {
 		return ID{}, errors.New("spiffeid: nil certificate")

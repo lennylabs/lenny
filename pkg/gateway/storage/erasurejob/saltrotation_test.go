@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 )
 
-// recordingLock is a §12.8 line 856 advisory-lock seam that records the
+// recordingLock is a §12.8 advisory-lock seam that records the
 // order in which the protected critical sections run, so a test can assert
 // the lock actually serializes a rotation against a pseudonymize.
 type recordingLock struct {
@@ -32,7 +32,7 @@ func (l *recordingLock) WithSaltLock(ctx context.Context, tenantID string, fn fu
 	return err
 }
 
-// spec: §12.8 lines 856-857 — RotateErasureSalt generates and stores a
+// spec: §12.8 — RotateErasureSalt generates and stores a
 // fresh per-tenant salt, replacing any prior one. F-12.8.5.
 func TestRotateErasureSaltStoresFreshSalt_spec_12_8_857(t *testing.T) {
 	ctx := context.Background()
@@ -48,11 +48,11 @@ func TestRotateErasureSaltStoresFreshSalt_spec_12_8_857(t *testing.T) {
 		t.Fatalf("rotated salt is %d bytes, want a fresh 256-bit salt", len(tn.ErasureSalt))
 	}
 	if string(tn.ErasureSalt) == "old-salt-old-salt-old-salt-old01" {
-		t.Error("§12.8 line 857: the old salt must be replaced, not retained")
+		t.Error("§12.8: the old salt must be replaced, not retained")
 	}
 }
 
-// spec: §12.8 line 855 — a tenant exempt from billing erasure has no salt,
+// spec: §12.8 — a tenant exempt from billing erasure has no salt,
 // so rotation returns ErrBillingErasureExempt. F-12.8.5.
 func TestRotateErasureSaltExemptTenant_spec_12_8_855(t *testing.T) {
 	ctx := context.Background()
@@ -72,7 +72,7 @@ func TestRotateErasureSaltUnknownTenant(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 856 — both the pseudonymize and the rotation run under
+// spec: §12.8 — both the pseudonymize and the rotation run under
 // the advisory lock when one is wired, so the migration and erasure never
 // race. F-12.8.5.
 func TestSaltRotationLockWrapsBothPaths_spec_12_8_856(t *testing.T) {
@@ -103,7 +103,7 @@ func TestSaltRotationLockWrapsBothPaths_spec_12_8_856(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 856 — a nil lock leaves both paths unsynchronized,
+// spec: §12.8 — a nil lock leaves both paths unsynchronized,
 // which is the single-process in-memory default. F-12.8.5.
 func TestSaltRotationNilLockIsNoOp_spec_12_8_856(t *testing.T) {
 	ctx := context.Background()
@@ -116,7 +116,7 @@ func TestSaltRotationNilLockIsNoOp_spec_12_8_856(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 853 — the caller's source salt slice is not corrupted
+// spec: §12.8 — the caller's source salt slice is not corrupted
 // by the in-memory zeroing of the eraser's working copy; the persisted
 // pseudonyms remain derivable from the original salt. F-12.8.5.
 func TestPseudonymizeDoesNotZeroCallerSalt_spec_12_8_853(t *testing.T) {
@@ -132,7 +132,7 @@ func TestPseudonymizeDoesNotZeroCallerSalt_spec_12_8_853(t *testing.T) {
 	if _, err := eraser.Pseudonymize(ctx, "acme", "alice@acme"); err != nil {
 		t.Fatalf("Pseudonymize: %v", err)
 	}
-	// The §12.8 line 853 in-memory zeroing operates on the eraser's working
+	// The §12.8 in-memory zeroing operates on the eraser's working
 	// copy (the tenant store clones ErasureSalt on Get), so the original
 	// salt is intact and the persisted pseudonyms remain derivable from it.
 	want := billingstore.Pseudonymize("alice@acme", saltCopy)

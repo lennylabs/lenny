@@ -9,17 +9,17 @@ import (
 	"github.com/lennylabs/lenny/pkg/quota"
 )
 
-// DefaultUserFailOpenFraction is the §12.4 line 222
+// DefaultUserFailOpenFraction is the §12.4
 // `quotaUserFailOpenFraction` default (0.25): a single user may consume at
 // most 25% of the tenant's per-replica fail-open allocation.
 const DefaultUserFailOpenFraction = 0.25
 
-// UserFractionWeakThreshold is the §12.4 line 222 boundary at or above
+// UserFractionWeakThreshold is the §12.4 boundary at or above
 // which the per-user fail-open cap is judged substantially weakened (the
 // QuotaFailOpenUserFractionInoperative warning fires).
 const UserFractionWeakThreshold = 0.5
 
-// Backstop is the §12.4 lines 220-224 in-memory per-replica emergency
+// Backstop is the §12.4 in-memory per-replica emergency
 // counter the gateway applies to admission requests during a Redis outage.
 // It counts requests per key within a fixed one-minute window (matching
 // the §11.1 request-rate window) so a single user or tenant cannot send
@@ -28,8 +28,7 @@ const UserFractionWeakThreshold = 0.5
 // cluster-wide effective limit is N × the per-replica ceiling, which the
 // cached-replica-count division bounds.
 //
-// spec: §12.4 lines 220-224 ("in-memory per-user request counter as a
-// coarse emergency backstop").
+// spec: §12.4.
 type Backstop struct {
 	mu  sync.Mutex
 	win map[string]*minuteCount
@@ -70,8 +69,7 @@ func (b *Backstop) Incr(key string, now time.Time) int {
 
 // Reset clears every counter. The gateway calls it on the Redis-recovery
 // edge so per-user fail-open counters do not bleed into the recovered
-// window. spec: §12.4 line 222 ("Per-user fail-open counters are reset
-// when Redis recovers").
+// window. spec: §12.4.
 func (b *Backstop) Reset() {
 	b.mu.Lock()
 	b.win = map[string]*minuteCount{}
@@ -92,7 +90,7 @@ func (b *Backstop) Sweep(now time.Time) {
 	b.mu.Unlock()
 }
 
-// Ceilings is the §12.4 line 222/224 per-replica fail-open allocation for
+// Ceilings is the §12.4 per-replica fail-open allocation for
 // one tenant: the per-tenant effective ceiling and the per-user ceiling
 // derived from it.
 type Ceilings struct {
@@ -107,17 +105,16 @@ type Ceilings struct {
 // ComputeCeilings derives the §12.4 per-replica ceilings for a tenant
 // whose configured per-window limit is tenantLimit, given the last-known
 // cached replica count, the per-replica hard cap, and the user fraction.
-// A non-positive perReplicaHardCap defaults to tenant_limit / 2 per §12.4
-// line 224. A non-positive userFraction selects the 0.25 default.
+// A non-positive perReplicaHardCap defaults to tenant_limit / 2 per §12.4. A non-positive userFraction selects the 0.25 default.
 //
-// spec: §12.4 lines 222-224; §11.2 Maximum Overshoot Formula.
+// spec: §12.4; §11.2 Maximum Overshoot Formula.
 func ComputeCeilings(tenantLimit int64, cachedReplicaCount int, perReplicaHardCap int64, userFraction float64) Ceilings {
 	if tenantLimit <= 0 {
 		return Ceilings{}
 	}
 	cap := perReplicaHardCap
 	if cap <= 0 {
-		// spec: §12.4 line 224 — per_replica_hard_cap defaults to
+		// spec: §12.4 — per_replica_hard_cap defaults to
 		// tenant_limit / 2.
 		cap = tenantLimit / 2
 		if cap <= 0 {

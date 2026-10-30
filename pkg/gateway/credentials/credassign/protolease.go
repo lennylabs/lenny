@@ -41,12 +41,24 @@ type credentialPayload struct {
 // AssignProto satisfies the gateway session path's credential-assigner
 // dependency, so the §4.7 binder can mint and deliver a session's
 // leases without depending on the lease internals.
-func (s *Service) AssignProto(poolName, sessionID, spiffeURI, tenantID string) (*adapterv1.CredentialLease, error) {
-	lease, err := s.Assign(poolName, sessionID, spiffeURI, tenantID)
+//
+// When the wire conversion fails, AssignProto releases the lease it
+// recorded before it returns the error, so no lease stays recorded,
+// counted against its pool, and tracked for renewal with no attempt
+// holding its identifier.
+//
+// spec: §4.9 (Credential Leasing Service)
+func (s *Service) AssignProto(poolName, sessionID, spiffeURI, tenantID string, generation int64) (*adapterv1.CredentialLease, error) {
+	lease, err := s.Assign(poolName, sessionID, spiffeURI, tenantID, generation)
 	if err != nil {
 		return nil, err
 	}
-	return ProtoLease(lease)
+	wire, err := ProtoLease(lease)
+	if err != nil {
+		_ = s.Release(lease.LeaseID)
+		return nil, err
+	}
+	return wire, nil
 }
 
 // ProtoLeaseByID resolves a recorded §4.9 credential lease by its lease

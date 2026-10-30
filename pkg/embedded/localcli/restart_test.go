@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §24.19 line 264 — `lenny restart` requires a component argument.
+// spec: §24.19 — `lenny restart` requires a component argument.
 func TestCmdRestartRequiresComponent_spec_24_19_264(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := cmdRestart(context.Background(), nil, &stdout, &stderr)
@@ -21,7 +21,7 @@ func TestCmdRestartRequiresComponent_spec_24_19_264(t *testing.T) {
 	}
 }
 
-// spec: §24.19 line 264 — only the pod-backed control-plane Deployments
+// spec: §24.19 — only the pod-backed control-plane Deployments
 // (gateway, controller, ops) are individually restartable; other names are
 // rejected before any rollout-restart.
 func TestCmdRestartRejectsUnknownComponent_spec_24_19_264(t *testing.T) {

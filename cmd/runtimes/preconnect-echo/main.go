@@ -8,7 +8,7 @@
 // The §6.1 SDK-warm model pre-connects the agent process during the warm
 // phase so the first prompt does not pay SDK cold-start latency. This
 // binary shows the wiring a first-party Go runtime uses: build an
-// adapter.Server, attach an adapter.SDKWarmInProcessRuntime (the §15.4.1
+// adapter.Server, attach an adapter.SDKWarmInProcessRuntime (the §28.5.3
 // echo loop with the SDK-warm PreConnect / ConfigureWorkspace / DemoteSDK
 // methods), call adapter.Server.PreConnect once the server is up, and
 // serve adapter.NewGRPCServer. The gateway then either points the
@@ -35,6 +35,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/prestop"
 	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/runtimekit/echocore"
@@ -45,16 +46,29 @@ import (
 var version = "0.1.0"
 
 func main() {
-	// spec: §16.4 lines 370-372 — structured JSON logs (component=preconnect-echo).
+	// spec: §16.4 — structured JSON logs (component=preconnect-echo).
 	logging.Setup(os.Stderr, "preconnect-echo")
+
+	// spec: §4.6.1, §4.7 — in the embedded model the pod builder attaches
+	// the preStop drain hook to this container, so the binary dispatches
+	// the `prestop` subcommand before parsing its server flags, exactly as
+	// lenny-adapter does.
+	if len(os.Args) > 1 && os.Args[1] == prestop.Verb {
+		os.Exit(prestop.Run(os.Args[2:], log.Printf))
+	}
 
 	addr := flag.String("addr", ":50051", "address the embedded runtime gRPC server binds to")
 	certFile := flag.String("tls-cert-file", "", "path to the server certificate")
 	keyFile := flag.String("tls-key-file", "", "path to the server private key")
 	clientCAFile := flag.String("tls-client-ca-file", "",
 		"path to the CA bundle that verifies gateway client certificates")
-	workspaceRoot := flag.String("workspace-root", "/workspace/current",
-		"directory the session workspace is materialized into")
+	// spec: §6.4 — every session on every pod owns a per-slot tree under
+	// the workspace base, `<base>/slots/{sessionId}/current/` for its cwd
+	// and `<base>/slots/{sessionId}/staging/` for its uploads. The
+	// embedded runtime is the adapter, so it parses the same base the
+	// controller renders onto the runtime container's argv.
+	workspaceBase := flag.String("workspace-base", "/workspace",
+		"§6.4 workspace base the per-session `slots/{sessionId}` trees nest under")
 	stagingDir := flag.String("staging-dir", "/workspace/.staging",
 		"directory PrepareWorkspace streams uploaded files into before "+
 			"FinalizeWorkspace materializes them")
@@ -73,6 +87,15 @@ func main() {
 		"§9.1/§4.7 abstract Unix socket the platform MCP server binds for a type:agent runtime; empty disables it")
 	gatewayGRPCAddr := flag.String("gateway-grpc-addr", "",
 		"§9.1/§8.6 gateway GatewayControl address the embedded runtime dials to forward platform tool calls; empty serves an empty catalog")
+	// spec: §4.4/§13.2 — the reconciler renders the checkpoint-probe flags
+	// onto the pod's gateway-facing container, which in the embedded model
+	// is the runtime. They are accepted and ignored: this fixture never
+	// checkpoints, so it needs no size probe and dials no object store.
+	// Without them flag.Parse exits 2 and the pool crash-loops.
+	_ = flag.Int64("workspace-size-limit-bytes", 0,
+		"§4.4 per-pod workspace-size limit for the pre-checkpoint size probe; accepted and ignored by this fixture")
+	_ = flag.String("objectstore-ca-bundle", "",
+		"§13.2 mounted object-store CA trust bundle; accepted and ignored by this fixture")
 	flag.Parse()
 
 	tlsOpt, err := adapter.TLSServerOption(*certFile, *keyFile, *clientCAFile)
@@ -85,7 +108,7 @@ func main() {
 	}
 
 	adapterSrv := adapter.New(version)
-	adapterSrv.WorkspaceRoot = *workspaceRoot
+	adapterSrv.WorkspaceBase = *workspaceBase
 	adapterSrv.StagingDir = *stagingDir
 	adapterSrv.CredentialsDir = *credentialsDir
 	adapterSrv.ManifestDir = *credentialsDir
@@ -101,9 +124,13 @@ func main() {
 	// §9.1/§4.7: bind the platform MCP socket and, when a gateway address is
 	// configured, dial the gateway's GatewayControl service. ManifestDir is
 	// set above, since the platform MCP server reads the authenticating nonce
-	// from the manifest. In the embedded model the runtime and MCP server are
-	// one process and UID, so RuntimeUID stays zero (the SO_PEERCRED self-check
-	// is disabled, which is correct per §4.7).
+	// from the manifest. The embedded model is a single trusted process with
+	// no adapter-agent socket boundary, so the MCP listener applies no
+	// SO_PEERCRED peer check and the manifest nonce authenticates the
+	// connection. EmbeddedPeerAuth states that posture explicitly, because
+	// the zero-value posture fails closed.
+	// spec: §4.7.11 (Separate UIDs and connection authentication).
+	adapterSrv.PeerAuth = adapter.EmbeddedPeerAuth()
 	gwCloser, err := adapterSrv.ConnectGateway(*mcpSocket, *gatewayGRPCAddr, *certFile, *keyFile, *clientCAFile)
 	if err != nil {
 		log.Fatalf("preconnect-echo: %v", err)
@@ -126,15 +153,14 @@ func main() {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 		<-stop
-		// §6.1 line 67 — SIGTERM during sdk_connecting tears the SDK down
+		// §6.1 — SIGTERM during sdk_connecting tears the SDK down
 		// within LENNY_DEMOTE_TIMEOUT_SECONDS (default 5s), force-terminating
 		// it on overrun, before the process exits so it does not leak
 		// credentials or hold provider connections open.
-		adapterSrv.ShutdownDemoteSDK(adapter.DemoteTimeoutFromEnv())
-		srv.GracefulStop()
+		adapterSrv.ExitOnSignal(adapter.DemoteTimeoutFromEnv(), srv)
 	}()
 
-	// §6.1 line 30 — pre-connect the SDK at warm time, before any session
+	// §6.1 — pre-connect the SDK at warm time, before any session
 	// is assigned. The server is already serving, so a concurrent gateway
 	// claim that arrives before pre-connect completes is handled by the
 	// idempotent ConfigureWorkspace path.
@@ -150,7 +176,7 @@ func main() {
 	}
 }
 
-// echoLoop is the §15.4.1 echo handler the adapter drives in-process.
+// echoLoop is the §28.5.3 echo handler the adapter drives in-process.
 func echoLoop(ctx context.Context, in io.Reader, out io.Writer) error {
 	return echocore.Run(ctx, in, out, os.Stderr)
 }

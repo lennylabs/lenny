@@ -14,7 +14,7 @@ import (
 // ProbeConnectivity is the §25.6 connectivity reader. It runs the §25.4
 // dependency probes (Postgres, Redis, MinIO, the Kubernetes API, the
 // gateway, registered connectors) and projects their results onto the
-// §25.6 connectivity dependency list. spec: §25.6 line 2906. F-25.6.1.
+// §25.6 connectivity dependency list. spec: §25.6. F-25.6.1.
 type ProbeConnectivity struct {
 	probes  map[string]probe.Func
 	timeout time.Duration

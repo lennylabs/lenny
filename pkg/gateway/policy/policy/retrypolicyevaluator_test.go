@@ -35,7 +35,7 @@ func (f fakeMaxRetriesResolver) ResolveMaxRetries(_ context.Context, _, _ string
 	return f.max, f.ok
 }
 
-// spec: §4.8 line 977 — RetryPolicyEvaluator is the PostRoute built-in at
+// spec: §4.8 — RetryPolicyEvaluator is the PostRoute built-in at
 // the reserved priority 600.
 func TestRetryPolicyEvaluatorIdentity_spec_4_8(t *testing.T) {
 	e := policy.NewRetryPolicyEvaluator(nil, nil, 0)
@@ -99,7 +99,7 @@ func TestRetryPolicyEvaluatorBudget_spec_7_3(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 977 — the effective retryPolicy.maxRetries comes from
+// spec: §4.8 — the effective retryPolicy.maxRetries comes from
 // the resolver (the per-session / per-DelegationPolicy source). A
 // resolver-supplied cap overrides the evaluator default.
 func TestRetryPolicyEvaluatorResolverOverridesDefault_spec_4_8(t *testing.T) {

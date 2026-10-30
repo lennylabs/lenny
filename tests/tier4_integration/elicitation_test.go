@@ -149,7 +149,8 @@ func (c mcpClient) delegateChild(parentID, runtimeRef string) string {
 // resolver selection, or the §15.1 respond authorization triple
 // diverged from §9.2 when driven through one process.
 func TestMCPElicitationChain(t *testing.T) {
-	gw := gateway.StartWith(t, "--dev-mode")
+	t.Parallel()
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	c := mcpClient{t: t, base: gw.BaseURL()}
 
 	// Build a root -> child -> leaf §8 delegation tree. Each delegated
@@ -169,7 +170,7 @@ func TestMCPElicitationChain(t *testing.T) {
 	const elicitationID = "elic-chain-1"
 	done := make(chan map[string]any, 1)
 	go func() {
-		// spec: §8.5 line 559 (F-8.5.13) — request_elicitation requires
+		// spec: §8.5 (F-8.5.13) — request_elicitation requires
 		// both `message` and `schema`. An empty schema object declares a
 		// free-form prompt, which is all this chain test needs.
 		done <- c.callTool("lenny/request_elicitation",
@@ -228,8 +229,9 @@ func TestMCPElicitationChain(t *testing.T) {
 	}
 }
 
-// spec: 9.2 (url-mode elicitation provenance controls), 8.5 line 559
-// (F-8.5.13 request_elicitation schema requirement)
+// spec: 9.2 (url-mode elicitation provenance controls), 8.5 (Delegation
+// Tools, lenny/request_elicitation schema: F-8.5.13 request_elicitation
+// schema requirement)
 // diagnosis: the §9.2 url-mode provenance controls did not behave as
 //
 //	specified through the real cmd/lenny-gateway binary. A
@@ -239,7 +241,8 @@ func TestMCPElicitationChain(t *testing.T) {
 //	DOMAIN_NOT_ALLOWLISTED. A non-url-mode elicitation through the
 //	same tool is admitted and resolvable.
 func TestMCPProvenance(t *testing.T) {
-	gw := gateway.StartWith(t, "--dev-mode")
+	t.Parallel()
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode")
 	c := mcpClient{t: t, base: gw.BaseURL()}
 
 	root := c.runningSession()
@@ -252,7 +255,7 @@ func TestMCPProvenance(t *testing.T) {
 	// drops it. With no urlModeElicitation config the rejection reason
 	// is "disabled for this pool"; DOMAIN_NOT_ALLOWLISTED applies only
 	// when url-mode is enabled and the host misses the allowlist. The
-	// required §8.5 line 559 `schema` is present so the request reaches
+	// required §8.5 `schema` is present so the request reaches
 	// the provenance check rather than failing input validation first
 	// (F-8.5.13).
 	agentRPC := c.callTool("lenny/request_elicitation",

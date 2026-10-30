@@ -281,7 +281,7 @@ func TestRuntimePublishRegistersAgainstGateway(t *testing.T) {
 	}
 }
 
-// TestRuntimePublishRequiresAdminToken checks the §24.18 line 232
+// TestRuntimePublishRequiresAdminToken checks the §24.18
 // requirement: publish fails fast with a CLI-side diagnostic when no
 // admin token is configured, before any docker push or gateway call.
 func TestRuntimePublishRequiresAdminToken(t *testing.T) {
@@ -332,7 +332,7 @@ integrationLevel: full
 	}
 }
 
-// TestDigestPinnedImage checks the §5.1 line 690 digest-pinned
+// TestDigestPinnedImage checks the §5.1 digest-pinned
 // reference construction cmdRuntimePublish uses to register a freshly
 // pushed image: appending the local content id to the pushed reference
 // as `<ref>@sha256:<hex>`, the same form

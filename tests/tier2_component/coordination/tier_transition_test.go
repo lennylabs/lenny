@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/coordination/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/coordination/redisstore"
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
@@ -62,9 +63,7 @@ func (a *recAudit) LockEvent(_ context.Context, event string, _ coordination.Loc
 // wrong holder, or the ops_lock_conflicts audit trail is wrong — so two
 // agents can run conflicting remediations after a Postgres recovery.
 //
-// spec: §25.4 lines 2220-2267 (tier transitions, outage epochs, the
-// single-transaction advisory-lock reconciliation, and the deterministic
-// split-brain resolution rule).
+// spec: §25.4.
 func TestTierTransitionSplitBrainReconciliation_spec_25_4(t *testing.T) {
 	pg := containers.StartPostgres(t, containers.PostgresOptions{})
 	rd := containers.StartRedis(t, containers.RedisOptions{})
@@ -81,7 +80,11 @@ func TestTierTransitionSplitBrainReconciliation_spec_25_4(t *testing.T) {
 	}
 
 	pgStore := pgstore.New(pg.Pool)
-	rdStore := redisstore.New(rd.Client)
+	// The slot guard fails any script, transaction, or multi-key command
+	// whose keys span hash slots, as a Redis Cluster would (§12.4 Redis HA
+	// and Failure Modes), so this single-node container also proves the
+	// store's Tier 2 operations stay in one slot.
+	rdStore := redisstore.New(slotguard.Install(rd.Client))
 	metrics := &recMetrics{}
 	audit := &recAudit{}
 	svc := coordination.NewService(coordination.ServiceOptions{
@@ -109,8 +112,8 @@ func TestTierTransitionSplitBrainReconciliation_spec_25_4(t *testing.T) {
 	}
 
 	// Postgres → Tier 2 transition: the Service increments the Redis-side
-	// outage epoch (§25.4 line 2220, "increments the Redis-side epoch via
-	// INCR ops:lock-epoch:current") so every Tier 2 acquisition carries it.
+	// outage epoch (§25.4, "increments the Redis-side epoch via
+	// INCR ops:{lock}:epoch") so every Tier 2 acquisition carries it.
 	// This is the store effect of Service.onPostgresUnavailable; drive it
 	// directly since the live container cannot return a genuine outage.
 	postEpoch, err := rdStore.IncrementEpoch(ctx)
@@ -135,7 +138,7 @@ func TestTierTransitionSplitBrainReconciliation_spec_25_4(t *testing.T) {
 			t.Fatalf("post-outage redis acquire %s: %v", a.Scope, err)
 		}
 		if lock.Epoch != 1 {
-			t.Errorf("redis lock %s epoch = %d, want 1 (stamped from ops:lock-epoch:current)", a.Scope, lock.Epoch)
+			t.Errorf("redis lock %s epoch = %d, want 1 (stamped from ops:{lock}:epoch)", a.Scope, lock.Epoch)
 		}
 	}
 
@@ -238,7 +241,7 @@ func TestTierTransitionSplitBrainReconciliation_spec_25_4(t *testing.T) {
 // running a remediation the winner now owns exclusively, which is the exact
 // silent split-brain §25.4 is designed to prevent.
 //
-// spec: §25.4 line 2267 ("Not expired | Not expired | Pre-outage (Postgres)
+// spec: §25.4 ("Not expired | Not expired | Pre-outage (Postgres)
 // wins ... The Redis lock is removed; the Redis lock holder receives 409
 // REMEDIATION_LOCK_CONFLICT with splitBrain: true, winner: "pre_outage",
 // winnerHolder: "<pre-outage acquiredBy>" on its next heartbeat/list/release
@@ -258,7 +261,11 @@ func TestSplitBrainLosingHolderReceives409_spec_25_4(t *testing.T) {
 	}
 
 	pgStore := pgstore.New(pg.Pool)
-	rdStore := redisstore.New(rd.Client)
+	// The slot guard fails any script, transaction, or multi-key command
+	// whose keys span hash slots, as a Redis Cluster would (§12.4 Redis HA
+	// and Failure Modes), so this single-node container also proves the
+	// store's Tier 2 operations stay in one slot.
+	rdStore := redisstore.New(slotguard.Install(rd.Client))
 	svc := coordination.NewService(coordination.ServiceOptions{
 		Postgres: pgStore,
 		Redis:    rdStore,
@@ -313,14 +320,12 @@ func TestSplitBrainLosingHolderReceives409_spec_25_4(t *testing.T) {
 		t.Errorf("split-brain winnerHolder = %q, want alice (the pre-outage acquiredBy)", winnerHolder)
 	}
 
-	// The losing Redis lock is removed (§25.4 line 2267 "The Redis lock is
-	// removed") so a later Postgres outage cannot resurface it.
+	// The losing Redis lock is removed (§25.4) so a later Postgres outage cannot resurface it.
 	if got, err := rdStore.Get(ctx, bob.ID); coordination.CodeOf(err) != coordination.ErrCodeNotFound {
 		t.Errorf("losing Redis lock still present after reconcile: lock=%v err=%v, want REMEDIATION_LOCK_NOT_FOUND", got, err)
 	}
 
-	// The losing holder is notified on the release path too (§25.4 line
-	// 2267 names heartbeat/list/release).
+	// The losing holder is notified on the release path too (§25.4 names heartbeat/list/release).
 	if relErr := svc.Release(bobCtx, bob.ID); !coordination.IsSplitBrain(relErr) {
 		t.Errorf("losing holder release error IsSplitBrain = false (err=%v), want split-brain 409", relErr)
 	}

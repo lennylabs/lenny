@@ -49,7 +49,7 @@ func migrateReq(t *testing.T, h http.Handler, method, path string, body any, aut
 	return doAdminReq(t, h, method, path, body, auth)
 }
 
-// spec: §15.1 line 891 — GET …/status returns the per-migration phase
+// spec: §15.1 — GET …/status returns the per-migration phase
 // projection.
 func TestMigrationStatus_spec_15_1_891(t *testing.T) {
 	mgr := &fakeMigrationManager{status: schemamigrate.StatusReport{
@@ -74,7 +74,7 @@ func TestMigrationStatus_spec_15_1_891(t *testing.T) {
 	}
 }
 
-// spec: §24.13 line 150 — the status response surfaces the Job-recorded
+// spec: §24.13 — the status response surfaces the Job-recorded
 // expand-contract fields (appliedAt, gateCheckResult, migrationJobName)
 // for an applied migration. F-24.13.4.
 func TestMigrationStatusSurfacesRecordedPhase_spec_24_13_150(t *testing.T) {
@@ -118,7 +118,7 @@ func TestMigrationStatusRejectsNonAdmin_spec_10_2(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 892 — a down call without confirm is rejected with
+// spec: §15.1 — a down call without confirm is rejected with
 // 422 CONFIRMATION_REQUIRED and Down is never invoked.
 func TestMigrationDownRequiresConfirm_spec_15_1_892(t *testing.T) {
 	mgr := &fakeMigrationManager{}
@@ -140,7 +140,7 @@ func TestMigrationDownRequiresConfirm_spec_15_1_892(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 892 / §16.6 — a confirmed down rolls the version back
+// spec: §15.1 / §16.6 — a confirmed down rolls the version back
 // and writes the platform.schema_migration_rolled_back audit row.
 func TestMigrationDownHappyPathAudits_spec_15_1_892(t *testing.T) {
 	mgr := &fakeMigrationManager{down: schemamigrate.DownResult{
@@ -167,7 +167,7 @@ func TestMigrationDownHappyPathAudits_spec_15_1_892(t *testing.T) {
 	}
 }
 
-// spec: §24.13 line 151 — a version that is not the current migration
+// spec: §24.13 — a version that is not the current migration
 // returns 409 MIGRATION_VERSION_MISMATCH.
 func TestMigrationDownVersionMismatch_spec_24_13_151(t *testing.T) {
 	mgr := &fakeMigrationManager{downErr: schemamigrate.ErrVersionMismatch}

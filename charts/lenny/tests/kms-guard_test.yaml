@@ -1,0 +1,57 @@
+suite: KMS render guard (§10.2, §17.8.2 kms.signQuotaPerSecond)
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - kms-guard.yaml
+tests:
+  # spec: §17.8.2 (Capacity Tier Reference) — under the default local
+  # provider no Sign quota applies, so the guard renders no object.
+  - it: renders nothing under the local provider without signQuotaPerSecond
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §17.8.2 (Capacity Tier Reference), §10.2 (Authentication) —
+  # kms.signQuotaPerSecond has no default and is required on every cloud
+  # provider, so an unset value fails the render naming the value.
+  - it: fails the render on aws with signQuotaPerSecond unset
+    set:
+      kms.provider: aws
+    asserts:
+      - failedTemplate:
+          errorPattern: "kms.signQuotaPerSecond is required when kms.provider is \"aws\""
+
+  - it: fails the render on gcp with signQuotaPerSecond unset
+    set:
+      kms.provider: gcp
+    asserts:
+      - failedTemplate:
+          errorPattern: "kms.signQuotaPerSecond is required when kms.provider is \"gcp\""
+
+  - it: fails the render on azure with signQuotaPerSecond unset
+    set:
+      kms.provider: azure
+    asserts:
+      - failedTemplate:
+          errorPattern: "kms.signQuotaPerSecond is required when kms.provider is \"azure\""
+
+  # spec: §17.8.2 (Capacity Tier Reference) — a set quota lets a cloud
+  # render proceed.
+  - it: renders nothing on a cloud provider once signQuotaPerSecond is set
+    set:
+      kms.provider: aws
+      kms.signQuotaPerSecond: 50
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §17.8.2 (Capacity Tier Reference) — the schema bounds a set
+  # quota to at least 1.
+  - it: rejects signQuotaPerSecond of 0 at schema validation
+    set:
+      kms.provider: aws
+      kms.signQuotaPerSecond: 0
+    asserts:
+      - failedTemplate:
+          errorPattern: "/kms/signQuotaPerSecond.: minimum: got 0, want 1"

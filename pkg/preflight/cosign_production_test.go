@@ -10,11 +10,18 @@ import (
 )
 
 // TestCheckCosignProductionDevPasses_spec_5_3 confirms a dev install is
-// not warned: §5.3 line 669 scopes the prerequisite to production and
+// not warned: §5.3 scopes the prerequisite to production and
 // staging, and a stock dev install renders without the signing material
-// configured.
+// configured. The retired "production" spelling, "stage", and case or
+// whitespace variants of prod and staging are outside the advisory,
+// because matching is exact.
+//
+// spec: §5.3, 17.9.1 (Composition Dimensions) "Production mode"
 func TestCheckCosignProductionDevPasses_spec_5_3(t *testing.T) {
-	for _, env := range []string{"dev", "", "Dev", "  development-sandbox  "} {
+	for _, env := range []string{
+		"dev", "", "Dev", "  development-sandbox  ",
+		"production", "stage", "PROD", "Prod", " prod", " Staging ",
+	} {
 		d := preflight.CheckCosignProduction(env, false)
 		if !d.Passed {
 			t.Fatalf("env=%q: dev-like install should pass, got %+v", env, d)
@@ -30,9 +37,9 @@ func TestCheckCosignProductionDevPasses_spec_5_3(t *testing.T) {
 // non-blocking WARNING (Passed stays true) so the install is not aborted
 // but the operator is notified.
 //
-// spec: §5.3 line 669.
+// spec: §5.3, 17.9.1 (Composition Dimensions) "Production mode"
 func TestCheckCosignProductionWarnsWhenDisabled_F_5_3_5(t *testing.T) {
-	for _, env := range []string{"prod", "production", "staging", "stage", "PROD", " Staging "} {
+	for _, env := range []string{"prod", "staging"} {
 		d := preflight.CheckCosignProduction(env, false)
 		if !d.Passed {
 			t.Fatalf("env=%q: advisory must be non-blocking, got Passed=false", env)
@@ -49,8 +56,10 @@ func TestCheckCosignProductionWarnsWhenDisabled_F_5_3_5(t *testing.T) {
 // TestCheckCosignProductionEnabledSilent_F_5_3_5 confirms a production
 // install that has already enabled signature verification produces no
 // advisory.
+//
+// spec: §5.3, 17.9.1 (Composition Dimensions) "Production mode"
 func TestCheckCosignProductionEnabledSilent_F_5_3_5(t *testing.T) {
-	for _, env := range []string{"prod", "production", "staging", "stage"} {
+	for _, env := range []string{"prod", "staging"} {
 		d := preflight.CheckCosignProduction(env, true)
 		if !d.Passed {
 			t.Fatalf("env=%q: enabled cosign should pass, got %+v", env, d)

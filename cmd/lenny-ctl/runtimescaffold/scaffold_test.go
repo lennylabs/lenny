@@ -238,14 +238,14 @@ func TestGenerateWritesFileSet(t *testing.T) {
 		if !strings.Contains(string(manifest), "integrationLevel: "+level) {
 			t.Errorf("%s/%s: runtime.yaml lacks integrationLevel: %s", c.lang, c.tmpl, level)
 		}
-		// spec: §5.1 line 51 ("Labels are required from v1"): the admin
+		// spec: §5.1: the admin
 		// registration path (POST /v1/admin/runtimes, the path `lenny
 		// runtime publish` and `lenny-ctl admin runtimes register` both
 		// use) unconditionally rejects a manifest with no labels. A
 		// scaffold with none can never be published as scaffolded.
 		if !strings.Contains(string(manifest), "labels:") {
 			t.Errorf("%s/%s: runtime.yaml has no labels field; POST /v1/admin/runtimes "+
-				"rejects a runtime with no labels (§5.1 line 51)", c.lang, c.tmpl)
+				"rejects a runtime with no labels (§5.1)", c.lang, c.tmpl)
 		}
 	}
 }
@@ -358,10 +358,14 @@ func TestGenerateGoCellsCompile(t *testing.T) {
 			dir := filepath.Join(base, "buildme")
 
 			// The binary cell has no SDK dependency, so it builds as
-			// generated. The SDK cells need the replace directive.
+			// generated. The SDK cells need the replace directives: a
+			// dependency's own replace lines are ignored, so the
+			// generated module carries the SDK's replace of the root
+			// module as well.
 			if c.lang != LangBinary {
 				appendToFile(t, filepath.Join(dir, "go.mod"),
-					"\nreplace github.com/lennylabs/runtime-sdk-go => "+sdkMod+"\n")
+					"\nreplace github.com/lennylabs/runtime-sdk-go => "+sdkMod.dir+"\n"+
+						"\nreplace "+lennyModulePath+" => "+sdkMod.repoRoot+"\n")
 			}
 
 			runGo(t, dir, "build", "./...")
@@ -369,12 +373,27 @@ func TestGenerateGoCellsCompile(t *testing.T) {
 	}
 }
 
+// lennyModulePath is the root module path. The Go runtime-author SDK
+// imports pkg/runtimekit from it for the runtime connection handshake
+// (spec: 4.7.11 (Runtime connection handshake)).
+const lennyModulePath = "github.com/lennylabs/lenny"
+
+// sdkReplacement names the directory holding the copied SDK module and
+// the repository root that satisfies the SDK's dependency on the root
+// module.
+type sdkReplacement struct {
+	dir      string
+	repoRoot string
+}
+
 // buildSDKReplacementModule copies the in-repo Go runtime-author SDK
 // into a temp directory and adds a go.mod declaring the published
 // module path, so a generated skeleton can `replace` the published
-// module with it. The in-repo SDK package imports only the standard
-// library, so the single-directory copy is self-contained.
-func buildSDKReplacementModule(t *testing.T) string {
+// module with it. The SDK package imports the standard library and
+// pkg/runtimekit from the root module, so the go.mod requires the root
+// module at a placeholder version that the generated module's replace
+// resolves to the repository root.
+func buildSDKReplacementModule(t *testing.T) sdkReplacement {
 	t.Helper()
 	repoRoot := findRepoRoot(t)
 	srcDir := filepath.Join(repoRoot, "sdks", "runtime", "go", "runtime")
@@ -401,11 +420,12 @@ func buildSDKReplacementModule(t *testing.T) string {
 			t.Fatalf("write %s: %v", e.Name(), err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(dst, "go.mod"),
-		[]byte("module github.com/lennylabs/runtime-sdk-go\n\ngo 1.25\n"), 0o644); err != nil {
+	gomod := "module github.com/lennylabs/runtime-sdk-go\n\ngo 1.25\n\n" +
+		"require " + lennyModulePath + " v0.0.0-00010101000000-000000000000\n"
+	if err := os.WriteFile(filepath.Join(dst, "go.mod"), []byte(gomod), 0o644); err != nil {
 		t.Fatalf("write SDK go.mod: %v", err)
 	}
-	return dst
+	return sdkReplacement{dir: dst, repoRoot: repoRoot}
 }
 
 // findRepoRoot walks up from the test file until it finds the
@@ -506,4 +526,60 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestCodingScaffoldsDeriveWorkspaceFromSession_spec_6_4 checks that the
+// coding-agent cells emit the one pod filesystem layout: the session's
+// working directory is /workspace/slots/{sessionId}/current, derived
+// from the session identifier the SDK hands the handler, and no emitted
+// source names a pod-global workspace path. Before the layouts were
+// collapsed each language template declared "/workspace/current" as a
+// constant, so a scaffolded runtime wrote to a directory that no pod
+// has.
+// spec: §6.4 (one pod filesystem layout), §6.1 (warm pod anatomy)
+func TestCodingScaffoldsDeriveWorkspaceFromSession_spec_6_4(t *testing.T) {
+	cases := []struct {
+		lang    Language
+		source  string
+		derives []string
+	}{
+		{LangGo, "main.go", []string{`"/workspace/slots/" + sessionID + "/current"`, "func workspaceRoot(sessionID string) string"}},
+		{LangPython, "main.py", []string{`f"/workspace/slots/{session_id}/current"`, "def workspace_root(session_id: str) -> str:"}},
+		{LangTypeScript, "main.ts", []string{"`/workspace/slots/${sessionId}/current`", "function workspaceRoot(sessionId: string): string"}},
+	}
+	for _, c := range cases {
+		t.Run(string(c.lang), func(t *testing.T) {
+			base := t.TempDir()
+			var stdout, stderr bytes.Buffer
+			if code := Generate(Spec{
+				Name:     "coder",
+				Language: c.lang,
+				Template: TemplateCoding,
+			}, base, &stdout, &stderr); code != ExitOK {
+				t.Fatalf("generate: exit %d, stderr=%q", code, stderr.String())
+			}
+			dir := filepath.Join(base, "coder")
+			for _, name := range []string{c.source, "runtime.yaml"} {
+				raw, err := os.ReadFile(filepath.Join(dir, name))
+				if err != nil {
+					t.Fatalf("read %s: %v", name, err)
+				}
+				if strings.Contains(string(raw), "/workspace/current") {
+					t.Errorf("%s names the retired pod-global /workspace/current", name)
+				}
+				if !strings.Contains(string(raw), "/workspace/slots/") {
+					t.Errorf("%s does not name the per-session slot workspace tree", name)
+				}
+			}
+			source, err := os.ReadFile(filepath.Join(dir, c.source))
+			if err != nil {
+				t.Fatalf("read %s: %v", c.source, err)
+			}
+			for _, want := range c.derives {
+				if !strings.Contains(string(source), want) {
+					t.Errorf("%s does not derive the workspace root from the session identifier: missing %q", c.source, want)
+				}
+			}
+		})
+	}
 }

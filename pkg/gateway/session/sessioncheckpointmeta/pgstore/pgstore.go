@@ -5,7 +5,7 @@
 // table from migration 0148 and applies the §12.3 tenant-context RLS
 // guard via pgtenant.InTx.
 //
-// spec: §10.1 line 393.
+// spec: §10.1.
 package pgstore
 
 import (

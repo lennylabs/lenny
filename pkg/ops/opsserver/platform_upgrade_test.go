@@ -119,8 +119,7 @@ func TestUpgradeProceed(t *testing.T) {
 	}
 }
 
-// spec: §25.8 — proceed with no upgrade is 409 UPGRADE_NOT_IN_PROGRESS
-// (error table line 3638).
+// spec: §25.8 proceed with no upgrade is 409 UPGRADE_NOT_IN_PROGRESS.
 func TestUpgradeProceedNoUpgrade(t *testing.T) {
 	s, _ := newUpgradeServer(t)
 	w := do(s, http.MethodPost, "/v1/admin/platform/upgrade/proceed", "")

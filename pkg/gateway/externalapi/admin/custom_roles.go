@@ -24,7 +24,7 @@ type CustomRolePayload struct {
 	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
 	// decimal version. List and GET responses carry it so a client can
 	// supply it as the If-Match header on a later PUT.
-	// spec: §15.1 lines 1207-1209.
+	// spec: §15.1.
 	ETag string `json:"etag,omitempty"`
 }
 
@@ -40,7 +40,7 @@ func fromCustomRole(r customrolestore.CustomRole) CustomRolePayload {
 		Permissions: r.Permissions,
 		CreatedAt:   rfc3339Nano(r.CreatedAt),
 		UpdatedAt:   rfc3339Nano(r.UpdatedAt),
-		// spec: §15.1 line 1207 — the ETag is the quoted decimal version,
+		// spec: §15.1 — the ETag is the quoted decimal version,
 		// carried per-item on list responses and in the GET header.
 		ETag: formatETag(r.Version),
 	}
@@ -93,7 +93,7 @@ func (r *Router) handleCreateCustomRole(w http.ResponseWriter, req *http.Request
 	role.UpdatedAt = role.CreatedAt
 	if err := r.customRoles.Create(req.Context(), role); err != nil {
 		if errors.Is(err, customrolestore.ErrAlreadyExists) {
-			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			// spec: §15.1 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
 			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"custom role with this name already exists in tenant", nil)
 			return
@@ -125,7 +125,7 @@ func (r *Router) handleListCustomRoles(w http.ResponseWriter, req *http.Request)
 	for _, role := range rows {
 		out = append(out, fromCustomRole(role))
 	}
-	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope. F-15.1.6.
+	// spec: §15.1 — canonical cursor-paginated envelope. F-15.1.6.
 	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
 		func(x CustomRolePayload, s pagination.Sort) (string, string) {
 			switch s.Field {
@@ -154,7 +154,7 @@ func (r *Router) handleGetCustomRole(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1209 — GET responses for an admin resource carry the
+	// spec: §15.1 — GET responses for an admin resource carry the
 	// ETag header so the client can use it as the next PUT's If-Match.
 	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -185,7 +185,7 @@ func (r *Router) handleUpdateCustomRole(w http.ResponseWriter, req *http.Request
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
 		return
 	}
-	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match. The
+	// spec: §15.1 — every admin PUT requires If-Match. The
 	// role's entity tag is its version; enforce the optimistic-concurrency
 	// precondition before applying the mutation.
 	if !enforceIfMatch(w, req, current.Version) {
@@ -206,7 +206,7 @@ func (r *Router) handleUpdateCustomRole(w http.ResponseWriter, req *http.Request
 	principal, _ := authmw.FromContext(req.Context())
 	r.emit(req.Context(), principal, "admin.custom_role.updated", name,
 		map[string]any{"tenantId": tenant})
-	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so
+	// spec: §15.1 — a successful PUT carries the bumped ETag so
 	// the client can chain a subsequent write without a refresh GET.
 	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -273,7 +273,7 @@ func (r *Router) handleDeleteCustomRole(w http.ResponseWriter, req *http.Request
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1213 — DELETE honours If-Match only when present: a
+	// spec: §15.1 — DELETE honours If-Match only when present: a
 	// stale tag returns 412 ETAG_MISMATCH, an absent header proceeds.
 	if !enforceIfMatchIfPresent(w, req, current.Version) {
 		return

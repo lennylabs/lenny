@@ -7,22 +7,20 @@ import (
 	"errors"
 )
 
-// ErrUnavailable is the §12.4 line 210 dual-store outage outcome: the
+// ErrUnavailable is the §12.4 dual-store outage outcome: the
 // Redis counter is unreachable AND the Postgres artifact_store sum that
 // backs the fallback is also unreachable. The spec mandates that storage
 // uploads fail closed (HTTP 503) in this state so the storage quota can
 // never be bypassed by infrastructure degradation; the upload handler
 // maps this sentinel to a 503 rather than admitting the write.
 //
-// spec: §12.4 line 210 — "If Postgres is also unavailable (dual-store
+// spec: §12.4 — "If Postgres is also unavailable (dual-store
 // outage), storage uploads are rejected with 503 (fail closed)".
 var ErrUnavailable = errors.New("storagequota: counter unavailable (Redis and Postgres both unreachable)")
 
 // Failover routes §11.2 storage-quota operations to a Redis-backed
 // primary and, when the primary signals infrastructure unavailability,
-// to a Postgres-derived fallback. It is the §12.4 line 210 "Storage
-// quota counter (storage_bytes_used) | Postgres fallback, then fail
-// closed" path: a Redis outage no longer breaks uploads outright;
+// to a Postgres-derived fallback. It is the §12.4 path: a Redis outage no longer breaks uploads outright;
 // pre-checks instead read the authoritative sum of artifact_size_bytes
 // across the tenant's active artifacts in Postgres, and only a
 // simultaneous Postgres outage fails the upload closed with
@@ -49,7 +47,7 @@ var ErrUnavailable = errors.New("storagequota: counter unavailable (Redis and Po
 // Redis recovery, RecoveryReconciler writes the authoritative sum back
 // to Redis and the atomic fast path resumes.
 //
-// spec: §12.4 line 222.
+// spec: §12.4.
 type Failover struct {
 	primary    Counter
 	sizeOf     LiveBytesSource
@@ -93,7 +91,7 @@ func (f *Failover) routedToFallback() {
 // headroom math is exact). A simultaneous Postgres outage returns
 // ErrUnavailable for the §12.4 fail-closed 503.
 //
-// spec: §12.4 line 222 — "Upload pre-checks ... use this reservation-aware
+// spec: §12.4 — "Upload pre-checks ... use this reservation-aware
 // Postgres-derived value ... during the outage window."
 func (f *Failover) Reserve(ctx context.Context, tenantID string, incoming, limit int64) (int64, error) {
 	prior, err := f.primary.Reserve(ctx, tenantID, incoming, limit)
@@ -148,7 +146,7 @@ func (f *Failover) Used(ctx context.Context, tenantID string) (int64, error) {
 	return sum, nil
 }
 
-// Set overwrites the primary counter. It is the §12.4 line 210 recovery
+// Set overwrites the primary counter. It is the §12.4 recovery
 // write-back target (RecoveryReconciler calls it through Rehydrate); an
 // infrastructure error is surfaced so the reconciler can log and retry on
 // the next recovery edge rather than masking a still-down Redis.

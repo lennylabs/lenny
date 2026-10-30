@@ -23,7 +23,7 @@ import (
 // dead-lettering. A nil notifier leaves the channel unconfigured; the
 // dual-control workflow still records and audits the pending request.
 //
-// spec: §11.2.1 line 175. F-11.2.14.
+// spec: §11.2.1. F-11.2.14.
 type ApproverNotifier interface {
 	NotifyApprovers(ctx context.Context, payload []byte) error
 }
@@ -261,7 +261,7 @@ func (r *Router) handleCreateBillingCorrection(w http.ResponseWriter, req *http.
 		"state":                   "pending",
 		"dualControl":             true,
 	})
-	// §11.2.1 line 175: notify eligible approvers via the configured
+	// §11.2.1: notify eligible approvers via the configured
 	// billing.approverNotificationWebhook (best-effort, detached).
 	r.notifyApprovers(pending)
 	w.Header().Set("Content-Type", "application/json")
@@ -286,8 +286,8 @@ func (r *Router) handleListBillingCorrections(w http.ResponseWriter, req *http.R
 	for _, c := range rows {
 		out = append(out, correctionPayload(c))
 	}
-	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope.
-	// Corrections carry no created_at; submitted_at is the §15.1 line 1236
+	// spec: §15.1 — canonical cursor-paginated envelope.
+	// Corrections carry no created_at; submitted_at is the §15.1
 	// creation-time sort field, defaulting to descending. F-15.1.6.
 	writePaginatedList(w, req, r.clock(), out,
 		[]string{"submitted_at"},
@@ -430,7 +430,7 @@ func (r *Router) commitCorrection(req *http.Request, decider authmw.Principal, p
 		CorrectionReasonCode: pending.ReasonCode,
 		CorrectionDetail:     pending.Detail,
 	}
-	// spec: §14 line 106 — a correction inherits the labels of the event
+	// spec: §14 — a correction inherits the labels of the event
 	// it corrects so a label-scoped metering query returns the original
 	// and its correction together. Best-effort: a lookup miss leaves the
 	// correction unlabelled rather than failing the commit. F-14.1.13.

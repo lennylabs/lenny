@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/backup/restoretest"
 )
 
-// spec: §25.11 lines 4098, 4254-4256 — the restore-test-metrics sampler
+// spec: §25.11 — the restore-test-metrics sampler
 // publishes the latest run's success flag, duration, and (when the
 // sampled-HEAD check ran) artifact success rate, plus the cumulative
 // artifact-missing counter. F-17.3.6.

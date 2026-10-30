@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/evictionstatestore"
 )
 
-// noRetryBudget disables the §4.4 line 277 retry loop in unit tests
+// noRetryBudget disables the §4.4 retry loop in unit tests
 // that exercise the total-loss path with a permanently-failing store.
 // The retry-budget behaviour itself is covered by TestWriteRetryBudget*
 // below.
@@ -26,7 +26,7 @@ var noRetryBudget = checkpoint.RetryBudget{
 	TotalBudget: 1, // 1 ns total — first failure terminates.
 }
 
-// spec: §4.4 lines 263–291 — eviction-fallback writer + total-loss path.
+// spec: §4.4 — eviction-fallback writer + total-loss path.
 
 // fakeUploader records every upload and optionally fails.
 type fakeUploader struct {
@@ -70,7 +70,7 @@ func (f *fakeMetrics) IncCheckpointEvictionPartialKeysLogged(pool, keysCommitted
 	f.partialKeyCalls = append(f.partialKeyCalls, pool+"|"+keysCommitted)
 }
 
-// spec: §4.4 line 263 — counts every entry to the eviction-fallback
+// spec: §4.4 — counts every entry to the eviction-fallback
 // writer.
 func (f *fakeMetrics) IncCheckpointEvictionFallback(pool string, hadPriorCheckpoint bool) {
 	tag := "no_prior"
@@ -156,7 +156,7 @@ func TestWriteInlineForSmallContext(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 263 — every entry to the eviction-fallback writer
+// spec: §4.4 — every entry to the eviction-fallback writer
 // bumps lenny_checkpoint_eviction_fallback_total. The counter fires
 // on success and failure alike so operators can count every fallback
 // attempt regardless of the chooser outcome.
@@ -387,7 +387,7 @@ func TestWriteHadPriorCheckpointFalseLabel(t *testing.T) {
 }
 
 // flakyStore fails on the first N attempts then succeeds. Used to
-// exercise the §4.4 line 277 retry loop.
+// exercise the §4.4 retry loop.
 type flakyStore struct {
 	mu        sync.Mutex
 	failsLeft int
@@ -416,11 +416,11 @@ func (f *flakyStore) DeleteByUser(context.Context, string, string, []string) err
 func (f *flakyStore) DeleteByTenant(context.Context, string) error                 { return nil }
 func (f *flakyStore) SweepDeletedBefore(context.Context, time.Time) (int, error)   { return 0, nil }
 
-// TestWriteRetriesPostgresFailover exercises the §4.4 line 277 retry
+// TestWriteRetriesPostgresFailover exercises the §4.4 retry
 // loop. The flakyStore fails twice then succeeds; the writer must
 // loop without driving the total-loss path.
 //
-// spec: §4.4 line 277.
+// spec: §4.4.
 func TestWriteRetriesPostgresFailover(t *testing.T) {
 	store := &flakyStore{failsLeft: 2}
 	metrics := &fakeMetrics{}
@@ -465,11 +465,9 @@ func TestWriteRetriesPostgresFailover(t *testing.T) {
 	}
 }
 
-// TestWriteExhaustsRetryBudgetThenDrivesTotalLoss confirms the §4.4
-// line 277 total budget terminates the loop and the §4.4 line 279 and
-// 283–289 emissions fire on exhaustion.
+// TestWriteExhaustsRetryBudgetThenDrivesTotalLoss confirms the §4.4 total budget terminates the loop and the §4.4 emissions fire on exhaustion.
 //
-// spec: §4.4 lines 277, 279, 283–289.
+// spec: §4.4.
 func TestWriteExhaustsRetryBudgetThenDrivesTotalLoss(t *testing.T) {
 	metrics := &fakeMetrics{}
 	events := &fakeEvents{}
@@ -515,7 +513,7 @@ func TestWriteExhaustsRetryBudgetThenDrivesTotalLoss(t *testing.T) {
 // TestWritePartialKeysCounterZeroLabel covers the keys_committed="0"
 // label branch — total-MinIO-failure with no chunks committed.
 //
-// spec: §4.4 line 279.
+// spec: §4.4.
 func TestWritePartialKeysCounterZeroLabel(t *testing.T) {
 	metrics := &fakeMetrics{}
 	w := &evictionfallback.Writer{
@@ -560,12 +558,12 @@ func (q *fakeQuota) Adjust(_ context.Context, _ string, delta int64) error {
 	return q.err
 }
 
-// TestWriteRecordsArtifactStoreAndBumpsQuota covers the §4.4 line 291
+// TestWriteRecordsArtifactStoreAndBumpsQuota covers the §4.4
 // storage-quota accounting: when MinIO succeeds the writer inserts an
 // artifact_store row and then bumps the Redis quota by the confirmed
 // size.
 //
-// spec: §4.4 line 291.
+// spec: §4.4.
 func TestWriteRecordsArtifactStoreAndBumpsQuota(t *testing.T) {
 	store := newMemStore()
 	uploader := &fakeUploader{}
@@ -596,11 +594,10 @@ func TestWriteRecordsArtifactStoreAndBumpsQuota(t *testing.T) {
 	}
 }
 
-// TestWriteSkipsArtifactAccountingOnMinIOFailure asserts the §4.4 line
-// 291 guard: on MinIO unavailability no artifact_store row is written
+// TestWriteSkipsArtifactAccountingOnMinIOFailure asserts the §4.4 guard: on MinIO unavailability no artifact_store row is written
 // and no quota increment is issued.
 //
-// spec: §4.4 line 291 — "On MinIO unavailability ... no MinIO object
+// spec: §4.4 — "On MinIO unavailability ... no MinIO object
 // is written and therefore no artifact_store row is inserted and no
 // quota increment is issued."
 func TestWriteSkipsArtifactAccountingOnMinIOFailure(t *testing.T) {

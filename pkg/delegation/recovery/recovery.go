@@ -6,7 +6,8 @@
 // recovers each level deepest-first, bounding each level by
 // maxLevelRecoverySeconds and the whole traversal by
 // maxTreeRecoverySeconds. A node not recovered within its budget is
-// marked terminally failed and the traversal continues upward.
+// recorded as failed and the traversal continues upward; the caller marks
+// it terminally failed only while it is still in resume_pending.
 //
 // The traversal is pure: the caller injects the per-node recovery
 // action and the clock, so the ordering and deadline rules are
@@ -14,6 +15,8 @@
 package recovery
 
 import (
+	"context"
+	"errors"
 	"sort"
 	"time"
 )
@@ -26,26 +29,24 @@ const (
 	// DefaultTreeTimeout bounds the whole traversal
 	// (`maxTreeRecoverySeconds`). It overrides the per-level budgets.
 	DefaultTreeTimeout = 600 * time.Second
-	// DefaultUsageQuiescenceTimeout is the §11.3 line 224
+	// DefaultUsageQuiescenceTimeout is the §11.3
 	// `delegation.usageQuiescenceTimeoutSeconds` window the tree-recovery
 	// path waits after the most recent child usage report before
 	// declaring the delegation tree quiescent and starting the bottom-up
 	// reattach traversal. A node that reports usage during the
-	// quiescence window resets the timer. spec: §11.3 line 224; §8.10
+	// quiescence window resets the timer. spec: §11.3; §8.10
 	// tree recovery.
 	DefaultUsageQuiescenceTimeout = 5 * time.Second
 )
 
 // Node is one delegation-tree node to recover. Depth is the node's
-// distance from the tree root (root = 0). ResumeWindow, when positive,
-// is the §7.3 line 408 / §8.10 line 1027 per-node `maxResumeWindowSeconds`
-// budget the recovery traversal must compose with the level- and
-// tree-wide caps. Zero leaves the node with no individual bound — the
-// level/tree budgets alone govern. spec: §8.10 line 1027.
+// distance from the tree root (root = 0). The traversal bounds a node only
+// by the level and tree budgets: a node's individual resume window is owned
+// by the §6.2 resume_pending wall-clock cap, which moves the node out of
+// resume_pending without the traversal's involvement. spec: §8.10.
 type Node struct {
-	SessionID    string
-	Depth        int
-	ResumeWindow time.Duration
+	SessionID string
+	Depth     int
 }
 
 // Outcome is a node's recovery result.
@@ -54,8 +55,8 @@ type Outcome int
 const (
 	// OutcomeRecovered — the node was reattached successfully.
 	OutcomeRecovered Outcome = iota
-	// OutcomeFailed — the node could not be recovered and is marked
-	// terminally failed.
+	// OutcomeFailed — the node could not be recovered. The caller marks
+	// it terminally failed only while it is still in resume_pending.
 	OutcomeFailed
 )
 
@@ -79,7 +80,7 @@ type NodeResult struct {
 type Config struct {
 	LevelTimeout time.Duration
 	TreeTimeout  time.Duration
-	// UsageQuiescenceTimeout is the §11.3 line 224 wall-clock window the
+	// UsageQuiescenceTimeout is the §11.3 wall-clock window the
 	// caller observes between the last child usage report and the start
 	// of the bottom-up reattach traversal. Exposed on Config so the
 	// gateway can thread an operator-tuned value through to whatever
@@ -87,6 +88,13 @@ type Config struct {
 	// consume the value. Zero selects DefaultUsageQuiescenceTimeout.
 	UsageQuiescenceTimeout time.Duration
 	Now                    func() time.Time
+
+	// OnResult, when non-nil, receives each node's result at the moment
+	// Recover decides it, on Recover's own goroutine. Every call for a
+	// level precedes the next level's start calls, so a caller that
+	// fails a node from OnResult fails each level before the traversal
+	// continues upward. spec: §8.10.
+	OnResult func(NodeResult)
 }
 
 func (c Config) withDefaults() Config {
@@ -109,8 +117,7 @@ func (c Config) withDefaults() Config {
 // orchestrator must wait until before declaring the tree quiescent and
 // starting the reattach traversal. lastUsageReport is the timestamp of
 // the most recent child usage report; an orchestrator that resets on
-// every new report calls this helper after each report. spec: §11.3
-// line 224.
+// every new report calls this helper after each report. spec: §11.3.
 func (c Config) QuiescenceDeadline(lastUsageReport time.Time) time.Time {
 	cfg := c.withDefaults()
 	return lastUsageReport.Add(cfg.UsageQuiescenceTimeout)
@@ -138,79 +145,105 @@ func Levels(nodes []Node) [][]Node {
 	return levels
 }
 
-// Recover drives the §8.10 bottom-up traversal. It groups nodes by
-// depth and recovers each level deepest-first, calling recoverFn per
-// node; recoverFn returns nil on a successful reattach. A node is
-// marked failed when recoverFn returns an error, when its individual
-// `maxResumeWindowSeconds` has elapsed (Node.ResumeWindow), when its
-// level has exceeded LevelTimeout, or when the traversal has exceeded
-// TreeTimeout — once the tree deadline passes every remaining node is
-// failed without a recovery attempt. Per §8.10 line 1027 the effective
-// recovery window for any node is
-// `min(maxResumeWindowSeconds, remaining maxTreeRecoverySeconds)`; this
-// implementation also clamps to the per-level budget. Returns one
-// NodeResult per node, in bottom-up traversal order. spec: §8.10 lines
-// 1020-1023, 1027.
-func Recover(nodes []Node, recoverFn func(Node) error, cfg Config) []NodeResult {
+// Failure reasons Recover records for a node it could not recover within a
+// budget. A wait that a node's deadline ends is recorded with the reason of
+// the budget that set the deadline, so a caller's timeout counters count it.
+const (
+	ReasonTreeTimeout  = "tree recovery deadline exceeded"
+	ReasonLevelTimeout = "level recovery deadline exceeded"
+)
+
+// Recover drives the §8.10 bottom-up traversal. It groups nodes by depth and
+// recovers each level deepest-first. For each level it first calls start for
+// every node whose tree and level budgets have not elapsed, so every selected
+// node of the level is driven before any of them is waited on, because
+// maxLevelRecoverySeconds bounds the wait for all nodes at one depth
+// together. It then calls recoverFn for those nodes in order; recoverFn
+// returns nil once the node's restore committed. Each recoverFn call
+// receives a context whose deadline is the node's deadline: the earlier of
+// the level deadline and the tree deadline. A recoverFn error fails the
+// node; when the node's deadline ended the wait, the node is recorded with
+// the reason of the budget that set the deadline. A node whose budget has
+// already elapsed is failed without a start, and once the tree deadline
+// passes every remaining node is failed.
+//
+// Recover appends each node's result as it decides it and, when
+// cfg.OnResult is non-nil, calls it synchronously with that result: for a
+// node failed without a start, at that point, and for a driven node, when
+// its wait returns. Every OnResult call for a level therefore precedes the
+// next level's start calls. start may be nil. Returns one NodeResult per
+// node, in bottom-up traversal order. spec: §8.10.
+func Recover(ctx context.Context, nodes []Node, start func(Node), recoverFn func(context.Context, Node) error, cfg Config) []NodeResult {
 	cfg = cfg.withDefaults()
 	results := make([]NodeResult, 0, len(nodes))
-	traversalStart := cfg.Now()
-	treeDeadline := traversalStart.Add(cfg.TreeTimeout)
-	treeExpired := false
+	record := func(res NodeResult) {
+		results = append(results, res)
+		if cfg.OnResult != nil {
+			cfg.OnResult(res)
+		}
+	}
+	treeDeadline := cfg.Now().Add(cfg.TreeTimeout)
 
 	for _, level := range Levels(nodes) {
 		levelDeadline := cfg.Now().Add(cfg.LevelTimeout)
 		if levelDeadline.After(treeDeadline) {
 			levelDeadline = treeDeadline
 		}
+		deadline, deadlineReason := nodeDeadline(levelDeadline, treeDeadline)
+		var driven []Node
 		for _, node := range level {
-			now := cfg.Now()
-			// spec: §8.10 line 1027 — effective recovery window is
-			// min(node.ResumeWindow, remaining tree window). Composed with
-			// the per-level cap so a level still bounds a long-resume-window
-			// node when its level peers progress more slowly.
-			nodeDeadline := levelDeadline
-			if node.ResumeWindow > 0 {
-				ndl := traversalStart.Add(node.ResumeWindow)
-				if ndl.Before(nodeDeadline) {
-					nodeDeadline = ndl
-				}
+			if reason, failed := budgetElapsed(cfg.Now(), levelDeadline, treeDeadline); failed {
+				record(NodeResult{Node: node, Outcome: OutcomeFailed, Reason: reason})
+				continue
 			}
-			switch {
-			case treeExpired || !now.Before(treeDeadline):
-				treeExpired = true
-				results = append(results, NodeResult{
-					Node: node, Outcome: OutcomeFailed,
-					Reason: "tree recovery deadline exceeded",
-				})
-			case !now.Before(levelDeadline) && (node.ResumeWindow == 0 || now.Before(traversalStart.Add(node.ResumeWindow))):
-				// Level cap bit first while the node's individual window is
-				// still open — surface the level-cap reason so an operator
-				// can grow `maxLevelRecoverySeconds`.
-				results = append(results, NodeResult{
-					Node: node, Outcome: OutcomeFailed,
-					Reason: "level recovery deadline exceeded",
-				})
-			case node.ResumeWindow > 0 && !now.Before(traversalStart.Add(node.ResumeWindow)):
-				// Per-node `maxResumeWindowSeconds` elapsed before the
-				// level/tree budgets — the §7.3 per-session resume window
-				// is the binding deadline for this node. spec: §8.10 line
-				// 1027 ("node transitions to `expired`").
-				results = append(results, NodeResult{
-					Node: node, Outcome: OutcomeFailed,
-					Reason: "node resume window exceeded",
-				})
-			default:
-				_ = nodeDeadline
-				if err := recoverFn(node); err != nil {
-					results = append(results, NodeResult{
-						Node: node, Outcome: OutcomeFailed, Reason: err.Error(),
-					})
-				} else {
-					results = append(results, NodeResult{Node: node, Outcome: OutcomeRecovered})
-				}
+			if start != nil {
+				start(node)
 			}
+			driven = append(driven, node)
+		}
+		for _, node := range driven {
+			record(waitNode(ctx, node, deadline, deadlineReason, recoverFn, cfg.Now))
 		}
 	}
 	return results
+}
+
+// budgetElapsed reports whether the tree or level budget has already elapsed
+// at now, with the reason Recover records.
+func budgetElapsed(now, levelDeadline, treeDeadline time.Time) (string, bool) {
+	switch {
+	case !now.Before(treeDeadline):
+		return ReasonTreeTimeout, true
+	case !now.Before(levelDeadline):
+		return ReasonLevelTimeout, true
+	default:
+		return "", false
+	}
+}
+
+// nodeDeadline returns the deadline of a driven node, the level deadline
+// already capped at the tree deadline, and the reason of the budget that
+// sets it.
+func nodeDeadline(levelDeadline, treeDeadline time.Time) (time.Time, string) {
+	if !treeDeadline.After(levelDeadline) {
+		return levelDeadline, ReasonTreeTimeout
+	}
+	return levelDeadline, ReasonLevelTimeout
+}
+
+// waitNode runs recoverFn for one driven node under a context bounded by the
+// node's deadline, measured on the traversal clock.
+func waitNode(ctx context.Context, node Node, deadline time.Time, reason string,
+	recoverFn func(context.Context, Node) error, now func() time.Time,
+) NodeResult {
+	nctx, cancel := context.WithTimeout(ctx, deadline.Sub(now()))
+	defer cancel()
+	err := recoverFn(nctx, node)
+	if err == nil {
+		return NodeResult{Node: node, Outcome: OutcomeRecovered}
+	}
+	if errors.Is(nctx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+		return NodeResult{Node: node, Outcome: OutcomeFailed, Reason: reason}
+	}
+	return NodeResult{Node: node, Outcome: OutcomeFailed, Reason: err.Error()}
 }

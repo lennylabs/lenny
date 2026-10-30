@@ -6,14 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"log"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
+	"github.com/lennylabs/lenny/pkg/gateway/coordination/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
@@ -33,7 +32,7 @@ import (
 // phase is idempotent (§12.8 "Idempotency and resumption"), a job rebuilt
 // from `disabling` after a restart re-runs the early phases harmlessly.
 //
-// spec: §12.8 line 865, lines 872-889. F-12.8.1, F-24.10.3.
+// spec: §12.8. F-12.8.1, F-24.10.3.
 
 // tenantStateDisabler is the §12.8 Phase 1 SoftDisabler: it flips the
 // tenant into `disabling`, which tenantstore.Tenant.AcceptsNewWork reads
@@ -54,9 +53,153 @@ func (d tenantStateDisabler) SoftDisableTenant(ctx context.Context, tenantID str
 	return err
 }
 
+// tenantSessionLister lists a tenant's sessions. sessionstore.Store
+// satisfies it.
+type tenantSessionLister interface {
+	List(ctx context.Context, tenantID string, filter sessionstore.ListFilter) ([]sessionstore.Session, error)
+}
+
+// tenantCredentialRevoker is the §12.8 Phase 3 CredentialRevoker. It runs
+// three steps in order and returns the first error, which keeps the job at
+// Phase 3 for the next pass. Each step is idempotent.
+//
+//  1. It commits TenantState deleting on the tenant row unless the row is
+//     already deleting or deleted. The runner's syncBack normally writes
+//     the state in the pass that completes Phase 2; committing it here
+//     keeps the gateway's tenant registry refusing the tenant's bearers
+//     before the other Phase 3 actions, even when that write failed.
+//  2. It lists the tenant's sessions from the primary, terminal ones
+//     included, and returns every credential lease they hold through the
+//     §11.4 lease step. credential_leases carries no tenant column, so the
+//     sessions are the only path to the tenant's leases. A lease-store
+//     error inside the step is silent, because LeasesBySession returns no
+//     error: such a lease stays valid until it expires, the stale-slot
+//     reaper reclaims it, or a later pass returns it. The step therefore
+//     does not fail closed on a lease-store error.
+//  3. It runs the tokens entry of the Phase 4 eraser list, which deletes
+//     the tenant's TokenStore rows (connector refresh tokens and
+//     registered credentials). A nil function means no TokenStore backend
+//     is wired in this posture.
+//
+// The access-token cache flush that §12.8 Phase 3 names has no code here.
+// The token service constructs that cache and never writes to it, so a
+// flush would delete nothing; the tier-0 guard
+// TestErasureExemptionsHaveNoProductionWriter_spec_12_8 fails when a
+// writer appears.
+//
+// spec: §12.8 (Compliance Interfaces: Tenant deletion lifecycle Phase 3), §11.4 (User Invalidation).
+type tenantCredentialRevoker struct {
+	tenants  tenantstore.Store
+	sessions tenantSessionLister
+	leases   admin.UserLeaseRevoker
+	tokens   tenantEraseFunc
+	clock    func() time.Time
+}
+
+// RevokeTenantCredentials runs the Phase 3 steps for tenantID.
+func (c tenantCredentialRevoker) RevokeTenantCredentials(ctx context.Context, tenantID string) error {
+	if err := c.commitDeleting(ctx, tenantID); err != nil {
+		return fmt.Errorf("tenant deletion phase 3: commit deleting: %w", err)
+	}
+	rows, err := c.sessions.List(ctx, tenantID, sessionstore.ListFilter{Primary: true})
+	if err != nil {
+		return fmt.Errorf("tenant deletion phase 3: list sessions: %w", err)
+	}
+	if len(rows) > 0 {
+		ids := make([]string, len(rows))
+		for i, s := range rows {
+			ids[i] = s.ID
+		}
+		c.leases.RevokeUserLeases(tenantID, "", ids)
+	}
+	if c.tokens != nil {
+		if _, err := c.tokens(ctx, tenantID); err != nil {
+			return fmt.Errorf("tenant deletion phase 3: delete tokens: %w", err)
+		}
+	}
+	return nil
+}
+
+// commitDeleting moves the tenant row to deleting unless it is already
+// deleting or deleted.
+func (c tenantCredentialRevoker) commitDeleting(ctx context.Context, tenantID string) error {
+	_, err := c.tenants.Update(ctx, tenantID, func(t *tenantstore.Tenant) error {
+		if t.State != tenantstore.TenantStateDeleting && t.State != tenantstore.TenantStateDeleted {
+			t.State = tenantstore.TenantStateDeleting
+			t.UpdatedAt = c.clock()
+		}
+		return nil
+	})
+	return err
+}
+
+// tenantEraserFunc returns the function of the entry named name in
+// erasers, or nil when the entry is absent or has no function.
+func tenantEraserFunc(erasers []namedTenantEraser, name string) tenantEraseFunc {
+	for _, e := range erasers {
+		if e.name == name {
+			return e.fn
+		}
+	}
+	return nil
+}
+
+// tenantSessionTerminator is the §12.8 Phase 2 SessionTerminator. It
+// runs the lifecycle drain over the whole tenant under a per-drain
+// budget, so one tenant's drain delays the other tenants' deletion by at
+// most one budget. A budget expiry ends the drain between sessions and
+// is returned as a drain error, which keeps the job at Phase 2 for the
+// next tick.
+//
+// After the drain verifies, it holds the job at Phase 2 while any session
+// of the tenant is in its §7.1 post-terminal window (admin.ReleasePending),
+// because Phase 3 returns the sessions' leases and Phase 3.5 copies their
+// artifacts while a seal may still be writing them.
+//
+// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain),
+// §7.1 (Post-terminal window).
+type tenantSessionTerminator struct {
+	sessions admin.DrainLister
+	term     admin.DrainTerminator
+	// pods is the binding-release fan-out the drain publishes its
+	// transitioned sessions on (CH-BINDRELEASE). Nil publishes nothing.
+	// spec: §12.8 (Lifecycle fence and drain), §28.5.7 (Gateway-to-store).
+	pods admin.UserPodTerminator
+	// budget bounds each drain. It is the operator-tunable
+	// --lifecycle-tick-budget, which the startup gate requires positive.
+	budget time.Duration
+	// cap is the post-terminal window cap, the terminal pipeline budget.
+	// A non-positive cap fails every pass with admin.ErrReleaseCapUnset.
+	cap time.Duration
+	// clock reads the instant the window is evaluated at.
+	clock func() time.Time
+}
+
+// TerminateTenantSessions drains every non-terminal session of tenantID
+// and returns the drain's error, then returns an error naming the count of
+// the tenant's sessions still in their post-terminal window, or the
+// release check's own error, so the reconciler pauses the job at Phase 2.
+func (t tenantSessionTerminator) TerminateTenantSessions(ctx context.Context, tenantID string) error {
+	tctx, cancel := context.WithTimeout(ctx, t.budget)
+	defer cancel()
+	if _, err := admin.DrainSessions(tctx, t.sessions, t.term, t.pods, tenantID, ""); err != nil {
+		return fmt.Errorf("tenant deletion drain: %w", err)
+	}
+	pending, err := admin.ReleasePending(tctx, t.sessions, tenantID, "", t.clock(), t.cap)
+	if err != nil {
+		return fmt.Errorf("tenant deletion post-terminal release check: %w", err)
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("tenant deletion waits for %d drained session(s) in the post-terminal window", len(pending))
+	}
+	return nil
+}
+
 // namedTenantEraser pairs a store name with its DeleteByTenant function.
 // Both the (int, error) CountingEraser stores and the (error)-only
-// StoreEraser stores adapt to this single shape.
+// StoreEraser stores adapt to this single signature. A nil fn lists the store
+// by name for a posture whose backend is absent: ValidateTenantOrder counts
+// the name as wired, and tenantEraser skips it.
 type namedTenantEraser struct {
 	name string
 	fn   func(ctx context.Context, tenantID string) (int, error)
@@ -67,6 +210,11 @@ type namedTenantEraser struct {
 // deleted-row tally for the erasure receipt. A store error aborts the
 // phase (it is retried from Phase 4 on a later pass); each DeleteByTenant
 // is idempotent so the retry re-deletes already-removed rows as a no-op.
+// An entry with a nil function is skipped and left out of the tally, so the
+// receipt does not report a store that did not run as having erased zero
+// rows.
+//
+// spec: §12.8 (Compliance Interfaces: Tenant deletion lifecycle).
 type tenantEraser struct {
 	erasers []namedTenantEraser
 }
@@ -74,6 +222,9 @@ type tenantEraser struct {
 func (e *tenantEraser) DeleteByTenant(ctx context.Context, tenantID string) (map[string]int, error) {
 	out := make(map[string]int, len(e.erasers))
 	for _, ne := range e.erasers {
+		if ne.fn == nil {
+			continue
+		}
 		n, err := ne.fn(ctx, tenantID)
 		if err != nil {
 			return out, fmt.Errorf("tenant erase %s: %w", ne.name, err)
@@ -85,8 +236,7 @@ func (e *tenantEraser) DeleteByTenant(ctx context.Context, tenantID string) (map
 
 // auditReceiptSink is the §12.8 Phase 6 ReceiptSink. It writes the
 // erasure receipt as a gdpr.* audit event (retained under
-// audit.gdprRetentionDays and exempt from later erasure, per §12.8 line
-// 775) so the receipt survives the tenant tombstone.
+// audit.gdprRetentionDays and exempt from later erasure, per §12.8) so the receipt survives the tenant tombstone.
 type auditReceiptSink struct {
 	appender policy.AuditAppender
 	clock    func() time.Time
@@ -120,10 +270,9 @@ type artifactHoldChecker interface {
 // tenantHoldEnumerator is the §12.8 Phase 3.5 LegalHoldEnumerator. It
 // reports the tenant's active session-level holds (sessions.legal_hold)
 // and artifact-level holds (any artifact under one of the tenant's
-// sessions). The audit_range / workspace_snapshot ledger holds (§12.8
-// line 878(c)) are not yet enumerated here.
+// sessions). The audit_range / workspace_snapshot ledger holds (§12.8) are not yet enumerated here.
 //
-// spec: §12.8 line 878(a)(b).
+// spec: §12.8(a)(b).
 type tenantHoldEnumerator struct {
 	sessions  sessionstore.Store
 	artifacts artifactHoldChecker
@@ -156,7 +305,7 @@ func (e tenantHoldEnumerator) ActiveTenantHolds(ctx context.Context, tenantID st
 // It writes the admin.tenant.deletion_blocked audit event listing the
 // held resource IDs when a deletion pauses on an active hold.
 //
-// spec: §12.8 line 878.
+// spec: §12.8.
 type tenantDeletionBlockedSink struct {
 	appender policy.AuditAppender
 	clock    func() time.Time
@@ -182,25 +331,28 @@ func (s tenantDeletionBlockedSink) DeletionBlocked(ctx context.Context, tenantID
 // tick it reconstructs a deletion Job for every tenant in `disabling` or
 // `deleting`, advances every active job one phase via the Reconciler,
 // reflects the job state back onto the tenant row, and tombstones the
-// tenant once the lifecycle completes. A single-flight Postgres advisory
-// lock keeps the destructive loop running on at most one gateway replica.
+// tenant once the lifecycle completes. A tick runs only while the §12.5
+// lenny-gateway-leader elector reports this replica as leader, so the
+// destructive loop runs on the same replica as the other gateway-singleton
+// sweeps and holds no pooled connection across the tick.
+//
+// The runner is not registered on the leader gate: a lease loss cancels
+// the leader context, which would fail the replica's in-memory deletion
+// job mid-phase. It runs for the process lifetime and polls the elector
+// instead.
+//
+// spec: §12.8 (Tenant deletion lifecycle), §12.5 (lenny-gateway-leader
+// gate).
 type tenantDeletionRunner struct {
 	reconciler *tenantdeletion.Reconciler
 	tenants    tenantstore.Store
 	clock      func() time.Time
 	interval   time.Duration
-	// pool, when non-nil, gates each tick behind a non-blocking advisory
-	// lock so only one replica runs the destructive loop. Nil runs the
-	// loop unguarded (single-replica / in-memory posture).
-	pool *pgxpool.Pool
-}
-
-// advisoryLockKey is the stable 64-bit key for the tenant-deletion
-// single-flight lock, shared across replicas.
-func advisoryLockKey() int64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte("tenant_deletion_controller"))
-	return int64(h.Sum64())
+	// elector gates each tick. startLeaderElectedSweeps sets it to the
+	// gateway-leader elector before it launches Start. A nil elector runs
+	// no tick, so an unwired runner never runs the destructive loop on
+	// every replica.
+	elector gatewayleader.Elector
 }
 
 // Start runs the reconcile loop until ctx is cancelled. It reconciles
@@ -224,22 +376,11 @@ func (rn *tenantDeletionRunner) Start(ctx context.Context) {
 	}
 }
 
-// tick advances every in-flight tenant deletion by one phase under the
-// single-flight lock.
+// tick advances every in-flight tenant deletion by one phase when this
+// replica is the gateway leader.
 func (rn *tenantDeletionRunner) tick(ctx context.Context) {
-	if rn.pool != nil {
-		conn, err := rn.pool.Acquire(ctx)
-		if err != nil {
-			return
-		}
-		defer conn.Release()
-		var locked bool
-		if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", advisoryLockKey()).Scan(&locked); err != nil || !locked {
-			return
-		}
-		defer func() {
-			_, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", advisoryLockKey())
-		}()
+	if rn.elector == nil || !rn.elector.IsLeader() {
+		return
 	}
 	rn.reconcileOnce(ctx)
 }
@@ -321,8 +462,11 @@ func (rn *tenantDeletionRunner) ensureJob(ctx context.Context, t tenantstore.Ten
 // syncBack reflects a job's progress onto the tenant row: a completed
 // lifecycle tombstones the tenant; an in-progress job advances the tenant
 // state (disabling → deleting) so GET /v1/admin/tenants/{id} surfaces
-// real progress; a failed or blocked job leaves the tenant in `deleting`
-// for operator attention.
+// real progress. A job paused at Phase 2 on a drain that did not verify
+// keeps state `disabling`, so a job rebuilt after a restart resumes at
+// Phase 1 and re-runs the drain. A Phase 3.5 block leaves the tenant in
+// `deleting`, and a failed job leaves it where it is for operator
+// attention.
 func (rn *tenantDeletionRunner) syncBack(ctx context.Context, tenantID string) {
 	job, err := rn.reconciler.Jobs.Get(ctx, tenantID)
 	if err != nil {
@@ -335,7 +479,8 @@ func (rn *tenantDeletionRunner) syncBack(ctx context.Context, tenantID string) {
 			log.Printf("lenny-gateway: tenant-deletion tombstone %q: %v", tenantID, err)
 		}
 	case tenantdeletion.PhaseFailed:
-		// Leave the tenant where it is; an operator retries the job.
+		// Leave the tenant where it is. A failed job is terminal for the
+		// controller and needs operator attention.
 	default:
 		// Reflect the job's coarse state onto the tenant row so a GET
 		// surfaces progress. The job reaches state `deleted` already at the

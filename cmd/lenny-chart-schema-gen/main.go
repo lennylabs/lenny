@@ -10,7 +10,7 @@
 // Regenerate:  go run ./cmd/lenny-chart-schema-gen
 // Drift check: go run ./cmd/lenny-chart-schema-gen -check
 //
-// spec: §17.6 lines 651-666.
+// spec: §17.6.
 package main
 
 import (

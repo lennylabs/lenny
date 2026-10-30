@@ -14,7 +14,7 @@ import (
 // audit trail requires lands with F-25.4.22. A nil recorder on the Server
 // drops the event.
 //
-// spec: §25.4 line 1641 (identity.discovered), line 1779
+// spec: §25.4
 // (operations.inventory_queried).
 type AuditRecorder interface {
 	RecordOpsAudit(ctx context.Context, event string, fields map[string]any)

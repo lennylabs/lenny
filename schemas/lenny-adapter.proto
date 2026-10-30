@@ -28,20 +28,22 @@ option go_package = "github.com/lennylabs/lenny/pkg/proto/adapter/v1;adapterv1";
 // session lifecycle, credential delivery, interrupt control, checkpoint
 // orchestration, and usage reporting. Pod → gateway traffic is initiated
 // by the gateway only; the adapter responds to RPCs and emits structured
-// events via a separate streaming RPC (the lifecycle channel).
+// events via a separate streaming RPC (the CH-ADAPTEREVENTS).
 service Adapter {
-  // PrepareWorkspace accepts streamed upload-file content into the pod's
-  // staging area. It is the first RPC in the §4.7 session assignment
-  // sequence (PrepareWorkspace, FinalizeWorkspace, RunSetup,
-  // StartSession). Frames sharing an upload_ref are concatenated in
-  // arrival order into one staged file; FinalizeWorkspace then
-  // materializes the uploadFile and uploadArchive plan sources from the
-  // staged content.
+  // PrepareWorkspace accepts streamed upload-file content into the named
+  // session's /workspace/slots/{sessionId}/staging, which is the tree
+  // FinalizeWorkspace promotes from. It is the first RPC in the §4.7
+  // session assignment sequence (PrepareWorkspace, FinalizeWorkspace,
+  // RunSetup, StartSession). Frames sharing an upload_ref are
+  // concatenated in arrival order into one staged file;
+  // FinalizeWorkspace then materializes the uploadFile and uploadArchive
+  // plan sources from the staged content.
   rpc PrepareWorkspace(stream PrepareWorkspaceRequest) returns (PrepareWorkspaceResponse) {}
 
   // FinalizeWorkspace validates the staged workspace content and
-  // materializes the §14 WorkspacePlan into /workspace/current. It is
-  // the second RPC in the §4.7 session assignment sequence
+  // materializes the §14 WorkspacePlan into the named session's
+  // /workspace/slots/{sessionId}/current. It is the second RPC in the
+  // §4.7 session assignment sequence
   // (PrepareWorkspace, FinalizeWorkspace, RunSetup, StartSession).
   rpc FinalizeWorkspace(FinalizeWorkspaceRequest) returns (FinalizeWorkspaceResponse) {}
 
@@ -77,7 +79,7 @@ service Adapter {
   // running session (spec §4.7 RPC table: "Connect client stream to running
   // session"). The gateway streams client-to-agent envelopes in; the adapter
   // streams the agent's response, tool-call, and status envelopes back.
-  // Envelope payloads are §15.4.1 JSONL frames carried verbatim as JSON
+  // Envelope payloads are §28.5.3 JSONL frames carried verbatim as JSON
   // bytes, mirroring SendMessage.envelope_json.
   rpc Attach(stream AttachRequest) returns (stream AttachResponse) {}
 
@@ -98,7 +100,7 @@ service Adapter {
   // guard when the Token Service circuit breaker is open and the lease
   // has not yet expired. Requires no Token Service call: the gateway
   // supplies the new deadline from the lease record it already holds.
-  // spec: §4.9 line 1470.
+  // spec: §4.9.
   rpc ExtendCredentialLease(ExtendCredentialLeaseRequest) returns (ExtendCredentialLeaseResponse) {}
 
   // RevokeCredentials removes a credential lease immediately. The agent
@@ -106,7 +108,7 @@ service Adapter {
   rpc RevokeCredentials(RevokeCredentialsRequest) returns (RevokeCredentialsResponse) {}
 
   // Interrupt asks the agent to pause and (optionally) checkpoint. Two
-  // modes: clean (graceful, with deadline) and hard (SIGTERM/SIGKILL).
+  // modes: clean (graceful, with deadline) and hard (immediate).
   rpc Interrupt(InterruptRequest) returns (InterruptResponse) {}
 
   // Checkpoint is the gateway-driven bidirectional grant/confirm stream
@@ -125,47 +127,55 @@ service Adapter {
   // terminates the stream with a gRPC FailedPrecondition status before any
   // grant is minted, and carries no CheckpointFailed frame. The adapter
   // never mints a `checkpoint_id`; the id the gateway
-  // sends in CheckpointStart is authoritative (§10.1 line 130). Used for
+  // sends in CheckpointStart is authoritative (§10.1.7). Used for
   // eviction, drain, periodic, and pre-scale-down checkpoints — this is
   // the single upload path for every trigger.
   rpc Checkpoint(stream CheckpointRequest) returns (stream CheckpointResponse) {}
 
   // SignalDeadline warns the running session's runtime that the session is
-  // approaching its §11.3 line 240 deadline so the agent can checkpoint and
+  // approaching its §11.3 deadline so the agent can checkpoint and
   // the client can wrap up. The gateway watchdog fires it once, five minutes
   // before `maxSessionAge` expires. The adapter forwards it as a
-  // DEADLINE_APPROACHING frame over the §15.4.6 lifecycle channel; a
-  // Basic/Standard runtime with no lifecycle channel cannot receive advance
-  // notice (§15 line 2141) and the call returns delivered=false rather than
+  // DEADLINE_APPROACHING frame over the §15.4.6 CH-RUNTIMEOPS; a
+  // Basic/Standard runtime with no CH-RUNTIMEOPS cannot receive advance
+  // notice (§15) and the call returns delivered=false rather than
   // erroring so the watchdog's best-effort warning never fails. One-way: the
   // adapter does not block on a runtime acknowledgement.
   rpc SignalDeadline(SignalDeadlineRequest) returns (SignalDeadlineResponse) {}
 
   // Resume restores a session's workspace from a checkpoint on a
   // replacement pod (§4.7, §7.1). The adapter claims the session,
-  // rebuilds /workspace/current from the named checkpoint, and starts
-  // the runtime — the replacement-pod counterpart of StartSession.
+  // rebuilds /workspace/slots/{sessionId}/current from the named
+  // checkpoint, and starts the runtime — the replacement-pod
+  // counterpart of StartSession.
   rpc Resume(ResumeRequest) returns (ResumeResponse) {}
 
   // CoordinatorFence announces a new `coordination_generation` to the pod
-  // on coordinator handoff (§4.7 line 632, §10.1). The pod records the new
-  // generation and from this point rejects any RPC carrying an older one.
-  // Deadline: 5 s (hard-coded, §11.3). Includes gap detection: if the
-  // received generation skips one or more values relative to the last
-  // acknowledged fence, the adapter cancels and discards every in-flight
-  // RPC received under the missing generation(s), resets transient
-  // tool-call state, and logs a `coordinator_generation_gap` event before
-  // acknowledging the new generation. The first call on a pod's lifetime
-  // is never treated as a gap regardless of value.
+  // on coordinator handoff (§4.7, §10.1). The pod records the generation
+  // against the session the fence names, and from that point rejects any
+  // RPC carrying a generation older than the one it holds for that
+  // session. A fence for one session does not change the generation the
+  // pod holds for another. Deadline: 5 s (hard-coded, §11.3). Includes
+  // gap detection: if the received generation skips one or more values
+  // relative to that session's last acknowledged fence, the adapter
+  // cancels and discards every in-flight RPC received for that session
+  // under the missing generation(s), resets the transient tool-call state
+  // that session accumulated, and logs a `coordinator_generation_gap`
+  // event before acknowledging the new generation. The first fence for
+  // that session within its current binding on this pod is never treated
+  // as a gap regardless of value.
   rpc CoordinatorFence(CoordinatorFenceRequest) returns (CoordinatorFenceResponse) {}
 
   // CheckpointBarrier dispatches a barrier signal during gateway graceful
-  // drain (§4.7 line 631, §10.1). The adapter validates the request's
-  // `coordination_generation` against the last fenced generation, quiesces
-  // tool-call dispatch, and holds the quiesced state open while the
-  // gateway drives the Checkpoint stream against the held pod. The adapter
-  // acknowledges via `CheckpointBarrierAck` on the LifecycleChannel
-  // control stream (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`)
+  // drain (§4.7, §10.1). The adapter validates the request's
+  // `coordination_generation` against the generation the pod holds for
+  // the session the request names; a barrier naming a bound session for
+  // which the pod holds no fenced generation is accepted and records no
+  // value. The adapter then quiesces tool-call dispatch and holds the
+  // quiesced state open while the gateway drives the Checkpoint stream
+  // against the held pod. The adapter
+  // acknowledges via `CheckpointBarrierAck` on the AdapterEvents
+  // control stream (§4.7 — fields: `barrier_id`, `checkpoint_ref`)
   // only after that gateway-driven stream terminates, then releases
   // quiescence. The RPC return value mirrors the ack so a synchronous
   // caller has the same information; the control-stream emit is the
@@ -176,22 +186,43 @@ service Adapter {
   // the gateway across all coordinated pods.
   rpc CheckpointBarrier(CheckpointBarrierRequest) returns (CheckpointBarrierResponse) {}
 
-  // ExportPaths packages files from /workspace/current for delegation,
-  // rebased per the export spec (§8.7). The adapter resolves each export
+  // SealSession seals the named session against `message` delivery when
+  // the adapter observed no activity for the session in the idle window
+  // the request names (§4.7.1 **Session seal.**). It refuses a session
+  // whose `session_start` the adapter has not written, and a session whose
+  // runtime output the adapter does not read. It answers not sealed, with
+  // the time since the session's last activity, when activity occurred
+  // within the window or a CH-MCP-PLATFORM or CH-MCP-CONNECTOR call for the
+  // session is in flight, and leaves a seal it placed earlier in place.
+  // While the session is sealed the adapter writes no `message` frame for
+  // it to the runtime. Deadline: 5 s. spec: §4.7.1, §28.5.1.
+  rpc SealSession(SealSessionRequest) returns (SealSessionResponse) {}
+
+  // UnsealSession lifts the named session's seal (§4.7.1 **Session
+  // seal.**). Removal of the session's registry entry also ends the seal.
+  // Deadline: 5 s. spec: §4.7.1, §28.5.1.
+  rpc UnsealSession(UnsealSessionRequest) returns (UnsealSessionResponse) {}
+
+  // ExportPaths packages files from the named session's
+  // /workspace/slots/{sessionId}/current for delegation, rebased per the
+  // export spec (§8.7). The adapter resolves each export
   // source glob inside the workspace root, rejects any matched file whose
   // realpath escapes the workspace via symlink, strips the glob's base
   // path, and re-roots each file under the export's dest_prefix. The
   // gateway applies the lease's fileExportLimits and optional content
-  // scanning to the returned set. Spec: §4.7 line 633, §8.7.
+  // scanning to the returned set. Spec: §4.7, §8.7.
   rpc ExportPaths(ExportPathsRequest) returns (ExportPathsResponse) {}
 
   // ReportUsage returns token-usage and time-usage accounting since the
   // last call. The gateway uses this for budget enforcement and billing.
   rpc ReportUsage(ReportUsageRequest) returns (ReportUsageResponse) {}
 
-  // Shutdown asks the adapter to terminate the agent and release the pod.
-  // The adapter forwards a JSONL `shutdown` to the agent with the supplied
-  // deadline. Returns when the agent process has exited.
+  // Shutdown ends the named session's use of the pod's runtime process,
+  // which outlives the session on a keep pod and, on a restart pod, ends in
+  // the next whole-pod scrub or when the pod retires (§4.7.10, Runtime
+  // process lifetime), and releases the session's slot. The adapter forwards a JSONL `shutdown` to the agent
+  // with the supplied deadline. Returns without waiting for the runtime
+  // process to exit.
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse) {}
 
   // DemoteSDK is required for runtimes that declare
@@ -211,20 +242,23 @@ service Adapter {
 
   // GetObservedIntegrationLevel reports the §5.1 / §15.4.3 integration
   // level the adapter observed the runtime actually implement, derived
-  // from whether the runtime completed the §4.7
+  // from whether the runtime completed the §28.5.3 CH-RUNTIMEOPS
   // lifecycle_capabilities/lifecycle_support exchange (full) and whether
-  // it connected to the intra-pod platform MCP server (standard). The
-  // gateway calls it once per runtime on the first session assignment to
-  // compare the observed level against the runtime's declared
-  // integrationLevel and reject an underperforming runtime
-  // (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
+  // it connected to the §28.5.3 CH-MCP-PLATFORM intra-pod platform MCP
+  // server (standard). The gateway calls it once per runtime on the
+  // first session assignment to compare the observed level against the
+  // runtime's declared integrationLevel and reject an underperforming
+  // runtime (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
   rpc GetObservedIntegrationLevel(GetObservedIntegrationLevelRequest) returns (GetObservedIntegrationLevelResponse) {}
 
-  // LifecycleChannel is a bidirectional stream the adapter uses to surface
-  // Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
-  // credentials_acknowledged, deadline_approaching). See spec §15.4 for
-  // the event taxonomy.
-  rpc LifecycleChannel(stream LifecycleChannelRequest) returns (stream LifecycleChannelResponse) {}
+  // AdapterEvents is the bidirectional stream over which the adapter
+  // surfaces operational events to the gateway: RATE_LIMITED,
+  // AUTH_EXPIRED, PROVIDER_UNAVAILABLE, LEASE_REJECTED,
+  // AdapterTerminating, FINAL_USAGE_REPORT, and CheckpointBarrierAck.
+  // The gateway opens the stream and the adapter originates the
+  // messages. The event taxonomy is the adapter→gateway events table in
+  // spec/04_system-components.md (§4.7.3).
+  rpc AdapterEvents(stream AdapterEventsRequest) returns (stream AdapterEventsResponse) {}
 }
 
 // GatewayControl is the adapter→gateway control surface. It is the
@@ -245,12 +279,11 @@ service Adapter {
 // trigger is driven by the gateway LLM Proxy in-process, so no adapter
 // RPC requests it.
 service GatewayControl {
-  // ListPlatformTools returns the §9.1 platform tool catalog (lines
-  // 14-31: lenny/delegate_task, lenny/await_children, ...) the adapter's
+  // ListPlatformTools returns the §9.1 platform tool catalog the adapter's
   // intra-pod platform MCP server advertises to a type:agent runtime on
   // tools/list. The catalog is sourced from the gateway's platform tool
   // surface so the intra-pod server never duplicates the tool schemas.
-  // spec: §9.1 lines 14-31.
+  // spec: §9.1.
   rpc ListPlatformTools(ListPlatformToolsRequest) returns (ListPlatformToolsResponse) {}
 
   // CallPlatformTool dispatches one §9.1 platform tool call a type:agent
@@ -260,7 +293,7 @@ service GatewayControl {
   // handler the gateway-edge /mcp surface runs, so the intra-pod and
   // edge surfaces stay in lockstep. The response carries the JSON-encoded
   // MCP tool result; a tool-level failure is an is_error result rather
-  // than a gRPC error. spec: §9.1 line 14; §4.7 line 942.
+  // than a gRPC error. spec: §9.1; §4.7.
   rpc CallPlatformTool(CallPlatformToolRequest) returns (CallPlatformToolResponse) {}
 
   // ListSessionConnectors returns the §9.3 connectors a session's
@@ -270,7 +303,7 @@ service GatewayControl {
   // type:agent runtime can reach every external tool its policy admits.
   // The gateway filters the tenant's connector registry by the calling
   // session's delegation policy, so a connector the policy denies is
-  // never advertised to the pod. spec: §9.3 line 142.
+  // never advertised to the pod. spec: §9.3.
   rpc ListSessionConnectors(ListSessionConnectorsRequest) returns (ListSessionConnectorsResponse) {}
 
   // ListConnectorTools returns the tool catalog a single §9.3 connector
@@ -279,7 +312,7 @@ service GatewayControl {
   // external endpoint (the connector's mcpServerUrl), using the
   // gateway-held OAuth credential — the credential never transits the
   // pod. A connector the calling session's policy denies is rejected.
-  // spec: §9.3 lines 142-164.
+  // spec: §9.3.
   rpc ListConnectorTools(ListConnectorToolsRequest) returns (ListConnectorToolsResponse) {}
 
   // CallConnectorTool forwards one §9.3 external tool call a type:agent
@@ -289,15 +322,13 @@ service GatewayControl {
   // tools/call to the external MCP endpoint with the gateway-held
   // credential. The response carries the JSON-encoded MCP tool result; a
   // tool-level failure is an is_error result rather than a gRPC error.
-  // spec: §9.3 lines 142-164.
+  // spec: §9.3.
   rpc CallConnectorTool(CallConnectorToolRequest) returns (CallConnectorToolResponse) {}
 
-  // ReportSessionScrub reports the outcome of the per-slot cleanup the
-  // adapter runs on every session release (§5.2), across the
-  // `maxConcurrentSessions > 1` and recycling cases alike. The outcome is
-  // RELEASED when the slot's runtime, credential timers, and per-slot
-  // directory tree were torn down cleanly, or LEAKED when a resource could
-  // not be reclaimed. The gateway resolves the pod from pod_id, increments
+  // ReportSessionScrub reports a per-slot cleanup's outcome for the
+  // cleanups §5.2 states the adapter reports, and for no other release.
+  // RELEASED and LEAKED are the outcomes §5.2 states for the cleanup.
+  // The gateway resolves the pod from pod_id, increments
   // sessionsServed on its agent_pod_state row, and feeds a LEAKED outcome
   // into the unhealthy-threshold ledger behind the lenny.dev/drain-request
   // annotation (§4.6.3). The adapter initiates this RPC; a transport
@@ -317,7 +348,7 @@ service GatewayControl {
   // reserved otherwise. A missing report is bounded by a gateway-side
   // timeout (cleanupTimeoutSeconds plus a grace period). The adapter
   // initiates this RPC; a transport failure is a gRPC status error.
-  // spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model; §3.4 recycle disposition.
+  // spec: §4.7 (Adapter → Gateway RPCs); §5.2 scrub model; §6.2 recycle disposition.
   rpc ReportPodScrub(ReportPodScrubRequest) returns (ReportPodScrubResponse) {}
 }
 
@@ -424,27 +455,32 @@ message CallConnectorToolResponse {
 // adapter runs on every session release.
 enum SessionScrubOutcome {
   SESSION_SCRUB_OUTCOME_UNSPECIFIED = 0;
-  // SESSION_SCRUB_OUTCOME_RELEASED — the slot's runtime, credential
-  // timers, and per-slot directory tree were torn down cleanly and the
-  // slot was released. spec: §5.2 (slot_cleanup → released).
+  // SESSION_SCRUB_OUTCOME_RELEASED — the cleanup reported released, on the
+  // terms §5.2 states. spec: §5.2 (slot_cleanup → released).
   SESSION_SCRUB_OUTCOME_RELEASED = 1;
-  // SESSION_SCRUB_OUTCOME_LEAKED — a resource could not be reclaimed at
-  // the session release. The gateway feeds the outcome into the
+  // SESSION_SCRUB_OUTCOME_LEAKED — the cleanup reported leaked, on the
+  // terms §5.2 states. The gateway feeds the outcome into the
   // unhealthy-threshold ledger behind the lenny.dev/drain-request
   // annotation. spec: §5.2 (leaked slot semantics); §4.6.3.
   SESSION_SCRUB_OUTCOME_LEAKED = 2;
 }
 
-// ReportSessionScrubRequest carries the §5.2 per-slot cleanup outcome the
-// adapter reports on every session release. pod_id is the agent_pod_state
-// row key the gateway increments sessionsServed on; session_id names the
-// released session; slot_id is set only when the pod runs concurrent
-// sessions (`maxConcurrentSessions > 1`) and identifies the released slot.
+// ReportSessionScrubRequest carries a per-slot cleanup's outcome, for the
+// cleanups §5.2 states the adapter reports and for no other release.
+// pod_id is the agent_pod_state row key the gateway increments
+// sessionsServed on; session_id names the released session, which is also
+// the identifier of the slot it held.
 // spec: §4.7; §5.2.
 message ReportSessionScrubRequest {
   string pod_id = 1;
   SessionId session_id = 2;
-  SlotId slot_id = 3;
+  // Field 3 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 3;
+  reserved "slot_id";
   SessionScrubOutcome outcome = 4;
 }
 
@@ -455,6 +491,18 @@ message ReportSessionScrubRequest {
 // response.
 message ReportSessionScrubResponse {}
 
+// SlotReclaimOutcome is the outcome a Shutdown reports under spec §4.7.1
+// rule 15.
+enum SlotReclaimOutcome {
+  SLOT_RECLAIM_OUTCOME_UNSPECIFIED = 0;
+  // SLOT_RECLAIM_OUTCOME_RECLAIMED: spec: §4.7.1 rules 12 and 14; §7.1.
+  SLOT_RECLAIM_OUTCOME_RECLAIMED = 1;
+  // SLOT_RECLAIM_OUTCOME_ABSENT: spec: §4.7.1 rule 11; §7.1.
+  SLOT_RECLAIM_OUTCOME_ABSENT = 2;
+  // SLOT_RECLAIM_OUTCOME_SUPERSEDED: spec: §4.7.1 rule 13; §7.1.
+  SLOT_RECLAIM_OUTCOME_SUPERSEDED = 3;
+}
+
 // PodScrubOutcome is the binary result of the §5.2 whole-pod scrub the
 // adapter runs at the occupancy-zero recycle boundary.
 enum PodScrubOutcome {
@@ -462,12 +510,12 @@ enum PodScrubOutcome {
   // POD_SCRUB_OUTCOME_SUCCEEDED — the §5.2 whole-pod scrub sequence
   // completed. The gateway records rewarmStartedAt and coordinates the
   // SDK re-warm on a preConnect pool, or patches the claim directly to
-  // reserved otherwise. spec: §3.4 recycle disposition.
+  // reserved otherwise. This is the recycle disposition.
   POD_SCRUB_OUTCOME_SUCCEEDED = 1;
   // POD_SCRUB_OUTCOME_FAILED — the §5.2 whole-pod scrub did not complete.
   // The gateway increments scrubFailureCount and computes the disposition
   // against sessionPolicy (retire under onScrubFailure: fail or
-  // maxScrubFailures). spec: §3.4 recycle disposition; §4.6.3.
+  // maxScrubFailures). spec: §4.6.3.
   POD_SCRUB_OUTCOME_FAILED = 2;
 }
 
@@ -477,11 +525,19 @@ enum PodScrubOutcome {
 // agent_pod_state row key the gateway resolves the claim and disposition
 // from; there is no session_id because occupancy is zero at the recycle
 // boundary. detail carries an optional adapter-side failure description
-// for the audit trail on a FAILED outcome. spec: §4.7; §5.2; §3.4.
+// for the audit trail on a FAILED outcome. runtime_live states whether the
+// adapter's runtime can serve the pod's next session, sampled after the
+// whole-pod scrub finishes; in the sidecar model it is false whenever the
+// adapter's not-live state is set (§4.7.10, Runtime supervisor, Liveness).
+// The field is
+// positive so that an absent value reads as not live, and the gateway
+// retires the pod with the non-counting runtime_not_live reason when it is
+// false. spec: §4.7; §5.2 (Pod retirement policy, Runtime not live); §6.2.
 message ReportPodScrubRequest {
   string pod_id = 1;
   PodScrubOutcome outcome = 2;
   string detail = 3;
+  bool runtime_live = 4;
 }
 
 // ReportPodScrubResponse acknowledges the §5.2 whole-pod scrub report. It
@@ -565,6 +621,12 @@ message Error {
     ERROR_CODE_EXTENSION_COOL_OFF_ACTIVE = 25;
     ERROR_CODE_PLATFORM_DEGRADED = 26;
     ERROR_CODE_PROTOCOL_VERSION_INCOMPATIBLE = 27;
+    // ERROR_CODE_SLOT_BIND_ALREADY_STARTED: spec §4.7.1 rule 6, the
+    // started-session rule. PERMANENT; FailedPrecondition.
+    ERROR_CODE_SLOT_BIND_ALREADY_STARTED = 28;
+    // ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED: spec §4.7.1 rule 5, the attempt
+    // identity rule. TRANSIENT; Aborted.
+    ERROR_CODE_SLOT_BIND_ATTEMPT_SUPERSEDED = 29;
     // Reserved range for Phase 2+ additions. Do not assign 1000–1999 to
     // anything that does not survive a wire-compat audit.
   }
@@ -576,13 +638,6 @@ message Error {
 
 // SessionId identifies a session. Format: UUIDv8 (per spec §10.1 routing).
 message SessionId {
-  string value = 1;
-}
-
-// SlotId identifies a slot on a pod that runs concurrent sessions
-// (`sessionPolicy.maxConcurrentSessions > 1`). Empty when
-// `maxConcurrentSessions: 1`, where a session claims the whole pod.
-message SlotId {
   string value = 1;
 }
 
@@ -605,10 +660,7 @@ message SlotId {
 // (the §10.7 ref-resolver, audit log, partial-replay snapshot) sees the
 // plan as a single document. The adapter MUST NOT execute setup
 // commands from this field — it runs them only on the explicit
-// RunSetup RPC, which §5.2 line 415 specifies fires once per pod at
-// start (a recycled pod skips the second RunSetup on its subsequent
-// session assignments; the gateway owns the once-per-pod gate). See
-// also F-5.2.24.
+// RunSetup RPC. spec: §7.5 Setup Commands.
 message WorkspacePlan {
   int32 schema_version = 1;
   repeated WorkspaceSource sources = 2;
@@ -631,8 +683,8 @@ message WorkspaceSource {
   string resolved_commit_sha = 13; // gateway-written, readonly
   // link_target is the symlink target for a gateway-produced `symlink`
   // source. The gateway extracts §14 uploadArchive sources in its own
-  // §4.1 Upload Handler subsystem (§7.4 line 448; §13.4 line 652 — the
-  // pod never decompresses), validates each symlink target with
+  // §4.1 Upload Handler subsystem (§7.4; §13.4 — the
+  // pod never extracts a client-uploaded archive), validates each symlink target with
   // pkg/upload.ValidateSymlinkTarget against the workspace root, and
   // rewrites a symlink-bearing archive entry into a `symlink` source so
   // the adapter recreates the link without canonicalizing untrusted
@@ -675,11 +727,19 @@ message PrepareWorkspaceRequest {
   // name with no path separators.
   string upload_ref = 2;
   bytes chunk = 3;
-  // slot_id, when set, stages this slot's uploads into the §6.4 per-slot
-  // staging area /workspace/slots/{slotId}/staging/ instead of the single
-  // /workspace/staging. Empty when `maxConcurrentSessions: 1` (the base
-  // layout). spec: §6.4 lines 385-405.
-  SlotId slot_id = 4;
+  // Field 4 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 4;
+  reserved "slot_id";
+  // bind_attempt is the bind attempt token; spec: §4.7.1 (bind attempt
+  // token), its carriage table and rules 1, 4, 5 and 9.
+  string bind_attempt = 5;
+  // mid_session marks a §7.4 mid-session upload; spec: §4.7.1 carriage
+  // table and rules 1, 3, 6 and 9.
+  bool mid_session = 6;
 }
 
 // PrepareWorkspaceResponse reports the total staged upload set.
@@ -695,35 +755,46 @@ message FinalizeWorkspaceRequest {
   WorkspacePlan workspace_plan = 2;
   // archive_policy is the §13.4 per-Runtime opt-in surface the gateway
   // delivers to the adapter for uploadArchive extraction. An unset
-  // message means "platform defaults" (symlinks rejected). spec: §7.4
-  // lines 458, 462; §13.4 lines 663-672 — F-7.4.4.
+  // message means "platform defaults" (symlinks rejected). spec: §7.4; §13.4 — F-7.4.4.
   ArchivePolicy archive_policy = 3;
-  // mid_session marks a §7.4 line 433 mid-session upload: the session is
+  // mid_session marks a §7.4 mid-session upload: the session is
   // already running and the named sources are overlaid onto the existing
-  // /workspace/current rather than replacing the whole tree. The adapter
-  // builds the sources in /workspace/staging, validates them, atomically
-  // moves each entry onto /workspace/current (preserving the agent's
-  // existing files), then emits a `files_updated` lifecycle signal to the
+  // /workspace/slots/{sessionId}/current rather than replacing the whole
+  // tree. The adapter builds the sources in
+  // /workspace/slots/{sessionId}/staging, validates them, atomically
+  // moves each entry onto /workspace/slots/{sessionId}/current
+  // (preserving the agent's existing files), then emits a
+  // `files_updated` lifecycle signal to the
   // runtime so the agent re-reads the workspace only after promotion. The
   // proto3 default false is the pre-start whole-tree materialization the
-  // §4.7 assignment sequence uses. spec: §7.4 line 433 — F-7.4.6.
+  // §4.7 assignment sequence uses. spec: §7.4 — F-7.4.6.
   bool mid_session = 4;
-  // slot_id, when set, materializes this slot's workspace under the §6.4
-  // per-slot tree (staging /workspace/slots/{slotId}/staging/ promoted to
-  // current /workspace/slots/{slotId}/current/) instead of the single
-  // /workspace/current. Empty when `maxConcurrentSessions: 1`. spec: §6.4
-  // lines 385-405.
-  SlotId slot_id = 5;
+  // Field 5 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 5;
+  reserved "slot_id";
+  // bind_attempt is the bind attempt token; spec: §4.7.1 (bind attempt
+  // token), its carriage table and rules 1, 4 and 5.
+  string bind_attempt = 6;
+  // restore_chunks carries one presigned single-key GET capability per
+  // chunk of a derived or replayed session's starting snapshot, in
+  // ascending index order, minted immediately before this call. Empty on
+  // every other request. A request marked mid_session that carries it is
+  // answered INVALID_ARGUMENT.
+  // spec: §4.7.1 (pairing rule); §7.1 (Derive restore semantics).
+  repeated ChunkGrant restore_chunks = 7;
 }
 
 // ArchivePolicy carries the §13.4 per-Runtime archive-extraction opts.
 // The platform ceilings (256 MiB / 100:1 / 10 000 entries / 64 MiB per
 // entry / depth 32 / path 4096 bytes) are normative and non-tunable
 // per §13.4 — only the per-Runtime AllowSymlinks toggle and the
-// adapter's workspace_root path travel on the wire. spec: §7.4 lines
-// 448-462; §13.4 — F-7.4.2, F-7.4.4.
+// adapter's workspace_root path travel on the wire. spec: §7.4; §13.4 — F-7.4.2, F-7.4.4.
 message ArchivePolicy {
-  // allow_symlinks lifts the §7.4 line 458 default-deny on symlink
+  // allow_symlinks lifts the §7.4 default-deny on symlink
   // entries. The adapter still validates every symlink target with
   // pkg/upload.ValidateSymlinkTarget (relative-to-workspace canonical
   // path; rejects /proc, /sys, /dev, /run/lenny). False (the default)
@@ -733,19 +804,20 @@ message ArchivePolicy {
   // gateway derives it from the SandboxTemplate so the per-Runtime
   // workspace-tier and slot-scoped paths flow through correctly. The
   // adapter falls back to its own configured root when this field is
-  // empty (workspaces materialized into /workspace/current). F-7.4.4.
+  // empty (workspaces materialized into
+  // /workspace/slots/{sessionId}/current). F-7.4.4.
   string workspace_root = 2;
 }
 
 // FinalizeWorkspaceResponse carries per-source advisory warnings the
 // adapter raised during materialization. The adapter returns a gRPC
 // error only on fatal materialization failures; non-fatal §14 plan
-// warnings (entries the §7.4 line 459 strip-components rule skipped,
+// warnings (entries the §7.4 strip-components rule skipped,
 // etc.) ride here so the gateway can republish them on the session's
 // SSE event stream and append them to the §11.7 audit trail.
 message FinalizeWorkspaceResponse {
   // workspace_plan_warnings transcribes the §14 closed warning enum
-  // for the adapter side of materialization. The §7.4 line 459
+  // for the adapter side of materialization. The §7.4
   // `workspace_plan_strip_components_skip` warning per skipped archive
   // entry is the only producer in v1; future codes ride the same
   // surface so the proto need not grow per warning kind. F-7.4.15.
@@ -763,11 +835,11 @@ message WorkspacePlanWarning {
   // `workspace_plan_strip_components_skip`.
   string code = 1;
   // source_index is the workspace plan's 0-based source index the
-  // warning refers to. spec: §14 line 100 — `sourceIndex` is the
+  // warning refers to. spec: §14 — `sourceIndex` is the
   // first field listed in the strip-components-skip warning fields.
   int32 source_index = 2;
   // entry_path is the archive entry path that triggered the warning.
-  // Empty when the warning is not entry-scoped. spec: §14 line 100 —
+  // Empty when the warning is not entry-scoped. spec: §14 —
   // `entryPath` is the per-entry path the strip-components rule
   // discarded. F-14.1.18.
   string entry_path = 3;
@@ -775,18 +847,18 @@ message WorkspacePlanWarning {
   string message = 4;
   // segment_count is the number of `/`-separated segments the rejected
   // entry path had after stripping any leading/trailing empty
-  // segments. spec: §14 line 100 — `segmentCount`. Populated on
+  // segments. spec: §14 — `segmentCount`. Populated on
   // `workspace_plan_strip_components_skip` warnings; zero on other
   // codes. F-14.1.18.
   int32 segment_count = 5;
   // strip_components is the configured `stripComponents` value the
-  // entry was tested against. spec: §14 line 100 —
+  // entry was tested against. spec: §14 —
   // `stripComponents`. Populated on
   // `workspace_plan_strip_components_skip` warnings; zero on other
   // codes. F-14.1.18.
   int32 strip_components = 6;
   // unknown_type is the open-string `source.type` discriminator the
-  // materializer did not recognize and skipped. spec: §14 line 334 —
+  // materializer did not recognize and skipped. spec: §14 —
   // `unknownType`. Populated only on `workspace_plan_unknown_source_type`
   // warnings the adapter raises when it is the live consumer of a plan
   // carrying a source type a newer gateway injected; empty on other
@@ -794,24 +866,24 @@ message WorkspacePlanWarning {
   string unknown_type = 7;
   // schema_version is the plan's declared §14.1 `schemaVersion`, copied
   // onto the warning so a consumer correlating warnings to plans does
-  // not have to re-read the request body. spec: §14 line 334 —
+  // not have to re-read the request body. spec: §14 —
   // `schemaVersion`. Populated only on
   // `workspace_plan_unknown_source_type` warnings; zero on other codes.
   // F-14.1.2.
   int32 schema_version = 8;
   // path is the workspace-relative path two sources resolved to during
-  // materialization. spec: §14 line 338 — `path`. Populated only on
+  // materialization. spec: §14 — `path`. Populated only on
   // `workspace_plan_path_collision` warnings; empty on other codes.
   // F-14.1.9.
   string path = 9;
   // winning_source_index is the later (last-writer-wins) source index
-  // whose content survives the collision. spec: §14 line 338 —
+  // whose content survives the collision. spec: §14 —
   // `winningSourceIndex`. Populated only on
   // `workspace_plan_path_collision` warnings; equals source_index.
   // F-14.1.9.
   int32 winning_source_index = 10;
   // losing_source_index is the earlier source index the later write
-  // overwrote. spec: §14 line 338 — `losingSourceIndex`. Populated only
+  // overwrote. spec: §14 — `losingSourceIndex`. Populated only
   // on `workspace_plan_path_collision` warnings. F-14.1.9.
   int32 losing_source_index = 11;
 }
@@ -822,24 +894,26 @@ message WorkspacePlanWarning {
 // authoritative execution payload — see WorkspacePlan.setup_commands
 // for why the same commands also ride on the plan document.
 //
-// Per §5.2 setup commands run once per pod at start. The gateway issues
-// RunSetup once on first pod assignment; on a recycled pod's subsequent
-// session assignments the gateway skips the RunSetup RPC entirely so the
-// adapter's pod-level setup-completion state is implicit (no second
-// RunSetup means no second execution). Per-session setup belongs in the
-// runtime's initialization rather than in setupCommands.
+// The adapter keeps no pod-level setup-completion state: it runs the
+// commands of every RunSetup it receives. spec: §7.5 Setup Commands.
 message RunSetupRequest {
   SessionId session_id = 1;
   repeated SetupCommand setup_commands = 2;
   SetupPolicy setup_policy = 3;
-  // slot_id, when set, runs setup against this slot's materialized cwd
-  // /workspace/slots/{slotId}/current/ instead of /workspace/current.
-  // Empty when `maxConcurrentSessions: 1`. spec: §6.4 lines 401-405.
-  SlotId slot_id = 4;
+  // Field 4 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 4;
+  reserved "slot_id";
+  // bind_attempt is the bind attempt token; spec: §4.7.1 (bind attempt
+  // token), its carriage table and rules 1, 4 and 5.
+  string bind_attempt = 5;
 }
 
 // RunSetupResponse reports the per-command setup output the adapter
-// captured. The §7.5 line 475 contract requires "Fully logged
+// captured. The §7.5 contract requires "Fully logged
 // (stdout/stderr captured)" so the gateway can persist the trail on the
 // session row and surface it through the §15.1 GET /v1/sessions/{id}
 // envelope and the §11.7 audit log. The returned outputs preserve the
@@ -861,7 +935,7 @@ message SetupCommandOutput {
   // cmd echoes the submitted command text so a downstream consumer can
   // correlate the record with the WorkspacePlan entry.
   string cmd = 1;
-  // exit_code is the §7.5 line 475 captured exit status. 0 is a clean
+  // exit_code is the §7.5 captured exit status. 0 is a clean
   // exit; non-zero is a failure (the §7.3 setup_command_failed signal).
   int32 exit_code = 2;
   // stdout is the captured standard output, truncated to a per-stream
@@ -885,19 +959,20 @@ message StartSessionRequest {
   // the FinalizeWorkspace and RunSetup staging RPCs (§4.7). Field 8
   // (task_id) was removed when the dead gateway-supplied task identifier
   // was dropped: a session has exactly one execution, so the adapter
-  // derives the manifest taskId from the session id (§4.7).
+  // derives the taskId from the session id (§4.7).
   reserved 3, 7, 8;
   reserved "workspace_plan", "setup_policy", "task_id";
   SessionId session_id = 1;
   string runtime = 2;
   map<string, string> labels = 4;
   // experiment_context is the §8.3 / §10.7 experiment enrollment
-  // delivered to the runtime in the adapter manifest. Absent for an
-  // unenrolled session.
+  // delivered to the runtime in the session's session_start frame on
+  // CH-MSGSOCK (§28.5.3). Absent for an unenrolled session.
   ExperimentContext experiment_context = 5;
   // tracing_context is the §8.3 opaque tracing-identifier map the
-  // runtime receives in the adapter manifest to stitch its native
-  // traces into the parent's trace tree. Empty when none is set.
+  // runtime receives in the session's session_start frame on CH-MSGSOCK
+  // (§28.5.3) to stitch its native traces into the parent's trace tree.
+  // Empty when none is set.
   map<string, string> tracing_context = 6;
   // agent_interface is the runtime's §5.1 agentInterface descriptor,
   // JSON-encoded, written verbatim into the adapter manifest's
@@ -908,14 +983,13 @@ message StartSessionRequest {
   // written into the adapter manifest. Empty when the runtime specifies no
   // minimum.
   string min_platform_version = 10;
-  // slot_id, when set, claims a §6.4 per-slot workspace rather than the
-  // whole pod: the adapter registers the slot (alongside sibling slots),
-  // ensures the per-slot tree exists, and starts the slot's runtime
-  // against /workspace/slots/{slotId}/current/. Set only when the pod
-  // runs concurrent sessions (`maxConcurrentSessions > 1`); empty when
-  // `maxConcurrentSessions: 1` (the one-session-per-pod claim). spec:
-  // §6.4 lines 385-405; §5.2.
-  SlotId slot_id = 11;
+  // Field 11 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 11;
+  reserved "slot_id";
 }
 
 // SetupPolicy is the §5.1 runtime setupPolicy: the aggregate cap on the
@@ -925,14 +999,15 @@ message SetupPolicy {
   // no aggregate cap.
   int32 timeout_seconds = 1;
   // on_timeout is the §5.1 disposition when the cap is hit: "fail"
-  // aborts pod startup, "warn" proceeds to runtime start. An empty
-  // value is the conservative "fail" default.
+  // fails the session's setup (spec: §7.5 Setup Commands; §6.2 Pod
+  // State Machine), "warn" proceeds to runtime start. An empty value is
+  // the conservative "fail" default.
   string on_timeout = 2;
   // shell carries the §7.5 setupCommandPolicy.shell flag from the gateway
   // to the adapter. When true the adapter runs each command via
   // `/bin/sh -c`; when false the adapter splits the command on whitespace
   // and execs the argv directly, neutering pipes, backtick substitution,
-  // glob expansion, redirects, and `&&` chaining per §7.5 line 490. The
+  // glob expansion, redirects, and `&&` chaining per §7.5. The
   // proto3 default is false (argv-mode); the gateway sends `true` only
   // when the runtime's policy explicitly requests shell execution. F-7.5.2.
   bool shell = 3;
@@ -946,10 +1021,22 @@ message StartSessionResponse {
 
 message SendMessageRequest {
   SessionId session_id = 1;
-  SlotId slot_id = 2;
+  // Field 2 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 2;
+  reserved "slot_id";
   // Opaque JSON-encoded MessageEnvelope (lenny-adapter-jsonl.schema.json
   // `message`). The adapter writes it verbatim to the agent's stdin.
   bytes envelope_json = 3;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
+  int64 coordination_generation = 4;
 }
 
 message SendMessageResponse {}
@@ -959,11 +1046,25 @@ message SendMessageResponse {}
 // stream bound to a session the pod does not hold.
 message AttachRequest {
   SessionId session_id = 1;
-  SlotId slot_id = 2;
+  // Field 2 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 2;
+  reserved "slot_id";
   // Opaque JSON-encoded client-to-agent frame (lenny-adapter-jsonl.schema.json
   // `message`, `tool_result`, `heartbeat`, ...). The adapter writes it
   // verbatim to the agent's stdin.
   bytes envelope_json = 3;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1). It is carried on every frame
+  // of the stream rather than on the opening frame alone, for the same
+  // reason session_id is.
+  int64 coordination_generation = 4;
 }
 
 // AttachResponse is one frame the adapter streams back over Attach as
@@ -978,12 +1079,16 @@ message AttachResponse {
 message AssignCredentialsRequest {
   SessionId session_id = 1;
   map<string, CredentialLease> leases = 2; // keyed by provider
-  // slot_id, when set, writes this slot's independent credential lease to
-  // the §6.1 per-slot credential file /run/lenny/slots/{slotId}/credentials.json
-  // instead of the single global /run/lenny/credentials.json, so a
-  // rotation on one slot does not disrupt sibling slots. Empty when
-  // `maxConcurrentSessions: 1`. spec: §6.1 line 28.
-  SlotId slot_id = 3;
+  // Field 3 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 3;
+  reserved "slot_id";
+  // bind_attempt is the bind attempt token; spec: §4.7.1 (bind attempt
+  // token), its carriage table and rules 1, 4 and 5.
+  string bind_attempt = 4;
 }
 
 message AssignCredentialsResponse {}
@@ -995,14 +1100,23 @@ message RotateCredentialsRequest {
   // rotation. It governs the §4.7 Full-level in-flight gate ceiling:
   // any value other than "proactive_renewal" caps the in-flight wait at
   // 300s and falls through to the standard rotation path on ceiling hit
-  // (spec §4.7 line 822). The renewal trigger keeps the unbounded wait
+  // (spec §4.7). The renewal trigger keeps the unbounded wait
   // because the old credential is still valid. Empty is treated as a
   // fault trigger (capped) for fail-closed safety.
   string rotation_trigger = 3;
-  // slot_id, when set, rotates the lease in this slot's §6.1 per-slot
-  // credential file independently of sibling slots. Empty when
-  // `maxConcurrentSessions: 1`. spec: §6.1 line 28.
-  SlotId slot_id = 4;
+  // Field 4 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 4;
+  reserved "slot_id";
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
+  int64 coordination_generation = 5;
 }
 
 message RotateCredentialsResponse {}
@@ -1012,12 +1126,21 @@ message ExtendCredentialLeaseRequest {
   string provider = 2;
   string lease_id = 3;
   // expires_at_unix_ms is the new, later expiry deadline the adapter
-  // re-arms the direct-mode expiry timer to. spec: §4.9 line 1470.
+  // re-arms the direct-mode expiry timer to. spec: §4.9.
   int64 expires_at_unix_ms = 4;
-  // slot_id, when set, extends this slot's §6.1 per-slot credential
-  // lease timer independently of sibling slots. Empty when
-  // `maxConcurrentSessions: 1`. spec: §6.1 line 28.
-  SlotId slot_id = 5;
+  // Field 5 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 5;
+  reserved "slot_id";
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
+  int64 coordination_generation = 6;
 }
 
 message ExtendCredentialLeaseResponse {}
@@ -1026,10 +1149,19 @@ message RevokeCredentialsRequest {
   SessionId session_id = 1;
   repeated string providers = 2;
   string reason = 3;
-  // slot_id, when set, revokes from this slot's §6.1 per-slot credential
-  // file independently of sibling slots. Empty when
-  // `maxConcurrentSessions: 1`. spec: §6.1 line 28.
-  SlotId slot_id = 4;
+  // Field 4 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 4;
+  reserved "slot_id";
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
+  int64 coordination_generation = 5;
 }
 
 message RevokeCredentialsResponse {}
@@ -1047,10 +1179,23 @@ message InterruptRequest {
   SessionId session_id = 1;
   Mode mode = 2;
   int32 deadline_ms = 3;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
+  int64 coordination_generation = 4;
+  // Field 5 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 5;
+  reserved "slot_id";
   enum Mode {
     MODE_UNSPECIFIED = 0;
-    MODE_CLEAN = 1; // SIGTERM with grace
-    MODE_HARD = 2;  // immediate SIGKILL
+    MODE_CLEAN = 1; // graceful, with deadline
+    MODE_HARD = 2;  // immediate
   }
 }
 
@@ -1060,7 +1205,7 @@ message InterruptResponse {
   enum Status {
     STATUS_UNSPECIFIED = 0;
     STATUS_ACKNOWLEDGED = 1;     // runtime reached a safe stop point
-    STATUS_INTERRUPT_TIMEOUT = 2; // deadline elapsed with no acknowledgement (§4.7)
+    STATUS_INTERRUPT_TIMEOUT = 2; // deadline elapsed with no acknowledgement (§28.5.3 CH-RUNTIMEOPS)
     STATUS_BUSY = 3;             // operation lock rejected the interrupt (§4.7)
   }
 }
@@ -1092,10 +1237,18 @@ message CheckpointRequest {
     CheckpointGrant grant = 2;
     CheckpointAbort abort = 3;
   }
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1). It sits outside the `msg` oneof
+  // because the fence applies to every frame the gateway sends on the
+  // stream rather than to the opening frame alone.
+  int64 coordination_generation = 4;
 }
 
 // CheckpointStart opens the stream. It carries the gateway-minted
-// `checkpoint_id` (§10.1 line 130 — the adapter never mints one), the
+// `checkpoint_id` (§10.1.7 — the adapter never mints one), the
 // typed trigger, the gateway-chosen chunk size and encoding, and the
 // applicable deadline.
 message CheckpointStart {
@@ -1112,12 +1265,17 @@ message CheckpointStart {
   // checkpoint_id.
   string chunk_encoding = 4;
   int64 deadline_ms = 5;
-  // slot_id, when set, checkpoints this slot's per-slot workspace and
-  // session subtree (/workspace/slots/{slotId}/current and
-  // /sessions/{slotId}) instead of the pod-global roots. Empty when
-  // maxConcurrentSessions: 1 (the pod-global base layout). spec: §5.2
-  // (per-slot checkpoint granularity), §6.4 (per-slot layout).
-  SlotId slot_id = 6;
+  // Field 6 held slot_id. The stream's sole per-session address is
+  // session_id below, which every session on every pod carries.
+  // spec: §5.2; §6.4.
+  reserved 6;
+  reserved "slot_id";
+  // session_id names the session this checkpoint captures. Neither the
+  // CheckpointRequest envelope nor the Checkpoint RPC signature carries
+  // one, so the opening frame is where the stream is addressed. The
+  // adapter resolves the checkpoint roots and the per-session op lock
+  // from it. spec: §4.7.2; §10.1.7.
+  SessionId session_id = 7;
 }
 
 // CheckpointGrant is a single-chunk presigned PUT capability the gateway
@@ -1207,33 +1365,45 @@ message CheckpointFailed {
 message SignalDeadlineRequest {
   SessionId session_id = 1;
   // remaining_ms is the wall-clock left before the session's deadline
-  // (~300000 for the §11.3 line 240 five-minute pre-expiry warning).
+  // (~300000 for the §11.3 five-minute pre-expiry warning).
   int32 remaining_ms = 2;
   // trigger names which deadline is approaching: "session_age" (the
-  // §11.3 maxSessionAge cap), "budget", or "idle".
+  // §11.3 maxSessionAge cap) or "budget".
   string trigger = 3;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
+  int64 coordination_generation = 4;
+  // Field 5 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 5;
+  reserved "slot_id";
 }
 
 message SignalDeadlineResponse {
   // delivered is true when the warning reached the runtime over the
-  // lifecycle channel; false when the pod's runtime has no lifecycle
-  // channel (Basic/Standard integration level — §15 line 2141).
+  // CH-RUNTIMEOPS; false when the pod's runtime has no CH-RUNTIMEOPS (Basic/Standard integration level — §15).
   bool delivered = 1;
 }
 
 message ResumeRequest {
   // Field 6 (task_id) was removed when the dead gateway-supplied task
-  // identifier was dropped: the adapter derives the manifest taskId from
-  // the session id (§4.7), the same as StartSessionRequest.
+  // identifier was dropped: the adapter derives the taskId from the
+  // session id (§4.7), the same as StartSessionRequest.
   reserved 6;
   reserved "task_id";
   SessionId session_id = 1;
   string runtime = 2;        // runtime name, as in StartSessionRequest
   string checkpoint_id = 3;  // checkpoint to restore the workspace from
   // experiment_context and tracing_context are re-delivered to the
-  // restored runtime in the adapter manifest — the session's §8.3
-  // enrollment and tracing identifiers survive a resume onto a fresh
-  // pod. Absent when unset.
+  // restored runtime in the session's session_start frame on CH-MSGSOCK
+  // (§28.5.3), so the session's §8.3 enrollment and tracing identifiers
+  // survive a resume onto a fresh pod. Absent when unset.
   ExperimentContext experiment_context = 4;
   map<string, string> tracing_context = 5;
   // agent_interface and min_platform_version are re-delivered to the
@@ -1280,8 +1450,7 @@ message ResumeRequest {
   // guard.
   string expected_workspace_root = 12;
   // chunks carries one presigned single-key GET capability per chunk of
-  // the checkpoint being restored, in ascending index order (§10.1 line
-  // 155). The gateway resolves the chunk set from the manifest row it owns
+  // the checkpoint being restored, in ascending index order (§10.1). The gateway resolves the chunk set from the manifest row it owns
   // and mints one capability per index in [0, chunk_count); the adapter
   // fetches each chunk directly from object storage and concatenates them
   // into the single tar (or tar.gz) byte stream. The gateway has no byte
@@ -1289,6 +1458,22 @@ message ResumeRequest {
   // adapter's only means of reading the chunks; a fetch that outlives the
   // grants' expiry is re-driven by re-calling Resume, which re-mints.
   repeated ChunkGrant chunks = 13;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
+  int64 coordination_generation = 14;
+  // Field 15 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 15;
+  reserved "slot_id";
+  // bind_attempt is the bind attempt token; spec: §4.7.1 (bind attempt
+  // token), its carriage table and rules 1, 4 and 5.
+  string bind_attempt = 16;
 }
 
 // ChunkGrant is a single presigned GET capability for one checkpoint
@@ -1326,9 +1511,10 @@ message ResumeResponse {
 }
 
 // CoordinatorFenceRequest announces a new coordination generation to the
-// pod (§4.7 line 632 / §10.1). The pod records the new generation and
-// from this point rejects every RPC carrying a strictly older generation
-// with FailedPrecondition + a `coordinator_handoff_stale` detail string,
+// pod (§4.7 / §10.1). The pod records the generation against the session
+// the fence names, and from that point rejects every RPC carrying a
+// generation older than the one it holds for that session with
+// FailedPrecondition + a `coordinator_handoff_stale` detail string,
 // which the gateway counts on `lenny_coordinator_handoff_stale_total`.
 message CoordinatorFenceRequest {
   SessionId session_id = 1;
@@ -1340,12 +1526,13 @@ message CoordinatorFenceRequest {
 
 // CoordinatorFenceResponse acknowledges the new generation. accepted is
 // true when the pod records the generation; false when the supplied
-// generation is not greater than the last fenced generation (the
-// gateway should re-read Postgres and re-issue). gap_detected reports
-// that the new generation skips one or more values relative to the last
-// fenced generation; the adapter still acknowledges (the new coordinator
-// can proceed) but logged a `coordinator_generation_gap` event and
-// reset transient tool-call state per §10.1 line 36.
+// generation is not greater than the generation the pod holds for the
+// session the fence names (the gateway should re-read Postgres and
+// re-issue). gap_detected reports that the new generation skips one or
+// more values relative to the generation the pod holds for that session;
+// the adapter still acknowledges (the new coordinator can proceed) but
+// logged a `coordinator_generation_gap` event and reset the transient
+// tool-call state that session accumulated per §10.1.
 message CoordinatorFenceResponse {
   bool accepted = 1;
   int64 last_fenced_generation = 2;
@@ -1353,27 +1540,75 @@ message CoordinatorFenceResponse {
 }
 
 // CheckpointBarrierRequest dispatches a barrier during gateway graceful
-// drain (§4.7 line 631 / §10.1). barrier_id is the gateway's unique
+// drain (§4.7 / §10.1). barrier_id is the gateway's unique
 // identifier for this barrier (echoed in the ack). coordination_generation
-// must match the last fenced generation, or the adapter rejects with
-// FailedPrecondition; this is the same generation gate Coordinator
-// Fence installs.
+// must match the generation the pod holds for the session the request
+// names, or the adapter rejects with FailedPrecondition; a barrier naming
+// a bound session for which the pod holds no fenced generation is
+// accepted and records no value. This is the same generation gate
+// CoordinatorFence installs.
 message CheckpointBarrierRequest {
   SessionId session_id = 1;
   // coordination_generation is the gateway's view of the active
   // coordination generation. The adapter rejects with FailedPrecondition
-  // when this is not strictly equal to the last fenced generation.
+  // when the pod holds a generation for the session the request names and
+  // this is not equal to it.
   int64 coordination_generation = 2;
   // barrier_id is the gateway's correlation id for this barrier. Echoed
   // verbatim in the CheckpointBarrierAck.
   string barrier_id = 3;
+  // Field 4 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 4;
+  reserved "slot_id";
 }
 
+// SealSessionRequest asks the adapter to seal the named session when it
+// had no activity in the last idle_seconds (§4.7.1 **Session seal.**).
+message SealSessionRequest {
+  SessionId session_id = 1;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
+  int64 coordination_generation = 2;
+  // idle_seconds is the session's effective maxClientIdleSeconds, the
+  // window without activity the adapter requires before it seals the
+  // session. The adapter rejects a value at or below zero with
+  // InvalidArgument.
+  int64 idle_seconds = 3;
+}
+
+// SealSessionResponse reports whether the session is sealed. When it is
+// not, idle_age_seconds is the time since the session's last activity,
+// zero while a platform or connector call for the session is in flight.
+message SealSessionResponse {
+  bool sealed = 1;
+  int64 idle_age_seconds = 2;
+}
+
+// UnsealSessionRequest asks the adapter to lift the named session's seal.
+message UnsealSessionRequest {
+  SessionId session_id = 1;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
+  int64 coordination_generation = 2;
+}
+
+message UnsealSessionResponse {}
+
 // CheckpointBarrierResponse is the synchronous mirror of the
-// CheckpointBarrierAck event emitted on the LifecycleChannel control
-// stream (§4.7 line 660). barrier_id echoes the request. checkpoint_ref
+// CheckpointBarrierAck event emitted on the AdapterEvents control
+// stream (§4.7). barrier_id echoes the request. checkpoint_ref
 // echoes the gateway-minted `checkpoint_id` the adapter received in the
-// CheckpointStart of the barrier-window Checkpoint stream (§10.1 line 167);
+// CheckpointStart of the barrier-window Checkpoint stream (§10.1.8);
 // empty when the gateway drove no stream against the pod. The adapter
 // returns the ack only after that gateway-driven stream terminates.
 // quiesced_ms reports the time-to-quiescence measured inside the ack
@@ -1386,11 +1621,13 @@ message CheckpointBarrierResponse {
 }
 
 // ExportSpec is one §8.7 file-export entry: a source glob resolved
-// inside the parent's /workspace/current and an optional dest_prefix
-// the matched files are re-rooted under in the child's workspace.
+// inside the parent's /workspace/slots/{sessionId}/current and an
+// optional dest_prefix the matched files are re-rooted under in the
+// child's workspace.
 message ExportSpec {
-  // source is the glob resolved relative to /workspace/current. Its
-  // base path (the longest non-wildcard prefix) is stripped from each
+  // source is the glob resolved relative to the parent session's
+  // /workspace/slots/{sessionId}/current. Its base path (the longest
+  // non-wildcard prefix) is stripped from each
   // matched file's path during rebasing (§8.7).
   string source = 1;
   // dest_prefix is the relative directory the rebased files are placed
@@ -1405,6 +1642,12 @@ message ExportPathsRequest {
   // exports are applied in order; later entries overwrite earlier ones
   // on path collision (§8.7 "Multiple exports").
   repeated ExportSpec exports = 2;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
+  int64 coordination_generation = 3;
 }
 
 // ExportedFile is one rebased file the adapter packaged for delegation.
@@ -1444,6 +1687,19 @@ message ReportUsageRequest {
   // total)); a delta-only read would under-count after a replica crash.
   // spec: §4.7 ReportUsage, §11.2 crash recovery for quota counters.
   bool cumulative = 2;
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
+  int64 coordination_generation = 3;
+  // Field 4 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 4;
+  reserved "slot_id";
 }
 
 message ReportUsageResponse {
@@ -1456,20 +1712,39 @@ message ShutdownRequest {
   SessionId session_id = 1;
   string reason = 2;
   int32 deadline_ms = 3;
-  // slot_id, when set, tears down just this §6.4 per-slot session (its
-  // runtime, credential timers, and per-slot directory tree) while
-  // sibling slots on the pod keep running. Empty when
-  // `maxConcurrentSessions: 1` (the whole-pod shutdown). spec: §6.4 lines
-  // 401-405.
-  SlotId slot_id = 4;
+  // Field 4 held slot_id, a second address for the session this
+  // message already names in session_id. Every session is bound to a
+  // slot on every pod and a session-mode slot's identifier is its
+  // session's identifier, so the field carried no information of its
+  // own. spec: §5.2; §6.4.
+  reserved 4;
+  reserved "slot_id";
 
-  // recycle, when set, marks this as the occupancy-zero recycle-boundary
-  // shutdown (§5.2): the adapter closes the ending session's runtime, keeps
-  // the pod process alive, runs the §5.2 whole-pod scrub with the carried
+  // recycle, when set, carries the occupancy-zero recycle disposition
+  // beside the named session's teardown rather than selecting a scope
+  // (§5.2): the adapter tears the named session down, keeps the pod
+  // process alive, runs the §5.2 whole-pod scrub with the carried
   // parameters, and reports the binary outcome asynchronously via
-  // ReportPodScrub. Absent on the terminate path (the pod is replaced).
+  // ReportPodScrub. Absent on every other release, whose claim effect
+  // §4.6.3 assigns; the WarmPoolController projects the pod's phase from
+  // the claim (§4.6.1).
   // spec: §5.2 recycle lifecycle; §4.7 Shutdown recycle disposition.
   RecycleScrub recycle = 5;
+
+  // coordination_generation is the gateway's view of the active
+  // coordination generation for the session. A pod validates the
+  // generation on every gateway-to-pod RPC against the value it holds
+  // for the session the RPC names, and rejects a request whose
+  // generation does not match it (§10.1).
+  int64 coordination_generation = 6;
+
+  // bind_attempt names the bind attempt a compensating reclaim is for;
+  // spec: §4.7.1 rule 10 (teardown pairing) and rules 13 and 14.
+  string bind_attempt = 7;
+
+  // unconditional_teardown asks for the teardown of whatever entry the
+  // adapter holds; spec: §4.7.1 rule 10 (teardown pairing) and rule 12.
+  bool unconditional_teardown = 8;
 }
 
 // RecycleScrub carries the pod identity and the §5.2 whole-pod scrub
@@ -1502,6 +1777,8 @@ message RecycleScrub {
 message ShutdownResponse {
   bool exited_cleanly = 1;
   int32 exit_code = 2;
+  // slot_reclaim is the reclaim outcome; spec: §4.7.1 rule 15.
+  SlotReclaimOutcome slot_reclaim = 3;
 }
 
 // ConfigureWorkspaceRequest carries the finalized working directory to a
@@ -1510,12 +1787,13 @@ message ShutdownResponse {
 message ConfigureWorkspaceRequest {
   SessionId session_id = 1;
   // cwd is the finalized working directory the pre-connected SDK session
-  // is pointed at — /workspace/current in production. Idempotent: sending
-  // the same cwd twice is safe.
+  // is pointed at — /workspace/slots/{sessionId}/current in production.
+  // Idempotent: sending the same cwd twice is safe.
   string cwd = 2;
-  // experiment_context and tracing_context are written into the adapter
-  // manifest the runtime re-reads when the workspace is configured, the
-  // same as StartSession.
+  // experiment_context and tracing_context are delivered to the runtime
+  // in the session's session_start frame on CH-MSGSOCK (§28.5.3), which
+  // the adapter writes when the workspace is configured, the same as
+  // StartSession.
   ExperimentContext experiment_context = 3;
   map<string, string> tracing_context = 4;
 }
@@ -1562,23 +1840,30 @@ message NegotiateVersionResponse {
   // True when the adapter could not satisfy the gateway's accepted
   // versions. The connection should be torn down and the pod evicted.
   bool incompatible = 4;
-  // workspace_root is the §7.3 line 408 / §6.1 absolute cwd path the
-  // adapter mounts the session workspace into — the value of
-  // `--workspace-root` on `lenny-adapter`. The gateway captures it on
-  // the first Bind and persists it on the session row so a subsequent
-  // Resume can pass it back as `expected_workspace_root` and the
-  // replacement pod's adapter can assert "same absolute cwd path".
-  // F-7.3.15.
-  string workspace_root = 5;
+  // Field 5 held workspace_root, the pod-global cwd of the retired
+  // single-workspace layout. The per-slot tree is the only layout, so a
+  // session's root is derived from workspace_base below rather than
+  // reported directly. spec: §6.4; §7.3.
+  reserved 5;
+  reserved "workspace_root";
+  // workspace_base is the §6.4 absolute path the adapter nests every
+  // session's per-slot tree under — the value of `--workspace-base` on
+  // `lenny-adapter`. The gateway derives a session's cwd as
+  // `<base>/slots/{sessionId}/current`, captures it on the first Bind,
+  // and persists it on the session row so a subsequent Resume can pass
+  // it back as `expected_workspace_root` and the replacement pod's
+  // adapter can assert "same absolute cwd path". F-7.3.15.
+  string workspace_base = 6;
 }
 
 message GetObservedIntegrationLevelRequest {
   // wait_ms bounds how long the adapter waits for the runtime to complete
-  // its first §4.7 lifecycle handshake before classifying. A Full-level
-  // runtime dials the lifecycle channel shortly after boot, so a generous
-  // window avoids misclassifying a slow-to-connect runtime; the window is
-  // only fully consumed when the runtime never opens the channel. Zero
-  // classifies from the runtime's current connection state with no wait.
+  // its first §28.5.3 CH-RUNTIMEOPS lifecycle handshake before
+  // classifying. A Full-level runtime dials the CH-RUNTIMEOPS shortly
+  // after boot, so a generous window avoids misclassifying a
+  // slow-to-connect runtime; the window is only fully consumed when the
+  // runtime never opens the channel. Zero classifies from the runtime's
+  // current connection state with no wait.
   int32 wait_ms = 1;
 }
 
@@ -1586,20 +1871,20 @@ message GetObservedIntegrationLevelResponse {
   // observed_level is "basic", "standard", or "full" — the §5.1 level the
   // adapter observed the runtime actually implement. "full" when the
   // runtime completed the lifecycle handshake; "standard" when it
-  // connected to the platform MCP server but not the lifecycle channel;
+  // connected to the platform MCP server but not the CH-RUNTIMEOPS;
   // "basic" otherwise (stdin/stdout binary protocol only).
   string observed_level = 1;
 }
 
-// Opaque lifecycle event envelope. The lifecycle event taxonomy is defined
-// in lenny-adapter-jsonl.schema.json under the lifecycle section in the
-// spec. Kept opaque here so the proto schema does not need to evolve every
-// time a lifecycle event is added. Request and response carry the same
-// payload but are typed separately per proto-RPC convention.
-message LifecycleChannelRequest {
+// Opaque adapter event envelope. The event taxonomy is the adapter→gateway
+// events table in spec/04_system-components.md (§4.7.3), the same source the
+// AdapterEvents RPC comment names. Kept opaque here so the proto schema does
+// not need to evolve every time an event is added. Request and response carry
+// the same payload but are typed separately per proto-RPC convention.
+message AdapterEventsRequest {
   bytes envelope_json = 1;
 }
 
-message LifecycleChannelResponse {
+message AdapterEventsResponse {
   bytes envelope_json = 1;
 }

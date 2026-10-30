@@ -6,7 +6,7 @@
 // the CheckpointBarrierResponse message on the gateway ↔ pod adapter gRPC
 // contract (schemas/lenny-adapter.proto). The response message mirrors the
 // CheckpointBarrierAck control event the adapter emits on the
-// LifecycleChannel; the gateway's barrier-target reconciler consumes both.
+// AdapterEvents; the gateway's barrier-target reconciler consumes both.
 // This suite pins the wire fields and their numbers so a field addition,
 // rename, or renumber that survives a coordinated proto+regeneration edit
 // is still caught. It reads the generated protoreflect descriptor rather

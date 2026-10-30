@@ -194,3 +194,62 @@ func TestConcurrentIncrementsNoLostUpdate_spec_4_7(t *testing.T) {
 		t.Fatalf("SessionsServed = %d, want %d", rc.SessionsServed, n)
 	}
 }
+
+// seedIdle puts idle rows for pool-1 in order, advancing the clock between
+// them so the first is the oldest.
+func seedIdle(s *memstore.Store, clk *fixedClock, ids ...string) {
+	for _, id := range ids {
+		s.Put(agentpodstate.PodState{PodID: id, PoolID: "pool-1", State: "idle"})
+		clk.advance(time.Second)
+	}
+}
+
+// spec: 4.6.1 (Postgres-backed fallback claim), 5.2 (Tenant pinning)
+func TestClaimIdleSkipsRefusedRow_spec_5_2(t *testing.T) {
+	s, clk := newStore(t)
+	seedIdle(s, clk, "pod-old", "pod-young")
+	var offered []string
+	refuseOld := func(_ context.Context, podID string) (bool, error) {
+		offered = append(offered, podID)
+		return podID != "pod-old", nil
+	}
+	got, ok, err := s.ClaimIdle(context.Background(), "pool-1", "sess-1", "acme", nil, refuseOld)
+	if err != nil || !ok || got.PodID != "pod-young" {
+		t.Fatalf("ClaimIdle = (%+v, %v, %v), want pod-young", got, ok, err)
+	}
+	if len(offered) != 2 || offered[0] != "pod-old" {
+		t.Errorf("offered %v, want [pod-old pod-young]", offered)
+	}
+	old, _, _ := s.GetByPodID(context.Background(), "pod-old")
+	if old.State != "idle" || old.SessionID != "" || old.TenantID != "" {
+		t.Errorf("refused row = %+v, want idle with its prior columns", old)
+	}
+}
+
+// spec: 4.6.1 (Postgres-backed fallback claim)
+func TestClaimIdleNilCallbackAdmitsEveryRow_spec_4_6_1(t *testing.T) {
+	s, clk := newStore(t)
+	seedIdle(s, clk, "pod-old", "pod-young")
+	got, ok, err := s.ClaimIdle(context.Background(), "pool-1", "sess-1", "acme", nil, nil)
+	if err != nil || !ok || got.PodID != "pod-old" {
+		t.Fatalf("ClaimIdle = (%+v, %v, %v), want the oldest row pod-old", got, ok, err)
+	}
+}
+
+// spec: 4.6.1 (Postgres-backed fallback claim), 5.2 (Tenant pinning)
+func TestClaimIdleNeverOffersSkippedRow_spec_5_2(t *testing.T) {
+	s, clk := newStore(t)
+	seedIdle(s, clk, "pod-old", "pod-young")
+	var offered []string
+	admit := func(_ context.Context, podID string) (bool, error) {
+		offered = append(offered, podID)
+		return true, nil
+	}
+	got, ok, err := s.ClaimIdle(context.Background(), "pool-1", "sess-1", "acme", []string{"pod-old"}, admit)
+	if err != nil || !ok || got.PodID != "pod-young" {
+		t.Fatalf("ClaimIdle = (%+v, %v, %v), want pod-young", got, ok, err)
+	}
+	if len(offered) != 1 || offered[0] != "pod-young" {
+		t.Errorf("offered %v, want only pod-young", offered)
+	}
+}

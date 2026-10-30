@@ -17,7 +17,7 @@ import (
 // serialized TaskSpec the interceptor chain inspects around runtime
 // selection. PreRoute carries the requested runtime and input before
 // selection; PostRoute carries the resolved runtime metadata after
-// selection (spec: §4.8 lines 1048, 1052). The JSON field names match
+// selection (spec: §4.8). The JSON field names match
 // the immutable-field paths the chain enforces on MODIFY
 // (pkg/gateway/interceptor/immutability.go): `tenant_id` / `user_id`
 // at PreRoute, `resolved_runtime_name` / `credential_pool_id` at
@@ -33,8 +33,8 @@ type routeTaskSpec struct {
 
 // runRouteChain runs the §4.8 chain for phase over the serialized
 // routeTaskSpec and returns the (possibly MODIFY-rewritten) spec. The
-// PreRoute chain (spec: §4.8 line 1048) fires after authentication and
-// before runtime selection; the PostRoute chain (spec: §4.8 line 1052)
+// PreRoute chain (spec: §4.8) fires after authentication and
+// before runtime selection; the PostRoute chain (spec: §4.8)
 // fires after runtime selection with the resolved runtime metadata. The
 // same chain the spec names for top-level session creation runs here.
 //
@@ -42,8 +42,7 @@ type routeTaskSpec struct {
 // audit row (synchronously, per §11.7) and writes a 403
 // INTERCEPTOR_REJECTED response; on a fail-closed timeout/error it
 // writes a 503 INTERCEPTOR_TIMEOUT (TRANSIENT, retryable) carrying the
-// `interceptor_ref`, `phase`, and `timeout_ms` details (spec: §4.8
-// line 1032, §15.1 line 1008). When the chain admits the request it
+// `interceptor_ref`, `phase`, and `timeout_ms` details (spec: §4.8, §15.1). When the chain admits the request it
 // returns ok=true; when it returns ok=false it has already written the
 // response.
 //
@@ -61,10 +60,10 @@ func (s *Server) runRouteChain(w http.ResponseWriter, r *http.Request, phase int
 // runRouteChainRange is runRouteChain restricted to the interceptors
 // whose priority falls in the half-open window [minPriority,
 // maxPriority). The PreRoute chain runs in two segments around the §4.8
-// ExperimentRouter built-in (priority 300, spec: §4.8 line 115): the
+// ExperimentRouter built-in (priority 300, spec: §4.8): the
 // segment below 300 runs before experiment routing so a priority 101–299
 // MODIFY of the runtime hint affects which variant the router assigns
-// (spec: §4.8 line 115), and the segment at or above 300 runs after it
+// (spec: §4.8), and the segment at or above 300 runs after it
 // so a priority ≥ 300 external interceptor orders after the built-in per
 // the §4.8 line-12 ascending-priority rule. PostRoute and the other
 // single-segment phases pass the full window via runRouteChain.
@@ -89,9 +88,8 @@ func (s *Server) runRouteChainRange(w http.ResponseWriter, r *http.Request, phas
 	}, minPriority, maxPriority)
 	switch res.Action {
 	case interceptor.ActionReject:
-		if !s.recordRouteRejection(r.Context(), w, phase, spec.TenantID, spec.UserID, res) {
-			return routeTaskSpec{}, false
-		}
+		auditErr := s.auditRouteRejection(r.Context(), phase, spec.TenantID, spec.UserID, res)
+		s.writeRouteRejection(w, phase, res, auditErr)
 		return routeTaskSpec{}, false
 	case interceptor.ActionModify:
 		var modified routeTaskSpec
@@ -106,26 +104,32 @@ func (s *Server) runRouteChainRange(w http.ResponseWriter, r *http.Request, phas
 	}
 }
 
-// recordRouteRejection writes the §16.7 audit row and the HTTP error
-// envelope for a PreRoute/PostRoute chain REJECT. It returns false in
-// every case (the caller always aborts); the bool exists so the audit
-// failure path can short-circuit the response code distinctly. A
+// auditRouteRejection writes the §16.7 `interceptor.rejected` audit row for
+// a chain REJECT and returns the audit sink's error. No sink records nothing
+// and returns nil. spec: §4.8; §16.7.
+func (s *Server) auditRouteRejection(ctx context.Context, phase interceptor.Phase, tenantID, userID string, res interceptor.Result) error {
+	if s.policyAuditSink == nil {
+		return nil
+	}
+	return s.policyAuditSink.RecordRejection(ctx, policy.RejectionContext{
+		TenantID:  tenantID,
+		CallerSub: userID,
+		Phase:     phase,
+	}, res)
+}
+
+// writeRouteRejection writes the HTTP error envelope for a chain REJECT whose
+// audit half returned auditErr. A failed audit write maps to 500; a
 // fail-closed timeout/error (CodeInterceptorTimeout) maps to 503; an
-// immutable-field violation (CodeInterceptorImmutableFieldViolation)
-// maps to 400 INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION carrying
-// interceptor_ref, phase, and violated_fields; a deliberate REJECT maps
-// to 403 INTERCEPTOR_REJECTED.
-func (s *Server) recordRouteRejection(ctx context.Context, w http.ResponseWriter, phase interceptor.Phase, tenantID, userID string, res interceptor.Result) bool {
-	if s.policyAuditSink != nil {
-		if err := s.policyAuditSink.RecordRejection(ctx, policy.RejectionContext{
-			TenantID:  tenantID,
-			CallerSub: userID,
-			Phase:     phase,
-		}, res); err != nil {
-			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-				"policy rejection could not be recorded to the audit chain: "+err.Error(), nil)
-			return false
-		}
+// immutable-field violation (CodeInterceptorImmutableFieldViolation) maps to
+// 400 INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION carrying interceptor_ref, phase,
+// and violated_fields; a deliberate REJECT maps to 403 INTERCEPTOR_REJECTED.
+// spec: §4.8; §15.1.
+func (s *Server) writeRouteRejection(w http.ResponseWriter, phase interceptor.Phase, res interceptor.Result, auditErr error) {
+	if auditErr != nil {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"policy rejection could not be recorded to the audit chain: "+auditErr.Error(), nil)
+		return
 	}
 	if res.Code == interceptor.CodeInterceptorTimeout {
 		s.writeError(w, http.StatusServiceUnavailable, interceptor.CodeInterceptorTimeout, res.Reason,
@@ -134,7 +138,7 @@ func (s *Server) recordRouteRejection(ctx context.Context, w http.ResponseWriter
 				"phase":           string(phase),
 				"timeout_ms":      res.TimeoutMs,
 			})
-		return false
+		return
 	}
 	// An external MODIFY that altered an immutable field surfaces as the
 	// §15.1 400 INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION (POLICY, non-retryable
@@ -150,30 +154,29 @@ func (s *Server) recordRouteRejection(ctx context.Context, w http.ResponseWriter
 				"phase":           string(phase),
 				"violated_fields": res.ViolatedFields,
 			})
-		return false
+		return
 	}
 	details := map[string]any{"reason": res.Reason, "phase": string(phase)}
 	if res.Code != "" {
 		details["interceptorCode"] = res.Code
 	}
 	s.writeError(w, http.StatusForbidden, "INTERCEPTOR_REJECTED", res.Reason, details)
-	return false
 }
 
-// runPostAgentOutput runs the §4.8 PostAgentOutput chain over the
-// agent's output parts before the gateway delivers them to the client.
-// It returns the possibly-modified parts and a rejected flag. On REJECT
-// it writes the §16.7 audit row and the HTTP error envelope (so the
-// caller must return without delivering); on MODIFY it returns the
-// rewritten parts. A malformed MODIFY payload leaves the parts
-// unchanged. spec: §4.8 line 1054.
-func (s *Server) runPostAgentOutput(ctx context.Context, w http.ResponseWriter, tenantID, sessionID string, out []executor.MessagePart) ([]executor.MessagePart, bool) {
+// runPostAgentOutput runs the §4.8 PostAgentOutput chain over the agent's
+// output parts before the gateway delivers them. It returns the possibly
+// modified parts, the chain's result when it REJECTs (nil otherwise), and the
+// audit-record error. On REJECT it writes the §16.7 audit row and returns the
+// result, so the caller delivers nothing and writes its own answer; on
+// MODIFY it returns the rewritten parts. A malformed MODIFY payload leaves the
+// parts unchanged. It writes no response. spec: §4.8.
+func (s *Server) runPostAgentOutput(ctx context.Context, tenantID, sessionID string, out []executor.MessagePart) ([]executor.MessagePart, *interceptor.Result, error) {
 	if s.interceptors == nil || s.interceptors.Len(interceptor.PhasePostAgentOutput) == 0 {
-		return out, false
+		return out, nil, nil
 	}
 	raw, err := json.Marshal(out)
 	if err != nil {
-		return out, false
+		return out, nil, nil
 	}
 	res := s.interceptors.Run(ctx, interceptor.Request{
 		Phase:     interceptor.PhasePostAgentOutput,
@@ -183,15 +186,15 @@ func (s *Server) runPostAgentOutput(ctx context.Context, w http.ResponseWriter, 
 	})
 	switch res.Action {
 	case interceptor.ActionReject:
-		s.recordRouteRejection(ctx, w, interceptor.PhasePostAgentOutput, tenantID, "", res)
-		return out, true
+		auditErr := s.auditRouteRejection(ctx, interceptor.PhasePostAgentOutput, tenantID, "", res)
+		return out, &res, auditErr
 	case interceptor.ActionModify:
 		var modified []executor.MessagePart
 		if err := json.Unmarshal(res.ModifiedContent, &modified); err != nil {
-			return out, false
+			return out, nil, nil
 		}
-		return modified, false
+		return modified, nil, nil
 	default:
-		return out, false
+		return out, nil, nil
 	}
 }

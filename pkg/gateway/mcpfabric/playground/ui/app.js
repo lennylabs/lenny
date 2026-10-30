@@ -135,7 +135,7 @@
     });
   }
 
-  // §27.5 line 190: runtime discovery is filtered by
+  // §27.5: runtime discovery is filtered by
   // playground.allowedRuntimes. The gateway is the authoritative filter
   // (it applies the same globs to GET /v1/runtimes for an
   // origin=playground bearer), and the picker honors the server-sourced
@@ -770,7 +770,7 @@
         state.ws = ws;
         ws.onopen = function () {
           appendMsg("event", "connection", "MCP WebSocket open");
-          // §15.2 line 1289 / §27.5 R2: attach to the session event stream so
+          // §15.2 / §27.5 R2: attach to the session event stream so
           // the gateway pushes the agent's output, tool-call, and lifecycle
           // events back as notifications/lenny/sessionEvent frames over this
           // socket. Without the attach the socket would carry only the
@@ -811,7 +811,7 @@
   //      transport error.
   //   2. Server-pushed session events ({method:"notifications/lenny/
   //      sessionEvent", params:{type,data}}) — the live agent stream the
-  //      attach_session push delivers (§15.2 lines 1331/1370). The §15.1
+  //      attach_session push delivers (§15.2). The §15.1
   //      wire type in params.type drives the four-way classification.
   //   3. tools/call responses ({result}) — the attach ack and the
   //      send_message delivery receipt.
@@ -915,7 +915,7 @@
       return;
     }
     // §27.5: send_message is the registered §15.2 tool; its schema names
-    // the target as `to` and the body as `message` (§8.5 line 537).
+    // the target as `to` and the body as `message` (§8.5).
     var frame = JSON.stringify({
       jsonrpc: "2.0",
       id: "msg-" + Date.now(),
@@ -928,7 +928,7 @@
 
   function sendControl(kind) {
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
-    // §15.2 lines 1295/1303: the registered control tools are
+    // §15.2: the registered control tools are
     // interrupt_session and cancel_session.
     var tool = kind === "interrupt" ? "lenny/interrupt_session" : "lenny/cancel_session";
     state.ws.send(JSON.stringify({
@@ -961,7 +961,7 @@
   // §27.4 item 3 / §27.9: the "Copy as client SDK snippet" feature emits
   // equivalent code in Go, Python, or TypeScript. Every template
   // references the gateway URL and bearer through environment variables
-  // and never embeds a credential (§27.9 line 256).
+  // and never embeds a credential (§27.9).
   function copySnippet(lang) {
     var rt = state.runtime.id || state.runtime.name;
     var snippet = sdkSnippet(lang || "go", rt);

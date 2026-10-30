@@ -12,11 +12,11 @@
 -- created_at ordering.
 --
 -- The table is platform-scoped (the §25 control plane is not
--- multi-tenanted at this boundary; §25.4 line 1492 lists ops_escalations
+-- multi-tenanted at this boundary; §25.4 lists ops_escalations
 -- among the PlatformPostgres() tables), so no tenant column or RLS
 -- policy applies.
 --
--- spec: §25.4 lines 2433-2455.
+-- spec: §25.4.
 
 CREATE TABLE ops_escalations (
     id              TEXT PRIMARY KEY,

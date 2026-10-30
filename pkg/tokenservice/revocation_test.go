@@ -14,10 +14,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // fakeRevocationStore implements IssuedTokenStore + RevocationStore so
-// the handler's §13.3 line 603 recursive-revocation branch can be
+// the handler's §13.3 recursive-revocation branch can be
 // exercised without Postgres.
 type fakeRevocationStore struct {
 	revoked []issuedtokenstore.RevokedToken
@@ -60,8 +61,10 @@ func revokedPayloads(t *testing.T, rows []recordedAudit) []revokedAuditPayload {
 func revocationServer(t *testing.T, store IssuedTokenStore, auditor Auditor, prop func(context.Context, string, string) error) (*Server, *jwt.HMACSigner) {
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	return NewServer(Options{
-		Signer:               signer,
+	return mustNewServer(t, Options{
+		CapabilityTokenTTL:   15 * time.Minute,
+		Signer:               jwtsign.HMAC(signer),
+		Verifier:             signer,
 		Issuer:               "https://lenny.dev.test/token",
 		IssuedTokens:         store,
 		Auditor:              auditor,
@@ -69,7 +72,7 @@ func revocationServer(t *testing.T, store IssuedTokenStore, auditor Auditor, pro
 	}), signer
 }
 
-// spec: §13.3 line 603 / §16.7 line 666 — a recursive-revocation request
+// spec: §13.3 / §16.7 — a recursive-revocation request
 // revokes the root and every delegation descendant, emitting one
 // token.revoked row per node: the root carries revocation_reason=
 // explicit_revoke and no cascade_root_jti; each descendant carries
@@ -124,7 +127,7 @@ func TestHandlerRecursiveRevocationEmitsPerNode_spec_16_7_5(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 666 — propagation_mode is `eventbus` when the
+// spec: §16.7 — propagation_mode is `eventbus` when the
 // cluster propagation publish succeeds.
 func TestHandlerRecursiveRevocationEventBusMode_spec_16_7_5(t *testing.T) {
 	store := &fakeRevocationStore{revoked: []issuedtokenstore.RevokedToken{
@@ -146,7 +149,7 @@ func TestHandlerRecursiveRevocationEventBusMode_spec_16_7_5(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 666 — a publish failure after the durable commit
+// spec: §16.7 — a publish failure after the durable commit
 // records propagation_mode=postgres_only (peers fall back to Postgres).
 func TestHandlerRecursiveRevocationPublishFailureIsPostgresOnly_spec_16_7_5(t *testing.T) {
 	store := &fakeRevocationStore{revoked: []issuedtokenstore.RevokedToken{{JTI: "root-jti", Subject: "alice@acme.com", IsRoot: true}}}
@@ -183,7 +186,7 @@ func TestHandlerRecursiveRevocationCrossTenantRejected_spec_16_7_5(t *testing.T)
 	}
 }
 
-// spec: §13.3 line 603 — a recursive revocation against a store with no
+// spec: §13.3 — a recursive revocation against a store with no
 // durable revocation surface fails closed with token_store_unavailable.
 func TestHandlerRecursiveRevocationNoDurableStore_spec_16_7_5(t *testing.T) {
 	// recordingIssuedTokenStore implements only IssuedTokenStore.
@@ -197,7 +200,7 @@ func TestHandlerRecursiveRevocationNoDurableStore_spec_16_7_5(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 603 — revoking an unknown jti is invalid_grant.
+// spec: §13.3 — revoking an unknown jti is invalid_grant.
 func TestHandlerRecursiveRevocationUnknownRoot_spec_16_7_5(t *testing.T) {
 	store := &fakeRevocationStore{err: issuedtokenstore.ErrNotFound}
 	srv, signer := revocationServer(t, store, &recordingAuditor{}, nil)

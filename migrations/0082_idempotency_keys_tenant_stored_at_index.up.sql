@@ -6,7 +6,7 @@
 -- lenny_tenant_guard trigger fires on every DELETE, requiring a
 -- per-tenant transaction); the prior single-column index supported
 -- only a hypothetical cross-tenant sweep that the codebase never
--- emits. spec: §11.5 line 277.
+-- emits. spec: §11.5.
 
 DROP INDEX IF EXISTS idempotency_keys_stored_at_idx;
 CREATE INDEX idempotency_keys_tenant_stored_at_idx

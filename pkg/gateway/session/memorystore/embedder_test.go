@@ -84,7 +84,7 @@ type fakeEmbedder struct {
 func (f fakeEmbedder) Embed(string) ([]float32, error) { return f.out, f.err }
 
 // TestValidateEmbedderAcceptsCorrectDim_spec_9_4_198: the default
-// HashingEmbedder passes the §9.4 line 198 preflight.
+// HashingEmbedder passes the §9.4 preflight.
 func TestValidateEmbedderAcceptsCorrectDim_spec_9_4_198(t *testing.T) {
 	if err := memorystore.ValidateEmbedder(memorystore.NewHashingEmbedder()); err != nil {
 		t.Fatalf("ValidateEmbedder: %v", err)

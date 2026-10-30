@@ -88,7 +88,7 @@ func writeBoundStatus(ctx context.Context, cl client.Client, namespace, claimNam
 // transition stamp.
 //
 // spec: §4.6.1 (recycling window, orphan GC), §4.6.3 (binding-state
-// enumeration), §6.14 (projection: a `recycling` claim projects `claimed`).
+// enumeration), §4.6.3 (projection: a `recycling` claim projects `claimed`).
 func WriteRecyclingStatus(ctx context.Context, cl client.Client, namespace, claimName string, now func() time.Time) error {
 	if now == nil {
 		now = time.Now
@@ -114,12 +114,12 @@ func WriteRecyclingStatus(ctx context.Context, cl client.Client, namespace, clai
 // pool and the recycle disposition begins the SDK re-warm. The phase stays
 // `recycling`; the stamp anchors the `sdkConnectTimeoutSeconds` re-warm
 // watchdog so only the re-warm leg is measured, and the projection enters
-// `sdk_connecting` from it (§6.14). The stamp does not re-stamp the
+// `sdk_connecting` from it (§4.6.3). The stamp does not re-stamp the
 // binding-state transition time, because the binding state does not change.
 // It is idempotent: a claim that already carries the stamp is a no-op.
 //
 // spec: §4.6.1 (rewarmStartedAt stamp on a preConnect successful
-// ReportPodScrub), §4.6.3 (rewarmStartedAt anchor), §6.14 (sdk_connecting
+// ReportPodScrub), §4.6.3 (rewarmStartedAt anchor), §4.6.3 (sdk_connecting
 // projection from rewarmStartedAt).
 func WriteRewarmStartedStatus(ctx context.Context, cl client.Client, namespace, claimName string, now func() time.Time) error {
 	if now == nil {
@@ -156,7 +156,7 @@ func WriteRewarmStartedStatus(ctx context.Context, cl client.Client, namespace, 
 // (`reserved → bound`) lands a further status patch that changes the
 // `resourceVersion`, so a hold-expiry DELETE carrying these preconditions
 // fails and the expiry aborts. spec: §4.6.1 (precondition-guarded DELETE),
-// §3.2 (rebind-vs-hold-expiry race).
+// (rebind-vs-hold-expiry race).
 type ReservedHold struct {
 	// UID is the claim's metadata.uid at the reserved patch.
 	UID types.UID
@@ -178,8 +178,7 @@ type ReservedHold struct {
 // patch, so a cross-replica rebind that lands first wins the race.
 //
 // spec: §4.6.1 (reserved hold, holdExpiresAt stamp, precondition token),
-// §4.6.3 (binding-state enumeration, holdExpiresAt), §6.14 (reserved
-// projection).
+// §4.6.3 (binding-state enumeration, holdExpiresAt, reserved projection).
 func WriteReservedStatus(ctx context.Context, cl client.Client, namespace, claimName string, holdTTL time.Duration, now func() time.Time) (ReservedHold, error) {
 	if now == nil {
 		now = time.Now
@@ -208,11 +207,11 @@ func WriteReservedStatus(ctx context.Context, cl client.Client, namespace, claim
 // pod is no longer held) and re-stamps the binding-state transition time.
 // Any gateway replica may rebind; the patch changes the `resourceVersion`,
 // so a hold-expiry DELETE fenced on the reserved-patch version fails its
-// precondition and the expiry aborts (§3.2 rebind-vs-hold-expiry race). The
+// precondition and the expiry aborts (the rebind-vs-hold-expiry race). The
 // rebinding caller re-reads the claim after this patch before dispatching.
 //
 // spec: §4.6.1 (reserved → bound rebind, precondition race), §4.6.3
-// (binding-state enumeration), §3.2 (rebind-vs-hold-expiry race).
+// (binding-state enumeration, rebind-vs-hold-expiry race).
 func WriteRebindStatus(ctx context.Context, cl client.Client, namespace, claimName string, now func() time.Time) error {
 	if now == nil {
 		now = time.Now
@@ -227,16 +226,17 @@ func WriteRebindStatus(ctx context.Context, cl client.Client, namespace, claimNa
 }
 
 // WriteDispositionStatus records a terminal retirement disposition
-// (`released` on a limit-reached retirement, `failed` on a scrub-failure or
-// crashed-session retirement) on the claim. The WarmPoolController projects
-// the pod to `draining` then `terminated` from a terminal disposition,
-// retiring it rather than returning it to the pool (§6.14). The patch records
-// the binding-state transition time and is rejected when disposition is not a
-// terminal state, so the gateway fails closed rather than writing an
-// out-of-enum value the API server would reject.
+// (`released` on a limit-reached retirement, `failed` on a scrub-failure
+// retirement (`onScrubFailure: fail`)) on the claim. The WarmPoolController
+// projects the pod to `draining` then `terminated` from a terminal
+// disposition, retiring it rather than returning it to the pool (§4.6.3).
+// The patch records the binding-state transition time and is rejected when
+// disposition is not a terminal state, so the gateway fails closed rather
+// than writing an out-of-enum value the API server would reject.
 //
 // spec: §4.6.1 (terminal disposition), §4.6.3 (released/failed terminal
-// dispositions), §6.14 (draining/terminated projection).
+// dispositions), §4.6.3 (draining/terminated projection), §4.6.3
+// (SandboxClaim.status.phase enumeration).
 func WriteDispositionStatus(ctx context.Context, cl client.Client, namespace, claimName string, disposition claimstate.State, now func() time.Time) error {
 	if now == nil {
 		now = time.Now
@@ -266,8 +266,8 @@ func WriteDispositionStatus(ctx context.Context, cl client.Client, namespace, cl
 // caller that a rebind won the race and the pod is still claimed; err is nil
 // in that case so the caller distinguishes a lost race from a real failure.
 //
-// spec: §4.6.1 (precondition-guarded hold-expiry DELETE), §3.2
-// (rebind-vs-hold-expiry race: a rebind that lands first aborts the expiry).
+// spec: §4.6.1 (precondition-guarded hold-expiry DELETE; in the
+// rebind-vs-hold-expiry race a rebind that lands first aborts the expiry).
 func DeleteOnHoldExpiry(ctx context.Context, cl client.Client, namespace, claimName string, hold ReservedHold) (aborted bool, err error) {
 	claim := &lennyv1.SandboxClaim{
 		ObjectMeta: metav1.ObjectMeta{
@@ -289,7 +289,7 @@ func DeleteOnHoldExpiry(ctx context.Context, cl client.Client, namespace, claimN
 	case apierrors.IsConflict(err):
 		// A rebind (or any other writer) changed the resourceVersion since
 		// the reserved patch: the precondition failed, so the expiry aborts
-		// and the rebound claim is left intact. spec: §3.2.
+		// and the rebound claim is left intact.
 		return true, nil
 	default:
 		return false, fmt.Errorf("podclaim: hold-expiry delete of claim %s: %w", claimName, err)

@@ -7,7 +7,7 @@
 // pods into a degraded artifact store and lose un-checkpointed
 // workspace state.
 //
-// The package also serves the §12.5 line 291 POST
+// The package also serves the §12.5 POST
 // /internal/audit/node-drain-forced endpoint, the durable hop the
 // webhook uses to commit the §16.7 `node.drain.forced` audit event into
 // the gateway's per-tenant §11.7 audit hash chain.
@@ -99,18 +99,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // audit.ChainSet satisfy it, so the gateway swaps the audit backend
 // without changing the handler.
 //
-// spec: §12.5 line 291; §16.7 node.drain.forced.
+// spec: §12.5; §16.7 node.drain.forced.
 type AuditAppender interface {
 	Append(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error)
 }
 
-// MetricsSink emits the §12.5 line 291 forced-drain audit-write
+// MetricsSink emits the §12.5 forced-drain audit-write
 // outcome counter. The webhook's metric (when wired) records every
 // admission decision; this gateway-side counter records the durable
 // audit-write step so a chronic chain-failure mode is visible apart
 // from the admission-decision distribution.
 //
-// spec: §12.5 line 291.
+// spec: §12.5.
 type MetricsSink interface {
 	IncDrainReadinessCheck(outcome string)
 }
@@ -130,7 +130,7 @@ type ForcedDrainAuditRequest struct {
 	EvictedAt    string `json:"evictedAt,omitempty"`
 }
 
-// ForcedDrainHandler serves the §12.5 line 291 POST
+// ForcedDrainHandler serves the §12.5 POST
 // /internal/audit/node-drain-forced endpoint. The lenny-drain-readiness
 // webhook posts here after admitting an eviction under a
 // drain-force override; the handler appends a `node.drain.forced`
@@ -154,7 +154,7 @@ type ForcedDrainHandler struct {
 // On a chain-write failure the handler returns HTTP 503 so the webhook
 // can deny the eviction fail-closed.
 //
-// spec: §12.5 line 291; §16.7 node.drain.forced.
+// spec: §12.5; §16.7 node.drain.forced.
 func (h *ForcedDrainHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "node.drain.forced audit endpoint accepts POST", http.StatusMethodNotAllowed)

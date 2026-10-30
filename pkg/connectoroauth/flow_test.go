@@ -224,7 +224,7 @@ func TestTokenResponseExpiresAt(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 200 — refresh-token grant happy path.
+// spec: §4.3 — refresh-token grant happy path.
 func TestRefreshAccessTokenHappyPath(t *testing.T) {
 	srv, captured := fakeTokenEndpoint(t, http.StatusOK,
 		`{"access_token":"at-new","refresh_token":"rt-new","token_type":"Bearer","expires_in":3600,"scope":"repo"}`)
@@ -256,7 +256,7 @@ func TestRefreshAccessTokenHappyPath(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 200 — refresh-token grant rejected by provider.
+// spec: §4.3 — refresh-token grant rejected by provider.
 func TestRefreshAccessTokenProviderError(t *testing.T) {
 	srv, _ := fakeTokenEndpoint(t, http.StatusBadRequest,
 		`{"error":"invalid_grant","error_description":"refresh token expired"}`)
@@ -271,7 +271,7 @@ func TestRefreshAccessTokenProviderError(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 200 — public-client refresh omits client_secret.
+// spec: §4.3 — public-client refresh omits client_secret.
 func TestRefreshAccessTokenPublicClientOmitsSecret(t *testing.T) {
 	srv, captured := fakeTokenEndpoint(t, http.StatusOK,
 		`{"access_token":"at-new","token_type":"Bearer"}`)
@@ -289,7 +289,7 @@ func TestRefreshAccessTokenPublicClientOmitsSecret(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 200 — refresh grant rejects missing required fields.
+// spec: §4.3 — refresh grant rejects missing required fields.
 func TestRefreshAccessTokenRejectsMissingFields(t *testing.T) {
 	for i, r := range []RefreshTokenRequest{
 		{ClientID: "c", RefreshToken: "rt"},                          // no token endpoint
@@ -302,7 +302,7 @@ func TestRefreshAccessTokenRejectsMissingFields(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 200 — refresh grant where provider rotates only the
+// spec: §4.3 — refresh grant where provider rotates only the
 // access token (no refresh_token in the response). The caller must keep
 // the previously stored refresh token in place.
 func TestRefreshAccessTokenNoRotation(t *testing.T) {

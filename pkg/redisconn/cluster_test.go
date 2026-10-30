@@ -11,9 +11,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
-// spec: §12.4 lines 260-264 — Redis Cluster migration pre-plan requires
-// a CLUSTER KEYSLOT-aware client. NewUniversalClient is the only path
-// that produces one. F-12.4.13.
+// spec: §12.4 — Redis Cluster migration pre-plan moves the deployment's
+// Redis to Redis Cluster, which needs a Redis Cluster client.
+// NewUniversalClient is the only path that produces one. F-12.4.13.
 func TestNewUniversalClientClusterMode_spec_12_4_264(t *testing.T) {
 	c, err := redisconn.NewUniversalClient(redisconn.Config{
 		ClusterAddrs:  []string{"10.0.0.1:6379", "10.0.0.2:6379"},

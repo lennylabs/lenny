@@ -135,7 +135,7 @@ func (r *recordingDrainMetrics) IncDrainReadinessCheck(outcome string) {
 // TestForcedDrainHandlerAppendsAuditEvent verifies the POST endpoint
 // appends a §16.7 node.drain.forced row to the §11.7 chain.
 //
-// spec: §12.5 line 291; §16.7 node.drain.forced.
+// spec: §12.5; §16.7 node.drain.forced.
 func TestForcedDrainHandlerAppendsAuditEvent(t *testing.T) {
 	app := &recordingAppender{}
 	m := &recordingDrainMetrics{}

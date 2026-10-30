@@ -27,7 +27,7 @@ func withPoolReady(t *testing.T, ready bool) {
 // CollectStatus reports the stack not running and an unknown session count, and
 // WriteStatus prints the no-stack message.
 //
-// spec: §17.4 line 178, §24.19 line 262.
+// spec: §17.4, §24.19.
 func TestCollectStatusNoStack(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("LENNY_HOME", root)
@@ -54,8 +54,7 @@ func TestCollectStatusNoStack(t *testing.T) {
 // ready gateway/controller and a still-rolling ops Deployment produce the
 // matching per-component health.
 //
-// spec: §17.4 line 178 (the control plane runs as in-cluster Deployments;
-// status reads their readiness), §24.19 line 262.
+// spec: §17.4, §24.19.
 func TestCollectStatusReadsDeploymentReadiness_spec_17_4(t *testing.T) {
 	recordRunningStack(t)
 	client := k8sfake.NewSimpleClientset(
@@ -92,8 +91,7 @@ func TestCollectStatusReadsDeploymentReadiness_spec_17_4(t *testing.T) {
 // true. The two states are reported independently so lenny up returning
 // (gateway answers) does not imply the pool is ready.
 //
-// spec: §17.4 line 178 (lenny status distinguishes "gateway up" from
-// "pool ready").
+// spec: §17.4.
 func TestCollectStatusDistinguishesGatewayUpFromPoolReady_spec_17_4(t *testing.T) {
 	recordRunningStack(t)
 	client := k8sfake.NewSimpleClientset(

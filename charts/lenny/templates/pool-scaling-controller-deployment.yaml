@@ -62,10 +62,10 @@ spec:
                 secretKeyRef:
                   name: lenny-datastore-conn
                   key: postgres-dsn
-            # §16.5 lines 590-601 — the workload-profile assumptions the
+            # §16.5 — the workload-profile assumptions the
             # tier sizing formulas depend on. The PSC reads them at
             # startup and warns when a Tier 2 / Tier 3 deployment runs the
-            # defaults (§16.5 line 601). F-16.5.6.
+            # defaults (§16.5). F-16.5.6.
             {{- with .Values.capacityPlanning }}
             - name: LENNY_CAPACITY_TIER
               value: {{ .tier | default "tier1" | quote }}
@@ -82,7 +82,7 @@ spec:
             - name: LENNY_CAPACITY_SESSION_IDLE_FRACTION
               value: {{ .sessionIdleFraction | quote }}
             {{- end }}
-            # §17.8.2 line 1008 poolScaling.safetyFactor — the agent-type
+            # §17.8.2 poolScaling.safetyFactor — the agent-type
             # safety_factor a pool inherits when it does not pin one. When
             # set to a positive value it pins the factor for every pool;
             # 0 (the default) lets the controller resolve the per-tier
@@ -93,7 +93,7 @@ spec:
             - name: LENNY_POOL_SCALING_SAFETY_FACTOR
               value: {{ .Values.poolScalingController.safetyFactor | quote }}
             {{- end }}
-            # §6.1 lines 48, 50 — the Prometheus HTTP API the SDK-warm
+            # §6.1 — the Prometheus HTTP API the SDK-warm
             # circuit breaker reads the rolling demotion rate from
             # (lenny_warmpool_sdk_demotions_total / lenny_warmpool_claims_total).
             # When unset the breaker only honors a state already persisted on a

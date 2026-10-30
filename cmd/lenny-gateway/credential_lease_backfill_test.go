@@ -45,7 +45,7 @@ type backfillableLeaseStore struct {
 // this wiring the method was implemented but never invoked, so a pre-migration
 // NULL-expires_at row lingered past its TTL and kept its deny-list entry.
 //
-// spec: §4.9 line 1671.
+// spec: §4.9.
 func TestRunCredentialLeaseExpiresAtBackfillInvokesStore(t *testing.T) {
 	b := newRecordingBackfiller(3, 1, nil)
 	runCredentialLeaseExpiresAtBackfill(context.Background(), b)
@@ -60,7 +60,7 @@ func TestRunCredentialLeaseExpiresAtBackfillInvokesStore(t *testing.T) {
 // store error is logged and does not panic or block, so a boot-time fault
 // leaves the pre-migration rows for the next restart rather than crashing.
 //
-// spec: §4.9 line 1671.
+// spec: §4.9.
 func TestRunCredentialLeaseExpiresAtBackfillLogsAndReturnsOnError(t *testing.T) {
 	b := newRecordingBackfiller(0, 0, errors.New("postgres unavailable"))
 	runCredentialLeaseExpiresAtBackfill(context.Background(), b)
@@ -77,7 +77,7 @@ func TestRunCredentialLeaseExpiresAtBackfillLogsAndReturnsOnError(t *testing.T) 
 // regression against the never-invoked defect: the method existed but no
 // startup path called it.
 //
-// spec: §4.9 line 1671.
+// spec: §4.9.
 func TestStartCredentialLeaseExpiresAtBackfillWiresPostgresBackend(t *testing.T) {
 	b := newRecordingBackfiller(2, 0, nil)
 	w := &gatewayWiring{}
@@ -98,7 +98,7 @@ func TestStartCredentialLeaseExpiresAtBackfillWiresPostgresBackend(t *testing.T)
 // in-memory lease store, which keeps ExpiresAt on the struct and carries no
 // projection column, is not backfilled.
 //
-// spec: §4.9 line 1671.
+// spec: §4.9.
 func TestStartCredentialLeaseExpiresAtBackfillSkipsInMemoryBackend(t *testing.T) {
 	w := &gatewayWiring{}
 	w.watchdogCtx = context.Background()

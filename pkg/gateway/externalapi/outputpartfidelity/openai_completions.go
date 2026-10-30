@@ -13,7 +13,7 @@ import (
 // content-block array; the array form is what the fidelity matrix
 // covers because a single `MessagePart` maps to a single content block.
 //
-// Fields preserved per §15.4.1 fidelity matrix:
+// Fields preserved per §15.4 fidelity matrix:
 //
 //   - Type: collapsed to "text" or "image_url" (lossy).
 //   - Text: present when the part collapses to text.
@@ -32,7 +32,7 @@ type openAIImageURLObj struct {
 }
 
 // TranslateOpenAICompletions converts a MessagePart to a single OpenAI
-// Chat Completions content block per the §15.4.1 fidelity matrix. The
+// Chat Completions content block per the §15.4 fidelity matrix. The
 // returned bytes are the JSON-marshalled block; callers wrap them into
 // the message content array.
 //

@@ -70,47 +70,48 @@ func schemaServer(t *testing.T) *mcp.Server {
 	t.Helper()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        memstore.New(),
-		InputWaits:   inputwait.NewRegistry(),
-		Events:       sessionevents.NewBus(0),
-		Interactions: interactionstore.NewMemory(),
-		Memory:       memorystore.NewInMemory(0, nil),
-		TenantID:     "acme",
+		DevTenantFallback: true,
+		Store:             memstore.New(),
+		InputWaits:        inputwait.NewRegistry(),
+		Events:            sessionevents.NewBus(0),
+		Interactions:      interactionstore.NewMemory(),
+		Memory:            memorystore.NewInMemory(0, nil),
+		TenantID:          "acme",
 	})
 	return srv
 }
 
-// TestOutputSchemaMatchesSpec asserts the §8.5 line 544 schema:
+// TestOutputSchemaMatchesSpec asserts the §8.5 schema:
 // `required: ["output"]` only. The legacy `sessionId` is accepted as a
 // transport fallback property but MUST NOT be required.
-// spec: §8.5 line 544; F-8.5.11.
+// spec: §8.5; F-8.5.11.
 func TestOutputSchemaMatchesSpec_spec_8_5_F_8_5_11(t *testing.T) {
 	schema := toolListedSchema(t, schemaServer(t).Handler(), "lenny/output")
 	req := requiredSet(t, schema)
 	if !req["output"] {
-		t.Errorf("schema.required = %v, want output (§8.5 line 544)", req)
+		t.Errorf("schema.required = %v, want output (§8.5)", req)
 	}
 	if req["sessionId"] {
-		t.Errorf("schema.required includes sessionId; the §8.5 line 544 schema lists only `output`")
+		t.Errorf("schema.required includes sessionId; the §8.5 schema lists only `output`")
 	}
 }
 
-// TestRequestInputSchemaMatchesSpec asserts the §8.5 line 539 contract:
+// TestRequestInputSchemaMatchesSpec asserts the §8.5 contract:
 // `lenny/request_input(parts)`. The required input is `parts` (an
 // MessagePart[]), not the legacy flat `prompt` string. `sessionId` and
 // `requestId` are extension fields and MUST NOT be required.
-// spec: §8.5 line 539; F-8.5.12.
+// spec: §8.5; F-8.5.12.
 func TestRequestInputSchemaMatchesSpec_spec_8_5_F_8_5_12(t *testing.T) {
 	schema := toolListedSchema(t, schemaServer(t).Handler(), "lenny/request_input")
 	req := requiredSet(t, schema)
 	if !req["parts"] {
-		t.Errorf("schema.required = %v, want parts (§8.5 line 539)", req)
+		t.Errorf("schema.required = %v, want parts (§8.5)", req)
 	}
 	if req["prompt"] {
 		t.Errorf("schema.required includes prompt; the §8.5 contract is `lenny/request_input(parts)`")
 	}
 	if req["sessionId"] || req["requestId"] {
-		t.Errorf("schema.required = %v; only `parts` is required by §8.5 line 539", req)
+		t.Errorf("schema.required = %v; only `parts` is required by §8.5", req)
 	}
 	props, _ := schema["properties"].(map[string]any)
 	if _, ok := props["parts"]; !ok {
@@ -121,86 +122,86 @@ func TestRequestInputSchemaMatchesSpec_spec_8_5_F_8_5_12(t *testing.T) {
 	}
 }
 
-// TestRequestElicitationSchemaMatchesSpec asserts the §8.5 line 559
+// TestRequestElicitationSchemaMatchesSpec asserts the §8.5
 // schema: `required: ["schema", "message"]`. The legacy `sessionId`
 // is accepted as a transport fallback but MUST NOT be required.
-// spec: §8.5 line 559; F-8.5.13.
+// spec: §8.5; F-8.5.13.
 func TestRequestElicitationSchemaMatchesSpec_spec_8_5_F_8_5_13(t *testing.T) {
 	schema := toolListedSchema(t, schemaServer(t).Handler(), "lenny/request_elicitation")
 	req := requiredSet(t, schema)
 	if !req["schema"] || !req["message"] {
-		t.Errorf("schema.required = %v, want both `schema` and `message` (§8.5 line 559)", req)
+		t.Errorf("schema.required = %v, want both `schema` and `message` (§8.5)", req)
 	}
 	if req["sessionId"] {
-		t.Errorf("schema.required includes sessionId; only `schema` and `message` are required by §8.5 line 559")
+		t.Errorf("schema.required includes sessionId; only `schema` and `message` are required by §8.5")
 	}
 }
 
-// TestMemoryWriteSchemaMatchesSpec asserts the §8.5 line 577 schema:
+// TestMemoryWriteSchemaMatchesSpec asserts the §8.5 schema:
 // `required: ["content"]` and `metadata.additionalProperties = string`.
-// spec: §8.5 line 577; F-8.5.14.
+// spec: §8.5; F-8.5.14.
 func TestMemoryWriteSchemaMatchesSpec_spec_8_5_F_8_5_14(t *testing.T) {
 	schema := toolListedSchema(t, schemaServer(t).Handler(), "lenny/memory_write")
 	req := requiredSet(t, schema)
 	if !req["content"] {
-		t.Errorf("schema.required = %v, want content (§8.5 line 577)", req)
+		t.Errorf("schema.required = %v, want content (§8.5)", req)
 	}
 	if req["sessionId"] {
-		t.Errorf("schema.required includes sessionId; only `content` is required by §8.5 line 577")
+		t.Errorf("schema.required includes sessionId; only `content` is required by §8.5")
 	}
 	props, _ := schema["properties"].(map[string]any)
 	meta, _ := props["metadata"].(map[string]any)
 	ap, _ := meta["additionalProperties"].(map[string]any)
 	if ap["type"] != "string" {
-		t.Errorf("metadata.additionalProperties.type = %v, want string (§8.5 line 577)", ap)
+		t.Errorf("metadata.additionalProperties.type = %v, want string (§8.5)", ap)
 	}
 }
 
-// TestMemoryQuerySchemaMatchesSpec asserts the §8.5 line 596 schema:
+// TestMemoryQuerySchemaMatchesSpec asserts the §8.5 schema:
 // `required: ["query"]` and `limit.default = 10`.
-// spec: §8.5 line 596; F-8.5.14.
+// spec: §8.5; F-8.5.14.
 func TestMemoryQuerySchemaMatchesSpec_spec_8_5_F_8_5_14(t *testing.T) {
 	schema := toolListedSchema(t, schemaServer(t).Handler(), "lenny/memory_query")
 	req := requiredSet(t, schema)
 	if !req["query"] {
-		t.Errorf("schema.required = %v, want query (§8.5 line 596)", req)
+		t.Errorf("schema.required = %v, want query (§8.5)", req)
 	}
 	if req["sessionId"] {
-		t.Errorf("schema.required includes sessionId; only `query` is required by §8.5 line 596")
+		t.Errorf("schema.required includes sessionId; only `query` is required by §8.5")
 	}
 	props, _ := schema["properties"].(map[string]any)
 	limit, _ := props["limit"].(map[string]any)
 	if got, _ := limit["default"].(float64); got != 10 {
-		t.Errorf("limit.default = %v, want 10 (§8.5 line 596)", limit["default"])
+		t.Errorf("limit.default = %v, want 10 (§8.5)", limit["default"])
 	}
 }
 
-// TestCancelChildSchemaMatchesSpec asserts the §8.5 line 531 contract:
+// TestCancelChildSchemaMatchesSpec asserts the §8.5 contract:
 // `lenny/cancel_child(child_id)`. The parent is implicit in the caller's
 // principal; the legacy `parentSessionId` field is accepted as a
 // transport fallback but MUST NOT be required.
-// spec: §8.5 line 531; F-8.5.15.
+// spec: §8.5; F-8.5.15.
 func TestCancelChildSchemaMatchesSpec_spec_8_5_F_8_5_15(t *testing.T) {
 	schema := toolListedSchema(t, schemaServer(t).Handler(), "lenny/cancel_child")
 	req := requiredSet(t, schema)
 	if !req["childSessionId"] {
-		t.Errorf("schema.required = %v, want childSessionId (§8.5 line 531)", req)
+		t.Errorf("schema.required = %v, want childSessionId (§8.5)", req)
 	}
 	if req["parentSessionId"] {
-		t.Errorf("schema.required includes parentSessionId; the §8.5 line 531 contract is `lenny/cancel_child(child_id)`")
+		t.Errorf("schema.required includes parentSessionId; the §8.5 contract is `lenny/cancel_child(child_id)`")
 	}
 }
 
-// TestSendMessageSchemaMatchesSpec asserts the §8.5 line 537 contract:
+// TestSendMessageSchemaMatchesSpec asserts the §8.5 contract:
 // `lenny/send_message(to, message)`. The schema MUST name `to` and
 // `message` as required; the legacy `sessionId`/`content` names are
 // gone.
-// spec: §8.5 line 537; F-8.5.16.
+// spec: §8.5; F-8.5.16.
 func TestSendMessageSchemaMatchesSpec_spec_8_5_F_8_5_16(t *testing.T) {
 	schema := toolListedSchema(t, schemaServer(t).Handler(), "lenny/send_message")
 	req := requiredSet(t, schema)
 	if !req["to"] || !req["message"] {
-		t.Errorf("schema.required = %v, want both `to` and `message` (§8.5 line 537)", req)
+		t.Errorf("schema.required = %v, want both `to` and `message` (§8.5)", req)
 	}
 	if req["sessionId"] || req["content"] {
 		t.Errorf("schema.required uses legacy field names; the §8.5 contract is `lenny/send_message(to, message)`")
@@ -220,11 +221,33 @@ func TestSendMessageSchemaMatchesSpec_spec_8_5_F_8_5_16(t *testing.T) {
 	}
 }
 
-// TestMemoryWriteRejectsNonStringMetadata asserts the §8.5 line 577
+// TestSetTracingContextSchemaMatchesSpec asserts the §8.5 contract:
+// `lenny/set_tracing_context(context)`. The session is resolved from
+// the caller's principal, so `sessionId` is a §15.2.1
+// transport-fallback property and MUST NOT be required.
+// spec: §8.3; §8.5.
+func TestSetTracingContextSchemaMatchesSpec_spec_8_3_8_5(t *testing.T) {
+	schema := toolListedSchema(t, schemaServer(t).Handler(), "lenny/set_tracing_context")
+	req := requiredSet(t, schema)
+	if !req["context"] {
+		t.Errorf("schema.required = %v, want context (§8.5)", req)
+	}
+	if req["sessionId"] {
+		t.Errorf("schema.required includes sessionId; only `context` is required by §8.5")
+	}
+	props, _ := schema["properties"].(map[string]any)
+	sid, _ := props["sessionId"].(map[string]any)
+	const wantDesc = "§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."
+	if got, _ := sid["description"].(string); got != wantDesc {
+		t.Errorf("sessionId.description = %q, want %q", got, wantDesc)
+	}
+}
+
+// TestMemoryWriteRejectsNonStringMetadata asserts the §8.5
 // schema constraint (`metadata.additionalProperties = string`) is
 // enforced at runtime. A numeric metadata value is rejected before the
 // store is touched.
-// spec: §8.5 line 577; F-8.5.14.
+// spec: §8.5; F-8.5.14.
 func TestMemoryWriteRejectsNonStringMetadata_spec_8_5_F_8_5_14(t *testing.T) {
 	srv, store, _ := newMCPForMemory(t)
 	_ = store.Create(context.Background(), sessionstore.Session{
@@ -239,13 +262,13 @@ func TestMemoryWriteRejectsNonStringMetadata_spec_8_5_F_8_5_14(t *testing.T) {
 	content, _ := result["content"].([]any)
 	c0, _ := content[0].(map[string]any)
 	if msg, _ := c0["text"].(string); !strings.Contains(msg, "metadata values must be strings") {
-		t.Errorf("error text = %q, want it to mention the §8.5 line 577 string-only constraint", msg)
+		t.Errorf("error text = %q, want it to mention the §8.5 string-only constraint", msg)
 	}
 }
 
-// TestMemoryQueryDefaultsLimitToTen asserts the §8.5 line 596 default
+// TestMemoryQueryDefaultsLimitToTen asserts the §8.5 default
 // of 10 is applied when the caller omits `limit`.
-// spec: §8.5 line 596; F-8.5.14.
+// spec: §8.5; F-8.5.14.
 func TestMemoryQueryDefaultsLimitToTen_spec_8_5_F_8_5_14(t *testing.T) {
 	srv, store, mem := newMCPForMemory(t)
 	seedMemorySession(t, store, "sess_q", "alice")
@@ -272,20 +295,21 @@ func TestMemoryQueryDefaultsLimitToTen_spec_8_5_F_8_5_14(t *testing.T) {
 		t.Fatalf("parse response: %v", err)
 	}
 	if len(parsed.Memories) != 10 {
-		t.Errorf("default limit returned %d results, want 10 (§8.5 line 596 default)", len(parsed.Memories))
+		t.Errorf("default limit returned %d results, want 10 (§8.5 default)", len(parsed.Memories))
 	}
 }
 
 // TestRequestInputEmitsPartsOnEventStream asserts that the F-8.5.12
 // elicitation_request event payload carries the structured `parts`
 // array, not the legacy flat `prompt` string.
-// spec: §8.5 line 539; §7.2 line 136; F-8.5.12.
+// spec: §8.5; §7.2; F-8.5.12.
 func TestRequestInputEmitsPartsOnEventStream_spec_8_5_F_8_5_12(t *testing.T) {
 	store := memstore.New()
 	reg := inputwait.NewRegistry()
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:   true,
 		Store:               store,
 		Events:              bus,
 		InputWaits:          reg,
@@ -299,9 +323,9 @@ func TestRequestInputEmitsPartsOnEventStream_spec_8_5_F_8_5_12(t *testing.T) {
 	done := make(chan map[string]any, 1)
 	go func() {
 		done <- call(t, h, "lenny/request_input",
-			`{"sessionId":"sess_i","requestId":"req-1","parts":[{"type":"text","text":"hi"}]}`)
+			`{"sessionId":"sess_i","parts":[{"type":"text","text":"hi"}]}`)
 	}()
-	waitPending(t, reg, "sess_i", "req-1")
+	req := waitPending(t, reg, "sess_i")
 	hist := bus.History("sess_i", 0)
 	if len(hist) != 1 || hist[0].Type != "elicitation_request" {
 		t.Fatalf("history = %+v, want one elicitation_request event", hist)
@@ -312,7 +336,7 @@ func TestRequestInputEmitsPartsOnEventStream_spec_8_5_F_8_5_12(t *testing.T) {
 	if strings.Contains(hist[0].Data, `"prompt"`) {
 		t.Errorf("event data = %q still carries legacy `prompt` field", hist[0].Data)
 	}
-	reg.Cancel("sess_i", "req-1")
+	reg.Cancel("sess_i", req)
 	select {
 	case <-done:
 	case <-time.After(time.Second):

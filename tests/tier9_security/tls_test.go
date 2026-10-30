@@ -153,6 +153,7 @@ func TestWebhookCABundlesPopulated(t *testing.T) {
 // is expected present on every non-dev-profile install.
 func TestOpsServingCertificateReady(t *testing.T) {
 	c := kind.InstallLenny(t)
+	requireNonDevAdminAPIProfile(t, c)
 
 	certReady := conditionReadiness(t, c, "certificates.cert-manager.io")
 	assertReady(t, certReady, "Certificate", "lenny-ops-tls", "§25.4/NET-070 ops admin-API TLS serving leaf")

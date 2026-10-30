@@ -140,3 +140,24 @@ func TestValidateEmptyPolicyNoRelaxation_spec_17_2(t *testing.T) {
 		t.Errorf("an empty policy must not relax any RuntimeClass, got %v", pe.Violations)
 	}
 }
+
+// TestValidateContainerIdentityUnderEveryRuntimeClass_spec_13_1 asserts
+// the §13.1 container identity clause has no §17.2 relaxation: under the
+// gVisor and the Kata policy, every rejected identity case still
+// rejects.
+//
+// spec: 13.1 (Pod Security), 17.2 (RuntimeClass-aware admission)
+func TestValidateContainerIdentityUnderEveryRuntimeClass_spec_13_1(t *testing.T) {
+	for _, rc := range []string{"gvisor", "kata"} {
+		for _, tc := range identityCases() {
+			if tc.want == "" {
+				continue
+			}
+			t.Run(rc+"/"+tc.name, func(t *testing.T) {
+				spec := tc.spec()
+				spec.RuntimeClassName = rc
+				assertIdentityOutcome(t, spec, canonicalRCPolicy, tc.want)
+			})
+		}
+	}
+}

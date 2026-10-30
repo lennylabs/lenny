@@ -52,11 +52,23 @@ func readDoc(t *testing.T, path string) string {
 // section returns the slice of body between the heading whose text contains
 // `heading` and the next heading at the same-or-shallower level, so a claim
 // can be asserted within a specific section rather than the whole page.
+//
+// A line opening with '#' inside a fenced code block is content rather than
+// a heading: a YAML or shell example carries comment lines that would
+// otherwise end the section early. Fenced lines are therefore skipped.
 func section(body, heading string) string {
 	lines := strings.Split(body, "\n")
 	start := -1
 	var startLevel int
+	inFence := false
 	for i, ln := range lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), "```") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
 		if start < 0 {
 			if strings.HasPrefix(ln, "#") && strings.Contains(ln, heading) {
 				start = i
@@ -72,6 +84,40 @@ func section(body, heading string) string {
 		return ""
 	}
 	return strings.Join(lines[start:], "\n")
+}
+
+// spec: §7.2
+//
+// diagnosis: the shared section reader ended a section at a '#' comment
+// line inside a fenced example instead of at the next real heading. Every
+// reconciliation check that pins a sentence sitting after a fenced YAML or
+// shell example then reads a truncated section and fails for a reason
+// unrelated to specification drift. §7.2 of spec/07_session-lifecycle.md
+// is the live instance: it carries a fenced Helm example whose comment
+// lines open with '#', ahead of the cross-replica routing sentences.
+func TestSectionReaderTreatsFencedHashLinesAsContent(t *testing.T) {
+	body := strings.Join([]string{
+		"### 7.2 Routing",
+		"",
+		"```yaml",
+		"# Deployment level (Helm)",
+		"replicas: 3",
+		"```",
+		"",
+		"The forwarding replica forwards the message to the coordinator.",
+		"",
+		"### 7.3 Next",
+		"",
+		"Unrelated.",
+	}, "\n")
+
+	sec := section(body, "### 7.2 ")
+	if !strings.Contains(sec, "forwards the message to the coordinator") {
+		t.Errorf("section() ended at the fenced comment line; it returned %q", sec)
+	}
+	if strings.Contains(sec, "Unrelated.") {
+		t.Errorf("section() ran past the next same-level heading; it returned %q", sec)
+	}
 }
 
 // headingLevel counts the leading '#' run of an ATX heading line.

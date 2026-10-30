@@ -6,10 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 
+	"google.golang.org/grpc"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -59,12 +63,13 @@ func seedDelegatedChild(t *testing.T, store sessionstore.Store, id, plan string)
 // materializeCluster builds the envtest warm-pool cluster, the bufconn adapter
 // dialer, and the adapter's workspace root the §8.2 materialization bind path
 // drives an idle Sandbox through. It reuses the start_pod_test warm-pool
-// fixtures (one idle "sbx-1" in "echo-pool").
-func materializeCluster(t *testing.T) (client.Client, func(string) (*adapterclient.Client, error), string) {
+// fixtures (one idle "sbx-1" in "echo-pool"). adapterOpts are passed to the
+// adapter's gRPC server, so a test can observe the calls the gateway makes.
+func materializeCluster(t *testing.T, adapterOpts ...grpc.ServerOption) (client.Client, func(string) (*adapterclient.Client, error), string) {
 	t.Helper()
 	wsRoot := t.TempDir()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = wsRoot
+	adapterSrv.WorkspaceBase = wsRoot
 	adapterSrv.Runtime = &podBindRuntime{}
 	cluster := podBindClient(
 		t,
@@ -72,7 +77,7 @@ func materializeCluster(t *testing.T) (client.Client, func(string) (*adapterclie
 		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
 	)
-	return cluster, podBindAdapterDialer(t, adapterSrv), wsRoot
+	return cluster, podBindAdapterDialer(t, adapterSrv, adapterOpts...), wsRoot
 }
 
 // materializeCredStores wires a single-provider (anthropic_direct) tenant
@@ -121,28 +126,49 @@ func materializeFakeScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-// failingAssigner fails every AssignProto, simulating the §8.3 line 470
+// failingAssigner fails every AssignProto, simulating the §8.3
 // post-pod-claim credential-assignment race: the pre-claim check passed (the
 // pool resolves) yet the lease mint fails in the assignment window.
 type failingAssigner struct{}
 
-func (failingAssigner) AssignProto(_, _, _, _ string) (*adapterv1.CredentialLease, error) {
+func (failingAssigner) AssignProto(_, _, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	return nil, credential.ErrPoolExhausted
 }
-func (failingAssigner) ReleaseSession(string) {}
+func (failingAssigner) ReleaseSession(string) error { return nil }
+
+// ReleaseThrough is the generation-scoped pod release; this fake records
+// nothing for it.
+func (failingAssigner) ReleaseThrough(string, int64) error { return nil }
+
+// Release is the attempt-scoped lease release podsession.CredentialAssigner
+// requires; this fake records nothing for it.
+func (failingAssigner) Release(string) error { return nil }
 
 // recordingAssigner assigns a real lease and records every ReleaseSession so a
 // test can assert the §7.1 step-23 lease revoke ran during a post-launch
 // rollback.
 type recordingAssigner struct{ released []string }
 
-func (a *recordingAssigner) AssignProto(_, _, _, _ string) (*adapterv1.CredentialLease, error) {
+func (a *recordingAssigner) AssignProto(_, _, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	return &adapterv1.CredentialLease{}, nil
 }
 
-func (a *recordingAssigner) ReleaseSession(sessionID string) {
+func (a *recordingAssigner) ReleaseSession(sessionID string) error {
 	a.released = append(a.released, sessionID)
+	return nil
 }
+
+// ReleaseThrough is the generation-scoped pod release. It records the session
+// as ReleaseSession does, because a pod release returns the session's leases
+// through the binding's stamp.
+func (a *recordingAssigner) ReleaseThrough(sessionID string, _ int64) error {
+	a.released = append(a.released, sessionID)
+	return nil
+}
+
+// Release is the attempt-scoped lease release podsession.CredentialAssigner
+// requires; this fake records nothing for it.
+func (*recordingAssigner) Release(string) error { return nil }
 
 // updateFaultStore fails store.Update while fail is set, leaving Get/Create
 // intact, so a test can inject the terminal transition-persist failure
@@ -150,10 +176,25 @@ func (a *recordingAssigner) ReleaseSession(sessionID string) {
 type updateFaultStore struct {
 	sessionstore.Store
 	fail bool
+	// onFail, when set, runs just before the injected fault returns, so a
+	// test can end the request context at the moment the commit fails.
+	onFail func()
+}
+
+// GetPrimary forwards the primary read, so the injected fault reaches only
+// the transition-persist Update and not the materialization's entry read.
+func (s *updateFaultStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	if pr, ok := s.Store.(sessionstore.PrimaryReader); ok {
+		return pr.GetPrimary(ctx, tenantID, id)
+	}
+	return s.Get(ctx, tenantID, id)
 }
 
 func (s *updateFaultStore) Update(ctx context.Context, tenantID, id string, mut func(*sessionstore.Session) error) (sessionstore.Session, error) {
 	if s.fail {
+		if s.onFail != nil {
+			s.onFail()
+		}
 		return sessionstore.Session{}, errors.New("injected transition-persist fault")
 	}
 	return s.Store.Update(ctx, tenantID, id, mut)
@@ -168,6 +209,7 @@ func (s *updateFaultStore) Update(ctx context.Context, tenantID, id string, mut 
 // claimed a pod, never launched, or launched but stayed unregistered and
 // unreachable, so §8.2 steps 5-9 did not execute.
 func TestMaterializeDelegatedChildTransitionsToRunning_spec_8_2(t *testing.T) {
+	t.Parallel()
 	store := memstore.New()
 	seedDelegatedChild(t, store, "child-1", `{
 		"schemaVersion": 1,
@@ -177,6 +219,7 @@ func TestMaterializeDelegatedChildTransitionsToRunning_spec_8_2(t *testing.T) {
 	registry := podsession.NewRegistry()
 	binder := podBindBinder(cluster, dial)
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -211,7 +254,7 @@ func TestMaterializeDelegatedChildTransitionsToRunning_spec_8_2(t *testing.T) {
 		t.Errorf("registry binding SandboxName = %q, want sbx-1", binding.SandboxName)
 	}
 	// The stamped WorkspacePlan streamed through the §6.3 binder onto the pod.
-	got, err := os.ReadFile(filepath.Join(wsRoot, "CHILD.md"))
+	got, err := os.ReadFile(filepath.Join(wsRoot, "slots", "child-1", "current", "CHILD.md"))
 	if err != nil {
 		t.Fatalf("child workspace plan was not materialized: %v", err)
 	}
@@ -231,6 +274,7 @@ func TestMaterializeDelegatedChildTransitionsToRunning_spec_8_2(t *testing.T) {
 // keep renewing it. A failure here means the lease holder and the binding
 // holder diverged, the exact decoupling co-location removes.
 func TestMaterializeDelegatedChildPersistFailureReleasesCoordinationLease(t *testing.T) {
+	t.Parallel()
 	base := memstore.New()
 	store := &updateFaultStore{Store: base}
 	seedDelegatedChild(t, store, "child-lease-persist", "")
@@ -239,6 +283,7 @@ func TestMaterializeDelegatedChildPersistFailureReleasesCoordinationLease(t *tes
 	binder := podBindBinder(cluster, dial)
 	leases := newComponentLeaseStore()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -286,6 +331,7 @@ func TestMaterializeDelegatedChildPersistFailureReleasesCoordinationLease(t *tes
 // failure here means the publish was gated on the redundant self-renew acquire
 // instead of running unconditionally once the lease is held.
 func TestMaterializeDelegatedChildPublishesBindingDespiteSelfRenewFault(t *testing.T) {
+	t.Parallel()
 	store := memstore.New()
 	seedDelegatedChild(t, store, "child-renew-blip", `{
 		"schemaVersion": 1,
@@ -299,6 +345,7 @@ func TestMaterializeDelegatedChildPublishesBindingDespiteSelfRenewFault(t *testi
 	// faults transiently.
 	leases.failAcquireAfter = 1
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -364,6 +411,7 @@ func TestMaterializeDelegatedChildNonCreatedGuard_spec_8_2(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(materializeFakeScheme(t)).WithObjects(pool, tmpl).Build()
 	registry := podsession.NewRegistry()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               &podsession.Binder{Client: c, Namespace: podTestNS},
@@ -405,6 +453,7 @@ func TestMaterializeDelegatedChildPreClaimExhaustion_spec_8_2(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(materializeFakeScheme(t)).WithObjects(pool, tmpl).Build()
 	registry := podsession.NewRegistry()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               &podsession.Binder{Client: c, Namespace: podTestNS},
@@ -440,6 +489,7 @@ func TestMaterializeDelegatedChildPreClaimExhaustion_spec_8_2(t *testing.T) {
 // failure here means a losing delegation leaked its warm pod, which §8.3
 // forbids, or the child was left partially materialized.
 func TestMaterializeDelegatedChildAssignmentRaceFailsClosed_spec_8_3(t *testing.T) {
+	t.Parallel()
 	store := memstore.New()
 	seedDelegatedChild(t, store, "child-race", "")
 	tenants, runtimes, credPools := materializeCredStores(t, credentialpoolstore.CredentialActive)
@@ -447,9 +497,10 @@ func TestMaterializeDelegatedChildAssignmentRaceFailsClosed_spec_8_3(t *testing.
 	registry := podsession.NewRegistry()
 	binder := podBindBinder(cluster, dial)
 	// The pre-check resolves an assignable pool, but the lease mint fails in the
-	// assignment window: the §8.3 line 470 post-pod-claim race.
+	// assignment window: the §8.3 post-pod-claim race.
 	binder.Credentials = failingAssigner{}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -492,6 +543,7 @@ func TestMaterializeDelegatedChildAssignmentRaceFailsClosed_spec_8_3(t *testing.
 // child pod and its lease leaked past a failed terminal persist, or a registry
 // entry survived the failed write.
 func TestMaterializeDelegatedChildPersistFailureReleasesBinding_spec_8_2(t *testing.T) {
+	t.Parallel()
 	base := memstore.New()
 	store := &updateFaultStore{Store: base}
 	seedDelegatedChild(t, store, "child-persist", "")
@@ -505,6 +557,7 @@ func TestMaterializeDelegatedChildPersistFailureReleasesBinding_spec_8_2(t *test
 	assigner := &recordingAssigner{}
 	binder.Credentials = assigner
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -539,5 +592,137 @@ func TestMaterializeDelegatedChildPersistFailureReleasesBinding_spec_8_2(t *test
 	}
 	if row.State != session.StateCreated {
 		t.Errorf("child state = %q, want created (non-running after the failed transition)", row.State)
+	}
+}
+
+// cancellingAssigner fails every AssignProto after ending the request context,
+// so the materializer's claim rollback runs on a context that has already
+// ended, as it does when the delegating client disconnects mid-bind.
+type cancellingAssigner struct {
+	failingAssigner
+	cancel context.CancelFunc
+}
+
+func (a cancellingAssigner) AssignProto(tenantID, sessionID, provider, pool string, gen int64) (*adapterv1.CredentialLease, error) {
+	a.cancel()
+	return a.failingAssigner.AssignProto(tenantID, sessionID, provider, pool, gen)
+}
+
+// shutdownCounter is a gRPC server interceptor counting the adapter Shutdown
+// calls that reach the adapter.
+func shutdownCounter(n *atomic.Int32) grpc.ServerOption {
+	return grpc.UnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, h grpc.UnaryHandler) (any, error) {
+		if strings.HasSuffix(info.FullMethod, "/Shutdown") {
+			n.Add(1)
+		}
+		return h(ctx, req)
+	})
+}
+
+// spec: §7.1 (Atomicity of session creation (steps 2–8)), §4.6.1 (Orphaned
+// SandboxClaim detection)
+// diagnosis: each of the materializer's rollback paths must reach the binder
+// when the request context ended before the rollback ran: the claim rollback
+// after a failed launch, the binding rollback after a refused coordination
+// lease, and the binding and lease rollback after a failed running-commit. A
+// failure here means a rollback ran on the cancelled request context, so the
+// adapter Shutdown never left the gateway, the claim stayed, or the lease
+// stayed held, and a cancelled delegate_task stranded a claimed pod.
+func TestMaterializeDelegatedChildRollbacksSurviveCancelledRequest_spec_7_1(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		// arm wires the fault that fails the materialization and ends the
+		// request context through cancel at the moment of the fault.
+		arm func(cancel context.CancelFunc, store *updateFaultStore, binder *podsession.Binder, leases *componentLeaseStore, childID string)
+		// credPools wires a credential pool so the launch reaches the
+		// assigner.
+		credPools    bool
+		wantShutdown bool
+		wantLeaseOff bool
+	}{
+		{
+			name: "launch failure rolls back the create-time claim",
+			arm: func(cancel context.CancelFunc, _ *updateFaultStore, binder *podsession.Binder, _ *componentLeaseStore, _ string) {
+				binder.Credentials = cancellingAssigner{cancel: cancel}
+			},
+			credPools: true,
+		},
+		{
+			name: "refused coordination lease rolls back the binding",
+			arm: func(cancel context.CancelFunc, _ *updateFaultStore, _ *podsession.Binder, leases *componentLeaseStore, childID string) {
+				leases.holders[clk("acme", childID)] = "replica-b"
+				leases.onAcquire = cancel
+			},
+			wantShutdown: true,
+		},
+		{
+			name: "failed running-commit rolls back the binding and the lease",
+			arm: func(cancel context.CancelFunc, store *updateFaultStore, _ *podsession.Binder, _ *componentLeaseStore, _ string) {
+				store.fail = true
+				store.onFail = cancel
+			},
+			wantShutdown: true,
+			wantLeaseOff: true,
+		},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			childID := fmt.Sprintf("child-cancelled-%d", i)
+			store := &updateFaultStore{Store: memstore.New()}
+			seedDelegatedChild(t, store, childID, "")
+			var shutdowns atomic.Int32
+			cluster, dial, _ := materializeCluster(t, shutdownCounter(&shutdowns))
+			binder := podBindBinder(cluster, dial)
+			leases := newComponentLeaseStore()
+			opts := sessionserver.Options{
+				DevTenantHeader:         true,
+				IDFunc:                  func() string { return "unused" },
+				DefaultIsolationProfile: isolation.ProfileSandboxed,
+				PodBinder:               binder,
+				PodRegistry:             podsession.NewRegistry(),
+				AgentNamespace:          podTestNS,
+				CoordinationLeaseStore:  leases,
+				ReplicaID:               "replica-a",
+			}
+			if tc.credPools {
+				tenants, runtimes, credPools := materializeCredStores(t, credentialpoolstore.CredentialActive)
+				opts.Tenants, opts.Runtimes, opts.CredentialPools = tenants, runtimes, credPools
+				opts.CredentialRouter = credrouter.NewDefault()
+			}
+			srv := sessionserver.New(store, opts)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			tc.arm(cancel, store, binder, leases, childID)
+
+			if _, err := srv.MaterializeDelegatedChild(ctx, "acme", childID); err == nil {
+				t.Fatal("MaterializeDelegatedChild = nil, want the injected failure")
+			}
+			if ctx.Err() == nil {
+				t.Fatal("the request context was not cancelled before the rollback; the fault did not fire")
+			}
+
+			var claim lennyv1.SandboxClaim
+			if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
+				t.Errorf("per-pod claim still present after the rollback; the claimed pod leaked")
+			}
+			if tc.wantShutdown && shutdowns.Load() == 0 {
+				t.Errorf("adapter Shutdown never reached the adapter: the binding rollback ran on the cancelled request context")
+			}
+			if tc.wantLeaseOff {
+				if _, err := leases.Get(context.Background(), "acme", childID); !errors.Is(err, leasestore.ErrNotFound) {
+					t.Errorf("coordination lease still held after the rollback: err=%v", err)
+				}
+			}
+			store.fail = false
+			row, err := store.Get(context.Background(), "acme", childID)
+			if err != nil {
+				t.Fatalf("get child row: %v", err)
+			}
+			if row.State != session.StateCreated {
+				t.Errorf("child state = %q, want created", row.State)
+			}
+		})
 	}
 }

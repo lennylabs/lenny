@@ -62,7 +62,7 @@ func (s *Store) Append(ctx context.Context, tenantID, sessionID string, entries 
 			if ts.IsZero() {
 				ts = time.Now().UTC()
 			}
-			// The gateway owns schema_version per §15.4.1 line 1694;
+			// The gateway owns schema_version per §15.4;
 			// normalize a zero-value caller field to the v1 baseline.
 			schemaVer := e.SchemaVersion
 			if schemaVer == 0 {
@@ -164,7 +164,7 @@ func (s *Store) Page(ctx context.Context, tenantID, sessionID string, afterSeq u
 // user's sessions and calls DeleteBySession. DeleteByUser at this
 // layer returns (0, nil).
 //
-// spec: §12.1 line 5.
+// spec: §12.1.
 func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 	return 0, nil
 }
@@ -175,7 +175,7 @@ func (s *Store) DeleteByUser(_ context.Context, _, _ string) (int, error) {
 // session deletion via the FK, so this is a defensive direct delete
 // for the §12.8 Phase 4 path.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("transcriptstore: DeleteByTenant requires a concrete tenant_id")
@@ -221,5 +221,29 @@ func normalizeMiss(err error) error {
 	if errors.As(err, &pgErr) && pgErr.Code == "22P02" {
 		return transcriptstore.ErrNotFound
 	}
+	return err
+}
+
+// CopySessionTx copies the transcript of sourceSessionID into
+// destSessionID on tx, in one INSERT ... SELECT. The copy renumbers seq from
+// 1 in the source order and keeps each entry's role, content, timestamp, and
+// schema version; each copied row gets a new id. A source with no transcript
+// copies nothing and returns nil. tx must carry the tenant context
+// (pgtenant.InTx) and must already hold the destination session row, which
+// session_messages.session_id references.
+//
+// The session store calls it from CreateWithTranscript on the replayed
+// session's insert transaction, so the copied rows commit only with the
+// session row, behind the creation fence.
+// spec: §12.8 (Lifecycle fence and drain), §15.1 (REST API).
+func CopySessionTx(ctx context.Context, tx pgx.Tx, tenantID, sourceSessionID, destSessionID string) error {
+	_, err := tx.Exec(ctx,
+		`INSERT INTO session_messages
+		 (id, session_id, tenant_id, seq, role, content, created_at, schema_version)
+		 SELECT gen_random_uuid(), $1::uuid, tenant_id, row_number() OVER (ORDER BY seq),
+		        role, content, created_at, schema_version
+		   FROM session_messages
+		  WHERE session_id = $2::uuid AND tenant_id = $3`,
+		destSessionID, sourceSessionID, tenantID)
 	return err
 }

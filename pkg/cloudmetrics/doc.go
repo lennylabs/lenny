@@ -6,5 +6,5 @@
 // per active provider and serves /metrics off the union of their
 // outputs.
 //
-// TESTING.md §12.12 / §24.1 (Wave 6 cloud metrics collector).
+// See spec §24.1 (Wave 6 cloud metrics collector).
 package cloudmetrics

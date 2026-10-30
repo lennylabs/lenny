@@ -76,7 +76,7 @@ func TestCrossTenantIntegritiesVerifiesPerTenant(t *testing.T) {
 	}
 }
 
-// TestScatterCacheKeyVariesByQuery confirms the §25.9 line 3709 cache key
+// TestScatterCacheKeyVariesByQuery confirms the §25.9 cache key
 // distinguishes queries by their parameters so a different page or filter
 // is not served a stale entry.
 func TestScatterCacheKeyVariesByQuery(t *testing.T) {

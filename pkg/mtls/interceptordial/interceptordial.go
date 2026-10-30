@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package interceptordial builds the gateway's outbound mTLS transport
-// credentials for the §10.3 NET-063 gateway→in-cluster-interceptor gRPC
-// link (spec lines 326-332). The link carries every request and
+// credentials for the §10.3 NET-063 gateway→in-cluster-interceptor gRPC link. The link carries every request and
 // response envelope the policy engine mediates, so the gateway pins
 // tls.Config.ServerName to the registered interceptor endpoint (DNS-SAN
 // validation), installs a SPIFFE InterceptorPeerVerifier (SPIFFE-URI
@@ -30,7 +29,7 @@ import (
 )
 
 // Handshake result labels for the §16.1 histogram (spec
-// 16_observability.md line 50): each non-success bucket maps to a
+// §16.1): each non-success bucket maps to a
 // distinct rejection path.
 const (
 	ResultSuccess     = "success"
@@ -47,7 +46,7 @@ type Observer func(result string, seconds float64)
 // Options configures Credentials.
 type Options struct {
 	// Reloader serves the gateway leaf via a filesystem-watching
-	// GetClientCertificate callback (§10.3 line 338). Required.
+	// GetClientCertificate callback (§10.3). Required.
 	Reloader *certreload.Reloader
 
 	// RootCAs is the cluster-internal CA bundle the interceptor
@@ -130,7 +129,7 @@ func (c *timedCreds) OverrideServerName(name string) error {
 // a *spiffe.VerifyError whose MismatchReason determines the bucket; chain
 // failures (expired certificate, DNS-SAN/hostname mismatch) are read off
 // the crypto/x509 error types; anything else is a generic TLS failure.
-// spec: 16_observability.md line 50.
+// spec: §16.1.
 func ClassifyResult(err error) string {
 	if err == nil {
 		return ResultSuccess

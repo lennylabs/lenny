@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 )
 
-// spec: §25.11 line 4309 — the backup-metrics sampler publishes the
+// spec: §25.11 — the backup-metrics sampler publishes the
 // last successful backup completion time per type on
 // lenny_backup_last_successful_timestamp so the BackupOverdue alert has
 // a source.

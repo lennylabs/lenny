@@ -5,12 +5,14 @@ package adapter
 import (
 	"bytes"
 	"context"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -30,6 +32,7 @@ func captureLogOutput(t *testing.T) (*bytes.Buffer, func()) {
 
 func runSetupReq(sessionID string, policy *adapterv1.SetupPolicy, cmds ...string) *adapterv1.RunSetupRequest {
 	req := &adapterv1.RunSetupRequest{
+		BindAttempt: "attempt-a",
 		SessionId:   &adapterv1.SessionId{Value: sessionID},
 		SetupPolicy: policy,
 	}
@@ -45,6 +48,7 @@ func wsSource(typ, path, content, mode string) *adapterv1.WorkspaceSource {
 
 func finalizeReq(sessionID string, sources ...*adapterv1.WorkspaceSource) *adapterv1.FinalizeWorkspaceRequest {
 	return &adapterv1.FinalizeWorkspaceRequest{
+		BindAttempt:   "attempt-a",
 		SessionId:     &adapterv1.SessionId{Value: sessionID},
 		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1, Sources: sources},
 	}
@@ -52,13 +56,13 @@ func finalizeReq(sessionID string, sources ...*adapterv1.WorkspaceSource) *adapt
 
 func TestFinalizeWorkspaceMaterializes(t *testing.T) {
 	root := t.TempDir()
-	srv := &Server{WorkspaceRoot: root}
+	srv := &Server{WorkspaceBase: root}
 	if _, err := srv.FinalizeWorkspace(context.Background(), finalizeReq("sess-1",
 		wsSource("mkdir", "docs", "", "755"),
 		wsSource("inlineFile", "docs/readme.md", "hello", "644"))); err != nil {
 		t.Fatalf("FinalizeWorkspace: %v", err)
 	}
-	b, err := os.ReadFile(filepath.Join(root, "docs", "readme.md"))
+	b, err := os.ReadFile(filepath.Join(slotCurrent(srv, "sess-1"), "docs", "readme.md"))
 	if err != nil {
 		t.Fatalf("read materialized file: %v", err)
 	}
@@ -69,14 +73,14 @@ func TestFinalizeWorkspaceMaterializes(t *testing.T) {
 
 func TestFinalizeWorkspaceEmptyPlan(t *testing.T) {
 	// A session with an empty workspace plan finalizes as a no-op.
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	if _, err := srv.FinalizeWorkspace(context.Background(), finalizeReq("sess-1")); err != nil {
 		t.Errorf("FinalizeWorkspace with an empty plan = %v, want nil", err)
 	}
 }
 
 func TestFinalizeWorkspaceRequiresSessionID(t *testing.T) {
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	_, err := srv.FinalizeWorkspace(context.Background(),
 		finalizeReq("", wsSource("mkdir", "x", "", "")))
 	if status.Code(err) != codes.InvalidArgument {
@@ -84,7 +88,7 @@ func TestFinalizeWorkspaceRequiresSessionID(t *testing.T) {
 	}
 }
 
-func TestFinalizeWorkspaceRequiresWorkspaceRoot(t *testing.T) {
+func TestFinalizeWorkspaceRequiresWorkspaceBase(t *testing.T) {
 	srv := &Server{}
 	_, err := srv.FinalizeWorkspace(context.Background(),
 		finalizeReq("sess-1", wsSource("mkdir", "x", "", "")))
@@ -97,7 +101,7 @@ func TestFinalizeWorkspaceRejectsEscapingPath(t *testing.T) {
 	// The §14 path-containment guard in workspace.Materialize rejects a
 	// source that escapes the workspace root; the RPC surfaces it as
 	// InvalidArgument.
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	_, err := srv.FinalizeWorkspace(context.Background(),
 		finalizeReq("sess-1", wsSource("inlineFile", "../escape.txt", "x", "644")))
 	if status.Code(err) != codes.InvalidArgument {
@@ -107,36 +111,38 @@ func TestFinalizeWorkspaceRejectsEscapingPath(t *testing.T) {
 
 // TestFinalizeWorkspacePlumsArchivePolicy covers F-7.4.4: the
 // FinalizeWorkspaceRequest.archive_policy.allow_symlinks toggle lifts
-// the §7.4 line 458 default-deny on symlink sources. The gateway extracts
+// the §7.4 default-deny on symlink sources. The gateway extracts
 // uploadArchive sources and rewrites their symlink entries into `symlink`
-// sources (§7.4 line 448 — the pod never decompresses); the adapter
+// sources (§7.4: the pod never extracts a client-uploaded archive); the adapter
 // honors the same per-Runtime policy when it materializes them. With the
 // gateway-supplied policy set to AllowSymlinks=true and a target inside
 // the workspace the link is created; without it the same source is
-// rejected. spec: §7.4 lines 448, 458, 462; §13.4 — F-7.4.4, F-7.4.1.
+// rejected. spec: §7.4; §13.4 — F-7.4.4, F-7.4.1.
 func TestFinalizeWorkspacePlumsArchivePolicy(t *testing.T) {
-	srv := &Server{WorkspaceRoot: t.TempDir(), StagingDir: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 
 	sources := []*adapterv1.WorkspaceSource{
 		wsSource("inlineFile", "target.txt", "hi", "644"),
 		{Type: "symlink", Path: "link", LinkTarget: "target.txt"},
 	}
 	reqWithSymlinkOptIn := &adapterv1.FinalizeWorkspaceRequest{
+		BindAttempt:   "attempt-a",
 		SessionId:     &adapterv1.SessionId{Value: "sess-1"},
 		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1, Sources: sources},
-		ArchivePolicy: &adapterv1.ArchivePolicy{AllowSymlinks: true, WorkspaceRoot: srv.WorkspaceRoot},
+		ArchivePolicy: &adapterv1.ArchivePolicy{AllowSymlinks: true, WorkspaceRoot: slotCurrent(srv, "sess-1")},
 	}
 	if _, err := srv.FinalizeWorkspace(context.Background(), reqWithSymlinkOptIn); err != nil {
 		t.Fatalf("FinalizeWorkspace with AllowSymlinks=true: %v", err)
 	}
-	if info, err := os.Lstat(filepath.Join(srv.WorkspaceRoot, "link")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+	if info, err := os.Lstat(filepath.Join(slotCurrent(srv, "sess-1"), "link")); err != nil || info.Mode()&os.ModeSymlink == 0 {
 		t.Fatalf("expected symlink to be created; Lstat = %v %v", info, err)
 	}
 
 	// Default policy (nil) must reject the same symlink source with
 	// InvalidArgument (the gRPC mapping of workspace.Materialize errors).
-	srv2 := &Server{WorkspaceRoot: t.TempDir(), StagingDir: t.TempDir()}
+	srv2 := &Server{WorkspaceBase: t.TempDir()}
 	reqDefault := &adapterv1.FinalizeWorkspaceRequest{
+		BindAttempt:   "attempt-a",
 		SessionId:     &adapterv1.SessionId{Value: "sess-1"},
 		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 1, Sources: sources},
 	}
@@ -146,16 +152,17 @@ func TestFinalizeWorkspacePlumsArchivePolicy(t *testing.T) {
 	}
 }
 
-// spec: §14.1 line 326 — the adapter is a live consumer that MUST reject
+// spec: §14.1 — the adapter is a live consumer that MUST reject
 // a plan whose schemaVersion exceeds the known revision before touching
 // the filesystem, and surface the typed WORKSPACE_PLAN_SCHEMA_UNSUPPORTED
 // code. A source that would write a file proves the reject happens before
 // materialization. F-14.1.3.
 func TestFinalizeWorkspaceRejectsUnsupportedSchemaVersion_spec_14_1_326(t *testing.T) {
 	root := t.TempDir()
-	srv := &Server{WorkspaceRoot: root}
+	srv := &Server{WorkspaceBase: root}
 	req := &adapterv1.FinalizeWorkspaceRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
 		WorkspacePlan: &adapterv1.WorkspacePlan{
 			SchemaVersion: workspace.MaxKnownSchemaVersion + 1,
 			Sources:       []*adapterv1.WorkspaceSource{wsSource("inlineFile", "written.txt", "x", "644")},
@@ -178,17 +185,17 @@ func TestFinalizeWorkspaceRejectsUnsupportedSchemaVersion_spec_14_1_326(t *testi
 		t.Errorf("status error code detail = %v, want WORKSPACE_PLAN_SCHEMA_UNSUPPORTED", code)
 	}
 	// The reject must happen before any filesystem write.
-	if _, statErr := os.Stat(filepath.Join(root, "written.txt")); statErr == nil {
+	if _, statErr := os.Stat(filepath.Join(slotCurrent(srv, "sess-1"), "written.txt")); statErr == nil {
 		t.Error("materialization wrote a file despite the schemaVersion reject; the gate ran too late")
 	}
 }
 
-// spec: §14 line 334 — an unknown source.type is skipped with a
+// spec: §14 — an unknown source.type is skipped with a
 // workspace_plan_unknown_source_type warning the adapter returns on
 // FinalizeWorkspaceResponse, carrying `unknownType` and the plan's
 // `schemaVersion`. F-14.1.2.
 func TestFinalizeWorkspaceSkipsUnknownSourceType_spec_14_334(t *testing.T) {
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	resp, err := srv.FinalizeWorkspace(context.Background(),
 		finalizeReq("sess-1", wsSource("teleport", "x", "", "")))
 	if err != nil {
@@ -210,12 +217,12 @@ func TestFinalizeWorkspaceSkipsUnknownSourceType_spec_14_334(t *testing.T) {
 	}
 }
 
-// spec: §14 line 338 — when two sources resolve to the same workspace
+// spec: §14 — when two sources resolve to the same workspace
 // path the adapter raises a workspace_plan_path_collision warning on
 // FinalizeWorkspaceResponse carrying `path`, `winningSourceIndex`, and
 // `losingSourceIndex` so the gateway can republish them. F-14.1.9.
 func TestFinalizeWorkspaceTranscribesPathCollision_spec_14_338(t *testing.T) {
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	resp, err := srv.FinalizeWorkspace(context.Background(), finalizeReq("sess-1",
 		wsSource("inlineFile", "conf/app.yaml", "first", "644"),
 		wsSource("inlineFile", "conf/app.yaml", "second", "644")))
@@ -246,19 +253,19 @@ func TestFinalizeWorkspaceTranscribesPathCollision_spec_14_338(t *testing.T) {
 
 func TestRunSetupExecutesCommands(t *testing.T) {
 	root := t.TempDir()
-	srv := &Server{WorkspaceRoot: root}
+	srv := &Server{WorkspaceBase: root}
 	if _, err := srv.RunSetup(context.Background(),
 		runSetupReq("sess-1", nil, "echo ok > result.txt", "mkdir sub")); err != nil {
 		t.Fatalf("RunSetup: %v", err)
 	}
-	b, err := os.ReadFile(filepath.Join(root, "result.txt"))
+	b, err := os.ReadFile(filepath.Join(slotCurrent(srv, "sess-1"), "result.txt"))
 	if err != nil {
 		t.Fatalf("read result.txt: %v", err)
 	}
 	if strings.TrimSpace(string(b)) != "ok" {
 		t.Errorf("result.txt = %q, want ok", b)
 	}
-	if fi, err := os.Stat(filepath.Join(root, "sub")); err != nil || !fi.IsDir() {
+	if fi, err := os.Stat(filepath.Join(slotCurrent(srv, "sess-1"), "sub")); err != nil || !fi.IsDir() {
 		t.Errorf("setup command did not create the sub directory: %v", err)
 	}
 }
@@ -266,21 +273,21 @@ func TestRunSetupExecutesCommands(t *testing.T) {
 func TestRunSetupNoCommands(t *testing.T) {
 	// The §4.7 sequence calls RunSetup even for a plan with no setup
 	// commands; an empty list completes the phase as a no-op.
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	if _, err := srv.RunSetup(context.Background(), runSetupReq("sess-1", nil)); err != nil {
 		t.Errorf("RunSetup with no commands = %v, want nil", err)
 	}
 }
 
 func TestRunSetupRequiresSessionID(t *testing.T) {
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	_, err := srv.RunSetup(context.Background(), runSetupReq("", nil, "true"))
 	if status.Code(err) != codes.InvalidArgument {
 		t.Errorf("RunSetup without a session id = %v, want InvalidArgument", err)
 	}
 }
 
-func TestRunSetupRequiresWorkspaceRoot(t *testing.T) {
+func TestRunSetupRequiresWorkspaceBase(t *testing.T) {
 	srv := &Server{}
 	_, err := srv.RunSetup(context.Background(), runSetupReq("sess-1", nil, "true"))
 	if status.Code(err) != codes.FailedPrecondition {
@@ -289,7 +296,7 @@ func TestRunSetupRequiresWorkspaceRoot(t *testing.T) {
 }
 
 func TestRunSetupFailingCommandIsRejected(t *testing.T) {
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	_, err := srv.RunSetup(context.Background(), runSetupReq("sess-1", nil, "exit 3"))
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("RunSetup with a failing command = %v, want FailedPrecondition", err)
@@ -300,7 +307,7 @@ func TestRunSetupAggregateTimeoutFails(t *testing.T) {
 	// §5.1: a setupPolicy with on_timeout "fail" aborts the phase when
 	// the aggregate cap is exceeded. Threading the policy through the
 	// RunSetup RPC is what this exercises.
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	policy := &adapterv1.SetupPolicy{TimeoutSeconds: 1, OnTimeout: "fail"}
 	_, err := srv.RunSetup(context.Background(), runSetupReq("sess-1", policy, "sleep 30"))
 	if status.Code(err) != codes.FailedPrecondition {
@@ -308,7 +315,7 @@ func TestRunSetupAggregateTimeoutFails(t *testing.T) {
 	}
 }
 
-// spec: §5.1 lines 89-91 — onTimeout `warn` proceeds past the aggregate
+// spec: §5.1 — onTimeout `warn` proceeds past the aggregate
 // cap rather than failing pod startup, and the §7.5 observability
 // contract requires a structured signal (operator-visible warning) so
 // "setup succeeded" and "setup truncated under warn" do not look
@@ -316,7 +323,7 @@ func TestRunSetupAggregateTimeoutFails(t *testing.T) {
 // `setup_aggregate_timeout_warn` line carrying the session id, cap, and
 // command count. F-7.5.13.
 func TestRunSetupAggregateTimeoutWarnProceeds(t *testing.T) {
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 	policy := &adapterv1.SetupPolicy{TimeoutSeconds: 1, OnTimeout: "warn"}
 
 	logBuf, restore := captureLogOutput(t)
@@ -328,5 +335,142 @@ func TestRunSetupAggregateTimeoutWarnProceeds(t *testing.T) {
 	got := logBuf.String()
 	if !strings.Contains(got, "setup_aggregate_timeout_warn") || !strings.Contains(got, "session=sess-1") {
 		t.Errorf("warn disposition should emit the setup_aggregate_timeout_warn observability line; got log: %q", got)
+	}
+}
+
+// slotCurrent is the session's own §6.4 cwd,
+// `<base>/slots/{sessionId}/current`, which is the only workspace layout
+// and the directory the workspace-prep RPCs materialize into.
+func slotCurrent(srv *Server, sessionID string) string {
+	return filepath.Join(srv.WorkspaceBase, "slots", sessionID, "current")
+}
+
+// prepareWorkspaceStreamStub feeds a fixed sequence of frames to the
+// PrepareWorkspace handler in-process. The embedded grpc.ServerStream
+// supplies the header/trailer methods the generated stream interface
+// requires; the handler calls none of them.
+type prepareWorkspaceStreamStub struct {
+	grpc.ServerStream
+	ctx    context.Context
+	frames []*adapterv1.PrepareWorkspaceRequest
+	next   int
+	resp   *adapterv1.PrepareWorkspaceResponse
+}
+
+func (s *prepareWorkspaceStreamStub) Context() context.Context { return s.ctx }
+
+func (s *prepareWorkspaceStreamStub) Recv() (*adapterv1.PrepareWorkspaceRequest, error) {
+	if s.next >= len(s.frames) {
+		return nil, io.EOF
+	}
+	f := s.frames[s.next]
+	s.next++
+	return f, nil
+}
+
+func (s *prepareWorkspaceStreamStub) SendAndClose(resp *adapterv1.PrepareWorkspaceResponse) error {
+	s.resp = resp
+	return nil
+}
+
+func uploadFrame(sessionID, ref, chunk string) *adapterv1.PrepareWorkspaceRequest {
+	return &adapterv1.PrepareWorkspaceRequest{
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: sessionID},
+		UploadRef:   ref,
+		Chunk:       []byte(chunk),
+	}
+}
+
+// TestPrepareWorkspaceStagesUnderTheSessionSlotTree asserts that an
+// upload stages into the named session's
+// /workspace/slots/{sessionId}/staging directory, which is the only
+// staging layout: no upload lands in a pod-global /workspace/staging.
+// spec: §6.4 (per-session workspace tree), §5.2 (session-addressed
+// adapter requests).
+func TestPrepareWorkspaceStagesUnderTheSessionSlotTree(t *testing.T) {
+	base := t.TempDir()
+	srv := &Server{WorkspaceBase: base}
+	stream := &prepareWorkspaceStreamStub{
+		ctx:    context.Background(),
+		frames: []*adapterv1.PrepareWorkspaceRequest{uploadFrame("sess-1", "lenny-blob://t/a", "hello")},
+	}
+	if err := srv.PrepareWorkspace(stream); err != nil {
+		t.Fatalf("PrepareWorkspace: %v", err)
+	}
+	if stream.resp.GetStagedBytes() != int64(len("hello")) {
+		t.Errorf("stagedBytes = %d, want %d", stream.resp.GetStagedBytes(), len("hello"))
+	}
+	slotStaging := filepath.Join(base, "slots", "sess-1", "staging")
+	entries, err := os.ReadDir(slotStaging)
+	if err != nil {
+		t.Fatalf("read per-session staging dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("per-session staging holds %d entries, want 1", len(entries))
+	}
+	if _, err := os.Stat(filepath.Join(base, "staging")); !os.IsNotExist(err) {
+		t.Errorf("pod-global /workspace/staging exists (%v); the per-session tree is the only layout", err)
+	}
+}
+
+// TestPrepareWorkspaceRefusesAnUnresolvableStagingPath asserts that an
+// adapter with no workspace base refuses the upload with
+// FailedPrecondition rather than writing the staged file into its own
+// working directory. spec: §6.4.
+func TestPrepareWorkspaceRefusesAnUnresolvableStagingPath(t *testing.T) {
+	srv := &Server{}
+	stream := &prepareWorkspaceStreamStub{
+		ctx:    context.Background(),
+		frames: []*adapterv1.PrepareWorkspaceRequest{uploadFrame("sess-1", "lenny-blob://t/a", "hello")},
+	}
+	err := srv.PrepareWorkspace(stream)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("PrepareWorkspace without a workspace base = %v, want FailedPrecondition", err)
+	}
+}
+
+// TestPrepareWorkspaceRejectsAMalformedSessionAddress asserts the
+// fail-closed arm of the address guard on the workspace-prep leg: a
+// session id that is not a safe single path segment is refused with
+// InvalidArgument before a staging root is resolved and before any tree is
+// written, so a hostile identifier cannot place uploaded bytes outside the
+// session's own slot tree.
+// spec: §5.2 (the address is required and well formed), §6.4 (the per-slot
+// tree the address resolves)
+func TestPrepareWorkspaceRejectsAMalformedSessionAddress_spec_5_2(t *testing.T) {
+	for _, id := range []string{".", "..", "a/b", `a\b`, "a\x00b", "./a", "a/"} {
+		base := t.TempDir()
+		srv := &Server{WorkspaceBase: base}
+		stream := &prepareWorkspaceStreamStub{
+			ctx:    context.Background(),
+			frames: []*adapterv1.PrepareWorkspaceRequest{uploadFrame(id, "lenny-blob://t/a", "hello")},
+		}
+		err := srv.PrepareWorkspace(stream)
+		if status.Code(err) != codes.InvalidArgument {
+			t.Errorf("PrepareWorkspace(%q) = %v, want InvalidArgument", id, status.Code(err))
+		}
+		if entries, readErr := os.ReadDir(filepath.Join(base, "slots")); readErr == nil && len(entries) != 0 {
+			t.Errorf("PrepareWorkspace(%q) wrote a slot tree: %v", id, entries)
+		}
+		if len(srv.slots) != 0 {
+			t.Errorf("PrepareWorkspace(%q) left a registry entry: %v", id, srv.slots)
+		}
+	}
+}
+
+// TestPrepareWorkspaceRequiresASessionID asserts that a frame carrying no
+// session id is refused: absence of the address is an error rather than a
+// scope.
+// spec: §5.2 (the address is required and well formed)
+func TestPrepareWorkspaceRequiresASessionID(t *testing.T) {
+	srv := &Server{WorkspaceBase: t.TempDir()}
+	stream := &prepareWorkspaceStreamStub{
+		ctx:    context.Background(),
+		frames: []*adapterv1.PrepareWorkspaceRequest{uploadFrame("", "lenny-blob://t/a", "hello")},
+	}
+	err := srv.PrepareWorkspace(stream)
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("PrepareWorkspace with an empty session id = %v, want InvalidArgument", err)
 	}
 }

@@ -13,7 +13,7 @@
 // defeats the fence: with all generations equal the supersede predicate always
 // matches and any writer supersedes any other.
 //
-// spec: §10.1 lines 137, 155 (generation fence, MAX(coordination_generation)
+// spec: §10.1 (generation fence, MAX(coordination_generation)
 // resume selector, baseline denominator).
 
 package tier4_integration_test
@@ -26,7 +26,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// spec: §10.1 lines 137, 155 — the gateway writes the intent row with the
+// spec: §10.1 — the gateway writes the intent row with the
 // session's coordination_generation, recovery_generation, and baseline, so a
 // newer coordinator supersedes an older active row and the finalised row
 // carries the session's generation rather than 0.
@@ -60,7 +60,6 @@ func TestCheckpointIntentRowCarriesSessionCoordinationGeneration(t *testing.T) {
 		TenantID:               cpTenant,
 		CheckpointID:           "older-generation-attempt",
 		SessionID:              cpSession,
-		SlotID:                 partialmanifeststore.SlotDefault,
 		CoordinationGeneration: 5,
 		ChunkObjectKeyPrefix:   "/acme/checkpoints/s1/older/",
 	}); err != nil {
@@ -98,7 +97,7 @@ func TestCheckpointIntentRowCarriesSessionCoordinationGeneration(t *testing.T) {
 	}
 }
 
-// spec: §10.1 lines 137, 155 — the supersede predicate fences on
+// spec: §10.1 — the supersede predicate fences on
 // coordination_generation, so a stale coordinator (a lower generation) must
 // not release the reservation or sweep the chunk objects of a live newer
 // writer's active manifest; its own intent-row Put is rejected as stale.
@@ -113,8 +112,8 @@ func TestCheckpointStaleCoordinatorDoesNotOrphanNewerWriter(t *testing.T) {
 	h := newCPDriverHarness(t, adapter)
 
 	// The session's committed generation is 3, but a newer coordinator has
-	// already written an active generation-7 manifest for the same
-	// (session, slot). This attempt reads the lagging generation-3 session row.
+	// already written an active generation-7 manifest for the same session.
+	// This attempt reads the lagging generation-3 session row.
 	if _, err := h.sessions.Update(context.Background(), cpTenant, cpSession, func(row *sessionstore.Session) error {
 		row.CoordinationGeneration = 3
 		return nil
@@ -126,7 +125,6 @@ func TestCheckpointStaleCoordinatorDoesNotOrphanNewerWriter(t *testing.T) {
 		TenantID:               cpTenant,
 		CheckpointID:           "newer-writer",
 		SessionID:              cpSession,
-		SlotID:                 partialmanifeststore.SlotDefault,
 		CoordinationGeneration: 7,
 		ChunkObjectKeyPrefix:   newerPrefix,
 		ReservedBytes:          4096,

@@ -58,11 +58,11 @@ func startRegistryPG(t *testing.T) (context.Context, string) {
 // saving an override the store loads every field back, a fresh PgStore
 // over a new pool (the restart / leader-handoff case) still reads it, and
 // a second Save upserts the same singleton row rather than accumulating
-// rows. This pins the §25.8 line 3362 contract that a runtime registry
+// rows. This pins the §25.8 contract that a runtime registry
 // update is "stored in Postgres" and is "a restart-free setting". It
 // downloads the PostgreSQL bundle, so it is skipped under -short.
 //
-// spec: §25.8 line 3362 — "PUT /v1/admin/platform/registry updates the
+// spec: §25.8 — "PUT /v1/admin/platform/registry updates the
 // registry URL and overrides at runtime (stored in Postgres, takes effect
 // on next image resolution). This is a restart-free setting."
 func TestPgStoreRoundTrip_spec_25_8(t *testing.T) {
@@ -153,7 +153,7 @@ func TestPgStoreRoundTrip_spec_25_8(t *testing.T) {
 // store resolves component images through the persisted override URL rather
 // than the chart base, without a restart.
 //
-// spec: §25.8 line 3362 — a runtime registry update is "stored in Postgres,
+// spec: §25.8 — a runtime registry update is "stored in Postgres,
 // takes effect on next image resolution".
 func TestPgStoreDrivesImageResolution_spec_25_8(t *testing.T) {
 	if testing.Short() {

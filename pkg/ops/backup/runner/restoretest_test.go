@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/backup/restoretest"
 )
 
-// spec: §25.11 lines 4128-4256 — the verify and restore-test seams.
+// spec: §25.11 — the verify and restore-test seams.
 
 type fakeResolver struct {
 	target   Target
@@ -85,7 +85,7 @@ func (f *fakeVerifyReporter) MarkVerificationFailed(_ context.Context, id, reaso
 	return nil
 }
 
-// spec: §25.11 lines 4128-4133 — a verify of a sound archive runs the
+// spec: §25.11 — a verify of a sound archive runs the
 // checksum check and pg_restore --list and records status:verified.
 func TestRunVerifyHappyPath_spec_25_11_4128(t *testing.T) {
 	rep := &fakeVerifyReporter{}
@@ -108,7 +108,7 @@ func TestRunVerifyHappyPath_spec_25_11_4128(t *testing.T) {
 	}
 }
 
-// spec: §25.11 line 4131 — a checksum mismatch is BACKUP_VERIFICATION_FAILED.
+// spec: §25.11 — a checksum mismatch is BACKUP_VERIFICATION_FAILED.
 func TestRunVerifyChecksumMismatch_spec_25_11_4131(t *testing.T) {
 	rep := &fakeVerifyReporter{}
 	err := RunVerify(context.Background(), VerifyConfig{
@@ -130,7 +130,7 @@ func TestRunVerifyChecksumMismatch_spec_25_11_4131(t *testing.T) {
 	}
 }
 
-// spec: §25.11 line 4132 — an unreadable dump fails pg_restore --list.
+// spec: §25.11 — an unreadable dump fails pg_restore --list.
 func TestRunVerifyUnreadableDump_spec_25_11_4132(t *testing.T) {
 	rep := &fakeVerifyReporter{}
 	err := RunVerify(context.Background(), VerifyConfig{
@@ -207,7 +207,7 @@ func TestRunVerifyResolveError(t *testing.T) {
 	}
 }
 
-// spec: §25.11 lines 4254-4256 — a sound backup with a fully-present
+// spec: §25.11 — a sound backup with a fully-present
 // artifact sample passes the restore test and records success.
 func TestRunRestoreTestHappyPath_spec_25_11_4254(t *testing.T) {
 	store := restoretest.NewMemory()
@@ -242,7 +242,7 @@ func TestRunRestoreTestHappyPath_spec_25_11_4254(t *testing.T) {
 	}
 }
 
-// spec: §25.11 line 4098 — an artifact success rate below 99% fails the
+// spec: §25.11 — an artifact success rate below 99% fails the
 // restore test (lenny_restore_test_success = 0).
 func TestRunRestoreTestArtifactBelowFloor_spec_25_11_4098(t *testing.T) {
 	store := restoretest.NewMemory()

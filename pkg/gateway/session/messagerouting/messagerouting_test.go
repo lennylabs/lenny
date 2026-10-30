@@ -8,10 +8,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 )
 
-// TestClassify_spec_7_2_paths covers every §7.2 lines 313-331 path the
+// TestClassify_spec_7_2_paths covers every §7.2 path the
 // coordinating replica can select from observable state, including the
 // path-3-over-path-4 precedence overlap and the pre-running
-// external-vs-inter-session branch (line 339).
+// external-vs-inter-session branch, and routes every suspended target to
+// the resume and a resuming target to the DLQ.
+//
+// spec: 7.2 (Message delivery routing — seven paths, path 6)
 func TestClassify_spec_7_2_paths(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -34,7 +37,7 @@ func TestClassify_spec_7_2_paths(t *testing.T) {
 			wantStatus: session.DeliveryStatusQueued,
 		},
 		{
-			// §7.2 line 319: input_required buffering applies even when
+			// §7.2: input_required buffering applies even when
 			// delivery:"immediate" is set — path 3 wins over path 4.
 			name: "path3_wins_over_immediate", state: session.StateRunning,
 			inputRequired: true, immediate: true, src: SourceExternal,
@@ -46,27 +49,71 @@ func TestClassify_spec_7_2_paths(t *testing.T) {
 			wantPath: 3, wantAction: ActionBufferInbox, wantStatus: session.DeliveryStatusQueued,
 		},
 		{
-			// §7.2 path 6 line 330: a suspended target without
-			// delivery:"immediate" remains buffered (inbox, queued).
-			name: "path6_suspended_buffers_inbox", state: session.StateSuspended,
-			src: SourceExternal, wantPath: 6, wantAction: ActionBufferInbox,
+			// §7.2 path 6: a suspended target without delivery:"immediate"
+			// resumes; nothing waits in the inbox for a suspended session.
+			name: "path6_suspended_resumes_without_immediate", state: session.StateSuspended,
+			src: SourceExternal, wantPath: 6, wantAction: ActionResumeAndDeliver,
 			wantStatus: session.DeliveryStatusQueued,
 		},
 		{
-			// §7.2 path 6 line 327: a delivery:"immediate" message to a
-			// pod-held suspended session selects the atomic resume-and-deliver,
-			// returning delivered.
+			// §7.2 path 6: delivery:"immediate" selects the same resume.
 			name: "path6_suspended_immediate_resumes", state: session.StateSuspended,
 			immediate: true, src: SourceInterSession,
-			wantPath: 6, wantAction: ActionResumeAndDeliver, wantStatus: session.DeliveryStatusDelivered,
+			wantPath: 6, wantAction: ActionResumeAndDeliver, wantStatus: session.DeliveryStatusQueued,
 		},
 		{
-			// §7.2 path 6: the resume-and-deliver selection is source-agnostic —
-			// an external-client immediate message to a suspended session also
-			// resumes-and-delivers.
+			// §7.2 path 6: the selection is source-agnostic.
 			name: "path6_suspended_immediate_external_resumes", state: session.StateSuspended,
 			immediate: true, src: SourceExternal,
-			wantPath: 6, wantAction: ActionResumeAndDeliver, wantStatus: session.DeliveryStatusDelivered,
+			wantPath: 6, wantAction: ActionResumeAndDeliver, wantStatus: session.DeliveryStatusQueued,
+		},
+		{
+			// §7.2 path 6 wins for every suspended row: an interrupt of a
+			// runtime blocked in lenny/request_input leaves the wait
+			// registered, and the message must still resume the session
+			// rather than wait in the inbox.
+			name: "path6_suspended_pending_input_wait_resumes_external_immediate_false", state: session.StateSuspended,
+			inputRequired: true, immediate: false, src: SourceExternal,
+			wantPath: 6, wantAction: ActionResumeAndDeliver, wantStatus: session.DeliveryStatusQueued,
+		},
+		{
+			// §7.2 path 6 wins for every suspended row: an interrupt of a
+			// runtime blocked in lenny/request_input leaves the wait
+			// registered, and the message must still resume the session
+			// rather than wait in the inbox.
+			name: "path6_suspended_pending_input_wait_resumes_external_immediate_true", state: session.StateSuspended,
+			inputRequired: true, immediate: true, src: SourceExternal,
+			wantPath: 6, wantAction: ActionResumeAndDeliver, wantStatus: session.DeliveryStatusQueued,
+		},
+		{
+			// §7.2 path 6 wins for every suspended row: an interrupt of a
+			// runtime blocked in lenny/request_input leaves the wait
+			// registered, and the message must still resume the session
+			// rather than wait in the inbox.
+			name: "path6_suspended_pending_input_wait_resumes_intersession_immediate_false", state: session.StateSuspended,
+			inputRequired: true, immediate: false, src: SourceInterSession,
+			wantPath: 6, wantAction: ActionResumeAndDeliver, wantStatus: session.DeliveryStatusQueued,
+		},
+		{
+			// §7.2 path 6 wins for every suspended row: an interrupt of a
+			// runtime blocked in lenny/request_input leaves the wait
+			// registered, and the message must still resume the session
+			// rather than wait in the inbox.
+			name: "path6_suspended_pending_input_wait_resumes_intersession_immediate_true", state: session.StateSuspended,
+			inputRequired: true, immediate: true, src: SourceInterSession,
+			wantPath: 6, wantAction: ActionResumeAndDeliver, wantStatus: session.DeliveryStatusQueued,
+		},
+		{
+			// §7.2 path 7: a resuming target has no runtime reading its
+			// input, so the message is held in the DLQ.
+			name: "path7_resuming_dlq", state: session.StateResuming,
+			src: SourceInterSession, wantPath: 7, wantAction: ActionBufferDLQ,
+			wantStatus: session.DeliveryStatusQueued,
+		},
+		{
+			name: "path7_resuming_external_dlq", state: session.StateResuming,
+			src: SourceExternal, wantPath: 7, wantAction: ActionBufferDLQ,
+			wantStatus: session.DeliveryStatusQueued,
 		},
 		{
 			name: "path7_resume_pending_dlq", state: session.StateResumePending,
@@ -95,12 +142,12 @@ func TestClassify_spec_7_2_paths(t *testing.T) {
 			src: SourceExternal, wantPath: 7, wantAction: ActionRejectTerminal,
 		},
 		{
-			// §7.2 line 339 pre-running: external client retries.
+			// §7.2 pre-running: external client retries.
 			name: "prerunning_external_rejects_not_ready", state: session.StateCreated,
 			src: SourceExternal, wantPath: 7, wantAction: ActionRejectNotReady,
 		},
 		{
-			// §7.2 line 339 pre-running: inter-session parent→child buffers.
+			// §7.2 pre-running: inter-session parent→child buffers.
 			name: "prerunning_intersession_buffers_dlq", state: session.StateStarting,
 			src: SourceInterSession, wantPath: 7, wantAction: ActionBufferDLQ,
 			wantStatus: session.DeliveryStatusQueued,

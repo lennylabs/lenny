@@ -481,6 +481,7 @@ func (h *flippableHealth) GatewayAvailable() bool { return true }
 // transition reports gapDetected and duplicates the whole retained window to
 // the caller, instead of continuing at the next event.
 func TestOpsEventStreamRedisMintedCursorContinuesInGatewayBufferFallback(t *testing.T) {
+	t.Parallel()
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ctx := context.Background()
 

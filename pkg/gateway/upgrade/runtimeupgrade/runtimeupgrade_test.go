@@ -62,7 +62,7 @@ func newManager(t *testing.T, pools runtimeupgrade.PoolReader, metrics runtimeup
 	return runtimeupgrade.NewManager(store, opts...), store
 }
 
-// spec: §10.5 lines 466-540 — the operator drives a full rollout through
+// spec: §10.5 — the operator drives a full rollout through
 // the linear progression pending -> expanding -> draining -> contracting
 // -> complete; each Proceed is a legal edge and Complete is terminal.
 func TestManager_fullLifecycle_spec_10_5(t *testing.T) {
@@ -144,7 +144,7 @@ func TestManager_startActiveAndRestart_spec_10_5(t *testing.T) {
 	}
 }
 
-// spec: §10.5 line 494 — pause from a non-terminal phase captures the
+// spec: §10.5 — pause from a non-terminal phase captures the
 // prior phase and reason; resume restores the captured phase.
 func TestManager_pauseResume_spec_10_5(t *testing.T) {
 	m, _ := newManager(t, fakePool{specs: map[string][]byte{"p": []byte(`{}`)}}, nil)
@@ -175,7 +175,7 @@ func TestManager_pauseResume_spec_10_5(t *testing.T) {
 	}
 }
 
-// spec: §10.5 lines 506-507 — rollback from Expanding always succeeds and
+// spec: §10.5 — rollback from Expanding always succeeds and
 // moves to Paused with a rollback reason.
 func TestManager_rollbackFromExpanding_spec_10_5(t *testing.T) {
 	m, _ := newManager(t, fakePool{specs: map[string][]byte{"p": []byte(`{"minWarm":2}`)}}, nil)
@@ -193,7 +193,7 @@ func TestManager_rollbackFromExpanding_spec_10_5(t *testing.T) {
 	}
 }
 
-// spec: §10.5 line 507 — rollback from Draining/Contracting requires
+// spec: §10.5 — rollback from Draining/Contracting requires
 // restoreOldPool and a preserved previousPoolSpec.
 func TestManager_rollbackFromDraining_spec_10_5(t *testing.T) {
 	m, _ := newManager(t, fakePool{specs: map[string][]byte{"p": []byte(`{"minWarm":2}`)}}, nil)
@@ -267,7 +267,7 @@ func TestManager_noUpgradeRegistered_spec_10_5(t *testing.T) {
 	}
 }
 
-// spec: §16.1 lines 184-186 — a committed transition emits the gauge
+// spec: §16.1 — a committed transition emits the gauge
 // family; emission count rises only on a durable write.
 func TestManager_metricsEmittedOnCommit_spec_16_1(t *testing.T) {
 	metrics := newRecordingMetrics()

@@ -29,7 +29,7 @@ func CollectClusterComponentsFromClientForTest(ctx context.Context, client kuber
 // RolloutRestartDeploymentForTest exposes rolloutRestartDeployment to the
 // external tier-2 envtest so the §24.19 rollout-restart runs against a real
 // kube-apiserver from an already-built clientset. It is test-only. spec:
-// §24.19 line 264 (the restart is a Deployment rollout-restart).
+// §24.19.
 func RolloutRestartDeploymentForTest(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
 	return rolloutRestartDeployment(ctx, client, namespace, name)
 }

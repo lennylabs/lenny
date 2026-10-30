@@ -155,7 +155,7 @@ func webhookDeploymentArgs(t *testing.T, c *kind.Cluster, deployment string) str
 // posture: failurePolicy: Fail, sandboxtemplates CREATE/UPDATE rule,
 // agent-namespace selector, populated caBundle. The test also admits a
 // compliant SandboxTemplate (deliveryMode: proxy) so the webhook plane
-// is reachable. The §13.15 direct/standard rejection enforces only in
+// is reachable. The TESTING.md §13.15 direct/standard rejection enforces only in
 // multi-tenant mode with devMode off; the e2e overlay runs
 // tenancy.mode: single, devMode: true, so the rejection half is
 // covered by the tier-2/3 component suites.
@@ -218,7 +218,7 @@ spec:
 // diagnosis: §12.5/§13.2 NET-037 lenny-drain-readiness webhook deployed
 // posture: failurePolicy: Fail, pods/eviction CREATE rule,
 // agent-namespace selector, populated caBundle, and the §12.5 gateway
-// callback URL on its Deployment. The §13.19 eviction-blocking
+// callback URL on its Deployment. The TESTING.md §13.19 eviction-blocking
 // rejection fires on a pods/eviction CREATE for a Ready agent pod
 // while the gateway MinIO probe reports unhealthy; driving the probe
 // to an unhealthy state would disrupt the other tier-5/8/9 tests, so
@@ -267,7 +267,7 @@ func TestDrainReadinessWebhook(t *testing.T) {
 // deployed posture: failurePolicy: Fail, sandboxclaims CREATE/UPDATE
 // rule, agent-namespace selector, populated caBundle. The test guards
 // against a chart change that wires --storage-regions without a
-// corresponding rejection test. The §13.28 region rejection cannot be
+// corresponding rejection test. The TESTING.md §13.28 region rejection cannot be
 // exercised on this install: the chart passes no --storage-regions and
 // the sandboxclaims CRD has no dataResidencyRegion field, so a
 // region-bearing claim is rejected by CRD decoding before the webhook.
@@ -299,22 +299,22 @@ func TestAdmissionDataResidency(t *testing.T) {
 
 	// Confirm the chart's _webhook.tpl does not pass --storage-regions:
 	// with no declared regions the validator has nothing to reject a
-	// resolved region against, which is one half of why the §13.28
+	// resolved region against, which is one half of why the TESTING.md §13.28
 	// rejection is unreachable. The absence is asserted so a future
 	// chart change that wires the flag turns this guard into a failure
 	// and prompts the rejection half to be written.
 	args := webhookDeploymentArgs(t, c, webhook)
 	if strings.Contains(args, "--storage-regions") {
 		t.Fatalf("%s Deployment now carries --storage-regions; the chart wires declared regions, so "+
-			"the §13.28 data-residency rejection is now exercisable and this test must drive it.\nargs:\n%s",
+			"the TESTING.md §13.28 data-residency rejection is now exercisable and this test must drive it.\nargs:\n%s",
 			webhook, args)
 	}
 	t.Logf("%s deployed fail-closed, scoped to sandboxclaims CREATE/UPDATE on agent namespaces; "+
-		"chart still does not wire --storage-regions so the §13.28 region rejection is unreachable "+
+		"chart still does not wire --storage-regions so the TESTING.md §13.28 region rejection is unreachable "+
 		"and remains covered by the tier-2/3 component suites", webhook)
 }
 
-// spec: 13.28
+// spec: 13.28, 13.1 (Pod Security)
 // diagnosis: the §6.4 STR-003 lenny-t4-node-isolation webhook does not
 // enforce the T4 dedicated-node rule. The test applies a T4-labelled
 // pod with no T4 nodeSelector or toleration and expects the §6.4
@@ -335,9 +335,11 @@ func TestAdmissionT4NodeIsolation(t *testing.T) {
 
 	// A T4 pod (lenny.dev/workspace-tier: t4) with no T4 nodeSelector
 	// and no T4 toleration — a §6.4 STR-003 violation. The pod sets the
-	// full §13.1 hardened securityContext so the lenny-pod-security
-	// webhook, which also fires on Pod CREATE in agent namespaces,
-	// admits it; the only rejection in scope is the T4 webhook's.
+	// full §13.1 hardened securityContext, including the explicit
+	// non-reserved container identity §13.1 (Container identity)
+	// requires, so the lenny-pod-security webhook, which also fires on
+	// Pod CREATE in agent namespaces, admits it; the only rejection in
+	// scope is the T4 webhook's.
 	const badT4Pod = `apiVersion: v1
 kind: Pod
 metadata:
@@ -358,6 +360,8 @@ spec:
       securityContext:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
+        runAsUser: 1000
+        runAsGroup: 1000
         capabilities:
           drop: ["ALL"]
 `
@@ -408,6 +412,8 @@ spec:
       securityContext:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
+        runAsUser: 1000
+        runAsGroup: 1000
         capabilities:
           drop: ["ALL"]
 `
@@ -420,7 +426,7 @@ spec:
 }
 
 // spec: 13.15
-// diagnosis: the §13.15 LLM Proxy proxy-mode admission posture is not
+// diagnosis: the TESTING.md §13.15 LLM Proxy proxy-mode admission posture is not
 // deployed fail-closed. The LLM Proxy and its proxy-mode admission
 // webhook (lenny-direct-mode-isolation) are rendered when
 // features.llmProxy is true; the e2e overlay sets it, so the test
@@ -444,6 +450,6 @@ func TestLLMProxyProxyMode(t *testing.T) {
 		t.Errorf("%s has an empty clientConfig.caBundle; a fail-closed webhook with no caBundle "+
 			"rejects every covered write", webhook)
 	}
-	t.Logf("%s deployed fail-closed for the §13.15 proxy-mode admission posture; the proxy-mode "+
+	t.Logf("%s deployed fail-closed for the TESTING.md §13.15 proxy-mode admission posture; the proxy-mode "+
 		"credential path itself needs a running agent pod making LLM calls through the proxy", webhook)
 }

@@ -2,7 +2,7 @@
 
 //go:build integration
 
-// Shared helpers for the tier-4 §10.1 line 155 reassembly-on-resume tests
+// Shared helpers for the tier-4 §10.1.7 reassembly-on-resume tests
 // that drive the gateway's chunk resolver, workspace-download stream, and
 // derive chunk-copy against a live MinIO container. A checkpoint's chunks
 // are written as real objects under the §10.1 chunk-object layout
@@ -117,7 +117,6 @@ func seedCompleteManifest(t *testing.T, mstore *partialmanifeststore.MemoryStore
 		TenantID:             tenant,
 		CheckpointID:         checkpointID,
 		SessionID:            session,
-		SlotID:               partialmanifeststore.SlotDefault,
 		ChunkObjectKeyPrefix: fmt.Sprintf("/%s/checkpoints/%s/%s/", tenant, session, checkpointID),
 		ChunkSizeBytes:       16 << 20,
 		ChunkEncoding:        encoding,
@@ -160,7 +159,6 @@ func seedPartialManifest(t *testing.T, mstore *partialmanifeststore.MemoryStore,
 		TenantID:                    tenant,
 		CheckpointID:                checkpointID,
 		SessionID:                   session,
-		SlotID:                      partialmanifeststore.SlotDefault,
 		ChunkObjectKeyPrefix:        fmt.Sprintf("/%s/checkpoints/%s/%s/", tenant, session, checkpointID),
 		ChunkSizeBytes:              16 << 20,
 		ChunkEncoding:               encoding,
@@ -190,8 +188,10 @@ func chunkResolver(store *miniostore.Store, mstore *partialmanifeststore.MemoryS
 }
 
 // newChunkGateway builds a sessionserver.Handler wired with the live MinIO
-// blob store and the memory manifest store, seeded with rows. idFn stamps
-// the derived session id on the derive path. It returns the handler and the
+// blob store, the memory manifest store, and the chunk resolver over both,
+// seeded with rows. The resolver is the one a derived or replayed session's
+// first-bind restore reads, and derive and replay refuse to copy without it.
+// idFn stamps the derived session id on the derive path. It returns the handler and the
 // session store so a test can inspect a derived row.
 func newChunkGateway(t *testing.T, store *miniostore.Store, mstore *partialmanifeststore.MemoryStore, idFn func() string, rows ...sessionstore.Session) (http.Handler, sessionstore.Store) {
 	t.Helper()
@@ -202,9 +202,11 @@ func newChunkGateway(t *testing.T, store *miniostore.Store, mstore *partialmanif
 		}
 	}
 	srv := sessionserver.New(sessions, sessionserver.Options{
+		DevTenantHeader:          true,
 		Blobs:                    store,
 		CheckpointManifestReader: mstore,
 		CheckpointManifestWriter: mstore,
+		ResumeChunkResolver:      chunkResolver(store, mstore),
 		IDFunc:                   idFn,
 		Clock:                    func() time.Time { return time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC) },
 	})

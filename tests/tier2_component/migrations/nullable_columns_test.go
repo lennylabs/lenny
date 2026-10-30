@@ -52,7 +52,7 @@ var addColumnSplit = regexp.MustCompile(`(?i)add column`)
 // precedes its literal within the clause, so a default value that itself
 // contains a comma does not produce a false positive.
 //
-// spec: §10.5 line 415 — every Phase 1 column must be NULLable or carry a
+// spec: §10.5 — every Phase 1 column must be NULLable or carry a
 // server-side DEFAULT until Phase 3 drops the old column; a NOT NULL
 // column with no default breaks the rolling deploy because an old-version
 // replica issues INSERTs that omit it.
@@ -86,7 +86,7 @@ func violatesNullableRule(src string) bool {
 // only be added in a Phase 3 migration via ALTER COLUMN ... SET NOT NULL,
 // after every replica runs the new code.
 //
-// spec: §10.5 line 415.
+// spec: §10.5.
 // diagnosis: a failure means a production up-migration adds a NOT NULL
 // column with no DEFAULT, which breaks the §10.5 expand-contract
 // rolling-deploy invariant by failing INSERTs from old-version replicas.
@@ -123,7 +123,7 @@ func TestPhase1ColumnsAreNullableOrDefaulted_spec_10_5_415(t *testing.T) {
 // where only one column violates (flagged), and a CREATE TABLE with NOT
 // NULL columns (allowed — a new table has no old-version writers).
 //
-// spec: §10.5 line 415.
+// spec: §10.5.
 // diagnosis: a failure means the nullable-column scanner misclassifies a
 // boundary case (a DEFAULT with an embedded comma, a multi-column ALTER,
 // or a CREATE TABLE), so the §10.5 CI defense would miss or falsely flag

@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 )
 
-// spec: §12.9 line 1048; §15.1 line 816 — POST /v1/admin/tenants rejects a
+// spec: §12.9; §15.1 — POST /v1/admin/tenants rejects a
 // workspaceTier outside the closed T3/T4 enum with 400 VALIDATION_ERROR,
 // so an arbitrary string can never persist and be read downstream as
 // "not T4".
@@ -53,7 +53,7 @@ func TestCreateTenantAcceptsValidWorkspaceTier(t *testing.T) {
 	}
 }
 
-// spec: §12.9 line 1048 — PUT /v1/admin/tenants/{id} rejects an
+// spec: §12.9 — PUT /v1/admin/tenants/{id} rejects an
 // out-of-enum workspaceTier before the stricter-only ratchet runs, so a
 // value like "T2" (off the ratchet ladder) cannot slip through as a
 // non-downgrade.
@@ -74,7 +74,7 @@ func TestUpdateTenantRejectsInvalidWorkspaceTier(t *testing.T) {
 	}
 }
 
-// spec: §12.9 line 1033 — a T4→T3 downgrade through PUT is still rejected
+// spec: §12.9 — a T4→T3 downgrade through PUT is still rejected
 // with 422 CLASSIFICATION_CONTROL_VIOLATION (the ratchet, not the enum
 // gate). This guards that the new enum gate does not mask the ratchet.
 func TestUpdateTenantT4ToT3StillRatcheted(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 )
 
-// spec: §4.4 line 254 — pre-checkpoint workspace-size probe.
+// spec: §4.4 — pre-checkpoint workspace-size probe.
 
 func TestSizeReturnsZeroForMissingRoot(t *testing.T) {
 	got, err := workspace.Size(filepath.Join(t.TempDir(), "missing"))

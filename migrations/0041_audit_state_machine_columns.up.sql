@@ -1,10 +1,10 @@
--- §11.7 / §12.3.7 audit pipeline state-machine columns.
+-- §11.7 audit pipeline state-machine columns.
 --
--- The §11.7 OCSF translator and the §12.3.7 EventBus retranscribe
+-- The §11.7 OCSF translator and the EventBus retranscribe
 -- worker advance per-row bookkeeping on audit_log: ocsf_translation_state
 -- runs pending -> retry_pending -> succeeded | dead_lettered, and
 -- eventbus_publish_state runs pending -> retry_pending -> published |
--- failed, with retry_count tracking attempts. §12.3.7 is explicit that
+-- failed, with retry_count tracking attempts. It is explicit that
 -- the retranscribe worker "updates only eventbus_publish_state and
 -- retry_count, both of which are excluded from the payload_canonical_json
 -- hash input" so the prev_hash chain is never re-hashed.
@@ -36,7 +36,7 @@ BEGIN
             'lenny_audit_immutability: audit_log is append-only; DELETE rejected'
             USING ERRCODE = 'insufficient_privilege';
     END IF;
-    -- TG_OP = 'UPDATE'. Permit the §11.7 / §12.3.7 state-machine write
+-- TG_OP = 'UPDATE'. Permit the §11.7 state-machine write
     -- only: the hash-input columns and the audited payload must be
     -- unchanged. ocsf_translation_state, eventbus_publish_state, and
     -- retry_count are the non-hash bookkeeping columns the translator

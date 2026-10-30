@@ -11,10 +11,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §7.3 line 397 / §10.1 line 132 — the gateway persists the
+// spec: §7.3 / §10.1 — the gateway persists the
 // adapter-reported total byte count from the CheckpointSummary frame on
 // WorkspaceSnapshot.Bytes. The §10.1 preStop tiered-cap selection reads
-// it via the SessionEnumerator, and the §7.2 line 138
+// it via the SessionEnumerator, and the §7.2
 // workspaceRecoveryFraction depends on it for partial-workspace resumes.
 // F-7.3.21.
 func TestCheckpointPersistsWorkspaceBytes_F_7_3_21(t *testing.T) {

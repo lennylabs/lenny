@@ -21,7 +21,7 @@ import (
 // store. It downloads the PostgreSQL bundle, so it is skipped under
 // -short.
 //
-// spec: §25.4 lines 2011-2130.
+// spec: §25.4.
 func TestPgStoreRoundTrip_spec_25_4(t *testing.T) {
 	if testing.Short() {
 		t.Skip("downloads the PostgreSQL bundle; skipped under -short")

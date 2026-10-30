@@ -15,7 +15,7 @@
 // (pkg/gateway/sessionusage/pgstore); the in-memory Memory here backs the
 // minimal single-process gateway.
 //
-// spec: §8.8 lines 897-917; §4.9 line 1468.
+// spec: §8.8; §4.9.
 package sessionusage
 
 import (

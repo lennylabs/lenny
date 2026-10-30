@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// spec: §12.8 line 865 — the TenantState enum is closed
+// spec: §12.8 — the TenantState enum is closed
 // (active/disabling/deleting/deleted); the empty pre-lifecycle value is
 // valid and read as active. F-12.8.12.
 func TestValidTenantState_spec_12_8_865(t *testing.T) {
@@ -24,7 +24,7 @@ func TestValidTenantState_spec_12_8_865(t *testing.T) {
 	}
 }
 
-// spec: §12.8 lines 865-873 — only `active` (and the empty value, read
+// spec: §12.8 — only `active` (and the empty value, read
 // as active) accepts new work; every other state rejects it. F-12.8.12.
 func TestAcceptsNewWork_spec_12_8_865(t *testing.T) {
 	cases := map[string]bool{
@@ -41,7 +41,7 @@ func TestAcceptsNewWork_spec_12_8_865(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 865 — a new tenant is born `active`; the in-memory
+// spec: §12.8 — a new tenant is born `active`; the in-memory
 // store defaults the column so the admin API never reports an empty
 // state for a freshly created tenant. F-12.8.12.
 func TestMemoryCreateDefaultsActive_spec_12_8_865(t *testing.T) {
@@ -58,7 +58,7 @@ func TestMemoryCreateDefaultsActive_spec_12_8_865(t *testing.T) {
 	}
 }
 
-// spec: §15.1 lines 818-819 — IsSuspended reports the operator
+// spec: §15.1 — IsSuspended reports the operator
 // suspension marker, orthogonal to the §12.8 deletion lifecycle. An
 // active or even disabling tenant may carry it. F-15.1.3.
 func TestIsSuspended_spec_15_1_818(t *testing.T) {
@@ -78,7 +78,7 @@ func TestIsSuspended_spec_15_1_818(t *testing.T) {
 	}
 }
 
-// spec: §15.1 lines 818-819 — the in-memory store round-trips the
+// spec: §15.1 — the in-memory store round-trips the
 // suspension marker, reason, operator, and timestamp through Update.
 // F-15.1.3.
 func TestMemoryUpdatePersistsSuspension_spec_15_1_818(t *testing.T) {

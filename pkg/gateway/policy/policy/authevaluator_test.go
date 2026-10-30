@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
-// spec: §4.8 lines 972, 1025–1028 — AuthEvaluator admits a request that
+// spec: §4.8 — AuthEvaluator admits a request that
 // carries an authenticated tenant and fails closed when none is present.
 func TestAuthEvaluator_IdentityGate_spec_4_8_972(t *testing.T) {
 	t.Parallel()
@@ -57,7 +57,7 @@ func TestAuthEvaluator_IdentityGate_spec_4_8_972(t *testing.T) {
 	}
 }
 
-// spec: §4.8 lines 972, 1021, 1023 — AuthEvaluator is a built-in at the
+// spec: §4.8 — AuthEvaluator is a built-in at the
 // reserved priority 100 and may register on the PreAuth phase, which
 // external interceptors cannot.
 func TestAuthEvaluator_Contract_spec_4_8_1021(t *testing.T) {

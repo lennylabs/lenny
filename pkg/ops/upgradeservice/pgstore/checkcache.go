@@ -18,7 +18,7 @@ import (
 // CheckCacheStore is the Postgres-backed §25.8 release-channel cache over
 // platform_upgrade_check_cache (migration 0124). It holds the last
 // successful upgrade-check so an unreachable channel serves cached data
-// (§25.8 line 3413) and an air-gapped install can pre-populate the row.
+// (§25.8) and an air-gapped install can pre-populate the row.
 // Construct with NewCheckCache.
 type CheckCacheStore struct {
 	pool *pgxpool.Pool
@@ -58,8 +58,7 @@ func (s *CheckCacheStore) Load(ctx context.Context) (upgradeservice.CachedCheck,
 }
 
 // Save replaces the cached check with the latest successful result. The
-// ttl_seconds column keeps its table default (21600, 6h per §25.8 line
-// 3414); the hourly check cron refreshes the row regardless of TTL.
+// ttl_seconds column keeps its table default (21600, 6h per §25.8); the hourly check cron refreshes the row regardless of TTL.
 func (s *CheckCacheStore) Save(ctx context.Context, cached upgradeservice.CachedCheck) error {
 	respRaw, err := json.Marshal(cached.Manifest)
 	if err != nil {

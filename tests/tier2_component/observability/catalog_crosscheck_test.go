@@ -47,7 +47,7 @@ import (
 // of removed expired lease rows is a first-class observable surface and
 // not an uncatalogued metric.
 //
-// spec: §4.9 line 1671 (sweep worker); §16.1 (metric catalog).
+// spec: §4.9; §16.1 (metric catalog).
 //
 // diagnosis: the expired-lease sweep worker's counter
 // lenny_gateway_credential_leases_swept_total is missing from the §16.1
@@ -185,7 +185,7 @@ func TestPrometheusRuleMatchesAlertCatalog(t *testing.T) {
 		t.Fatal("rendered PrometheusRule has no rule groups")
 	}
 
-	// spec: §25.13 line 4822 — the catalog renders as one rule group per
+	// spec: §25.13 — the catalog renders as one rule group per
 	// §16.5 severity bucket (lenny.critical / lenny.warning /
 	// lenny.info), so flatten the rules across every group before the
 	// catalog cross-check.
@@ -249,7 +249,7 @@ func TestGatewayEvaluatorTracksCatalogAndRenderedChart(t *testing.T) {
 	// tracked rule *set* is under test, so an empty registry suffices
 	// and no evaluation tick is driven.
 	//
-	// spec: §25.13 line 4679 — "**The gateway binary** — the in-process
+	// spec: §25.13 — "**The gateway binary** — the in-process
 	// alert state tracker (Section 25.3, Health API) evaluates these
 	// expressions against the in-process metric registry."
 	catalog := rules.Catalog()
@@ -273,7 +273,7 @@ func TestGatewayEvaluatorTracksCatalogAndRenderedChart(t *testing.T) {
 	// that made evaluator.New silently drop rules, leaves some catalog
 	// name untracked here.
 	//
-	// spec: §25.13 line 4682 — "the rule definitions cannot drift
+	// spec: §25.13 — "the rule definitions cannot drift
 	// between what the gateway evaluates and what Prometheus loads."
 	for name := range catalogNames {
 		if _, ok := ev.State(name); !ok {
@@ -292,7 +292,7 @@ func TestGatewayEvaluatorTracksCatalogAndRenderedChart(t *testing.T) {
 	// catalog (Direction A), so asserting catalog == rendered makes all
 	// three sets equal. A rule the gateway evaluates but the chart never
 	// renders (or the reverse) is exactly the two-source-of-truth drift
-	// §25.13 line 4682 forbids.
+	// §25.13 forbids.
 	for name := range catalogNames {
 		if !renderedNames[name] {
 			t.Errorf("catalog alert %q is evaluated by the gateway but missing from the rendered chart — Prometheus would never load a rule the gateway fires on", name)
@@ -332,7 +332,7 @@ func TestPrometheusRuleFieldsMatchCatalog(t *testing.T) {
 	if len(doc.Spec.Groups) == 0 {
 		t.Fatal("rendered PrometheusRule has no rule groups")
 	}
-	// §25.13 line 4822 per-severity group split — flatten before the
+	// §25.13 per-severity group split — flatten before the
 	// per-field comparison. The map is keyed by the composite alertKey so
 	// the §16.5 / §17.2 multi-pair alerts that share an alert Name compare
 	// against their matching rule rather than collapsing onto one.
@@ -396,7 +396,7 @@ func TestRenderedRuleGroupIsWellFormed(t *testing.T) {
 	if len(doc.Spec.Groups) == 0 {
 		t.Fatal("rendered PrometheusRule has no rule groups")
 	}
-	// §25.13 line 4822 — every per-severity group must be named and
+	// §25.13 — every per-severity group must be named and
 	// carry well-formed rules.
 	for _, g := range doc.Spec.Groups {
 		if g.Name == "" {
@@ -489,8 +489,7 @@ type promRuleFile struct {
 // diagnosis: The ConfigMap the chart renders for vanilla-Prometheus
 //
 //	deployers (monitoring.format=configmap) does not carry a
-//	loadable Prometheus rule file in data["rules.yaml"]. §25.13
-//	line 4721 requires the ConfigMap, mountable into the
+//	loadable Prometheus rule file in data["rules.yaml"]. §25.13 requires the ConfigMap, mountable into the
 //	Prometheus pod's rule_files directory, to hold "the same
 //	rules in standard Prometheus YAML format" — a top-level
 //	`groups:` document whose rules[] carry alert/expr/for. A
@@ -509,7 +508,7 @@ func TestRulesConfigMapIsLoadablePrometheusRuleFile(t *testing.T) {
 	// of a leaked CRD manifest, for example) a hard error rather than a
 	// silently ignored field, so only a genuine rule-file document passes.
 	//
-	// spec: §25.13 line 4721 — "The ConfigMap can be mounted into the
+	// spec: §25.13 — "The ConfigMap can be mounted into the
 	// Prometheus pod's `rule_files` directory. The chart emits the same
 	// rules in standard Prometheus YAML format."
 	dec := yaml.NewDecoder(bytes.NewReader([]byte(payload)))
@@ -553,7 +552,7 @@ func TestRulesConfigMapIsLoadablePrometheusRuleFile(t *testing.T) {
 	// pins the ConfigMap output to the shared catalog rather than accepting
 	// any well-formed but divergent rule file.
 	//
-	// spec: §25.13 line 4721 — "The chart emits the same rules ..."
+	// spec: §25.13 — "The chart emits the same rules ..."
 	for _, r := range rules.Catalog() {
 		if !renderedNames[r.Name] {
 			t.Errorf("§16.5 catalog alert %q is missing from the rendered ConfigMap rules.yaml", r.Name)

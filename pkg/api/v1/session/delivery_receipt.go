@@ -10,21 +10,20 @@ import "time"
 // exactly so the REST and MCP transports remain in lockstep per the
 // §15.2.1 consistency contract.
 //
-// spec: §15.4 lines 1725-1737 (`delivery_receipt` acknowledgement
-// schema); §7.2 line 345; §15.1 message-injection response.
+// spec: §15.4; §7.2; §15.1 message-injection response.
 type DeliveryReceipt struct {
 	// MessageID is the sender-supplied or gateway-assigned identifier
 	// of the message this receipt acknowledges. A gateway-assigned ID
-	// carries the `msg_` prefix per §15.4 line 1784.
+	// carries the `msg_` prefix per §15.4.
 	MessageID string `json:"messageId"`
 
-	// Status is the closed five-value enum from §15.4 line 1730:
+	// Status is the closed five-value enum from §15.4:
 	// `delivered` | `queued` | `dropped` | `expired` | `rate_limited`
 	// | `error`. The MessageResponse marshaller never emits any other
 	// value; implementations MUST NOT introduce synonyms.
 	Status DeliveryStatus `json:"status"`
 
-	// Reason is populated only for the §15.4 line 1742 reason enum
+	// Reason is populated only for the §15.4 reason enum
 	// (status ∈ {dropped, error}). Empty for `delivered` and
 	// `queued` per the same table.
 	Reason DeliveryReason `json:"reason,omitempty"`
@@ -40,7 +39,7 @@ type DeliveryReceipt struct {
 }
 
 // DeliveryStatus is the closed enum on DeliveryReceipt.Status. The
-// canonical values are defined in §15.4 line 1730.
+// canonical values are defined in §15.4.
 type DeliveryStatus string
 
 const (
@@ -53,7 +52,7 @@ const (
 )
 
 // DeliveryReason is the closed enum on DeliveryReceipt.Reason. The
-// canonical values are defined in the §15.4 line 1739
+// canonical values are defined in the §15.4
 // `delivery_receipt.reason` table.
 type DeliveryReason string
 

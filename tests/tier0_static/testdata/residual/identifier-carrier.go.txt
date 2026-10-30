@@ -1,0 +1,9 @@
+package carrier
+
+// Events names the stream the naming table retires the controlchannel
+// stem for, written there in the spelling the pass reads.
+type Events struct{}
+
+// ReadControlChannel writes the stem as a camel-case component of a Go
+// identifier, which the pass's token rule does not read.
+func (e *Events) ReadControlChannel() {}

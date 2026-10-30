@@ -12,7 +12,7 @@
 // run inside a tenant-scoped transaction; the table has no RLS policy
 // and no tenant column.
 //
-// spec: §25.4 lines 2011-2130.
+// spec: §25.4.
 package pgstore
 
 import (

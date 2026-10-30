@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Contract test for the §5.1 line 49 Postgres-backed per-tenant runtime
+// Contract test for the §5.1 Postgres-backed per-tenant runtime
 // capability override store (pkg/gateway/runtimecapoverride/pgstore)
 // against a real container with the production migrations applied. Covers
 // the JSONB override round-trip, upsert, delete idempotency, list, and
@@ -47,7 +47,7 @@ func freshTenant(t *testing.T, ctx context.Context, pg *containers.Postgres) str
 	return id
 }
 
-// spec: §5.1 line 49.
+// spec: §5.1.
 // diagnosis: a failure means the per-tenant runtime-capability-override
 // store does not round-trip a written override, so an admin-configured
 // override would be lost or corrupted on read-back.

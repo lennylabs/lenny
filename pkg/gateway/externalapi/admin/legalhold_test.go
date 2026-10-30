@@ -119,7 +119,7 @@ func TestSetLegalHold(t *testing.T) {
 	if !got.LegalHold {
 		t.Error("POST hold:true must set LegalHold on the session")
 	}
-	// spec: §15.1 line 865 — the hold's provenance is recorded so the
+	// spec: §15.1 — the hold's provenance is recorded so the
 	// list endpoint can report setBy/setAt/note.
 	if got.LegalHoldSetBy == "" || got.LegalHoldSetAt.IsZero() || got.LegalHoldNote != "incident-42" {
 		t.Errorf("provenance not recorded: setBy=%q setAt=%v note=%q",
@@ -146,7 +146,7 @@ func TestClearLegalHold(t *testing.T) {
 	if got.LegalHold {
 		t.Error("POST hold:false must clear LegalHold on the session")
 	}
-	// spec: §15.1 line 865 — a released hold reports no stale provenance.
+	// spec: §15.1 — a released hold reports no stale provenance.
 	if got.LegalHoldSetBy != "" || !got.LegalHoldSetAt.IsZero() || got.LegalHoldNote != "" {
 		t.Errorf("clear must blank provenance: setBy=%q setAt=%v note=%q",
 			got.LegalHoldSetBy, got.LegalHoldSetAt, got.LegalHoldNote)
@@ -165,8 +165,7 @@ func TestSetLegalHoldNotFound(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 865 (legal-hold requires platform-admin or
-// tenant-admin); §10.2 line 280 (tenant-admin own-tenant legal hold).
+// spec: §15.1; §10.2.
 //
 // A tenant-admin sets a hold on its own tenant, is rejected (403
 // FORBIDDEN) on a foreign tenant, and a platform-admin sets across
@@ -225,7 +224,7 @@ func TestSetLegalHoldRequiresSessionOrArtifact(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 864 — note is required when setting a hold.
+// spec: §15.1 — note is required when setting a hold.
 func TestSetLegalHoldRequiresNoteWhenHolding(t *testing.T) {
 	router, sessions, _ := newLegalHoldAdmin(t)
 	seedSession(t, sessions, sessionstore.Session{ID: "sess_n", TenantID: "acme", UserID: "alice@acme.com"})
@@ -246,7 +245,7 @@ func TestSetLegalHoldRequiresNoteWhenHolding(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 735 — exactly one of sessionId / artifactId.
+// spec: §12.8 — exactly one of sessionId / artifactId.
 func TestSetLegalHoldRejectsBothScopes(t *testing.T) {
 	router, sessions, _ := newLegalHoldAdmin(t)
 	seedSession(t, sessions, sessionstore.Session{ID: "sess_x", TenantID: "acme", UserID: "alice@acme.com"})
@@ -258,7 +257,7 @@ func TestSetLegalHoldRejectsBothScopes(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 735 — POST /v1/admin/legal-hold accepts an artifact
+// spec: §12.8 — POST /v1/admin/legal-hold accepts an artifact
 // ID and flips artifacts.legal_hold.
 func TestSetArtifactLegalHold(t *testing.T) {
 	sessions := memstore.New()

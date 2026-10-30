@@ -2,7 +2,7 @@
 
 //go:build security
 
-// Tier-9 §12.9.5 SSRF and DNS-rebinding test for the §25.5
+// Tier-9 TESTING.md §12.9.5 SSRF and DNS-rebinding test for the §25.5
 // /v1/admin/event-subscriptions webhook delivery path. The unit tests in
 // pkg/ops/eventsubscription exercise the callback-URL validator in
 // isolation with a fixed resolver; they never drive a delivery attempt
@@ -44,7 +44,7 @@ const publicWebhookIP = "93.184.216.34"
 // guard: it returns whichever address was last set, so a test can resolve
 // a host to a public address at create time and flip it to a
 // loopback/IMDS/private address before the delivery guard re-resolves.
-// This is the adversary's DNS server in the §12.9.5 rebinding scenario.
+// This is the adversary's DNS server in the TESTING.md §12.9.5 rebinding scenario.
 type rebindResolver struct {
 	mu   sync.Mutex
 	addr string
@@ -112,20 +112,20 @@ func TestEventWebhookDNSRebindingRejectedAtDelivery_spec_25_5(t *testing.T) {
 				CallbackURL: vec.host, Body: []byte(`{}`), Secret: []byte("whsec"),
 			})
 			if out.Delivered() {
-				t.Fatalf("§12.9.5 violation: delivery to %q succeeded after the host rebound to %s; the "+
+				t.Fatalf("TESTING.md §12.9.5 violation: delivery to %q succeeded after the host rebound to %s; the "+
 					"per-delivery SSRF guard did not re-resolve", vec.host, vec.rebindTo)
 			}
 			if out.Err == nil {
-				t.Fatalf("§12.9.5 violation: delivery to a host rebound to %s returned no error", vec.rebindTo)
+				t.Fatalf("TESTING.md §12.9.5 violation: delivery to a host rebound to %s returned no error", vec.rebindTo)
 			}
 			// StatusCode is only set from an HTTP response; a zero code proves the
 			// guard rejected the attempt before any request left the process.
 			if out.StatusCode != 0 {
-				t.Errorf("§12.9.5: rebound-host delivery returned HTTP status %d; the receiver was contacted "+
+				t.Errorf("TESTING.md §12.9.5: rebound-host delivery returned HTTP status %d; the receiver was contacted "+
 					"despite the SSRF guard", out.StatusCode)
 			}
 			if code := eventsubscription.CodeOf(out.Err); code != eventsubscription.ErrCodeWebhookValidation {
-				t.Errorf("§12.9.5: rebound-host delivery failed with code %q, want %q (err %v)",
+				t.Errorf("TESTING.md §12.9.5: rebound-host delivery failed with code %q, want %q (err %v)",
 					code, eventsubscription.ErrCodeWebhookValidation, out.Err)
 			}
 		})
@@ -155,21 +155,21 @@ func TestEventWebhookDNSRebindingRejectedAtDelivery_spec_25_5(t *testing.T) {
 			transport := webhookdelivery.NewTransport(2 * time.Second).WithSSRFGuard(validator.Validate)
 
 			if err := validator.Validate(ctx, vec.host); err == nil {
-				t.Fatalf("§12.9.5 violation: create-time validation admitted a smuggling URL %q", vec.host)
+				t.Fatalf("TESTING.md §12.9.5 violation: create-time validation admitted a smuggling URL %q", vec.host)
 			}
 			out := transport.Deliver(ctx, webhookdelivery.Delivery{
 				CallbackURL: vec.host, Body: []byte(`{}`), Secret: []byte("whsec"),
 			})
 			if out.Delivered() || out.Err == nil {
-				t.Fatalf("§12.9.5 violation: delivery to a smuggling URL %q was not rejected (out %+v)",
+				t.Fatalf("TESTING.md §12.9.5 violation: delivery to a smuggling URL %q was not rejected (out %+v)",
 					vec.host, out)
 			}
 			if out.StatusCode != 0 {
-				t.Errorf("§12.9.5: smuggling-URL delivery returned HTTP status %d; the receiver was contacted",
+				t.Errorf("TESTING.md §12.9.5: smuggling-URL delivery returned HTTP status %d; the receiver was contacted",
 					out.StatusCode)
 			}
 			if code := eventsubscription.CodeOf(out.Err); code != eventsubscription.ErrCodeWebhookValidation {
-				t.Errorf("§12.9.5: smuggling-URL delivery failed with code %q, want %q (err %v)",
+				t.Errorf("TESTING.md §12.9.5: smuggling-URL delivery failed with code %q, want %q (err %v)",
 					code, eventsubscription.ErrCodeWebhookValidation, out.Err)
 			}
 		})
@@ -265,10 +265,10 @@ func TestEventWebhookRebindingDeliveryMarkedFailed_spec_25_5(t *testing.T) {
 		t.Fatalf("recorded %d deliveries, want 1", len(records))
 	}
 	if !records[0] {
-		t.Errorf("§12.9.5: the rebound-host delivery was recorded as succeeded, want failed")
+		t.Errorf("TESTING.md §12.9.5: the rebound-host delivery was recorded as succeeded, want failed")
 	}
 	if failedSub != "sub-rebind" || failedEvent != "evt-rebind" {
-		t.Errorf("§12.9.5: event_delivery_failed emitted for sub %q event %q, want sub-rebind/evt-rebind",
+		t.Errorf("TESTING.md §12.9.5: event_delivery_failed emitted for sub %q event %q, want sub-rebind/evt-rebind",
 			failedSub, failedEvent)
 	}
 }

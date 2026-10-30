@@ -9,11 +9,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/preflight"
 )
 
-// InfraPreflighter runs the §15.1 line 890 infrastructure-connectivity
+// InfraPreflighter runs the §15.1 infrastructure-connectivity
 // preflight (Postgres, Redis, MinIO connectivity and schema version)
 // against the gateway's configured backends and returns one result per
 // check. *infra.Run wired against the gateway's resolved DSNs satisfies
-// it; tests inject a fake. spec: §15.1 line 890; §24.2.
+// it; tests inject a fake. spec: §15.1; §24.2.
 type InfraPreflighter interface {
 	Preflight(ctx context.Context) []preflight.CheckResult
 }
@@ -26,7 +26,7 @@ func (f InfraPreflightFunc) Preflight(ctx context.Context) []preflight.CheckResu
 	return f(ctx)
 }
 
-// WithPreflight wires the §15.1 line 890 infrastructure preflight onto
+// WithPreflight wires the §15.1 infrastructure preflight onto
 // the Router, registering `POST /v1/admin/preflight`. Without it the
 // endpoint stays unregistered (a 404), so a gateway with no configured
 // backends does not advertise a probe it cannot run.
@@ -56,7 +56,7 @@ type PreflightResponse struct {
 // Passed=false in the body with HTTP 200: the probe itself succeeded;
 // the negative finding is the payload, not a processing error.
 //
-// spec: §15.1 line 890; §24.2.
+// spec: §15.1; §24.2.
 func (r *Router) handlePreflight(w http.ResponseWriter, req *http.Request) {
 	report := r.preflighter.Preflight(req.Context())
 	resp := PreflightResponse{Passed: !preflight.Failed(report), Checks: make([]PreflightCheckResult, 0, len(report))}

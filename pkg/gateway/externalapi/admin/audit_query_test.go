@@ -17,7 +17,7 @@ import (
 )
 
 // spec: §25.9 Audit Log Query API.
-// spec: §4.4 line 232 — OCSF audit-egress translator.
+// spec: §4.4 — OCSF audit-egress translator.
 
 func newAuditQueryRouter(t *testing.T) (*admin.Router, *audit.ChainSet) {
 	t.Helper()
@@ -32,7 +32,7 @@ func newAuditQueryRouter(t *testing.T) (*admin.Router, *audit.ChainSet) {
 	return router, chains
 }
 
-// TestListAuditEventsReturnsOCSFEnvelope confirms the §4.4 line 232
+// TestListAuditEventsReturnsOCSFEnvelope confirms the §4.4
 // audit-egress contract: the list endpoint returns OCSF v1.1.0
 // records wrapped in the envelope with `ocsfVersion` and
 // `translatorVersion`.
@@ -167,7 +167,7 @@ func TestAuditQueryRejectsRegularUser(t *testing.T) {
 	}
 }
 
-// spec: §25.9 line 3659 — limit default 100, max 1000. An out-of-range
+// spec: §25.9 — limit default 100, max 1000. An out-of-range
 // or unparseable value MUST surface as 400 INVALID_ARGUMENT rather than
 // being silently coerced to the default.
 func TestListAuditEventsRejectsOutOfRangeLimit_spec_25_9_3659(t *testing.T) {
@@ -183,7 +183,7 @@ func TestListAuditEventsRejectsOutOfRangeLimit_spec_25_9_3659(t *testing.T) {
 	}
 }
 
-// spec: §25.9 line 3659 — limit values inside 1..1000 MUST succeed; the
+// spec: §25.9 — limit values inside 1..1000 MUST succeed; the
 // boundary values 1 and 1000 are valid.
 func TestListAuditEventsAcceptsBoundaryLimits_spec_25_9_3659(t *testing.T) {
 	router, _ := newAuditQueryRouter(t)

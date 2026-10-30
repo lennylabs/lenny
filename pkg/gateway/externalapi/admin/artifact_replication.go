@@ -23,7 +23,7 @@ import (
 // endpoints answering 503 (replication is not configured on this
 // deployment, the Tier-1 dev default).
 //
-// spec: §25.11 lines 3898-3899.
+// spec: §25.11.
 type ArtifactReplicationController interface {
 	// Resume re-runs the residency preflight for a suspended region and
 	// clears the suspension only when the preflight passes, recording the
@@ -41,7 +41,7 @@ type ArtifactReplicationController interface {
 // /v1/admin/artifact-replication/{region}/{resume,status} reach the live
 // controller. The gateway calls this once the controller is built
 // (after the admin Handler is mounted); the handlers read the field at
-// request time, so the late wiring takes effect. spec: §25.11 line 3898.
+// request time, so the late wiring takes effect. spec: §25.11.
 func (r *Router) WithArtifactReplication(c ArtifactReplicationController) *Router {
 	r.artifactReplication = c
 	return r
@@ -55,8 +55,7 @@ type resumeArtifactReplicationRequest struct {
 
 // writeArtifactReplicationError maps a §25.11 replication error to the
 // canonical envelope. A persisting jurisdiction mismatch is the
-// PERMANENT 422 ARTIFACT_REPLICATION_REGION_UNRESOLVABLE (§25.11 Error
-// Codes table line 4337); an unknown region is a 404; anything else is a
+// PERMANENT 422 ARTIFACT_REPLICATION_REGION_UNRESOLVABLE (§25.11 Error Codes table); an unknown region is a 404; anything else is a
 // 500.
 func writeArtifactReplicationError(w http.ResponseWriter, err error) {
 	switch {
@@ -92,7 +91,7 @@ func (r *Router) artifactReplicationUnconfigured(w http.ResponseWriter) {
 // post-fix destination_jurisdiction_tag. Requires platform-admin (the
 // requireAdmin gate the route is mounted behind).
 //
-// spec: §25.11 line 3898.
+// spec: §25.11.
 func (r *Router) handleResumeArtifactReplication(w http.ResponseWriter, req *http.Request) {
 	if r.artifactReplication == nil {
 		r.artifactReplicationUnconfigured(w)
@@ -109,7 +108,7 @@ func (r *Router) handleResumeArtifactReplication(w http.ResponseWriter, req *htt
 		return
 	}
 	if strings.TrimSpace(body.Justification) == "" {
-		// §25.11 line 3898: the operator justification is recorded in the
+		// §25.11: the operator justification is recorded in the
 		// audit trail. An empty justification would leave the compliance
 		// resume unattributed, so it is rejected before the preflight runs.
 		writeError(w, http.StatusBadRequest, "JUSTIFICATION_REQUIRED",
@@ -125,7 +124,7 @@ func (r *Router) handleResumeArtifactReplication(w http.ResponseWriter, req *htt
 		return
 	}
 	// The resume cleared the suspension; return the fresh state so the
-	// agent confirms the post-fix jurisdiction tag (§25.11 line 3898).
+	// agent confirms the post-fix jurisdiction tag (§25.11).
 	st, ok, err := r.artifactReplication.GetState(req.Context(), region)
 	if err != nil || !ok {
 		writeJSON(w, http.StatusOK, replication.RegionState{Region: region, State: replication.StateActive})
@@ -142,7 +141,7 @@ func (r *Router) handleResumeArtifactReplication(w http.ResponseWriter, req *htt
 // suspensions before the ArtifactReplicationResidencyViolation alert
 // escalates. Requires platform-admin.
 //
-// spec: §25.11 line 3899.
+// spec: §25.11.
 func (r *Router) handleArtifactReplicationStatus(w http.ResponseWriter, req *http.Request) {
 	if r.artifactReplication == nil {
 		r.artifactReplicationUnconfigured(w)

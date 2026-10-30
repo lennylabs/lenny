@@ -64,7 +64,7 @@ func TestIdempotencyStoreContract(t *testing.T) {
 		if got.Response.StatusCode != 201 {
 			t.Errorf("StatusCode: got %d, want 201", got.Response.StatusCode)
 		}
-		// spec: §11.5 line 277 — replay reproduces "the cached response
+		// spec: §11.5 — replay reproduces "the cached response
 		// (same HTTP status and body)"; preserving multi-value headers
 		// keeps Set-Cookie round-trips faithful instead of dropping the
 		// later values. Closes F-11.5.9.

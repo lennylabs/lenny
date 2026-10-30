@@ -15,25 +15,29 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// rotationGateServer wires a Server to a freshly handshaken lifecycle
-// channel with one assigned credential, ready to exercise the §4.7
-// Full-level rotation protocol.
+// rotationGateServer wires a Server to a freshly handshaken CH-RUNTIMEOPS
+// with one assigned credential and the session started on a runtime that
+// answers its session_start, ready to exercise the §4.7 Full-level rotation
+// protocol.
 func rotationGateServer(t *testing.T) (*Server, *fakeRuntime) {
 	t.Helper()
-	lc, fr := startLifecycleChannel(t)
+	lc, fr := startRuntimeOps(t)
 	fr.handshake()
+	awaitHandshake(t, lc)
 	s := New("rotation-test")
 	s.CredentialsDir = t.TempDir()
 	s.CheckpointPoolLabel = "test-pool"
 	s.Lifecycle = lc
 	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
 		Leases: map[string]*adapterv1.CredentialLease{
 			"anthropic": {LeaseId: "l-1", Provider: "anthropic", Payload: []byte("{}")},
 		},
 	}); err != nil {
 		t.Fatalf("AssignCredentials: %v", err)
 	}
+	startAckedSession(t, s, "sess-1")
 	return s, fr
 }
 
@@ -59,7 +63,7 @@ func expectNoFrame(t *testing.T, fr *fakeRuntime, d time.Duration) {
 	_ = fr.conn.SetReadDeadline(time.Time{})
 }
 
-// TestRotationInflightGateBlocksUntilDrained covers §4.7 line 820: the
+// TestRotationInflightGateBlocksUntilDrained covers §4.7: the
 // adapter waits for in-flight LLM requests to complete before sending
 // credentials_rotated. proactive_renewal waits unbounded.
 func TestRotationInflightGateBlocksUntilDrained_spec_4_7(t *testing.T) {
@@ -81,7 +85,7 @@ func TestRotationInflightGateBlocksUntilDrained_spec_4_7(t *testing.T) {
 	expectNoFrame(t, fr, 200*time.Millisecond)
 
 	// Draining the in-flight request releases the gate.
-	fr.write(lifecycleFrame{Type: "llm_request_completed", RequestID: "r1", Provider: "anthropic", Status: "ok"})
+	fr.write(lifecycleFrame{Type: "llm_request_completed", SessionID: "sess-1", RequestID: "r1", Provider: "anthropic", Status: "ok"})
 	if got := fr.read(); got.Type != "credentials_rotated" || got.LeaseID != "l-2" {
 		t.Fatalf("runtime saw %+v, want credentials_rotated lease l-2", got)
 	}
@@ -97,7 +101,7 @@ func (r *recordingAudit) EmitRotationCeilingHit(_ context.Context, e RotationCei
 	r.hits = append(r.hits, e)
 }
 
-// TestRotationCeilingHit covers §4.7 line 822: a fault/revocation trigger
+// TestRotationCeilingHit covers §4.7: a fault/revocation trigger
 // caps the in-flight wait at the ceiling, sends credentials_rotated
 // regardless, and records the ceiling counter plus the durable audit
 // event.
@@ -142,7 +146,7 @@ func TestRotationCeilingHit_spec_4_7(t *testing.T) {
 	}
 }
 
-// TestRotationAckTimeoutFallsThrough covers §4.7 lines 824-826: a missing
+// TestRotationAckTimeoutFallsThrough covers §4.7: a missing
 // credentials_acknowledged within the timeout returns DeadlineExceeded so
 // the gateway takes the standard rotation path, and increments the
 // timeout counter.

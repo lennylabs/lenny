@@ -84,4 +84,4 @@ Checklist item 3 is satisfied for lease identifiers: `credential.MintLease` deri
 
 ## How this file is consumed
 
-`phase-5.6-gate` (groups.yaml) asserts this file exists and parses as Markdown. The gate does not parse the checklist items; it pins the artifact in place so the review surface is discoverable. A separate human pass walks the checklist and edits the Findings section before the §5.6 phase gate closes.
+`phase-5.6-gate` (groups.yaml) asserts this file exists and parses as Markdown. The gate does not parse the checklist items; it pins the artifact in place so the review surface is discoverable. A separate human pass walks the checklist and edits the Findings section before the §5 phase gate closes.

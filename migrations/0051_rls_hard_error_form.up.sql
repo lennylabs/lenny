@@ -1,4 +1,4 @@
--- §4.2 line 163: every tenant-scoped table's RLS policy must use
+-- §4.2: every tenant-scoped table's RLS policy must use
 -- current_setting('app.current_tenant', false) so an unset GUC raises
 -- rather than silently falling through.
 --

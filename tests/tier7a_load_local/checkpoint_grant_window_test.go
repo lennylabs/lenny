@@ -14,12 +14,11 @@
 //   - a lagging Stat confirm never blocks the next grant (confirmation runs
 //     off the grant's critical path);
 //   - out-of-order chunk acknowledgements confirm each chunk exactly once;
-//   - a periodic checkpoint and a concurrent seal of one (session, slot)
-//     serialise on the single-flight lock rather than interleaving their
+//   - a periodic checkpoint and a concurrent seal of one session serialise
+//     on the per-session single-flight lock rather than interleaving their
 //     manifest writes.
 //
-// spec: §10.1 line 131 (fire-and-forget confirm, at-most-window grants
-// outstanding), §5.2 (checkpointGrantWindow), §10.1 supersede-on-write
+// spec: §10.1, §5.2 (checkpointGrantWindow), §10.1 supersede-on-write
 // (single-flight).
 
 package tier7a_load_local_test
@@ -433,7 +432,7 @@ func gwDial(t *testing.T, srv adapterv1.AdapterServer) *adapterclient.Client {
 	return cl
 }
 
-// spec: §5.2 / §10.1 line 131 — the resolved grant window bounds outstanding
+// spec: §5.2 / §10.1.7 — the resolved grant window bounds outstanding
 // grants by backpressure: a producer that pipelines every declaration ahead
 // of any ack is paced, not aborted. The gateway keeps at most `window` grants
 // outstanding, mints the (window+1)th grant only after the first chunk is
@@ -519,7 +518,7 @@ func TestResolvedPoolWindowOverridesDeploymentDefault(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 131 — a lagging Stat confirm never blocks the next
+// spec: §10.1.7 — a lagging Stat confirm never blocks the next
 // grant: the serial producer completes within the deadline even though
 // every confirm sleeps, because the ack (not the Stat) releases the window.
 // diagnosis: a slow Stat confirm blocked the next grant, so the serial
@@ -545,7 +544,7 @@ func TestLaggingStatDoesNotBlockNextGrant(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 131 — out-of-order chunk acknowledgements confirm each
+// spec: §10.1.7 — out-of-order chunk acknowledgements confirm each
 // chunk exactly once under the monotonic counter and the per-key catalog
 // insert.
 // diagnosis: out-of-order acknowledgements confirmed a chunk more than
@@ -568,12 +567,12 @@ func TestOutOfOrderAcksConfirmExactlyOnce(t *testing.T) {
 }
 
 // spec: §10.1 supersede-on-write — a periodic checkpoint and a concurrent
-// seal of one (session, slot) serialise on the single-flight lock; under
+// seal of one session serialise on the per-session single-flight lock; under
 // the race detector neither corrupts the other's manifest writes and both
 // complete.
-// diagnosis: a periodic checkpoint and a concurrent seal on the same
-// (session, slot) did not serialise on the single-flight lock, so one
-// corrupts the other's manifest writes under the race detector.
+// diagnosis: a periodic checkpoint and a concurrent seal on the same session
+// did not serialise on the per-session single-flight lock, so one corrupts
+// the other's manifest writes under the race detector.
 func TestPeriodicVsSealSerialiseOnSingleFlight(t *testing.T) {
 	adapter := &scriptAdapter{probeBytes: 30, chunkCount: 3, chunkLen: 10}
 	h := newGWHarness(t, adapter, 4, 0)

@@ -22,7 +22,8 @@ This page presents a complete file summarizer runtime in TypeScript. It implemen
  *   - Reads JSON Lines from stdin
  *   - Handles "message" by reading workspace files and summarizing them
  *   - Uses adapter-local tools (read_file, list_dir) via tool_call/tool_result
- *   - Handles "heartbeat" by responding with "heartbeat_ack"
+ *   - Handles "heartbeat" by responding with "heartbeat_ack", reporting busy
+ *     for the session whose message is in progress
  *   - Handles "shutdown" by exiting cleanly
  *   - Ignores unknown message types for forward compatibility
  *
@@ -43,6 +44,9 @@ interface InboundMessage {
   type: string;
   id?: string;
   input?: MessagePart[];
+  // Names the session this frame is addressed to. The adapter populates it on
+  // every pod, and the runtime echoes it on the frames it emits in response.
+  sessionId?: string;
   ts?: number;
   reason?: string;
   deadline_ms?: number;
@@ -54,12 +58,14 @@ interface InboundMessage {
 interface ToolCall {
   type: "tool_call";
   id: string;
+  sessionId?: string;
   name: string;
   arguments: Record<string, string>;
 }
 
 interface Response {
   type: "response";
+  sessionId?: string;
   output: MessagePart[];
 }
 
@@ -71,6 +77,9 @@ let phase = 0; // 0=idle, 1=listing, 2=reading, 3=summarizing
 let fileList: string[] = [];
 let fileContents: string[] = [];
 let currentFileIndex = 0;
+// Sessions whose message is in progress, from handleMessage until
+// writeResponse answers it.
+const busySessions = new Set<string>();
 
 // ---- Output helpers ----
 
@@ -87,14 +96,22 @@ function writeJSON(obj: unknown): void {
 }
 
 /**
- * Send a response message signaling task completion.
+ * Send a response message signaling task completion, addressed to the session
+ * the inbound frame it answers was addressed to. The address is read from that
+ * frame rather than held between frames, so a response emitted on a tool_result
+ * continuation stays on the session that tool_result belongs to. The field is
+ * optional, so an inbound frame that carried no address emits none.
  */
-function writeResponse(text: string): void {
+function writeResponse(sessionId: string | undefined, text: string): void {
   const resp: Response = {
     type: "response",
+    sessionId,
     output: [{ type: "text", inline: text }],
   };
   writeJSON(resp);
+  if (sessionId !== undefined) {
+    busySessions.delete(sessionId);
+  }
   phase = 0;
 }
 
@@ -119,12 +136,13 @@ function truncate(s: string, n = 500): string {
 /**
  * Send a list_dir tool call.
  */
-function listDir(path: string): void {
+function listDir(sessionId: string | undefined, path: string): void {
   const id = nextToolCallId();
   pendingToolCallId = id;
   const call: ToolCall = {
     type: "tool_call",
     id,
+    sessionId,
     name: "list_dir",
     arguments: { path },
   };
@@ -134,14 +152,15 @@ function listDir(path: string): void {
 /**
  * Send a read_file tool call for the next file in the list.
  */
-function readNextFile(): void {
+function readNextFile(sessionId: string | undefined): void {
   if (currentFileIndex >= fileList.length) return;
   const id = nextToolCallId();
   pendingToolCallId = id;
-  const filePath = `/workspace/current/${fileList[currentFileIndex]}`;
+  const filePath = `/workspace/slots/${sessionId}/current/${fileList[currentFileIndex]}`;
   const call: ToolCall = {
     type: "tool_call",
     id,
+    sessionId,
     name: "read_file",
     arguments: { path: filePath },
   };
@@ -159,6 +178,9 @@ function handleMessage(msg: InboundMessage): void {
   fileContents = [];
   currentFileIndex = 0;
   phase = 1;
+  if (msg.sessionId !== undefined) {
+    busySessions.add(msg.sessionId);
+  }
 
   // Extract the user's request text.
   let requestText = "";
@@ -167,8 +189,9 @@ function handleMessage(msg: InboundMessage): void {
   }
   process.stderr.write(`file-summarizer: received request: ${requestText}\n`);
 
-  // Step 1: List files in the workspace.
-  listDir("/workspace/current");
+  // Step 1: List files in the workspace. The tool_call this message triggers
+  // is addressed to the session the message itself was addressed to.
+  listDir(msg.sessionId, `/workspace/slots/${msg.sessionId}/current`);
 }
 
 /**
@@ -190,7 +213,7 @@ function handleToolResult(msg: InboundMessage): void {
       errorText = msg.content[0].inline || errorText;
     }
     process.stderr.write(`file-summarizer: tool error: ${errorText}\n`);
-    writeResponse(`Error reading workspace: ${errorText}`);
+    writeResponse(msg.sessionId, `Error reading workspace: ${errorText}`);
     return;
   }
 
@@ -207,14 +230,14 @@ function handleToolResult(msg: InboundMessage): void {
     }
 
     if (fileList.length === 0) {
-      writeResponse("No files found in the workspace.");
+      writeResponse(msg.sessionId, "No files found in the workspace.");
       return;
     }
 
     // Step 2: Start reading files one by one.
     phase = 2;
     currentFileIndex = 0;
-    readNextFile();
+    readNextFile(msg.sessionId);
   } else if (phase === 2) {
     // Phase 2: We received a file's contents.
     if (msg.content && msg.content.length > 0) {
@@ -226,11 +249,11 @@ function handleToolResult(msg: InboundMessage): void {
     currentFileIndex++;
     if (currentFileIndex < fileList.length && currentFileIndex < 10) {
       // Read the next file (cap at 10 files).
-      readNextFile();
+      readNextFile(msg.sessionId);
     } else {
       // All files read. Produce the summary.
       phase = 3;
-      produceSummary();
+      produceSummary(msg.sessionId);
     }
   }
 }
@@ -238,14 +261,14 @@ function handleToolResult(msg: InboundMessage): void {
 /**
  * Generate the final summary response.
  */
-function produceSummary(): void {
+function produceSummary(sessionId: string | undefined): void {
   const lines = [`Workspace Summary (${fileContents.length} files)\n`];
   for (const fc of fileContents) {
     lines.push(fc);
     lines.push("");
   }
   lines.push(`Total files examined: ${fileContents.length}`);
-  writeResponse(lines.join("\n"));
+  writeResponse(sessionId, lines.join("\n"));
 }
 
 // ---- Main loop ----
@@ -280,8 +303,13 @@ function main(): void {
         break;
 
       case "heartbeat":
-        // Respond immediately. Failure to ack within 10 seconds causes SIGTERM.
-        writeJSON({ type: "heartbeat_ack" });
+        // Respond immediately, within 10 seconds. While a message for the
+        // session the heartbeat names is in progress, report busy.
+        if (msg.sessionId !== undefined && busySessions.has(msg.sessionId)) {
+          writeJSON({ type: "heartbeat_ack", sessionId: msg.sessionId, busy: true });
+        } else {
+          writeJSON({ type: "heartbeat_ack" });
+        }
         break;
 
       case "shutdown":
@@ -310,6 +338,10 @@ main();
 ```
 
 ---
+
+## Heartbeats and busy reporting
+
+The adapter sends a `heartbeat` once per interval for each session, naming the session in `sessionId`. The example acknowledges each heartbeat at once, and while a message is in progress it acknowledges a heartbeat that names that message's session with `busy: true`. If no acknowledgment arrives within 10 seconds, the adapter treats the runtime as hung for the session the heartbeat names: it ends the session's stream to the gateway when one is open and refuses each later stream for the session until the adapter releases the session, and the runtime process receives no signal. The gateway handles the session as a runtime crash under its retry policy. A runtime reports `busy: true` with the heartbeat's `sessionId` on its `heartbeat_ack` while it does any work for the session the heartbeat names, as in `{"type":"heartbeat_ack","sessionId":"sess_abc","busy":true}`. The runtime SDKs do this while a message for the session is pending or being handled and while a busy hold (`HoldBusy` in Go, `hold_busy` in Python, `holdBusy` in TypeScript) is held. Work after a handler returns that takes no hold, including the rest of a streaming turn whose reply is not yet final, is not reported. Without a report, the adapter counts only the following traffic as activity for a session: each frame it writes to the runtime for the session other than `heartbeat` and `session_end`; each `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, or `status` frame it reads from the runtime that names the session, or that carries no `sessionId` on a pod holding at most one [slot](../../reference/glossary#slot); each CH-RUNTIMEOPS `llm_request_completed` that names the session; and each platform or connector MCP tool call for the session while it is in flight. When the gateway's idle clock (`maxClientIdleSeconds`, default 900s) fires for a session, the adapter seals the session only when it had none of that activity and no `busy` report in the window, and the gateway then idle-suspends the session and releases its pod or slot. See [Idle suspension](../lifecycle.md#idle-suspension).
 
 ## Stdout Flushing in Node.js
 
@@ -444,12 +476,12 @@ curl -X POST http://localhost:8080/v1/sessions \
 
 ### 2. Read the Adapter Manifest
 
+The manifest carries only pod-scoped fields. A session's own context, such as its credential file path, arrives in that session's `session_start` frame on stdin (see the [Adapter Contract](../../reference/adapter-contract.md#inbound-messages-adapter-writes-to-your-stdin)). This example keeps no per-session context, so it takes the session identifier from each `message`'s `sessionId` and ignores `session_start` and `session_end` under the unknown-type rule.
+
 ```typescript
 import * as fs from "fs";
 
 interface AdapterManifest {
-  sessionId: string;
-  taskId: string;
   platformMcpServer: {
     socket: string;
   };

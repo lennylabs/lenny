@@ -20,14 +20,23 @@ import (
 	"github.com/lennylabs/lenny/pkg/legalholdescrow"
 )
 
-// spec: §12.8 lines 880-889 — the gateway-side Phase 3.5 force-delete
+// spec: §12.8 — the gateway-side Phase 3.5 force-delete
 // escrow migrator. F-12.8.2, F-24.10.2, F-24.10.5.
 
 // stubCatalog is a minimal artifactcatalog.Store exposing only the held
-// records the escrow migrator enumerates; the rest are no-ops.
-type stubCatalog struct{ held []artifactcatalog.Record }
+// records and per-session records the escrow migrator enumerates, with
+// injectable listing errors; the rest are no-ops.
+type stubCatalog struct {
+	held       []artifactcatalog.Record
+	heldErr    error
+	bySession  []artifactcatalog.Record
+	sessionErr error
+}
 
 func (s stubCatalog) ListLegalHeld(_ context.Context, tenantID string) ([]artifactcatalog.Record, error) {
+	if s.heldErr != nil {
+		return nil, s.heldErr
+	}
 	var out []artifactcatalog.Record
 	for _, r := range s.held {
 		if r.TenantID == tenantID {
@@ -47,8 +56,17 @@ func (stubCatalog) HardPruneExpired(context.Context, time.Time) (int, error) {
 }
 func (stubCatalog) ListPrunable(context.Context, time.Time) ([]string, error) { return nil, nil }
 func (stubCatalog) HardPruneURIs(context.Context, []string) (int, error)      { return 0, nil }
-func (stubCatalog) ListBySession(context.Context, string, string) ([]artifactcatalog.Record, error) {
-	return nil, nil
+func (s stubCatalog) ListBySession(_ context.Context, tenantID, sessionID string) ([]artifactcatalog.Record, error) {
+	if s.sessionErr != nil {
+		return nil, s.sessionErr
+	}
+	var out []artifactcatalog.Record
+	for _, r := range s.bySession {
+		if r.TenantID == tenantID && r.SessionID == sessionID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 func (stubCatalog) SetLegalHold(context.Context, string, bool, string, time.Time, string) error {
@@ -144,15 +162,16 @@ func TestEscrowMigratorReEncryptsHeldArtifact_spec_12_8_880(t *testing.T) {
 	metrics, _ := gatewaymetrics.New()
 
 	mig := tenantEscrowMigrator{
-		cfg:       escrowConfigFromFlags("escrow-default", "minio:9000"),
-		tenants:   tenants,
-		artifacts: catalog,
-		blobs:     blobs,
-		cipher:    escrowCipherFactory(provider),
-		ledger:    escrowLedger{appender: appender, clock: clock},
-		metrics:   metrics,
-		appender:  appender,
-		clock:     clock,
+		cfg:         escrowConfigFromFlags("escrow-default", "minio:9000"),
+		tenants:     tenants,
+		artifacts:   catalog,
+		blobs:       blobs,
+		escrowBlobs: blobs,
+		cipher:      escrowCipherFactory(provider),
+		ledger:      escrowLedger{appender: appender, clock: clock},
+		metrics:     metrics,
+		appender:    appender,
+		clock:       clock,
 	}
 	out, err := mig.EscrowHolds(ctx, tenantdeletion.EscrowRequest{
 		TenantID: "acme",

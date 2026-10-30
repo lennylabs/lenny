@@ -16,7 +16,7 @@ import (
 // CARotationManager drives the §10.3 CA-rotation state machine on a
 // durable store. *carotation.Manager satisfies it; a nil manager leaves
 // the routes unregistered (a deployment with mTLS disabled never wires
-// one). spec: §10.3 lines 344-350. F-10.3.21.
+// one). spec: §10.3. F-10.3.21.
 type CARotationManager interface {
 	// Status returns the current rotation snapshot. ok is false before a
 	// rotation has been initialized.

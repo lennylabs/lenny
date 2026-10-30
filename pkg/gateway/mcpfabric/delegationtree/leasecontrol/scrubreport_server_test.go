@@ -26,32 +26,32 @@ type fakeScrubReports struct {
 }
 
 type sessionScrubCall struct {
-	podID, sessionID, slotID string
-	leaked                   bool
+	podID, sessionID string
+	leaked           bool
 }
 
 type podScrubCall struct {
-	podID  string
-	failed bool
-	detail string
+	podID       string
+	failed      bool
+	runtimeLive bool
+	detail      string
 }
 
-func (f *fakeScrubReports) RecordSessionScrub(_ context.Context, podID, sessionID, slotID string, leaked bool) error {
-	f.sessionCalls = append(f.sessionCalls, sessionScrubCall{podID, sessionID, slotID, leaked})
+func (f *fakeScrubReports) RecordSessionScrub(_ context.Context, podID, sessionID string, leaked bool) error {
+	f.sessionCalls = append(f.sessionCalls, sessionScrubCall{podID, sessionID, leaked})
 	return f.sessionErr
 }
 
-func (f *fakeScrubReports) RecordPodScrub(_ context.Context, podID string, failed bool, detail string) error {
-	f.podCalls = append(f.podCalls, podScrubCall{podID, failed, detail})
+func (f *fakeScrubReports) RecordPodScrub(_ context.Context, podID string, failed, runtimeLive bool, detail string) error {
+	f.podCalls = append(f.podCalls, podScrubCall{podID, failed, runtimeLive, detail})
 	return f.podErr
 }
 
 func newServiceWithScrub(t *testing.T, sr leasecontrol.ScrubReportService) *leasecontrol.Service {
 	t.Helper()
-	budgets := leasecontrol.NewMemoryBudgetSource()
+	budgets := newMemBudget()
 	svc, err := leasecontrol.NewService(leasecontrol.Options{
 		Budgets:      budgets,
-		Tenants:      budgets,
 		ScrubReports: sr,
 	})
 	if err != nil {
@@ -61,7 +61,7 @@ func newServiceWithScrub(t *testing.T, sr leasecontrol.ScrubReportService) *leas
 }
 
 // TestReportSessionScrubDelegatesLeaked verifies the handler decodes a
-// LEAKED outcome and delegates it as leaked=true, with the slot id when set.
+// LEAKED outcome and delegates it as leaked=true.
 // spec: 4.7 (ReportSessionScrub), 5.2 (scrub model)
 //
 // diagnosis: a failure means the gateway-side ReportSessionScrub handler
@@ -74,7 +74,6 @@ func TestReportSessionScrubDelegatesLeaked_spec_5_2(t *testing.T) {
 	_, err := svc.ReportSessionScrub(context.Background(), &adapterv1.ReportSessionScrubRequest{
 		PodId:     "pod-1",
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		SlotId:    &adapterv1.SlotId{Value: "slot-2"},
 		Outcome:   adapterv1.SessionScrubOutcome_SESSION_SCRUB_OUTCOME_LEAKED,
 	})
 	if err != nil {
@@ -84,8 +83,8 @@ func TestReportSessionScrubDelegatesLeaked_spec_5_2(t *testing.T) {
 		t.Fatalf("session calls = %d, want 1", len(f.sessionCalls))
 	}
 	got := f.sessionCalls[0]
-	if got.podID != "pod-1" || got.sessionID != "sess-1" || got.slotID != "slot-2" || !got.leaked {
-		t.Errorf("delegated %+v, want pod-1/sess-1/slot-2 leaked", got)
+	if got.podID != "pod-1" || got.sessionID != "sess-1" || !got.leaked {
+		t.Errorf("delegated %+v, want pod-1/sess-1 leaked", got)
 	}
 }
 
@@ -282,10 +281,17 @@ func (f *fakeCounters) RecycleCounters(_ context.Context, podID string) (int, in
 	return f.served[podID], f.scrub[podID], true, nil
 }
 
-type fakeLedger struct{ leaks []string }
+// fakeLedger records every leak the reporter forwards: leaks carries the pod
+// and slots carries the slot identifier the record is keyed by, index for
+// index.
+type fakeLedger struct {
+	leaks []string
+	slots []string
+}
 
-func (f *fakeLedger) RecordLeak(_ context.Context, podID string) error {
+func (f *fakeLedger) RecordLeak(_ context.Context, podID, slotID string) error {
 	f.leaks = append(f.leaks, podID)
+	f.slots = append(f.slots, slotID)
 	return nil
 }
 
@@ -329,6 +335,7 @@ type retireCall struct {
 	failed       bool
 	scrubWarning bool
 	reason       podscrub.RetireReason
+	lifetime     leasecontrol.PodLifetime
 	detail       string
 }
 
@@ -344,8 +351,8 @@ func (f *fakeDriver) Recycle(_ context.Context, podID string, preConnect, scrubW
 	return f.recycleErr
 }
 
-func (f *fakeDriver) Retire(_ context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, detail string) error {
-	f.retires = append(f.retires, retireCall{podID, failed, scrubWarning, reason, detail})
+func (f *fakeDriver) Retire(_ context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, lifetime leasecontrol.PodLifetime, detail string) error {
+	f.retires = append(f.retires, retireCall{podID, failed, scrubWarning, reason, lifetime, detail})
 	return f.retireErr
 }
 
@@ -420,8 +427,8 @@ func newReporterWithRetirer(t *testing.T, c *fakeCounters, l *fakeLedger, i *fak
 }
 
 // TestReporterSessionScrubIncrementsAndLeaks verifies the orchestrator
-// increments sessions_served on every release and records a leak only on a
-// leaked outcome.
+// increments sessions_served on each cleanup-outcome report and records a
+// leak only on a leaked outcome.
 // spec: 4.7 (ReportSessionScrub increments sessionsServed; leaked feeds the ledger), 5.2 (scrub model)
 //
 // diagnosis: a failure means the gateway's session-release accounting drifted
@@ -430,10 +437,10 @@ func newReporterWithRetirer(t *testing.T, c *fakeCounters, l *fakeLedger, i *fak
 func TestReporterSessionScrubIncrementsAndLeaks_spec_4_7(t *testing.T) {
 	c, l, i, d := newFakeCounters(), &fakeLedger{}, &fakeInspector{}, &fakeDriver{}
 	r, sr := newReporterWithRetirer(t, c, l, i, d)
-	if err := r.RecordSessionScrub(context.Background(), "pod-1", "s1", "", false); err != nil {
+	if err := r.RecordSessionScrub(context.Background(), "pod-1", "s1", false); err != nil {
 		t.Fatalf("released: %v", err)
 	}
-	if err := r.RecordSessionScrub(context.Background(), "pod-1", "s2", "", true); err != nil {
+	if err := r.RecordSessionScrub(context.Background(), "pod-1", "s2", true); err != nil {
 		t.Fatalf("leaked: %v", err)
 	}
 	if c.served["pod-1"] != 2 {
@@ -442,9 +449,16 @@ func TestReporterSessionScrubIncrementsAndLeaks_spec_4_7(t *testing.T) {
 	if len(l.leaks) != 1 || l.leaks[0] != "pod-1" {
 		t.Errorf("leaks = %v, want one pod-1", l.leaks)
 	}
-	// The per-release maxSessionsPerPod retirement runs on every release,
-	// carrying the atomic post-increment served-session count (1 then 2). The
-	// pre-fix RecordSessionScrub discarded the count and never called the
+	// spec: §5.2 — the leak record is keyed by slot, so the reporter forwards
+	// the leaked session's identifier (the slot identifier) rather than
+	// discarding it; an empty or constant slot would collapse a pod's leaks to
+	// one and the drain would never fire.
+	if len(l.slots) != 1 || l.slots[0] != "s2" {
+		t.Errorf("leak slots = %v, want one s2", l.slots)
+	}
+	// The per-release maxSessionsPerPod retirement runs on each cleanup-outcome
+	// report, carrying the atomic post-increment served-session count (1 then
+	// 2). The pre-fix RecordSessionScrub discarded the count and never called the
 	// retirer, so this assertion pins the wired per-release path.
 	if len(sr.calls) != 2 || sr.calls[0] != (sessionRetireCall{"pod-1", 1}) || sr.calls[1] != (sessionRetireCall{"pod-1", 2}) {
 		t.Errorf("per-release retirer calls = %+v, want pod-1 counts 1 then 2", sr.calls)
@@ -453,12 +467,12 @@ func TestReporterSessionScrubIncrementsAndLeaks_spec_4_7(t *testing.T) {
 
 // TestReporterSessionScrubDrivesPerReleaseRetirementWithPostIncrementCount
 // verifies RecordSessionScrub reports the atomic post-increment served-session
-// count to the per-release maxSessionsPerPod retirer on every release, in both
-// session modes (CODE-B emits on the base recycle path too). It pins the S11
-// wiring that captures the IncrementSessionsServed return value the pre-fix
-// handler discarded, so a concurrent non-vm-restart pool can drain per release
-// decoupled from the whole-pod scrub.
-// spec: 5.2 (per-release maxSessionsPerPod drain), 12 (sessions_served evaluated per release), 4.7 (ReportSessionScrub increments sessionsServed)
+// count to the per-release maxSessionsPerPod retirer on each cleanup-outcome
+// report, in both session modes (the base recycle path emits the report
+// too). It pins the wiring that captures the IncrementSessionsServed return
+// value the pre-fix handler discarded, so a concurrent non-vm-restart pool can
+// drain per release decoupled from the whole-pod scrub.
+// spec: 5.2 (per-release maxSessionsPerPod drain), 12 (sessions_served written on each cleanup-outcome report), 4.7 (ReportSessionScrub increments sessionsServed)
 //
 // diagnosis: a failure means the gateway no longer threads the post-increment
 // served-session count into the per-release retirement, so a concurrent pool
@@ -468,7 +482,7 @@ func TestReporterSessionScrubDrivesPerReleaseRetirementWithPostIncrementCount_sp
 	c, l, i, d := newFakeCounters(), &fakeLedger{}, &fakeInspector{}, &fakeDriver{}
 	c.served["pod-7"] = 4 // three prior releases; this release makes 5
 	r, sr := newReporterWithRetirer(t, c, l, i, d)
-	if err := r.RecordSessionScrub(context.Background(), "pod-7", "s5", "slot-2", false); err != nil {
+	if err := r.RecordSessionScrub(context.Background(), "pod-7", "s5", false); err != nil {
 		t.Fatalf("RecordSessionScrub: %v", err)
 	}
 	if len(sr.calls) != 1 {
@@ -497,7 +511,7 @@ func TestReporterSessionScrubPropagatesRetirerError_spec_5_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
 	}
-	if err := r.RecordSessionScrub(context.Background(), "pod-1", "s1", "", false); err == nil {
+	if err := r.RecordSessionScrub(context.Background(), "pod-1", "s1", false); err == nil {
 		t.Error("RecordSessionScrub with a failing per-release retirer: err = nil, want non-nil")
 	}
 }
@@ -513,7 +527,7 @@ func TestReporterSessionScrubMissingPodFailsClosed_spec_4_7(t *testing.T) {
 	c, l, i, d := newFakeCounters(), &fakeLedger{}, &fakeInspector{}, &fakeDriver{}
 	c.missing["ghost"] = true
 	r := newReporter(t, c, l, i, d)
-	err := r.RecordSessionScrub(context.Background(), "ghost", "s1", "", false)
+	err := r.RecordSessionScrub(context.Background(), "ghost", "s1", false)
 	if !errors.Is(err, leasecontrol.ErrPodNotInMirror) {
 		t.Fatalf("missing pod err = %v, want ErrPodNotInMirror", err)
 	}
@@ -534,7 +548,7 @@ func TestReporterPodScrubReuseNonPreConnect_spec_3_4(t *testing.T) {
 		MaxSessionsPerPod: 100, HostSchedulable: true,
 	}}
 	r := newReporter(t, c, l, i, d)
-	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, true, ""); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	if len(d.recycles) != 1 || d.recycles[0].preConnect || d.recycles[0].scrubWarning {
@@ -560,7 +574,7 @@ func TestReporterPodScrubReusePreConnectReWarm_spec_6_2(t *testing.T) {
 		MaxSessionsPerPod: 100, HostSchedulable: true,
 	}}
 	r := newReporter(t, c, l, i, d)
-	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, true, ""); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	if len(d.recycles) != 1 || !d.recycles[0].preConnect {
@@ -584,7 +598,7 @@ func TestReporterPodScrubFailedIncrementsAndWarns_spec_5_2(t *testing.T) {
 		MaxScrubFailures: 3, MaxSessionsPerPod: 100, HostSchedulable: true,
 	}}
 	r := newReporter(t, c, l, i, d)
-	if err := r.RecordPodScrub(context.Background(), "pod-1", true, "leftover"); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", true, true, "leftover"); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	if c.scrub["pod-1"] != 1 {
@@ -620,7 +634,7 @@ func TestReporterPodScrubScrubFailuresExhaustedRetires_spec_5_2(t *testing.T) {
 		MaxScrubFailures: 3, MaxSessionsPerPod: 100, HostSchedulable: true,
 	}}
 	r := newReporter(t, c, l, i, d)
-	if err := r.RecordPodScrub(context.Background(), "pod-1", true, ""); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", true, true, ""); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	if len(d.retires) != 1 {
@@ -653,7 +667,7 @@ func TestReporterPodScrubFailPolicyTerminates_spec_5_2(t *testing.T) {
 		MaxScrubFailures: 3, MaxSessionsPerPod: 100, HostSchedulable: true,
 	}}
 	r := newReporter(t, c, l, i, d)
-	if err := r.RecordPodScrub(context.Background(), "pod-1", true, "shred timed out on /tmp"); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", true, true, "shred timed out on /tmp"); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	if len(d.retires) != 1 {
@@ -671,7 +685,7 @@ func TestReporterPodScrubFailPolicyTerminates_spec_5_2(t *testing.T) {
 	}
 }
 
-// TestReporterPodScrubWarnFailedCordonDrainCarriesWarning verifies the §6.39
+// TestReporterPodScrubWarnFailedCordonDrainCarriesWarning verifies the §6.2
 // cordon-drain-under-warn path stamps the scrub_warning audit annotation onto
 // the retire: a warn-policy scrub failure that retires because the host node
 // is cordoned retains the residual-state marker the disposition computed (the
@@ -681,7 +695,7 @@ func TestReporterPodScrubFailPolicyTerminates_spec_5_2(t *testing.T) {
 //
 // diagnosis: a failure means a warn-policy scrub failure that retires on a
 // cordoned node writes the released terminal with no scrub_warning, losing the
-// residual-state audit marker §6.39/§5.2 retain, or drops the failure detail.
+// residual-state audit marker §6.2/§5.2 retain, or drops the failure detail.
 func TestReporterPodScrubWarnFailedCordonDrainCarriesWarning_spec_6_39(t *testing.T) {
 	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
 	c.served["pod-1"] = 1
@@ -692,7 +706,7 @@ func TestReporterPodScrubWarnFailedCordonDrainCarriesWarning_spec_6_39(t *testin
 		Pool:            "agents-pool", RuntimeClass: "gvisor",
 	}}
 	r := newReporter(t, c, l, i, d)
-	if err := r.RecordPodScrub(context.Background(), "pod-1", true, "in-place residue"); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", true, true, "in-place residue"); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	if len(d.retires) != 1 {
@@ -710,7 +724,7 @@ func TestReporterPodScrubWarnFailedCordonDrainCarriesWarning_spec_6_39(t *testin
 	}
 }
 
-// TestReporterPodScrubUnschedulableHostRetiresBothPools verifies the §6.39
+// TestReporterPodScrubUnschedulableHostRetiresBothPools verifies the §6.2
 // unschedulable-host-node retire applies on both preConnect and non-preConnect
 // pools even when no limit is reached.
 // spec: 6.39 (host-node schedulability retire), 3.4 (retire disposition)
@@ -728,7 +742,7 @@ func TestReporterPodScrubUnschedulableHostRetiresBothPools_spec_6_39(t *testing.
 			HostSchedulable: false, // cordoned, no limit reached
 		}}
 		r := newReporter(t, c, l, i, d)
-		if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+		if err := r.RecordPodScrub(context.Background(), "pod-1", false, true, ""); err != nil {
 			t.Fatalf("preConnect=%v: RecordPodScrub: %v", preConnect, err)
 		}
 		if len(d.retires) != 1 || d.retires[0].failed || d.retires[0].reason != podscrub.ReasonHostUnschedulable {
@@ -767,7 +781,7 @@ func TestReporterPodScrubVMRestartCleanScrubRetiresNotReserves_spec_5_2(t *testi
 			MaxScrubFailures: 3, MaxSessionsPerPod: 100, HostSchedulable: true,
 		}}
 		r := newReporter(t, c, l, i, d)
-		if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+		if err := r.RecordPodScrub(context.Background(), "pod-1", false, true, ""); err != nil {
 			t.Fatalf("preConnect=%v: RecordPodScrub: %v", preConnect, err)
 		}
 		if len(d.recycles) != 0 {
@@ -808,7 +822,7 @@ func TestReporterPodScrubStandardCleanScrubReserves_spec_5_2(t *testing.T) {
 		MaxScrubFailures: 3, MaxSessionsPerPod: 100, HostSchedulable: true,
 	}}
 	r := newReporter(t, c, l, i, d)
-	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, true, ""); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	if len(d.retires) != 0 {
@@ -846,7 +860,7 @@ func TestReporterPodScrubVMRestartWarnFailedRetiresWithWarning_spec_5_2(t *testi
 	// A single failure (scrub_failure_count reaches 1) is well under
 	// maxScrubFailures: 3, so the scrub-exhaustion branch does not fire and the
 	// vm-restart retire is the disposition under test.
-	if err := r.RecordPodScrub(context.Background(), "pod-1", true, "in-place residue"); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", true, true, "in-place residue"); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	if len(d.recycles) != 0 {
@@ -899,7 +913,7 @@ func TestReporterPodScrubVMRestartRetireEmitsNoRetirementCounter_spec_16_1(t *te
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
 	}
-	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, true, ""); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	if len(d.retires) != 1 || d.retires[0].reason != podscrub.ReasonVMRestartReprovision {
@@ -946,7 +960,7 @@ func TestReporterPodScrubUptimeExceededSuppressesGatewayCounter_spec_16_1(t *tes
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
 	}
-	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, true, ""); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	// The pod is still drained on the uptime disposition (the draining-state
@@ -973,7 +987,7 @@ func TestReporterPodScrubMissingPodIsNoOp_spec_3_4(t *testing.T) {
 	c.served["pod-1"] = 1
 	i := &fakeInspector{found: false} // claim gone
 	r := newReporter(t, c, l, i, d)
-	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, true, ""); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	if len(d.recycles) != 0 || len(d.retires) != 0 {
@@ -1038,7 +1052,7 @@ func TestReporterPodScrubEmitsMetrics_spec_16_1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
 	}
-	if err := r.RecordPodScrub(context.Background(), "pod-1", true, ""); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", true, true, ""); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	if len(m.totals) != 1 || m.totals[0].pool != "agents-pool" || m.totals[0].runtimeClass != "gvisor" {
@@ -1056,7 +1070,7 @@ func TestReporterPodScrubEmitsMetrics_spec_16_1(t *testing.T) {
 	}
 }
 
-// TestReporterPodScrubCordonDrainEmitsNoRetirementCounter verifies the §6.39
+// TestReporterPodScrubCordonDrainEmitsNoRetirementCounter verifies the §6.2
 // cordon-drain retire drains the pod without incrementing the gateway
 // retirement counter lenny_gateway_pod_retirement_total: the frozen §16.1
 // retirement-reason vocabulary (session_count_limit, uptime_limit,
@@ -1067,7 +1081,7 @@ func TestReporterPodScrubEmitsMetrics_spec_16_1(t *testing.T) {
 // value. The driver still receives the cordon-drain retire.
 // spec: 16.1 (lenny_gateway_pod_retirement_total reason label set), 16.1.1 (reason is the lifecycle limit triggers only), 6.39 (cordon-drain operational retire)
 //
-// diagnosis: a failure means the §6.39 cordon-drain emits
+// diagnosis: a failure means the §6.2 cordon-drain emits
 // lenny_gateway_pod_retirement_total{reason="host_unschedulable"}, a reason
 // value the §16.1 inventory does not declare, widening the frozen label set
 // and breaking the metric-catalog vocabulary contract.
@@ -1086,7 +1100,7 @@ func TestReporterPodScrubCordonDrainEmitsNoRetirementCounter_spec_16_1(t *testin
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
 	}
-	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, true, ""); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	// The pod is drained on the cordon-drain disposition.
@@ -1125,7 +1139,7 @@ func TestReporterPodScrubFailPolicyEmitsNoRetirementCounter_spec_16_1(t *testing
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
 	}
-	if err := r.RecordPodScrub(context.Background(), "pod-1", true, "shred failed"); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", true, true, "shred failed"); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	if len(d.retires) != 1 || !d.retires[0].failed || d.retires[0].reason != podscrub.ReasonCleanupFailPolicy {
@@ -1165,7 +1179,7 @@ func TestReporterPodScrubSessionCountLimitSingleSessionCounts_spec_16_1(t *testi
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
 	}
-	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, true, ""); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	if len(d.retires) != 1 || d.retires[0].reason != podscrub.ReasonSessionCountLimit {
@@ -1207,7 +1221,7 @@ func TestReporterPodScrubSessionCountLimitConcurrentPoolSuppressesCounter_spec_5
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
 	}
-	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, true, ""); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	// The disposition still drives the drain as the state backstop.
@@ -1248,7 +1262,7 @@ func TestReporterPodScrubSessionCountLimitConcurrentVMRestartCounts_spec_5_2(t *
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
 	}
-	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, true, ""); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	// A vm-restart pool retires with the non-counting vm_restart_reprovision
@@ -1286,7 +1300,7 @@ func TestReporterPodScrubSuccessEmitsNoScrubFailureMetrics_spec_5_2(t *testing.T
 	if err != nil {
 		t.Fatalf("NewScrubReporter: %v", err)
 	}
-	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err != nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, true, ""); err != nil {
 		t.Fatalf("RecordPodScrub: %v", err)
 	}
 	if len(m.totals) != 0 {
@@ -1313,7 +1327,7 @@ func TestReporterPodScrubCounterReadErrorPropagates_spec_4_7(t *testing.T) {
 		OnScrubFailure: podscrub.OnCleanupWarn, MaxSessionsPerPod: 100, HostSchedulable: true,
 	}}
 	r := newReporter(t, c, l, i, d)
-	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err == nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, true, ""); err == nil {
 		t.Fatal("counter read error: err = nil, want non-nil")
 	}
 	if len(d.recycles) != 0 || len(d.retires) != 0 {
@@ -1341,7 +1355,84 @@ func TestReporterPodScrubDriverErrorPropagates_spec_3_4(t *testing.T) {
 	}}
 	d := &fakeDriver{recycleErr: errors.New("ssa patch conflict")}
 	r := newReporter(t, c, l, i, d)
-	if err := r.RecordPodScrub(context.Background(), "pod-1", false, ""); err == nil {
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, true, ""); err == nil {
 		t.Fatal("recycle driver error: err = nil, want non-nil")
+	}
+}
+
+// TestReportPodScrubDelegatesRuntimeLive_spec_5_2 verifies the handler passes
+// the request's runtime_live to the service, and that a request omitting the
+// field delegates as not live, so the gateway retires the pod.
+// spec: 5.2 (Pod retirement policy), 4.7 (ReportPodScrub)
+//
+// diagnosis: a failure means the handler drops the adapter's liveness report,
+// so the gateway retires every recycled pod or reuses one whose runtime is
+// gone.
+func TestReportPodScrubDelegatesRuntimeLive_spec_5_2(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  *adapterv1.ReportPodScrubRequest
+		want bool
+	}{
+		{name: "live", want: true, req: &adapterv1.ReportPodScrubRequest{
+			PodId: "pod-1", Outcome: adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_SUCCEEDED, RuntimeLive: true,
+		}},
+		{name: "omitted", want: false, req: &adapterv1.ReportPodScrubRequest{
+			PodId: "pod-1", Outcome: adapterv1.PodScrubOutcome_POD_SCRUB_OUTCOME_SUCCEEDED,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeScrubReports{}
+			svc := newServiceWithScrub(t, f)
+			if _, err := svc.ReportPodScrub(context.Background(), tc.req); err != nil {
+				t.Fatalf("ReportPodScrub: %v", err)
+			}
+			if len(f.podCalls) != 1 || f.podCalls[0].runtimeLive != tc.want {
+				t.Errorf("delegated %+v, want one call with runtimeLive=%v", f.podCalls, tc.want)
+			}
+		})
+	}
+}
+
+// TestReporterPodScrubRuntimeNotLiveRetires_spec_5_2 verifies that a clean
+// scrub report whose runtime cannot serve the next session retires the pod as
+// a released drain with the non-counting runtime_not_live reason, passes the
+// pod's lifetime session count and uptime to the retire, and increments no
+// retirement counter.
+// spec: 5.2 (Pod retirement policy), 4.7 (ReportPodScrub), 16.1 (retirement
+// reason vocabulary)
+//
+// diagnosis: a failure means the gateway reserves a pod whose runtime cannot
+// start the next session, or counts a liveness retire on the frozen §16.1
+// retirement counter.
+func TestReporterPodScrubRuntimeNotLiveRetires_spec_5_2(t *testing.T) {
+	c, l, d := newFakeCounters(), &fakeLedger{}, &fakeDriver{}
+	c.served["pod-1"] = 2
+	i := &fakeInspector{found: true, policy: leasecontrol.PodRecyclePolicy{
+		PreConnect: false, OnScrubFailure: podscrub.OnCleanupWarn,
+		MaxSessionsPerPod: 100, HostSchedulable: true, PodUptimeSeconds: 420,
+	}}
+	m := newRecordingRetireMetrics()
+	r, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
+		Counters: c, Ledger: l, SessionRetirer: &fakeSessionRetirer{}, Inspector: i, Driver: d, Metrics: m,
+	})
+	if err != nil {
+		t.Fatalf("NewScrubReporter: %v", err)
+	}
+	if err := r.RecordPodScrub(context.Background(), "pod-1", false, false, ""); err != nil {
+		t.Fatalf("RecordPodScrub: %v", err)
+	}
+	want := retireCall{
+		podID: "pod-1", reason: podscrub.ReasonRuntimeNotLive,
+		lifetime: leasecontrol.PodLifetime{SessionsServed: 2, UptimeSeconds: 420},
+	}
+	if len(d.retires) != 1 || d.retires[0] != want {
+		t.Fatalf("retires = %+v, want [%+v]", d.retires, want)
+	}
+	if len(d.recycles) != 0 {
+		t.Errorf("recycles = %+v, want none", d.recycles)
+	}
+	if len(m.retirements) != 0 {
+		t.Errorf("retirement counter emissions = %+v, want none for runtime_not_live", m.retirements)
 	}
 }

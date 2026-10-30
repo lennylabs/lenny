@@ -2,14 +2,13 @@
 
 //go:build component
 
-// Tier-2 component test for the §12.5 line 297 MinIO server-side
+// Tier-2 component test for the §12.5 MinIO server-side
 // encryption preflight check. The test runs the preflight Run flow
 // end-to-end with a real fake-MinIO prober and asserts that the §17.9
 // report carries the SSE check outcome under both regulated and
 // unregulated complianceProfile values.
 //
-// The check is the §12.5 line 297 "preflight check validates that
-// MinIO SSE is enabled" contract; a regulated profile (soc2 | fedramp
+// The check is the §12.5 contract; a regulated profile (soc2 | fedramp
 // | hipaa) fails closed on absent SSE, an unregulated profile passes
 // advisory.
 
@@ -60,10 +59,10 @@ func findCheck(t *testing.T, report []preflight.CheckResult, name string) prefli
 }
 
 // TestMinIOSSECheckPassesWithAES256UnderRegulatedProfile verifies the
-// §12.5 line 297 check passes the install when MinIO SSE is enabled
+// §12.5 check passes the install when MinIO SSE is enabled
 // even under a regulated complianceProfile.
 //
-// spec: §12.5 line 297.
+// spec: §12.5.
 // diagnosis: a failure means the MinIO SSE preflight check fails the
 // install even though SSE is enabled, blocking a valid regulated-profile
 // deployment.
@@ -89,7 +88,7 @@ func TestMinIOSSECheckPassesWithAES256UnderRegulatedProfile(t *testing.T) {
 // TestMinIOSSECheckFailsClosedUnderRegulatedProfileWhenAbsent verifies
 // the install fails when SSE is absent under SOC2.
 //
-// spec: §12.5 line 297.
+// spec: §12.5.
 // diagnosis: a failure means the preflight check does not fail closed on
 // absent MinIO SSE under a regulated profile, letting an unencrypted
 // artifact store pass a SOC2/FedRAMP/HIPAA install.
@@ -107,15 +106,15 @@ func TestMinIOSSECheckFailsClosedUnderRegulatedProfileWhenAbsent(t *testing.T) {
 	if r.Decision.Passed {
 		t.Errorf("SOC2 with absent SSE must fail: %+v", r.Decision)
 	}
-	if !strings.Contains(r.Decision.Reason, "§12.5 line 297") {
-		t.Errorf("decision reason should cite §12.5 line 297: %q", r.Decision.Reason)
+	if !strings.Contains(r.Decision.Reason, "§12.5") {
+		t.Errorf("decision reason should cite §12.5: %q", r.Decision.Reason)
 	}
 }
 
 // TestMinIOSSECheckSkippedWhenBucketAbsent verifies the check is
 // skipped when no bucket is configured.
 //
-// spec: §12.5 line 297.
+// spec: §12.5.
 // diagnosis: a failure means the SSE check runs even when no bucket is
 // configured, emitting a spurious check outcome for a non-existent store.
 func TestMinIOSSECheckSkippedWhenBucketAbsent(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/resourceclass"
 )
 
-// TestDefaultRegistryHasSpec52Classes asserts the §5.2 line 369
+// TestDefaultRegistryHasSpec52Classes asserts the §5.2
 // small/medium/large classes are present with non-zero CPU and memory.
 func TestDefaultRegistryHasSpec52Classes_spec_5_2_369(t *testing.T) {
 	reg := resourceclass.DefaultRegistry()
@@ -30,7 +30,7 @@ func TestDefaultRegistryHasSpec52Classes_spec_5_2_369(t *testing.T) {
 }
 
 // TestDefaultRegistryAccountsForTmpfs verifies every default class's memory
-// limit clears the §6.4 line 413 tmpfs reservation, so the registry's own
+// limit clears the §6.4 tmpfs reservation, so the registry's own
 // Validate accepts it.
 func TestDefaultRegistryAccountsForTmpfs_spec_6_4_413(t *testing.T) {
 	if err := resourceclass.DefaultRegistry().Validate(); err != nil {
@@ -71,7 +71,7 @@ func TestResolveUnknownClass(t *testing.T) {
 }
 
 // TestValidateRejectsTmpfsUndersizedLimit asserts an override whose memory
-// limit does not clear the tmpfs reservation is rejected (§6.4 line 413).
+// limit does not clear the tmpfs reservation is rejected (§6.4).
 func TestValidateRejectsTmpfsUndersizedLimit_spec_6_4_413(t *testing.T) {
 	reg := resourceclass.DefaultRegistry()
 	name, req, err := resourceclass.ParseOverride("tiny=requests.cpu:50m,requests.memory:128Mi,limits.cpu:200m,limits.memory:256Mi")

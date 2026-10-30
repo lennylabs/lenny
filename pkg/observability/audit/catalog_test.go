@@ -25,7 +25,7 @@ var spec167AuditEvents = []string{
 	"admission.circuit_breaker_rejected",
 	"delegation.self_recursion_allowed",
 	"delegation.cycle_warning",
-	// §11.7 line 62 — F-8.5.8 closes the gap; delegation.spawned is
+	// §11.7 — F-8.5.8 closes the gap; delegation.spawned is
 	// the §11.7-catalogued audit row for every admitted delegation.
 	"delegation.spawned",
 	"gateway.cycle_detection_mode_changed",
@@ -33,7 +33,7 @@ var spec167AuditEvents = []string{
 	"gateway.default_max_depth_changed",
 	"circuit_breaker.state_changed",
 	"elicitation.content_tamper_detected",
-	// §16.7 line 681 — F-EL3 closes the gap; the url-mode allowlist drop
+	// §16.7 — F-EL3 closes the gap; the url-mode allowlist drop
 	// is now audited (the §9.2 DOMAIN_NOT_ALLOWLISTED per-hop rejection).
 	"elicitation.url_mode_domain_rejected",
 	"tenant.elicitation_content_integrity_changed",
@@ -45,7 +45,7 @@ var spec167AuditEvents = []string{
 	"admin.impersonation_ended",
 	"compliance.profile_decommissioned",
 	"deployment.feature_flag_downgrade_acknowledged",
-	// §12.5 line 291 — drain-force override audit event.
+	// §12.5 — drain-force override audit event.
 	"node.drain.forced",
 	"remediation.lock_acquired",
 	"remediation.lock_extended",
@@ -115,7 +115,7 @@ var spec167AuditEvents = []string{
 	"legal_hold.escrow_region_resolved",
 	"legal_hold.escrowed",
 	"legal_hold.escrow_released",
-	// §12.8 line 739 — legal-hold reconciler gap-detection event.
+	// §12.8 — legal-hold reconciler gap-detection event.
 	"legal_hold.checkpoint_gap_detected",
 	// §7.3 retry/resume lifecycle. F-7.3.25 closes the gap that the
 	// resume/retry/awaiting-action/cascade events §7.3 implies were
@@ -128,7 +128,7 @@ var spec167AuditEvents = []string{
 	"session.cascade_applied",
 	// §9.3 connector lifecycle and OAuth flow. F-9.3.9 — the
 	// §9.3 admin connector CRUD endpoints and OAuth flow emit
-	// these strings; §9.3 line 140 names audit logging as one of
+	// these strings; §9.3 names audit logging as one of
 	// the prescribed forensic surfaces. The catalog enumerates the
 	// rows so audit-sink validators (IsKnownEventType) do not
 	// discard them as unknown event types.
@@ -204,7 +204,7 @@ func TestIsKnownEventType(t *testing.T) {
 // pkg/gateway/policy.RecordRejection) is recognized by IsKnownEventType
 // so audit-sink validators do not discard the rows, while staying out
 // of Catalog() because §16.7 enumerates only the §25 additions.
-// spec: §11.7 line 331; §16.7 line 669 (contrast). F-11.7.18.
+// spec: §11.7; §16.7. F-11.7.18.
 func TestInterceptorRejectedIsKnownButNotCatalogued_spec_11_7_331(t *testing.T) {
 	if string(EventInterceptorRejected) != "interceptor.rejected" {
 		t.Fatalf("event wire string = %q, want %q", EventInterceptorRejected, "interceptor.rejected")
@@ -222,7 +222,7 @@ func TestInterceptorRejectedIsKnownButNotCatalogued_spec_11_7_331(t *testing.T) 
 // TestTenantSuspendResumeKnownButNotCatalogued asserts the §15.1 tenant
 // suspend/resume operator actions are recognized by IsKnownEventType so
 // audit-sink validators accept the rows, while staying out of Catalog()
-// because §16.7 does not enumerate them. spec: §15.1 lines 818-819.
+// because §16.7 does not enumerate them. spec: §15.1.
 // F-15.1.3.
 func TestTenantSuspendResumeKnownButNotCatalogued_spec_15_1_818(t *testing.T) {
 	wire := map[EventType]string{
@@ -248,7 +248,7 @@ func TestTenantSuspendResumeKnownButNotCatalogued_spec_15_1_818(t *testing.T) {
 // erasure-job operator-recovery events (retry, clear-processing-
 // restriction) are recognized by IsKnownEventType so audit-sink
 // validators accept them, while staying out of Catalog() because §16.7
-// does not enumerate them. spec: §24.12 lines 143-144. F-24.12.4.
+// does not enumerate them. spec: §24.12. F-24.12.4.
 func TestErasureRecoveryEventsKnownButNotCatalogued_spec_24_12(t *testing.T) {
 	events := []EventType{EventGDPRErasureJobRetried, EventGDPRProcessingRestrictionCleared}
 	wire := map[EventType]string{
@@ -274,7 +274,7 @@ func TestErasureRecoveryEventsKnownButNotCatalogued_spec_24_12(t *testing.T) {
 // operator force-terminate event is recognized by IsKnownEventType so
 // audit-sink validators accept the row, while staying out of Catalog()
 // because §16.7 enumerates the session lifecycle terminals but not this
-// operator-driven force. spec: §24.11 line 136. F-24.11.3.
+// operator-driven force. spec: §24.11. F-24.11.3.
 func TestSessionForceTerminatedKnownButNotCatalogued_spec_24_11(t *testing.T) {
 	if string(EventSessionForceTerminated) != "session.force_terminated" {
 		t.Fatalf("event wire string = %q, want %q", EventSessionForceTerminated, "session.force_terminated")

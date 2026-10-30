@@ -4,7 +4,6 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -42,8 +41,7 @@ type SandboxSpec struct {
 
 	// ExecutionMode is the §5.2 pod-reuse mode the pod was warmed
 	// under: `session` (a pod parameterized by the pool's sessionPolicy)
-	// or `service` (a claimless, request-routed pod). spec: §12.6 line
-	// 421-422 — the PodRegistry projects it as PodRecord.ExecutionMode.
+	// or `service` (a claimless, request-routed pod). spec: §12.6 — the PodRegistry projects it as PodRecord.ExecutionMode.
 	// The WarmPoolController denormalizes it from the pool's
 	// SandboxTemplate.spec.executionMode onto each Sandbox (the same
 	// copy-down as IsolationProfile) so the registry can project it
@@ -60,7 +58,7 @@ type SandboxSpec struct {
 
 	// ResourceClass is the §5.1/§5.2 resource class (small, medium,
 	// large, or a deployer-defined class) the pod's CPU/memory limits
-	// resolve from. spec: §12.6 line 422 — the PodRegistry PodSpec
+	// resolve from. spec: §12.6 — the PodRegistry PodSpec
 	// carries the per-pod resource limits, which this codebase models as
 	// a named resource class rather than raw quantities. A warm pod
 	// created by the WarmPoolController resolves its class from the
@@ -71,20 +69,8 @@ type SandboxSpec struct {
 	// +optional
 	ResourceClass string `json:"resourceClass,omitempty"`
 
-	// WorkspacePlan is the §14 WorkspacePlan a §12.6 CreatePod pod was
-	// created with. spec: §12.6 line 422 — the PodSpec carries the
-	// WorkspacePlan. It is empty for a warm pod (the WarmPoolController
-	// creates pods without a session, so the plan is materialized at
-	// session claim); the gateway-created-pod path (Tier 4+) stamps the
-	// resolved plan so the pod expresses the workspace it was created
-	// for. The schema is preserved as-is rather than re-declared here so
-	// a §14 schema revision does not require a CRD change.
-	// +kubebuilder:pruning:PreserveUnknownFields
-	// +optional
-	WorkspacePlan *apiextensionsv1.JSON `json:"workspacePlan,omitempty"`
-
 	// TopologySpreadConstraints distribute the pod across zones and
-	// nodes. spec: §5.2 lines 631-636 — the WarmPoolController copies the
+	// nodes. spec: §5.2 — the WarmPoolController copies the
 	// pool's SandboxTemplate.spec.topologySpreadConstraints onto each
 	// Sandbox it creates, and the Sandbox-to-Pod reconciler stamps them
 	// onto the agent pod. The PoolScalingController owns the defaults it
@@ -128,9 +114,10 @@ type SandboxStatus struct {
 	// +optional
 	TenantID string `json:"tenantId,omitempty"`
 
-	// SessionID records the session a pod is bound to. spec: §12.6
-	// line 421 — PodRecord.SessionID (nullable), and line 442 / the
-	// agent_pod_state.session_id column ("set on claim"). The §4.6.1
+	// SessionID records the session a pod is bound to. spec: §12.6 —
+	// PodRecord.SessionID (nullable) in the store interface table, and
+	// the PodRegistry agent_pod_state.session_id column, which the
+	// schema comment describes as set on claim. The §4.6.1
 	// claim path writes it on ClaimPod and clears it on ReleasePod; the
 	// orphan-session reconciler (§10.1) cross-references it via the
 	// partial session_id index. Empty for an unclaimed pod.
@@ -165,6 +152,14 @@ type SandboxStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// The lenny.dev/schema-version annotation is read at controller startup and
+// by lenny-preflight, and a mismatch with preflight.CurrentCRDSchemaVersion
+// is fatal, so a stale CRD never silently strips new fields. Bump the value
+// here and in that constant together. The top-level spec and status fields
+// carry +kubebuilder:pruning:PreserveUnknownFields for the same reason: a CRD
+// older than the controller does not prune fields a newer controller writes.
+// spec: §10.5 (Upgrade and Rollback Strategy). F-15.5.12.
+// +kubebuilder:metadata:annotations="lenny.dev/schema-version=1"
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=sbx
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
@@ -179,7 +174,9 @@ type Sandbox struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   SandboxSpec   `json:"spec,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Spec SandboxSpec `json:"spec,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
 	Status SandboxStatus `json:"status,omitempty"`
 }
 

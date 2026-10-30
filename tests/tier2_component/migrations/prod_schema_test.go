@@ -33,7 +33,7 @@ func prodMigrations(t *testing.T) string {
 // with the migration that creates it. TestProdSchemaMigrationRoundTrip
 // asserts each table appears after the forward apply and is gone after
 // rollback, so every migration listed here is covered by a test under
-// tests/tier2_component/migrations/ (the §12.0 lint-migrations rule).
+// tests/tier2_component/migrations/ (the TESTING.md §12.0 lint-migrations rule).
 var prodTables = []struct{ migration, name string }{
 	{"0001", "tenants"},
 	{"0001", "runtime_definitions"},
@@ -88,6 +88,8 @@ func execTenant(ctx context.Context, pg *containers.Postgres, tenant, sql string
 //
 //	apply, or did not roll back cleanly. Check that every .up.sql
 //	has a matching .down.sql and that DROP order respects FKs.
+//	A missing idx_issued_tokens_impersonation means migration 0192
+//	did not apply the §12.2 impersonation partial index.
 func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	t.Parallel()
 	dir := prodMigrations(t)
@@ -107,6 +109,8 @@ func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	mustHaveIndex(t, ctx, pg, "sessions", "idx_sessions_tenant_created")
 	mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_tenant_sub")
 	mustHaveIndex(t, ctx, pg, "agent_pod_state", "idx_agent_pod_state_pool_state")
+	// 0192 adds the §13.3 impersonation partial index.
+	mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_impersonation")
 
 	// Rollback removes every object, including the database roles.
 	pg.MigrateDown(t, dir)
@@ -127,7 +131,7 @@ func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	}
 }
 
-// spec: §12.8 lines 743-758
+// spec: §12.8
 // diagnosis: migration 0096 must seed the reserved __preflight__ tenant
 // so the §12.8 MemoryStore erasure preflight's synthetic agent_memory
 // probe row satisfies the agent_memory → tenants(id) foreign key. The row
@@ -256,7 +260,7 @@ func TestLedgerImmutability(t *testing.T) {
 
 	t.Run("audit_log permits the migration-0041 bookkeeping update", func(t *testing.T) {
 		// Migration 0041 narrows lenny_audit_immutability so the §11.7
-		// OCSF and §12.3.7 EventBus state machines can advance the
+		// OCSF and TESTING.md §12.3.7 EventBus state machines can advance the
 		// bookkeeping columns while the hash-input payload stays frozen.
 		if err := execTenant(ctx, pg, "acme",
 			`INSERT INTO audit_log (tenant_id, sequence_number, event_type, payload, payload_canonical_json)

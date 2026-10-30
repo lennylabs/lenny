@@ -18,7 +18,7 @@ import (
 )
 
 // F-7.4.17: a successful upload writes a §16.6 session.upload audit row
-// with the resulting UploadRef in Detail. spec: §16.6 line 338; §11.7.
+// with the resulting UploadRef in Detail. spec: §16.6; §11.7.
 func TestRunUploadEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 	store := memstore.New()
 	blobs := blobstore.NewMemoryStore(nil)
@@ -29,6 +29,7 @@ func TestRunUploadEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 	verifier := uploadtoken.NewVerifier(ring, tracker, clock)
 	sink := &captureLifecycleAudit{}
 	srv := New(store, Options{
+		DevTenantHeader:     true,
 		Clock:               clock,
 		UploadTokenIssuer:   issuer,
 		UploadTokenVerifier: verifier,
@@ -87,6 +88,7 @@ func TestHandleFinalizeEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 	verifier := uploadtoken.NewVerifier(ring, tracker, clock)
 	sink := &captureLifecycleAudit{}
 	srv := New(store, Options{
+		DevTenantHeader:     true,
 		Clock:               clock,
 		UploadTokenIssuer:   issuer,
 		UploadTokenVerifier: verifier,
@@ -142,6 +144,7 @@ func TestRunUploadAuditNilSinkSafe_spec_7_4_17(t *testing.T) {
 	tracker := uploadtoken.NewMemoryTracker()
 	verifier := uploadtoken.NewVerifier(ring, tracker, clock)
 	srv := New(store, Options{
+		DevTenantHeader:     true,
 		Clock:               clock,
 		UploadTokenIssuer:   issuer,
 		UploadTokenVerifier: verifier,

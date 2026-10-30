@@ -1,4 +1,4 @@
--- §7.1 line 6 — CreateSession(runtime, pool, retryPolicy, metadata)
+-- §7.1 — CreateSession(runtime, pool, retryPolicy, metadata)
 -- carries a client-supplied metadata payload. The minimal gateway
 -- preserves the payload verbatim across the session lifetime so a
 -- client annotation set at creation surfaces on GET /v1/sessions/{id}

@@ -258,7 +258,7 @@ func TestDefinitionRejectsReservedControlID(t *testing.T) {
 }
 
 func TestDefinitionRejectsBadWeights(t *testing.T) {
-	// spec: §10.7 line 694 / line 743 — each weight in [0.0, 1.0); a
+	// spec: §10.7 — each weight in [0.0, 1.0); a
 	// 1.0 weight always violates the cross-Σ < 1.0 rule.
 	cases := []struct {
 		name    string
@@ -286,7 +286,7 @@ func TestDefinitionRejectsBadWeights(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 694 — weight: 0.0 is operationally a no-op (no
+// spec: §10.7 — weight: 0.0 is operationally a no-op (no
 // traffic to the variant) and must be admitted so deployers can stage a
 // variant before turning on traffic. F-10.7.16.
 func TestDefinitionAcceptsZeroWeightVariant(t *testing.T) {

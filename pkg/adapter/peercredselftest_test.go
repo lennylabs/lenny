@@ -9,7 +9,7 @@ import (
 
 // TestPeercredSelftest_spec_4_7_passes_on_loopback verifies the §4.7
 // mandatory SO_PEERCRED startup self-test
-// (spec/04_system-components.md lines 870-877) succeeds in the test
+// (§4.7.11) succeeds in the test
 // environment: a loopback connection to an abstract socket reports the
 // process's own UID via SO_PEERCRED. On non-Linux hosts the self-test is
 // a no-op and also returns nil.

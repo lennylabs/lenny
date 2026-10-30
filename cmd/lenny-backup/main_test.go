@@ -80,7 +80,7 @@ func TestRunFullBackupRequiresShards(t *testing.T) {
 	}
 }
 
-// spec: §25.11 lines 4128-4133 — verify mode dispatches to the §25.11
+// spec: §25.11 — verify mode dispatches to the §25.11
 // Backup Verification flow and requires a backup id. F-17.3.6.
 func TestRunVerifyModeRequiresBackupID_spec_25_11(t *testing.T) {
 	code, _, stderr := runArgs("--mode", "verify",
@@ -94,7 +94,7 @@ func TestRunVerifyModeRequiresBackupID_spec_25_11(t *testing.T) {
 	}
 }
 
-// spec: §25.11 lines 4254-4256 — the restore-test CronJob flags
+// spec: §25.11 — the restore-test CronJob flags
 // (--namespace, --backup-selector, --artifact-sample-size) are
 // registered, so the monthly Job no longer exits usage(2) before
 // performing a restore. F-17.3.6.

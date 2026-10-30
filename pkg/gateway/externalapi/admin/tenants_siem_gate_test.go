@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
-// spec: §11.7 lines 445-451 — the compliance enforcement gate. These
+// spec: §11.7 — the compliance enforcement gate. These
 // tests build a SIEM-unconfigured router explicitly (the shared test
 // helpers default to configured). F-11.7.2.
 
@@ -41,7 +41,7 @@ func errorEnvelope(t *testing.T, rr *httptest.ResponseRecorder) (code, message s
 	return env.Error.Code, env.Error.Message
 }
 
-// spec: §11.7 line 446 — creating a regulated-profile tenant with no SIEM
+// spec: §11.7 — creating a regulated-profile tenant with no SIEM
 // endpoint is rejected with 422 COMPLIANCE_SIEM_REQUIRED.
 func TestCreateTenantRegulatedWithoutSIEMRejected(t *testing.T) {
 	for _, profile := range []string{"soc2", "fedramp", "hipaa"} {
@@ -73,7 +73,7 @@ func TestCreateTenantRegulatedWithoutSIEMRejected(t *testing.T) {
 	}
 }
 
-// spec: §11.7 line 446 — with SIEM configured the same create succeeds.
+// spec: §11.7 — with SIEM configured the same create succeeds.
 func TestCreateTenantRegulatedWithSIEMAllowed(t *testing.T) {
 	store := tenantstore.NewMemory()
 	router := admin.NewRouter(store, admin.Options{
@@ -105,7 +105,7 @@ func TestCreateTenantUnregulatedWithoutSIEMAllowed(t *testing.T) {
 	}
 }
 
-// spec: §11.7 line 446 — updating a tenant to a regulated profile with no
+// spec: §11.7 — updating a tenant to a regulated profile with no
 // SIEM is rejected with COMPLIANCE_SIEM_REQUIRED (tighten in place still
 // needs SIEM).
 func TestUpdateTenantToRegulatedWithoutSIEMRejected(t *testing.T) {
@@ -128,7 +128,7 @@ func TestUpdateTenantToRegulatedWithoutSIEMRejected(t *testing.T) {
 	}
 }
 
-// spec: §11.7 line 449 — environment creation under a regulated tenant
+// spec: §11.7 — environment creation under a regulated tenant
 // with no SIEM is rejected; under a non-regulated tenant it is allowed.
 func TestCreateEnvironmentUnderRegulatedTenantWithoutSIEMRejected(t *testing.T) {
 	store := tenantstore.NewMemory()
@@ -160,7 +160,7 @@ func TestCreateEnvironmentUnderRegulatedTenantWithoutSIEMRejected(t *testing.T) 
 	}
 }
 
-// spec: §11.7 line 450 — the startup gate returns the verbatim fatal
+// spec: §11.7 — the startup gate returns the verbatim fatal
 // message when a regulated tenant exists and SIEM is unconfigured, and is
 // a no-op otherwise. F-11.7.2.
 func TestValidateSIEMForRegulatedTenants(t *testing.T) {

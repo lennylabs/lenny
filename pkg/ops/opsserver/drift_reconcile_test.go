@@ -52,7 +52,7 @@ func reconcileServer(t *testing.T, applier driftservice.ResourceApplier) *opsser
 	return opsserver.New(opsserver.Options{Drift: svc})
 }
 
-// spec: §25.10 line 3765, 3842 — POST /v1/admin/drift/reconcile with
+// spec: §25.10 — POST /v1/admin/drift/reconcile with
 // confirm:true applies the drifted resources and returns 200.
 func TestDriftReconcileConfirm_spec_25_10(t *testing.T) {
 	srv := reconcileServer(t, labelApplier{})
@@ -69,7 +69,7 @@ func TestDriftReconcileConfirm_spec_25_10(t *testing.T) {
 	}
 }
 
-// spec: §25.10 line 3852, 3865 — a partial reconcile returns HTTP 207
+// spec: §25.10 — a partial reconcile returns HTTP 207
 // with errorCode DRIFT_RECONCILE_PARTIAL.
 func TestDriftReconcilePartial207_spec_25_10(t *testing.T) {
 	srv := reconcileServer(t, labelApplier{fail: map[string]bool{"pools:coding": true}})
@@ -100,7 +100,7 @@ func TestDriftReconcileDryRun_spec_25_10(t *testing.T) {
 	}
 }
 
-// spec: §25.10 line 3842 — a confirmed reconcile with no applier wired
+// spec: §25.10 — a confirmed reconcile with no applier wired
 // fails closed with 503 DRIFT_RECONCILE_UNAVAILABLE.
 func TestDriftReconcileNoApplier503_spec_25_10(t *testing.T) {
 	srv := reconcileServer(t, nil)
@@ -123,7 +123,7 @@ func errCode(body map[string]any) any {
 	return e["code"]
 }
 
-// spec: §25.10 line 3791 — GET /v1/admin/drift?against=both returns the
+// spec: §25.10 — GET /v1/admin/drift?against=both returns the
 // live and target diffs in one response.
 func TestDriftReportAgainstBoth_spec_25_10(t *testing.T) {
 	store := driftservice.NewMemSnapshotStore()
@@ -162,7 +162,7 @@ func TestDriftReportAgainstBoth_spec_25_10(t *testing.T) {
 	}
 }
 
-// spec: §25.10 line 3791 — against=both with no target snapshot returns
+// spec: §25.10 — against=both with no target snapshot returns
 // 404 DRIFT_NO_TARGET_SNAPSHOT.
 func TestDriftReportAgainstBothNoTarget_spec_25_10(t *testing.T) {
 	srv := driftServer(t,

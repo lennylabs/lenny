@@ -1,0 +1,2217 @@
+// SPDX-License-Identifier: MIT
+
+package tier0_static
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/lennylabs/lenny/cmd/lenny-test/changegraph"
+	"github.com/lennylabs/lenny/cmd/lenny-test/skipreason"
+	"github.com/lennylabs/lenny/scripts/specshift/anchor"
+	"github.com/lennylabs/lenny/scripts/specshift/citation"
+	"github.com/lennylabs/lenny/scripts/specshift/identifier"
+	"github.com/lennylabs/lenny/scripts/specshift/name"
+	"github.com/lennylabs/lenny/scripts/specshift/register"
+	"github.com/lennylabs/lenny/scripts/specshift/scope"
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+)
+
+// The residual gate is what makes every enumeration the migration works
+// from safe to be incomplete. Each enumerated class is defined by a
+// deliberately broad predicate rather than by its enumeration, and
+// anything that matches the predicate and appears in neither the
+// enumeration nor the class's residual register is a residual. A
+// residual fails tier 0, named together with the class that should own
+// it, so a member no enumeration anticipated is triaged rather than
+// absorbed.
+//
+// Closing a residual means one of two things. The member belongs to the
+// class, so it joins the register as in-class and the class's own pass
+// or remediation reaches it. Or it does not, so it joins the register as
+// an explicit exclusion with a reason. Both are recorded. Narrowing a
+// predicate to reach green is the one route the gate does not accept.
+//
+// Each class reads its own register at tests/registers/residual-<class>.yaml,
+// held separately from the register or baseline that drives the class's
+// pass, because a pass register is keyed for its rewrite and several of
+// them are emptied as that rewrite completes. A residual entry records a
+// triage decision instead: a member, its class, an in-class or excluded
+// disposition, and a reason. It carries no owner, no opened-at date, no
+// expiry, and no blocker, so the shared register contract's expiry and
+// blocker ratchet rules do not range over it. An exclusion is permanent,
+// because the member never belonged to the class, and an in-class entry
+// is retired by the event that takes its member out of the class rather
+// than by a date.
+//
+// The scan for a class ranges over that class's read domain, taken from
+// scripts/specshift/scope rather than re-derived here, so a class's
+// residual scan, its pass, and its gates read one domain. That domain is
+// the tracked tree less the shared read exclusion, which covers the
+// staged proposals, the two historical audit records, the two root
+// planning documents, and every testdata directory, less the root-level
+// planning records for the classes whose passes exclude them, and less
+// the registers the class cannot read as tree content. A residual entry
+// holds a copy of its member's text, so a scan that read its own
+// register would report that copy under the register's own path as a
+// further residual and the entry seeded for it would add another copy,
+// which does not converge.
+
+// The residual register's schema, its loader, its validator, its writer,
+// and the downward rewrite live in scripts/specshift/register, which the
+// passes read as well, so an entry this gate writes is an entry a pass
+// reads and neither side can drift from the other's entry schema. The
+// names below are that one contract under the names this gate reads it
+// by.
+type (
+	residualEntry       = register.Entry
+	residualDisposition = register.Disposition
+)
+
+const (
+	// residualInClass records a member that belongs to the class. Its
+	// route out is the class's own pass or remediation.
+	residualInClass = register.InClass
+	// residualExcluded records a member that never belonged to the class.
+	// It is permanent.
+	residualExcluded = register.Excluded
+)
+
+// residualMemberKey returns the key a stored member text is held under.
+func residualMemberKey(stored string) string { return register.MemberKey(stored) }
+
+// residualMember is one member the class's broad predicate selected,
+// with the site it was first read at. The site is a report aid and is
+// outside the key: the same citation text is written in several files,
+// and keying on the site would make an entry for one of them.
+type residualMember struct {
+	// Member is the member's stored text, with any continuation join
+	// preserved as a line break, as residualEntry.Member holds it.
+	Member string
+	Site   string
+}
+
+// residualFailure is one member or entry the run reports. Exactly one of
+// the three kinds is set.
+type residualFailure struct {
+	// Class names the class that should own the member.
+	Class scope.Class
+	// Unclassified is a member the predicate selected that the
+	// enumeration does not cover and the register does not carry.
+	Unclassified *residualMember
+	// StaleExcluded is an exclusion whose member the predicate no longer
+	// selects, so the register would otherwise accumulate dead
+	// exclusions.
+	StaleExcluded *residualEntry
+	// StaleInClass is an in-class entry whose member the predicate no
+	// longer selects and which survived the run, so an in-class entry
+	// cannot outlive the remediation it recorded.
+	StaleInClass *residualEntry
+}
+
+// String renders the failure for the gate's message.
+func (f residualFailure) String() string {
+	switch {
+	case f.Unclassified != nil:
+		return fmt.Sprintf("%s: %s at %s appears in neither the enumeration nor %s",
+			f.Class, residualMemberKey(f.Unclassified.Member), f.Unclassified.Site,
+			residualRegisterPath(f.Class))
+	case f.StaleExcluded != nil:
+		return fmt.Sprintf("%s: %s carries an exclusion for %q, which the class's predicate no longer selects",
+			f.Class, residualRegisterPath(f.Class), residualMemberKey(f.StaleExcluded.Member))
+	case f.StaleInClass != nil:
+		return fmt.Sprintf("%s: %s carries an in-class entry for %q, which the class's predicate no longer selects, "+
+			"and the run did not remove it", f.Class, residualRegisterPath(f.Class),
+			residualMemberKey(f.StaleInClass.Member))
+	}
+	return fmt.Sprintf("%s: an empty failure", f.Class)
+}
+
+// residualReport is what one run measured for one class.
+type residualReport struct {
+	// Class is the class the report covers.
+	Class scope.Class
+	// Files is the number of tracked files inside the class's read
+	// domain.
+	Files int
+	// Selected is the number of members the broad predicate selected
+	// after the enumeration was subtracted. It reaches zero when the
+	// class empties, which is a terminal state rather than a defect.
+	Selected int
+	// Carried is how many entries the register held when the run loaded
+	// it.
+	Carried int
+	// Held is how many of those the run read again as live members.
+	Held int
+	// Removed is every in-class entry the run dropped, because its member
+	// left the class. Together with Held and the stale failures it
+	// accounts for every entry Carried counts.
+	Removed []residualEntry
+	// Failures is every member or entry the run reports. A non-empty list
+	// is the gate's failure.
+	Failures []residualFailure
+}
+
+// residualClass is one class of the scan: the register it reads, whether
+// a member of it can leave, and the predicate that selects its members.
+type residualClass struct {
+	// Name is the class, as scripts/specshift/scope declares it.
+	Name scope.Class
+	// Removable reports whether a member can stop matching the class's
+	// broad predicate. Every class here but the generated-artifact class
+	// has a route out: a citation is rewritten by the line pass, a
+	// tracked path gains a glob key in the change graph, and a skip
+	// reason is rewritten to open with a category. A generated file keeps
+	// matching for as long as it exists, so its in-class entry is
+	// permanent for the same reason an exclusion is.
+	Removable bool
+	// Members returns the members the broad predicate selects over the
+	// class's read domain, with the enumeration already subtracted.
+	Members func(ctx context.Context, g *residualGate, domain []string) ([]residualMember, error)
+}
+
+// residualClasses are the classes this gate ranges over, in a stable
+// order. Every class the migration enumerates is here: each one's check
+// reads that class's own register, and each register is seeded by the
+// sub-step that seeds the class's pass or baseline register, so no check
+// reaches tier 0 before the register that makes it green exists.
+func residualClasses() []residualClass {
+	return []residualClass{
+		{Name: scope.ClassLineCitations, Removable: true, Members: residualCitationMembers},
+		{Name: scope.ClassLineCitationResolution, Removable: true, Members: residualCitationMembers},
+		{Name: scope.ClassGeneratedArtifact, Removable: false, Members: residualGeneratedMembers},
+		{Name: scope.ClassChangeGraphCoverage, Removable: true, Members: residualChangeGraphMembers},
+		{Name: scope.ClassSkipReason, Removable: true, Members: residualSkipMembers},
+		{Name: scope.ClassReservedPhrase, Removable: true, Members: residualReservedPhraseMembers},
+		{Name: scope.ClassIdentifier, Removable: true, Members: residualIdentifierMembers},
+		{Name: scope.ClassAnchor, Removable: true, Members: residualAnchorMembers},
+	}
+}
+
+// residualRegisterPath returns the class's register.
+func residualRegisterPath(c scope.Class) string { return c.ResidualRegister() }
+
+// residualGate is the tier-0 residual gate. Its dependencies are
+// injected so a case drives it over a fixture tree.
+type residualGate struct {
+	// List enumerates the tracked tree.
+	List scope.Lister
+	// Read reads a repo-relative tracked path.
+	Read scope.FileReader
+	// Write writes a repo-relative tracked path. It is used for the
+	// downward removal of an in-class entry whose member left the class,
+	// and nothing else. A gate with no writer reports such an entry
+	// instead, so a read-only inspection never certifies a register it
+	// could not reconcile.
+	Write func(path string, content []byte) error
+}
+
+// newResidualGate returns the gate over the tracked tree at root.
+func newResidualGate(root string) *residualGate {
+	return &residualGate{
+		List:  scope.GitLister(root),
+		Read:  scope.DirReader(root),
+		Write: scope.DirWriter(root),
+	}
+}
+
+// newResidualGateOver returns the gate with each dependency supplied, so
+// a caller drives it over a tree other than a git checkout. A nil writer
+// is a read-only run.
+func newResidualGateOver(list scope.Lister, read scope.FileReader, write func(string, []byte) error) *residualGate {
+	return &residualGate{List: list, Read: read, Write: write}
+}
+
+// RunAll runs every class and returns one report each, in class order. A
+// class that could not be inspected fails the whole run: a report of no
+// residual for the classes that did run would certify a tree the gate
+// only partly opened.
+func (g *residualGate) RunAll(ctx context.Context) ([]residualReport, error) {
+	var out []residualReport
+	for _, c := range residualClasses() {
+		rep, err := g.Run(ctx, c)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, rep)
+	}
+	return out, nil
+}
+
+// Run computes one class's residual.
+//
+// A run that could not inspect the tree returns an error rather than an
+// empty report: a walk that selected no file over a tree that is not
+// empty, and a missing or malformed register, are both states in which a
+// report of no residual would certify content the run never opened, or
+// would exempt every member at once.
+//
+// A class whose predicate selects no member over a scan that did select
+// files is the terminal state the class's pass or remediation reaches,
+// so it is reported green. An in-class entry that outlived its member is
+// the register-versus-tree inconsistency that state must not hide, and
+// it is removed by the run or reported by it.
+func (g *residualGate) Run(ctx context.Context, c residualClass) (residualReport, error) {
+	rep := residualReport{Class: c.Name}
+	if g.List == nil || g.Read == nil {
+		return rep, fmt.Errorf("residual gate: a lister and a reader are required")
+	}
+	// The class is named on the domain failure as well as on the
+	// residual, because a walk root or an exclusion list that selects
+	// nothing is reported against the class whose scan it emptied,
+	// whichever of the two exclusions emptied it.
+	domain, err := scope.ClassReadDomain(ctx, g.List, c.Name)
+	if err != nil {
+		return rep, fmt.Errorf("residual gate: %s class: %w", c.Name, err)
+	}
+	carried, order, err := loadResidualRegister(g.Read, c.Name)
+	if err != nil {
+		return rep, fmt.Errorf("residual gate: %w", err)
+	}
+	members, err := c.Members(ctx, g, domain)
+	if err != nil {
+		return rep, fmt.Errorf("residual gate: %s class: %w", c.Name, err)
+	}
+	rep.Files = len(domain)
+	rep.Selected = len(members)
+	rep.Carried = len(carried)
+
+	kept := g.compare(c, members, carried, order, &rep)
+	// The removal lands on a run that reports nothing else. A run that
+	// fails leaves the register byte-identical, so the next run measures
+	// the same population and reverting the edit that failed it restores
+	// green.
+	if len(rep.Failures) == 0 && len(rep.Removed) > 0 {
+		if err := writeResidualRegister(g.Write, c.Name, kept); err != nil {
+			return rep, fmt.Errorf("residual gate: %w", err)
+		}
+	}
+	return rep, nil
+}
+
+// compare measures the selected members against the register, fills in
+// the report, and returns the entries a rewritten register holds.
+//
+// A member the register does not carry is a residual. An entry whose
+// member the predicate no longer selects is either dropped, when the
+// class has a route out and a writer is configured, or reported.
+func (g *residualGate) compare(c residualClass, members []residualMember,
+	carried map[string]residualEntry, order []string, rep *residualReport,
+) []residualEntry {
+	selected := make(map[string]bool, len(members))
+	for _, m := range members {
+		selected[residualMemberKey(m.Member)] = true
+	}
+	for _, m := range members {
+		if _, ok := carried[residualMemberKey(m.Member)]; !ok {
+			held := m
+			rep.Failures = append(rep.Failures, residualFailure{Class: c.Name, Unclassified: &held})
+		}
+	}
+	kept := make([]residualEntry, 0, len(carried))
+	for _, member := range order {
+		entry := carried[member]
+		if selected[member] {
+			rep.Held++
+			kept = append(kept, entry)
+			continue
+		}
+		stale := entry
+		switch {
+		case entry.Disposition == residualExcluded:
+			// An exclusion is permanent, so a member the predicate has
+			// stopped selecting is a dead exclusion rather than a
+			// remediation, and the register does not accumulate one.
+			rep.Failures = append(rep.Failures, residualFailure{Class: c.Name, StaleExcluded: &stale})
+			kept = append(kept, entry)
+		case !c.Removable || g.Write == nil:
+			// A class with no route out has no remediation to record, and
+			// a run with no writer cannot record one, so the entry is
+			// reported rather than left standing unexplained.
+			rep.Failures = append(rep.Failures, residualFailure{Class: c.Name, StaleInClass: &stale})
+			kept = append(kept, entry)
+		default:
+			// The member took the class's own route out, so the entry
+			// that recorded it goes with it in the same run.
+			rep.Removed = append(rep.Removed, entry)
+		}
+	}
+	return kept
+}
+
+// residualCitationMembers selects the members of the two line-citation
+// classes. The predicate is any occurrence of a section sigil or a
+// section path standing adjacent to a line-number token, with adjacency
+// tolerating the continuation join, and with no commitment to a member
+// separator, a range spelling, or a comment dialect. The enumeration it
+// subtracts is the citation form itself, which is what the line pass
+// rewrites, the ratchet counts, and the resolver reads, so the residual
+// is the spelling the form misses.
+//
+// A member is keyed by its text rather than by its site. The same
+// spelling is written in several files, and a site-keyed member would
+// demand an entry for each of them while the text a register carries is
+// the same string. Keying on the text is also what makes the seeding
+// converge, because the copy a register holds of a member's text is the
+// member already recorded.
+//
+// The text is recorded with the occurrence's continuation join
+// preserved, so a citation read across two comment lines is stored
+// across two lines. A residual register is an ordinary member of the
+// shared read domain, and a wrapped occurrence folded onto one line
+// would stand there as a citation the form reads, which the ratchet
+// counts and the resolver reports under the register's own path.
+func residualCitationMembers(ctx context.Context, g *residualGate, domain []string) ([]residualMember, error) {
+	seen := map[string]residualMember{}
+	for _, target := range domain {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, err := g.Read(target)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", target, err)
+		}
+		content := string(data)
+		read := citation.FindIn(target, content)
+		for _, b := range citation.FindBroadIn(target, content) {
+			if coveredByCitationForm(b, read) {
+				continue
+			}
+			if _, ok := seen[b.Text]; ok {
+				continue
+			}
+			seen[b.Text] = residualMember{
+				Member: strings.Join(b.Lines, "\n"),
+				Site:   fmt.Sprintf("%s:%d", target, b.Line),
+			}
+		}
+	}
+	return sortedResidualMembers(seen), nil
+}
+
+// coveredByCitationForm reports whether the broad occurrence overlaps a
+// citation the form itself read. Overlap rather than equality is the
+// test, because the two matchers bound a citation differently: the form
+// consumes a trailing gloss the broad predicate stops before, and the
+// broad predicate consumes a separator run the form does not admit. An
+// occurrence that shares any byte with a citation the form read is
+// already enumerated.
+func coveredByCitationForm(b citation.LocatedBroad, read []citation.Located) bool {
+	for _, c := range read {
+		if b.Offset < c.Offset+len(c.Raw) && c.Offset < b.End {
+			return true
+		}
+	}
+	return false
+}
+
+// residualGeneratedMembers selects the members of the generated-artifact
+// class. The predicate is the union the per-file generated-artifact rule
+// applies: a generation marker in the file header, a generation
+// declaration in top-level document metadata for a format that carries
+// no comment syntax, and membership in the output set of a named
+// producer. The enumeration it subtracts is the marker: a file that
+// declares itself generated needs no triage, so what is left is the file
+// selected by producer membership alone.
+//
+// That second disjunct is what makes the class complete. The CRDs under
+// charts/lenny/crds/ and their copies under pkg/embedded/crds/ are
+// producer output that carries no marker at all, so a marker-only rule
+// would classify them as ordinary carriers and direct a pass to write
+// them. The producer output sets are read from the producer list rather
+// than by running a producer, which is what makes the rule decidable at
+// tier 0.
+func residualGeneratedMembers(ctx context.Context, g *residualGate, domain []string) ([]residualMember, error) {
+	seen := map[string]residualMember{}
+	for _, target := range domain {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		disjunct, err := scope.Generated(target, g.Read)
+		if err != nil {
+			return nil, err
+		}
+		if disjunct == scope.NotGenerated {
+			continue
+		}
+		marker, err := scope.MarkerDeclared(target, g.Read)
+		if err != nil {
+			return nil, err
+		}
+		if marker != scope.NotGenerated {
+			continue
+		}
+		seen[target] = residualMember{Member: target, Site: target}
+	}
+	return sortedResidualMembers(seen), nil
+}
+
+// residualDataExts is the documented denylist the change-graph coverage
+// class's broad predicate subtracts: the extensions whose content is
+// data, configuration, or documentation rather than a language this tree
+// builds, renders, or executes from. A path with no extension carries no
+// language either, and in this tree names a dotfile, a license, a
+// container or make recipe, or a fuzz corpus entry.
+//
+// The predicate is stated as a denylist because an allowlist of source
+// extensions is another enumeration wearing a regular expression: a
+// language added to the tree later drops out of the class silently,
+// which is the tail the residual exists to catch. A file in a language
+// this list does not name is a member and is triaged in the register,
+// and widening this list is the predicate narrowing the gate does not
+// accept as a route to green.
+var residualDataExts = []string{
+	"", ".md", ".txt", ".yaml", ".yml", ".json", ".toml", ".cfg", ".xml", ".mod", ".sum",
+}
+
+// residualChangeGraphMembers selects the members of the change-graph
+// coverage class. The predicate is any tracked file that no glob key in
+// the change graph covers, over every tree and every language, less the
+// documented data and documentation extensions. A test file is outside
+// the predicate for the reason the completeness check states: a test is
+// a target of the graph rather than a source of it.
+//
+// The enumeration it subtracts is the completeness check's own domain,
+// which the check holds to a glob key or to its coverage baseline on
+// every run of validate-maps. That domain is read from
+// cmd/lenny-test/changegraph, which the check reads as well, so a tree
+// or an extension that moves moves for both at once and no path is left
+// governed by neither. What remains is the source file the check's
+// narrowing never reaches, whose route out is the same glob key.
+func residualChangeGraphMembers(ctx context.Context, g *residualGate, domain []string) ([]residualMember, error) {
+	globs, err := readResidualChangeGraphGlobs(g.Read)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]residualMember{}
+	for _, target := range domain {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !residualSourceFile(target) || changegraph.InCheckDomain(target) {
+			continue
+		}
+		if changegraph.CoveredByGlob(target, globs) {
+			continue
+		}
+		seen[target] = residualMember{Member: target, Site: target}
+	}
+	return sortedResidualMembers(seen), nil
+}
+
+// residualSourceFile reports whether a tracked path is one the broad
+// predicate ranges over: anything but a test file and anything but the
+// data and documentation extensions residualDataExts names.
+func residualSourceFile(target string) bool {
+	if strings.HasSuffix(target, "_test.go") {
+		return false
+	}
+	ext := strings.ToLower(filepath.Ext(target))
+	for _, denied := range residualDataExts {
+		if ext == denied {
+			return false
+		}
+	}
+	return true
+}
+
+// readResidualChangeGraphGlobs returns the change graph's glob keys,
+// read through the reading in cmd/lenny-test/changegraph that the
+// completeness check and the `--changed` selector read, so a key means
+// the same thing to all three.
+//
+// A missing or malformed graph is an error rather than an empty key set:
+// a load that degraded to carrying nothing would report every source
+// file in the tree as a residual.
+func readResidualChangeGraphGlobs(read scope.FileReader) (map[string]bool, error) {
+	data, err := read(changegraph.RelPath)
+	if err != nil {
+		return nil, fmt.Errorf("read the change graph %s: %w", changegraph.RelPath, err)
+	}
+	return changegraph.ParseGlobKeys(changegraph.RelPath, data)
+}
+
+// residualSkipMembers selects the members of the skip-reason class. The
+// predicate is any call whose selected name opens with Skip, in any
+// tracked Go file of the class's read domain, that passes an argument
+// the classifier would read as a reason and whose reason does not open
+// with one of the categories. It commits to no tree and to no spelling
+// of the call beyond that opening, because a skip that states nothing a
+// reader can act on is the same defect wherever it is written.
+//
+// The enumeration it subtracts is the skip-reason classifier's own
+// domain and call forms, which the classifier holds to the categories or
+// to its register on every run. What is left is the skip call the
+// classifier's narrowing never reaches, in a tree outside its three or
+// under a name outside its two forms.
+func residualSkipMembers(ctx context.Context, g *residualGate, domain []string) ([]residualMember, error) {
+	seen := map[string]residualMember{}
+	for _, target := range domain {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !strings.HasSuffix(target, ".go") {
+			continue
+		}
+		data, err := g.Read(target)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", target, err)
+		}
+		found, err := residualSkipsInFile(target, data)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range found {
+			seen[m.Member] = m
+		}
+	}
+	return sortedResidualMembers(seen), nil
+}
+
+// residualSkipsInFile returns every skip-named call in one Go file that
+// the classifier's domain and call forms leave unread and whose reason
+// states no category.
+//
+// A file that does not parse is an error rather than a file with no
+// call: a scan that passed over what it could not read would go green on
+// the file a rewrite broke.
+func residualSkipsInFile(target string, src []byte) ([]residualMember, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, target, src, 0)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", target, err)
+	}
+	governed := inSkipDomain(target)
+	var out []residualMember
+	ordinals := map[string]int{}
+	for _, decl := range file.Decls {
+		fn := enclosingFuncName(decl)
+		ast.Inspect(decl, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			name, ok := residualSkipName(call)
+			if !ok {
+				return true
+			}
+			ordinals[fn]++
+			if governed && residualSkipEnumerated(name) {
+				return true
+			}
+			if residualSkipStatesCategory(call) {
+				return true
+			}
+			out = append(out, residualMember{
+				Member: residualSkipKey(target, fn, ordinals[fn], name),
+				Site:   fmt.Sprintf("%s:%d", target, fset.Position(call.Lparen).Line),
+			})
+			return true
+		})
+	}
+	return out, nil
+}
+
+// residualSkipName reports the selected name when the call opens with
+// Skip. The predicate is the opening of the name alone, so a spelling
+// the classifier's two forms do not carry is still selected.
+func residualSkipName(call *ast.CallExpr) (string, bool) {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return "", false
+	}
+	if !strings.HasPrefix(sel.Sel.Name, skipCallPlain) {
+		return "", false
+	}
+	return sel.Sel.Name, true
+}
+
+// residualSkipEnumerated reports whether the classifier's call forms
+// already read the name.
+func residualSkipEnumerated(name string) bool {
+	return name == skipCallPlain || name == skipCallFormatted || strings.HasPrefix(name, skipHelperPrefix)
+}
+
+// residualSkipStatesCategory reports whether the call's first argument
+// is a string literal opening with one of the categories. A call with no
+// argument states no reason to classify and is outside the predicate,
+// which is the same answer the classifier gives a bare skip.
+func residualSkipStatesCategory(call *ast.CallExpr) bool {
+	if len(call.Args) == 0 {
+		return true
+	}
+	reason, ok := constantStringExpr(call.Args[0])
+	if !ok {
+		return false
+	}
+	return openedWithSkipCategory(reason)
+}
+
+// residualSkipKey renders a skip call site as a member. The site is
+// keyed by its file, the function holding it, and its ordinal among the
+// skip-named call sites of that function, because the line a call sits
+// on moves with any edit above it.
+func residualSkipKey(path, function string, ordinal int, name string) string {
+	return fmt.Sprintf("%s %s (site %d): %s", path, function, ordinal, name)
+}
+
+// residualSiteKey renders a member of a class whose members are the
+// sites one carrier holds: the carrier, and the text standing in it.
+//
+// The text alone would not identify a member of these three classes. A
+// class whose predicate reads a handful of spellings would collapse the
+// whole tree into as many members, and one entry would absorb every site
+// of a spelling anywhere in the tree. The line the site sits on is
+// outside the key for the reason the skip-reason key states, which is
+// that a line moves with any edit above it, so the carrier is the unit
+// an entry is triaged at and retired with.
+func residualSiteKey(target, text string) string { return target + ": " + text }
+
+// residualOccurrenceKey renders the position and text of one occurrence,
+// which is what a scan subtracts the enumerated occurrences of a carrier
+// by. It is held inside one file's scan and is never written to a
+// register.
+func residualOccurrenceKey(line int, text string) string {
+	return fmt.Sprintf("%d:%s", line, residualFoldASCII(text))
+}
+
+// residualFoldASCII folds every upper-case ASCII byte to lower case,
+// leaving every byte offset where it stood. A case-insensitive scan and
+// the byte offsets it reports have to agree, and the Unicode fold maps
+// some runes to a different number of bytes.
+func residualFoldASCII(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
+}
+
+// residualReservedPhraseMembers selects the members of the
+// reserved-phrase class. The predicate is one of the two reserved words
+// standing next to the head noun the naming law bans it in front of,
+// under any separator that is not a word byte, in any carrier of the
+// class's read domain and at any position of that carrier. It commits to
+// no separator spelling, to no carrier, and to no in-file position,
+// because each of the last two is a statement the law makes about where
+// its prohibition reaches rather than a property of the words.
+//
+// The enumeration it subtracts is the site the name pass writes and the
+// naming lint reports, which the scripts/specshift/name package answers
+// for a carrier. What is left is the occurrence no pass rewrites: one in
+// a carrier the prohibition's domain excludes, such as a chart template
+// or a runtime SDK source in a language other than Go, one in a Go file
+// outside the doc comment the law governs, and one inside a markdown
+// anchor identifier, which is an addressable link target rather than
+// prose. Each is triaged in the register with the reason it stands.
+func residualReservedPhraseMembers(ctx context.Context, g *residualGate, domain []string) ([]residualMember, error) {
+	seen := map[string]residualMember{}
+	for _, target := range domain {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, err := g.Read(target)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", target, err)
+		}
+		content := string(data)
+		broad := name.FindBroadPhrases(content)
+		if len(broad) == 0 {
+			continue
+		}
+		// The enumeration is read for the carriers that carry an
+		// occurrence alone. It parses every Go carrier it is asked
+		// about, and a carrier holding no occurrence has nothing to
+		// subtract.
+		written, err := name.Sites(target, content)
+		if err != nil {
+			return nil, err
+		}
+		covered := map[string]int{}
+		for _, s := range written {
+			covered[residualOccurrenceKey(s.Line, s.Text)]++
+		}
+		for _, b := range broad {
+			at := residualOccurrenceKey(b.Line, b.Text)
+			if covered[at] > 0 {
+				covered[at]--
+				continue
+			}
+			member := residualSiteKey(target, b.Text)
+			seen[member] = residualMember{
+				Member: member,
+				Site:   fmt.Sprintf("%s:%d", target, b.Line),
+			}
+		}
+	}
+	return sortedResidualMembers(seen), nil
+}
+
+// residualIdentifierMembers selects the members of the identifier class.
+// The predicate is any occurrence of a spelling the naming table retires,
+// read without regard to case and without the token-boundary rule the
+// pass matches on, over every carrier of the class's read domain and over
+// the carrier's own file name. The retired set is read out of the
+// specification rather than enumerated here, so a spelling the table
+// retires later is covered without this scan changing.
+//
+// The spans it holds out are the naming-table rows, whose retired-spelling
+// cell declares the spelling rather than referring to the channel, which
+// is the rule the identifier pass and the identifier-resolution gate both
+// read.
+//
+// The enumeration it subtracts is the site the identifier pass rewrites
+// and the identifier-resolution gate reports, which is a token-bounded
+// occurrence inside that pass's write domain. What is left is the
+// occurrence no pass reaches: one in a file the write domain excludes,
+// which today is a derived artifact whose route out is the regeneration
+// of its source, and one written in a case or inside a longer token the
+// pass's boundary rule does not read.
+func residualIdentifierMembers(ctx context.Context, g *residualGate, domain []string) ([]residualMember, error) {
+	table, err := identifier.LoadTable(ctx, g.List, g.Read)
+	if err != nil {
+		return nil, err
+	}
+	retired := table.Retired()
+	_, declarations, err := identifierNamingRows(ctx, g.List, g.Read)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]residualMember{}
+	for _, target := range domain {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, err := g.Read(target)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", target, err)
+		}
+		content := string(data)
+		held := declarations[target]
+		broad := residualRetiredSpellings(content, retired, held)
+		named := identifierInFileName(target, retired)
+		if len(broad) == 0 && named == "" {
+			continue
+		}
+		writable, err := scope.Writable(scope.Identifier, target, g.Read)
+		if err != nil {
+			return nil, err
+		}
+		covered := map[string]int{}
+		if writable {
+			for _, s := range identifierSites(content, retired, held) {
+				covered[residualOccurrenceKey(s.line, s.retired)]++
+			}
+		}
+		for _, b := range broad {
+			at := residualOccurrenceKey(b.line, b.text)
+			if covered[at] > 0 {
+				covered[at]--
+				continue
+			}
+			member := residualSiteKey(target, b.text)
+			seen[member] = residualMember{
+				Member: member,
+				Site:   fmt.Sprintf("%s:%d", target, b.line),
+			}
+		}
+		// The naming law reaches the file-name stem, and the gate reads
+		// the stem of a writable carrier as a site of its own. A stem the
+		// pass cannot write is the residual.
+		if named != "" && !writable {
+			member := residualSiteKey(target, named)
+			seen[member] = residualMember{Member: member, Site: target}
+		}
+	}
+	return sortedResidualMembers(seen), nil
+}
+
+// residualSpelling is one occurrence of a retired spelling the broad
+// predicate selected: the text as the carrier writes it, and the line it
+// stands on.
+type residualSpelling struct {
+	text string
+	line int
+}
+
+// residualRetiredSpellings returns every occurrence of a retired spelling
+// one carrier holds, in source order.
+//
+// The spellings are read longest first and a match consumes its span, so
+// a stem that is a prefix of a compound does not take the span the
+// compound stands on, which is the rule the pass reads its own sites by.
+// The case fold and the absent boundary rule are the over-breadth: a
+// carrier alphabet neither the pass nor the gate anticipated still yields
+// an occurrence, and the register is where it is triaged.
+func residualRetiredSpellings(content string, retired []string, held [][2]int) []residualSpelling {
+	folded := residualFoldASCII(content)
+	// The spellings are folded once for the carrier rather than at every
+	// offset of it, because the scan asks the same question of each of
+	// them at every byte.
+	lowered := make([]string, len(retired))
+	for i, spelling := range retired {
+		lowered[i] = residualFoldASCII(spelling)
+	}
+	var out []residualSpelling
+	for at := 0; at < len(content); {
+		match := ""
+		for i, spelling := range retired {
+			if strings.HasPrefix(folded[at:], lowered[i]) {
+				match = spelling
+				break
+			}
+		}
+		if match == "" {
+			at++
+			continue
+		}
+		if !identifierHeld(held, at) {
+			out = append(out, residualSpelling{
+				text: content[at : at+len(match)],
+				line: citation.LineOf(content, at),
+			})
+		}
+		at += len(match)
+	}
+	return out
+}
+
+// residualAnchorMoveMap is the anchor-move map, which records every
+// anchor the reduction retires. It is the whole membership rule of the
+// anchor class: nothing else retires an anchor, and a section number the
+// map does not carry names a heading this reduction did not move.
+const residualAnchorMoveMap = "tests/spec-anchor-moves.json"
+
+// residualAnchorSectionExpr matches a bare section citation, and
+// residualAnchorProseExpr the spelled-out spelling of the same citation,
+// which the anchor pass does not read. Both capture the dotted number, so
+// a citation of a deeper subsection is read as naming that subsection.
+var (
+	residualAnchorSectionExpr = regexp.MustCompile(`§(\d+(?:\.\d+)*)`)
+	residualAnchorProseExpr   = regexp.MustCompile(`(?i)\bsections?\s+(\d+(?:\.\d+)*)`)
+)
+
+// residualAnchorMembers selects the members of the anchor class. The
+// predicate is any reference into an anchor the anchor-move map retires:
+// the anchor's own slug standing as text anywhere in a carrier, a bare
+// section citation of the section that anchor addressed, and the
+// spelled-out spelling of the same citation. It commits to no carrier and
+// to no reference syntax, so a reference written in an absolute URL, in a
+// string literal, or in a document metadata value is selected like a
+// markdown fragment link.
+//
+// The enumeration it subtracts is the reference the anchor pass reads,
+// which the scripts/specshift/anchor package answers for a carrier: an
+// intra-repo markdown fragment link into a retired anchor, and a bare
+// citation standing outside every link. What is left is the reference the
+// pass leaves standing, among them the absolute URL whose fragment names
+// a retired anchor, the citation written inside a link label, and the
+// spelled-out spelling.
+//
+// A map that retires nothing states a class with no member. That is the
+// tree before the reduction the map describes has landed and the tree
+// after the change that empties it, and in both the class is empty rather
+// than unchecked: a map the scan could not read fails instead.
+func residualAnchorMembers(ctx context.Context, g *residualGate, domain []string) ([]residualMember, error) {
+	scan, err := anchor.NewScan(ctx, g.List, g.Read, residualAnchorMoveMap)
+	if err != nil {
+		return nil, err
+	}
+	if scan.Empty() {
+		return nil, nil
+	}
+	anchors := scan.Anchors()
+	seen := map[string]residualMember{}
+	for _, target := range domain {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, err := g.Read(target)
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", target, err)
+		}
+		content := string(data)
+		rewritten := scan.References(target, content)
+		for _, occ := range residualAnchorOccurrences(content, anchors, scan) {
+			if residualSpanCovered(rewritten, occ.lo, occ.hi) {
+				continue
+			}
+			member := residualSiteKey(target, occ.text)
+			seen[member] = residualMember{
+				Member: member,
+				Site:   fmt.Sprintf("%s:%d", target, citation.LineOf(content, occ.lo)),
+			}
+		}
+	}
+	return sortedResidualMembers(seen), nil
+}
+
+// residualAnchorOccurrence is one reference into a retired anchor: the
+// text of the reference and the byte span it stands on.
+type residualAnchorOccurrence struct {
+	text string
+	lo   int
+	hi   int
+}
+
+// residualAnchorOccurrences returns every reference into a retired anchor
+// one carrier holds, in source order and without overlap.
+//
+// A slug match is bounded by the anchor alphabet, so a retired anchor
+// standing inside a longer slug is the longer slug rather than a
+// reference to the retired one. A citation match is admitted only when
+// the map retires the anchor of the section it names, which is the same
+// membership test the pass applies.
+func residualAnchorOccurrences(content string, anchors []string, scan *anchor.Scan) []residualAnchorOccurrence {
+	var out []residualAnchorOccurrence
+	for _, slug := range anchors {
+		for at := 0; at+len(slug) <= len(content); at++ {
+			if !strings.HasPrefix(content[at:], slug) || !residualAnchorBounded(content, at, at+len(slug)) {
+				continue
+			}
+			out = append(out, residualAnchorOccurrence{text: slug, lo: at, hi: at + len(slug)})
+		}
+	}
+	for _, expr := range []*regexp.Regexp{residualAnchorSectionExpr, residualAnchorProseExpr} {
+		for _, m := range expr.FindAllStringSubmatchIndex(content, -1) {
+			if !scan.RetiresSection(content[m[2]:m[3]]) {
+				continue
+			}
+			out = append(out, residualAnchorOccurrence{text: content[m[0]:m[1]], lo: m[0], hi: m[1]})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].lo < out[j].lo })
+	kept := out[:0]
+	end := -1
+	for _, occ := range out {
+		if occ.lo < end {
+			continue
+		}
+		kept = append(kept, occ)
+		end = occ.hi
+	}
+	return kept
+}
+
+// residualAnchorBounded reports whether a slug match stands on the
+// boundaries of the anchor alphabet, which is what a renderer builds a
+// slug out of.
+func residualAnchorBounded(content string, lo, hi int) bool {
+	if lo > 0 && residualAnchorByte(content[lo-1]) {
+		return false
+	}
+	return hi >= len(content) || !residualAnchorByte(content[hi])
+}
+
+// residualAnchorByte reports whether a byte is one an anchor slug is
+// written from.
+func residualAnchorByte(b byte) bool {
+	switch {
+	case b >= '0' && b <= '9', b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z':
+		return true
+	case b == '.' || b == '_' || b == '-':
+		return true
+	}
+	return false
+}
+
+// residualSpanCovered reports whether any of the spans overlaps the byte
+// range. Overlap rather than containment is the test, because the two
+// matchers bound a reference differently: the pass spans a link's whole
+// destination while the predicate spans the fragment alone.
+func residualSpanCovered(spans [][2]int, lo, hi int) bool {
+	for _, s := range spans {
+		if lo < s[1] && s[0] < hi {
+			return true
+		}
+	}
+	return false
+}
+
+// sortedResidualMembers returns the members in a stable order.
+func sortedResidualMembers(seen map[string]residualMember) []residualMember {
+	out := make([]residualMember, 0, len(seen))
+	for _, m := range seen {
+		out = append(out, m)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return residualMemberKey(out[i].Member) < residualMemberKey(out[j].Member)
+	})
+	return out
+}
+
+// loadResidualRegister reads and validates one class's register through
+// the shared register contract, returning its entries by member key
+// together with the order they were written in.
+//
+// A missing, unreadable, or malformed register is an error rather than
+// an empty set: a load that degraded to carrying nothing would report
+// every member of the class at once, and one that degraded to carrying
+// everything would exempt the population the gate exists to surface.
+func loadResidualRegister(read scope.FileReader, c scope.Class) (map[string]residualEntry, []string, error) {
+	doc, err := register.ReadFor(register.Reader(read), residualRegisterPath(c), string(c))
+	if err != nil {
+		return nil, nil, err
+	}
+	carried, order := doc.Keyed()
+	return carried, order, nil
+}
+
+// writeResidualRegister writes one class's register holding exactly the
+// entries given, through the shared register writer.
+func writeResidualRegister(write func(string, []byte) error, c scope.Class, entries []residualEntry) error {
+	return register.Write(write, residualRegisterPath(c), string(c), entries)
+}
+
+// residualTree is a fixture tree the gate runs over. It holds whichever
+// files a case writes and the registers at the paths the gate reads.
+type residualTree struct {
+	t    *testing.T
+	root string
+}
+
+// newResidualTree returns a fixture tree carrying an empty register for
+// every class, a change graph holding one key, the naming table the
+// identifier class reads its retired spellings out of, and an
+// anchor-move map that retires nothing, so a case writes only the files
+// it exercises.
+//
+// The last two are the registers those two classes are driven by rather
+// than fixture content. A class whose driving register is absent fails
+// the run, which is the malformed-register case rather than the one a
+// caller asked for, and the map is seeded empty so a case that does not
+// exercise the anchor class carries no retirement.
+func newResidualTree(t *testing.T) *residualTree {
+	t.Helper()
+	tr := &residualTree{t: t, root: t.TempDir()}
+	for _, c := range residualClasses() {
+		tr.register(c.Name)
+	}
+	tr.changeGraph("pkg")
+	tr.file(residualNamingTable, residualFixtureText(t, "naming-table.md.txt"))
+	tr.file(residualAnchorMoveMap, "{\n  \"kind\": \"spec-anchor-moves\",\n  \"version\": 1,\n  \"moves\": []\n}\n")
+	return tr
+}
+
+// file writes a file into the tree.
+func (tr *residualTree) file(target, content string) {
+	tr.t.Helper()
+	full := filepath.Join(tr.root, filepath.FromSlash(target))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		tr.t.Fatalf("create the directory for %s: %v", target, err)
+	}
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		tr.t.Fatalf("write %s: %v", target, err)
+	}
+}
+
+// register writes one class's register holding the given entries.
+func (tr *residualTree) register(c scope.Class, entries ...residualEntry) {
+	tr.t.Helper()
+	// The writer preserves the mode of an existing file and creates no
+	// directory, so the register is placed before it is written.
+	tr.file(residualRegisterPath(c), "")
+	if err := writeResidualRegister(scope.DirWriter(tr.root), c, entries); err != nil {
+		tr.t.Fatalf("seed the fixture register for %s: %v", c, err)
+	}
+}
+
+// rawRegister writes one class's register verbatim, for a document the
+// writer would not produce.
+func (tr *residualTree) rawRegister(c scope.Class, body string) {
+	tr.t.Helper()
+	tr.file(residualRegisterPath(c), body)
+}
+
+// removeRegister deletes one class's register from the tree.
+func (tr *residualTree) removeRegister(c scope.Class) {
+	tr.t.Helper()
+	if err := os.Remove(filepath.Join(tr.root, filepath.FromSlash(residualRegisterPath(c)))); err != nil {
+		tr.t.Fatalf("remove the fixture register for %s: %v", c, err)
+	}
+}
+
+// registerText returns one class's register as it stands in the tree.
+func (tr *residualTree) registerText(c scope.Class) string {
+	tr.t.Helper()
+	body, err := os.ReadFile(filepath.Join(tr.root, filepath.FromSlash(residualRegisterPath(c))))
+	if err != nil {
+		tr.t.Fatalf("read the fixture register for %s: %v", c, err)
+	}
+	return string(body)
+}
+
+// changeGraph writes a change graph holding the given glob keys.
+func (tr *residualTree) changeGraph(keys ...string) {
+	tr.t.Helper()
+	globs := map[string]any{}
+	for _, key := range keys {
+		globs[key] = []string{"./..."}
+	}
+	body, err := json.MarshalIndent(map[string]any{"version": 1, "globs": globs}, "", "  ")
+	if err != nil {
+		tr.t.Fatalf("encode the fixture change graph: %v", err)
+	}
+	tr.file(changegraph.RelPath, string(body))
+}
+
+// run drives one class over the fixture tree.
+func (tr *residualTree) run(c residualClass) (residualReport, error) {
+	tr.t.Helper()
+	g := newResidualGateOver(scope.DirLister(tr.root), scope.DirReader(tr.root), scope.DirWriter(tr.root))
+	return g.Run(context.Background(), c)
+}
+
+// runReadOnly drives one class with no writer, so an entry the run would
+// otherwise remove survives it.
+func (tr *residualTree) runReadOnly(c residualClass) (residualReport, error) {
+	tr.t.Helper()
+	g := newResidualGateOver(scope.DirLister(tr.root), scope.DirReader(tr.root), nil)
+	return g.Run(context.Background(), c)
+}
+
+// runOK drives one class and fails the test when the run could not
+// inspect the tree.
+func (tr *residualTree) runOK(c residualClass) residualReport {
+	tr.t.Helper()
+	rep, err := tr.run(c)
+	if err != nil {
+		tr.t.Fatalf("run the %s residual scan over the fixture tree: %v", c.Name, err)
+	}
+	return rep
+}
+
+// residualClassByName returns the class of that name.
+func residualClassByName(t *testing.T, name scope.Class) residualClass {
+	t.Helper()
+	for _, c := range residualClasses() {
+		if c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("the residual gate carries no %s class", name)
+	return residualClass{}
+}
+
+// residualFailureTexts renders a report's failures for an assertion
+// message.
+func residualFailureTexts(rep residualReport) []string {
+	out := make([]string, 0, len(rep.Failures))
+	for _, f := range rep.Failures {
+		out = append(out, f.String())
+	}
+	return out
+}
+
+// residualNames a report's unclassified members.
+func residualNames(rep residualReport) []string {
+	var out []string
+	for _, f := range rep.Failures {
+		if f.Unclassified != nil {
+			out = append(out, f.Unclassified.Member)
+		}
+	}
+	return out
+}
+
+// inClassEntry and excludedEntry build a register entry of each
+// disposition.
+func inClassEntry(c scope.Class, member string) residualEntry {
+	return residualEntry{Member: member, Class: string(c), Disposition: residualInClass, Reason: "the class's pass reaches it"}
+}
+
+func excludedEntry(c scope.Class, member string) residualEntry {
+	return residualEntry{Member: member, Class: string(c), Disposition: residualExcluded, Reason: "it never belonged to the class"}
+}
+
+// TestNoInClassLineCitationEntryIsUnreachableByItsPass pins the closure
+// route an in-class entry records. An in-class entry says the member
+// belongs to the class and the class's own pass or remediation reaches
+// it. The line-citation classes are driven by one citation form: the
+// pass rewrites what that form reads, the resolver resolves it, and the
+// ratchet counts it. A member the form does not read is therefore a
+// member no pass can rewrite, no resolver reports, and no ratchet
+// counts, so filing it as in-class narrows the class from inside the
+// register and lets its carrier reach a count of zero with the stale
+// pointer standing.
+//
+// The two closures the gate accepts stay open: the member is read by the
+// form, in which case the pass reaches it and no entry is needed, or it
+// never belonged to the class, in which case the entry is an exclusion.
+func TestNoInClassLineCitationEntryIsUnreachableByItsPass(t *testing.T) {
+	t.Parallel()
+	read := scope.DirReader(schematest.RepoRoot(t))
+	for _, class := range []scope.Class{scope.ClassLineCitations, scope.ClassLineCitationResolution} {
+		t.Run(string(class), func(t *testing.T) {
+			t.Parallel()
+			path := residualRegisterPath(class)
+			carried, order, err := loadResidualRegister(read, class)
+			if err != nil {
+				t.Fatalf("load %s: %v", path, err)
+			}
+			for _, key := range order {
+				entry := carried[key]
+				if entry.Disposition != residualInClass {
+					continue
+				}
+				if len(citation.Find(key)) == 0 {
+					t.Errorf("%s carries %q as in-class, and the citation form reads no citation in it, "+
+						"so the line pass cannot rewrite it, the resolver does not read it, "+
+						"and the ratchet does not count it", path, key)
+				}
+			}
+		})
+	}
+}
+
+func TestResidualGateCertifiesTheTree(t *testing.T) {
+	t.Parallel()
+	root := schematest.RepoRoot(t)
+	reports, err := newResidualGate(root).RunAll(context.Background())
+	if err != nil {
+		t.Fatalf("run the residual gate over the tracked tree: %v", err)
+	}
+	if len(reports) != len(residualClasses()) {
+		t.Fatalf("the gate reported %d class(es), want %d", len(reports), len(residualClasses()))
+	}
+	for _, rep := range reports {
+		if len(rep.Failures) > 0 {
+			t.Errorf("%d member(s) of the %s class are classified by neither the enumeration nor %s:\n  %s",
+				len(rep.Failures), rep.Class, residualRegisterPath(rep.Class),
+				strings.Join(residualFailureTexts(rep), "\n  "))
+		}
+		// A scan that read a fraction of the tree reports no residual, so
+		// the file count is asserted rather than taken as a clean class.
+		// The selected count and the register are not asserted to be
+		// non-zero: both reach zero when a class empties, which is the
+		// terminal state the pass and the remediation drive toward.
+		if rep.Files == 0 {
+			t.Errorf("the %s scan read no file; a report of no residual over an unread tree certifies nothing", rep.Class)
+		}
+		t.Logf("%s: %d file(s) in the domain, %d member(s) selected, %d carried, %d held, %d removed",
+			rep.Class, rep.Files, rep.Selected, rep.Carried, rep.Held, len(rep.Removed))
+		for _, removed := range rep.Removed {
+			t.Logf("%s: removed %s", rep.Class, removed)
+		}
+	}
+}
+
+// residualFixture is one class's residual: the file the case writes, the
+// member the scan reports for it, and the route that takes the member
+// out of the class.
+type residualFixture struct {
+	// Class is the class the residual belongs to.
+	Class scope.Class
+	// Member is what the scan reports.
+	Member string
+	// Write places the residual in the tree.
+	Write func(tr *residualTree)
+	// Retire takes the member out of the class on the class's own route
+	// out. It is nil for the generated-artifact class, whose members
+	// cannot leave: a generated file keeps matching the predicate for as
+	// long as it exists.
+	Retire func(tr *residualTree)
+}
+
+// residualFixtureDir holds the citation a case writes into its fixture
+// tree, the carrier that carries it, and the record that quotes it.
+//
+// The text sits in a fixture rather than in this source because this
+// gate reads the tracked tree: a citation written here would be an
+// occurrence of the class this gate scans for, reported under this
+// file's own path with no route out but the deletion of the case.
+// testdata is outside every read domain, so a gate does not report its
+// own input.
+const residualFixtureDir = "testdata/residual"
+
+// residualCitationCarrier is where a case places the fixture carrier in
+// its tree.
+const residualCitationCarrier = "pkg/carrier/carrier.go"
+
+// residualFixtureText reads one fixture.
+func residualFixtureText(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(residualFixtureDir, name))
+	if err != nil {
+		t.Fatalf("read the residual fixture %s: %v", name, err)
+	}
+	return string(data)
+}
+
+// residualCitationMember is the member the scan reports for the fixture
+// carrier. The spelling is outside the enumerated citation grammar,
+// which reads the keyword in lower case alone, so the scan reports it.
+func residualCitationMember(t *testing.T) string {
+	t.Helper()
+	return strings.TrimSuffix(residualFixtureText(t, "citation-member.txt"), "\n")
+}
+
+// residualCitationSource is the carrier carrying that citation, and
+// residualCitationRetired is the same carrier after the citation is
+// rewritten, which is the route the line pass takes a member out of the
+// class by.
+func residualCitationSource(t *testing.T) string {
+	t.Helper()
+	return residualFixtureText(t, "citation-carrier.go.txt")
+}
+
+func residualCitationRetired(t *testing.T) string {
+	t.Helper()
+	return residualFixtureText(t, "citation-retired.go.txt")
+}
+
+// residualCitationRecord is a record quoting the citation, which a case
+// places in an excluded file.
+func residualCitationRecord(t *testing.T) string {
+	t.Helper()
+	return residualFixtureText(t, "citation-record.md.txt")
+}
+
+// The producer output a case writes, which carries no generation marker
+// of its own, so the marker enumeration does not cover it and the
+// producer disjunct is what selects it.
+const (
+	residualGeneratedMember = "charts/lenny/crds/lenny.dev_widgets.yaml"
+	residualGeneratedSource = "apiVersion: apiextensions.k8s.io/v1\nkind: CustomResourceDefinition\nmetadata:\n  name: widgets.lenny.dev\n"
+	residualGeneratedMarked = "# Code generated by controller-gen. DO NOT EDIT.\n" + residualGeneratedSource
+)
+
+// The source file a case writes outside the completeness check's trees
+// and extensions, and the glob key that covers it.
+const (
+	residualChangeGraphMember = "dist/tool.rb"
+	residualChangeGraphSource = "# a packaging formula\nclass Tool\nend\n"
+	residualChangeGraphKey    = "dist"
+)
+
+// residualNamingTable is where a case places the specification file the
+// identifier class reads its retired spellings out of. The path carries
+// the prefix the naming table is read under, because the retired set is
+// read from the specification rather than enumerated by the gate.
+const residualNamingTable = "spec/28_communication-channels.md"
+
+// The carriers a case writes for the three classes whose members are the
+// sites of one file.
+const (
+	residualReservedPhraseCarrier = "pkg/carrier/reserved.go"
+	residualIdentifierCarrier     = "pkg/carrier/identifier.go"
+	residualIdentifierGenerated   = "pkg/carrier/generated.go"
+	residualAnchorCarrier         = "docs/carrier.md"
+)
+
+// residualReservedPhraseMember is the member the scan reports for the
+// reserved-phrase carrier. The carrier writes the phrase twice: once in
+// the doc comment the naming law governs, which the name pass writes and
+// the scan subtracts, and once in a comment inside a function body,
+// which no pass reaches. The two are written in different spellings, so
+// a scan that failed to subtract the first would report two members
+// rather than one.
+func residualReservedPhraseMember(t *testing.T) string {
+	t.Helper()
+	return residualSiteKey(residualReservedPhraseCarrier,
+		strings.TrimSuffix(residualFixtureText(t, "reserved-phrase-member.txt"), "\n"))
+}
+
+// residualIdentifierMember is the member the scan reports for the
+// identifier carrier, which writes the retired stem twice: once in the
+// spelling the naming table retires, which the pass rewrites and the
+// scan subtracts, and once as a camel-case component of a Go identifier,
+// which the pass's token rule does not read.
+func residualIdentifierMember(t *testing.T) string {
+	t.Helper()
+	return residualSiteKey(residualIdentifierCarrier, residualIdentifierText(t))
+}
+
+// residualIdentifierText is the retired stem the scan reports, read from
+// a fixture rather than written here: a spelling the naming table
+// retires, written in this source, would be an occurrence of the
+// identifier class under this file's own path.
+func residualIdentifierText(t *testing.T) string {
+	t.Helper()
+	return strings.TrimSuffix(residualFixtureText(t, "identifier-member.txt"), "\n")
+}
+
+// residualAnchorMember is the member the scan reports for the anchor
+// carrier, which writes two references into the same retired anchor: a
+// bare section citation the pass reads and rewrites, which the scan
+// subtracts, and an absolute URL whose fragment names the anchor, which
+// the pass leaves standing because it judges no reference it cannot
+// resolve against the tree.
+func residualAnchorMember(t *testing.T) string {
+	t.Helper()
+	return residualSiteKey(residualAnchorCarrier,
+		strings.TrimSuffix(residualFixtureText(t, "anchor-member.txt"), "\n"))
+}
+
+// The skip call site a case writes outside the classifier's trees, and
+// the member the scan reports for it.
+const residualSkipCarrier = "migrations/carrier_test.go"
+
+// residualSkipMember is the member the scan reports for that site.
+var residualSkipMember = residualSkipKey(residualSkipCarrier, "TestCarrier", 1, skipCallPlain)
+
+// residualFixtures returns one fixture per class, in class order.
+func residualFixtures(t *testing.T) []residualFixture {
+	t.Helper()
+	return []residualFixture{
+		{
+			Class:  scope.ClassLineCitations,
+			Member: residualCitationMember(t),
+			Write:  func(tr *residualTree) { tr.file(residualCitationCarrier, residualCitationSource(tr.t)) },
+			Retire: func(tr *residualTree) { tr.file(residualCitationCarrier, residualCitationRetired(tr.t)) },
+		},
+		{
+			Class:  scope.ClassLineCitationResolution,
+			Member: residualCitationMember(t),
+			Write:  func(tr *residualTree) { tr.file(residualCitationCarrier, residualCitationSource(tr.t)) },
+			Retire: func(tr *residualTree) { tr.file(residualCitationCarrier, residualCitationRetired(tr.t)) },
+		},
+		{
+			Class:  scope.ClassGeneratedArtifact,
+			Member: residualGeneratedMember,
+			Write:  func(tr *residualTree) { tr.file(residualGeneratedMember, residualGeneratedSource) },
+		},
+		{
+			Class:  scope.ClassChangeGraphCoverage,
+			Member: residualChangeGraphMember,
+			Write:  func(tr *residualTree) { tr.file(residualChangeGraphMember, residualChangeGraphSource) },
+			Retire: func(tr *residualTree) { tr.changeGraph("pkg", residualChangeGraphKey) },
+		},
+		{
+			Class:  scope.ClassSkipReason,
+			Member: residualSkipMember,
+			Write: func(tr *residualTree) {
+				tr.file(residualSkipCarrier, skipCarrierSource(skipCarrierFunc{
+					Name:       "TestCarrier",
+					Statements: []string{`t.Skip("the bundle is absent")`},
+				}))
+			},
+			Retire: func(tr *residualTree) {
+				tr.file(residualSkipCarrier, skipCarrierSource(skipCarrierFunc{
+					Name:       "TestCarrier",
+					Statements: []string{fmt.Sprintf("t.Skip(%q)", skipreason.Categories[0]+" the bundle is absent")},
+				}))
+			},
+		},
+		{
+			Class:  scope.ClassReservedPhrase,
+			Member: residualReservedPhraseMember(t),
+			Write: func(tr *residualTree) {
+				tr.file(residualReservedPhraseCarrier, residualFixtureText(tr.t, "reserved-phrase-carrier.go.txt"))
+			},
+			Retire: func(tr *residualTree) {
+				tr.file(residualReservedPhraseCarrier, residualFixtureText(tr.t, "reserved-phrase-retired.go.txt"))
+			},
+		},
+		{
+			Class:  scope.ClassIdentifier,
+			Member: residualIdentifierMember(t),
+			Write: func(tr *residualTree) {
+				tr.file(residualIdentifierCarrier, residualFixtureText(tr.t, "identifier-carrier.go.txt"))
+			},
+			Retire: func(tr *residualTree) {
+				tr.file(residualIdentifierCarrier, residualFixtureText(tr.t, "identifier-retired.go.txt"))
+			},
+		},
+		{
+			Class:  scope.ClassAnchor,
+			Member: residualAnchorMember(t),
+			Write: func(tr *residualTree) {
+				tr.file(residualAnchorMoveMap, residualFixtureText(tr.t, "anchor-moves.json.txt"))
+				tr.file(residualAnchorCarrier, residualFixtureText(tr.t, "anchor-carrier.md.txt"))
+			},
+			Retire: func(tr *residualTree) {
+				tr.file(residualAnchorCarrier, residualFixtureText(tr.t, "anchor-retired.md.txt"))
+			},
+		},
+	}
+}
+
+// assertResidualNames fails the test unless the report names exactly the
+// member given.
+func assertResidualNames(t *testing.T, rep residualReport, member string) {
+	t.Helper()
+	named := residualNames(rep)
+	if len(named) != 1 || named[0] != member {
+		t.Fatalf("the %s scan reported %v, want the one member %q:\n  %s",
+			rep.Class, named, member, strings.Join(residualFailureTexts(rep), "\n  "))
+	}
+}
+
+func TestResidualGateFailsOnAResidualInEachClassAndNamesIt(t *testing.T) {
+	t.Parallel()
+	for _, fixture := range residualFixtures(t) {
+		t.Run(string(fixture.Class), func(t *testing.T) {
+			t.Parallel()
+			tr := newResidualTree(t)
+			fixture.Write(tr)
+			c := residualClassByName(t, fixture.Class)
+
+			rep := tr.runOK(c)
+			assertResidualNames(t, rep, fixture.Member)
+			// The gate names the class alongside the member, because the
+			// remedy is an entry in that class's register.
+			if !strings.Contains(rep.Failures[0].String(), string(fixture.Class)) {
+				t.Errorf("the failure %q names no class", rep.Failures[0])
+			}
+		})
+	}
+}
+
+func TestResidualGateAcceptsAMemberRegisteredInEachDisposition(t *testing.T) {
+	t.Parallel()
+	for _, fixture := range residualFixtures(t) {
+		for _, disposition := range []residualDisposition{residualInClass, residualExcluded} {
+			t.Run(string(fixture.Class)+"/"+string(disposition), func(t *testing.T) {
+				t.Parallel()
+				tr := newResidualTree(t)
+				fixture.Write(tr)
+				entry := inClassEntry(fixture.Class, fixture.Member)
+				if disposition == residualExcluded {
+					entry = excludedEntry(fixture.Class, fixture.Member)
+				}
+				tr.register(fixture.Class, entry)
+				c := residualClassByName(t, fixture.Class)
+
+				rep := tr.runOK(c)
+				if len(rep.Failures) > 0 {
+					t.Errorf("a member registered as %s was reported:\n  %s",
+						disposition, strings.Join(residualFailureTexts(rep), "\n  "))
+				}
+				// The member is held rather than passed over, so a run
+				// that read nothing cannot produce this result.
+				if rep.Selected != 1 || rep.Held != 1 {
+					t.Errorf("the scan selected %d member(s) and held %d entr(ies), want one of each",
+						rep.Selected, rep.Held)
+				}
+			})
+		}
+	}
+}
+
+func TestResidualGateFailsOnAnEntryWithNoReason(t *testing.T) {
+	t.Parallel()
+	tr := newResidualTree(t)
+	fixture := residualFixtures(t)[0]
+	fixture.Write(tr)
+	// The writer refuses an entry with no reason, so the document is
+	// written verbatim: a triage decision with no reason recorded is what
+	// the case exercises.
+	tr.rawRegister(fixture.Class, "kind: residual-register\nversion: 1\nclass: "+string(fixture.Class)+
+		"\nentries:\n  - member: |-\n      "+fixture.Member+"\n    class: "+string(fixture.Class)+
+		"\n    disposition: excluded\n    reason: \"\"\n")
+
+	_, err := tr.run(residualClassByName(t, fixture.Class))
+	if err == nil {
+		t.Fatal("an entry carrying no reason was accepted")
+	}
+	if !strings.Contains(err.Error(), "no reason") {
+		t.Errorf("the failure %q does not name the missing reason", err)
+	}
+}
+
+func TestResidualGateFailsOnAnExclusionThePredicateNoLongerSelects(t *testing.T) {
+	t.Parallel()
+	for _, fixture := range residualFixtures(t) {
+		if fixture.Retire == nil {
+			continue
+		}
+		t.Run(string(fixture.Class), func(t *testing.T) {
+			t.Parallel()
+			tr := newResidualTree(t)
+			fixture.Write(tr)
+			tr.register(fixture.Class, excludedEntry(fixture.Class, fixture.Member))
+			fixture.Retire(tr)
+			c := residualClassByName(t, fixture.Class)
+
+			before := tr.registerText(fixture.Class)
+			rep := tr.runOK(c)
+			if len(rep.Failures) != 1 || rep.Failures[0].StaleExcluded == nil {
+				t.Fatalf("a dead exclusion was accepted:\n  %s", strings.Join(residualFailureTexts(rep), "\n  "))
+			}
+			// An exclusion is permanent, so the run reports it rather
+			// than dropping it, and it leaves the register standing.
+			if got := tr.registerText(fixture.Class); got != before {
+				t.Errorf("the run rewrote the register on a failure:\n%s", got)
+			}
+		})
+	}
+}
+
+func TestResidualGateRemovesAnInClassEntryWhoseMemberLeftTheClass(t *testing.T) {
+	t.Parallel()
+	for _, fixture := range residualFixtures(t) {
+		if fixture.Retire == nil {
+			continue
+		}
+		t.Run(string(fixture.Class), func(t *testing.T) {
+			t.Parallel()
+			tr := newResidualTree(t)
+			fixture.Write(tr)
+			tr.register(fixture.Class, inClassEntry(fixture.Class, fixture.Member))
+			// The route out is the class's own: the citation is
+			// rewritten by the pass, the path gains a glob key, and the
+			// skip reason gains a category.
+			fixture.Retire(tr)
+			c := residualClassByName(t, fixture.Class)
+
+			rep := tr.runOK(c)
+			if len(rep.Failures) > 0 {
+				t.Errorf("the remediation that emptied the class turned the gate red:\n  %s",
+					strings.Join(residualFailureTexts(rep), "\n  "))
+			}
+			if len(rep.Removed) != 1 || rep.Removed[0].Member != fixture.Member {
+				t.Fatalf("the run removed %v, want the entry for %q", rep.Removed, fixture.Member)
+			}
+			if strings.Contains(tr.registerText(fixture.Class), fixture.Member) {
+				t.Errorf("the register still carries %q:\n%s", fixture.Member, tr.registerText(fixture.Class))
+			}
+			// The second run reads the rewritten register and stays
+			// green, so the removal is recorded rather than repeated.
+			again := tr.runOK(c)
+			if len(again.Failures) > 0 || len(again.Removed) > 0 {
+				t.Errorf("the run after the removal reported %d failure(s) and %d removal(s)",
+					len(again.Failures), len(again.Removed))
+			}
+		})
+	}
+}
+
+func TestResidualGateFailsOnAnInClassEntryThatSurvivesItsMember(t *testing.T) {
+	t.Parallel()
+	for _, fixture := range residualFixtures(t) {
+		if fixture.Retire == nil {
+			continue
+		}
+		t.Run(string(fixture.Class), func(t *testing.T) {
+			t.Parallel()
+			tr := newResidualTree(t)
+			fixture.Write(tr)
+			tr.register(fixture.Class, inClassEntry(fixture.Class, fixture.Member))
+			fixture.Retire(tr)
+			c := residualClassByName(t, fixture.Class)
+
+			// A run with no writer cannot remove the entry, so it
+			// reports it: an in-class entry does not outlive the
+			// remediation it recorded, and a read-only inspection never
+			// certifies a register it could not reconcile.
+			rep, err := tr.runReadOnly(c)
+			if err != nil {
+				t.Fatalf("run the %s residual scan: %v", c.Name, err)
+			}
+			if len(rep.Failures) != 1 || rep.Failures[0].StaleInClass == nil {
+				t.Fatalf("an in-class entry outlived its member unreported:\n  %s",
+					strings.Join(residualFailureTexts(rep), "\n  "))
+			}
+			if !strings.Contains(rep.Failures[0].String(), fixture.Member) {
+				t.Errorf("the failure %q does not name the member", rep.Failures[0])
+			}
+		})
+	}
+}
+
+func TestResidualGateHoldsAGeneratedArtifactEntryAcrossRuns(t *testing.T) {
+	t.Parallel()
+	tr := newResidualTree(t)
+	tr.file(residualGeneratedMember, residualGeneratedSource)
+	tr.register(scope.ClassGeneratedArtifact, inClassEntry(scope.ClassGeneratedArtifact, residualGeneratedMember))
+	c := residualClassByName(t, scope.ClassGeneratedArtifact)
+
+	// No member of this class leaves it: a generated file keeps matching
+	// the predicate for as long as it exists, so its in-class entry is
+	// permanent and the class is not required to empty.
+	before := tr.registerText(scope.ClassGeneratedArtifact)
+	for run := 1; run <= 3; run++ {
+		rep := tr.runOK(c)
+		if len(rep.Failures) > 0 || len(rep.Removed) > 0 {
+			t.Fatalf("run %d reported %d failure(s) and %d removal(s):\n  %s",
+				run, len(rep.Failures), len(rep.Removed), strings.Join(residualFailureTexts(rep), "\n  "))
+		}
+		if rep.Held != 1 {
+			t.Fatalf("run %d held %d entr(ies), want the one the register carries", run, rep.Held)
+		}
+	}
+	if got := tr.registerText(scope.ClassGeneratedArtifact); got != before {
+		t.Errorf("the register was rewritten across runs:\n%s", got)
+	}
+}
+
+func TestResidualGateReportsAProducerOutputWithNoMarker(t *testing.T) {
+	t.Parallel()
+	tr := newResidualTree(t)
+	tr.file(residualGeneratedMember, residualGeneratedSource)
+	// A second producer output that declares itself generated is what
+	// the marker enumeration covers, so the case cannot pass through a
+	// scan that reports every producer output.
+	marked := "charts/lenny/crds/lenny.dev_gadgets.yaml"
+	tr.file(marked, residualGeneratedMarked)
+	c := residualClassByName(t, scope.ClassGeneratedArtifact)
+
+	rep := tr.runOK(c)
+	assertResidualNames(t, rep, residualGeneratedMember)
+}
+
+func TestResidualGateReadsNoRegisterAsTreeContent(t *testing.T) {
+	t.Parallel()
+	fixture := residualFixtures(t)[0]
+	for name, place := range map[string]func(tr *residualTree){
+		"its own residual register": func(tr *residualTree) {
+			tr.register(fixture.Class, inClassEntry(fixture.Class, residualCitationMember(tr.t)))
+		},
+		// Another class's residual register is excluded for the same
+		// reason. The two line-citation classes select the same text, so
+		// each register holds a copy of the other's members: a class that
+		// read its sibling's register would triage every member twice and
+		// would keep selecting it after the pass had rewritten every
+		// carrier site, leaving the entry that recorded it unremovable.
+		"another class's residual register": func(tr *residualTree) {
+			tr.register(scope.ClassLineCitationResolution,
+				inClassEntry(scope.ClassLineCitationResolution, residualCitationMember(tr.t)))
+		},
+		"the baseline its gate excludes": func(tr *residualTree) {
+			tr.file("tests/registers/line-citations.yaml",
+				"kind: line-citation-count-baseline\nversion: 1\nfiles: []\n# "+residualCitationMember(tr.t)+"\n")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tr := newResidualTree(t)
+			// A carrier with no citation keeps the class's domain
+			// selecting files, so the case measures the register rather
+			// than an empty scan.
+			tr.file(residualCitationCarrier, residualCitationRetired(tr.t))
+			place(tr)
+			c := residualClassByName(t, fixture.Class)
+
+			rep := tr.runOK(c)
+			if len(rep.Failures) > 0 {
+				t.Errorf("a member's text inside a register was read as tree content:\n  %s",
+					strings.Join(residualFailureTexts(rep), "\n  "))
+			}
+		})
+	}
+}
+
+func TestResidualGateReadsNoExcludedFile(t *testing.T) {
+	t.Parallel()
+	fixture := residualFixtures(t)[0]
+	// The last entry is the control. The same sentence in an ordinary
+	// carrier is reported, so a case that reports nothing cannot pass
+	// through a scan that reads no file at all.
+	for _, target := range []struct {
+		Path     string
+		Excluded bool
+	}{
+		{Path: "BUILD-GAPS.md", Excluded: true},
+		{Path: "TEST-GAPS.md", Excluded: true},
+		{Path: "gateway-runtime-comms.md", Excluded: true},
+		{Path: "gateway-runtime-comms-remediation.md", Excluded: true},
+		{Path: "proposals/0065_a-staged-proposal.md", Excluded: true},
+		{Path: "pkg/carrier/testdata/fixture.go", Excluded: true},
+		{Path: "docs/record.md"},
+	} {
+		t.Run(target.Path, func(t *testing.T) {
+			t.Parallel()
+			tr := newResidualTree(t)
+			tr.file(residualCitationCarrier, residualCitationRetired(tr.t))
+			tr.file(target.Path, residualCitationRecord(t))
+			c := residualClassByName(t, fixture.Class)
+
+			rep := tr.runOK(c)
+			if target.Excluded {
+				if len(rep.Failures) > 0 {
+					t.Errorf("an occurrence in %s was reported:\n  %s", target.Path,
+						strings.Join(residualFailureTexts(rep), "\n  "))
+				}
+				return
+			}
+			assertResidualNames(t, rep, residualCitationMember(t))
+		})
+	}
+}
+
+// residualPlanningControl is the ordinary carrier the same record is
+// written into, so a class that reported nothing for the three records
+// is held to reporting the record's own members somewhere.
+const residualPlanningControl = "docs/record.md"
+
+// residualPlanningPhraseMember is the member the reserved-phrase scan
+// reports for that record, which writes the phrase inside a markdown
+// anchor identifier. An anchor identifier is an addressable link target
+// rather than prose, so the name pass leaves it standing in every
+// carrier, and the occurrence is a residual wherever the record is read.
+func residualPlanningPhraseMember(t *testing.T) string {
+	t.Helper()
+	return strings.TrimSuffix(residualFixtureText(t, "planning-phrase-member.txt"), "\n")
+}
+
+// TestResidualGateReadsNoPlanningRecordInAClassThatExcludesIt covers the
+// second of the three read exclusions. The reserved-phrase class and the
+// identifier class exclude the root-level build and queue records, so
+// each of those classes ranges over the same domain as its own pass and
+// gates, and a phrase or a retired spelling written in a record of what
+// was planned is left as it was written.
+//
+// The record each case writes carries one occurrence of each class that
+// no pass reaches wherever the record stands: the phrase inside a
+// markdown anchor identifier, which the name pass leaves as an
+// addressable link target, and the retired stem as a camel-case
+// component of a longer identifier, which the identifier pass's token
+// rule does not read. Neither occurrence depends on the write domain, so
+// a case that reports nothing reports it because the file was never
+// opened.
+//
+// spec: §28.1 (N3, the naming law: the build and queue records are
+// outside the prohibition's domain, together with the historical audit
+// records and the planning documents)
+func TestResidualGateReadsNoPlanningRecordInAClassThatExcludesIt(t *testing.T) {
+	t.Parallel()
+	for _, class := range []struct {
+		Name scope.Class
+		Text func(t *testing.T) string
+	}{
+		{Name: scope.ClassReservedPhrase, Text: residualPlanningPhraseMember},
+		{Name: scope.ClassIdentifier, Text: residualIdentifierText},
+	} {
+		t.Run(string(class.Name), func(t *testing.T) {
+			t.Parallel()
+			// The last path is the control. The same record in an
+			// ordinary carrier is reported, so a case that reports
+			// nothing cannot pass through a scan that read no file.
+			for _, target := range append(scope.PlanningRecords(), residualPlanningControl) {
+				t.Run(target, func(t *testing.T) {
+					t.Parallel()
+					tr := newResidualTree(t)
+					tr.file(target, residualFixtureText(t, "planning-record.md.txt"))
+
+					rep := tr.runOK(residualClassByName(t, class.Name))
+					if rep.Files == 0 {
+						t.Fatal("the scan read no file, so it reports nothing because it opened nothing")
+					}
+					if target == residualPlanningControl {
+						assertResidualNames(t, rep, residualSiteKey(target, class.Text(t)))
+						return
+					}
+					if len(rep.Failures) > 0 {
+						t.Errorf("an occurrence in %s was reported to the %s class:\n  %s",
+							target, class.Name, strings.Join(residualFailureTexts(rep), "\n  "))
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestResidualGateStoresAWrappedCitationWithItsContinuationJoin(t *testing.T) {
+	t.Parallel()
+	tr := newResidualTree(t)
+	tr.file(residualCitationCarrier, residualFixtureText(t, "citation-wrapped.go.txt"))
+	c := residualClassByName(t, scope.ClassLineCitations)
+
+	rep := tr.runOK(c)
+	if len(rep.Failures) != 1 || rep.Failures[0].Unclassified == nil {
+		t.Fatalf("a wrapped citation was reported as %v, want the one unclassified member",
+			residualFailureTexts(rep))
+	}
+	member := rep.Failures[0].Unclassified.Member
+	if !strings.Contains(member, "\n") {
+		t.Fatalf("the member %q carries no line break, so the wrap it was read across is lost", member)
+	}
+	// The case pins nothing unless the folded spelling is an occurrence
+	// of the class in its own right. The wrap is what the scan read the
+	// occurrence across, and folding it back into the register is what
+	// would make the stored copy a member of the sibling class, reported
+	// under the register's own path.
+	folded := residualMemberKey(member)
+	if len(citation.FindBroad(folded)) != 1 {
+		t.Fatalf("the folded member %q is selected by the class predicate as no occurrence", folded)
+	}
+
+	tr.register(scope.ClassLineCitations, inClassEntry(scope.ClassLineCitations, member))
+	body := tr.registerText(scope.ClassLineCitations)
+	// The expected spelling is read from a fixture rather than written
+	// here, because a copy of the member written in this file would be an
+	// occurrence of the class under this file's own path.
+	want := residualFixtureText(t, "citation-wrapped-member.txt")
+	if !strings.Contains(body, "      "+strings.ReplaceAll(strings.TrimSuffix(want, "\n"), "\n", "\n      ")+"\n") {
+		t.Errorf("the register does not carry the member across two lines:\n%s", body)
+	}
+	register := residualRegisterPath(scope.ClassLineCitations)
+	if read := citation.FindIn(register, body); len(read) > 0 {
+		t.Errorf("the stored member stands as the citation %q, which the ratchet counts and the resolver reports under %s",
+			read[0].Raw, register)
+	}
+	if selected := citation.FindBroadIn(register, body); len(selected) > 0 {
+		t.Errorf("the stored member stands as the occurrence %q, which the sibling class reports under %s",
+			selected[0].Text, register)
+	}
+	// The stored spelling reads back as the same member, so the entry
+	// holds the site rather than being reported again beside it.
+	again := tr.runOK(c)
+	if len(again.Failures) > 0 || again.Held != 1 {
+		t.Errorf("the run after the entry landed held %d entr(ies) and reported:\n  %s",
+			again.Held, strings.Join(residualFailureTexts(again), "\n  "))
+	}
+}
+
+// The class this case exercises is the population the reserved-word ban
+// defines, so the tie is to the section that states the ban. The gate
+// around it is migration tooling and carries no spec citation of its own.
+//
+// spec: §28.1 N3 (reserved-word ban)
+func TestResidualGateSelectsAReservedPhraseTheEnumeratedSeparatorMisses(t *testing.T) {
+	t.Parallel()
+	tr := newResidualTree(t)
+	// The carrier writes the phrase across a blank comment line, so the
+	// join leaves two consumed continuations between the two words and
+	// the separator run the enumerated matcher admits reads neither the
+	// phrase nor either half of it. The site sits in the doc comment the
+	// naming law governs, so it is a violation the naming lint does not
+	// report and no pass rewrites.
+	tr.file(residualReservedPhraseCarrier, residualFixtureText(t, "reserved-phrase-wrapped.go.txt"))
+	c := residualClassByName(t, scope.ClassReservedPhrase)
+
+	rep := tr.runOK(c)
+	want := residualSiteKey(residualReservedPhraseCarrier,
+		strings.TrimSuffix(residualFixtureText(t, "reserved-phrase-wrapped-member.txt"), "\n"))
+	assertResidualNames(t, rep, want)
+}
+
+// The retired spellings this case's class ranges over are the ones the
+// naming table states, so the tie is to the section that carries it.
+//
+// spec: §28.3 (naming table)
+func TestResidualGateSelectsARetiredSpellingInAFileNoPassWrites(t *testing.T) {
+	t.Parallel()
+	tr := newResidualTree(t)
+	// A derived artifact is inside the class's read domain and outside
+	// the identifier pass's write domain, so the pass rewrites no site in
+	// it and the identifier-resolution gate reads none. Its route out of
+	// the class is the regeneration of the source the pass did rewrite,
+	// and the entry that records it says so.
+	tr.file(residualIdentifierGenerated, residualFixtureText(t, "identifier-generated.go.txt"))
+	c := residualClassByName(t, scope.ClassIdentifier)
+
+	rep := tr.runOK(c)
+	want := residualSiteKey(residualIdentifierGenerated,
+		strings.TrimSuffix(residualFixtureText(t, "identifier-member.txt"), "\n"))
+	assertResidualNames(t, rep, want)
+}
+
+func TestResidualGateSelectsASpelledOutCitationOfARetiredSection(t *testing.T) {
+	t.Parallel()
+	tr := newResidualTree(t)
+	tr.file(residualAnchorMoveMap, residualFixtureText(t, "anchor-moves.json.txt"))
+	// The anchor pass reads the sigil spelling of a bare citation alone,
+	// so a citation of the same retired section written out in words is a
+	// reference the reduction invalidated that no pass redirects.
+	const prose = "docs/prose.md"
+	tr.file(prose, residualFixtureText(t, "anchor-prose.md.txt"))
+	c := residualClassByName(t, scope.ClassAnchor)
+
+	rep := tr.runOK(c)
+	want := residualSiteKey(prose, strings.TrimSuffix(residualFixtureText(t, "anchor-prose-member.txt"), "\n"))
+	assertResidualNames(t, rep, want)
+}
+
+func TestResidualGateSelectsNoAnchorReferenceWhileTheMapRetiresNothing(t *testing.T) {
+	t.Parallel()
+	tr := newResidualTree(t)
+	// The map is the whole record of what the reduction retired. While it
+	// retires nothing the class has no member, which is the tree before
+	// the reduction lands and after the change that empties the map, and
+	// the same carrier is selected once a retirement is recorded.
+	tr.file(residualAnchorCarrier, residualFixtureText(t, "anchor-carrier.md.txt"))
+	c := residualClassByName(t, scope.ClassAnchor)
+
+	rep := tr.runOK(c)
+	if len(rep.Failures) > 0 || rep.Selected != 0 {
+		t.Fatalf("a map retiring nothing selected %d member(s):\n  %s",
+			rep.Selected, strings.Join(residualFailureTexts(rep), "\n  "))
+	}
+	if rep.Files == 0 {
+		t.Error("the scan selected no file, which is the failure the zero-file case covers")
+	}
+
+	tr.file(residualAnchorMoveMap, residualFixtureText(t, "anchor-moves.json.txt"))
+	assertResidualNames(t, tr.runOK(c), residualAnchorMember(t))
+}
+
+func TestResidualGateFailsOnAnUnreadableAnchorMoveMap(t *testing.T) {
+	t.Parallel()
+	for name, body := range map[string]string{
+		"a document that is not JSON":    "{\n  \"kind\": \n",
+		"a document of another kind":     "{\"kind\": \"exception-register\", \"version\": 1, \"moves\": []}\n",
+		"a document of another version":  "{\"kind\": \"spec-anchor-moves\", \"version\": 2, \"moves\": []}\n",
+		"a document with no moves block": "{\"kind\": \"spec-anchor-moves\", \"version\": 1}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tr := newResidualTree(t)
+			// A scan driven by a map it could not read would report no
+			// reference the pass handles, so it would triage every
+			// reference in the tree as a residual, or none.
+			tr.file(residualAnchorMoveMap, body)
+			tr.file(residualAnchorCarrier, residualFixtureText(t, "anchor-carrier.md.txt"))
+
+			if _, err := tr.run(residualClassByName(t, scope.ClassAnchor)); err == nil {
+				t.Fatalf("%s certified the class", name)
+			}
+		})
+	}
+}
+
+func TestResidualGateSelectsEverySourceLanguageOutsideTheCompletenessCheck(t *testing.T) {
+	t.Parallel()
+	tr := newResidualTree(t)
+	// Each of these is a tracked source file in a language the
+	// completeness check does not read, under a tree it does not walk,
+	// covered by no glob key. A predicate written as a list of source
+	// extensions carries the languages the tree happened to hold when it
+	// was written and drops every one added later.
+	members := []string{
+		"deploy/terraform/cloud/aws/main.tf",
+		"dist/scaffold/go.Makefile.tmpl",
+		"dist/tool.rb",
+		"dist/web/app.css",
+		"dist/web/index.html",
+		"schemas/service.proto",
+	}
+	for _, target := range members {
+		tr.file(target, "a source file\n")
+	}
+	// Data, configuration, and documentation carry no language a tier is
+	// selected from, and the denylist subtracts them.
+	for _, target := range []string{
+		"docs/guide.md", "deploy/values.yaml", "deploy/values.yml", "compose/config.json",
+		"hack/boilerplate.txt", "dist/config.toml", "dist/policy.xml", "dist/plugin.cfg",
+		"dist/go.mod", "dist/go.sum", "dist/Dockerfile",
+	} {
+		tr.file(target, "data\n")
+	}
+	// The completeness check governs a source file under its own trees,
+	// so the residual subtracts it whether or not a glob key covers it.
+	tr.file("cmd/tool/main.go", "package main\n")
+	tr.file("scripts/build.sh", "echo build\n")
+	// A test file is a target of the graph rather than a source of it.
+	tr.file("dist/tool_test.go", "package dist\n")
+	// A glob key covers the fixture tree's own package.
+	tr.file("pkg/carrier/carrier.go", "package carrier\n")
+	c := residualClassByName(t, scope.ClassChangeGraphCoverage)
+
+	rep := tr.runOK(c)
+	named := residualNames(rep)
+	sort.Strings(named)
+	if strings.Join(named, "\n") != strings.Join(members, "\n") {
+		t.Errorf("the scan reported\n  %s\nwant\n  %s", strings.Join(named, "\n  "), strings.Join(members, "\n  "))
+	}
+}
+
+func TestResidualGateFailsOnAMalformedOrMissingRegister(t *testing.T) {
+	t.Parallel()
+	fixture := residualFixtures(t)[0]
+	for name, place := range map[string]func(tr *residualTree){
+		"a register that is absent":   func(tr *residualTree) { tr.removeRegister(fixture.Class) },
+		"a document that is not YAML": func(tr *residualTree) { tr.rawRegister(fixture.Class, "\tnot: [a document\n") },
+		"a document of another kind": func(tr *residualTree) {
+			tr.rawRegister(fixture.Class, "kind: exception-register\nversion: 1\nentries: []\n")
+		},
+		"a document of another version": func(tr *residualTree) {
+			tr.rawRegister(fixture.Class, "kind: residual-register\nversion: 2\nclass: line-citations\nentries: []\n")
+		},
+		"a document declaring another class": func(tr *residualTree) {
+			tr.rawRegister(fixture.Class, "kind: residual-register\nversion: 1\nclass: anchors\nentries: []\n")
+		},
+		"a document with no entries block": func(tr *residualTree) {
+			tr.rawRegister(fixture.Class, "kind: residual-register\nversion: 1\nclass: line-citations\n")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tr := newResidualTree(t)
+			fixture.Write(tr)
+			place(tr)
+
+			if _, err := tr.run(residualClassByName(t, fixture.Class)); err == nil {
+				t.Fatalf("%s certified the class", name)
+			}
+		})
+	}
+}
+
+func TestResidualGateFailsOnAScanThatSelectedNoFile(t *testing.T) {
+	t.Parallel()
+	// The tree is not empty and holds one register, which the class
+	// cannot read as tree content, so the class's own scan selects
+	// nothing. Both a citation class and the skip-reason class are
+	// covered, because the exclusion that empties the scan is the
+	// per-class register exclusion in either case.
+	for _, name := range []scope.Class{scope.ClassLineCitations, scope.ClassSkipReason} {
+		t.Run(string(name), func(t *testing.T) {
+			t.Parallel()
+			tr := &residualTree{t: t, root: t.TempDir()}
+			tr.register(name)
+
+			_, err := tr.run(residualClassByName(t, name))
+			if err == nil {
+				t.Fatal("a scan that selected no file certified the class")
+			}
+			if !strings.Contains(err.Error(), string(name)) {
+				t.Errorf("the failure %q does not name the class", err)
+			}
+		})
+	}
+}
+
+func TestResidualGateAcceptsAClassWhosePredicateSelectsNoMember(t *testing.T) {
+	t.Parallel()
+	fixture := residualFixtures(t)[0]
+	c := residualClassByName(t, fixture.Class)
+
+	t.Run("an empty register", func(t *testing.T) {
+		t.Parallel()
+		tr := newResidualTree(t)
+		tr.file(residualCitationCarrier, residualCitationRetired(tr.t))
+
+		rep := tr.runOK(c)
+		if len(rep.Failures) > 0 || rep.Selected != 0 {
+			t.Errorf("an emptied class over %d file(s) selected %d member(s) and reported:\n  %s",
+				rep.Files, rep.Selected, strings.Join(residualFailureTexts(rep), "\n  "))
+		}
+		if rep.Files == 0 {
+			t.Error("the scan selected no file, which is the failure the zero-file case covers")
+		}
+	})
+
+	t.Run("a register still carrying an in-class entry", func(t *testing.T) {
+		t.Parallel()
+		tr := newResidualTree(t)
+		tr.file(residualCitationCarrier, residualCitationRetired(tr.t))
+		tr.register(fixture.Class, inClassEntry(fixture.Class, fixture.Member))
+
+		// The register and the tree disagree: the class is empty and the
+		// entry records a member the predicate no longer selects. A run
+		// that can rewrite the register removes it, and a run that
+		// cannot reports it.
+		rep, err := tr.runReadOnly(c)
+		if err != nil {
+			t.Fatalf("run the %s residual scan: %v", c.Name, err)
+		}
+		if len(rep.Failures) != 1 || rep.Failures[0].StaleInClass == nil {
+			t.Fatalf("an emptied class certified a register that still carries an in-class entry:\n  %s",
+				strings.Join(residualFailureTexts(rep), "\n  "))
+		}
+	})
+}

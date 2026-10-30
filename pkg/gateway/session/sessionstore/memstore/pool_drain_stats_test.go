@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// TestPoolDrainStats verifies the §15.1 line 797 pool-drain accounting:
+// TestPoolDrainStats verifies the §15.1 pool-drain accounting:
 // the count of live (non-terminal) sessions bound to a pool across
 // tenants and the oldest created_at among them. Terminal sessions and
 // sessions in other pools are excluded; an empty poolRef matches none.
@@ -46,7 +46,7 @@ func TestPoolDrainStats_spec_15_1_797(t *testing.T) {
 }
 
 // TestPoolDrainStatsEmpty covers the no-sessions and empty-poolRef paths.
-// spec: §15.1 line 797.
+// spec: §15.1.
 func TestPoolDrainStatsEmpty_spec_15_1_797(t *testing.T) {
 	s := memstore.New()
 	ctx := context.Background()

@@ -15,8 +15,7 @@ import (
 // service leaves them unmapped (404), the cold-start posture for a
 // deployment without the registry service wired.
 //
-// spec: §25.8 Image Registry Configuration / Runtime API (lines
-// 3300-3301, 3360-3362).
+// spec: §25.8 Image Registry Configuration / Runtime API.
 func (s *Server) registerPlatformRegistryRoutes() {
 	if s.registry == nil {
 		return
@@ -33,7 +32,7 @@ func (s *Server) registryUnavailable(w http.ResponseWriter) {
 
 // handleRegistryGet serves GET /v1/admin/platform/registry: the effective
 // registry configuration with the pull-secret name but not its value
-// (§25.8 line 3362).
+// (§25.8).
 func (s *Server) handleRegistryGet(w http.ResponseWriter, r *http.Request) {
 	if s.registry == nil {
 		s.registryUnavailable(w)
@@ -41,7 +40,7 @@ func (s *Server) handleRegistryGet(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, err := s.registry.Effective(r.Context())
 	if err != nil {
-		// §25.8 line 3610: Postgres down — the runtime override is
+		// §25.8: Postgres down — the runtime override is
 		// unreadable. Surface a transient error rather than the chart base,
 		// so the operator does not act on a stale view.
 		conventions.WriteError(w, http.StatusServiceUnavailable, "REGISTRY_UNAVAILABLE",

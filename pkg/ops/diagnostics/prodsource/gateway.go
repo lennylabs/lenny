@@ -19,8 +19,7 @@ type gatewayGetter interface {
 
 // GatewayPoolReader is the §25.6 warm-pool config reader over the gateway
 // admin API. It reads GET /v1/admin/pools/{name} for the pool's config
-// summary and CRD sync status. spec: §25.6 line 2906 (gateway admin
-// GetPoolConfig / GetPoolSyncStatus). F-25.6.1.
+// summary and CRD sync status. spec: §25.6. F-25.6.1.
 type GatewayPoolReader struct {
 	client gatewayGetter
 }

@@ -111,7 +111,7 @@ func TestTokenServiceOutage(t *testing.T) {
 		endpointCount(t, c, tokenServiceDeployment))
 }
 
-// spec: 12.8
+// spec: 12.8, 13.1 (Pod Security)
 // diagnosis: §12.8 / §13 ephemeral-container-cred-guard outage did not
 // fail closed. The cred-guard is a failurePolicy: Fail webhook. The
 // test scales its Deployment to zero so the backend is unreachable,
@@ -379,19 +379,23 @@ func TestCertManagerOutage(t *testing.T) {
 }
 
 // credCredReadersGID is the §13.1 lenny-cred-readers GID. The
-// pod-security webhook requires every agent pod to set fsGroup to this
-// value (the credential-file read group); the cred-guard target pod
-// carries it so the pod-security webhook admits it.
+// pod-security webhook requires every agent pod to set both fsGroup and
+// a pod-level supplementalGroups entry to this value (the
+// credential-file read group); the cred-guard target pod carries both so
+// the pod-security webhook admits it.
 const credCredReadersGID = 65534
 
 // credGuardTargetPod renders a pod manifest the cred-guard outage test
 // targets with ephemeralcontainers updates. It runs in an agent
 // namespace, where both the cred-guard webhook and the §13.1
 // lenny-pod-security webhook are scoped, so the manifest carries the
-// full §13.1 hardened security context — pod-level runAsNonRoot,
-// fsGroup set to the lenny-cred-readers GID, seccompProfile, and
-// per-container hardening — or the pod-security webhook would reject
-// the pod before the test could use it. The curl image is used merely
+// full §13.1 hardened security context (pod-level runAsNonRoot,
+// fsGroup and supplementalGroups set to the lenny-cred-readers GID,
+// seccompProfile, and per-container hardening) or the pod-security
+// webhook would reject the pod before the test could use it. The target
+// container sets its own runAsUser and runAsGroup (100, the curl image
+// user) at container level, because §13.1 (Container identity) does not
+// accept a pod-level identity and reserves the adapter and agent UIDs. The curl image is used merely
 // as a long-lived sleeping process.
 func credGuardTargetPod(ns, name string) string {
 	return "apiVersion: v1\n" +
@@ -407,9 +411,9 @@ func credGuardTargetPod(ns, name string) string {
 		"  terminationGracePeriodSeconds: 1\n" +
 		"  securityContext:\n" +
 		"    runAsNonRoot: true\n" +
-		"    runAsUser: 100\n" +
-		"    runAsGroup: 100\n" +
 		fmt.Sprintf("    fsGroup: %d\n", credCredReadersGID) +
+		"    supplementalGroups:\n" +
+		fmt.Sprintf("      - %d\n", credCredReadersGID) +
 		"    seccompProfile:\n" +
 		"      type: RuntimeDefault\n" +
 		"  containers:\n" +
@@ -422,6 +426,7 @@ func credGuardTargetPod(ns, name string) string {
 		"        readOnlyRootFilesystem: true\n" +
 		"        runAsNonRoot: true\n" +
 		"        runAsUser: 100\n" +
+		"        runAsGroup: 100\n" +
 		"        seccompProfile:\n" +
 		"          type: RuntimeDefault\n" +
 		"        capabilities:\n" +

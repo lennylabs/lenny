@@ -144,9 +144,10 @@ func TestCheckDepthRejectsZeroMax(t *testing.T) {
 	}
 }
 
-// spec: §8.4 lines 515-521 — the §8.4 closed enum admits "policy",
-// "approval", "deny", and the empty string (which the gateway aliases
-// to ApprovalModePolicy at evaluation time per the v1 default).
+// spec: §8.4 (Approval Modes) — the closed enum admits "policy",
+// "approval", and "deny". §8.3 (Delegation Policy and Lease) gives the
+// lease's approvalMode field a "policy" value, so the gateway aliases
+// the empty string to ApprovalModePolicy at evaluation time.
 // F-8.4.1, F-8.4.2.
 func TestValidateApprovalModeAcceptsClosedEnum_spec_8_4(t *testing.T) {
 	cases := []ApprovalMode{"", ApprovalModePolicy, ApprovalModeApproval, ApprovalModeDeny}
@@ -176,7 +177,7 @@ func TestValidateApprovalModeRejectsUnknownValue_spec_8_4(t *testing.T) {
 	}
 }
 
-// spec: §8.4 line 520 — `approval` is accepted at registration time
+// spec: §8.4 — `approval` is accepted at registration time
 // but the gateway treats it identically to `policy` mode in v1.
 // EffectiveApprovalMode encodes the alias so the §8.5 service can
 // share the policy auto-approval path for both inputs. F-8.4.1.
@@ -236,7 +237,7 @@ func TestValidateCredentialPropagationRejectsUnknownValue_spec_8_3(t *testing.T)
 	}
 }
 
-// spec: §8.3 line 470 — the provider-intersection primitive returns
+// spec: §8.3 — the provider-intersection primitive returns
 // the a-ordered intersection, deduplicated, and preserves the order of
 // the first list so a credential can be assigned deterministically
 // from the parent pool.

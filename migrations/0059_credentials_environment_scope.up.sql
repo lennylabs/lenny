@@ -1,4 +1,4 @@
--- §4.3 line 202 "scoped by user + connector + tenant + environment".
+-- §4.3.
 --
 -- Pre-fix, both credential tables ignored the environment dimension:
 --

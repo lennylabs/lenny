@@ -2,7 +2,7 @@
 
 //go:build integration
 
-// Tier-4 integration test: the §12.3 line 81 opt-in T2 audit batching
+// Tier-4 integration test: the §12.3 opt-in T2 audit batching
 // path against a live Postgres container. The batch buffer accumulates
 // non-PII T2 events and flushes them through auditstore.AppendBatch,
 // which seals each row under one per-tenant advisory lock reusing the
@@ -13,17 +13,14 @@ package tier4_integration_test
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore/auditbatch"
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// spec: §12.3 line 81 — batched T2 inserts seal and chain correctly,
+// spec: §12.3 — batched T2 inserts seal and chain correctly,
 // and the resulting audit chain verifies.
 // diagnosis: a failure means batched T2 audit inserts do not seal and
 // chain correctly, so the audit chain would fail verification after a
@@ -32,9 +29,7 @@ func TestAuditBatchBufferChainsCorrectly(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	store := auditstore.New(pg.Router(t))
 
 	buf := auditbatch.New(store.AppendBatch, auditbatch.Config{BatchSize: 1000}, nil)

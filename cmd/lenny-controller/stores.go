@@ -6,15 +6,15 @@ import (
 	"context"
 	"log"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
+	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
-	experimentstorepg "github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore/pgstore"
-	poolstorepg "github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore/pgstore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore/pgstore"
 	sessionstorepg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/redisconn"
@@ -26,16 +26,14 @@ import (
 // so the leader-elected runnables share the parsed list.
 //
 // The Postgres-backed stores (the agent_pod_state mirror, the orphan-claim
-// session lookup, the §5.1 Runtime CRD registry, and the §10.7 pool-scaling
-// pool/experiment registries) are constructed only under --postgres-dsn; when
-// the flag is empty they stay nil and the dependent controllers skip
-// registration in the steps that follow.
+// session lookup, and the §5.1 Runtime CRD registry) are constructed only under
+// --postgres-dsn; when the flag is empty they stay nil and the dependent
+// controllers skip registration in the steps that follow.
 //
 // spec: §4.6.1 — the agent_pod_state mirror, the orphan-claim GC session
 // lookup, and the bounded work-queue factory; §5.1 — the Runtime CRD registry;
-// §10.7 — the pool-scaling pool/experiment registries; §16.6 / §25.5 — the
-// operational-event emitter (Redis-backed under --redis-url, otherwise the
-// controller-local in-memory ring buffer).
+// §16.6 / §25.5 — the operational-event emitter (Redis-backed under
+// --redis-url, otherwise the controller-local in-memory ring buffer).
 func (w *controllerWiring) buildStores() {
 	f := w.f
 
@@ -46,11 +44,6 @@ func (w *controllerWiring) buildStores() {
 	// status that the gateway's fallback claim path reads. When the flag
 	// is empty the mirror store is left nil and the controller skips
 	// mirroring.
-	//
-	// §10.7 PoolScalingController inputs: the §5.2 pool registry is the
-	// source of truth for pool definitions, and the cross-tenant
-	// experiment registry drives the variant-pool lifecycle. Both require
-	// Postgres, so the controller is wired only under --postgres-dsn.
 	if f.postgresDSN != "" {
 		pgPool, err := pgxpool.New(context.Background(), f.postgresDSN)
 		if err != nil {
@@ -58,16 +51,18 @@ func (w *controllerWiring) buildStores() {
 		}
 		w.pgPool = pgPool
 		w.mirror = agentpodstatepg.New(pgPool)
-		// The §4.6.1 orphan-claim GC checks Postgres for an active session
-		// backing each candidate claim before reclaiming it.
-		w.sessionLookup = &sessionActiveLookup{store: sessionstorepg.New(pgPool)}
+		// The §4.6.1 orphan-claim GC checks Postgres for a session holding
+		// each candidate claim's pod before reclaiming it. The store caps
+		// the §7.1 post-terminal window at the orphan timeout the GC loop
+		// applies, which §5.2 keeps above the gateway's terminal pipeline
+		// budget, so the controller needs no copy of that budget.
+		// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.1 (Post-terminal window).
+		w.sessionLookup = newSessionLookup(pgPool, f.claimOrphanTimeout)
 		// §5.1 Runtime CRD mirror: the RuntimeReconciler writes the
 		// declarative Runtime resources into the same runtime_definitions
 		// registry the gateway reads at session creation. Requires the
 		// Postgres registry, so it is wired only under --postgres-dsn.
 		w.runtimeRegistry = runtimepg.New(pgPool)
-		w.poolScalingPools = poolstorepg.New(pgPool)
-		w.poolScalingExperiments = experimentstorepg.New(pgPool)
 	}
 
 	w.opsEmitter = w.buildOpsEmitter()
@@ -77,6 +72,15 @@ func (w *controllerWiring) buildStores() {
 	// its controller, so the lenny_controller_workqueue_depth gauge is
 	// labeled per controller.
 	w.queueFactory = controllermetrics.NewQueueFactory(f.workqueueMaxDepth)
+}
+
+// newSessionLookup builds the §4.6.1 orphan-claim session lookup over the
+// Postgres session store, with the §7.1 post-terminal cap set to the orphan
+// timeout the GC loop applies for claimOrphanTimeout.
+// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.1 (Post-terminal window).
+func newSessionLookup(pool *pgxpool.Pool, claimOrphanTimeout time.Duration) *sessionActiveLookup {
+	window := warmpool.ResolveClaimOrphanTimeout(claimOrphanTimeout)
+	return &sessionActiveLookup{store: sessionstorepg.New(pool, sessionstorepg.WithPostTerminalCap(window))}
 }
 
 // buildOpsEmitter constructs the §16.6 / §25.5 operational-event emitter the

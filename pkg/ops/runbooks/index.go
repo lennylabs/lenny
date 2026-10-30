@@ -24,7 +24,7 @@ type Trigger struct {
 // FrontMatter is the §25.7 runbook front matter parsed for discovery.
 type FrontMatter struct {
 	// Title is the human runbook title, searched by the `q` full-text
-	// filter alongside symptoms and tags (§25.7 line 3143).
+	// filter alongside symptoms and tags (§25.7).
 	Title      string    `yaml:"title" json:"title,omitempty"`
 	Triggers   []Trigger `yaml:"triggers" json:"triggers,omitempty"`
 	Components []string  `yaml:"components" json:"components,omitempty"`
@@ -54,8 +54,7 @@ func Parse(markdown []byte) (FrontMatter, error) {
 	return fm, nil
 }
 
-// Filter is the §25.7 Path A runbook discovery filter (spec lines
-// 3140-3143). Every set field must match; an empty filter matches every
+// Filter is the §25.7 Path A runbook discovery filter. Every set field must match; an empty filter matches every
 // runbook.
 type Filter struct {
 	// Alert matches a runbook whose triggers name the alert

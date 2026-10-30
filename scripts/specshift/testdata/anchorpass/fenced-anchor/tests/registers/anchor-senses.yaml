@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT
+#
+# A well-formed register, so a run over this tree turns on the anchor a
+# fenced example writes rather than on the register.
+kind: anchor-senses
+version: 1
+entries:
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format

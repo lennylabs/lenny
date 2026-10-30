@@ -112,13 +112,13 @@ func UpTimeout() time.Duration {
 // distinct sidecar-model image to prove placement is runtime-agnostic rather
 // than echo-only. The reference sidecar-model runtime is runtime-echo
 // (cmd/runtimes/echo): it dials the abstract @lenny-runtime socket the
-// stamped lenny-adapter container binds and speaks the §15.4.1 JSONL
+// stamped lenny-adapter container binds and speaks the §28.5.3 JSONL
 // protocol the adapter bridges, exactly the contract a sidecar-model runtime
 // container fulfills (unlike runtime-echo-embedded, the §4.7 embedded model
 // that links the adapter as a library and serves gRPC itself). The
 // test-smoke-embedded Makefile target builds and stages it and sets this
 // variable. spec: §17.4 (the runtime-agnostic custom-runtime walkthrough),
-// §4.7 (the sidecar deployment model), §15.4.1 (the JSONL contract the
+// §4.7 (the sidecar deployment model), §28.5.3 (the JSONL contract the
 // runtime container speaks to the adapter).
 const SidecarRuntimeTarballEnv = "LENNY_SIDECAR_RUNTIME_TARBALL"
 

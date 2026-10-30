@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+#
+# The replacement carries the first identifier and not the second, so the
+# second is never written.
+kind: reserved-phrase-senses
+version: 1
+entries:
+  - file: pkg/carrier/carrier.go
+    occurrence: 1
+    identifiers:
+      - LNK-POD-GRPC
+      - CH-LLMPROXY
+    replacement: the LNK-POD-GRPC link

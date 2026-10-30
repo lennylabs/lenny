@@ -17,10 +17,9 @@ import (
 
 // RequireSATokenInterceptor returns a unary server interceptor that
 // validates the projected ServiceAccount token on every pod→gateway
-// GatewayControl call. The §10.2 line 227 contract — "Pods cannot forge
-// or extend this token. The gateway validates the signature on every
-// pod→gateway request" — and the §10.3 line 334 audience binding are both
-// enforced here, the SA-token layer of the defense-in-depth chain that
+// GatewayControl call. The §10.3 "Projected SA token" contract (the
+// gateway validates the token's signature, expiry, and deployment-specific
+// audience on every pod→gateway request) is enforced here, the SA-token layer of the defense-in-depth chain that
 // sits alongside the mTLS SPIFFE check (RequireVerifiedPeerInterceptor)
 // and the NetworkPolicy isolation.
 //
@@ -45,7 +44,7 @@ import (
 // global.saTokenAudience is unset — the interceptor passes every call
 // through unchanged, mirroring RequireVerifiedPeerInterceptor's dev-mode
 // behaviour.
-// spec: §10.2 line 227 (signature validation); §10.3 line 334 (audience).
+// spec: §10.3 (Projected SA token).
 func RequireSATokenInterceptor(expectedAudience string, verifier TokenVerifier) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if expectedAudience == "" {
@@ -54,10 +53,10 @@ func RequireSATokenInterceptor(expectedAudience string, verifier TokenVerifier) 
 		token, ok := bearerTokenFromContext(ctx)
 		if !ok {
 			return nil, status.Error(codes.Unauthenticated,
-				"leasecontrol: GatewayControl requires a projected SA token (reason=token_missing) (§10.2)")
+				"leasecontrol: GatewayControl requires a projected SA token (reason=token_missing) (§10.3)")
 		}
 		if verifier != nil {
-			// spec: §10.2 line 227 — validate the signature (and audience)
+			// spec: §10.3 (Projected SA token) — validate the signature (and audience)
 			// on every pod→gateway request. Fail closed on any error.
 			if err := verifier.Verify(ctx, token, expectedAudience); err != nil {
 				reason := "signature_invalid"
@@ -68,7 +67,7 @@ func RequireSATokenInterceptor(expectedAudience string, verifier TokenVerifier) 
 					reason = "tokenreview_unavailable"
 				}
 				return nil, status.Errorf(codes.Unauthenticated,
-					"leasecontrol: SA token rejected (reason=%s): %v (§10.2)", reason, err)
+					"leasecontrol: SA token rejected (reason=%s): %v (§10.3)", reason, err)
 			}
 			return handler(ctx, req)
 		}

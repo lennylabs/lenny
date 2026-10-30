@@ -13,7 +13,7 @@ import (
 
 // fakeProvider is a §9.1 ToolProvider that records calls and returns
 // canned results, so the server's provider dispatch can be exercised
-// without a gateway. spec: §9.1 lines 14-31. F-9.1.1.
+// without a gateway. spec: §9.1. F-9.1.1.
 type fakeProvider struct {
 	list     []mcp.Tool
 	listErr  error
@@ -38,7 +38,7 @@ func (p *fakeProvider) Call(_ context.Context, name string, args json.RawMessage
 	return p.result, nil
 }
 
-// spec: §9.1 lines 14-31 — tools/list merges the locally-registered
+// spec: §9.1 — tools/list merges the locally-registered
 // tools with the Provider's catalog so the intra-pod platform MCP server
 // advertises the gateway's platform tools without duplicating schemas.
 func TestServerToolsListMergesProvider_spec_9_1(t *testing.T) {
@@ -75,7 +75,7 @@ func TestServerToolsListMergesProvider_spec_9_1(t *testing.T) {
 	}
 }
 
-// spec: §9.1 line 14 — a tools/call for a tool the intra-pod server does
+// spec: §9.1 — a tools/call for a tool the intra-pod server does
 // not register locally is forwarded to the gateway through the Provider,
 // and the gateway's MCP result is returned verbatim.
 func TestServerToolsCallForwardsToProvider_spec_9_1(t *testing.T) {
@@ -113,7 +113,7 @@ func TestServerToolsCallForwardsToProvider_spec_9_1(t *testing.T) {
 	}
 }
 
-// spec: §9.1 line 14 — a Provider routing failure (e.g. the gateway
+// spec: §9.1 — a Provider routing failure (e.g. the gateway
 // reports an unknown session) surfaces as a JSON-RPC error, distinct from
 // an in-band isError tool result.
 func TestServerProviderCallErrorIsJSONRPCError_spec_9_1(t *testing.T) {

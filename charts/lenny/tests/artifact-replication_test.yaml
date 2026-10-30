@@ -2,7 +2,7 @@ suite: artifact-store replication config
 templates:
   - gateway-deployment.yaml
 tests:
-  # spec: §25.11 lines 4045-4068 — by default (Tier 1 dev,
+  # spec: §25.11 — by default (Tier 1 dev,
   # minio.artifactBackup.enabled false) the gateway gets no replication
   # config env, so it runs no replication controller. F-25.11.9.
   - it: omits LENNY_ARTIFACT_REPLICATION_CONFIG by default
@@ -16,7 +16,7 @@ tests:
             name: LENNY_ARTIFACT_REPLICATION_CONFIG
           any: true
 
-  # spec: §25.11 lines 4046-4068 — the single-region minio.artifactBackup
+  # spec: §25.11 — the single-region minio.artifactBackup
   # block renders into the gateway's --artifact-replication-config JSON
   # (one "default" region with no residency constraint). F-25.11.9.
   - it: renders the single-region replication config JSON
@@ -37,7 +37,7 @@ tests:
             name: LENNY_ARTIFACT_REPLICATION_CONFIG
             value: '{"enabled":true,"regions":[{"allowedDestinationCidrs":[],"dataResidencyRegion":"","region":"default","sourceBucket":"b","target":{"accessCredentialSecret":"sec","bucket":"db","endpoint":"https://dr:9000","kmsKeyId":""}}],"replicationLagRpoSeconds":900,"residencyAuditSamplingWindowSeconds":3600,"residencyCheckIntervalSeconds":300,"versioning":true}'
 
-  # spec: §25.11 line 4071 — the per-region topology declares each region's
+  # spec: §25.11 — the per-region topology declares each region's
   # replication under minio.regions.<region>.artifactBackup; the region key
   # becomes dataResidencyRegion (cross-region replication is prohibited).
   # Per-region entries take precedence over the single-region block.
@@ -87,7 +87,7 @@ tests:
             value: "arn:minio:replication::role/lenny"
           any: true
 
-  # spec: §25.11 line 4041 — enabling replication without a source
+  # spec: §25.11 — enabling replication without a source
   # ArtifactStore endpoint (minio.endpoint) is rejected at render so the
   # operator sees the misconfiguration before the gateway fatals at start.
   # F-25.11.9.

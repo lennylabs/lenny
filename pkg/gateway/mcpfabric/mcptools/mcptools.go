@@ -25,7 +25,7 @@
 // endpoint so the REST and MCP surfaces stay in lockstep per the
 // §15.2.1 consistency contract.
 //
-// spec: §15.2.1 rule 4 line 1386 — MCP tool input schemas for operations
+// spec: §15.2.1 rule 4 — MCP tool input schemas for operations
 // that overlap the REST API are generated from the OpenAPI document by the
 // build-pipeline code generation step below, not maintained by hand.
 //
@@ -45,6 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/environment"
+	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
@@ -87,7 +88,7 @@ import (
 // projection; the metadata is discarded on this single-string path. The
 // terminal and input_required spellings are byte-identical to the former
 // task-level table. F-8.8.7.
-// spec: §8.8 lines 855-883, §7.2.
+// spec: §8.8, §7.2.
 func mcpStateForSession(s session.State) string {
 	proto, _ := nodeProtocolState(s)
 	return proto
@@ -102,7 +103,7 @@ func mcpStateForSession(s session.State) string {
 // sessionstate.MCPProtocolState projection; the terminal and
 // input_required spellings are byte-identical to the former task-level
 // table. F-8.8.7 / F-8.8.9.
-// spec: §8.8 lines 855-883, §7.2.
+// spec: §8.8, §7.2.
 func nodeProtocolState(s session.State) (string, map[string]any) {
 	return sessionstate.MCPProtocolState(sessionstate.State(s))
 }
@@ -112,7 +113,7 @@ func nodeProtocolState(s session.State) (string, map[string]any) {
 // the shared §15.2.1 errorclassify table assigns the same (category,
 // retryable) pair the REST surface returns, instead of the handler
 // error falling back to INTERNAL_ERROR / (TRANSIENT, true). spec:
-// §15.2.1 rule 5(d) line 1396. F-15.2.12.
+// §15.2.1 rule 5(d). F-15.2.12.
 
 // errInvalidArgs maps a tools/call argument-unmarshal failure to the
 // REST VALIDATION_ERROR (PERMANENT, not retryable).
@@ -120,7 +121,7 @@ func errInvalidArgs(err error) error {
 	return mcp.NewToolError("VALIDATION_ERROR", fmt.Sprintf("invalid arguments: %v", err), nil)
 }
 
-// maxMessagePartBytes is the §15.4.1 line 1548 hard ceiling: a single
+// maxMessagePartBytes is the §28.5.3 hard ceiling: a single
 // MessagePart above 50 MB is rejected at ingress. The gate measures the
 // marshaled part (inline payload plus envelope) so a base64-inlined blob
 // that exceeds the cap is refused before it reaches the event stream.
@@ -131,16 +132,16 @@ const maxMessagePartBytes = 50 * 1024 * 1024
 // union (`oneOf(string, MessagePart[])`) sourced from the single
 // sessionrecord.MessageContentJSONSchema definition, so the MCP send
 // surface and the REST `/messages` body express the identical union under
-// the §15.2.1 parity rule. `to` is the §8.5 line 537 target id, and the
+// the §15.2.1 parity rule. `to` is the §8.5 target id, and the
 // `inReplyTo`/`messageId`/`fromSessionId` extensions are unchanged.
-// spec: §8.5 line 537, §15.4 (MessageEnvelope.input), §15.2.1 (REST/MCP
+// spec: §8.5, §15.4 (MessageEnvelope.input), §15.2.1 (REST/MCP
 // parity).
 var sendMessageInputSchema = json.RawMessage(fmt.Sprintf(
-	`{"type":"object","required":["to","message"],"properties":{"to":{"type":"string","description":"Target taskId / sessionId (§8.5 line 537)."},"message":%s,"inReplyTo":{"type":"string","description":"§8.8 line 951 — when this answers a pending lenny/request_input, the matching requestId."},"messageId":{"type":"string","description":"§15.4 line 1784 sender-supplied id; gateway assigns one when absent."},"fromSessionId":{"type":"string","description":"§7.2 sender session id. When set (or implied by the principal), the gateway enforces the §7.2 line 240 topology constraint: target must be the sender's parent, direct child, or sibling. F-7.2.22."}}}`,
+	`{"type":"object","required":["to","message"],"properties":{"to":{"type":"string","description":"Target taskId / sessionId."},"message":%s,"inReplyTo":{"type":"string","description":"when this answers a pending lenny/request_input, the matching requestId."},"messageId":{"type":"string","description":"sender-supplied id; gateway assigns one when absent."},"fromSessionId":{"type":"string","description":"§7.2 sender session id. When set (or implied by the principal), the gateway enforces the §7.2 topology constraint: target must be the sender's parent, direct child, or sibling. F-7.2.22."}}}`,
 	sessionrecord.MessageContentJSONSchema,
 ))
 
-// validateMessagePart enforces the two §15.4.1 lines 1542-1548 MessagePart
+// validateMessagePart enforces the two §28.5.3 MessagePart
 // ingress invariants on one `lenny/output` part: `inline` and `ref` are
 // mutually exclusive (both set → `400 MESSAGEPART_INLINE_REF_CONFLICT`),
 // and a part larger than 50 MB is rejected (`413 MESSAGEPART_TOO_LARGE`).
@@ -237,20 +238,20 @@ func cooldownToolError(cdErr *delegation.InterceptorWeakeningCooldownError) *mcp
 // session: the maxInputSize byte cap and the interceptorRef naming the
 // external content scanner. lenny/delegate_task resolves the parent
 // session's policy; lenny/send_message resolves the target session's
-// policy. *delegation.Service implements it. spec: §8.3 lines 149-188;
-// §4.8 lines 1036, 1040; §13.5 mitigations 2-3. F-8.2.9 / F-13.5.2.
+// policy. *delegation.Service implements it. spec: §8.3;
+// §4.8; §13.5 mitigations 2-3. F-8.2.9 / F-13.5.2.
 type ContentPolicyResolver interface {
 	ResolveContentPolicy(ctx context.Context, tenantID, sessionID string) (maxInputSize int, interceptorRef string, ok bool)
 }
 
-// InterceptorCooldownChecker reports the §4.8 line 1034 / §8.3 SEC-013
+// InterceptorCooldownChecker reports the §4.8 / §8.3 SEC-013
 // fail-policy weakening cooldown for the interceptor named by a policy's
 // `contentPolicy.interceptorRef`. lenny/send_message consults it to
 // reject a delivery whose target session's effective interceptor is
 // inside the `fail-closed → fail-open` weakening window, the same gate
 // the delegation service applies inside Delegate for lenny/delegate_task.
 // A non-nil return is a *delegation.InterceptorWeakeningCooldownError.
-// *delegation.Service implements it. spec: §4.8 line 1034; §8.3 line 218.
+// *delegation.Service implements it. spec: §4.8; §8.3.
 // F-4.8.17.
 type InterceptorCooldownChecker interface {
 	InterceptorFailPolicyCooldown(ctx context.Context, interceptorRef string) error
@@ -263,7 +264,7 @@ type InterceptorCooldownChecker interface {
 // the returned tree; the observer surfaces the corruption to
 // operators via the §11.7 audit log + §16.1 counter. The source
 // field is `mcp` for the lenny/get_task_tree platform tool.
-// spec: §8.9 line 1003; F-8.9.10.
+// spec: §8.9; F-8.9.10.
 type TreeCycleObserver interface {
 	OnTreeCycle(ctx context.Context, ev TreeCycleEvent)
 }
@@ -290,7 +291,7 @@ type TreeCycleEvent struct {
 // by the minimal in-process gateway that wires no session server (and by
 // the mcptools unit suite). Production wires the real service.
 //
-// spec: §15.2.1 rule 1 line 1380. F-15.2.4.
+// spec: §15.2.1 rule 1. F-15.2.4.
 type SessionCreator interface {
 	CreateSessionService(ctx context.Context, tenantID string, req sessionserver.CreateSessionRequest) (sessionserver.CreateSessionResponse, *sessionserver.ServiceError)
 }
@@ -304,7 +305,7 @@ type SessionCreator interface {
 // delegate handler maps to CREDENTIAL_POOL_EXHAUSTED / USER_CREDENTIAL_NOT_FOUND.
 // It claims no pod and reserves no lease.
 //
-// spec: §8.3 line 470; §4.9
+// spec: §8.3; §4.9
 type CredentialAvailabilityChecker interface {
 	CheckDelegationCredentialAvailability(ctx context.Context, q sessionserver.DelegationCredentialQuery) error
 }
@@ -323,13 +324,46 @@ type CredentialAvailabilityChecker interface {
 // precedent above, so mcptools depends on the interface rather than importing
 // the concrete server and creating a cycle).
 //
-// spec: §8.2 lines 93-97
+// spec: §8.2
 type ChildMaterializer interface {
 	MaterializeDelegatedChild(ctx context.Context, tenantID, childID string) (session.State, error)
 }
 
+// RetryBudget resolves the effective §7.3 retry budget for a session
+// row: the per-session retryPolicy.maxRetries, else the deployer cap,
+// else the §7.3 default. *sessionserver.Server implements it.
+// spec: §8.8 (TaskRecord and TaskResult Schema); §7.3.
+type RetryBudget interface {
+	EffectiveMaxRetries(row sessionstore.Session) int
+}
+
+// maxRetriesFor resolves row's effective retry budget through b, falling
+// back to the cap-free resolution when no resolver is wired.
+func maxRetriesFor(b RetryBudget, row sessionstore.Session) int {
+	if b == nil {
+		return sessionserver.EffectiveMaxRetriesForRow(row, session.RetryPolicyCaps{})
+	}
+	return b.EffectiveMaxRetries(row)
+}
+
+// HolderForwarder forwards a tool call on a session to the session's
+// coordinating replica when a §29.3 forwarding row requires it, and returns
+// the coordinator's result or error as the calling handler's own.
+// *sessionserver.Server implements it through ForwardToolCall.
+//
+// spec: §29.3 (Interactive message send) Forwarding rule 2, §15.2 (MCP API)
+type HolderForwarder interface {
+	ForwardToolCall(ctx context.Context, row sessionstore.Session, kind sessionserver.ForwardKind, tool string, arguments json.RawMessage) (mcp.ToolResult, sessionserver.ForwardOutcome, error)
+}
+
 // Deps carries the gateway services the MCP tools dispatch to.
 type Deps struct {
+	// HolderForward forwards lenny/send_message and lenny/cancel_session to
+	// the session's coordinating replica. Nil makes each site run its local
+	// path, which the in-process harnesses that wire one replica rely on.
+	// Production wires *sessionserver.Server. spec: §29.3 Forwarding.
+	HolderForward HolderForwarder
+
 	// Store is the §4.2 session store.
 	Store sessionstore.Store
 
@@ -337,7 +371,7 @@ type Deps struct {
 	// service. When set, lenny/create_session routes through it so the
 	// MCP and REST surfaces run identical validation and return identical
 	// envelopes. Optional — a nil creator selects the legacy direct-store
-	// create path. spec: §15.2.1 rule 1 line 1380. F-15.2.4.
+	// create path. spec: §15.2.1 rule 1. F-15.2.4.
 	SessionCreator SessionCreator
 
 	// SessionService is the §15.2.1 rule-1 shared service layer the
@@ -348,8 +382,7 @@ type Deps struct {
 	// upload_files). When nil those tools are not registered (the minimal
 	// in-process gateway / unit suite). Production wires *sessionserver.Server,
 	// so the MCP surface runs the identical REST route, validation, and
-	// response shaping. spec: §15.2 lines 1284-1306; §15.2.1 rule 1 line
-	// 1380. F-15.2.3.
+	// response shaping. spec: §15.2; §15.2.1 rule 1. F-15.2.3.
 	SessionService SessionService
 
 	// CredAvailability runs the §8.3 delegation-time pre-claim
@@ -358,7 +391,7 @@ type Deps struct {
 	// delegations on it and rejects with CREDENTIAL_POOL_EXHAUSTED before
 	// pod allocation. Optional — a nil checker skips the gate (the minimal
 	// in-process gateway and the mcptools unit suite leave it nil).
-	// Production wires *sessionserver.Server. spec: §8.3 line 470; §4.9.
+	// Production wires *sessionserver.Server. spec: §8.3; §4.9.
 	CredAvailability CredentialAvailabilityChecker
 
 	// ChildMaterializer runs the §8.2 steps after admission for the
@@ -369,7 +402,7 @@ type Deps struct {
 	// drives the admitted child through it before delivering task input.
 	// Optional — a nil materializer leaves the child in StateCreated (the
 	// minimal in-process gateway and the mcptools unit suite leave it nil).
-	// Production wires *sessionserver.Server. spec: §8.2 lines 93-97.
+	// Production wires *sessionserver.Server. spec: §8.2.
 	ChildMaterializer ChildMaterializer
 
 	// Executor routes messages to runtimes.
@@ -388,11 +421,19 @@ type Deps struct {
 	// the admin user API. spec: §11.4; F-11.4.1.
 	Users userstore.Store
 
+	// CallerCheck carries the issued-token reader and the rejection
+	// auditor of the §10.2 "Signing topology" caller check that
+	// lenny/delegate_task applies to a client-facing caller's bearer
+	// before delegating. A zero value passes every caller, and a pod-path
+	// call carries no jti and passes without a store read.
+	// spec: §10.2 (Signing topology), §13.3.
+	CallerCheck callercheck.Deps
+
 	// Runtimes is the §5.1 runtime registry. Optional — when nil, the
 	// lenny/discover_agents tool is not registered.
 	Runtimes runtimestore.Store
 
-	// CapabilityOverrides is the §5.1 line 49 per-tenant runtime
+	// CapabilityOverrides is the §5.1 per-tenant runtime
 	// capability override store. Optional — when set, the §8.8 one_shot
 	// input-round gate resolves the session tenant's overridden
 	// capabilities.interaction. F-5.1.20.
@@ -424,7 +465,7 @@ type Deps struct {
 	// ParentSessionID lineage. Production wires the same observer to
 	// the REST /v1/sessions/{id}/tree handler; nil disables the
 	// emission and the walker still truncates the cycle.
-	// spec: §8.9 line 1003; F-8.9.10.
+	// spec: §8.9; F-8.9.10.
 	TreeCycleObserver TreeCycleObserver
 
 	// DefaultNoEnvironmentPolicy is the §10.6 platform-wide
@@ -446,24 +487,23 @@ type Deps struct {
 	// maxInputSize on the body. Optional — when nil the handlers run the
 	// gateway-wide chain (built-ins plus every external interceptor at the
 	// phase), the pre-F-8.2.9 behavior the minimal gateway and unit suite
-	// rely on. Production wires *delegation.Service. spec: §8.3 lines
-	// 149-188; §4.8 lines 1036, 1040; §13.5 mitigations 2-3.
+	// rely on. Production wires *delegation.Service. spec: §8.3; §4.8; §13.5 mitigations 2-3.
 	// F-8.2.9 / F-13.5.2.
 	ContentPolicies ContentPolicyResolver
 
-	// CooldownChecker gates lenny/send_message on the §4.8 line 1034 /
+	// CooldownChecker gates lenny/send_message on the §4.8 /
 	// §8.3 SEC-013 interceptor fail-policy weakening cooldown. Optional —
 	// when nil, lenny/send_message applies no interceptor-failPolicy
 	// cooldown (the delegate_task path enforces it inside Delegate). The
 	// in-process minimal gateway and the unit suite register no external
 	// interceptors, so the nil default is a no-op. Production wires
-	// *delegation.Service. spec: §4.8 line 1034; §8.3 line 218. F-4.8.17.
+	// *delegation.Service. spec: §4.8; §8.3. F-4.8.17.
 	CooldownChecker InterceptorCooldownChecker
 
 	// PolicyAudit emits the §16.7 interceptor.rejected audit row when a
 	// chain REJECTs at PreDelegation or PreMessageDelivery. Optional —
 	// when nil, a chain REJECT still blocks the request but writes no
-	// audit row. spec: §4.8 line 981, §11.7.
+	// audit row. spec: §4.8, §11.7.
 	PolicyAudit *policy.AuditSink
 
 	// Events is the §15.1 session event bus. Optional — when nil, the
@@ -474,7 +514,7 @@ type Deps struct {
 	// Optional — when nil, lenny/request_input is not registered.
 	InputWaits *inputwait.Registry
 
-	// ActivityStamper records §6.2 line 276 qualifying activity for a
+	// ActivityStamper records §6.2 qualifying activity for a
 	// parent session blocked in lenny/await_children so the §11.3 idle
 	// watchdog does not reap it while it actively waits for children. A
 	// nil stamper disables the reset (the parent then relies on its
@@ -491,14 +531,22 @@ type Deps struct {
 	// TaskUsage, when set, stamps the §8.8 usage / treeUsage rollups on a
 	// lenny/await_children child result resolved from the live row (the
 	// archived body already carries them). Optional — nil leaves the
-	// row-only result without rollups. spec: §8.8 lines 897-917.
+	// row-only result without rollups. spec: §8.8.
 	TaskUsage *resultrollup.Builder
+
+	// RetryBudget resolves a child row's effective §7.3 retry budget, the
+	// value the §8.8 TaskResult error block compares RetryCount against to
+	// report retriesExhausted. The gateway wires the session server so the
+	// await path uses the deployer caps the failure path enforces.
+	// Optional: nil resolves the budget without deployer caps (the row's
+	// retryPolicy.maxRetries, else the §7.3 default).
+	// spec: §8.8 (TaskRecord and TaskResult Schema); §7.3.
+	RetryBudget RetryBudget
 
 	// DeadlockTracker records the §8.8 await edges (which session awaits
 	// which children) so the subtree deadlock detector can decide whether
 	// an awaiting parent's children are all blocked. Optional — when nil,
-	// lenny/await_children does not register its edge. spec: §8.8 line
-	// 981. F-8.8.6.
+	// lenny/await_children does not register its edge. spec: §8.8. F-8.8.6.
 	DeadlockTracker *deadlock.AwaitTracker
 
 	// Deadlocks is the §8.8 deadlock manager the await poll reads to
@@ -536,7 +584,7 @@ type Deps struct {
 	// and terminal lifecycle events the operator dashboards and the
 	// §16.5 ElicitationBacklogHigh alert read. Optional; nil disables
 	// the histograms, the pending gauge, and the timeout/suppressed
-	// counters. spec: §16.1 lines 60–63; §16.5 line 458. F-9.2.14.
+	// counters. spec: §16.1; §16.5. F-9.2.14.
 	ElicitationLifecycleMetrics ElicitationLifecycleRecorder
 
 	// ElicitationTamperMetrics, when set, receives a §9.2 / §16.5
@@ -552,8 +600,7 @@ type Deps struct {
 	// consults it on the content-integrity hot path: `off` skips the
 	// check, `detect-only` records a divergence but forwards as received,
 	// `enforce` drops the divergent forward. Optional — a nil resolver
-	// defaults to the §9.2 enforce tenant default. spec: §9.2 lines
-	// 58–64. F-9.2.2.
+	// defaults to the §9.2 enforce tenant default. spec: §9.2. F-9.2.2.
 	ElicitationModeResolver func(ctx context.Context, tenantID string) elicitation.EnforcementMode
 
 	// ElicitationDepthPolicy is the §9.2 depth policy applied to an
@@ -586,14 +633,13 @@ type Deps struct {
 	// empty MessagingMaxScope imposes no ceiling beyond the enum.
 	// Tenant- and runtime-level overrides narrow further once those
 	// configuration surfaces are stored (their absence resolves to the
-	// deployment scope). spec: §7.2 lines 236-266. F-7.2.6.
+	// deployment scope). spec: §7.2. F-7.2.6.
 	MessagingDefaultScope session.MessagingScope
 	MessagingMaxScope     session.MessagingScope
 
 	// MessagingRateLimit carries the §8.3 per-session lenny/send_message
 	// rate limits (maxPerMinute, maxPerSession, maxInboundPerMinute). A
-	// zero field selects the §8.3 default. spec: §7.2 line 270; §8.3
-	// lines 269-272. F-7.2.6.
+	// zero field selects the §8.3 default. spec: §7.2; §8.3. F-7.2.6.
 	MessagingRateLimit MessagingRateLimit
 
 	// MessagingRateCounter is the fixed-window counter backing the
@@ -605,12 +651,11 @@ type Deps struct {
 
 	// Messaging is the §7.2 session-inbox + DLQ coordinator. When set,
 	// lenny/send_message routes a message to a non-delivering target
-	// (input_required / suspended → inbox; recovering / pre-running →
+	// (input_required → inbox; suspended / recovering / pre-running →
 	// DLQ) instead of forcing it onto the executor, returning a
 	// `queued` delivery receipt per the §7.2 paths 3/5/6/7. A nil
 	// coordinator (no Redis) surfaces inbox_unavailable for those
-	// paths. The same coordinator backs the REST handler. spec: §7.2
-	// lines 313-331. F-7.2.5.
+	// paths. The same coordinator backs the REST handler. spec: §7.2. F-7.2.5.
 	Messaging *sessioninbox.Coordinator
 
 	// Clock + IDFunc match the session server's construction; pass
@@ -620,12 +665,22 @@ type Deps struct {
 
 	// TenantID is the tenant the MCP session operates within. The
 	// MCP adapter is mounted per-tenant; v1 binds one tenant per
-	// adapter instance.
+	// adapter instance. It is the fallback tenant of a tool call with no
+	// authenticated principal, which only DevTenantFallback admits.
 	TenantID string
+
+	// DevTenantFallback, when true, admits a tool call that carries no
+	// authenticated principal and runs it as TenantID (or `default`).
+	// The gateway sets it only under --dev-mode. When false, the
+	// default, Register installs a pre-dispatch gate that refuses such a
+	// call with UNAUTHORIZED before any tool runs, so no tool resolves its
+	// tenant from the fallback outside dev mode (F-10.2.21).
+	// spec: §10.2 (Authentication); §17.4 (dev mode).
+	DevTenantFallback bool
 
 	// DevMode is the platform global.devMode (LENNY_DEV_MODE=true). When
 	// true, a session created without an explicit isolation profile
-	// defaults to `standard` (runc) per §5.3 line 677 rather than the
+	// defaults to `standard` (runc) per §5.3 rather than the
 	// production `sandboxed`.
 	DevMode bool
 
@@ -636,30 +691,88 @@ type Deps struct {
 	// session's tenant VCS credential pool. The runtime never holds a
 	// long-lived credential; the token is minted per git invocation and
 	// bound to the originating session id. Optional — a nil resolver
-	// leaves the tool unregistered. spec: §26.2 line 119; §4.9. F-26.2.5.
+	// leaves the tool unregistered. spec: §26.2; §4.9. F-26.2.5.
 	VCSCreds vcscred.Resolver
 
 	// VCSLeaseAuditor records the §4.9.2 `credential.leased` event each
 	// time lenny/vcs_token mints a token, bound to the originating
 	// session id for the §26.2 audit-traceability requirement. Optional —
-	// a nil auditor disables the emission. spec: §26.2 line 119; §4.9.2.
+	// a nil auditor disables the emission. spec: §26.2; §4.9.2.
 	// F-26.2.5.
 	VCSLeaseAuditor VCSLeaseAuditor
+
+	// Terminal is the session server's terminal-writer seam. The
+	// lenny/cancel_session handler and lenny/cancel_child's cancelSubtree
+	// open a terminal claim through BeginTerminal before each terminal
+	// Update and run the post-terminal hook through AfterTerminalWrite
+	// after a write that applied, so a cancel seals, drains, emits the
+	// terminal events, and releases the pod as every other terminal writer
+	// does. Nil records the Terminated fact alone. spec: §7.2 (Interactive
+	// Session Model), §15.1 (REST API).
+	Terminal Terminal
+
+	// Delivery is the session server's delivery of held messages and resume
+	// of suspended sessions. lenny/send_message takes the session's
+	// delivery lock, delivers held messages before a path-2 send, holds a
+	// message to a suspended or recovering target in the DLQ, and resumes a
+	// suspended target; lenny/delegate_task delivers a child's held
+	// messages after its task input. With a nil Delivery, lenny/send_message
+	// delivers no held message and answers a held or resume decision with
+	// error and inbox_unavailable. spec: §7.2 (Message delivery routing —
+	// seven paths, path 6).
+	Delivery SessionDelivery
+
+	// PrimaryReadTimeout bounds every sessionstore.ReadPrimary call the
+	// tools make: the lenny/send_message classification read and its
+	// re-read after a sealed refusal, the lenny/delegate_task child read,
+	// and the lenny/request_elicitation terminal-state check. A
+	// non-positive value selects sessionstore.DefaultPrimaryReadTimeout.
+	// spec: §12.3 (Postgres HA Requirements).
+	PrimaryReadTimeout time.Duration
+}
+
+// SessionDelivery is the session server's delivery seam the message tools
+// consume. *sessionserver.Server satisfies it.
+//
+//   - LockDelivery takes the session's per-replica delivery lock, honoring
+//     ctx, and returns its release. The lock is not reentrant.
+//   - HoldMessage holds a message in the session's DLQ and re-reads the
+//     primary row, answering queued, dropped, or terminal.
+//   - HoldUndeliveredForward holds a message whose forward to the
+//     session's coordinating replica was not delivered, with the TTL of
+//     the dead-letter table's recovering-state row, answering as
+//     HoldMessage does.
+//   - DeliverHeld delivers the held messages of a session its caller found
+//     `running` with the lock held, reading no row.
+//   - ResumeSuspended resumes a `suspended` session a message is held for;
+//     it takes the lock itself, so the caller must not hold it.
+//   - AdmitResume runs the resume admission check on a `suspended` row
+//     before its message is held: nil, a *sessionserver.CapRefusal, or a
+//     lookup or count error.
+//
+// spec: §7.2 (Message delivery routing — seven paths, path 6), §11.1
+// (Resume admission), §29.3 (Interactive message send) Forwarding rule 6
+type SessionDelivery interface {
+	LockDelivery(ctx context.Context, sessionID string) (func(), error)
+	HoldMessage(ctx context.Context, tenantID, sessionID string, msg sessioninbox.Message) (sessionserver.HoldOutcome, session.State, error)
+	HoldUndeliveredForward(ctx context.Context, row sessionstore.Session, msg sessioninbox.Message) (sessionserver.HoldOutcome, session.State, error)
+	DeliverHeld(ctx context.Context, row sessionstore.Session) error
+	ResumeSuspended(ctx context.Context, row sessionstore.Session) error
+	AdmitResume(ctx context.Context, row sessionstore.Session) error
 }
 
 // VCSLeaseAuditor records a §4.9.2 VCS credential lease the
 // lenny/vcs_token tool issues. The implementation writes the
 // `credential.leased` audit row bound to the originating session id so a
 // minted VCS token is traceable to the session that requested it.
-// spec: §26.2 line 119; §4.9.2. F-26.2.5.
+// spec: §26.2; §4.9.2. F-26.2.5.
 type VCSLeaseAuditor interface {
 	RecordVCSLease(ctx context.Context, lease VCSLeaseRecord)
 }
 
 // VCSLeaseRecord is the §4.9.2 audit payload for one minted VCS token:
 // the session it is bound to, the resolved host, the VCS provider, and
-// the access mode. The token itself is never recorded. spec: §26.2 line
-// 119; §4.9.2. F-26.2.5.
+// the access mode. The token itself is never recorded. spec: §26.2; §4.9.2. F-26.2.5.
 type VCSLeaseRecord struct {
 	SessionID string
 	TenantID  string
@@ -688,12 +801,12 @@ const (
 	// elicitationDropDepthSuppressed — the §9.2 depth policy suppressed
 	// the request.
 	elicitationDropDepthSuppressed = "depth_suppressed"
-	// elicitationDropDomainNotAllowlisted — the §9.2 line 86 url-mode
+	// elicitationDropDomainNotAllowlisted — the §9.2 url-mode
 	// allowlist rejected the request. The metric drop substitutes for
 	// the unspec'd `elicitation.url_mode_domain_rejected` audit event
 	// the dispatcher previously emitted; the §16.7 catalog enumerates
 	// the closed set of audit events and does not list one for this
-	// rejection. spec: §9.2 line 86; F-9.2.11.
+	// rejection. spec: §9.2; F-9.2.11.
 	elicitationDropDomainNotAllowlisted = "domain_not_allowlisted"
 )
 
@@ -706,7 +819,7 @@ type ElicitationDropRecorder interface {
 
 // ElicitationLifecycleRecorder hooks the §16.1 admit/terminal metric
 // sites the elicitation handler instruments. *gatewaymetrics.Metrics
-// satisfies it. spec: §16.1 lines 60–63 — pending gauge, timeout /
+// satisfies it. spec: §16.1 — pending gauge, timeout /
 // suppressed counters, roundtrip histogram. F-9.2.14.
 type ElicitationLifecycleRecorder interface {
 	// IncElicitationPending increments the lenny_elicitation_pending
@@ -740,6 +853,12 @@ func Register(srv *mcp.Server, deps Deps) {
 	if tenant == "" {
 		tenant = "default"
 	}
+	// spec: §10.2 — outside dev mode every tool call must carry an
+	// authenticated principal; callerTenantID's fallback is then never
+	// reached. F-10.2.21.
+	if !deps.DevTenantFallback {
+		srv.SetToolCallGate(requirePrincipalTenant)
+	}
 
 	// §7.2 send_message governance shared per-adapter state: the
 	// fixed-window + lifetime rate limiter and the deployment-resolved
@@ -752,9 +871,9 @@ func Register(srv *mcp.Server, deps Deps) {
 
 	// §4.8 PreToolResult: install the transport-layer hook that runs the
 	// interceptor chain over every tool result before it reaches the
-	// agent. A nil chain leaves the hook unset. spec: §4.8 line 1053.
+	// agent. A nil chain leaves the hook unset. spec: §4.8.
 	if ri := buildPreToolResultInterceptor(deps, tenant); ri != nil {
-		srv.SetResultInterceptor(ri)
+		srv.SetResultInterceptor(skipForwardedResults(ri))
 	}
 
 	// env carries the prologue values resolved above to each per-family
@@ -769,8 +888,7 @@ func Register(srv *mcp.Server, deps Deps) {
 	}
 
 	// §15.2 session-lifecycle surface: attach_session (when the session store
-	// is wired), create_session, send_message, interrupt_session, and
-	// cancel_session.
+	// is wired), create_session, send_message, and cancel_session.
 	registerSessionLifecycleTools(srv, deps, env)
 
 	// §8.5/§8.9 delegation-tree surface: get_task_tree, cancel_child, and
@@ -808,7 +926,7 @@ func Register(srv *mcp.Server, deps Deps) {
 		registerVCSTokenTool(srv, deps, tenant)
 	}
 
-	// spec: §15.2 lines 1284-1306 — the remaining client-facing tools
+	// spec: §15.2 — the remaining client-facing tools
 	// (create_and_start_session, start_session, finalize_workspace,
 	// terminate_session, resume_session, get_session_status, list_sessions,
 	// get_session_logs, list_artifacts, get_token_usage, download_artifact,
@@ -819,7 +937,7 @@ func Register(srv *mcp.Server, deps Deps) {
 
 // vcsTokenResult is the §26.2 lenny/vcs_token tool result: the HTTP Basic
 // credential a pod's git-credential helper feeds to git for an
-// HTTPS clone/fetch/push against host. spec: §26.2 line 119. F-26.2.5.
+// HTTPS clone/fetch/push against host. spec: §26.2. F-26.2.5.
 type vcsTokenResult struct {
 	Host     string `json:"host"`
 	Username string `json:"username"`
@@ -835,7 +953,7 @@ type vcsTokenResult struct {
 // hostPatterns). The token is minted per invocation and bound to the
 // originating session id for audit traceability; the runtime never holds
 // a long-lived credential. v1 ships `github` as the only built-in VCS
-// provider. spec: §26.2 line 119; §4.9. F-26.2.5.
+// provider. spec: §26.2; §4.9. F-26.2.5.
 func registerVCSTokenTool(srv *mcp.Server, deps Deps, defaultTenant string) {
 	srv.RegisterTool(mcp.Tool{
 		Name: "lenny/vcs_token",
@@ -845,7 +963,7 @@ func registerVCSTokenTool(srv *mcp.Server, deps Deps, defaultTenant string) {
 			"v1 ships `github` as the only built-in VCS provider.",
 		InputSchema: json.RawMessage(`{"type":"object","required":["host"],"properties":{"host":{"type":"string","description":"The HTTPS git host (e.g. github.com)."},"provider":{"type":"string","description":"VCS provider; defaults to github (the only built-in v1 provider)."},"mode":{"type":"string","enum":["read","write"],"description":"Access mode; defaults to read."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		// spec: §26.2 line 119 — the lease is bound to the originating
+		// spec: §26.2 — the lease is bound to the originating
 		// session id. The §9.1 bridge installs the calling pod's session
 		// on the principal; a call with no session principal (e.g. a
 		// gateway-edge /mcp caller that is not a pod) cannot mint a
@@ -874,7 +992,7 @@ func registerVCSTokenTool(srv *mcp.Server, deps Deps, defaultTenant string) {
 		if provider == "" {
 			provider = "github"
 		}
-		// spec: §26.2 line 119 — `gitClone.url` is HTTPS-only in v1, so a
+		// spec: §26.2 — `gitClone.url` is HTTPS-only in v1, so a
 		// read scope covers clone/fetch and a write scope covers push.
 		mode := "read"
 		if strings.TrimSpace(in.Mode) == "write" {
@@ -920,7 +1038,7 @@ func registerVCSTokenTool(srv *mcp.Server, deps Deps, defaultTenant string) {
 // vcsTokenError maps a vcscred.Resolve failure to the §15.1 git-clone
 // auth error code the REST gitClone path uses, so the in-pod token
 // surface and the gateway-side clone surface report identical codes.
-// spec: §15.1; §26.2 line 119. F-26.2.5.
+// spec: §15.1; §26.2. F-26.2.5.
 func vcsTokenError(err error) error {
 	var resolveErr *credentialpoolstore.VCSResolveError
 	if errors.As(err, &resolveErr) {
@@ -970,26 +1088,11 @@ type taskHandle struct {
 	Depth int `json:"depth"`
 }
 
-// senderFrom builds the §15.4.1 from-object for a delivered
-// lenny/send_message. An authenticated inter-session sender is attributed
-// as kind `agent` with its session id; an unattributed send (no principal
-// session binding and no fromSessionId) returns the zero value so the
-// executor stamps its default gateway-client identity. The gateway always
-// sets `from` — a caller cannot. spec: §15.4.1 lines 1696-1707; §13.5
-// mitigation 6. F-13.5.11.
-func senderFrom(senderID string) executor.MessageFrom {
-	if senderID == "" {
-		return executor.MessageFrom{}
-	}
-	return executor.MessageFrom{Kind: "agent", ID: senderID}
-}
-
 // recordChainRejection emits the §16.7 interceptor.rejected audit row
-// childRouteSpec is the §8.2 line 90 PreRoute content payload for a
+// childRouteSpec is the §8.2 PreRoute content payload for a
 // delegated child: the augmented TaskSpec the chain inspects before
 // runtime selection. The JSON field names match the PreRoute immutable
-// fields (tenant_id/user_id) the chain enforces on MODIFY (spec: §4.8
-// line 1048).
+// fields (tenant_id/user_id) the chain enforces on MODIFY (spec: §4.8).
 type childRouteSpec struct {
 	TenantID         string `json:"tenant_id"`
 	UserID           string `json:"user_id,omitempty"`
@@ -1003,7 +1106,7 @@ type childRouteSpec struct {
 // with the rejecting interceptor so the audit row identifies it. It is
 // best-effort: a nil PolicyAudit is a no-op, and an append failure is
 // logged-by-omission rather than blocking the rejection, because the
-// caller already fails the request closed. spec: §4.8 line 981, §11.7.
+// caller already fails the request closed. spec: §4.8, §11.7.
 func recordChainRejection(ctx context.Context, deps Deps, tenant, sessionID string, phase interceptor.Phase, res interceptor.Result) {
 	if deps.PolicyAudit == nil {
 		return
@@ -1015,11 +1118,11 @@ func recordChainRejection(ctx context.Context, deps Deps, tenant, sessionID stri
 	}, res)
 }
 
-// preToolResultPayload is the §4.8 line 1053 PreToolResult content
+// preToolResultPayload is the §4.8 PreToolResult content
 // payload: the tool result delivered back to the agent. `id` is the
 // originating tool_call.id and is immutable on MODIFY (the chain
 // enforces it via phaseImmutableFields); `content` and `isError` are
-// mutable. spec: §4.8 line 1053.
+// mutable. spec: §4.8.
 type preToolResultPayload struct {
 	ID      string            `json:"id"`
 	Content []mcp.ToolContent `json:"content"`
@@ -1032,7 +1135,7 @@ type preToolResultPayload struct {
 // transport adapter keeps its zero-cost default. A REJECT (including an
 // immutable-id MODIFY violation, which the chain converts to a REJECT)
 // surfaces as a tool error; a MODIFY substitutes the rewritten result.
-// spec: §4.8 line 1053.
+// spec: §4.8.
 func buildPreToolResultInterceptor(deps Deps, tenant string) mcp.ResultInterceptor {
 	if deps.Interceptors == nil {
 		return nil
@@ -1095,7 +1198,7 @@ func buildPreToolResultInterceptor(deps Deps, tenant string) mcp.ResultIntercept
 // the parent session. It returns the possibly-modified parts and a
 // non-nil rejection Result when the chain REJECTs; the caller surfaces
 // the rejection to the agent or client. A nil chain or a malformed
-// MODIFY payload leaves the parts unchanged. spec: §4.8 line 1054.
+// MODIFY payload leaves the parts unchanged. spec: §4.8.
 func applyPostAgentOutput(ctx context.Context, deps Deps, tenant, sessionID string, parts []executor.MessagePart) ([]executor.MessagePart, *interceptor.Result) {
 	if deps.Interceptors == nil {
 		return parts, nil
@@ -1135,7 +1238,7 @@ func applyPostAgentOutput(ctx context.Context, deps Deps, tenant, sessionID stri
 func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() time.Time) {
 	srv.RegisterTool(mcp.Tool{
 		Name: "lenny/memory_write",
-		// spec: §8.5 line 577 — the §8.5 JSON Schema lists `content` as
+		// spec: §8.5 — the §8.5 JSON Schema lists `content` as
 		// the only required input; the §9.4 memory record is scoped to
 		// the calling principal's user via the session lookup. Metadata
 		// values are constrained to strings per the spec schema
@@ -1145,7 +1248,7 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 		Description: "Write a memory to the §9.4 memory store, scoped to the calling session's user.",
 		InputSchema: json.RawMessage(`{"type":"object","required":["content"],"properties":{"content":{"type":"string","description":"The memory content to store."},"metadata":{"type":"object","description":"Optional key-value metadata attached to the memory record.","additionalProperties":{"type":"string"}},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal so the §9.4 memory scope and the session lookup
 		// stay tenant-correct. F-9.2.13 / F-15.2.15.
 		tenant := callerTenantID(ctx, tenant)
@@ -1154,15 +1257,14 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 			// principal carries no SessionID claim. F-8.5.14.
 			SessionID string `json:"sessionId,omitempty"`
 			Content   string `json:"content"`
-			// Metadata values are decoded as strings per the §8.5 line
-			// 577 schema (`additionalProperties: {"type":"string"}`). A
+			// Metadata values are decoded as strings per the §8.5 schema (`additionalProperties: {"type":"string"}`). A
 			// non-string value rejects the call so the storage layer is
 			// never asked to coerce. F-8.5.14.
 			Metadata map[string]string `json:"metadata"`
 		}
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
-				fmt.Sprintf("invalid arguments: %v (metadata values must be strings per §8.5 line 577)", err), nil)
+				fmt.Sprintf("invalid arguments: %v (metadata values must be strings per §8.5)", err), nil)
 		}
 		sessionID := callerSessionID(ctx, in.SessionID)
 		if sessionID == "" {
@@ -1171,7 +1273,7 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 		}
 		if in.Content == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
-				"content is required (§8.5 line 577)", nil)
+				"content is required (§8.5)", nil)
 		}
 		row, err := deps.Store.Get(ctx, tenant, sessionID)
 		if err != nil {
@@ -1198,7 +1300,7 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 
 	srv.RegisterTool(mcp.Tool{
 		Name: "lenny/memory_query",
-		// spec: §8.5 line 596 — the §8.5 JSON Schema lists `query` as
+		// spec: §8.5 — the §8.5 JSON Schema lists `query` as
 		// required and declares `limit` with `default: 10`. The session
 		// is implicit in the calling principal. `sessionId` is the
 		// transport fallback used when the principal carries no
@@ -1206,7 +1308,7 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 		Description: "Query the §9.4 memory store across the calling session's user's memories.",
 		InputSchema: json.RawMessage(`{"type":"object","required":["query"],"properties":{"query":{"type":"string","description":"Natural-language query for semantic search over the memory store."},"limit":{"type":"integer","description":"Maximum number of results to return. Default: 10.","default":10},"sessionId":{"type":"string","description":"§15.2.1 transport-fallback session id; the principal's SessionID claim takes precedence."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		// spec: §9.2 / §16.1 / §15.2 line 1335 — tenant from the caller's
+		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal so the §9.4 user-scoped memory query stays tenant-
 		// correct. F-9.2.13 / F-15.2.15.
 		tenant := callerTenantID(ctx, tenant)
@@ -1227,9 +1329,9 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 		}
 		if in.Query == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
-				"query is required (§8.5 line 596)", nil)
+				"query is required (§8.5)", nil)
 		}
-		// spec: §8.5 line 596 — `limit` declares `default: 10`. The
+		// spec: §8.5 — `limit` declares `default: 10`. The
 		// MCP transport does not auto-fill JSON Schema defaults, so a
 		// caller that omits the field arrives with the zero value; the
 		// handler applies the documented default here. F-8.5.14.
@@ -1267,19 +1369,18 @@ type memoryResult struct {
 }
 
 // treeNode mirrors the §8 tree shape the get_task_tree tool returns.
-// spec: §8.5 line 540 — "Each node includes `taskId`, `state`, and
+// spec: §8.5 — "Each node includes `taskId`, `state`, and
 // `runtimeRef`". The REST surface (sessionserver.TreeNode) carries the
 // same three fields; per §15.2.1 the MCP and REST projections of the
 // same operation must remain semantically equivalent. The v1 invariant
-// "task record == session row" (§4.2 line 157) means TaskID is the
+// "task record == session row" (§4.2) means TaskID is the
 // session row's id. F-8.9.5.
 //
 // `state` carries the §8.8 MCP-protocol spelling (e.g., `canceled`,
-// `working`, `failed` for `expired`). `metadata` carries the §8.8 line
-// 871-883 supplementary table annotations — `suspended: true` for the
+// `working`, `failed` for `expired`). `metadata` carries the §8.8 supplementary table annotations — `suspended: true` for the
 // `suspended` session state and `resuming: true` for `resume_pending`
 // / `resuming`. The map is omitted when no annotation applies. F-8.8.9.
-// Attributes carries the §8.9 line 1010 per-node tracking projection
+// Attributes carries the §8.9 per-node tracking projection
 // (generation, pod, lease, failure history), matching the REST
 // /v1/sessions/{id}/tree surface per the §15.2.1 REST↔MCP
 // semantic-equivalence rule. F-8.9.1.
@@ -1305,7 +1406,7 @@ func mcpEndpointFor(rt runtimestore.Runtime) string {
 // discoveredRuntime is one entry in the lenny/list_runtimes result. It
 // covers every runtime type, so it carries the type discriminator.
 //
-// McpEndpoint is the §9.1 line 38 / §15.1 line 698 discovery pointer
+// McpEndpoint is the §9.1 / §15.1 discovery pointer
 // to the per-runtime intra-pod MCP server (`/mcp/runtimes/{name}` for
 // type:mcp; empty for type:agent). F-9.1.4 / coordinated with F-9.1.3.
 type discoveredRuntime struct {
@@ -1342,40 +1443,65 @@ type discoveredAgent struct {
 	Description      string `json:"description,omitempty"`
 }
 
-// requireActiveDelegator enforces the §11.4 rule that hard_disable
-// "also block[s] new delegated tasks". It resolves the parent session's
-// owning user and rejects the delegation with USER_INVALIDATED when that
-// user is no longer active. When no user store is wired, the parent
-// session is unresolvable, or the owning user has no registry row, the
-// delegation proceeds — mirroring the REST session-creation gate, which
-// admits principals that were never provisioned through the admin user
-// API. spec: §11.4; F-11.4.1.
+// requireDelegatingBearerAllowed applies the §10.2 session-creation caller
+// check to the bearer that calls lenny/delegate_task, through
+// callercheck.Check. A refusal answers the FORBIDDEN tool error once its
+// token.exchanged rejection row is durable; a failed issued_tokens read or
+// rejection write answers INTERNAL_ERROR. A pod-path call over
+// LNK-GWCONTROL carries no jti and passes. It runs before any admission,
+// reservation, export, or pod claim.
+// spec: §10.2 (Signing topology), §13.3 (Credential Flow: Write-before-issue
+// ordering, step (1a)).
+func requireDelegatingBearerAllowed(ctx context.Context, deps Deps, now time.Time) error {
+	principal, ok := authmw.FromContext(ctx)
+	if !ok {
+		return nil
+	}
+	err := callercheck.Check(ctx, deps.CallerCheck, principal, now)
+	if err == nil {
+		return nil
+	}
+	var refused *callercheck.Refused
+	if errors.As(err, &refused) {
+		return mcp.NewToolError("FORBIDDEN",
+			"the presented bearer cannot create sessions: "+refused.Reason, nil)
+	}
+	return mcp.NewToolError("INTERNAL_ERROR",
+		"session-creation caller check failed: "+err.Error(), nil)
+}
+
+// requireActiveDelegator is the early creation gate of a delegated child.
+// It reads the parent session's owning user's row and the tenant row and
+// refuses with the code CreationMarkers.Refusal answers for a delegated
+// child, so it answers the fence's code for the same marker state: a
+// soft-disabled owner's in-flight work keeps delegating (§11.4), while a
+// hard-disabled or fully revoked owner, a restricted owner, and a
+// suspended or non-active tenant refuse. A missing row carries no marker,
+// and an unwired store reads nothing. A marker read error answers the
+// INTERNAL_ERROR tool error. When the parent session is unresolvable the
+// gate stays out of the way so the delegation service returns its
+// canonical PARENT_NOT_FOUND. The fence in the child's insert transaction
+// remains the serialization point.
+// spec: §11.4 (User Invalidation), §12.8 (Lifecycle fence and drain).
 func requireActiveDelegator(ctx context.Context, deps Deps, tenant, parentSessionID string) error {
-	if deps.Users == nil || deps.Store == nil || parentSessionID == "" {
+	if (deps.Users == nil && deps.Tenants == nil) || deps.Store == nil || parentSessionID == "" {
 		return nil
 	}
 	parent, err := deps.Store.Get(ctx, tenant, parentSessionID)
 	if err != nil {
-		// A missing or unreadable parent is the delegation service's
-		// concern (it returns PARENT_NOT_FOUND); the user gate stays out
-		// of the way so the canonical error surfaces downstream.
 		return nil
 	}
-	if parent.UserID == "" {
-		return nil
-	}
-	user, err := deps.Users.Get(ctx, tenant, parent.UserID)
-	if errors.Is(err, userstore.ErrNotFound) {
-		return nil
-	}
+	m, err := sessionstore.StoreMarkers(deps.Tenants, deps.Users)(ctx, tenant, parent.UserID)
 	if err != nil {
 		return mcp.NewToolError("INTERNAL_ERROR",
-			"user-invalidation check failed: "+err.Error(), nil)
+			"delegation lifecycle check failed: "+err.Error(), nil)
 	}
-	if !user.IsActive() {
-		return mcp.NewToolError("USER_INVALIDATED",
-			"the owning user has been invalidated and cannot spawn new delegated tasks",
-			map[string]any{"userId": parent.UserID})
+	// The early gate reads no parent row and leaves ParentTerminal unset, so
+	// the child's insert transaction is the only producer of
+	// DELEGATION_PARENT_REVOKED. spec: §12.8 (Lifecycle fence and drain).
+	m.IsDelegatedChild = true
+	if ref := m.Refusal(tenant, parent.UserID); ref != nil {
+		return mcp.NewToolError(ref.Code, ref.Message, ref.Details)
 	}
 	return nil
 }
@@ -1396,7 +1522,7 @@ func requireActiveDelegator(ctx context.Context, deps Deps, tenant, parentSessio
 // requireActiveDelegator does, so a store read never blocks it — the
 // §8.3 skip set is a deny hop and a nil checker alone. When no store is
 // wired the query carries an empty user and origin and the pre-check
-// still runs. spec: §8.3 line 470.
+// still runs. spec: §8.3.
 func resolveDelegationCredentialQuery(ctx context.Context, deps Deps, tenant, parentSessionID string, mode lease.CredentialPropagation) (userID, originID string, err error) {
 	if deps.Store == nil {
 		return "", "", nil
@@ -1433,7 +1559,7 @@ func resolveDelegationCredentialQuery(ctx context.Context, deps Deps, tenant, pa
 //     in (environmentDefaultPolicy).
 //
 // A runtime survives only when every resolved policy permits it — the
-// §10.6 line 629 effective scope intersects the environment runtime set
+// §10.6 effective scope intersects the environment runtime set
 // with the delegation policy, and the §8.3 least-privilege discipline
 // ("restriction only, never expansion") makes intersection the safe
 // composition of two policies. When neither layer resolves a policy
@@ -1442,7 +1568,7 @@ func resolveDelegationCredentialQuery(ctx context.Context, deps Deps, tenant, pa
 // returned unchanged — discovery then reflects only the §10.6
 // environment scope, the pre-policy behaviour.
 //
-// spec: §8.3 line 244; §10.6 line 601, line 629. F-8.5.7 / F-10.6.7.
+// spec: §8.3; §10.6. F-8.5.7 / F-10.6.7.
 func filterByEffectiveDelegationPolicy(ctx context.Context, deps Deps, tenant, sessionID string, runtimes []runtimestore.Runtime) ([]runtimestore.Runtime, error) {
 	if deps.Delegation == nil || sessionID == "" {
 		return runtimes, nil
@@ -1490,7 +1616,7 @@ func allPoliciesPermit(policies []delegationpolicystore.DelegationPolicy, c dele
 
 // environmentDefaultPolicy resolves the §10.6 defaultDelegationPolicy
 // that governs a calling session: the DelegationPolicy named on the
-// environment the session was created in (§10.6 line 601 — "the
+// environment the session was created in (§10.6 — "the
 // DelegationPolicy applied to sessions created in this environment").
 // It returns (policy, true, nil) when the session is environment-scoped,
 // the environment names a defaultDelegationPolicy, and that policy
@@ -1500,7 +1626,7 @@ func allPoliciesPermit(policies []delegationpolicystore.DelegationPolicy, c dele
 // soft-deleted policy — leaving the environment-default layer imposing
 // no restriction, the same conservative fall-through the runtime-level
 // EffectiveDelegationPolicy applies to an unresolved reference.
-// spec: §10.6 line 601, line 629. F-10.6.7.
+// spec: §10.6. F-10.6.7.
 func environmentDefaultPolicy(ctx context.Context, deps Deps, tenant, sessionID string) (delegationpolicystore.DelegationPolicy, bool, error) {
 	if deps.Environments == nil || deps.Store == nil || deps.Delegation == nil || sessionID == "" {
 		return delegationpolicystore.DelegationPolicy{}, false, nil
@@ -1586,7 +1712,7 @@ func filterByEnvironmentAccess(ctx context.Context, deps Deps, runtimes []runtim
 }
 
 // narrowRuntimesToEnvironment narrows runtimes to those admitted by
-// environmentName's runtimeSelector — the §10.6 line 672
+// environmentName's runtimeSelector — the §10.6
 // `environmentId` v1 stub. The narrowing applies on top of the §10.6
 // transparent filter already applied upstream: a runtime the filter
 // excluded stays excluded. A nil environment registry leaves the list
@@ -1703,9 +1829,11 @@ func crossEnvReachable(ctx context.Context, deps Deps, tenant, parentSessionID, 
 // crossEnvReachable's nil-registry behavior; a parent lookup failure also
 // skips it, since the pod-claiming Delegate path rejects a missing parent.
 //
-// spec: §8.3 line 472 (cross-environment compatibility check and exact
-// rejection message); line 472/488 (origin-pool forwarding through
-// contiguous inherit hops); line 474. §15 CREDENTIAL_PROVIDER_MISMATCH is
+// spec: §8.3 ("Delegation Lease") — the cross-environment compatibility
+// check with its exact rejection message, and the credential-pool
+// identity rule that forwards the origin pool through contiguous inherit
+// hops and re-checks it against the immediate target runtime at every
+// environment boundary. §15.1 classifies CREDENTIAL_PROVIDER_MISMATCH as
 // POLICY / 422.
 func crossEnvInheritMismatch(ctx context.Context, deps Deps, tenant, parentSessionID, targetRef string) *mcp.ToolError {
 	if deps.Store == nil || deps.Runtimes == nil || deps.Tenants == nil {
@@ -1773,15 +1901,14 @@ func resolvePoolIsolation(ctx context.Context, deps Deps, poolRef string) isolat
 
 // resolvePoolElicitationPolicy returns the §9.2 per-pool elicitation
 // depth policy and agent-initiated url-mode allowlist configured on the
-// named pool. The §9.2 elicitationDepthPolicy (lines 90-98) and
-// urlModeElicitation (line 86) are per-pool, so the dispatch path
-// resolves them from the raising session's pool rather than from a
+// named pool. The §9.2 elicitationDepthPolicy and urlModeElicitation
+// settings are per-pool, so the dispatch path resolves them from the raising session's pool rather than from a
 // single Register-time platform value. The bool is false when the pool
 // registry is unwired or the pool cannot be resolved, in which case the
 // caller keeps the dispatcher's Register-time defaults (which the
 // §9.2 WalkChain coerces to the platform suppress_at_depth=3 default and
-// the agent-initiated url-mode block). spec: §9.2 lines 86, 90-98.
-// F-9.2.12.
+// the agent-initiated url-mode block). spec: §9.2 (URL-mode elicitation
+// security controls and depth-based restrictions). F-9.2.12.
 func resolvePoolElicitationPolicy(ctx context.Context, deps Deps, poolRef string) (elicitation.DepthPolicy, int, elicitation.URLModeAllowlist, bool) {
 	if deps.Pools == nil || poolRef == "" {
 		return "", 0, elicitation.URLModeAllowlist{}, false
@@ -1806,7 +1933,7 @@ const awaitPollInterval = 25 * time.Millisecond
 // because the session is implicit in the caller's identity; the
 // fallback keeps the v1 tool surface usable in deployments that have
 // not yet rotated to session-bound bearer tokens.
-// spec: §8.5 lines 544, 559, 577, 596; F-8.5.11, F-8.5.13, F-8.5.14.
+// spec: §8.5; F-8.5.11, F-8.5.13, F-8.5.14.
 func callerSessionID(ctx context.Context, fallback string) string {
 	if p, ok := authmw.FromContext(ctx); ok && p.SessionID != "" {
 		return p.SessionID
@@ -1814,17 +1941,32 @@ func callerSessionID(ctx context.Context, fallback string) string {
 	return fallback
 }
 
+// requirePrincipalTenant is the pre-dispatch gate Register installs
+// outside dev mode. It refuses a tool call whose context carries no
+// authenticated principal with a tenant, with the §15.1 UNAUTHORIZED
+// code the REST surface returns for a request without credentials.
+// spec: §10.2 (Authentication); §15.1 (UNAUTHORIZED). F-10.2.21.
+func requirePrincipalTenant(ctx context.Context) *mcp.ToolError {
+	if p, ok := authmw.FromContext(ctx); ok && p.TenantID != "" {
+		return nil
+	}
+	return mcp.NewToolError("UNAUTHORIZED", "tool call requires an authenticated principal",
+		map[string]any{"reason": "auth_required"})
+}
+
 // callerTenantID resolves the per-request tenant id from the
 // authenticated principal, falling back to the binary's configured
 // default. The §15.2 / §10.2 production posture mounts the MCP
 // adapter under the auth middleware so every authenticated request
-// carries the caller's tenant on the request context. Tests and the
-// dev-headers transport do not carry a principal; the fallback (the
+// carries the caller's tenant on the request context, and outside dev
+// mode the requirePrincipalTenant gate refuses a call without one
+// before the tool runs. Tests and the dev-headers transport do not
+// carry a principal; under Deps.DevTenantFallback the fallback (the
 // Register-time Deps.TenantID, which defaults to "default") keeps the
 // tool surface usable in those minimal deployments. A bare "default"
 // is the absolute floor — never an empty tenant id, which would
 // collapse into an unbounded scan on the session store.
-// spec: §9.2 / §16.1 / §15.2 line 1335; F-9.2.13, F-15.2.15.
+// spec: §9.2 / §16.1 / §15.2; F-9.2.13, F-15.2.15.
 func callerTenantID(ctx context.Context, fallback string) string {
 	if p, ok := authmw.FromContext(ctx); ok && p.TenantID != "" {
 		return p.TenantID
@@ -1845,14 +1987,15 @@ func callerTenantID(ctx context.Context, fallback string) string {
 // comes from the shared §15.2.1 classifier so the value matches the REST
 // and MCP error envelopes for the same code, and retriesExhausted
 // reports whether the gateway consumed the row's automatic-recovery
-// budget. Output is left nil here; a completed child's parts ride on the
+// budget, maxRetries, which the caller resolves through RetryBudget.
+// Output is left nil here; a completed child's parts ride on the
 // archived body.
-// spec: §8.8 line 855-867 (MCP state spelling), lines 922-940
+// spec: §8.8
 // (error: code, category, message, retriesExhausted). F-8.8.4.
-func toTaskResult(s sessionstore.Session) sessionrecord.Result {
+func toTaskResult(s sessionstore.Session, maxRetries int) sessionrecord.Result {
 	tr := sessionrecord.Result{SchemaVersion: sessionrecord.SchemaVersion, TaskID: s.ID, State: mcpStateForSession(s.State)}
 	if s.State != session.StateCompleted {
-		tr.Error = taskErrorForRow(s)
+		tr.Error = taskErrorForRow(s, maxRetries)
 	}
 	return tr
 }
@@ -1863,17 +2006,12 @@ func toTaskResult(s sessionstore.Session) sessionrecord.Result {
 // terminal code falls back to the classifier's documented (TRANSIENT,
 // retryable) pair rather than an invented category — the §8.8 example's
 // RUNTIME_CRASH → TRANSIENT mapping is exactly this fallback.
-// spec: §8.8 lines 922-940; §15.2.1. F-8.8.4.
-func taskErrorForRow(s sessionstore.Session) *sessionrecord.Error {
-	code := s.FailureReason
-	if code == "" {
-		code = "CHILD_" + strings.ToUpper(string(s.State))
-	}
+// spec: §8.8; §15.2.1. F-8.8.4.
+func taskErrorForRow(s sessionstore.Session, maxRetries int) *sessionrecord.Error {
+	// spec: §8.8 — the stored reason maps to its catalog code, such as
+	// deadlock_timeout to DEADLOCK_TIMEOUT. F-8.8.6.
+	code := session.TaskErrorCode(s.FailureReason, s.State)
 	cat, _ := errorclassify.Classify(code)
-	maxRetries := 0
-	if s.RetryPolicy != nil {
-		maxRetries = s.RetryPolicy.MaxRetries
-	}
 	return &sessionrecord.Error{
 		Code:             code,
 		Category:         string(cat),
@@ -1895,7 +2033,7 @@ type childOutcome struct {
 	// SettledAt. Zero when the child has not settled yet. The `any` mode
 	// of lenny/await_children uses it to pick the chronologically-first
 	// settled child rather than the first-listed terminal child.
-	// spec: §8.8 lines 945-949; F-8.8.12.
+	// spec: §8.8; F-8.8.12.
 	settledAt time.Time
 }
 
@@ -1904,13 +2042,13 @@ type childOutcome struct {
 // gone — a child that settled and was reclaimed, or whose pod failed
 // while its resumed parent re-awaits it.
 func resolveChild(ctx context.Context, store sessionstore.Store, archive treearchive.Store, usage *resultrollup.Builder,
-	tenant, childID string,
+	budget RetryBudget, tenant, childID string,
 ) (childOutcome, error) {
 	row, err := store.Get(ctx, tenant, childID)
 	if err == nil {
-		oc := childOutcome{parentID: row.ParentSessionID, state: row.State, result: toTaskResult(row)}
+		oc := childOutcome{parentID: row.ParentSessionID, state: row.State, result: toTaskResult(row, maxRetriesFor(budget, row))}
 		if session.IsTerminal(row.State) {
-			// spec: §8.8 lines 897-917 — stamp the usage / treeUsage rollups
+			// spec: §8.8 — stamp the usage / treeUsage rollups
 			// on the row-only projection so a terminal child resolved before
 			// its archive body exists carries the same rollups the archived
 			// body does (§15.2.1 REST/MCP equivalence). The richer archive
@@ -1919,13 +2057,13 @@ func resolveChild(ctx context.Context, store sessionstore.Store, archive treearc
 				oc.result.Usage = usage.Usage(ctx, row)
 				oc.result.TreeUsage = usage.TreeUsage(ctx, row, oc.result.Usage)
 			}
-			// spec: §8.8 line 945 — the live row mutates on terminal
+			// spec: §8.8 — the live row mutates on terminal
 			// transition; UpdatedAt is the closest in-tree witness of when
 			// the row reached that state. The archive's SettledAt is more
 			// precise once the row migrates, but until then UpdatedAt is the
 			// authoritative settle witness. F-8.8.12.
 			oc.settledAt = row.UpdatedAt
-			// spec: §8.8 lines 887-917 — a terminal child's full TaskResult
+			// spec: §8.8 — a terminal child's full TaskResult
 			// body (output.parts, artifactRefs) is materialized into the
 			// §8.10 archive at settle time, where the transcript and the
 			// artifact catalog are in scope. Prefer that richer body over the
@@ -1968,7 +2106,7 @@ func resolveChild(ctx context.Context, store sessionstore.Store, archive treearc
 // inputRequiredChild is one awaited child's input_required partial
 // result on the lenny/await_children response: the child id, the fixed
 // `input_required` state tag, the §8.8 `requestId` the parent answers
-// with `inReplyTo`, and the question `parts`. spec: §8.8 line 951;
+// with `inReplyTo`, and the question `parts`. spec: §8.8;
 // F-8.8.5.
 type inputRequiredChild struct {
 	ChildID   string            `json:"childId"`
@@ -1981,8 +2119,7 @@ type inputRequiredChild struct {
 // the awaited children that currently have a pending lenny/request_input
 // round. The result is ordered by (childIDs position, requestId) so a
 // repeated poll yields a stable frame. Returns nil when the registry is
-// absent or no awaited child is blocked on input. spec: §8.8 lines
-// 951-971; F-8.5.5 / F-8.8.5.
+// absent or no awaited child is blocked on input. spec: §8.8; F-8.5.5 / F-8.8.5.
 func collectInputRequired(reg *inputwait.Registry, childIDs []string) []inputRequiredChild {
 	if reg == nil {
 		return nil
@@ -2004,7 +2141,7 @@ func collectInputRequired(reg *inputwait.Registry, childIDs []string) []inputReq
 // collectChildResults reads the awaited children and reports whether
 // the mode's settle condition holds. For `all` and `settled` the
 // condition is every child terminal; both modes return the full set on
-// completion (the spec at §8.8 lines 945-949 defines `settled` as an
+// completion (the spec at §8.8 defines `settled` as an
 // alias for `all`, retained for external MCP / A2A callers that already
 // emit either spelling). For `any` it is at least one child terminal,
 // and only the chronologically-first settled child is returned — sourced
@@ -2012,9 +2149,9 @@ func collectInputRequired(reg *inputwait.Registry, childIDs []string) []inputReq
 // finisher buried later in childIDs is preferred over a slow finisher
 // at the head of the list. A child whose live row is gone is resolved
 // from the §8.10 archive. F-8.8.12.
-// spec: §8.8 lines 945-949
+// spec: §8.8
 func collectChildResults(ctx context.Context, store sessionstore.Store, archive treearchive.Store, usage *resultrollup.Builder,
-	tenant string, childIDs []string, mode string,
+	budget RetryBudget, tenant string, childIDs []string, mode string,
 ) ([]sessionrecord.Result, bool, error) {
 	type settled struct {
 		at     time.Time
@@ -2024,7 +2161,7 @@ func collectChildResults(ctx context.Context, store sessionstore.Store, archive 
 	var terminal []settled
 	allTerminal := true
 	for i, cid := range childIDs {
-		oc, err := resolveChild(ctx, store, archive, usage, tenant, cid)
+		oc, err := resolveChild(ctx, store, archive, usage, budget, tenant, cid)
 		if err != nil {
 			return nil, false, err
 		}
@@ -2040,7 +2177,7 @@ func collectChildResults(ctx context.Context, store sessionstore.Store, archive 
 		}
 		first := terminal[0]
 		for _, c := range terminal[1:] {
-			// spec: §8.8 lines 945-949 — "Returns the first TaskResult"
+			// spec: §8.8 — "Returns the first TaskResult"
 			// means the child that reached terminal earliest by wall
 			// clock. Stable tie-break on childIDs order when two
 			// children share the same settle instant (e.g., both
@@ -2052,7 +2189,7 @@ func collectChildResults(ctx context.Context, store sessionstore.Store, archive 
 		return []sessionrecord.Result{first.result}, true, nil
 	}
 	if allTerminal {
-		// spec: §8.10 line 1062 — the re-await protocol streams settled
+		// spec: §8.10 — the re-await protocol streams settled
 		// child results "in original-settlement order". Sort by the
 		// per-child settle witness (the archive's SettledAt once migrated,
 		// the live row's UpdatedAt until then), with a stable tie-break on
@@ -2078,7 +2215,7 @@ func collectChildResults(ctx context.Context, store sessionstore.Store, archive 
 // treeWalkContext carries the per-walk fields the MCP tree walker
 // passes to the §8.9 cycle observer. The observer fires once per
 // repeated node; the walker still truncates the cycle to keep the
-// response well-formed. spec: §8.9 line 1003; F-8.9.10.
+// response well-formed. spec: §8.9; F-8.9.10.
 type treeWalkContext struct {
 	ctx           context.Context
 	tenantID      string
@@ -2102,9 +2239,9 @@ func buildTree(wctx treeWalkContext, root sessionstore.Session, all []sessionsto
 }
 
 func walk(wctx treeWalkContext, s sessionstore.Session, byParent map[string][]sessionstore.Session, seen map[string]bool) treeNode {
-	// spec: §8.5 line 530 — every tree node carries `runtimeRef` so the
+	// spec: §8.5 — every tree node carries `runtimeRef` so the
 	// MCP projection matches the REST `/tree` surface.
-	// spec: §8.8 lines 855-883 — `state` uses the §8.8 MCP protocol
+	// spec: §8.8 — `state` uses the §8.8 MCP protocol
 	// spelling, and the supplementary table's `metadata.suspended` /
 	// `metadata.resuming` annotations ride on the optional metadata
 	// field for non-terminal session states. F-8.8.7 / F-8.8.9.
@@ -2118,7 +2255,7 @@ func walk(wctx treeWalkContext, s sessionstore.Session, byParent map[string][]se
 		Children:   []treeNode{},
 	}
 	if seen[s.ID] {
-		// spec: §8.9 line 1003; F-8.9.10 — defensive cycle guard.
+		// spec: §8.9; F-8.9.10 — defensive cycle guard.
 		if wctx.observer != nil {
 			wctx.observer.OnTreeCycle(wctx.ctx, TreeCycleEvent{
 				TenantID:      wctx.tenantID,
@@ -2131,7 +2268,7 @@ func walk(wctx treeWalkContext, s sessionstore.Session, byParent map[string][]se
 	}
 	seen[s.ID] = true
 	for _, c := range byParent[s.ID] {
-		// spec: §8.5 line 540 — under a narrowed treeVisibility the walker
+		// spec: §8.5 — under a narrowed treeVisibility the walker
 		// descends only into the visible nodes; an out-of-scope child (a
 		// sibling subtree under `parent-and-self`, any child under
 		// `self-only`) is pruned. F-8.5.2 / F-8.9.2.
@@ -2168,6 +2305,14 @@ func isDescendant(child sessionstore.Session, parentID string, all []sessionstor
 	return false
 }
 
+// Terminal is the terminal-writer seam the cancel tools consume:
+// *sessionserver.Server satisfies it. spec: §7.2 (Interactive Session Model).
+type Terminal interface {
+	BeginTerminal(sessionID string) (end func())
+	AfterTerminalWrite(ctx context.Context, fromState session.State, sess sessionstore.Session,
+		signals func(context.Context, sessionstore.Session)) sessionstore.Session
+}
+
 // cancelSubtree cancels the subtree rooted at child, honouring each
 // non-terminal descendant's §8.10 `cascadeOnFailure` policy. The root
 // (the explicit `cancel_child` target) is always cancelled per the
@@ -2178,68 +2323,129 @@ func isDescendant(child sessionstore.Session, parentID string, all []sessionstor
 // running because the spec models that mode as "let children outlive
 // the terminated parent".
 //
-// Already-terminal sessions are left untouched and their own subtree
-// is not re-traversed because their own cascade already ran when they
-// settled. The returned slice is the ids actually transitioned, sorted
-// for a deterministic result. spec: §8.5 (cancel_child cascades per
-// policy); §8.10 (cascadeOnFailure modes). F-8.5.19.
+// The walk is breadth-first, one level at a time. After a level's cancel
+// writes return, it lists the tenant from the primary once and queues the
+// next level from that listing, so a delegated child the creation fence
+// admitted before its parent's terminal write is reached. The caller's
+// pre-write listing serves only authorization and the tree root.
+//
+// Each cancel is a hook-path terminal write: it opens the session's terminal
+// claim before its Update, writes cancelled only over a non-terminal locked
+// row, records the Terminated fact in the write, and runs the post-terminal
+// hook (with fromState from the locked row) and ends the claim on a goroutine
+// on a detached context, so one session's seal window does not delay the
+// next. signals is the hook's signal tail for each cancelled node, and nil
+// runs none. A node another writer already ended, on the listing or on the
+// locked row, is skipped with none of its children queued and is left out of
+// the returned IDs. A store error returns the IDs cancelled so far with the
+// error, and the remaining nodes are not cancelled. With a nil terminal the
+// write records the Terminated fact alone. The returned slice is the IDs
+// actually transitioned, sorted for a deterministic result.
+//
+// spec: §8.5 (cancel_child cascades per policy); §8.10 (cascadeOnFailure
+// modes); §7.2 (Interactive Session Model); §12.8 (Lifecycle fence and
+// drain). F-8.5.19.
 func cancelSubtree(ctx context.Context, store sessionstore.Store, tenant string,
-	child sessionstore.Session, all []sessionstore.Session,
+	child sessionstore.Session, terminal Terminal,
+	signals func(context.Context, sessionstore.Session), now func() time.Time,
 ) ([]string, error) {
-	byParent := map[string][]sessionstore.Session{}
-	for _, s := range all {
-		if s.ParentSessionID != "" {
-			byParent[s.ParentSessionID] = append(byParent[s.ParentSessionID], s)
-		}
-	}
 	var cancelled []string
 	seen := map[string]bool{child.ID: true}
-	// rootCancelled tracks whether the explicit target has been
-	// transitioned. The root's own cascade policy decides whether to
-	// queue its children — the root itself is always cancelled because
-	// the §8.5 contract is `lenny/cancel_child(child_id)`.
-	rootCancelled := false
-	queue := []sessionstore.Session{child}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		if session.IsTerminal(cur.State) {
-			continue
-		}
-		updated, err := store.Update(ctx, tenant, cur.ID, func(row *sessionstore.Session) error {
-			row.State = session.StateCancelled
-			return nil
-		})
-		if err != nil {
-			return cancelled, fmt.Errorf("cancel session %s: %w", cur.ID, err)
-		}
-		cancelled = append(cancelled, cur.ID)
-		// §8.10: queue this node's children only when its cascade
-		// policy is `cancel_all`. `await_completion` and `detach` leave
-		// descendants running per the spec semantics. The root's policy
-		// applies to *its* descendants the same way every other node's
-		// does.
-		_ = updated
-		if cur.CascadeOnFailure.Resolve() == session.CascadeCancelAll {
-			for _, c := range byParent[cur.ID] {
-				if seen[c.ID] {
-					continue
-				}
-				seen[c.ID] = true
-				queue = append(queue, c)
+	level := []sessionstore.Session{child}
+	for len(level) > 0 {
+		var parents []string
+		for _, cur := range level {
+			if session.IsTerminal(cur.State) {
+				continue
+			}
+			applied, err := cancelNode(ctx, store, tenant, cur.ID, terminal, signals, now)
+			if err != nil {
+				sort.Strings(cancelled)
+				return cancelled, fmt.Errorf("cancel session %s: %w", cur.ID, err)
+			}
+			if !applied {
+				continue
+			}
+			cancelled = append(cancelled, cur.ID)
+			// §8.10: queue this node's children only when its cascade policy
+			// is `cancel_all`. `await_completion` and `detach` leave
+			// descendants running per the spec semantics.
+			if cur.CascadeOnFailure.Resolve() == session.CascadeCancelAll {
+				parents = append(parents, cur.ID)
 			}
 		}
-		if cur.ID == child.ID {
-			rootCancelled = true
+		if len(parents) == 0 {
+			break
 		}
+		// spec: §12.8 (Lifecycle fence and drain), §8.10 — list after this
+		// level's terminal writes committed, from the primary.
+		byParent, err := sessionstore.ChildrenByParent(ctx, store, tenant)
+		if err != nil {
+			sort.Strings(cancelled)
+			return cancelled, err
+		}
+		level = nextCascadeLevel(parents, byParent, seen)
 	}
-	// Defensive: the root was queued first, so an empty cancelled slice
-	// implies the root was already terminal. The §8.5 handler checks
-	// for that case before calling us, but assert here so a future
-	// refactor cannot silently regress.
-	_ = rootCancelled
 	sort.Strings(cancelled)
 	return cancelled, nil
+}
+
+// nextCascadeLevel returns the children of parents in byParent that seen does
+// not hold, marking each one seen.
+func nextCascadeLevel(parents []string, byParent map[string][]sessionstore.Session, seen map[string]bool) []sessionstore.Session {
+	var next []sessionstore.Session
+	for _, p := range parents {
+		for _, c := range byParent[p] {
+			if seen[c.ID] {
+				continue
+			}
+			seen[c.ID] = true
+			next = append(next, c)
+		}
+	}
+	return next
+}
+
+// cancelNode makes one hook-path cancel write and reports whether it
+// applied. A locked row that is already terminal is not applied. On a write
+// that applied, the post-terminal hook and the claim's end run on a
+// goroutine on a detached context.
+func cancelNode(ctx context.Context, store sessionstore.Store, tenant, id string, terminal Terminal,
+	signals func(context.Context, sessionstore.Session), now func() time.Time,
+) (bool, error) {
+	end := func() {}
+	if terminal != nil {
+		end = terminal.BeginTerminal(id)
+	}
+	var from session.State
+	stamp := now()
+	updated, err := store.Update(ctx, tenant, id, func(row *sessionstore.Session) error {
+		if session.IsTerminal(row.State) {
+			return sessionstore.ErrSuperseded
+		}
+		from = row.State
+		row.State = session.StateCancelled
+		sessionstore.MarkTerminated(row, from, stamp)
+		return nil
+	})
+	if errors.Is(err, sessionstore.ErrSuperseded) {
+		end()
+		return false, nil
+	}
+	if err != nil {
+		end()
+		return false, err
+	}
+	if terminal == nil {
+		end()
+		return true, nil
+	}
+	hctx := context.WithoutCancel(ctx)
+	go func() {
+		defer end()
+		terminal.AfterTerminalWrite(hctx, from, updated, signals)
+	}()
+	return true, nil
 }
 
 // treeRoot returns the id of the §8 delegation tree's root by walking
@@ -2263,49 +2469,45 @@ func treeRoot(start sessionstore.Session, all []sessionstore.Session) string {
 	return cur.ID
 }
 
-// archiveCancelled records each cancelled subtree node in the §8.10
-// session_tree_archive, keyed by the delegation tree's root. Archiving
-// is best-effort: an archive error does not undo the cancellation, so
-// the error is dropped.
-func archiveCancelled(ctx context.Context, archive treearchive.Store,
-	tenant, rootSessionID string, cancelled []string, all []sessionstore.Session, now time.Time,
+// archiveCancelled records one cancelled subtree node in the §8.10
+// session_tree_archive, keyed by the delegation tree's root, with the state of
+// the row the post-terminal hook passed it, so a seal relabel archives
+// `failed`. The error code is CHILD_ plus the upper-cased state, as a child's
+// code is built elsewhere. Archiving is best-effort: an archive error does not
+// undo the cancellation, so the error is dropped. spec: §8.10; §8.8.
+func archiveCancelled(ctx context.Context, archive treearchive.Store, rootSessionID string,
+	row sessionstore.Session, now time.Time,
 ) {
-	parentOf := make(map[string]string, len(all))
-	for _, s := range all {
-		parentOf[s.ID] = s.ParentSessionID
-	}
-	// spec: §15.2.1 — the cancel code's category is stable across nodes,
-	// so classify once before the loop. F-8.8.4.
-	cancelCat, _ := errorclassify.Classify("CHILD_CANCELLED")
-	for _, id := range cancelled {
-		result, _ := json.Marshal(sessionrecord.Result{
-			SchemaVersion: sessionrecord.SchemaVersion,
-			TaskID:        id,
-			// spec: §8.8 line 857 — the result body's state uses the MCP
-			// protocol spelling (`canceled`), matching the settle-path
-			// archive body so a resumed parent replaying either archive
-			// route sees the same value. F-8.8.7.
-			State: mcpStateForSession(session.StateCancelled),
-			// spec: §8.8 lines 922-940 — a cancel-cascade node carries the
-			// error block; category routes through the §15.2.1 classifier.
-			// retriesExhausted stays false: a parent-cancelled child did not
-			// consume its automatic-recovery budget. F-8.8.4.
-			Error: &sessionrecord.Error{
-				Code:     "CHILD_CANCELLED",
-				Category: string(cancelCat),
-				Message:  "child session ended in state cancelled",
-			},
-		})
-		_ = archive.Archive(ctx, treearchive.ArchivedNode{
-			TenantID:        tenant,
-			RootSessionID:   rootSessionID,
-			NodeSessionID:   id,
-			ParentSessionID: parentOf[id],
-			State:           string(session.StateCancelled),
-			Result:          string(result),
-			SettledAt:       now,
-		})
-	}
+	code := "CHILD_" + strings.ToUpper(string(row.State))
+	// spec: §15.2.1 — the error category routes through the classifier.
+	// F-8.8.4.
+	cat, _ := errorclassify.Classify(code)
+	result, _ := json.Marshal(sessionrecord.Result{
+		SchemaVersion: sessionrecord.SchemaVersion,
+		TaskID:        row.ID,
+		// spec: §8.8 — the result body's state uses the MCP protocol
+		// spelling, matching the settle-path archive body so a resumed
+		// parent replaying either archive route sees the same value.
+		// F-8.8.7.
+		State: mcpStateForSession(row.State),
+		// spec: §8.8 — a cancel-cascade node carries the error block;
+		// retriesExhausted stays false: a parent-cancelled child did not
+		// consume its automatic-recovery budget. F-8.8.4.
+		Error: &sessionrecord.Error{
+			Code:     code,
+			Category: string(cat),
+			Message:  "child session ended in state " + string(row.State),
+		},
+	})
+	_ = archive.Archive(ctx, treearchive.ArchivedNode{
+		TenantID:        row.TenantID,
+		RootSessionID:   rootSessionID,
+		NodeSessionID:   row.ID,
+		ParentSessionID: row.ParentSessionID,
+		State:           string(row.State),
+		Result:          string(result),
+		SettledAt:       now,
+	})
 }
 
 func textResult(s string) mcp.ToolResult {
@@ -2323,7 +2525,7 @@ func textResult(s string) mcp.ToolResult {
 // inReplyTo can pivot off either field; for the executor path it is
 // empty. The `output` field mirrors the executor's text output parts so
 // the runtime's reply travels in the same JSON envelope as the receipt.
-// spec: §15.4 lines 1725-1737; F-7.2.10.
+// spec: §15.4; F-7.2.10.
 func buildSendMessageReceipt(messageID, resolvedRequestID string, out []executor.MessagePart, now time.Time) string {
 	envelope := struct {
 		DeliveryReceipt session.DeliveryReceipt `json:"deliveryReceipt"`
@@ -2347,17 +2549,16 @@ func buildSendMessageReceipt(messageID, resolvedRequestID string, out []executor
 // `deliveredAt` is set only for the `delivered` status; `rate_limited`
 // and `error` carry no timestamp. v1 does not define a `reason` enum
 // value for `rate_limited` — the status alone conveys the condition
-// (§15.4). spec: §15.4 lines 1725-1737; §7.2 line 371. F-7.2.6.
+// (§15.4). spec: §15.4; §7.2. F-7.2.6.
 func buildSendMessageReceiptStatus(messageID string, status session.DeliveryStatus, now time.Time) string {
 	return buildSendMessageReceiptStatusReason(messageID, status, "", now)
 }
 
 // buildSendMessageReceiptStatusReason builds the §15.4 delivery_receipt
-// envelope for a non-`delivered` status that carries a §15.4 line 1739
+// envelope for a non-`delivered` status that carries a §15.4
 // reason — the §7.2 buffered-path outcomes (`queued`, `dropped` with
 // inbox_overflow / dlq_overflow, `error` with inbox_unavailable).
-// `deliveredAt` is set only for `delivered`. spec: §15.4 lines
-// 1725-1742; §7.2 lines 313-331. F-7.2.5.
+// `deliveredAt` is set only for `delivered`. spec: §15.4; §7.2. F-7.2.5.
 func buildSendMessageReceiptStatusReason(messageID string, status session.DeliveryStatus, reason session.DeliveryReason, now time.Time) string {
 	receipt := session.DeliveryReceipt{MessageID: messageID, Status: status, Reason: reason}
 	if status == session.DeliveryStatusDelivered {
@@ -2379,4 +2580,20 @@ func elicitationOrGen(id string, gen func() string) string {
 		return id
 	}
 	return gen()
+}
+
+// skipForwardedResults wraps the §4.8 PreToolResult interceptor so it returns
+// the result unchanged on a forwarded tool call. The serving replica runs the
+// phase over the result it returns to its client, so the coordinator does not
+// run it a second time.
+//
+// spec: §29.3 (Interactive message send) Forwarding rule 4, §4.8 (Gateway
+// Policy Engine)
+func skipForwardedResults(ri mcp.ResultInterceptor) mcp.ResultInterceptor {
+	return func(ctx context.Context, callID, name string, result mcp.ToolResult) (mcp.ToolResult, error) {
+		if sessionserver.Forwarded(ctx) {
+			return result, nil
+		}
+		return ri(ctx, callID, name, result)
+	}
 }

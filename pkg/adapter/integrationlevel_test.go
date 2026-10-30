@@ -10,8 +10,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// spec: §5.1 / §15.4.3 — a runtime that opened neither the lifecycle
-// channel nor the platform MCP server is observationally Basic (stdin/
+// spec: §5.1 / §15.4.3 — a runtime that opened neither the CH-RUNTIMEOPS nor the platform MCP server is observationally Basic (stdin/
 // stdout binary protocol only).
 func TestObservedIntegrationLevelBasic_spec_5_1(t *testing.T) {
 	s := New("test")
@@ -21,7 +20,7 @@ func TestObservedIntegrationLevelBasic_spec_5_1(t *testing.T) {
 }
 
 // spec: §5.1 — a runtime that connected to the platform MCP server but not
-// the lifecycle channel is observationally Standard.
+// the CH-RUNTIMEOPS is observationally Standard.
 func TestObservedIntegrationLevelStandard_spec_5_1(t *testing.T) {
 	s := New("test")
 	s.markMCPHandshakeSeen()
@@ -34,7 +33,7 @@ func TestObservedIntegrationLevelStandard_spec_5_1(t *testing.T) {
 // observationally Full, the §5.1 "runtime source of truth", regardless of
 // the MCP signal.
 func TestObservedIntegrationLevelFull_spec_5_1(t *testing.T) {
-	lc, fr := startLifecycleChannel(t)
+	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
 	s := New("test")
@@ -44,12 +43,12 @@ func TestObservedIntegrationLevelFull_spec_5_1(t *testing.T) {
 	}
 }
 
-// spec: §5.1 — when the adapter offers a lifecycle channel but the runtime
+// spec: §5.1 — when the adapter offers a CH-RUNTIMEOPS but the runtime
 // never completes the handshake within the wait window, the runtime is
 // classified by its MCP signal: Standard if it reached MCP, else Basic.
 // This is the underperformance case the §5.1 admission check catches.
 func TestObservedIntegrationLevelLifecycleNotCompleted_spec_5_1(t *testing.T) {
-	lc, _ := startLifecycleChannel(t) // dialled but no handshake written
+	lc, _ := startRuntimeOps(t) // dialled but no handshake written
 	s := New("test")
 	s.Lifecycle = lc
 
@@ -76,13 +75,14 @@ func TestGetObservedIntegrationLevelRPC_spec_5_1(t *testing.T) {
 	}
 }
 
-// spec: §5.1 — releaseSession clears the MCP-handshake signal so the next
-// session's runtime must reconnect to be observed at Standard.
-func TestObservedLevelResetOnReleaseSession_spec_5_1(t *testing.T) {
+// spec: §5.1 — releasing the session's slot clears the MCP-handshake
+// signal so the next session's runtime must reconnect to be observed at
+// Standard.
+func TestObservedLevelResetOnSlotRelease_spec_5_1(t *testing.T) {
 	s := New("test")
 	s.markMCPHandshakeSeen()
-	s.releaseSession()
+	s.ReleaseSlotForTest(t.Context(), "")
 	if lvl := s.observedIntegrationLevel(context.Background(), 0); lvl != observedLevelBasic {
-		t.Errorf("after releaseSession level = %q, want basic", lvl)
+		t.Errorf("after the slot release level = %q, want basic", lvl)
 	}
 }

@@ -2,18 +2,17 @@
 
 package poolscaling
 
-// CapacityPlanningDefaultsWarning is the §16.5 line 601 warning the
+// CapacityPlanningDefaultsWarning is the §16.5 warning the
 // PoolScalingController logs when a Tier 2 or Tier 3 deployment runs the
 // workload-profile values at their defaults. The text is transcribed
 // verbatim from the spec so log scrapers can match on it. spec:
-// spec/16_observability.md line 601.
+// §16.5.
 const CapacityPlanningDefaultsWarning = "[WARN] capacityPlanning Helm values are at defaults — review Section 16.5 workload profile table and substitute observed values before production promotion"
 
 // CapacityPlanning carries the §16.5 workload-profile assumptions the
 // tier sizing formulas (warm pool sizing, Redis ops budgets, gateway
 // replica counts) depend on. The PoolScalingController reads these from
-// the capacityPlanning.* Helm values at startup. spec: §16.5 lines
-// 590-601.
+// the capacityPlanning.* Helm values at startup. spec: §16.5.
 type CapacityPlanning struct {
 	// AvgSessionDurationSeconds feeds the Little's Law warm-pool claim
 	// rate and the delegation-budget Redis ops/s estimate. Default 333.
@@ -36,7 +35,7 @@ type CapacityPlanning struct {
 	SessionIdleFraction float64
 }
 
-// DefaultCapacityPlanning returns the §16.5 lines 594-599 default
+// DefaultCapacityPlanning returns the §16.5 default
 // workload profile.
 func DefaultCapacityPlanning() CapacityPlanning {
 	return CapacityPlanning{
@@ -52,7 +51,7 @@ func DefaultCapacityPlanning() CapacityPlanning {
 // AtDefaults reports whether the profile is unchanged from the §16.5
 // default workload profile. Each field is compared against the default
 // literal; an operator who substitutes any observed value clears the
-// flag. spec: §16.5 line 601.
+// flag. spec: §16.5.
 func (c CapacityPlanning) AtDefaults() bool {
 	return c == DefaultCapacityPlanning()
 }
@@ -62,7 +61,7 @@ func (c CapacityPlanning) AtDefaults() bool {
 // workload profile is at its defaults and the deployment is a
 // production tier (Tier 2 or Tier 3). Tier 1 is single-node development
 // and CI, so unsubstituted defaults there are expected and not warned.
-// spec: §16.5 line 601.
+// spec: §16.5.
 func ShouldWarnCapacityPlanningDefaults(c CapacityPlanning, tier string) bool {
 	switch tier {
 	case "tier2", "tier3":
@@ -76,7 +75,7 @@ func ShouldWarnCapacityPlanningDefaults(c CapacityPlanning, tier string) bool {
 // normative per-tier agent-type safety_factor defaults: 1.5 at Tier 1/2,
 // 1.2 at Tier 3. The Tier 3 override is applied because per-pool demand is
 // larger, allowing a thinner fractional buffer to achieve the same
-// absolute headroom. spec: spec/17_deployment-topology.md line 1008.
+// absolute headroom. spec: §17.8.2.
 const (
 	agentTierDefaultSafetyFactor = 1.5
 	agentTier3SafetyFactor       = 1.2
@@ -91,8 +90,7 @@ const (
 // differs (2.0 at Tier 1/2, 1.5 at Tier 3) set the per-pool SafetyFactor
 // explicitly — the controller applies one default value per deployment,
 // consistent with the §17.8.2 "the controller applies one safety_factor
-// value per pool" statement. spec: spec/17_deployment-topology.md lines
-// 1008, 1010; spec/04_system-components.md line 523.
+// value per pool" statement. spec: §17.8.2; §4.6.1.
 func DefaultSafetyFactorForTier(tier string) float64 {
 	if tier == "tier3" {
 		return agentTier3SafetyFactor

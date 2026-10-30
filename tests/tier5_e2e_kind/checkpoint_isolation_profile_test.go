@@ -7,11 +7,11 @@
 // under (runc, gVisor, Kata). Two behaviours are in scope:
 //
 //   - Positive (spec line 241): the cooperative
-//     checkpoint_request/checkpoint_ready handshake via the lifecycle
-//     channel is the only mechanism that produces a *consistent*
+//     checkpoint_request/checkpoint_ready handshake on CH-RUNTIMEOPS
+//     is the only mechanism that produces a *consistent*
 //     checkpoint under a sandboxed isolation profile. A Full-level agent
-//     pod running under the gVisor RuntimeClass, checkpointed through the
-//     lifecycle channel, must produce a checkpoint record tagged
+//     pod running under the gVisor RuntimeClass, checkpointed through
+//     CH-RUNTIMEOPS, must produce a checkpoint record tagged
 //     consistency: consistent.
 //   - Negative (spec line 243): signal-based (SIGSTOP/SIGCONT)
 //     checkpointing is "not supported under gVisor or Kata". A pod that
@@ -62,12 +62,11 @@ import (
 
 // spec: §4.4 (spec/04_system-components.md, "Checkpoint quiescence
 // strategy by level", Full-level runtimes) — "Cooperative
-// checkpoint_request/checkpoint_ready handshake via the lifecycle
-// channel ... is the only mechanism that produces consistent checkpoints
+// checkpoint_request/checkpoint_ready handshake via the CH-RUNTIMEOPS ... is the only mechanism that produces consistent checkpoints
 // under all isolation profiles (runc, gVisor, Kata)."
 //
 // diagnosis: a failure here (once the skip is lifted) means the
-// cooperative lifecycle-channel handshake does not produce a consistent
+// cooperative CH-RUNTIMEOPS handshake does not produce a consistent
 // checkpoint when the agent pod runs under a real gVisor sandbox: either
 // the quiescence handshake did not complete against a runsc-sandboxed
 // pod, or the resulting checkpoint record was not tagged consistency:
@@ -88,7 +87,7 @@ func TestCheckpointHandshakeUnderGvisorTagsConsistent(t *testing.T) {
 // spec: §4.4 (spec/04_system-components.md, "Checkpoint quiescence
 // strategy by level", Embedded adapter mode only) — "This is not
 // supported under gVisor or Kata — signal-based checkpointing under
-// sandboxed runtimes is unsupported; use the lifecycle channel instead."
+// sandboxed runtimes is unsupported; use the CH-RUNTIMEOPS instead."
 //
 // diagnosis: a failure here (once the skip is lifted) means the
 // embedded-adapter SIGSTOP/SIGCONT checkpoint path was allowed to run

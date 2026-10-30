@@ -1,6 +1,6 @@
--- §4.3 line 193 / §13.3 per-dialect cap discipline.
+-- §4.3 / §13.3 per-dialect cap discipline.
 --
--- spec: §4.3 line 193 cross-ref to §13.3 — issued tokens MUST record
+-- spec: §4.3 cross-ref to §13.3 — issued tokens MUST record
 -- the dialect cap that capped the lifetime so a forensic reconstruction
 -- of "why did this token live exactly Nh" is possible after the fact.
 -- The §13.3 caps are `lenny-gateway: 24h`, `lenny-ops: 1h`,

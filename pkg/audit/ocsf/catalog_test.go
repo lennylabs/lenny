@@ -19,11 +19,11 @@ func repoRel(parts ...string) string {
 	return filepath.Join(append([]string{"..", "..", ".."}, parts...)...)
 }
 
-// TestMappingYAMLInSync is the §11.7 line 414 CI guard: the committed
-// schemas/ocsf-mapping.yaml must equal the generator's output. A
-// catalog change in pkg/audit/ocsf/mapping.go that is not regenerated
-// fails here.
-// spec: 11_security-trust-model.md line 414.
+// TestMappingYAMLInSync is the CI guard for the §11.7 OCSF wire-format
+// mapping: the committed schemas/ocsf-mapping.yaml must equal the
+// generator's output. A catalog change in pkg/audit/ocsf/mapping.go that
+// is not regenerated fails here.
+// spec: §11.7 (audit logging, OCSF wire format)
 func TestMappingYAMLInSync(t *testing.T) {
 	want, err := ocsf.MarshalMappingYAML()
 	if err != nil {
@@ -41,7 +41,7 @@ func TestMappingYAMLInSync(t *testing.T) {
 // TestMappingYAMLRoundTrips confirms the generated YAML deserializes
 // back into the same catalog the Go source produces — every event type
 // the translator can resolve appears in the mirror.
-// spec: 11_security-trust-model.md line 414.
+// spec: §11.7 (audit logging, OCSF wire format)
 func TestMappingYAMLRoundTrips(t *testing.T) {
 	data, err := ocsf.MarshalMappingYAML()
 	if err != nil {
@@ -72,7 +72,7 @@ func TestMappingYAMLRoundTrips(t *testing.T) {
 // in the mirror agrees with the live LookupClass result, so an external
 // verifier reading only the YAML reaches the same class/activity the
 // translator would.
-// spec: 11_security-trust-model.md line 414.
+// spec: §11.7 (audit logging, OCSF wire format)
 func TestMappingYAMLResolvesEveryExactEvent(t *testing.T) {
 	for _, e := range ocsf.Catalog() {
 		if e.Match != "exact" {
@@ -106,11 +106,11 @@ func TestActivityNameDisambiguatesLogon(t *testing.T) {
 	}
 }
 
-// TestAuditEventsRegistryV1 validates the §11.7 line 365
-// schemas/audit-events/v1.json registry: it parses, declares JSON
-// Schema 2020-12, and pins event_schema_version to the version named in
-// its filename.
-// spec: 11_security-trust-model.md line 365.
+// TestAuditEventsRegistryV1 validates the schemas/audit-events/v1.json
+// registry that §11.7 requires alongside each release: it parses,
+// declares JSON Schema 2020-12, and pins event_schema_version to the
+// version named in its filename.
+// spec: §11.7 (audit logging, event-schema-version registry)
 func TestAuditEventsRegistryV1(t *testing.T) {
 	data, err := os.ReadFile(repoRel("schemas", "audit-events", "v1.json"))
 	if err != nil {

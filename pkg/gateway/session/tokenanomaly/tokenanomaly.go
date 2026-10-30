@@ -270,3 +270,21 @@ func (d *Detector) Forget(sessionID string) {
 	delete(d.sessions, sessionID)
 	d.mu.Unlock()
 }
+
+// TrackedSessions returns the ids of the sessions the detector holds an
+// accumulator for, in no particular order. The per-replica budget state sweep
+// resolves them against the session store and forgets each one whose row is
+// terminal or absent. Nil-safe.
+// spec: §11.2, §10.1.1.
+func (d *Detector) TrackedSessions() []string {
+	if d == nil {
+		return nil
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	ids := make([]string, 0, len(d.sessions))
+	for id := range d.sessions {
+		ids = append(ids, id)
+	}
+	return ids
+}

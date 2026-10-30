@@ -4,7 +4,9 @@ package sessionserver
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -17,80 +19,115 @@ import (
 // for the per-node reattach, the terminal transition, and the
 // orphaned-node predicate.
 
-// sessionNodeReattacher reattaches one orphaned delegation node onto a
-// fresh pod via the §7.3 resume path, then transitions it back to
-// running. It is the treerecovery.NodeReattacher the bottom-up
-// traversal calls per node (leaves first).
+// treeRecoveryPollInterval is how often ReattachNode reads a node's row from
+// the primary while it waits for the node's restore to finish.
+const treeRecoveryPollInterval = time.Second
+
+// sessionNodeReattacher drives and waits for the restore of one
+// resume_pending delegation node. It is the treerecovery.NodeReattacher the
+// bottom-up traversal calls per node, leaves-first. It claims no pod and
+// writes no row: the node's restore runs through the resume driver on the
+// replica that coordinates the node.
 //
-// spec: §8.10 line 1016 (per-node recovery); §7.3 (resume).
+// The states the traversal does not select are routed elsewhere: a node that
+// holds its pod (running, input_required, or held-pod suspended) is
+// re-adopted onto that pod by the coordination Sweeper when its coordinator
+// dies; a node whose pod failed reaches resume_pending through its failure
+// edge, where this traversal or its coordinating replica's watchdog drives
+// it; and a podless suspended node is restored by its next message or
+// resume.
+//
+// spec: §8.10 (Delegation Tree Recovery); §7.3 (Resume driver).
 type sessionNodeReattacher struct{ s *Server }
 
-func (a sessionNodeReattacher) ReattachNode(ctx context.Context, node sessionstore.Session) error {
-	if _, err := a.s.resumeOnPod(ctx, node); err != nil {
-		return err
-	}
-	// The node lost its pod while non-terminal; resumeOnPod claimed a
-	// fresh pod and restored the snapshot, so the row returns to
-	// running. A node that settled concurrently (a racing terminal
-	// transition) is left at its terminal state.
-	_, err := a.s.store.Update(ctx, node.TenantID, node.ID, func(row *sessionstore.Session) error {
-		if !session.IsTerminal(row.State) {
-			row.State = session.StateRunning
-		}
-		return nil
-	})
-	return err
+// StartNode drives the node's restore through the resume driver, which
+// applies the in-flight check, the coordination-lease gate, and the
+// active-age check. spec: §8.10; §7.3 (Resume driver).
+func (a sessionNodeReattacher) StartNode(ctx context.Context, node sessionstore.Session) {
+	a.s.DriveResume(ctx, node)
 }
 
-// sessionTerminalMarker marks an unrecovered delegation node terminally
-// failed (or expired). It is the treerecovery.TerminalMarker the
-// traversal calls for a node that exhausts its recovery budget.
+// ReattachNode waits for the node's restore: it reads the row from the
+// primary once per poll interval until the row is in neither resume_pending
+// nor resuming, or the context, which carries the node's recovery deadline,
+// ends. It returns an error when the restore ended in awaiting_client_action
+// or a terminal state, and nil for any other state, because the restore
+// committed: a restored node can leave running before the next poll, to
+// input_required or suspended, and neither is a failed restore. A read error
+// is logged and the next poll retries. A node coordinated by a peer waits
+// for that replica's driver.
 //
-// Per §8.10 line 1027 a node whose individual `maxResumeWindowSeconds`
-// elapsed transitions to `expired`; a node lost to a level or whole-tree
-// budget transitions to `failed`. Both are terminal and trigger the
-// node's cascade policy from that point (§8.10 line 1025).
+// spec: §8.10 (Delegation Tree Recovery).
+func (a sessionNodeReattacher) ReattachNode(ctx context.Context, node sessionstore.Session) error {
+	interval := a.s.treePollInterval
+	if interval <= 0 {
+		interval = treeRecoveryPollInterval
+	}
+	for {
+		row, err := a.s.readPrimary(ctx, node.TenantID, node.ID)
+		switch {
+		case err != nil:
+			if ctx.Err() == nil {
+				log.Printf("sessionserver: tree recovery poll of node %s: %v", node.ID, err)
+			}
+		case row.State == session.StateAwaitingClientAction || session.IsTerminal(row.State):
+			return fmt.Errorf("sessionserver: tree recovery of node %s ended in %s", node.ID, row.State)
+		case row.State != session.StateResumePending && row.State != session.StateResuming:
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("sessionserver: tree recovery wait for node %s: %w", node.ID, ctx.Err())
+		case <-time.After(interval):
+		}
+	}
+}
+
+// sessionTerminalMarker hands an unrecovered delegation node to
+// failSession. It is the treerecovery.TerminalMarker the traversal calls for
+// every node it could not recover, whatever the reason: the reason does not
+// choose the state, because §8.10 tree recovery writes only `failed`, and
+// only over a node still in resume_pending. A node whose individual
+// `maxResumeWindowSeconds` elapsed was already moved to
+// awaiting_client_action by the §6.2 resume_pending wall-clock cap, so
+// failSession's guard leaves it unchanged.
+//
+// spec: §8.10 (Delegation Tree Recovery), §6.2 (resume_pending wall-clock
+// cap)
 type sessionTerminalMarker struct{ s *Server }
 
-func (a sessionTerminalMarker) FailNode(ctx context.Context, node sessionstore.Session, reason string) {
-	if reason == "node resume window exceeded" {
-		a.s.expireSession(ctx, node.TenantID, node.ID)
-		return
-	}
+func (a sessionTerminalMarker) FailNode(ctx context.Context, node sessionstore.Session, _ string) {
 	a.s.failSession(ctx, node.TenantID, node.ID)
 }
 
-// nodeNeedsRecovery reports whether a non-terminal descendant node has
-// lost its pod binding and therefore needs §8.10 reattach. A node still
-// present in the pod registry is live and is left untouched, so a root
-// that resumed for its own reasons does not tear down descendants still
-// running on their pods. When the pod registry is unwired (dev /
-// unit-test) no node is recoverable and the recovery degrades to a
-// no-op.
+// nodeNeedsRecovery reports whether a delegation node is selected for §8.10
+// recovery: exactly the resume_pending nodes. A node is selected by its row
+// state rather than by its absence from this replica's pod registry, because
+// the registry holds only this replica's bindings and a node bound on a peer
+// is not orphaned. Tree recovery therefore never drives a node that is
+// running, suspended, awaiting_client_action, or bound on a peer replica,
+// and failSession fails a selected node only while its locked row is still
+// in resume_pending.
 //
-// spec: §8.10 line 1014 (the tree is tracked independently of pods).
+// spec: §8.10 (Delegation Tree Recovery).
 func (s *Server) nodeNeedsRecovery(node sessionstore.Session) bool {
-	if s.podRegistry == nil {
-		return false
-	}
-	_, live := s.podRegistry.Get(node.ID)
-	return !live
+	return node.State == session.StateResumePending
 }
 
 // recoverDelegationTree runs the §8.10 bottom-up recovery for the tree
-// rooted at rootID. The resume handler calls it after a root reattaches
-// so the root's orphaned descendants are brought to a known state
-// (recovered, failed, or still running) leaves-first. It is detached
-// from the request: the traversal is bounded by maxTreeRecoverySeconds
-// (default 600s), far longer than an HTTP response should block, so it
-// runs in its own goroutine on a context that outlives the request.
+// rooted at rootID. The resume driver's commit tail calls it after a node of
+// the tree resumed, so the tree's resume_pending descendants are driven
+// leaves-first, and a descendant left unrecovered is failed only while it is
+// still in resume_pending. The traversal is bounded by
+// maxTreeRecoverySeconds (default 600s), so it runs in its own goroutine on
+// the server-lifetime context, which shutdown cancels.
 //
-// spec: §8.10 lines 1016, 1023.
-func (s *Server) recoverDelegationTree(reqCtx context.Context, tenantID, rootID string) {
+// spec: §8.10.
+func (s *Server) recoverDelegationTree(_ context.Context, tenantID, rootID string) {
 	if s.treeRecovery == nil || rootID == "" {
 		return
 	}
-	ctx := context.WithoutCancel(reqCtx)
+	ctx := s.lifetime()
 	go func() {
 		if _, err := s.treeRecovery.RecoverTree(ctx, tenantID, rootID); err != nil {
 			log.Printf("sessionserver: tree recovery for root %s failed: %v", rootID, err)

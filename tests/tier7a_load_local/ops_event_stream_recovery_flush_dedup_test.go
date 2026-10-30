@@ -78,6 +78,8 @@ func (g *gatedStreamClient) XRevRangeN(ctx context.Context, stream, start, stop 
 // already reached ops:events:stream. The webhook worker pages the stream by
 // position and does not deduplicate by eventKey, so the duplicate entry is
 // delivered to every matching subscription a second time.
+//
+// spec: §25.5 (best-effort recovery flush, eventKey dedup).
 func TestOpsEventStreamRecoveryFlushDoesNotDuplicateConcurrentEmit(t *testing.T) {
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ctx := context.Background()

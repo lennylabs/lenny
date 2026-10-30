@@ -29,6 +29,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
+
 	"github.com/lennylabs/lenny/pkg/compliance"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/outputpartfidelity"
 	"github.com/lennylabs/lenny/sdks/runtime/go/runtime"
@@ -83,7 +85,9 @@ func buildArtifacts(t *testing.T) *builtArtifacts {
 	}
 	artifactsOnce.Do(func() {
 		root := repoRoot(t)
-		dir, err := os.MkdirTemp("", "tier10-conformance-*")
+		// The shared builds live under the harness temp root rather than
+		// /tmp, which a host cleanup can empty mid-run (TEST-GAPS T-4.7.23).
+		dir, err := testtmp.MkdirTemp("tier10-conformance-*")
 		if err != nil {
 			artifactsErr = err
 			return
@@ -95,6 +99,7 @@ func buildArtifacts(t *testing.T) *builtArtifacts {
 			bin := filepath.Join(dir, name)
 			cmd := exec.Command("go", "build", "-o", bin, pkg)
 			cmd.Dir = root
+			cmd.Env = append(os.Environ(), testtmp.Env(filepath.Dir(dir))...)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				artifactsErr = &buildError{pkg: pkg, output: string(out), err: err}
 				return ""
@@ -117,6 +122,17 @@ func buildArtifacts(t *testing.T) *builtArtifacts {
 		t.Fatalf("building conformance artifacts: %v", artifactsErr)
 	}
 	return artifacts
+}
+
+// checkPassedNamed reports whether the report carries a passing check
+// named name.
+func checkPassedNamed(r complianceReport, name string) bool {
+	for _, c := range r.Checks {
+		if c.Name == name {
+			return c.Pass
+		}
+	}
+	return false
 }
 
 // buildError carries the failing package and the build output so a
@@ -189,11 +205,12 @@ func assertAllPass(t *testing.T, runtime, level string, r complianceReport) {
 	}
 }
 
-// spec: 12.10 (Basic-level adapter-protocol conformance battery)
+// spec: 12.10 (Basic-level adapter-protocol conformance battery), 28.5.3 (per-session identifier echo)
 // diagnosis: The Basic battery — JSON Lines framing, message/response,
 //
-//	heartbeat ack, unknown-type tolerance, shutdown deadline — fails
-//	for a bundled runtime, so the §15.4 adapter protocol regressed.
+//	heartbeat ack, unknown-type tolerance, shutdown deadline,
+//	per-session identifier echo — fails for a bundled runtime, so the
+//	§15.4 adapter protocol regressed.
 func TestBasicAdapterProtocol(t *testing.T) {
 	a := buildArtifacts(t)
 	// Every bundled runtime is at least Basic-conformant: echo is the
@@ -210,11 +227,23 @@ func TestBasicAdapterProtocol(t *testing.T) {
 				t.Errorf("report level = %q, want basic", report.Level)
 			}
 			assertAllPass(t, rt.name, "basic", report)
-			// Every Basic check is tagged with the §15.4 adapter
-			// protocol section.
+			// Every Basic check is tagged with the section that
+			// defines it: the §15.4 adapter protocol for the
+			// framing and round-trip checks, §15.4.6 for the
+			// conformance battery's schema-driven checks, §24.8
+			// for the proto error-code catalog the schema-driven
+			// validate command generates its assertions from, and
+			// §28.5.3 for the per-session identifier a runtime
+			// echoes on the frames it emits.
+			basicSpecSections := map[string]bool{
+				"15.4":   true,
+				"15.4.6": true,
+				"24.8":   true,
+				"28.5.3": true,
+			}
 			for _, c := range report.Checks {
-				if c.Spec != "15.4" {
-					t.Errorf("Basic check %q spec = %q, want 15.4", c.Name, c.Spec)
+				if !basicSpecSections[c.Spec] {
+					t.Errorf("Basic check %q spec = %q, want one of 15.4, 15.4.6, 24.8, or 28.5.3", c.Name, c.Spec)
 				}
 			}
 		})
@@ -275,17 +304,19 @@ func TestStandardLevel(t *testing.T) {
 	}
 }
 
-// spec: 12.10 (Full-level conformance battery)
-// diagnosis: The Full battery — Standard plus the §15.4.6 lifecycle
-//
-//	channel handshake, checkpoint, interrupt, credential rotation, and
-//	deadline-signal handling — fails for streaming-echo, so the Full
-//	lifecycle contract regressed.
+// spec: 12.10 (Full-level conformance battery), 15.4.6 (CH-RUNTIMEOPS opening), 28.5.3 (CH-MSGSOCK Outbound: session_started)
+// diagnosis: The Full battery — Standard plus the §15.4.6 CH-RUNTIMEOPS
+// handshake, checkpoint, interrupt, credential rotation, and
+// deadline-signal handling — fails for streaming-echo, so the Full
+// lifecycle contract regressed. A failed runtime_ops_handshake check means
+// the reference runtime no longer answers the battery's session_start with
+// the session_started carrying its sessionId and startId, which every
+// start on a Full-level pod waits for.
 func TestFullLevel(t *testing.T) {
 	a := buildArtifacts(t)
 
-	// streaming-echo is the reference Full runtime: it opens the
-	// lifecycle channel and answers every §15.4.6 lifecycle event.
+	// streaming-echo is the reference Full runtime: it opens
+	// CH-RUNTIMEOPS and answers every §15.4.6 lifecycle event.
 	report := runCompliance(t, a, a.streamingEcho, "full")
 	if report.Level != "full" {
 		t.Errorf("report level = %q, want full", report.Level)
@@ -293,7 +324,7 @@ func TestFullLevel(t *testing.T) {
 	assertAllPass(t, "streaming-echo", "full", report)
 	// The five §15.4.6 Full categories are present.
 	wantFull := map[string]bool{
-		"lifecycle_channel_opening":         false,
+		"runtime_ops_handshake":             false,
 		"checkpoint_quiesce_resume":         false,
 		"interrupt_acknowledgement":         false,
 		"credential_rotation_no_disruption": false,
@@ -309,8 +340,13 @@ func TestFullLevel(t *testing.T) {
 			t.Errorf("Full battery is missing the §15.4.6 category %q", name)
 		}
 	}
+	// The CH-RUNTIMEOPS opening check reads the session_started that
+	// answers its session_start after the capability handshake.
+	if !checkPassedNamed(report, "runtime_ops_handshake") {
+		t.Errorf("streaming-echo failed runtime_ops_handshake, which asserts its session_started acknowledgement")
+	}
 
-	// echo has no lifecycle channel; the Full lifecycle checks must
+	// echo has no CH-RUNTIMEOPS; the Full lifecycle checks must
 	// fail it while the inherited Basic checks still pass.
 	basicReport := runCompliance(t, a, a.echo, "full")
 	if basicReport.Summary.Failed == 0 {
@@ -327,7 +363,7 @@ func TestBundledRuntimesEveryPR(t *testing.T) {
 	a := buildArtifacts(t)
 	// Each bundled runtime declares an integration level and must pass
 	// the matching battery cleanly. This is the per-PR subset from
-	// §12.10: cheap, hermetic, and run on every change.
+	// TESTING.md §12.10: cheap, hermetic, and run on every change.
 	bundled := []struct {
 		name   string
 		binary string
@@ -365,7 +401,7 @@ func TestBundledRuntimesEveryPR(t *testing.T) {
 // images themselves are first-party deliverables published from
 // github.com/lennylabs/runtime-templates outside this repository.
 // spec: 12.10
-// diagnosis: §12.10 conformance scenario — covered structurally by pkg/* + the conformance binary; composite live exercise on the ops backlog.
+// diagnosis: TESTING.md §12.10 conformance scenario — covered structurally by pkg/* + the conformance binary; composite live exercise on the ops backlog.
 func TestReferenceCatalogNightly(t *testing.T) {
 	catalog, err := compliance.ReferenceCatalog()
 	if err != nil {
@@ -447,7 +483,7 @@ func TestThirdPartyRegistration(t *testing.T) {
 //	longer matches the translators — a field documented as preserved
 //	was dropped, or a field documented as lossy now survives.
 func TestFidelityMatrix(t *testing.T) {
-	// §12.10 specifies a table-driven test asserting the documented
+	// TESTING.md §12.10 specifies a table-driven test asserting the documented
 	// per-MessagePart fidelity for the OpenAI Chat Completions and Open
 	// Responses surfaces (the OpenAI Responses API serves the Open
 	// Responses dialect as a proper superset per §15.1). For each
@@ -502,7 +538,7 @@ func TestFidelityMatrix(t *testing.T) {
 }
 
 // fidelitySamples returns one MessagePart per canonical type in the
-// §15.4.1 Canonical Type Registry, each carrying every field the
+// §28.5.3 Canonical Type Registry, each carrying every field the
 // fidelity matrix tracks so per-field assertions can observe what
 // survives translation.
 func fidelitySamples() []runtime.MessagePart {

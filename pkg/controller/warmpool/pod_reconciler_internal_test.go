@@ -145,7 +145,7 @@ func (f *fakeCertMetric) Clear(namespace, pod string) {
 	f.clear[namespace+"/"+pod]++
 }
 
-// TestPublishCertExpiry_spec_10_3 verifies the §10.3 line 342/343
+// TestPublishCertExpiry_spec_10_3 verifies the §10.3
 // lenny_cert_expiry_seconds gauge carries the remaining certificate
 // validity in seconds and emits no sample when no expiry is derivable.
 func TestPublishCertExpiry_spec_10_3(t *testing.T) {
@@ -175,7 +175,7 @@ func TestPublishCertExpiry_spec_10_3(t *testing.T) {
 	})
 }
 
-// TestCertIssued_spec_10_3 covers the §10.3 line 342 "valid certificate"
+// TestCertIssued_spec_10_3 covers the §10.3
 // predicate the issuance check keys on: only a present, parseable,
 // not-yet-expired annotation counts as issued — there is no creation-time
 // fallback (its absence is the no-cert signal).
@@ -205,8 +205,7 @@ func TestCertIssued_spec_10_3(t *testing.T) {
 	}
 }
 
-// TestReconcileCertIssuance_NonDrainPaths_spec_10_3 covers every §10.3
-// line 342 issuance-grace branch that does not reach the drain (which
+// TestReconcileCertIssuance_NonDrainPaths_spec_10_3 covers every §10.3 issuance-grace branch that does not reach the drain (which
 // needs a client): disabled by default, a non-pre-idle pod, a pod with a
 // valid cert, and a pod still inside the grace window. A nil client is
 // safe on all of these because none patches the Sandbox.

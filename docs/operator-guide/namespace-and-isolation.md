@@ -93,13 +93,15 @@ The chart deploys the following admission policies:
 
 4. **Label-based namespace targeting** -- Policies target namespaces listed in `.Values.agentNamespaces`.
 
-5. **`lenny-label-immutability` webhook** -- Enforces immutability of security-critical labels (`lenny.dev/managed`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`). Only the warm pool controller ServiceAccount can set these at pod creation.
+5. **`lenny-label-immutability` webhook** -- Enforces immutability of security-critical labels (`lenny.dev/managed`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`, and `lenny.dev/runtime-process`). Only the warm pool controller ServiceAccount can set these at pod creation.
 
 6. **`lenny-tenant-label-immutability` webhook** -- Prevents mutation of the `lenny.dev/tenant-id` label to a different non-empty value on existing pods.
 
 7. **`lenny-sandboxclaim-guard` webhook** -- Prevents double-claim of pods by intercepting `CREATE` only on `SandboxClaim` resources, rejecting a second non-terminal claim for the same pod. Binding-state transitions are `SandboxClaim.status` patches serialized by resourceVersion preconditions rather than gated by the webhook, so the guard no longer intercepts `PATCH` or `PUT`.
 
-8. **`lenny-ephemeral-container-cred-guard` webhook** -- Scoped to the `pods/ephemeralcontainers` subresource. Rejects `kubectl debug`-style ephemeral-container attach requests on any of four conditions: reuse of the adapter UID or agent UID, inclusion of the `lenny-cred-readers` GID in `runAsGroup`/`supplementalGroups`, absent `runAsUser`/`runAsGroup`/`supplementalGroups` fields (which would inherit pod-level defaults including fsGroup), or a `volumeMounts` entry that references the credential tmpfs volume by name or mounts anything at the `/run/lenny` directory prefix. The fourth condition closes the fsGroup-inheritance side-channel that the first three cannot close on their own — fsGroup is applied by kubelet to every container regardless of explicit securityContext values, so rejecting the credential volumeMount is the cleanest barrier to credential-file access.
+8. **`lenny-ephemeral-container-cred-guard` webhook** -- Scoped to the `pods/ephemeralcontainers` subresource. Rejects `kubectl debug`-style ephemeral-container attach requests on any of four conditions: reuse of the adapter UID or agent UID, inclusion of the `lenny-cred-readers` GID in `runAsGroup`/`supplementalGroups`, absent `runAsUser`/`runAsGroup`/`supplementalGroups` fields (which would inherit pod-level defaults including fsGroup), or a `volumeMounts` entry that references the credential tmpfs volume by name or mounts anything at the `/run/lenny` directory prefix. The fourth condition closes the fsGroup-inheritance side-channel that the first three cannot close on their own — fsGroup is applied by kubelet to every container regardless of explicit securityContext values, so rejecting the credential volumeMount is the cleanest barrier to credential-file access. Ephemeral containers are also subject to the container identity check of the `lenny-pod-security` webhook described in item 9.
+
+9. **`lenny-pod-security` webhook container identity check** -- Validates every Pod `CREATE` and `UPDATE`, and every `UPDATE` to the `pods/ephemeralcontainers` subresource, in an agent namespace after mutating admission, under every RuntimeClass, so a container that a deployer's mutating webhook injects into an agent pod is checked as well as the containers the controller renders. Every init, regular, and ephemeral container must set `securityContext.runAsUser` and `securityContext.runAsGroup` at container level, and neither value may be 0. A pod-level `runAsUser` or `runAsGroup` does not satisfy the check, so a container that relies on a pod-level value is rejected. The adapter UID and the agent UID are the chart values `security.podUIDs.adapter` (default 65532) and `security.podUIDs.agent` (default 65533). Only the regular container named `adapter` may run at the adapter UID, and only the regular container named `runtime` may run at the agent UID. An init container, including a sidecar declared as an init container with `restartPolicy: Always`, and an ephemeral container hold neither UID, whatever their names. The recommended fix for a rejected injector is to configure it to give each container it injects an explicit `runAsUser` and `runAsGroup` outside both reserved UIDs. Distroless images run as the `nonroot` user, UID 65532, which equals the default adapter UID, so an injected distroless container that keeps its image identity is rejected. When the injector cannot be configured, override `security.podUIDs.adapter` instead; the override changes the adapter identity on every agent pod.
 
 ### Webhook Configuration
 
@@ -256,7 +258,7 @@ A pod that can serve more than one session is pinned to a single tenant. Pinning
 - **Concurrent sessions** (`maxConcurrentSessions > 1`): the tenant is pinned on first slot assignment.
 - **Service mode:** the tenant-affinity routing layer pins each pod on first request and rejects a mismatched `tenantId`.
 
-Cross-tenant pod reuse is only permitted on the sequential-reuse path (`maxConcurrentSessions: 1`, `recycle.enabled: true`) with `microvm` isolation and explicit `recycle.allowCrossTenantReuse: true`.
+A pod is never reused across tenants, because a recycled pod keeps state the scrub does not reach and the tenant pin applies on every pool. `recycle.allowCrossTenantReuse: true` applies only to the sequential-reuse path (`maxConcurrentSessions: 1`, `recycle.enabled: true`) with `microvm` isolation, and a pod on such a pool also stays pinned to its tenant.
 
 ### Tenant Label Immutability
 
@@ -276,6 +278,6 @@ The `lenny-tenant-label-immutability` webhook enforces immutability of the `lenn
 |---|---|---|---|
 | `standard` | runc | Linux cgroups + namespaces | Development, low-risk workloads |
 | `sandboxed` | gVisor (runsc) | Userspace syscall interception | **Default for production** |
-| `microvm` | Kata Containers | Full VM boundary per pod | High-risk, semi-trusted code, cross-tenant reuse |
+| `microvm` | Kata Containers | Full VM boundary per pod | High-risk, semi-trusted code, multi-tenant clusters |
 
 **Recommendation:** Use `sandboxed` (gVisor) as the default isolation profile for all production workloads. Use `microvm` (Kata) only for workloads that require a VM-level isolation boundary.

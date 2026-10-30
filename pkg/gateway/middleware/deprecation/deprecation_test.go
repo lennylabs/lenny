@@ -51,7 +51,7 @@ func TestSkipsHeaderOnLiveVersion_spec_15_5_124(t *testing.T) {
 // F-15.5.11.
 func TestSkipsHeaderOnUnversionedPath_spec_15_5_124(t *testing.T) {
 	h := deprecation.Wrap(pingHandler(), "v1")
-	for _, path := range []string{"/healthz", "/metrics", "/openapi.json", "/.well-known/jwks.json"} {
+	for _, path := range []string{"/healthz", "/metrics", "/openapi.json", "/openapi.yaml"} {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
 		if got := rr.Header().Get(deprecation.HeaderName); got != "" {
@@ -90,7 +90,7 @@ func TestPathVersionPrefix(t *testing.T) {
 		{"", ""},
 		{"/healthz", ""},
 		{"/openapi.json", ""},
-		{"/.well-known/jwks.json", ""},
+		{"/openapi.yaml", ""},
 		{"/vfoo/bar", ""},
 		{"/v/foo", ""},
 		{"v1/sessions", ""},

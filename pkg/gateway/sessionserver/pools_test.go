@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
-// spec: §15.1 line 703 — GET /v1/pools session-facing pool discovery.
+// spec: §15.1 — GET /v1/pools session-facing pool discovery.
 
 type poolListResponse struct {
 	Items   []sessionserver.PoolDiscoveryEntry `json:"items"`
@@ -51,7 +51,7 @@ func poolNames(items []sessionserver.PoolDiscoveryEntry) map[string]sessionserve
 // A pool whose runtimeRef the caller can discover is surfaced with its
 // warm-count and runtime ref; a pool backing a runtime that is not in the
 // caller's discovery set is hidden, so the endpoint never widens runtime
-// visibility. spec: §15.1 line 703.
+// visibility. spec: §15.1.
 func TestListPoolsVisibilityScoping_spec_15_1_703(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-agent", Type: runtimestore.TypeAgent})
@@ -63,7 +63,7 @@ func TestListPoolsVisibilityScoping_spec_15_1_703(t *testing.T) {
 	// Backs a runtime that is not registered, so it is invisible to the caller.
 	_ = pools.Create(context.Background(), poolstore.Pool{Name: "pool-orphan", RuntimeRef: "ghost-agent", WarmCount: 9})
 
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes, Pools: pools})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes, Pools: pools})
 	resp := getPools(t, srv, "/v1/pools")
 
 	if len(resp.Items) != 2 {
@@ -83,12 +83,12 @@ func TestListPoolsVisibilityScoping_spec_15_1_703(t *testing.T) {
 
 // With pools wired but no runtime registry the §10.6 visibility set is
 // empty, so the pool list fails closed to empty rather than leaking every
-// pool. spec: §15.1 line 703; §10.6 transparent filter.
+// pool. spec: §15.1; §10.6 transparent filter.
 func TestListPoolsFailsClosedWithoutRuntimes_spec_10_6(t *testing.T) {
 	pools := poolstore.NewMemory()
 	_ = pools.Create(context.Background(), poolstore.Pool{Name: "pool-claude", RuntimeRef: "claude-agent", WarmCount: 3})
 
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Pools: pools})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Pools: pools})
 	resp := getPools(t, srv, "/v1/pools")
 	if len(resp.Items) != 0 {
 		t.Errorf("pool discovery without a runtime registry must be empty: %+v", resp.Items)
@@ -100,7 +100,7 @@ func TestListPoolsEmptyWhenPoolsUnwired(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-agent", Type: runtimestore.TypeAgent})
 
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes})
 	resp := getPools(t, srv, "/v1/pools")
 	if len(resp.Items) != 0 {
 		t.Errorf("want empty list, got %+v", resp.Items)
@@ -111,7 +111,7 @@ func TestListPoolsEmptyWhenPoolsUnwired(t *testing.T) {
 }
 
 // A service pool surfaces its §5.2 maxConcurrent; a session pool omits it.
-// spec: §5.2 line 703 (service mode).
+// spec: §5.2.
 func TestListPoolsServiceFieldsSurface_spec_5_2(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-agent", Type: runtimestore.TypeAgent})
@@ -126,7 +126,7 @@ func TestListPoolsServiceFieldsSurface_spec_5_2(t *testing.T) {
 		WarmCount:     1,
 	})
 
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes, Pools: pools})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes, Pools: pools})
 	byName := poolNames(getPools(t, srv, "/v1/pools").Items)
 
 	if c := byName["pool-service"]; c.MaxConcurrent != 8 {
@@ -139,7 +139,7 @@ func TestListPoolsServiceFieldsSurface_spec_5_2(t *testing.T) {
 
 // The list honours the canonical §15.1 cursor-paginated envelope: a
 // ?limit=1 request returns one item with hasMore set and a cursor that
-// pages to the remaining pool. spec: §15.1 line 1228.
+// pages to the remaining pool. spec: §15.1.
 func TestListPoolsPaginationEnvelope_spec_15_1_1228(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-agent", Type: runtimestore.TypeAgent})
@@ -149,7 +149,7 @@ func TestListPoolsPaginationEnvelope_spec_15_1_1228(t *testing.T) {
 	_ = pools.Create(context.Background(), poolstore.Pool{Name: "pool-older", RuntimeRef: "claude-agent", WarmCount: 1, CreatedAt: base})
 	_ = pools.Create(context.Background(), poolstore.Pool{Name: "pool-newer", RuntimeRef: "claude-agent", WarmCount: 1, CreatedAt: base.Add(time.Hour)})
 
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Runtimes: runtimes, Pools: pools})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Runtimes: runtimes, Pools: pools})
 
 	page1 := getPools(t, srv, "/v1/pools?limit=1")
 	if len(page1.Items) != 1 || !page1.HasMore || page1.Cursor == "" {

@@ -89,7 +89,7 @@ func TestEmitterDrivesEmittedTotal_spec_25_3_709(t *testing.T) {
 }
 
 // metricsFailingRedis returns an error from XAdd so the StreamEmitter
-// takes the §25.3 line 703 Redis-unreachable path.
+// takes the §25.3 Redis-unreachable path.
 type metricsFailingRedis struct{}
 
 func (metricsFailingRedis) XAdd(ctx context.Context, args *redis.XAddArgs) *redis.StringCmd {

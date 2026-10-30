@@ -42,14 +42,13 @@ var ErrPoolNotSatisfiable = errors.New("podsession: the requested pool is not ba
 // WarmPoolController sets True while a pool with a positive minWarm has
 // no idle pods and at least one pod still warming. The gateway reads it
 // to answer session creation with a 503 during the bootstrap window.
-// spec: §5.2 line 594 ("PoolWarmingUp condition").
+// spec: §5.2.
 const conditionPoolWarmingUp = "PoolWarmingUp"
 
 // PoolWarmingError reports that the resolved pool is in the §5.2
 // PoolWarmingUp state: it has no idle pods yet because it is still
-// bootstrapping. The session-creation handler maps it to the §5.2
-// lines 602-625 `503 RUNTIME_UNAVAILABLE` "Pool Not Ready" response.
-// spec: §5.2 lines 602-625.
+// bootstrapping. The session-creation handler maps it to the §5.2 "Pool Not Ready" response.
+// spec: §5.2.
 type PoolWarmingError struct {
 	// Pool is the warming pool's name (its SandboxWarmPool name).
 	Pool string
@@ -102,8 +101,9 @@ type PoolMatch struct {
 	SpiffeBinding string
 	// Recycle reports whether the pool's §5.2 sessionPolicy.recycle block
 	// is present, so the §7.1 scrubPolicy derivation knows the pod is
-	// reused across sessions. It is set from the SandboxTemplate's
-	// sessionPolicy.recycle presence.
+	// reused across sessions. It is the stored recycle.enabled when the pool
+	// has a poolstore mirror row (foldPoolPolicy), and otherwise falls back
+	// to the SandboxTemplate's sessionPolicy.recycle presence.
 	Recycle bool
 	// AllowCrossTenantReuse and MicrovmScrubMode select the §7.1 scrubPolicy
 	// variant for a cross-tenant-reuse microvm pool. MicrovmScrubMode is set
@@ -112,6 +112,19 @@ type PoolMatch struct {
 	// poolstore sessionPolicy mirror.
 	AllowCrossTenantReuse bool
 	MicrovmScrubMode      string
+	// ReusesPods reports whether the pool lets a pod serve a later session:
+	// maxConcurrentSessions above 1, or a reusing recycling pool
+	// (poolstore.ReusesPods). RequiresProcessAcknowledgment reports whether
+	// the pool requires the runtime-process acknowledgment
+	// (poolstore.RequiresProcessAcknowledgment): concurrent, or recycling
+	// under recycle.runtimeProcess: keep. Both are folded in from the
+	// poolstore sessionPolicy mirror; a resolution with no reader or no
+	// mirror row leaves both false, so every acquisition refuses a pod that
+	// has served a session. The claim copies both into
+	// podclaim.ClaimRequest. spec: §5.2 (Deployer acknowledgment (runtime
+	// process kept across sessions)).
+	ReusesPods                    bool
+	RequiresProcessAcknowledgment bool
 	// CleanupCommands and CleanupTimeoutSeconds are the §5.2 deployer
 	// cleanup commands and their aggregate cap, run by the adapter's
 	// whole-pod scrub after the credential purge and before the standard
@@ -127,6 +140,12 @@ type PoolMatch struct {
 	// subset); §4.6.3.
 	CleanupCommands       []string
 	CleanupTimeoutSeconds int
+	// SlotRetries is the pool's §5.2 sessionPolicy.slotRetries, the
+	// concurrent-workspace slot retry budget, folded in from the poolstore
+	// sessionPolicy mirror. Nil, as on a pool with no mirror row or no
+	// stored value, takes the §5.2 default of 1 where the retry loop reads
+	// it. spec: §5.2 (Slot retry policy).
+	SlotRetries *int
 	// PoolWarmingUp reflects the §5.2 PoolWarmingUp condition on the
 	// pool's SandboxTemplate: true while the pool is bootstrapping with
 	// no idle pods. The start path returns a 503 RUNTIME_UNAVAILABLE
@@ -139,10 +158,10 @@ type PoolMatch struct {
 	// WorkspaceSizeLimitBytes is the §4.4 / §10.1 per-pod hard workspace
 	// size limit declared on the SandboxTemplate. Zero leaves the cap
 	// unset (the kubelet emptyDir guard remains the backstop). The
-	// resume path forwards it to the adapter for the §7.3 line 397
+	// resume path forwards it to the adapter for the §7.3
 	// pre-extraction symmetric size check. F-7.3.26.
 	WorkspaceSizeLimitBytes int64
-	// MaxPodUptimeSeconds is the §6.2 lines 166-167 concurrent-workspace
+	// MaxPodUptimeSeconds is the §6.2 concurrent-workspace
 	// pod-uptime retirement cap copied from the SandboxTemplate's
 	// sessionPolicy.recycle.maxPodUptimeSeconds. Zero leaves uptime retirement off. The
 	// slot-claim path drains an over-uptime pod before its next slot
@@ -164,7 +183,7 @@ type PoolMatch struct {
 	// capabilities the gateway keeps outstanding while draining this pool's
 	// workspace checkpoints. It is copied from the SandboxTemplate's
 	// checkpointGrantWindow field. Nil leaves the driver on the
-	// deployment-wide default. spec: §10.1 line 131 chunk-grant window;
+	// deployment-wide default. spec: §10.1.7 chunk-grant window;
 	// §17.8.1 checkpointGrantWindow default 4; §5.2 (per-pool override).
 	CheckpointGrantWindow *int32
 }
@@ -187,12 +206,19 @@ type PoolPolicyMirror struct {
 	// in-place). The CRD pair carries the flag only implicitly, for the
 	// microvm cross-tenant scrub variants where a non-empty scrubProfile
 	// is itself an admission-enforced signal (§4.6.3 ownership); a
-	// standard-profile recycling pool sets no CRD field at all, so this
-	// gateway-enforced mirror is the only source foldPoolPolicy has for
-	// the common case. spec: §5.2 (Recycle lifecycle).
+	// standard-profile recycling pool sets no CRD field at all. When a
+	// mirror row exists, foldPoolPolicy takes this value over the CRD
+	// signal, which lags an admitted pool update. spec: §5.2 (Recycle
+	// lifecycle).
 	Recycle bool
 	// AllowCrossTenantReuse is sessionPolicy.recycle.allowCrossTenantReuse.
 	AllowCrossTenantReuse bool
+	// ReusesPods is poolstore.ReusesPods of the stored sessionPolicy, and
+	// RequiresProcessAcknowledgment is
+	// poolstore.RequiresProcessAcknowledgment of it. spec: §5.2 (Deployer
+	// acknowledgment (runtime process kept across sessions)).
+	ReusesPods                    bool
+	RequiresProcessAcknowledgment bool
 	// CleanupCommands and CleanupTimeoutSeconds are the §5.2
 	// sessionPolicy.cleanupCommands and sessionPolicy.cleanupTimeoutSeconds
 	// the adapter's whole-pod scrub runs at the recycle boundary. They are
@@ -203,6 +229,10 @@ type PoolPolicyMirror struct {
 	// MaxPodUptimeSeconds is sessionPolicy.recycle.maxPodUptimeSeconds, the
 	// §6.2 concurrent-workspace pod-uptime retirement cap.
 	MaxPodUptimeSeconds int64
+	// SlotRetries is sessionPolicy.slotRetries, the §5.2 concurrent-workspace
+	// slot retry budget; nil when the stored policy sets none. spec: §5.2
+	// (Slot retry policy).
+	SlotRetries *int
 	// OnPoolExhausted is sessionPolicy.onPoolExhausted ("reject" | "queue");
 	// empty defaults to "reject". spec: §5.2 (Pool exhaustion behavior).
 	OnPoolExhausted string
@@ -211,7 +241,7 @@ type PoolPolicyMirror struct {
 	MaxQueueWaitSeconds int
 	// CheckpointGrantWindow is the §5.2 per-pool checkpointGrantWindow
 	// override read from the poolstore mirror. Nil leaves the checkpoint
-	// driver on the deployment-wide default. spec: §10.1 line 131; §5.2
+	// driver on the deployment-wide default. spec: §10.1.7; §5.2
 	// (per-pool override of the deployment-wide default).
 	CheckpointGrantWindow *int32
 }
@@ -316,13 +346,13 @@ func ResolvePool(ctx context.Context, reader client.Reader, policy PoolPolicyRea
 			m.Recycle = true
 			m.MicrovmScrubMode = sp.Recycle.ScrubProfile
 		}
-		// spec: §4.4 line 254 / §10.1 line 122 — copy the per-pod hard
+		// spec: §4.4 / §10.1 — copy the per-pod hard
 		// workspace size cap so the resume path can pass it to the adapter
-		// for the §7.3 line 397 symmetric pre-extraction check. F-7.3.26.
+		// for the §7.3 symmetric pre-extraction check. F-7.3.26.
 		if tmpl.Spec.WorkspaceSizeLimitBytes != nil {
 			m.WorkspaceSizeLimitBytes = *tmpl.Spec.WorkspaceSizeLimitBytes
 		}
-		// spec: §10.1 line 131 / §5.2 — copy the per-pool
+		// spec: §10.1.7 / §5.2 — copy the per-pool
 		// checkpointGrantWindow override from the SandboxTemplate so the
 		// checkpoint driver can prefer it over the deployment-wide default.
 		// foldPoolPolicy lets a poolstore mirror row override it further.
@@ -368,14 +398,25 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 		return nil
 	}
 	m.MaxConcurrentSessions = mirror.MaxConcurrentSessions
-	// spec: §5.2 (Recycle lifecycle) — the CRD only sets SessionPolicy.
-	// Recycle for the microvm cross-tenant scrub variants (a non-empty
-	// scrubProfile); a standard-profile recycling pool carries no CRD
-	// signal at all. OR in the mirror's Recycle rather than overwrite, so
-	// a CRD-derived true (the microvm case) is never downgraded by a
-	// mirror row that happens to omit the flag.
-	m.Recycle = m.Recycle || mirror.Recycle
+	// spec: §5.2 (Recycle lifecycle; Deployer acknowledgment (runtime
+	// process kept across sessions)), §7.1 (sessionIsolationLevel) — the
+	// stored recycle.enabled is authoritative whenever the pool has a mirror
+	// row, so it overwrites the CRD-derived signal rather than being ORed
+	// into it. The CRD's sessionPolicy.recycle block is only a proxy for
+	// recycle.enabled: the PoolScalingController renders it for a scrub
+	// profile, the in-place acknowledgment, or a runtime-process lifetime,
+	// and it lags an admitted pool update until the next reconcile. ORing it
+	// in kept Recycle true after an update to recycle.enabled: false, so a
+	// session created before the reconcile reported podReuse: true and
+	// recycled its pod at release while ReusesPods, read from the same
+	// mirror, already refused pod reuse.
+	m.Recycle = mirror.Recycle
 	m.AllowCrossTenantReuse = mirror.AllowCrossTenantReuse
+	// §5.2 process-reuse rule: whether an acquisition may admit a pod that
+	// has served a session, and whether it admits such a `keep` pod. A pool
+	// with no mirror row keeps both false.
+	m.ReusesPods = mirror.ReusesPods
+	m.RequiresProcessAcknowledgment = mirror.RequiresProcessAcknowledgment
 	// §5.2 whole-pod scrub trigger: the deployer cleanup commands and their
 	// aggregate cap are gateway-enforced and live on the mirror, so fold them
 	// onto PoolMatch beside AllowCrossTenantReuse. The recycle-path Shutdown
@@ -384,6 +425,9 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 	m.CleanupCommands = mirror.CleanupCommands
 	m.CleanupTimeoutSeconds = mirror.CleanupTimeoutSeconds
 	m.MaxPodUptimeSeconds = mirror.MaxPodUptimeSeconds
+	// §5.2 Slot retry policy: the slot retry budget is gateway-enforced and
+	// lives on the mirror; nil leaves the §5.2 default to the retry loop.
+	m.SlotRetries = mirror.SlotRetries
 	// §5.2 / §4.6.1 pool-exhaustion disposition: the queue-vs-reject choice
 	// and its wait bound are gateway-enforced and live on the mirror, not the
 	// CRD pair. A pool with no mirror row keeps the "reject" default.
@@ -394,7 +438,7 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 	if mirror.MaxConcurrent > 0 {
 		m.MaxConcurrent = mirror.MaxConcurrent
 	}
-	// spec: §10.1 line 131 / §5.2 — a poolstore mirror row that carries a
+	// spec: §10.1.7 / §5.2 — a poolstore mirror row that carries a
 	// checkpointGrantWindow override wins over the CRD-derived value; a
 	// mirror without the override leaves the CRD value in place.
 	if mirror.CheckpointGrantWindow != nil {
@@ -405,7 +449,7 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 
 // PoolStatusLookup reads the live §5.2 bootstrap status of a pool from
 // its Kubernetes CRD pair. The §15.1 admin pool GET handler consults it
-// to surface `poolCondition` and `idlePodCount` (§5.2 line 629) without
+// to surface `poolCondition` and `idlePodCount` (§5.2) without
 // requiring operators to inspect the CR status directly. The pool's
 // SandboxWarmPool and SandboxTemplate share the pool name (the
 // PoolScalingController names both after the pool, §4.6.2).
@@ -423,7 +467,7 @@ type PoolStatusLookup struct {
 // when the pool has no SandboxWarmPool yet (defined in Postgres but not
 // reconciled into a CRD), so the caller omits the live-status fields
 // rather than reporting a misleading zero.
-// spec: §5.2 line 629 ("Operator visibility").
+// spec: §5.2.
 func (l PoolStatusLookup) PoolStatus(ctx context.Context, poolName string) (condition string, idlePodCount int, found bool, err error) {
 	var pool lennyv1.SandboxWarmPool
 	if e := l.Reader.Get(ctx, client.ObjectKey{Namespace: l.Namespace, Name: poolName}, &pool); e != nil {
@@ -470,7 +514,7 @@ func (l PoolStatusLookup) PoolBootstrapStatus(ctx context.Context, poolName stri
 	return float64(pool.Status.BootstrapHoursOfData), pool.Status.ScalingMode, true, nil
 }
 
-// CRDGeneration returns the §4.6.2 line 558 pool_config_generation the
+// CRDGeneration returns the §4.6.2 pool_config_generation the
 // PoolScalingController stamped on the pool's SandboxTemplate annotation,
 // the line-560 last-reconciled instant, and ok = true when the
 // SandboxTemplate exists. It satisfies the admin
@@ -481,7 +525,7 @@ func (l PoolStatusLookup) PoolBootstrapStatus(ctx context.Context, poolName stri
 // Postgres but not reconciled into a CRD), so the handler reports the
 // pending state. The PoolScalingController names both CRDs after the pool
 // (§4.6.2), so the SandboxTemplate is looked up by the pool name.
-// spec: spec/04_system-components.md lines 558-560.
+// spec: §4.6.2.
 func (l PoolStatusLookup) CRDGeneration(ctx context.Context, poolName string) (generation int64, lastReconciledAt time.Time, ok bool, err error) {
 	var tmpl lennyv1.SandboxTemplate
 	if e := l.Reader.Get(ctx, client.ObjectKey{Namespace: l.Namespace, Name: poolName}, &tmpl); e != nil {

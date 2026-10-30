@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §15.1 lines 1207-1224 — ETag-based optimistic concurrency. Migration
+// spec: §15.1 — ETag-based optimistic concurrency. Migration
 // 0142 extends the integer `version` column (the strong entity tag) to the
 // runtime_definitions resource, completing the admin-resource rollout; the
 // down migration drops it. F-15.1.2.

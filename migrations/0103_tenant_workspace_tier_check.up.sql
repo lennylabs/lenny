@@ -1,4 +1,4 @@
--- §12.9 line 1048 / §15.1 line 816: workspace_tier is a closed
+-- §12.9 / §15.1: workspace_tier is a closed
 -- data-classification enum. The tenant-settable values are '' (the
 -- implicit T3 — Confidential default), 'T3', and 'T4' (Restricted);
 -- 'T1'/'T2' classify other data categories and are not selectable as a

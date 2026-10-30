@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: MIT
+#
+# Overlay for the default test compose stack that adds a three-master Redis
+# Cluster (§12.4, Redis Cluster at Tier 3). Bring it up with
+#   lenny-test infra up --profile compose-redis-cluster
+# which runs `docker compose -f compose/default.yml -f compose/redis-cluster.yml`.
+#
+# The masters listen on host ports 17000, 17001, and 17002 and announce
+# 127.0.0.1, so a go-redis cluster client on the Docker host dials
+# 127.0.0.1:17000 and discovers the other two. This is a test fixture for
+# key co-location and SCAN routing; it has no replicas and no AUTH and is not
+# a production posture.
+services:
+  redis-cluster:
+    image: redis:7-alpine
+    container_name: lenny-redis-cluster
+    entrypoint: ["/bin/sh", "/opt/lenny/redis-cluster-start.sh"]
+    environment:
+      REDIS_CLUSTER_PORTS: "17000 17001 17002"
+      REDIS_CLUSTER_ANNOUNCE_IP: "127.0.0.1"
+    volumes:
+      - ./redis-cluster/start.sh:/opt/lenny/redis-cluster-start.sh:ro
+    ports:
+      - "17000:17000"
+      - "17001:17001"
+      - "17002:17002"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 17000 cluster info | grep -q cluster_state:ok"]
+      interval: 2s
+      timeout: 2s
+      retries: 30

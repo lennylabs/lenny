@@ -9,7 +9,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
-// spec: §25.4 lines 1914-1916 / F-25.4.18 — NewPromQueryMetrics registers
+// spec: §25.4 / F-25.4.18 — NewPromQueryMetrics registers
 // lenny_prometheus_query_duration_seconds{kind} and pre-stamps the three
 // closed-enum kinds so the series are scrapeable before the first query.
 func TestPromQueryMetrics_RegistersAndPreStamps_spec_25_4_18(t *testing.T) {

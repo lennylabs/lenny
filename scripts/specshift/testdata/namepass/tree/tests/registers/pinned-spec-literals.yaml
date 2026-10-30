@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+#
+# The string literals of the tier-11 reconciliation carriers that pin
+# specification prose, a specification heading slug, or an intra-spec
+# markdown link, keyed by file and by the literal's position among the
+# string literals that file holds. A literal absent from here is
+# operator-facing or internal text the naming law does not govern, and
+# the pass leaves it as it stands.
+kind: pinned-spec-literals
+version: 1
+entries:
+  - file: tests/tier11_docs/route_test.go
+    literal: 1

@@ -5,7 +5,7 @@ release:
 templates:
   - otlp-tls-guard.yaml
 tests:
-  # spec: §13.2 lines 176-178 — TLS is the default, so the guard renders
+  # spec: §13.2 — TLS is the default, so the guard renders
   # no object and passes on a stock install.
   - it: renders nothing when otlpTlsEnabled is true (the default)
     asserts:

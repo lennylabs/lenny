@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
-// spec: §7.1 line 6 — CreateSession(runtime, pool, retryPolicy,
+// spec: §7.1 — CreateSession(runtime, pool, retryPolicy,
 // metadata). The metadata payload is preserved verbatim across the
 // session lifetime and echoed on GET /v1/sessions/{id}. F-7.3.20.
 
@@ -26,6 +26,7 @@ func newCreateServerWithMetadata(t *testing.T) (*sessionserver.Server, func() st
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	idFn := func() string { return "sess_md" }
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            idFn,
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
@@ -77,7 +78,7 @@ func TestCreateSessionRoundTripsClientMetadata_spec_7_1_F_7_3_20(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 6 — absent metadata payload is preserved as nil so
+// spec: §7.1 — absent metadata payload is preserved as nil so
 // the wire envelope omits the field per the omitempty contract.
 func TestCreateSessionMetadataAbsentOmitsField_spec_F_7_3_20(t *testing.T) {
 	srv, _ := newCreateServerWithMetadata(t)

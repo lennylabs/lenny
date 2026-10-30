@@ -21,36 +21,36 @@ import (
 )
 
 // DefaultSweepInterval is how often the retention GC runs when no
-// interval is configured. It matches the §12.5 line 317
+// interval is configured. It matches the §12.5
 // `gc.cycleIntervalSeconds` default of 900 seconds.
 //
-// spec: §12.5 line 317.
+// spec: §12.5.
 const DefaultSweepInterval = 15 * time.Minute
 
-// MinSweepInterval is the §12.5 line 317 floor on `gc.cycleIntervalSeconds`.
+// MinSweepInterval is the §12.5 floor on `gc.cycleIntervalSeconds`.
 // Operators may raise the interval freely; a configured value below this
 // floor is clamped up so the leader-elected sweep cannot busy-loop.
 //
-// spec: §12.5 line 317 ("minimum: 60").
+// spec: §12.5.
 const MinSweepInterval = 60 * time.Second
 
-// DefaultTombstoneRetention is the §12.5 line 341
+// DefaultTombstoneRetention is the §12.5
 // `gc.tombstoneRetentionSeconds` default: a soft-deleted artifact_store
 // row is retained for this window before the hard-prune sweep physically
 // removes it. The window must outlast the maximum stale-leader write
 // delay; 24 hours is the spec default. Operators may raise it without
 // affecting GC correctness.
 //
-// spec: §12.5 line 341 ("default: 86400 / 24 hours").
+// spec: §12.5.
 const DefaultTombstoneRetention = 24 * time.Hour
 
-// ClampSweepInterval applies the §12.5 line 317 bounds to a configured
+// ClampSweepInterval applies the §12.5 bounds to a configured
 // `gc.cycleIntervalSeconds` value: a non-positive duration selects
 // DefaultSweepInterval, and a positive duration below MinSweepInterval is
 // raised to the floor so the leader-elected sweep cannot busy-loop. Any
 // value at or above the floor is returned unchanged.
 //
-// spec: §12.5 line 317 (default 900, minimum 60).
+// spec: §12.5.
 func ClampSweepInterval(d time.Duration) time.Duration {
 	if d <= 0 {
 		return DefaultSweepInterval
@@ -78,7 +78,7 @@ type Artifact struct {
 // wires it to the corresponding `gatewaymetrics.Metrics` emitters; the
 // minimal/in-memory gateway leaves it nil and the sweep keeps working.
 //
-// spec: §12.5 line 321.
+// spec: §12.5.
 type MetricsSink interface {
 	IncGCRun(outcome string)
 	AddGCArtifactsDeleted(store string, n int)
@@ -106,6 +106,13 @@ type Collector struct {
 	interval  time.Duration
 	clock     func() time.Time
 	metrics   MetricsSink
+	// retentionFor resolves a session's §7.1 retention window. Nil leaves
+	// every row ineligible.
+	retentionFor func(context.Context, sessionstore.Session) (time.Duration, error)
+	// postTerminalCap is the cap of the §7.1 post-terminal window; a
+	// non-positive value refuses every terminal row that names a pod and
+	// records no release.
+	postTerminalCap time.Duration
 }
 
 // Options configures a Collector. A zero field selects its default.
@@ -117,6 +124,20 @@ type Options struct {
 	// Metrics, when set, receives the §12.5 ll. 321 retention-GC
 	// observability signals (runs/artifacts/errors/duration).
 	Metrics MetricsSink
+	// RetentionFor resolves the §7.1 artifact-retention window of a
+	// session; the gateway passes (*sessionserver.Server).RetentionWindow.
+	// A row is collected only once that window has elapsed from its
+	// TerminatedAt. A nil RetentionFor, or one that returns an error,
+	// leaves the row ineligible for that pass. spec: §7.1 (Artifact
+	// retention).
+	RetentionFor func(ctx context.Context, sess sessionstore.Session) (time.Duration, error)
+	// PostTerminalCap is the cap of the §7.1 post-terminal window, the
+	// terminal pipeline budget. A row in its window is not collected,
+	// because a seal may still be uploading under its prefix. A
+	// non-positive cap refuses every terminal row that names a pod and
+	// records no release, so an unwired cap fails closed. spec: §7.1
+	// (Post-terminal window).
+	PostTerminalCap time.Duration
 }
 
 // New returns a Collector. artifacts is the ordered set of per-session
@@ -129,6 +150,9 @@ func New(store sessionstore.Store, tenants TenantLister, artifacts []Artifact, o
 		interval:  opts.Interval,
 		clock:     opts.Clock,
 		metrics:   opts.Metrics,
+
+		retentionFor:    opts.RetentionFor,
+		postTerminalCap: opts.PostTerminalCap,
 	}
 	if c.interval <= 0 {
 		c.interval = DefaultSweepInterval
@@ -140,13 +164,39 @@ func New(store sessionstore.Store, tenants TenantLister, artifacts []Artifact, o
 }
 
 // eligible reports whether a session is due for artifact collection at
-// now: it must be terminal, past a set retention deadline, and not
-// under a §12.8 legal hold.
-func eligible(s sessionstore.Session, now time.Time) bool {
+// now: it must be terminal, not under a §12.8 legal hold, past a set
+// retention deadline, stamped with a TerminatedAt, outside its §7.1
+// post-terminal window, and past its retention window counted from
+// TerminatedAt. The last check makes the deadline the terminal roll writes
+// a best-effort step: a create-time deadline left by a lost roll cannot
+// shorten retention. A terminal row with a zero TerminatedAt stays
+// ineligible, matching the stale-slot reaper's ListStaleTerminalSessions.
+// The window is resolved only for a row already past its deadline.
+// spec: §7.1 (Artifact retention)
+func (c *Collector) eligible(ctx context.Context, s sessionstore.Session, now time.Time) bool {
 	if !session.IsTerminal(s.State) || s.LegalHold {
 		return false
 	}
-	return !s.RetentionExpiresAt.IsZero() && !s.RetentionExpiresAt.After(now)
+	if s.RetentionExpiresAt.IsZero() || s.RetentionExpiresAt.After(now) || s.TerminatedAt.IsZero() {
+		return false
+	}
+	if c.inPostTerminalWindow(s, now) || c.retentionFor == nil {
+		return false
+	}
+	w, err := c.retentionFor(ctx, s)
+	return err == nil && !s.TerminatedAt.Add(w).After(now)
+}
+
+// inPostTerminalWindow reports whether s is in its post-terminal window
+// under the collector's cap. With no positive cap it reports true for every
+// row that names a pod and records no release, so an unwired cap fails
+// closed rather than collect the chunks of a seal still uploading.
+// spec: §7.1 (Post-terminal window)
+func (c *Collector) inPostTerminalWindow(s sessionstore.Session, now time.Time) bool {
+	if c.postTerminalCap <= 0 {
+		return s.PodAssignment != "" && s.PodReleasedAt.IsZero()
+	}
+	return sessionstore.InPostTerminalWindow(s, now, c.postTerminalCap)
 }
 
 // Tick runs one sweep at now and returns the count of sessions whose
@@ -159,7 +209,7 @@ func eligible(s sessionstore.Session, now time.Time) bool {
 //   - `lenny_gc_artifacts_deleted` increments per per-store success,
 //     `lenny_gc_errors_total` increments per per-store failure.
 //
-// spec: §12.5 line 321.
+// spec: §12.5.
 func (c *Collector) Tick(ctx context.Context, now time.Time) (int, error) {
 	start := c.clock()
 	defer func() {
@@ -193,7 +243,7 @@ func (c *Collector) Tick(ctx context.Context, now time.Time) (int, error) {
 
 // SweepTenant runs one incremental retention sweep scoped to a single
 // tenant at now and returns the count of sessions whose artifacts it
-// collected. It is the §12.5 line 317 `gcPriority: high` immediate-sweep
+// collected. It is the §12.5 immediate-sweep
 // hook: the erasure-completion handler calls it for a high-priority tenant
 // whenever an erasure job for that tenant completes, so the tenant's
 // expired artifacts are reclaimed without waiting for the global cycle.
@@ -204,7 +254,7 @@ func (c *Collector) Tick(ctx context.Context, now time.Time) (int, error) {
 // scheduled one. An empty tenant id is rejected so a caller cannot
 // accidentally sweep the whole store.
 //
-// spec: §12.5 line 317.
+// spec: §12.5.
 func (c *Collector) SweepTenant(ctx context.Context, tenant string, now time.Time) (int, error) {
 	start := c.clock()
 	defer func() {
@@ -236,7 +286,7 @@ func (c *Collector) sweepTenant(ctx context.Context, tenant string, now time.Tim
 	}
 	collected := 0
 	for _, row := range rows {
-		if !eligible(row, now) {
+		if !c.eligible(ctx, row, now) {
 			continue
 		}
 		// Re-read the row immediately before the irreversible artifact
@@ -246,7 +296,7 @@ func (c *Collector) sweepTenant(ctx context.Context, tenant string, now time.Tim
 		if err != nil {
 			return collected, err
 		}
-		if !eligible(fresh, now) {
+		if !c.eligible(ctx, fresh, now) {
 			continue
 		}
 		for _, a := range c.artifacts {

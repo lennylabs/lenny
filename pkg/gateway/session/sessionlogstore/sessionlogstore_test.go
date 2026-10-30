@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// spec: §4.4 line 226 — canonical session-log object key path.
+// spec: §4.4 — canonical session-log object key path.
 func TestSessionLogObjectKey(t *testing.T) {
 	got := SessionLogObjectKey("acme", "sess_alice_1")
 	want := "/acme/sessions/sess_alice_1/stderr.log"
@@ -19,7 +19,7 @@ func TestSessionLogObjectKey(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 226 — Noop store accepts well-formed records.
+// spec: §4.4 — Noop store accepts well-formed records.
 func TestNoop_PutAcceptsRecord(t *testing.T) {
 	store := Noop{}
 	err := store.Put(context.Background(), Record{
@@ -32,7 +32,7 @@ func TestNoop_PutAcceptsRecord(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 226 — Noop store rejects malformed records.
+// spec: §4.4 — Noop store rejects malformed records.
 func TestNoop_PutValidatesTenantAndSession(t *testing.T) {
 	store := Noop{}
 	cases := []Record{
@@ -46,7 +46,7 @@ func TestNoop_PutValidatesTenantAndSession(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 226 — MinIOStore.Put requires tenant + session.
+// spec: §4.4 — MinIOStore.Put requires tenant + session.
 func TestMinIOStore_PutValidates(t *testing.T) {
 	store := &MinIOStore{Uploader: &fakeUploader{}}
 	if err := store.Put(context.Background(), Record{}); err == nil {
@@ -54,7 +54,7 @@ func TestMinIOStore_PutValidates(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 226 — empty body is dropped without an upload.
+// spec: §4.4 — empty body is dropped without an upload.
 func TestMinIOStore_PutDropsEmptyBody(t *testing.T) {
 	up := &fakeUploader{}
 	cat := &fakeCatalog{}
@@ -74,7 +74,7 @@ func TestMinIOStore_PutDropsEmptyBody(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 226 — happy path: upload + catalog + quota all fire.
+// spec: §4.4 — happy path: upload + catalog + quota all fire.
 func TestMinIOStore_PutHappyPath(t *testing.T) {
 	up := &fakeUploader{}
 	cat := &fakeCatalog{}
@@ -116,7 +116,7 @@ func TestMinIOStore_PutHappyPath(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 226 — uploader failure is swallowed (best-effort).
+// spec: §4.4 — uploader failure is swallowed (best-effort).
 func TestMinIOStore_UploadFailureIsBestEffort(t *testing.T) {
 	up := &fakeUploader{err: errors.New("minio down")}
 	cat := &fakeCatalog{}
@@ -147,7 +147,7 @@ func TestMinIOStore_UploadFailureIsBestEffort(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 226 — catalog failure does not block quota bump.
+// spec: §4.4 — catalog failure does not block quota bump.
 func TestMinIOStore_CatalogFailureContinues(t *testing.T) {
 	up := &fakeUploader{}
 	cat := &fakeCatalog{err: errors.New("pg down")}
@@ -166,7 +166,7 @@ func TestMinIOStore_CatalogFailureContinues(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 226 — quota failure does not block catalog row.
+// spec: §4.4 — quota failure does not block catalog row.
 func TestMinIOStore_QuotaFailureContinues(t *testing.T) {
 	up := &fakeUploader{}
 	cat := &fakeCatalog{}
@@ -185,7 +185,7 @@ func TestMinIOStore_QuotaFailureContinues(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 226 — body larger than MaxLogBytes is truncated.
+// spec: §4.4 — body larger than MaxLogBytes is truncated.
 func TestMinIOStore_TruncatesLargeBody(t *testing.T) {
 	up := &fakeUploader{}
 	store := &MinIOStore{Uploader: up}
@@ -203,7 +203,7 @@ func TestMinIOStore_TruncatesLargeBody(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 226 — Store without Uploader is a no-op (dev mode).
+// spec: §4.4 — Store without Uploader is a no-op (dev mode).
 func TestMinIOStore_NoUploaderIsNoOp(t *testing.T) {
 	store := &MinIOStore{}
 	err := store.Put(context.Background(), Record{
@@ -216,7 +216,7 @@ func TestMinIOStore_NoUploaderIsNoOp(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 226 — CloseHook routes to the Store.
+// spec: §4.4 — CloseHook routes to the Store.
 func TestCloseHook_OnSessionTerminal(t *testing.T) {
 	captured := &capturingStore{}
 	hook := &CloseHook{Store: captured}
@@ -239,7 +239,7 @@ func TestCloseHook_OnSessionTerminal(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 226 — CloseHook validates Store is wired.
+// spec: §4.4 — CloseHook validates Store is wired.
 func TestCloseHook_NilStoreErrors(t *testing.T) {
 	hook := &CloseHook{}
 	err := hook.OnSessionTerminal(context.Background(), "acme", "sess", nil, false)
@@ -302,7 +302,7 @@ func (c *capturingStore) Put(_ context.Context, r Record) error {
 	return nil
 }
 
-// spec: §4.4 line 226 — sliceReader sustains short-buffer reads.
+// spec: §4.4 — sliceReader sustains short-buffer reads.
 func TestSliceReader_ShortReads(t *testing.T) {
 	r := newReader([]byte("abcdef"))
 	buf := make([]byte, 2)

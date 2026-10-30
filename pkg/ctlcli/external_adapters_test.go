@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// spec: §24.8 line 113 — `lenny-ctl admin external-adapters validate
+// spec: §24.8 — `lenny-ctl admin external-adapters validate
 // --name <name>` issues POST /v1/admin/external-adapters/{name}/validate.
 func TestExternalAdaptersValidateTargetsGateway(t *testing.T) {
 	code, got := runAgainstGateway(t, http.StatusOK, `{"name":"acme-a2a","status":"active"}`,
@@ -108,8 +108,7 @@ func TestExternalAdaptersDelete(t *testing.T) {
 // body-less DELETE leaves stdout empty for a strict `| jq` pipeline), it must
 // route to stderr instead, and `--quiet` must suppress it. Fails against
 // pre-fix code, which wrote the advisory to stdout and ignored --quiet.
-// spec: §24.16 line 205 (--output json strict stdout; --quiet suppresses
-// informational messages).
+// spec: §24.16.
 func TestExternalAdaptersDeleteAdvisoryStdoutClean_spec_24_16_205(t *testing.T) {
 	const advisory = "external adapter"
 
@@ -151,7 +150,7 @@ func TestExternalAdaptersNoSubcommand(t *testing.T) {
 	}
 }
 
-// spec: §15.1 lines 1207-1213 — `external-adapters update` reads the current
+// spec: §15.1 — `external-adapters update` reads the current
 // ETag with a GET and forwards it as If-Match on the PUT (the read-modify-write
 // pattern the §15.1 admin API documents).
 func TestExternalAdaptersUpdateSendsIfMatch(t *testing.T) {

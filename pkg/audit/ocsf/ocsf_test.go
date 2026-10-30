@@ -297,7 +297,7 @@ func TestAdminUserInvalidatedMapsToDisable_spec_11_4(t *testing.T) {
 	}
 }
 
-// spec: §9.3 line 116-164 — F-9.3.9. The §9.3 connector lifecycle
+// spec: §9.3 — F-9.3.9. The §9.3 connector lifecycle
 // audit events must resolve to a distinguished OCSF class so SIEM
 // consumers see registration, update, soft-delete, and OAuth flow
 // rows under the right semantic class instead of the generic admin.*
@@ -329,7 +329,7 @@ func TestConnectorEventsResolveToTypedClasses_spec_9_3_116(t *testing.T) {
 	}
 }
 
-// spec: §24.11 line 136 — F-24.11.3. The operator force-terminate event
+// spec: §24.11 — F-24.11.3. The operator force-terminate event
 // resolves to API Activity with a Delete activity_id via an explicit
 // exact-catalog entry, not the generic `session.` prefix fallback (which
 // would yield ActivityUnknown).
@@ -343,5 +343,39 @@ func TestSessionForceTerminatedResolvesToDelete_spec_24_11(t *testing.T) {
 	}
 	if m.ActivityID != ActivityDelete {
 		t.Errorf("activity_id = %d, want %d (Delete) — must not fall through to the session. prefix Unknown", m.ActivityID, ActivityDelete)
+	}
+}
+
+// spec: 12.3 (Postgres HA Requirements, cross_tenant_read audit event), 11.7 (Audit Logging, OCSF wire format)
+// diagnosis: the §12.3 cross_tenant_read receipt that every `__all__`
+// reader writes to the platform chain must translate to OCSF. A miss
+// dead-letters every SIEM-forwarder receipt and fails the §25.9
+// audit-events listing that renders the platform chain with a 500.
+func TestCrossTenantReadTranslatesToAPIActivityRead_spec_12_3(t *testing.T) {
+	m, ok := LookupClass("cross_tenant_read")
+	if !ok {
+		t.Fatal("cross_tenant_read has no OCSF class mapping")
+	}
+	if m.ClassUID != ClassAPIActivity || m.ActivityID != ActivityRead {
+		t.Errorf("cross_tenant_read mapped to class %d activity %d, want %d/%d",
+			m.ClassUID, m.ActivityID, ClassAPIActivity, ActivityRead)
+	}
+	// The payload forms the emitters write: the batched worker form and
+	// the synchronous form that carries a caller.
+	for _, payload := range []string{
+		`{"category":"audit_siem_forwarder","row_count":3}`,
+		`{"category":"audit_scatter_gather","row_count":0,"caller_subject":"alice@acme.com","endpoint":"/v1/admin/audit-events"}`,
+	} {
+		rec, err := Translate(Input{
+			ID: "row-1", Sequence: 4591, TenantID: "platform",
+			EventType: "cross_tenant_read", Payload: json.RawMessage(payload),
+		})
+		if err != nil {
+			t.Fatalf("translate %s: %v", payload, err)
+		}
+		if rec.ClassUID != ClassAPIActivity || rec.ActivityID != ActivityRead {
+			t.Errorf("record class/activity = %d/%d, want %d/%d",
+				rec.ClassUID, rec.ActivityID, ClassAPIActivity, ActivityRead)
+		}
 	}
 }

@@ -3,7 +3,8 @@
 // Package fileexport implements the §8.7 delegation file-export
 // validation rules: destPrefix rebasing constraints, the
 // fileExportLimits structural ceilings, and the realpath
-// symlink-containment check against the parent's /workspace/current.
+// symlink-containment check against the parent session's
+// /workspace/slots/{sessionId}/current.
 //
 // These are the validators the §8.7 materialization path (delegate_task
 // fileExport resolution → parent-pod file fetch → child-workspace
@@ -27,7 +28,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/upload"
 )
 
-// destPrefix validation errors. spec: §8.7 line 789.
+// destPrefix validation errors. spec: §8.7.
 var (
 	// ErrDestPrefixAbsolute — destPrefix is an absolute path. §8.7
 	// requires a relative path so the rebased file lands under the
@@ -39,7 +40,7 @@ var (
 	ErrDestPrefixParentSegment = errors.New("fileexport: destPrefix must not contain a `..` segment")
 )
 
-// ValidateDestPrefix enforces the §8.7 line 789 destPrefix rules: a
+// ValidateDestPrefix enforces the §8.7 destPrefix rules: a
 // destPrefix must be a relative path with no `..` segment and no leading
 // `/`. An empty destPrefix is valid and means "rebase to the child's
 // workspace root" (the "none" column in the §8.7 rebasing table). The
@@ -62,7 +63,7 @@ func ValidateDestPrefix(destPrefix string) error {
 	return nil
 }
 
-// FileExportLimits is the §8.3 line 264 fileExportLimits structural
+// FileExportLimits is the §8.3 fileExportLimits structural
 // ceiling carried on the delegation lease: the maximum number of
 // exported files and the maximum aggregate exported size in bytes,
 // checked across all of a delegation's fileExport entries. It is
@@ -78,14 +79,14 @@ type FileExportLimits struct {
 	MaxTotalSize int64
 }
 
-// DefaultFileExportLimits is the §8.3 line 264 default
+// DefaultFileExportLimits is the §8.3 default
 // `{ maxFiles: 100, maxTotalSize: 100MB }`.
 var DefaultFileExportLimits = FileExportLimits{
 	MaxFiles:     100,
 	MaxTotalSize: 100 * 1024 * 1024,
 }
 
-// fileExportLimits violation errors. spec: §8.7 lines 790-791.
+// fileExportLimits violation errors. spec: §8.7.
 var (
 	// ErrTooManyFiles — the export's file count exceeds MaxFiles.
 	ErrTooManyFiles = errors.New("fileexport: exported file count exceeds fileExportLimits.maxFiles")
@@ -94,8 +95,8 @@ var (
 	ErrTotalSizeExceeded = errors.New("fileexport: aggregate exported size exceeds fileExportLimits.maxTotalSize")
 )
 
-// Check enforces the §8.7 lines 790-791 aggregate ceilings against a
-// resolved export's file count and total byte size. The §15.1 line 1071
+// Check enforces the §8.7 aggregate ceilings against a
+// resolved export's file count and total byte size. The §15.1
 // note positions these as "the export validation" that surfaces before
 // the per-file contentPolicy.maxExportedFileSize scan gate.
 func (l FileExportLimits) Check(fileCount int, totalBytes int64) error {
@@ -109,11 +110,10 @@ func (l FileExportLimits) Check(fileCount int, totalBytes int64) error {
 }
 
 // ErrPathEscapesRoot — a matched export source resolved (via realpath)
-// to a location outside the parent's workspace root. spec: §8.7 line
-// 787.
+// to a location outside the parent's workspace root. spec: §8.7.
 var ErrPathEscapesRoot = errors.New("fileexport: resolved source path escapes the workspace root")
 
-// ResolveWithinRoot implements the §8.7 line 787 symlink defense: it
+// ResolveWithinRoot implements the §8.7 symlink defense: it
 // resolves candidate to its real path (following symlinks, like
 // realpath) and rejects it when the resolved path falls outside
 // workspaceRoot. This stops an agent that planted a symlink (for

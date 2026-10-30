@@ -7,8 +7,7 @@ package events
 // non-audit event carries an event-specific JSON object, an
 // audit-bearing event carries the §11.7 OCSF v1.1.0 record. The
 // CloudEvents envelope is the transport; the data field is the payload;
-// there is no intermediate container. spec: §25.3 line 652; §25.5 line
-// 2556.
+// there is no intermediate container. spec: §25.3; §25.5.
 const (
 	// ContentTypeJSON is the datacontenttype a non-audit operational
 	// event sets.
@@ -24,8 +23,7 @@ const (
 // data field (datacontenttype application/ocsf+json), per the §25.5
 // single-envelope model. A consumer that sees true parses data as the
 // §11.7 OCSF v1.1.0 record; false means data is the event-specific JSON
-// object documented per type in the §16.6 catalogue. spec: §25.5 line
-// 2556.
+// object documented per type in the §16.6 catalogue. spec: §25.5.
 func (e OperationalEvent) IsAuditBearing() bool {
 	return e.DataContentType == ContentTypeOCSF
 }

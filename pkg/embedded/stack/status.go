@@ -67,8 +67,7 @@ type StatusOptions struct {
 // recorded kubeconfig on Linux). The active session count is read from the
 // gateway admin API through the host-side forwarder.
 //
-// spec: §17.4 line 178 (the control plane runs as in-cluster pods; status
-// distinguishes gateway-up from pool-ready), §24.19 line 262.
+// spec: §17.4, §24.19.
 func CollectStatus(ctx context.Context, opts StatusOptions) (Status, error) {
 	root, err := resolveRoot(opts.Root)
 	if err != nil {
@@ -239,7 +238,7 @@ func containerDetail(name string) string {
 
 // WriteStatus renders a Status report as a human-readable table.
 //
-// spec: §17.4 line 178, §24.19 line 262.
+// spec: §17.4, §24.19.
 func WriteStatus(w io.Writer, s Status) {
 	if !s.Running {
 		fmt.Fprintln(w, "lenny status: no embedded stack is running")

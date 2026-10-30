@@ -4,32 +4,33 @@
 // handoff-safe durable home for the §8.6 extension-denied flag, the
 // rejection cool-off expiry, and the lease-extension grant counters.
 //
-// §8.6 lines 730-733 forbid a user's rejection of a budget elicitation
+// §8.6 forbid a user's rejection of a budget elicitation
 // from being bypassed by a gateway restart, rolling update, or
 // coordinator handoff. This store satisfies the three normative rules:
 //
-//   - Durability (line 730): Deny persists the flag and the cool-off
+//   - Durability: Deny persists the flag and the cool-off
 //     expiry to the delegation_tree_budget table, keyed by
 //     (tenant_id, root_session_id), so a newly elected replica reads the
 //     denial on its first extension request.
-//   - Read-from-store (line 731): Denied reads the flag from Postgres,
+//   - Read-from-store: Denied reads the flag from Postgres,
 //     never from an in-memory cache, and compares cool_off_expiry against
 //     the database clock (NOW()) rather than a replica's Go wall clock.
-//   - In-flight atomic re-check (line 732): Grant locks the tree's row,
-//     re-evaluates the denial inside the same transaction that increments
-//     the durable extension counters, and rolls the increment back —
-//     returning ErrExtensionDenied — when the flag is found set. The flag
-//     read and the counter write serialize under the row lock, closing
-//     the race where a REJECTED outcome is persisted between an earlier
-//     flag read and a later grant commit.
+//   - In-flight atomic re-check: Grant locks the tree's row,
+//     re-evaluates the denial inside the same transaction that adds the
+//     clamped grant to the cumulative ext_* columns, and rolls back,
+//     returning ErrExtensionDenied, when the flag is found set. The flag
+//     read, the clamp, and the counter write serialize under the row
+//     lock, closing the race where a REJECTED outcome is persisted
+//     between an earlier flag read and a later grant commit, and keeping
+//     concurrent grants from different replicas within the limit.
 //
-// All cool-off comparisons use the database clock per §8.6 line 733; the
+// All cool-off comparisons use the database clock per §8.6; the
 // store never compares an expiry against time.Now() in Go. The §11.2
 // consumption-counter checkpoint (delegationbudget/pgstore) and this
 // store write disjoint column sets on the same row, so neither clobbers
 // the other.
 //
-// spec: §8.6 lines 730-733.
+// spec: §8.6.
 package denialpg
 
 import (
@@ -58,7 +59,7 @@ func New(pool *pgxpool.Pool) *Store {
 var _ leasecontrol.DenialStore = (*Store)(nil)
 
 // Deny persists the tree's extension-denied flag and sets the cool-off
-// expiry coolOff into the future from the database clock (§8.6 line 733),
+// expiry coolOff into the future from the database clock (§8.6),
 // keyed by (tenantID, rootSessionID). It upserts so a tree with no prior
 // row (no checkpoint yet) is created denied. The §11.2 consumption
 // columns are left at their defaults.
@@ -85,7 +86,7 @@ func (s *Store) Deny(ctx context.Context, tenantID, rootSessionID string, coolOf
 
 // Denied reports whether the tree is currently extension-denied. The
 // flag-set AND cool_off_expiry > NOW() comparison is evaluated in SQL
-// against the database clock (§8.6 line 733). A tree with no persisted
+// against the database clock (§8.6). A tree with no persisted
 // row is reported not denied with a zero expiry.
 func (s *Store) Denied(ctx context.Context, tenantID, rootSessionID string) (bool, time.Time, error) {
 	var denied bool
@@ -112,63 +113,112 @@ func (s *Store) Denied(ctx context.Context, tenantID, rootSessionID string) (boo
 	return denied, expiry.UTC(), nil
 }
 
-// Grant runs the §8.6 line 732 in-flight atomic re-check. The single
-// upsert acquires the tree row's lock (via ON CONFLICT) and either:
-//
-//   - increments the durable per-tree extension counters and returns the
-//     row (the grant committed) when the tree is not denied; or
-//   - suppresses the increment via the conditional WHERE and returns no
-//     row when the flag is set and the cool-off has not expired, which
-//     this method maps to ErrExtensionDenied.
-//
-// On the fresh-insert path no denial can exist, so the row is always
-// returned. The denial comparison uses NOW() inside the transaction so
-// the flag read and the counter write are serialized under the row lock.
-func (s *Store) Grant(ctx context.Context, tenantID, rootSessionID string, granted leasecontrol.Dimensions) error {
+// Grant runs the §8.6 in-flight atomic re-check. In one transaction it
+// ensures the tree's row exists, locks it with SELECT ... FOR UPDATE,
+// re-evaluates the denial against the database clock, clamps requested
+// so each cumulative ext_* column stays within limit
+// (leasecontrol.ClampGrant), and adds the clamped amount. A denied tree
+// returns leasecontrol.ErrExtensionDenied and the transaction rolls back.
+// The flag read, the clamp, and the counter write serialize under the
+// row lock, so grants served by different replicas never exceed the
+// limit together.
+// spec: §8.6 (In-flight requests), §8.6 (Extension state)
+func (s *Store) Grant(ctx context.Context, tenantID, rootSessionID string, requested, limit leasecontrol.Dimensions) (leasecontrol.GrantResult, error) {
+	var res leasecontrol.GrantResult
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-		var ok bool
-		scanErr := tx.QueryRow(
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO delegation_tree_budget (tenant_id, root_session_id, updated_at)
+			 VALUES ($1, $2, clock_timestamp())
+			 ON CONFLICT (tenant_id, root_session_id) DO NOTHING`,
+			tenantID, rootSessionID); err != nil {
+			return err
+		}
+		var denied bool
+		var cur leasecontrol.Dimensions
+		if err := tx.QueryRow(ctx,
+			`SELECT extension_denied
+			          AND cool_off_expiry IS NOT NULL
+			          AND cool_off_expiry > NOW(),
+			        `+extColumns+`
+			   FROM delegation_tree_budget
+			  WHERE tenant_id = $1 AND root_session_id = $2
+			    FOR UPDATE`,
+			tenantID, rootSessionID).Scan(append([]any{&denied}, extTargets(&cur)...)...); err != nil {
+			return err
+		}
+		if denied {
+			return leasecontrol.ErrExtensionDenied
+		}
+		applied := leasecontrol.ClampGrant(cur, requested, limit)
+		var total leasecontrol.Dimensions
+		if err := tx.QueryRow(
 			ctx,
-			`INSERT INTO delegation_tree_budget
-			     (tenant_id, root_session_id,
-			      ext_tokens, ext_seconds, ext_children, ext_parallel_children,
-			      ext_tree_size, ext_file_export_files, ext_file_export_bytes, updated_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())
-			 ON CONFLICT (tenant_id, root_session_id) DO UPDATE
-			     SET ext_tokens            = delegation_tree_budget.ext_tokens            + EXCLUDED.ext_tokens,
-			         ext_seconds           = delegation_tree_budget.ext_seconds           + EXCLUDED.ext_seconds,
-			         ext_children          = delegation_tree_budget.ext_children          + EXCLUDED.ext_children,
-			         ext_parallel_children = delegation_tree_budget.ext_parallel_children + EXCLUDED.ext_parallel_children,
-			         ext_tree_size         = delegation_tree_budget.ext_tree_size         + EXCLUDED.ext_tree_size,
-			         ext_file_export_files = delegation_tree_budget.ext_file_export_files + EXCLUDED.ext_file_export_files,
-			         ext_file_export_bytes = delegation_tree_budget.ext_file_export_bytes + EXCLUDED.ext_file_export_bytes,
+			`UPDATE delegation_tree_budget
+			     SET ext_tokens            = ext_tokens            + $3,
+			         ext_seconds           = ext_seconds           + $4,
+			         ext_children          = ext_children          + $5,
+			         ext_parallel_children = ext_parallel_children + $6,
+			         ext_tree_size         = ext_tree_size         + $7,
+			         ext_file_export_files = ext_file_export_files + $8,
+			         ext_file_export_bytes = ext_file_export_bytes + $9,
 			         updated_at            = clock_timestamp()
-			     WHERE NOT (delegation_tree_budget.extension_denied
-			                AND delegation_tree_budget.cool_off_expiry IS NOT NULL
-			                AND delegation_tree_budget.cool_off_expiry > NOW())
-			 RETURNING TRUE`,
+			   WHERE tenant_id = $1 AND root_session_id = $2
+			 RETURNING `+extColumns,
 			tenantID, rootSessionID,
-			granted.Tokens, granted.Seconds, granted.Children, granted.ParallelChildren,
-			granted.TreeSize, granted.FileExportFiles, granted.FileExportBytes,
-		).Scan(&ok)
-		if errors.Is(scanErr, pgx.ErrNoRows) {
-			// The conflict-update WHERE was false: the tree is denied and
-			// in cool-off, so no row was updated or returned. Roll back.
-			return leasecontrol.ErrExtensionDenied
+			applied.Tokens, applied.Seconds, applied.Children, applied.ParallelChildren,
+			applied.TreeSize, applied.FileExportFiles, applied.FileExportBytes,
+		).Scan(extTargets(&total)...); err != nil {
+			return err
 		}
-		return scanErr
+		res = leasecontrol.GrantResult{Applied: applied, Total: total}
+		return nil
 	})
-	if err != nil {
-		if errors.Is(err, leasecontrol.ErrExtensionDenied) {
-			return leasecontrol.ErrExtensionDenied
-		}
-		return fmt.Errorf("denialpg: grant %q/%q: %w", tenantID, rootSessionID, err)
+	if errors.Is(err, leasecontrol.ErrExtensionDenied) {
+		return leasecontrol.GrantResult{}, leasecontrol.ErrExtensionDenied
 	}
-	return nil
+	if err != nil {
+		return leasecontrol.GrantResult{}, fmt.Errorf("denialpg: grant %q/%q: %w", tenantID, rootSessionID, err)
+	}
+	return res, nil
+}
+
+// Grants returns the tree's cumulative extension grants with a
+// primary-key SELECT of the ext_* columns, and zero for a tree with no
+// row.
+// spec: §8.6 (Extension state)
+func (s *Store) Grants(ctx context.Context, tenantID, rootSessionID string) (leasecontrol.Dimensions, error) {
+	var d leasecontrol.Dimensions
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT `+extColumns+`
+			   FROM delegation_tree_budget
+			  WHERE tenant_id = $1 AND root_session_id = $2`,
+			tenantID, rootSessionID).Scan(extTargets(&d)...)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return leasecontrol.Dimensions{}, nil
+	}
+	if err != nil {
+		return leasecontrol.Dimensions{}, fmt.Errorf("denialpg: grants %q/%q: %w", tenantID, rootSessionID, err)
+	}
+	return d, nil
+}
+
+// extColumns lists the cumulative grant columns in the order extTargets
+// scans them.
+const extColumns = `ext_tokens, ext_seconds, ext_children, ext_parallel_children,
+			        ext_tree_size, ext_file_export_files, ext_file_export_bytes`
+
+// extTargets returns scan targets for extColumns.
+func extTargets(d *leasecontrol.Dimensions) []any {
+	return []any{
+		&d.Tokens, &d.Seconds, &d.Children, &d.ParallelChildren,
+		&d.TreeSize, &d.FileExportFiles, &d.FileExportBytes,
+	}
 }
 
 // Clear clears the tree's extension-denied flag and cool-off, backing the
-// §15.1 line 868 admin extension-denial clear endpoint. Clearing a tree
+// §15.1 admin extension-denial clear endpoint. Clearing a tree
 // with no persisted denial row is a no-op (the caller has already
 // established the tree is known).
 func (s *Store) Clear(ctx context.Context, tenantID, rootSessionID string) error {

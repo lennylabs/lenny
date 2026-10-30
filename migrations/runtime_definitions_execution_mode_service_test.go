@@ -34,7 +34,7 @@ const pgCheckViolation = "23514"
 // (TestStaleModeCommentsReKeyed_spec_5_2_12_6).
 //
 // The concurrency_style drop is a §10.5 Phase 3 column drop fronted by a
-// PL/pgSQL DO $$ preflight gate (spec §10.5 line 417), which counts un-migrated
+// PL/pgSQL DO $$ preflight gate (spec §10.5), which counts un-migrated
 // rows and RAISE EXCEPTIONs when any remain. A non-default concurrency_style
 // (the empty string is the 0040 default) is an un-migrated row: the §5.2 mode
 // collapse stages no per-row SQL backfill, so a pool still carrying a
@@ -58,12 +58,12 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 		"scrub_failure_count INTEGER",
 		"DROP COLUMN IF EXISTS concurrency_style",
 		"RENAME COLUMN task_policy TO session_policy",
-		// §10.5 line 417: the Phase 3 column drop is fronted by a DO $$
+		// §10.5: the Phase 3 column drop is fronted by a DO $$
 		// preflight gate and declares the covering partial index in a
 		// -- gate-index: comment.
 		"DO $$",
 		"gate-index:",
-		// §10.5 line 417: the gate counts un-migrated rows and aborts when
+		// §10.5: the gate counts un-migrated rows and aborts when
 		// any remain. A non-default concurrency_style is un-migrated data the
 		// §5.2 collapse re-expresses in pool configuration with no per-row SQL
 		// backfill, so the gate fails closed on any such row.
@@ -126,7 +126,7 @@ func TestExecutionModeServiceMigrationSQL_spec_5_2_12_6(t *testing.T) {
 // to the new model rather than swapped token-for-token: under the §5.2 mode
 // collapse the non-'none' scrub policies (sequential recycling and
 // concurrent slots) are session-mode presets, so the comment keys them to
-// session mode per spec/07 §7.1 line 72 rather than to service mode, and it
+// session mode per spec/07 §7.1 rather than to service mode, and it
 // must not assert the column is set 'only when execution_mode is service'
 // (the inverted claim the first landing carried). The golang-migrate runner
 // tracks the version integer and never re-reads an applied migration body
@@ -157,7 +157,7 @@ func TestStaleModeCommentsReKeyed_spec_5_2_12_6(t *testing.T) {
 				// The non-'none' scrub policies belong to session mode under the
 				// §5.2 mode collapse (sequential recycling and concurrent slots are
 				// session-mode presets). A comment claiming the column is set 'only
-				// when execution_mode is service' inverts the §7.1 line 72 keying:
+				// when execution_mode is service' inverts the §7.1 keying:
 				// service mode carries 'none', and the recycling and concurrent
 				// scrub policies sit under session mode.
 				"only when execution_mode is 'service'",

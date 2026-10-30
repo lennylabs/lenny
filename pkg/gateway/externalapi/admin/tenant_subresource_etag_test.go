@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
-// spec: §15.1 lines 1207-1224 — the §10.6 rbac-config and §9.2
+// spec: §15.1 — the §10.6 rbac-config and §9.2
 // elicitation-content-integrity admin sub-resources are stored on the
 // tenant row, so their ETag is the tenant's version. These cases verify
 // the contract end to end and that a write through any of the three

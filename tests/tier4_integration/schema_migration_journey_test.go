@@ -82,7 +82,7 @@ func newFixtureMigrator(t *testing.T, pg *containers.Postgres) *migrate.Migrate 
 // (contract): Drop old columns/tables in a subsequent release ... Every
 // Phase 3 migration file must begin with a preflight verification block
 // ... and aborts the migration with a non-zero exit code if the result is
-// nonzero"); §17.6 line 848 ("Re-run: ... clear the dirty flag
+// nonzero"); §17.6 ("Re-run: ... clear the dirty flag
 // (`UPDATE schema_migrations SET dirty = false WHERE version = <N>`),
 // release any stale advisory locks, and re-run the migration Job").
 //
@@ -92,6 +92,9 @@ func newFixtureMigrator(t *testing.T, pg *containers.Postgres) *migrate.Migrate 
 // recovered by the documented clear-dirty-flag-and-retry procedure, over
 // a real Postgres and the real golang-migrate driver.
 func TestSchemaMigrationJourney_ExpandGateContract(t *testing.T) {
+	t.Parallel()
+	// A container of its own rather than sharedDatabase: the fixture
+	// migrator drives an unmigrated server (T-17.4.33).
 	pg := containers.StartPostgres(t, containers.PostgresOptions{})
 
 	m := newFixtureMigrator(t, pg)
@@ -144,7 +147,7 @@ func TestSchemaMigrationJourney_ExpandGateContract(t *testing.T) {
 	// Phase 3 (contract) attempted with widget-b still un-migrated: the
 	// gate must abort the migration with a non-zero-exit-equivalent
 	// error before any DDL commits, and the failed run must leave the
-	// fixture's schema_migrations row dirty (§17.6 line 848 line "clear
+	// fixture's schema_migrations row dirty (§17.6 line "clear
 	// the dirty flag" implies a failed migration leaves one set).
 	err = m.Migrate(3)
 	if err == nil {
@@ -179,7 +182,7 @@ func TestSchemaMigrationJourney_ExpandGateContract(t *testing.T) {
 		t.Fatalf("Phase 3 gate rejection still dropped widgets.price_cents; the whole up-file must roll back in one transaction")
 	}
 
-	// Recover per the §17.6 line 848 documented remediation: resolve the
+	// Recover per the §17.6 documented remediation: resolve the
 	// data, clear the dirty flag, and re-run. golang-migrate records the
 	// dirty flag against the target version it failed to reach (3 here),
 	// so "clear the dirty flag" alone leaves the tracker believing
@@ -231,13 +234,12 @@ func TestSchemaMigrationJourney_ExpandGateContract(t *testing.T) {
 // the expand-contract discipline exists to provide does not hold over
 // the real HTTP admin surface and a real Postgres.
 func TestSchemaMigrationJourney_GatewayCoexistsAcrossExpandStepAndRestart(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 
-	gw1 := gateway.StartWith(t, "--dev-mode", "--postgres-dsn="+pg.DSN)
+	gw1 := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN)
 	c1 := poolUpgradeClient{t: t, base: gw1.BaseURL()}
 
 	if code, body := c1.do(http.MethodPost, "/v1/admin/bootstrap", map[string]any{
@@ -269,7 +271,7 @@ func TestSchemaMigrationJourney_GatewayCoexistsAcrossExpandStepAndRestart(t *tes
 	// Warm restart: a second gateway process boots against the same,
 	// now-migrated Postgres while gw1 remains alive, matching §10.5's
 	// "mixed-version replicas must coexist during rollout."
-	gw2 := gateway.StartWith(t, "--dev-mode", "--postgres-dsn="+pg.DSN)
+	gw2 := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN)
 	c2 := poolUpgradeClient{t: t, base: gw2.BaseURL()}
 
 	// gw2 sees the pool gw1 created before the restart (data continuity

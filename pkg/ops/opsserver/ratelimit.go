@@ -17,14 +17,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
-// Defaults from §25.4 line 2001 ("Default: 20 requests/second with burst
-// of 50, configurable via ops.rateLimiting Helm values").
+// Defaults from §25.4.
 const (
 	DefaultRateLimitRPS   = 20.0
 	DefaultRateLimitBurst = 50
 )
 
-// rateLimitedTotal is the §25.4 line 2007 counter of requests rejected
+// rateLimitedTotal is the §25.4 counter of requests rejected
 // by the per-service-account rate limiter, labelled by the JWT sub
 // claim. Registered on the default registry at package init so the
 // §16.9 lenny-ops /metrics endpoint exposes it (F-16.8.1).
@@ -43,10 +42,10 @@ func init() {
 	rateLimitedTotal = c
 }
 
-// RateLimiter is the §25.4 line 2001 per-service-account token-bucket
+// RateLimiter is the §25.4 per-service-account token-bucket
 // rate limiter. It keys an independent token bucket on the authenticated
 // sub claim, so one service account saturating its budget never starves
-// another. The limiter is in-process (§25.4 line 2003): with N replicas
+// another. The limiter is in-process (§25.4): with N replicas
 // the effective per-account limit is rps*N.
 type RateLimiter struct {
 	rps   rate.Limit
@@ -77,7 +76,7 @@ func NewRateLimiter(rps float64, burst int) *RateLimiter {
 	}
 }
 
-// Snapshot reports the §25.4 line 1611 rateLimits block for sub: the
+// Snapshot reports the §25.4 rateLimits block for sub: the
 // current token-bucket balance, the configured rps, and the burst. The
 // GET /v1/admin/me endpoint surfaces tokens so an agent can self-pace
 // precisely. Reading the balance creates the bucket on first use (so a
@@ -99,7 +98,7 @@ func (rl *RateLimiter) limiterFor(sub string) *rate.Limiter {
 	return l
 }
 
-// retryAfterSeconds is the §25.4 line 2003 Retry-After value: the time
+// retryAfterSeconds is the §25.4 Retry-After value: the time
 // until the next token, rounded up to whole seconds with a one-second
 // floor (a sub-second Retry-After serializes to "0", which clients read
 // as "retry immediately" and would defeat the back-pressure).
@@ -121,7 +120,7 @@ func (rl *RateLimiter) retryAfterSeconds() int {
 // principal; an unauthenticated request (no principal) shares the
 // "anonymous" bucket, which only the dev path can reach.
 //
-// spec: §25.4 lines 2001-2003.
+// spec: §25.4.
 func (rl *RateLimiter) Wrap(inner http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sub := "anonymous"

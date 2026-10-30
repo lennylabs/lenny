@@ -3,6 +3,7 @@
 package adapter
 
 import (
+	"fmt"
 	"log"
 	"sort"
 	"time"
@@ -15,17 +16,19 @@ import (
 )
 
 // assignCredentialsSlot writes the §6.1 per-slot credential file
-// /run/lenny/slots/{slotId}/credentials.json from the slot's independent
+// /run/lenny/slots/{sessionId}/credentials.json from the slot's independent
 // lease set, leaving sibling slots' files untouched. The slot must
 // already hold the session (StartSession ran first); credentials may also
 // be assigned before start during the §4.7 bind sequence, in which case
-// the slot tree is created here. spec: §6.1 line 28.
-func (s *Server) assignCredentialsSlot(sessionID, slotID string, reqLeases map[string]*adapterv1.CredentialLease) (*adapterv1.AssignCredentialsResponse, error) {
+// the slot tree is created here. r is the resolve the AssignCredentials
+// request asserts, so §4.7.1's admission rules gate the write.
+// spec: §6.1; §4.7.1 (role and gateway RPC contract).
+func (s *Server) assignCredentialsSlot(sessionID, slotID string, reqLeases map[string]*adapterv1.CredentialLease, r slotResolve) (*adapterv1.AssignCredentialsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st, err := s.ensureSlotStateLocked(slotID)
+	st, err := s.ensureSlotStateLocked(slotID, r)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "resolve slot %s: %v", slotID, err)
+		return nil, slotResolveError(err, fmt.Sprintf("resolve slot %s", slotID))
 	}
 	// The §4.7 bind sequence assigns credentials before StartSession, so a
 	// not-yet-started slot records the session here; a started slot must
@@ -45,19 +48,25 @@ func (s *Server) assignCredentialsSlot(sessionID, slotID string, reqLeases map[s
 		return nil, err
 	}
 	st.creds = leases
-	// §4.9 line 1149: arm a per-slot expiry timer for each direct-mode lease,
+	st.assigned = true
+	// §4.9: arm a per-slot expiry timer for each direct-mode lease,
 	// independent of sibling slots.
 	s.reconcileSlotExpiryTimersLocked(st, slotID, leases)
 	return &adapterv1.AssignCredentialsResponse{}, nil
 }
 
 // rotateCredentialsSlot replaces the named providers' leases in the
-// slot's per-slot file. Per §6.1 the rotation is independent: a sibling
-// slot's file and in-flight requests are unaffected. The §4.7 Full-level
-// in-flight gate / ceiling / ack protocol is the runtime's concern over
-// its lifecycle channel; the concurrent slot's runtime owns its own
-// channel, so this path performs the file rewrite and lets the slot's
-// runtime rebind. spec: §6.1 line 28; §4.7 lines 816-829.
+// session's own credential file. The file rewrite is per session: a
+// sibling session's file is untouched, and so is the acknowledgement
+// wait, which is keyed on this rotation's lease. The §4.7 Full-level
+// in-flight gate and its ceiling are not per session. One runtime
+// process serves every slot on the pod over the pod's single
+// CH-RUNTIMEOPS, so the gate counts outstanding requests pod-wide per
+// provider: a co-tenant session's outstanding request for the same
+// provider gates this rotation and can drive it into the ceiling on its
+// own. The protocol runs in the merged RotateCredentials handler, which
+// calls rotateProviderFull per provider once this rewrite returns.
+// spec: §6.1; §4.7.
 func (s *Server) rotateCredentialsSlot(sessionID, slotID string, reqLeases map[string]*adapterv1.CredentialLease) (*adapterv1.RotateCredentialsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -68,6 +77,9 @@ func (s *Server) rotateCredentialsSlot(sessionID, slotID string, reqLeases map[s
 	if st.sessionID != sessionID {
 		return nil, status.Errorf(codes.NotFound,
 			"slot %s credentials are assigned to session %s, not %s", slotID, st.sessionID, sessionID)
+	}
+	if err := requireAssigned(st); err != nil {
+		return nil, err
 	}
 	leases := cloneLeases(st.creds)
 	for provider, lease := range reqLeases {
@@ -89,7 +101,7 @@ func (s *Server) rotateCredentialsSlot(sessionID, slotID string, reqLeases map[s
 // has no timer for the provider, or its lease id differs from leaseID, it
 // is a no-op. The re-armed timer still targets onSlotLeaseExpired, so a
 // later expiry deletes the provider's entry at the extended deadline.
-// spec: §6.1 line 28; §4.9 line 1470.
+// spec: §6.1; §4.9.
 func (s *Server) extendCredentialLeaseSlot(slotID, provider, leaseID string, newExpiresAt time.Time) (*adapterv1.ExtendCredentialLeaseResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -109,7 +121,7 @@ func (s *Server) extendCredentialLeaseSlot(slotID, provider, leaseID string, new
 }
 
 // revokeCredentialsSlot removes the named providers from the slot's
-// per-slot file. spec: §6.1 line 28.
+// per-slot file. spec: §6.1.
 func (s *Server) revokeCredentialsSlot(sessionID, slotID string, providers []string) (*adapterv1.RevokeCredentialsResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -121,6 +133,9 @@ func (s *Server) revokeCredentialsSlot(sessionID, slotID string, providers []str
 		return nil, status.Errorf(codes.NotFound,
 			"slot %s credentials are assigned to session %s, not %s", slotID, st.sessionID, sessionID)
 	}
+	if err := requireAssigned(st); err != nil {
+		return nil, err
+	}
 	leases := cloneLeases(st.creds)
 	for _, provider := range providers {
 		delete(leases, provider)
@@ -131,6 +146,22 @@ func (s *Server) revokeCredentialsSlot(sessionID, slotID string, providers []str
 	st.creds = leases
 	s.reconcileSlotExpiryTimersLocked(st, slotID, leases)
 	return &adapterv1.RevokeCredentialsResponse{}, nil
+}
+
+// requireAssigned is the fail-closed was-assigned precondition the
+// rotate and revoke handlers share. A slot that is registered and bound
+// but never received AssignCredentials has no credential file, and
+// admitting a rotation or a revocation there would materialize one for a
+// session the gateway never assigned credentials to. The predicate reads
+// the entry's was-assigned marker rather than its live lease set,
+// because a direct-mode expiry empties the lease set on a session that
+// is still live and whose replacement lease arrives over
+// RotateCredentials. spec: §6.1; §4.9.
+func requireAssigned(st *slotState) error {
+	if st.assigned {
+		return nil
+	}
+	return status.Error(codes.FailedPrecondition, "no credentials have been assigned to this pod")
 }
 
 // cloneLeases returns a shallow copy of a lease map so a rewrite is
@@ -146,7 +177,7 @@ func cloneLeases(in map[string]*adapterv1.CredentialLease) map[string]*adapterv1
 // writeSlotCredentialFile materializes the slot's leases to its per-slot
 // credential file, ordered by provider for a deterministic file. The
 // credential directory must already exist (ensureSlotStateLocked created
-// it). spec: §6.1 line 28.
+// it). spec: §6.1.
 func writeSlotCredentialFile(dir string, leases map[string]*adapterv1.CredentialLease) error {
 	if dir == "" {
 		return status.Error(codes.FailedPrecondition,
@@ -169,7 +200,7 @@ func writeSlotCredentialFile(dir string, leases map[string]*adapterv1.Credential
 
 // reconcileSlotExpiryTimersLocked brings the slot's §4.9 direct-mode
 // expiry timers in line with its lease set, independent of sibling slots
-// and the single-slot set. Callers hold s.mu. spec: §4.9 line 1149.
+// and the single-slot set. Callers hold s.mu. spec: §4.9.
 func (s *Server) reconcileSlotExpiryTimersLocked(st *slotState, slotID string, leases map[string]*adapterv1.CredentialLease) {
 	if st.timers == nil {
 		st.timers = map[string]*expiryTimer{}
@@ -186,7 +217,7 @@ func (s *Server) reconcileSlotExpiryTimersLocked(st *slotState, slotID string, l
 
 // armSlotExpiryTimerLocked arms (or re-arms) the slot's direct-mode
 // expiry timer for one provider. Only direct-mode leases with a positive
-// expiry get a timer. Callers hold s.mu. spec: §4.9 line 1149.
+// expiry get a timer. Callers hold s.mu. spec: §4.9.
 func (s *Server) armSlotExpiryTimerLocked(st *slotState, slotID, provider string, lease *adapterv1.CredentialLease) {
 	ms := lease.GetExpiresAtUnixMs()
 	if leaseDeliveryMode(lease) != string(directDeliveryMode) || ms <= 0 {
@@ -218,7 +249,7 @@ func (s *Server) cancelSlotExpiryTimerLocked(st *slotState, provider string) {
 // lease the timer guarded is still current it deletes the provider's entry
 // from the slot's credential file and reports AUTH_EXPIRED, exactly as the
 // single-slot path does but scoped to the slot so sibling slots are
-// unaffected. spec: §4.9 line 1149.
+// unaffected. spec: §4.9.
 func (s *Server) onSlotLeaseExpired(slotID, provider, leaseID string) {
 	s.mu.Lock()
 	st, ok := s.slotStateLocked(slotID)

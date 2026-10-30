@@ -20,8 +20,8 @@
 // post-crash state), so this always-running leader-gated sweep is the surface
 // that covers crash recovery.
 //
-// spec: §13.3 (named predecessor and leader-gated reclaimer, lines 601-607),
-// §16.7 (token.revoked revocation_reason=rotation_replaced, line 673), §17.6.
+// spec: §13.3,
+// §16.7, §17.6.
 package reclaimer
 
 import (
@@ -134,8 +134,7 @@ func (r *Reclaimer) Interval() time.Duration { return r.interval }
 // Secret's current jti) nor a general /v1/oauth/token self-rotated token for
 // the lenny-admin subject (never written into prev_jti).
 //
-// spec: §13.3 line 603 (named predecessor, leader-gated reclaimer), §16.7
-// line 673 (token.revoked revocation_reason=rotation_replaced).
+// spec: §13.3, §16.7.
 func (r *Reclaimer) Sweep(ctx context.Context) (reclaimed bool, err error) {
 	data, exists, err := r.secrets.Get(ctx, r.cfg.Namespace, r.cfg.SecretName)
 	if err != nil {
@@ -162,7 +161,7 @@ func (r *Reclaimer) Sweep(ctx context.Context) (reclaimed bool, err error) {
 // when non-nil, receives each sweep's reclaimed flag and error so the caller
 // can log the crash-recovery reclaim.
 //
-// spec: §13.3 line 603.
+// spec: §13.3.
 func (r *Reclaimer) Run(ctx context.Context, onTick func(reclaimed bool, err error)) {
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()

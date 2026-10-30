@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT
+# One entry, keyed to a Go carrier that does not parse. A run confined to
+# the specification defers the entry and never opens the carrier; the
+# complementary run reads it and fails on the parse.
+kind: identifier-senses
+version: 1
+entries:
+  - file: pkg/adapter/holdbroken.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS

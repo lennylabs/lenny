@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// §4.3 / §12.2.4 Token Service gRPC contract. The gateway calls these
+// §4.3 Token Service gRPC contract. The gateway calls these
 // RPCs over mTLS to materialize, rotate, and revoke credential leases.
 // The Token Service runs as a separate Deployment with KMS access; the
 // gateway has no KMS decrypt grants and cannot mint leases in-process
@@ -77,7 +77,7 @@ type TokenServiceClient interface {
 	// DENIED/NOT_FOUND verdict maps to 422 CREDENTIAL_SECRET_RBAC_MISSING
 	// at the admin handler; a transport or non-deterministic failure maps
 	// to 503 CREDENTIAL_PROBE_UNAVAILABLE and the write is rejected
-	// (never fail open). spec: §4.9 line 1212.
+	// (never fail open). spec: §4.9.
 	ProbeSecretAccess(ctx context.Context, in *ProbeSecretAccessRequest, opts ...grpc.CallOption) (*ProbeSecretAccessResponse, error)
 }
 
@@ -163,7 +163,7 @@ type TokenServiceServer interface {
 	// DENIED/NOT_FOUND verdict maps to 422 CREDENTIAL_SECRET_RBAC_MISSING
 	// at the admin handler; a transport or non-deterministic failure maps
 	// to 503 CREDENTIAL_PROBE_UNAVAILABLE and the write is rejected
-	// (never fail open). spec: §4.9 line 1212.
+	// (never fail open). spec: §4.9.
 	ProbeSecretAccess(context.Context, *ProbeSecretAccessRequest) (*ProbeSecretAccessResponse, error)
 }
 
@@ -177,12 +177,15 @@ type UnimplementedTokenServiceServer struct{}
 func (UnimplementedTokenServiceServer) AssignCredentials(context.Context, *AssignCredentialsRequest) (*AssignCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AssignCredentials not implemented")
 }
+
 func (UnimplementedTokenServiceServer) RotateCredentials(context.Context, *RotateCredentialsRequest) (*RotateCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RotateCredentials not implemented")
 }
+
 func (UnimplementedTokenServiceServer) RevokeCredentials(context.Context, *RevokeCredentialsRequest) (*RevokeCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RevokeCredentials not implemented")
 }
+
 func (UnimplementedTokenServiceServer) ProbeSecretAccess(context.Context, *ProbeSecretAccessRequest) (*ProbeSecretAccessResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ProbeSecretAccess not implemented")
 }

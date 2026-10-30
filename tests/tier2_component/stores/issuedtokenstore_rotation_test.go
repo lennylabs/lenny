@@ -23,8 +23,7 @@ import (
 	auditcatalog "github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
-// spec: §13.3 line 597 (gateway-mediated admin-credential rotation
-// ordering), §16.7 line 673 (token.revoked revocation_reason).
+// spec: §13.3, §16.7.
 // diagnosis: RevokeWithAudit must stamp revoked_at/revoked_reason on the
 // named jti and write the token.revoked audit row in the SAME transaction.
 // A failure means the durable revoke and its audit trail are not bound in
@@ -105,7 +104,7 @@ func TestRevokeWithAuditBindsRevocationAndAuditRow(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 597, §16.7 line 673.
+// spec: §13.3, §16.7.
 // diagnosis: a RevokeWithAudit retry against a token the durable store
 // already revoked must return ErrNotFound and NOT write a second audit
 // row. A failure means a retried admin rotation double-emits a
@@ -160,7 +159,7 @@ func TestRevokeWithAuditIsIdempotentOnAlreadyRevoked(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 597, §16.7 line 673.
+// spec: §13.3, §16.7.
 // diagnosis: RevokeWithAudit on a jti that does not exist must return
 // ErrNotFound and write no audit row. A failure means the gateway could
 // emit a token.revoked audit row for a token that was never issued.
@@ -186,8 +185,8 @@ func TestRevokeWithAuditMissingTokenIsErrNotFound(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 605 (advisory-locked concurrent-rotation discipline),
-// §13.3 line 597.
+// spec: §13.3,
+// §13.3.
 // diagnosis: WithSubjectLock must provide mutual exclusion: while one
 // caller holds the lock for a subject, a second caller for the same
 // subject must block until the first releases. A failure means the
@@ -251,7 +250,7 @@ func TestWithSubjectLockSerializesSameSubject(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 605.
+// spec: §13.3.
 // diagnosis: WithSubjectLock must NOT serialize distinct subjects — the
 // lock key is per-subject (hashtext("admintoken:"+subject)), so two
 // different subjects rotate concurrently. A failure means the lock key is

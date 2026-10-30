@@ -32,8 +32,9 @@ func newMessagesServer(t *testing.T) (*sessionserver.Server, sessionstore.Store)
 	t.Helper()
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
 	})
 	return srv, store
 }
@@ -84,13 +85,13 @@ func TestMessagesEchoExecutor(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	// spec: §15.4 lines 1725-1737 — every send_message call returns a
+	// spec: §15.4 — every send_message call returns a
 	// `delivery_receipt` envelope (F-7.2.10).
 	if got, want := resp.DeliveryReceipt.Status, session.DeliveryStatusDelivered; got != want {
 		t.Errorf("delivery receipt status = %q, want %q", got, want)
 	}
 	if resp.DeliveryReceipt.MessageID == "" {
-		t.Error("delivery receipt messageId is empty; §15.4 line 1784 requires a gateway-assigned id when the sender omits one")
+		t.Error("delivery receipt messageId is empty; §15.4 requires a gateway-assigned id when the sender omits one")
 	}
 	if resp.DeliveryReceipt.DeliveredAt.IsZero() {
 		t.Error("delivery receipt deliveredAt is zero for status=delivered")
@@ -186,7 +187,7 @@ func TestMessagesRejectsMissingSession(t *testing.T) {
 func TestMessagesRejectsWhenExecutorUnwired(t *testing.T) {
 	store := memstore.New()
 	seedRunningSession(t, store, "sess_no_exec")
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	rr := sendMessageRequest(t, srv.Handler(), "sess_no_exec", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Content: sessionrecord.MessageContentFromText("x")}},
 	})
@@ -231,10 +232,9 @@ func TestMessagesRecordsTranscript(t *testing.T) {
 	}
 }
 
-// transcriptEnvelopeJSON is the §15.1 canonical list envelope per spec
-// lines 1228-1253. Used by tests that assert the transcript handler
+// transcriptEnvelopeJSON is the §15.1 canonical list envelope per spec. Used by tests that assert the transcript handler
 // emits `{items, cursor, hasMore}` and not the legacy
-// `{sessionId, entries}` shape. spec: §15.1 line 1228.
+// `{sessionId, entries}` shape. spec: §15.1.
 type transcriptEnvelopeJSON struct {
 	Items   []transcriptstore.Entry `json:"items"`
 	Cursor  string                  `json:"cursor"`
@@ -250,9 +250,10 @@ func TestMessagesRejectsInjectionWhenRuntimeUnsupported(t *testing.T) {
 		Name: "oneshot", Type: runtimestore.TypeAgent,
 	})
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Runtimes:    runtimes,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Runtimes:        runtimes,
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
@@ -272,7 +273,7 @@ func TestMessagesRejectsInjectionWhenRuntimeUnsupported(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 49 — a tenant capability override that disables
+// spec: §5.1 — a tenant capability override that disables
 // injection.supported on an injection-capable runtime narrows the
 // injection gate for that tenant's sessions, while a tenant with no
 // override keeps the runtime's declared (injection-on) default.
@@ -292,6 +293,7 @@ func TestMessagesInjectionTenantOverride_spec_5_1_49(t *testing.T) {
 		runtimestore.CapabilityOverride{InjectionSupported: &off})
 
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Executor:            executor.NewEchoExecutor(),
 		Transcripts:         transcriptstore.NewMemory(),
 		Runtimes:            runtimes,
@@ -337,9 +339,10 @@ func TestMessagesAllowsInjectionWhenRuntimeSupports(t *testing.T) {
 		},
 	})
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Runtimes:    runtimes,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Runtimes:        runtimes,
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
@@ -373,9 +376,10 @@ func TestMessagesInjectionResolvesDerivedRuntime(t *testing.T) {
 		Name: "chatty-derived", Type: runtimestore.TypeAgent, BaseRuntime: "chatty-base",
 	})
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Runtimes:    runtimes,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Runtimes:        runtimes,
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
@@ -505,6 +509,7 @@ func TestMessagesInjectionFailsClosedOnTransientRegistryError_spec_5_1(t *testin
 	runtimes := transientRuntimeStore{Store: seedInjectionRuntime(t), err: errors.New("registry pg read timeout")}
 	rec := &failClosedRecorder{}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:            true,
 		Executor:                   executor.NewEchoExecutor(),
 		Transcripts:                transcriptstore.NewMemory(),
 		Runtimes:                   runtimes,
@@ -527,7 +532,7 @@ func TestMessagesInjectionFailsClosedOnTransientRegistryError_spec_5_1(t *testin
 // store blip must fail closed rather than admit injection against the
 // un-overlaid (injection-on) base runtime and must record the granular
 // cause in both logs and metrics.
-// spec: §5.1 line 49 (F-5.1.20 injection fail-closed), §15.1 (SERVICE_UNAVAILABLE).
+// spec: §5.1 (F-5.1.20 injection fail-closed), §15.1 (SERVICE_UNAVAILABLE).
 func TestMessagesInjectionFailsClosedOnTransientOverrideStoreError_spec_5_1_49(t *testing.T) {
 	store := memstore.New()
 	overrides := transientOverrideStore{
@@ -536,6 +541,7 @@ func TestMessagesInjectionFailsClosedOnTransientOverrideStoreError_spec_5_1_49(t
 	}
 	rec := &failClosedRecorder{}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:            true,
 		Executor:                   executor.NewEchoExecutor(),
 		Transcripts:                transcriptstore.NewMemory(),
 		Runtimes:                   seedInjectionRuntime(t),
@@ -563,9 +569,10 @@ func TestMessagesInjectionNotFoundDegradesOpen_spec_5_1(t *testing.T) {
 	// The registry is wired but has no entry for the session's RuntimeRef,
 	// so Resolve returns ErrNotFound: the gate degrades open.
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Runtimes:    runtimestore.NewMemory(),
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Runtimes:        runtimestore.NewMemory(),
 	})
 	seedInjectionSession(t, store, "s1", "acme")
 	rr := sendMessageRequest(t, srv.Handler(), "s1", sessionserver.MessageRequest{
@@ -608,12 +615,12 @@ func TestTranscriptEmptyForFreshSession(t *testing.T) {
 }
 
 // TestMessagesRejectsPreRunningStatesPerSpec71Line339 covers the
-// §7.2 line 339 routing-by-target-state table: external-client REST
+// §7.2 routing-by-target-state table: external-client REST
 // calls against a pre-running session (created / finalizing / ready /
 // starting) MUST reject with `TARGET_NOT_READY` so the client retries
 // after starting the session. The DLQ-buffered behavior is reserved
 // for inter-session `lenny/send_message` callers.
-// spec: §7.2 line 339; F-7.2.15.
+// spec: §7.2; F-7.2.15.
 func TestMessagesRejectsPreRunningStatesPerSpec71Line339(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -649,7 +656,7 @@ func TestMessagesRejectsPreRunningStatesPerSpec71Line339(t *testing.T) {
 
 // TestMessagesAcceptsRunningSession reasserts the spec line 622
 // running-state happy path now that pre-running is rejected.
-// spec: §15.1 line 622; §7.2 paths 2/4.
+// spec: §15.1; §7.2 paths 2/4.
 func TestMessagesAcceptsRunningSession(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_run")
@@ -661,8 +668,8 @@ func TestMessagesAcceptsRunningSession(t *testing.T) {
 	}
 }
 
-// TestMessagesRejectsInvalidDeliveryValue covers §15.4 line 1723.
-// spec: §15.4 line 1715-1723; §15.1 INVALID_DELIVERY_VALUE; F-7.2.14.
+// TestMessagesRejectsInvalidDeliveryValue covers §15.4.
+// spec: §15.4; §15.1 INVALID_DELIVERY_VALUE; F-7.2.14.
 func TestMessagesRejectsInvalidDeliveryValue(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_d")
@@ -679,7 +686,7 @@ func TestMessagesRejectsInvalidDeliveryValue(t *testing.T) {
 
 // TestMessagesAcceptsCanonicalDeliveryValues covers the closed §15.4
 // enum (queued, immediate, absent).
-// spec: §15.4 line 1715-1719; F-7.2.14.
+// spec: §15.4; F-7.2.14.
 func TestMessagesAcceptsCanonicalDeliveryValues(t *testing.T) {
 	for _, v := range []string{"", "queued", "immediate"} {
 		t.Run("delivery="+v, func(t *testing.T) {
@@ -698,14 +705,15 @@ func TestMessagesAcceptsCanonicalDeliveryValues(t *testing.T) {
 // TestMessagesInReplyToResolvesPendingRequestInput covers §7.2 path 1:
 // a payload's inReplyTo resolves a pending lenny/request_input
 // without falling through to the executor.
-// spec: §7.2 line 317; §15.4 line 1786; F-7.2.14.
+// spec: §7.2; §15.4; F-7.2.14.
 func TestMessagesInReplyToResolvesPendingRequestInput(t *testing.T) {
 	store := memstore.New()
 	reg := inputwait.NewRegistry()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		InputWaits:  reg,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		InputWaits:      reg,
 	})
 	seedRunningSession(t, store, "sess_rr")
 	ch, err := reg.Register("sess_rr", "req_alpha", nil)
@@ -743,14 +751,15 @@ func TestMessagesInReplyToResolvesPendingRequestInput(t *testing.T) {
 // TestMessagesInReplyToFallsThroughOnNoMatch — a stale inReplyTo that
 // matches no pending request falls through to the executor per §7.2
 // path 1 ("no matching inReplyTo" → continue evaluating paths).
-// spec: §7.2 line 317; F-7.2.14.
+// spec: §7.2; F-7.2.14.
 func TestMessagesInReplyToFallsThroughOnNoMatch(t *testing.T) {
 	store := memstore.New()
 	reg := inputwait.NewRegistry()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		InputWaits:  reg,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		InputWaits:      reg,
 	})
 	seedRunningSession(t, store, "sess_fall")
 
@@ -767,20 +776,23 @@ func TestMessagesInReplyToFallsThroughOnNoMatch(t *testing.T) {
 	}
 }
 
-// TestMessagesClientSlotIDIsIgnored — the §5.2 slotId is internal and
-// adapter-injected: the client addresses a message by session_id and never
-// supplies a slotId. A slotId in the request body does not deserialize onto
-// the payload, so it is silently ignored while the message still delivers.
-// spec: §7.2 (per-slot routing), §15.4.
-func TestMessagesClientSlotIDIsIgnored(t *testing.T) {
+// TestMessagesClientSessionIDIsIgnored — the per-session identifier is
+// internal and gateway-injected: the client addresses a message by the
+// session_id path parameter and never supplies one in the body. A
+// `sessionId` in the request body does not deserialize onto the payload,
+// so it is silently ignored while the message still delivers to the
+// session the path names.
+// spec: §28.5.3 (every session-scoped frame carries the session), §15.4.
+func TestMessagesClientSessionIDIsIgnored(t *testing.T) {
 	srv, store := newMessagesServer(t)
 	seedRunningSession(t, store, "sess_slot")
-	// A raw body that carries a stray client slotId. The gateway must accept
-	// the message (the field is ignored, not rejected) and deliver it.
+	// A raw body that carries a stray client sessionId naming another
+	// session. The gateway must accept the message (the field is ignored
+	// rather than rejected) and deliver it against the path parameter.
 	rr := sendRawMessageRequest(t, srv.Handler(), "sess_slot",
-		`{"messages":[{"content":"ok","slotId":"slot_01"}]}`)
+		`{"messages":[{"content":"ok","sessionId":"sess_other"}]}`)
 	if rr.Code != http.StatusOK {
-		t.Fatalf("client slotId rejected: got %d, body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("client sessionId rejected: got %d, body=%s", rr.Code, rr.Body.String())
 	}
 	var resp sessionserver.MessageResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
@@ -792,7 +804,7 @@ func TestMessagesClientSlotIDIsIgnored(t *testing.T) {
 }
 
 // TestTranscriptEmitsCanonicalEnvelope_spec_15_1_1228 pins the
-// §15.1 line 1228 canonical list envelope `{items, cursor, hasMore}`
+// §15.1 canonical list envelope `{items, cursor, hasMore}`
 // on the transcript endpoint. F-15.1.19.
 func TestTranscriptEmitsCanonicalEnvelope_spec_15_1_1228(t *testing.T) {
 	srv, store := newMessagesServer(t)
@@ -872,7 +884,7 @@ func TestTranscriptPaginatesWithCanonicalCursor_spec_15_1_1228(t *testing.T) {
 }
 
 // TestTranscriptRejectsOversizedLimit_spec_15_1_1236 confirms the
-// §15.1 line 1236 clamp [1, 200] is enforced — requests for limit=500
+// §15.1 clamp [1, 200] is enforced — requests for limit=500
 // see 200 items at most.
 func TestTranscriptClampsLimitToSpecMax_spec_15_1_1236(t *testing.T) {
 	srv, store := newMessagesServer(t)
@@ -894,7 +906,7 @@ func TestTranscriptClampsLimitToSpecMax_spec_15_1_1236(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if len(env.Items) != 200 {
-		t.Errorf("limit=500: items=%d, want 200 (§15.1 line 1236 clamp)", len(env.Items))
+		t.Errorf("limit=500: items=%d, want 200 (§15.1 clamp)", len(env.Items))
 	}
 	if !env.HasMore {
 		t.Errorf("limit=500 against 500-entry transcript should report hasMore=true")
@@ -902,7 +914,7 @@ func TestTranscriptClampsLimitToSpecMax_spec_15_1_1236(t *testing.T) {
 }
 
 // TestTranscriptRejectsExpiredCursor_spec_15_1_1253 confirms the
-// §15.1 line 1253 "cursor_expired" rule fires after the 24-hour TTL.
+// §15.1 rule fires after the 24-hour TTL.
 // F-15.1.20.
 func TestTranscriptRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 	// Build a server with a clock we can advance past the 24-hour TTL.
@@ -912,9 +924,10 @@ func TestTranscriptRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 		return func() time.Time { return now }
 	}()
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Clock:       clock,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Clock:           clock,
 	})
 	seedRunningSession(t, store, "sess_expired")
 	_ = sendMessageRequest(t, srv.Handler(), "sess_expired", sessionserver.MessageRequest{
@@ -939,7 +952,7 @@ func TestTranscriptRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 818 — POST /v1/sessions/{id}/messages against a
+// spec: §15.1 — POST /v1/sessions/{id}/messages against a
 // suspended tenant is rejected with 403 TENANT_SUSPENDED before the
 // message reaches the executor. F-15.1.3.
 func TestMessages_SuspendedTenantRejected_spec_15_1_818(t *testing.T) {
@@ -950,9 +963,10 @@ func TestMessages_SuspendedTenantRejected_spec_15_1_818(t *testing.T) {
 		t.Fatalf("seed tenant: %v", err)
 	}
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Tenants:     tenants,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Tenants:         tenants,
 	})
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_susp", sessionserver.MessageRequest{
@@ -976,9 +990,10 @@ func TestMessages_ActiveTenantAdmitted_spec_15_1_818(t *testing.T) {
 		t.Fatalf("seed tenant: %v", err)
 	}
 	srv := sessionserver.New(store, sessionserver.Options{
-		Executor:    executor.NewEchoExecutor(),
-		Transcripts: transcriptstore.NewMemory(),
-		Tenants:     tenants,
+		DevTenantHeader: true,
+		Executor:        executor.NewEchoExecutor(),
+		Transcripts:     transcriptstore.NewMemory(),
+		Tenants:         tenants,
 	})
 
 	rr := sendMessageRequest(t, srv.Handler(), "sess_ok", sessionserver.MessageRequest{

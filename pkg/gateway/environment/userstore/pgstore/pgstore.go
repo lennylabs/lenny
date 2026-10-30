@@ -60,7 +60,7 @@ func (s *Store) Create(ctx context.Context, u userstore.User) error {
 	if u.UpdatedAt.IsZero() {
 		u.UpdatedAt = u.CreatedAt
 	}
-	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	// spec: §15.1 — a new resource is born at version 1.
 	if u.Version == 0 {
 		u.Version = 1
 	}
@@ -131,7 +131,7 @@ func (s *Store) Update(ctx context.Context, tenantID, subject string, mutate fun
 			return err
 		}
 		u.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
-		// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+		// spec: §15.1 — bump the entity-tag version on every write.
 		u.Version++
 		if _, err := tx.Exec(ctx, `UPDATE users SET
 			email = $3, display_name = $4, roles = $5, disabled = $6,
@@ -154,49 +154,89 @@ func (s *Store) Update(ctx context.Context, tenantID, subject string, mutate fun
 	return out, nil
 }
 
-// ClearProcessingRestriction clears the §12.8 / GDPR Article 18
-// processing-restriction flag on the user, setting the
-// lenny.clear_processing_restriction session-local first so the
-// migration 0042 BEFORE UPDATE trigger exempts the clear even when an
-// erasure job for the user is still in a non-terminal phase. This is the
-// privileged §24.12 clear-processing-restriction admin path; a plain
-// Update flipping the flag is rejected by the trigger while a job is
-// active. spec: §12.8 line 764 (clear-processing-restriction sets the
-// session-local bypass, analogous to lenny.erasure_mode).
-func (s *Store) ClearProcessingRestriction(ctx context.Context, tenantID, subject string) (userstore.User, error) {
-	var out userstore.User
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-		// The session-local bypass mirrors the lenny.erasure_mode guard on
-		// the §11.7 immutability triggers; it is scoped to this transaction.
-		if _, err := tx.Exec(ctx, "SET LOCAL lenny.clear_processing_restriction = 'true'"); err != nil {
-			return err
-		}
-		row := tx.QueryRow(ctx,
-			`SELECT `+selectList+` FROM users WHERE tenant_id = $1 AND subject = $2 FOR UPDATE`,
-			tenantID, subject)
-		u, err := scanUser(row)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return userstore.ErrNotFound
-		}
-		if err != nil {
-			return err
-		}
-		u.ProcessingRestricted = false
-		u.ErasureJobID = ""
-		u.UpdatedAt = pgtenant.MonotonicNext(u.UpdatedAt, time.Now())
-		if _, err := tx.Exec(ctx, `UPDATE users SET
-			updated_at = $3, processing_restricted = false, erasure_job_id = ''
-		WHERE tenant_id = $1 AND subject = $2`,
-			tenantID, subject, u.UpdatedAt); err != nil {
-			return err
-		}
-		out = u
-		return nil
-	})
-	if err != nil {
-		return userstore.User{}, err
+// SetErasureRestrictionTx is the one write path for the §12.8 / GDPR
+// Article 18 restriction flag on a users row, run inside the caller's
+// transaction so the erasure job store writes the job row and the flag
+// together. It locks the row FOR UPDATE, advances updated_at with
+// pgtenant.MonotonicNext, increments version, and writes
+// processing_restricted = restricted and erasure_job_id = jobID (empty when
+// restricted is false). When requireJobID is non-empty it writes only when
+// the locked row's erasure_job_id equals it and otherwise returns 0 rows,
+// which is how a job's completion clears only its own restriction. A
+// missing row returns userstore.ErrNotFound.
+//
+// The helper sets no trigger bypass. A clear it writes passes the migration
+// 0042 trigger only when no erasure job for the user is in progress, which
+// holds for a completion because the caller marks its job completed earlier
+// in the same transaction. The operator clear's bypass lives in
+// ClearProcessingRestrictionTx alone.
+//
+// spec: §12.8 (Processing restriction during erasure (GDPR Article 18)).
+func SetErasureRestrictionTx(ctx context.Context, tx pgx.Tx, tenantID, subject, jobID string, restricted bool, requireJobID string) (int64, error) {
+	var (
+		current   string
+		updatedAt time.Time
+	)
+	err := tx.QueryRow(ctx,
+		`SELECT erasure_job_id, updated_at FROM users WHERE tenant_id = $1 AND subject = $2 FOR UPDATE`,
+		tenantID, subject).Scan(&current, &updatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, userstore.ErrNotFound
 	}
-	return out, nil
+	if err != nil {
+		return 0, fmt.Errorf("lock user %s/%s: %w", tenantID, subject, err)
+	}
+	if requireJobID != "" && current != requireJobID {
+		return 0, nil
+	}
+	if !restricted {
+		jobID = ""
+	}
+	// spec: §15.1 — bump the entity-tag version on every write.
+	tag, err := tx.Exec(ctx, `UPDATE users SET
+		processing_restricted = $3, erasure_job_id = $4,
+		updated_at = $5, version = version + 1
+	WHERE tenant_id = $1 AND subject = $2`,
+		tenantID, subject, restricted, jobID, pgtenant.MonotonicNext(updatedAt, time.Now()))
+	if err != nil {
+		return 0, fmt.Errorf("write restriction on user %s/%s: %w", tenantID, subject, err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// ClearProcessingRestrictionTx is the §15.1 operator clear of the
+// restriction a failed erasure job left set, run inside the caller's
+// transaction after it has locked and checked the job row. It sets the
+// transaction-local lenny.clear_processing_restriction bypass so the
+// migration 0042 trigger admits the clear, locks the users row, and returns
+// userstore.ErrRestrictionHeldByOtherJob without writing when the row's
+// erasure_job_id names a job other than jobID. Otherwise it clears the flag
+// through SetErasureRestrictionTx, so one users write path remains. A
+// missing row returns userstore.ErrNotFound.
+//
+// spec: §12.8 (Processing restriction during erasure (GDPR Article 18)),
+// §15.1 (REST API).
+func ClearProcessingRestrictionTx(ctx context.Context, tx pgx.Tx, tenantID, subject, jobID string) error {
+	// The session-local bypass mirrors the lenny.erasure_mode guard on the
+	// §11.7 immutability triggers; SET LOCAL scopes it to this transaction.
+	if _, err := tx.Exec(ctx, "SET LOCAL lenny.clear_processing_restriction = 'true'"); err != nil {
+		return fmt.Errorf("set restriction-clear bypass: %w", err)
+	}
+	var current string
+	err := tx.QueryRow(ctx,
+		`SELECT erasure_job_id FROM users WHERE tenant_id = $1 AND subject = $2 FOR UPDATE`,
+		tenantID, subject).Scan(&current)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return userstore.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock user %s/%s: %w", tenantID, subject, err)
+	}
+	if current != "" && current != jobID {
+		return userstore.ErrRestrictionHeldByOtherJob
+	}
+	_, err = SetErasureRestrictionTx(ctx, tx, tenantID, subject, "", false, "")
+	return err
 }
 
 // List returns the tenant's users subject-ascending. Soft-deleted and
@@ -264,7 +304,7 @@ func (s *Store) SoftDelete(ctx context.Context, tenantID, subject string, at tim
 // Hard-deletes the user row keyed by (tenantID, userID); returns the
 // number of rows removed (0 if no such row).
 //
-// spec: §12.1 line 5.
+// spec: §12.1.
 func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, errors.New("userstore: DeleteByUser requires non-empty tenant_id and user_id")
@@ -289,7 +329,7 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 // DeleteByTenant implements the §12.1 mandatory-erasure primitive.
 // Removes every user row belonging to tenantID.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("userstore: DeleteByTenant requires a concrete tenant_id")

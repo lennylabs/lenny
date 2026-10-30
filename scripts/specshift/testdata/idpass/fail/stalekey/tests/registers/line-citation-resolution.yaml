@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: MIT
+# The baseline names the carrier's path inside a citation text as well as
+# in its key, and the site rewrite does not reach a citation baseline.
+kind: line-citation-resolution-baseline
+version: 1
+files:
+    - path: pkg/adapter/lifecyclechannel.go
+      citations:
+        - §28.1 line 400 (pkg/adapter/lifecyclechannel.go)

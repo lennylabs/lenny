@@ -209,7 +209,8 @@ class SessionPage:
     has_more: bool = False
 
     #: The total match count across all pages, or ``None`` when the
-    #: gateway omits it (spec section 15.1 line 1252). Callers must not
+    #: gateway omits it (spec section 15.1, REST API, "Cursor-based
+    #: pagination"). Callers must not
     #: rely on its presence.
     total: Optional[int] = None
 
@@ -229,7 +230,7 @@ class SessionPage:
         )
 
 
-# spec: section 15.4 lines 1715-1723 -- delivery is a closed enum on the
+# spec: section 15.4 (MessageEnvelope, "delivery") -- delivery is a closed enum on the
 # inbound message payload. Surface the values as constants so the SDK
 # consumer does not stringly type them.
 DELIVERY_QUEUED = "queued"
@@ -241,7 +242,8 @@ class MessagePayload:
     """One section 15.4 inbound MessageEnvelope.
 
     Mirrors the spec field names verbatim; only ``content`` is required
-    by the gateway. spec: section 15.4 lines 1672-1721.
+    by the gateway. spec: section 15.4 (MessageEnvelope, Unified Message
+    Format).
     """
 
     #: Optional client-supplied message id; the gateway stamps
@@ -262,9 +264,6 @@ class MessagePayload:
     #: Section 15.4 closed enum: ``queued`` (default) or ``immediate``.
     delivery: str = ""
 
-    #: Section 5.2 concurrent-workspace slot identifier.
-    slot_id: str = ""
-
     def to_wire(self) -> dict[str, Any]:
         """Return the JSON payload the gateway expects."""
         body: dict[str, Any] = {"content": self.content}
@@ -276,8 +275,6 @@ class MessagePayload:
             body["inReplyTo"] = self.in_reply_to
         if self.delivery:
             body["delivery"] = self.delivery
-        if self.slot_id:
-            body["slotId"] = self.slot_id
         return body
 
 
@@ -285,7 +282,8 @@ class MessagePayload:
 class DeliveryReceipt:
     """The section 15.4 ``delivery_receipt`` envelope.
 
-    spec: section 15.4 lines 1725-1737; section 7.2 line 345.
+    spec: section 15.4 (Runtime Adapter Specification, "delivery_receipt acknowledgement schema");
+    section 7.2 (Interactive Session Model, "Delivery receipts").
     """
 
     #: Gateway-stamped or sender-supplied message id.
@@ -334,7 +332,7 @@ class SendMessagesResponse:
     """``POST /v1/sessions/{id}/messages`` response.
 
     spec: section 15.1 messages endpoint; section 15.4 delivery_receipt;
-    section 7.2 line 345.
+    section 7.2 (Interactive Session Model, "Delivery receipts").
     """
 
     delivery_receipt: DeliveryReceipt = field(default_factory=DeliveryReceipt)

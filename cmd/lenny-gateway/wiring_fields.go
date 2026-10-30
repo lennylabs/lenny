@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"net/http"
 	"sync/atomic"
@@ -23,24 +24,30 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/serviceidentity"
+	"github.com/lennylabs/lenny/pkg/gateway/session/budgetstate"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/orphansession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionlogstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/tokenanomaly"
 	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/blobstore/cataloging"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal"
@@ -78,7 +85,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/usercreds"
@@ -104,8 +110,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore/cachingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/operability/health"
 	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	podterminateprop "github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podterminate/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
@@ -123,6 +129,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/redistopology"
@@ -159,6 +166,27 @@ type gatewayWiringFields struct {
 	gwMetrics           *gatewaymetrics.Metrics
 	opsEmitter          events.EventEmitter
 	replica             string
+	// coordHolder is the §10.1.1 Replica address holder value every
+	// REG-COORDLEASE and REG-COORDMIRROR consumer receives: the session
+	// server, the coordination Sweeper, the barrier mirror lister, the
+	// coordination seams, and the coordination fencer. Set by
+	// buildRedisAndQuota. replica stays the identity of the ops Source,
+	// billing, service.instance.id, and the nonce checkpoint.
+	coordHolder string
+	// holderForwardEnabled is true when a lease store is wired and the
+	// gateway replica certificate material is complete, so the gateway
+	// builds the CH-HOLDERFORWARD client and listener (§10.3 NET-072).
+	holderForwardEnabled bool
+	// holderForwardClient is the shared CH-HOLDERFORWARD client; nil without
+	// the material. holderForwardTLS is the listener's TLS configuration.
+	holderForwardClient *http.Client
+	holderForwardTLS    *tls.Config
+	// holderForwardSrv is the CH-HOLDERFORWARD listener, started and drained
+	// with the REST listener; nil when the forward is not enabled.
+	holderForwardSrv *http.Server
+	// restAuthOpts is the auth middleware configuration of the REST
+	// listener, which the forward listener reuses (§29.3 Forwarding rule 3).
+	restAuthOpts authmw.Options
 	// §10.6 resolved noEnvironmentPolicy, computed by buildStartupGates from
 	// the --no-environment-policy flag and dev mode; read by the session
 	// server, the MCP fabric, and the HTTP surface.
@@ -229,14 +257,22 @@ type gatewayWiringFields struct {
 	// token delta and raises the enforcer budget, keeping the raise alive
 	// across the next Enforcer.Record (proposal 0023 S3/S4). Nil when no
 	// usagestore is wired (the recorder is nil), in which case exhaustion
-	// keeps the §11.2 line 44 terminate-immediately posture.
-	proxyUsageRec         *proxyUsageRecorder
-	leaseBudgets          *leasecontrol.MemoryBudgetSource
-	leaseExtDefaults      sessionserver.LeaseExtensionDefaults
-	sessionLeaseRegistrar sessionserver.LeaseTreeRegistrar
-	childLeaseRegistrar   delegation.LeaseChildRegistrar
-	activityStamper       *sessionidle.Stamper
-	slotHealth            *slothealth.Tracker
+	// keeps the §11.2 terminate-immediately posture.
+	proxyUsageRec *proxyUsageRecorder
+	// tokenAnomaly is the §11.2 direct-mode anomaly detector buildLLMProxy
+	// constructs. The budget state sweep reads the sessions it tracks.
+	tokenAnomaly *tokenanomaly.Detector
+	// budgetStateSweep reclaims per-session budget state for sessions that
+	// ended on another replica or were erased. buildSessionServer constructs
+	// it and startBackgroundWorkers runs it. spec: §11.2, §10.1.1.
+	budgetStateSweep *budgetstate.Sweep
+	leaseBudgets     *leasecontrol.StoreBudgetSource
+	// leaseDenials is the §8.6 DenialStore behind leaseBudgets. It is built
+	// whether or not the GatewayControl listener is enabled, because the
+	// delegate_task token cap reads the tree's cumulative grants from it.
+	leaseDenials    leasecontrol.DenialStore
+	activityStamper *sessionidle.Stamper
+	slotHealth      *slothealth.Tracker
 
 	// §4.9 / §9.3 credential-surface outputs. buildCredentialSurface
 	// constructs the OpenAI/Open Responses translators, the §4.9 end-user
@@ -275,7 +311,7 @@ type gatewayWiringFields struct {
 	// serves no proxy traffic against a retained revoked lease with an
 	// incomplete deny list; the rebuild goroutine (startBillingAndSecurityWorkers)
 	// flips it after the union across both credential stores lands.
-	// spec: §4.9 lines 1692-1697; §10.4 readiness precedence.
+	// spec: §4.9; §10.4 readiness precedence.
 	credDenyRebuilt atomic.Bool
 	credRenewalProp *credrenewalprop.Propagator
 	deadlockTracker *deadlock.AwaitTracker
@@ -309,18 +345,30 @@ type gatewayWiringFields struct {
 	eventBus                    *sessionevents.Bus
 	eventBusRetranscriber       *eventbus.Retranscriber
 	failOpenReplicas            *failopen.ReplicaCount
-	impersonationSvc            *impersonation.Service
 	inputWaits                  *inputwait.Registry
 	kmsProbeLifecycle           *tenantkms.Lifecycle
 	mtlsDenyProp                *mtlsdenylistprop.Propagator
 	mux                         *http.ServeMux
 	podBinder                   *podsession.Binder
-	recommendationStore         *recommendations.WindowStore
-	revCache                    *revocation.Cache
-	revProp                     *revocationprop.Propagator
-	sessions                    sessionstore.Store
-	sessionSrv                  *sessionserver.Server
-	storageCounter              storagequota.Counter
+	// slotCounter is the §5.2 slot set shared by every concurrent-mode
+	// reservation and release; its §12.4 recovery probe runs on
+	// watchdogCtx, and the leader-run stale-slot reaper reads and removes
+	// its members. Nil when no Redis is wired, which also leaves the reaper
+	// unregistered.
+	slotCounter         *slotcounter.Counter
+	recommendationStore *recommendations.WindowStore
+	revCache            *revocation.Cache
+	revProp             *revocationprop.Propagator
+	sessions            sessionstore.Store
+	// postTerminalCap is the §7.1 terminal pipeline budget in effect, the
+	// cap of the post-terminal window. buildPersistenceStores computes it
+	// once and passes it to the session store's slot queries; the retention
+	// GC options, the §12.8 erasure release gate, and the tenant-deletion
+	// session terminator read the same value. spec: §7.1 (Post-terminal
+	// window).
+	postTerminalCap time.Duration
+	sessionSrv      *sessionserver.Server
+	storageCounter  storagequota.Counter
 	// storageLiveBytes is the reservation-aware §12.4 LiveBytesSource seam
 	// (live artifact_store bytes plus outstanding checkpoint reservations)
 	// buildRedisAndQuota composes once and every storage-counter consumer
@@ -338,28 +386,36 @@ type gatewayWiringFields struct {
 	uploadTracker             *uploadtoken.MemoryTracker
 	wd                        *watchdog.Watchdog
 	billingTier               *redisstream.Tier
-	connectorStateStore       *connectoroauth.MemoryStateStore
-	deadlockManager           *deadlock.Manager
-	dsMonitor                 *dualstore.Monitor
-	pools                     poolstore.Store
-	treeArchive               treearchive.Store
-	userPodTerminateProp      *podterminateprop.Propagator
-	blobsCataloged            *cataloging.Store
-	quotaBudgetTracker        *quotabudget.Tracker
-	quotaCheckpointSvc        *quotacheckpoint.Service
-	quotaFailOpenAccum        *quotafailopen.Accumulator
-	sessionUsage              sessionusage.Store
-	treeBudgetConcrete        *treebudget.Reserver
-	artifactCatalog           artifactcatalog.Store
-	blobs                     blobstore.Store
-	credRenewalWorker         *credrenewal.Worker
-	credentialPools           credentialpoolstore.Store
-	evals                     evalstore.Store
-	immediateGCSweep          func(ctx context.Context, tenantID string)
-	partialManifests          partialmanifeststore.Store
-	securityBus               *pubsub.Bus
-	memories                  memorystore.Store
-	memoryBackendLabel        string
+	// billingStream is the billing pipeline's Tier 1 stream (the Redis
+	// stream, or the in-process MemStream without Redis), which the §12.8
+	// tenant-deletion billing_buffer entry purges.
+	billingStream       failover.StreamTier
+	connectorStateStore *connectoroauth.MemoryStateStore
+	deadlockManager     *deadlock.Manager
+	dsMonitor           *dualstore.Monitor
+	pools               poolstore.Store
+	treeArchive         treearchive.Store
+	bindReleaseProp     *bindrelease.Propagator
+	blobsCataloged      *cataloging.Store
+	quotaBudgetTracker  *quotabudget.Tracker
+	quotaCheckpointSvc  *quotacheckpoint.Service
+	quotaFailOpenAccum  *quotafailopen.Accumulator
+	sessionUsage        sessionusage.Store
+	treeBudgetConcrete  *treebudget.Reserver
+	artifactCatalog     artifactcatalog.Store
+	blobs               blobstore.Store
+	credRenewalWorker   *credrenewal.Worker
+	credentialPools     credentialpoolstore.Store
+	evals               evalstore.Store
+	immediateGCSweep    func(ctx context.Context, tenantID string)
+	partialManifests    partialmanifeststore.Store
+	// checkpointRetention is the §12.5 checkpoint retention catalog
+	// (session_checkpoints). The §12.8 tenant-deletion Phase 4 eraser
+	// erases the tenant's rows through it.
+	checkpointRetention checkpointretention.Store
+	securityBus         *pubsub.Bus
+	memories            memorystore.Store
+	memoryBackendLabel  string
 
 	// tokenServiceConn is the §4.3 token-service gRPC connection. buildStores
 	// dials it; runGateway closes it on exit (the original deferred close is
@@ -368,6 +424,11 @@ type gatewayWiringFields struct {
 	tokenServiceConn *grpc.ClientConn
 	auditSyncPool    *pgxpool.Pool
 	bearerVerifier   jwt.Verifier
+	// idpVerifier is the §10.2 upstream IdP verifier buildIdPVerifier
+	// returns (nil when no IdP is configured). The §27.3.1 playground
+	// exchanger validates the ID token of its authorization-code flow
+	// with it.
+	idpVerifier      jwt.Verifier
 	billingAuditPool *pgxpool.Pool
 	// billingAuditDDLPool is the CREATE-privileged DDL pool for the
 	// billing/audit instance (LENNY_PG_BILLING_AUDIT_DDL_DSN). It logs in as
@@ -400,8 +461,8 @@ type gatewayWiringFields struct {
 	hwmReader          sessionserver.DelegationHighWatermarkReader
 	inProcessAssign    *credassign.Service
 	interactions       interactionstore.Store
+	jwtKeySet          *jwt.KeySet
 	jwtSigner          *jwt.BreakerSigner
-	kmsBackedSigner    *jwt.KMSSigner
 	kmsBreakerObs      *kmsBreakerObserver
 	kmsProvider        kms.Provider
 	kubeHealthzProbe   func(context.Context) error
@@ -414,7 +475,6 @@ type gatewayWiringFields struct {
 	readPool           *pgxpool.Pool
 	recycleBoundary    *recycle.RecycleBoundaryCoordinator
 	ring               *uploadtoken.KeyRing
-	rotatingVerifier   *jwt.RotatingVerifier
 	runtimes           runtimestore.Store
 	saTokenVerifier    leasecontrol.TokenVerifier
 	saUserVerifier     serviceidentity.SATokenAuthenticator
@@ -428,4 +488,32 @@ type gatewayWiringFields struct {
 	uploadIssuer       *uploadtoken.Issuer
 	uploadVerifier     *uploadtoken.Verifier
 	users              userstore.Store
+	// erasureJobs is the §12.8 erasure job store buildPersistenceStores
+	// builds for the posture: the Postgres store over the primary pool, or
+	// erasurejob.Memory writing the flag through the branch's user store.
+	// The admin router, the erasure runner, and the sampler read it.
+	erasureJobs erasurejob.Store
+	// erasureRunner and erasureSampler are the §12.8 erasure executor and
+	// SLA sampler the admin router builds. startLeaderElectedSweeps
+	// registers both on the gateway-leader gate, so only the leader runs
+	// them. Nil when no erasure surface is built.
+	erasureRunner  *erasurejob.Runner
+	erasureSampler *erasurejob.Sampler
+	// tenantDeletion is the §12.8 tenant-deletion runner the admin router
+	// builds when a receipt sink is wired. startLeaderElectedSweeps sets its
+	// elector to the gateway-leader elector and launches it. Nil when no
+	// receipt sink is wired.
+	tenantDeletion *tenantDeletionRunner
+	// orphanSessionReconciler is the §10.1.4 orphan-session reconciler
+	// startReconcilerWorkers builds when the Postgres agent_pod_state
+	// mirror is wired. startLeaderElectedSweeps registers it on the
+	// gateway-leader gate, so only the leader runs it. Nil without the
+	// mirror.
+	orphanSessionReconciler *orphansession.Reconciler
+	// checkpointStore is objectStore as the §10.1.7 chunked-checkpoint
+	// surface (checkpointStoreOf): the chunk resolver, the checkpoint
+	// driver, the partial cleaner, and the backstop sweep read it. Nil on a
+	// backend that cannot presign, which startup refuses for a pod-based
+	// deployment.
+	checkpointStore blobstore.CheckpointStore
 }

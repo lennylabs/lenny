@@ -1,5 +1,5 @@
 suite: lenny-ops and lenny-backup NetworkPolicies
-# spec: §25.4 lines 1119-1403 — F-25.4.12, F-17.1.4. The three §25.4
+# spec: §25.4 — F-25.4.12, F-17.1.4. The three §25.4
 # policies beyond the lenny-ops-deny-all-ingress baseline.
 templates:
   - ops-network-policies.yaml
@@ -154,3 +154,49 @@ tests:
             ports:
               - protocol: TCP
                 port: 6380
+
+  # spec: §13.2 (Network Isolation), §25.4 (The lenny-ops Service) —
+  # lenny-ops reaches the external Postgres the gateway's postgres.dsn
+  # names through the same postgres.gatewayEgressCIDR peer
+  # allow-gateway-egress renders.
+  - it: renders a 5432 ipBlock peer for postgres.gatewayEgressCIDR when it is set
+    set:
+      postgres.gatewayEgressCIDR: 10.20.0.0/16
+    documentSelector:
+      path: metadata.name
+      value: lenny-ops-egress
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - ipBlock:
+                  cidr: "10.20.0.0/16"
+            ports:
+              - protocol: TCP
+                port: 5432
+
+  # The PgBouncer rule is followed directly by the Redis rule when the
+  # CIDR is unset, so no ipBlock peer sits between them.
+  - it: renders no Postgres ipBlock peer when postgres.gatewayEgressCIDR is unset
+    documentSelector:
+      path: metadata.name
+      value: lenny-ops-egress
+    asserts:
+      - equal:
+          path: spec.egress[1].to[0].podSelector.matchLabels["lenny.dev/component"]
+          value: pgbouncer
+      - equal:
+          path: spec.egress[2].to[0].podSelector.matchLabels["lenny.dev/component"]
+          value: redis
+
+  # spec: §13.2.4 lenny-ops row — lenny-ops-egress carries the KMS peer
+  # under the Gateway row condition, so it refuses the same render.
+  - it: refuses an aws render of lenny-ops-egress while kms.endpointCIDR is 0.0.0.0/0
+    template: ops-network-policies.yaml
+    set:
+      kms.provider: aws
+      kms.signQuotaPerSecond: 50
+    asserts:
+      - failedTemplate:
+          errorPattern: "kms.endpointCIDR is \"0.0.0.0/0\" while kms.provider is \"aws\""

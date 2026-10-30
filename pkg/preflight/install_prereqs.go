@@ -9,7 +9,7 @@
 // LimitRange, ClusterIssuer, monitoring namespace) live alongside the
 // run.go orchestrator.
 //
-// spec: §17.6 lines 478-525. F-17.6.1.
+// spec: §17.6. F-17.6.1.
 package preflight
 
 import (
@@ -17,27 +17,29 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/lennylabs/lenny/pkg/deployenv"
 )
 
-// MinKubernetesMinor is the §17.6 line 503 minimum supported Kubernetes
+// MinKubernetesMinor is the §17.6 minimum supported Kubernetes
 // minor version (1.27). Older clusters lack API features Lenny relies
 // on, so the install aborts fail-closed.
 const MinKubernetesMinor = 27
 
-// KubernetesVersionCheck is the §17.6 line 503 server-version gate. It
+// KubernetesVersionCheck is the §17.6 server-version gate. It
 // fails the install when the API server reports a version below 1.27.
 // An empty or unparseable version is non-blocking (the binary could not
 // read the version; the gate degrades to advisory rather than blocking
 // an install on a discovery quirk).
 //
-// spec: §17.6 line 503.
+// spec: §17.6.
 type KubernetesVersionCheck struct {
 	// Version is the API server GitVersion (for example "v1.29.4" or a
 	// distro-suffixed "v1.27.6+vmware.1"). Empty skips the check.
 	Version string
 }
 
-// Decide evaluates the §17.6 line 503 minimum-version gate.
+// Decide evaluates the §17.6 minimum-version gate.
 func (c KubernetesVersionCheck) Decide() Decision {
 	raw := strings.TrimSpace(c.Version)
 	if raw == "" {
@@ -89,25 +91,27 @@ func leadingDigits(s string) string {
 	return s
 }
 
-// SIEMEndpointCheck is the §17.6 line 517 SIEM-endpoint advisory. When
-// the deployment runs in production with no audit.siem.endpoint
+// SIEMEndpointCheck is the §17.6 SIEM-endpoint advisory. When
+// the deployment runs in production mode with no audit.siem.endpoint
 // configured it emits a non-blocking warning: audit logs are stored in
 // Postgres only, which does not meet compliance-grade audit-integrity
 // requirements. The check always passes (it never blocks an install).
 //
-// spec: §17.6 line 517.
+// spec: §17.6, §17.9.1 (Composition Dimensions) "Production mode".
 type SIEMEndpointCheck struct {
-	// Environment is the chart `environment` value (dev | staging |
-	// prod | production).
+	// Environment is the chart `environment` value. Production mode is
+	// the exact value prod, read through deployenv.IsProduction.
+	//
+	// spec: §17.9.1 (Composition Dimensions) "Production mode"
 	Environment string
 	// SIEMEndpoint is the audit.siem.endpoint value. Empty triggers the
 	// warning in a production environment.
 	SIEMEndpoint string
 }
 
-// Decide evaluates the §17.6 line 517 SIEM advisory.
+// Decide evaluates the §17.6 SIEM advisory.
 func (c SIEMEndpointCheck) Decide() Decision {
-	if !isProductionEnvironment(c.Environment) || strings.TrimSpace(c.SIEMEndpoint) != "" {
+	if !deployenv.IsProduction(c.Environment) || strings.TrimSpace(c.SIEMEndpoint) != "" {
 		return Decision{Passed: true}
 	}
 	return Decision{
@@ -116,15 +120,67 @@ func (c SIEMEndpointCheck) Decide() Decision {
 	}
 }
 
-// isProductionEnvironment reports whether the chart environment value
-// names a production posture. §17.6 line 517 keys on LENNY_ENV=production;
-// the chart `environment` value uses `prod`, so both spellings match.
-func isProductionEnvironment(env string) bool {
-	switch strings.ToLower(strings.TrimSpace(env)) {
-	case "prod", "production":
-		return true
+// EtcdSecretEncryptionWarning is the §17.6 etcd Secret encryption warning
+// text, verbatim from the preflight check table row.
+//
+// spec: §17.6 (Packaging and Installation) "etcd Secret encryption (warning)"
+const EtcdSecretEncryptionWarning = "WARNING: Kubernetes does not encrypt Secrets in etcd by default. Credential pool API keys stored in Kubernetes Secrets (secretRef) are readable in plaintext from etcd snapshots or backups unless EncryptionConfiguration is enabled. Production deployments MUST configure EncryptionConfiguration with aescbc/aesgcm/kms for the 'secrets' resource type. Cloud-managed clusters: enable envelope encryption via AWS KMS (EKS), GCP Cloud KMS (GKE), or Azure Key Vault (AKS). Self-managed clusters: verify with 'etcdctl get /registry/secrets/lenny-system/<name> | hexdump'. See Section 4.9."
+
+// NodeDiskEncryptionWarning is the §17.6 node disk encryption warning text,
+// verbatim from the preflight check table row.
+//
+// spec: §17.6 (Packaging and Installation) "Node disk encryption (warning)"
+const NodeDiskEncryptionWarning = "WARNING: Node-level disk encryption (LUKS/dm-crypt or cloud-provider encrypted volumes) is required for production deployments (Section 6.4) but cannot be verified by Lenny — it depends on the underlying node pool configuration. Verify manually: AWS (EBS encryption on launch template), GCP (CMEK or default encryption on boot/scratch disks), Azure (SSE on managed disks). For T4 workloads, use Kata or gVisor isolation profiles with encrypted scratch volumes."
+
+// EtcdSecretEncryptionCheck is the §17.6 etcd Secret encryption advisory.
+// The preflight Job has no etcd access, so it cannot verify that the
+// cluster encrypts Secrets at rest. In production mode the check emits the
+// §17.6 warning that the control is unverified; outside production it is
+// silent. It always passes, because the §17.6 row makes it non-blocking.
+//
+// spec: §17.6 (Packaging and Installation) "etcd Secret encryption (warning)",
+// §17.9.1 (Composition Dimensions) "Production mode".
+type EtcdSecretEncryptionCheck struct {
+	// Environment is the chart `environment` value, read through
+	// deployenv.IsProduction.
+	Environment string
+}
+
+// Decide evaluates the §17.6 etcd Secret encryption advisory.
+func (c EtcdSecretEncryptionCheck) Decide() Decision {
+	return productionOnlyWarning(c.Environment, EtcdSecretEncryptionWarning)
+}
+
+// NodeDiskEncryptionCheck is the §17.6 node disk encryption advisory.
+// Node-level disk encryption depends on the node pool configuration, which
+// Lenny cannot inspect, so in production mode the check emits the §17.6
+// warning that the control is unverified; outside production it is silent.
+// It always passes, because the §17.6 row makes it non-blocking. It is
+// distinct from the §12.9 volume-encryption check, which audits the
+// Postgres and Redis volumes.
+//
+// spec: §17.6 (Packaging and Installation) "Node disk encryption (warning)",
+// §17.9.1 (Composition Dimensions) "Production mode".
+type NodeDiskEncryptionCheck struct {
+	// Environment is the chart `environment` value, read through
+	// deployenv.IsProduction.
+	Environment string
+}
+
+// Decide evaluates the §17.6 node disk encryption advisory.
+func (c NodeDiskEncryptionCheck) Decide() Decision {
+	return productionOnlyWarning(c.Environment, NodeDiskEncryptionWarning)
+}
+
+// productionOnlyWarning returns a passing Decision that carries warning
+// when env is production mode, and a silent pass otherwise.
+//
+// spec: §17.9.1 (Composition Dimensions) "Production mode"
+func productionOnlyWarning(env, warning string) Decision {
+	if !deployenv.IsProduction(env) {
+		return Decision{Passed: true}
 	}
-	return false
+	return Decision{Passed: true, Reason: warning}
 }
 
 // StorageRouterRegion names one data-residency region the chart declares
@@ -148,12 +204,12 @@ type StorageRouterRegion struct {
 // fail-closed. An empty region set skips the check (single-region
 // deployments do not declare regions).
 //
-// spec: §17.6 line 504 (StorageRouter region coverage); §12.6.
+// spec: §17.6; §12.6.
 type StorageRouterRegionCoverageCheck struct {
 	Regions []StorageRouterRegion
 }
 
-// Decide evaluates the §17.6 line 504 region-coverage audit.
+// Decide evaluates the §17.6 region-coverage audit.
 func (c StorageRouterRegionCoverageCheck) Decide() Decision {
 	if len(c.Regions) == 0 {
 		return Decision{Passed: true, Reason: "SKIPPED: no StorageRouter regions declared (single-region deployment)"}
@@ -177,14 +233,14 @@ func (c StorageRouterRegionCoverageCheck) Decide() Decision {
 	return Decision{Passed: true, Reason: fmt.Sprintf("all %d StorageRouter regions have Postgres and object-storage backends", len(c.Regions))}
 }
 
-// LegalHoldEscrowCheck is the §17.6 line 505 legal-hold escrow audit.
+// LegalHoldEscrowCheck is the §17.6 legal-hold escrow audit.
 // When legal hold is enabled, every declared StorageRouter region must
 // have a region-scoped escrow KEK so a force-delete under hold can seal
 // the escrow copy in-region (§12.8 Phase 3.5 residency). A region without
 // an escrow key fails the install fail-closed. The check skips when legal
 // hold is disabled or no regions are declared.
 //
-// spec: §17.6 line 505; §12.8 Phase 3.5.
+// spec: §17.6; §12.8 Phase 3.5.
 type LegalHoldEscrowCheck struct {
 	// Enabled is the legalHold.enabled chart value.
 	Enabled bool
@@ -194,7 +250,7 @@ type LegalHoldEscrowCheck struct {
 	Regions []string
 }
 
-// Decide evaluates the §17.6 line 505 escrow per-region audit.
+// Decide evaluates the §17.6 escrow per-region audit.
 func (c LegalHoldEscrowCheck) Decide() Decision {
 	if !c.Enabled {
 		return Decision{Passed: true, Reason: "SKIPPED: legal hold is not enabled"}
@@ -223,24 +279,23 @@ func (c LegalHoldEscrowCheck) Decide() Decision {
 // connection); the chart-side connect_query ConfigMap is validated at
 // render time.
 //
-// spec: §17.6 lines 487-488 (PgBouncer pool_mode == transaction;
-// connect_query sets the tenant sentinel).
+// spec: §17.6.
 type PgBouncerConfigProber interface {
 	ProbePgBouncer(ctx context.Context) (poolMode string, hasTenantSentinel bool, err error)
 }
 
-// PgBouncerConfigCheck is the §17.6 lines 487-488 PgBouncer audit. When a
+// PgBouncerConfigCheck is the §17.6 PgBouncer audit. When a
 // prober is wired it verifies pool_mode == transaction and that the
 // per-connection tenant sentinel connect_query is present. A nil prober
 // skips the check.
 //
-// spec: §17.6 lines 487-488.
+// spec: §17.6.
 type PgBouncerConfigCheck struct {
 	// Prober reads the live PgBouncer config. Nil skips the check.
 	Prober PgBouncerConfigProber
 }
 
-// Decide evaluates the §17.6 lines 487-488 PgBouncer audit.
+// Decide evaluates the §17.6 PgBouncer audit.
 func (c PgBouncerConfigCheck) Decide(ctx context.Context) Decision {
 	if c.Prober == nil {
 		return Decision{Passed: true, Reason: "SKIPPED: no PgBouncer admin connection wired (chart-side connect_query ConfigMap validated at render time)"}
@@ -267,23 +322,23 @@ func (c PgBouncerConfigCheck) Decide(ctx context.Context) Decision {
 // database. It is the seam the real database dialer and test fakes
 // satisfy. A nil prober skips the check.
 //
-// spec: §17.6 line 489 (billing/audit trigger enabled).
+// spec: §17.6.
 type BillingTriggerProber interface {
 	ProbeBillingTriggers(ctx context.Context) (enabled bool, err error)
 }
 
-// BillingTriggerCheck is the §17.6 line 489 integrity-trigger audit. When
+// BillingTriggerCheck is the §17.6 integrity-trigger audit. When
 // a prober is wired it verifies the billing/audit integrity triggers are
 // enabled. A nil prober skips the check (the v1 preflight Job is not
 // granted the billing-database superuser connection the SHOW requires).
 //
-// spec: §17.6 line 489.
+// spec: §17.6.
 type BillingTriggerCheck struct {
 	// Prober reads the live trigger state. Nil skips the check.
 	Prober BillingTriggerProber
 }
 
-// Decide evaluates the §17.6 line 489 integrity-trigger audit.
+// Decide evaluates the §17.6 integrity-trigger audit.
 func (c BillingTriggerCheck) Decide(ctx context.Context) Decision {
 	if c.Prober == nil {
 		return Decision{Passed: true, Reason: "SKIPPED: no billing-database connection wired for the integrity-trigger audit"}

@@ -89,7 +89,7 @@ func (m *recordingMetrics) SetAuditPartitionDropBlocked(partition string, blocke
 
 var now = time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 
-// spec: §16.4 lines 378-382 — Tick passes the general window
+// spec: §16.4 — Tick passes the general window
 // (retentionDays) and the separate gdpr.* window to every tenant.
 func TestTickComputesWindowsAndSums(t *testing.T) {
 	store := &fakeStore{perTenant: map[string]int{"platform": 3, "acme": 5}}
@@ -134,7 +134,7 @@ func TestTickComputesWindowsAndSums(t *testing.T) {
 	}
 }
 
-// spec: §16.4 line 380 — a zero GDPRRetentionDays holds every gdpr.*
+// spec: §16.4 — a zero GDPRRetentionDays holds every gdpr.*
 // row indefinitely (the gdpr cutoff is the zero time, which
 // PruneRetention treats as match-nothing).
 func TestTickZeroGDPRWindowHoldsReceipts(t *testing.T) {
@@ -198,7 +198,7 @@ func TestTickTenantListErrorIsReported(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 687 — ForceDrop records audit.partition_drop_forced
+// spec: §16.7 — ForceDrop records audit.partition_drop_forced
 // with the window statistics and the operator's acknowledgement before
 // it deletes, and forces past the SIEM guard.
 func TestForceDropEmitsEventAndForces(t *testing.T) {
@@ -278,7 +278,7 @@ func TestForceDropNoWindowRejected(t *testing.T) {
 	}
 }
 
-// spec: §16.4 line 378 — a tenant whose SIEM forwarder is stalled (held
+// spec: §16.4 — a tenant whose SIEM forwarder is stalled (held
 // rows past the retention TTL) raises the partition-drop-blocked gauge
 // to 1; a tenant with nothing held never creates a series.
 func TestTickSetsPartitionDropBlockedGauge(t *testing.T) {
@@ -307,7 +307,7 @@ func TestTickSetsPartitionDropBlockedGauge(t *testing.T) {
 	}
 }
 
-// spec: §16.4 line 378 — once the forwarder catches up the held count
+// spec: §16.4 — once the forwarder catches up the held count
 // returns to zero and the gauge is cleared exactly once; a partition
 // that was never blocked is never cleared (no spurious 0 series).
 func TestTickClearsPartitionDropBlockedOnRecovery(t *testing.T) {

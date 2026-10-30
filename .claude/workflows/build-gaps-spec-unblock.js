@@ -10,7 +10,7 @@ export const meta = {
 //
 //   Workflow({ name: "build-gaps-spec-unblock", args: {
 //     date: "YYYY-MM-DD",      // required (logging only; scripts cannot call Date)
-//     repoRoot: "/abs/path",   // optional; defaults to this project
+//     repoRoot: "/abs/path",   // required: the repository root
 //     maxIterations: 5,        // optional; safety cap on the outer loop
 //     buildMaxIter: 0          // optional; >0 passes --max-iter to close-build-gaps.sh
 //   }})
@@ -20,7 +20,7 @@ export const meta = {
 // neither writes nor approves proposals, and never opens, re-opens, or creates
 // a finding — it only CLOSES findings that already reference an approved
 // proposal. The per-finding work lives in close-build-gaps.sh, the single
-// engine: it applies the proposal's spec edits with the implement-proposal skill (apply-only),
+// engine: it applies the proposal's spec edits with the implement-proposal skill (spec-only),
 // implements the entire spec change's blast radius across the codebase, writes
 // and runs tests to green, and marks the finding CLOSED. close-build-gaps.sh
 // loops internally across batches until no qualifying finding remains and then
@@ -34,7 +34,11 @@ if (typeof input === "string") input = JSON.parse(input);
 if (!input || !input.date) {
   throw new Error("args.date is required (YYYY-MM-DD; workflow scripts cannot call Date)");
 }
-const repo = input.repoRoot || "/Users/joan/projects/lenny";
+// Required rather than defaulted: a default is one machine's checkout, and a
+// workflow that silently runs against the wrong tree is worse than one that
+// stops. change-proposal.js requires it for the same reason.
+if (!input.repoRoot) throw new Error("args.repoRoot is required and missing");
+const repo = input.repoRoot;
 const date = input.date;
 const maxIterations = input.maxIterations || 5;
 const buildMaxIter = input.buildMaxIter || 0;
@@ -80,7 +84,7 @@ function runPrompt(iter) {
     repo +
     "/close-build-gaps.sh" +
     flag +
-    " to completion. It implements every OPEN BUILD-GAPS.md finding that references an approved spec proposal — applying the proposal's spec edits via the implement-proposal skill (apply-only), implementing the full spec-change blast radius in code, writing and running tests to green, and marking the finding CLOSED — looping internally across batches until no qualifying finding remains. It can run for hours, and harness process-tree timeouts kill ordinary background children, so launch it DETACHED:\n" +
+    " to completion. It implements every OPEN BUILD-GAPS.md finding that references an approved spec proposal — applying the proposal's spec edits via the implement-proposal skill (spec-only), implementing the full spec-change blast radius in code, writing and running tests to green, and marking the finding CLOSED — looping internally across batches until no qualifying finding remains. It can run for hours, and harness process-tree timeouts kill ordinary background children, so launch it DETACHED:\n" +
     "     cd " +
     repo +
     " && nohup setsid ./close-build-gaps.sh" +

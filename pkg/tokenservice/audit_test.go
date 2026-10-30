@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // recordingAuditor captures audit appends for assertion.
@@ -151,6 +152,33 @@ type txStore struct {
 	// failErr, when set, is returned verbatim from RecordWithAudit so a
 	// test can inject a typed Postgres-unavailability error. F-13.3.4.
 	failErr error
+	// revoked lists source jtis the fake reports as revoked at the
+	// §13.3 step (1a) re-read, and sources records the list the handler
+	// passed on the last call.
+	revoked map[string]time.Time
+	// impersonation lists source jtis the fake reports as live
+	// platform-admin impersonation rows at the step (1a) re-read.
+	impersonation map[string]bool
+	sources       []issuedtokenstore.SourceToken
+}
+
+// fakeRecheck mirrors the issuedtokenstore step (1a) re-read: it returns
+// a *SourceRevokedError for the first listed source whose jti is in
+// revoked and, when none is revoked, a *SourceImpersonationError for the
+// first listed source whose jti is in impersonation, checking sources in
+// list order.
+func fakeRecheck(sources []issuedtokenstore.SourceToken, revoked map[string]time.Time, impersonation map[string]bool) error {
+	for _, src := range sources {
+		if at, ok := revoked[src.JTI]; ok && src.JTI != "" {
+			return &issuedtokenstore.SourceRevokedError{Role: src.Role, JTI: src.JTI, RevokedAt: at}
+		}
+	}
+	for _, src := range sources {
+		if impersonation[src.JTI] && src.JTI != "" {
+			return &issuedtokenstore.SourceImpersonationError{Role: src.Role, JTI: src.JTI}
+		}
+	}
+	return nil
 }
 
 func (t *txStore) Record(_ context.Context, tok issuedtokenstore.IssuedToken) error {
@@ -161,10 +189,14 @@ func (t *txStore) Record(_ context.Context, tok issuedtokenstore.IssuedToken) er
 }
 
 func (t *txStore) RecordWithAudit(_ context.Context, tok issuedtokenstore.IssuedToken,
-	eventType string, payload json.RawMessage, at time.Time,
+	sources []issuedtokenstore.SourceToken, eventType string, payload json.RawMessage, at time.Time,
 ) (audit.Row, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.sources = append([]issuedtokenstore.SourceToken(nil), sources...)
+	if err := fakeRecheck(sources, t.revoked, t.impersonation); err != nil {
+		return audit.Row{}, err
+	}
 	if t.failErr != nil {
 		return audit.Row{}, t.failErr
 	}
@@ -199,9 +231,11 @@ func (e *txStoreErr) Error() string { return e.msg }
 func newAuditTestServer(t *testing.T) (*Server, *jwt.HMACSigner) {
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	return NewServer(Options{
-		Signer: signer,
-		Issuer: "https://lenny.dev.test/token",
+	return mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
 	}), signer
 }
 
@@ -224,17 +258,19 @@ func mintToken(t *testing.T, signer *jwt.HMACSigner, c jwt.Claims) string {
 	return tok
 }
 
-// spec: §13.3 line 587 — every accepted exchange emits one
+// spec: §13.3 — every accepted exchange emits one
 // token.exchanged audit row with policy_result=accepted and the jti.
 func TestHandlerEmitsTokenExchangedAudit_InMemoryPath(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
 	store := &recordingIssuedTokenStore{}
-	srv := NewServer(Options{
-		Signer:       signer,
-		Issuer:       "https://lenny.dev.test/token",
-		IssuedTokens: store,
-		Auditor:      auditor,
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		IssuedTokens:       store,
+		Auditor:            auditor,
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
@@ -271,13 +307,13 @@ func TestHandlerEmitsTokenExchangedAudit_InMemoryPath(t *testing.T) {
 	if payload.JTI == "" {
 		t.Errorf("payload missing jti")
 	}
-	// §13.3 line 587 — no raw tokens in audit body.
+	// §13.3 — no raw tokens in audit body.
 	if bytes.Contains(r.Payload, []byte(subjectTok)) {
 		t.Errorf("audit payload leaked raw subject_token")
 	}
 }
 
-// spec: §13.3 line 589 — when the IssuedTokenStore is also an
+// spec: §13.3 — when the IssuedTokenStore is also an
 // IssuedTokenAuditStore the handler binds the issued_tokens INSERT
 // and the audit_log INSERT in one transactional call. The audit row
 // from the in-memory Auditor must NOT be additionally produced (the
@@ -286,11 +322,13 @@ func TestHandlerUsesTxStorePathWhenAvailable(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
 	tx := &txStore{}
-	srv := NewServer(Options{
-		Signer:       signer,
-		Issuer:       "https://lenny.dev.test/token",
-		IssuedTokens: tx,
-		Auditor:      auditor,
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		IssuedTokens:       tx,
+		Auditor:            auditor,
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
@@ -320,16 +358,18 @@ func TestHandlerUsesTxStorePathWhenAvailable(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 589 — write-before-issue fail-closed: when the
+// spec: §13.3 — write-before-issue fail-closed: when the
 // tx-store INSERT fails, the handler returns 500 and does NOT return
 // the signed token to the caller.
 func TestHandlerTxFailureReturns500NoToken(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	tx := &txStore{failAt: "audit"}
-	srv := NewServer(Options{
-		Signer:       signer,
-		Issuer:       "https://lenny.dev.test/token",
-		IssuedTokens: tx,
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		IssuedTokens:       tx,
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
@@ -354,15 +394,17 @@ func TestHandlerTxFailureReturns500NoToken(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 585 — rejected exchanges emit a token.exchanged
+// spec: §13.3 — rejected exchanges emit a token.exchanged
 // audit row with policy_result=rejected:<reason>.
 func TestHandlerEmitsRejectionAuditOnInvalidScope(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
-	srv := NewServer(Options{
-		Signer:  signer,
-		Issuer:  "https://lenny.dev.test/token",
-		Auditor: auditor,
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		Auditor:            auditor,
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
@@ -387,20 +429,22 @@ func TestHandlerEmitsRejectionAuditOnInvalidScope(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 607 — rate limit returns 429 with Retry-After and
+// spec: §13.3 — rate limit returns 429 with Retry-After and
 // emits both the unconditional counter and the sampled audit row.
 func TestHandlerRateLimitedReturns429AndAudits(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	auditor := &recordingAuditor{}
 	metrics := &recordingMetrics{}
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	srv := NewServer(Options{
-		Signer:    signer,
-		Issuer:    "https://lenny.dev.test/token",
-		Auditor:   auditor,
-		Metrics:   metrics,
-		RateLimit: RateLimitOptions{CallerPerSecond: 1, SampleWindow: 10 * time.Second},
-		Now:       func() time.Time { return now },
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute,
+		Signer:             jwtsign.HMAC(signer),
+		Verifier:           signer,
+		Issuer:             "https://lenny.dev.test/token",
+		Auditor:            auditor,
+		Metrics:            metrics,
+		RateLimit:          RateLimitOptions{CallerPerSecond: 1, SampleWindow: 10 * time.Second},
+		Now:                func() time.Time { return now },
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,

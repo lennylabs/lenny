@@ -64,7 +64,11 @@ echo "boundary held: lenny-ops and token-service both blocked"; exit 0`
 	nonRoot := true
 	noPrivEsc := false
 	roFS := true
-	var uid int64 = 65532
+	// §13.1 (Container identity): the probe states its own nonzero
+	// runAsUser and runAsGroup at container level, outside the reserved
+	// adapter UID (65532 by default) and agent UID. A pod-level identity
+	// does not satisfy the lenny-pod-security webhook.
+	var probeID int64 = 1000
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "objstore-egress-boundary-probe",
@@ -75,7 +79,6 @@ echo "boundary held: lenny-ops and token-service both blocked"; exit 0`
 			RestartPolicy: corev1.RestartPolicyNever,
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: &nonRoot,
-				RunAsUser:    &uid,
 			},
 			Containers: []corev1.Container{{
 				Name:    "probe",
@@ -85,6 +88,8 @@ echo "boundary held: lenny-ops and token-service both blocked"; exit 0`
 					AllowPrivilegeEscalation: &noPrivEsc,
 					ReadOnlyRootFilesystem:   &roFS,
 					RunAsNonRoot:             &nonRoot,
+					RunAsUser:                &probeID,
+					RunAsGroup:               &probeID,
 					Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 				},
 			}},

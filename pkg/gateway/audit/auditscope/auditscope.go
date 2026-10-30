@@ -6,7 +6,7 @@
 // guard prevents a compromised caller from injecting a forged-tenant
 // audit row at write time in the first place.
 //
-// §11.7 line 428 ("Write-time tenant validation") requires that the
+// §11.7 requires that the
 // `tenant_id` on every audit row equal the authenticated caller's
 // scope, derived from the JWT claim or the session context rather
 // than from the caller-supplied payload. A mismatch is rejected at
@@ -22,7 +22,7 @@
 // guard unchanged, since they are not the forged-tenant vector the
 // spec names.
 //
-// spec: §11.7 line 428.
+// spec: §11.7.
 package auditscope
 
 import (
@@ -43,7 +43,7 @@ import (
 // so they bypass the per-tenant scope match.
 const platformTenant = "platform"
 
-// CodeTenantScopeMismatch is the §11.7 line 428 error code surfaced
+// CodeTenantScopeMismatch is the §11.7 error code surfaced
 // when an audit write targets a tenant other than the authenticated
 // caller's scope.
 const CodeTenantScopeMismatch = "AUDIT_TENANT_SCOPE_MISMATCH"
@@ -60,7 +60,7 @@ type Chain interface {
 
 // TenantScopeError is returned by Validator.Append when the row's
 // target tenant does not match the authenticated caller's scope. Its
-// Code is the §11.7 line 428 AUDIT_TENANT_SCOPE_MISMATCH.
+// Code is the §11.7 AUDIT_TENANT_SCOPE_MISMATCH.
 type TenantScopeError struct {
 	// Attempted is the tenant the rejected row targeted.
 	Attempted string
@@ -102,7 +102,7 @@ func New(inner Chain, clock func() time.Time) *Validator {
 // `security.audit_write_rejected` row on the platform chain.
 //
 // The scope is derived from the request context's authenticated
-// principal, never from the caller-supplied payload (§11.7 line 428).
+// principal, never from the caller-supplied payload (§11.7).
 // A write that carries no authenticated principal (a gateway-internal
 // background writer) is allowed: it is not the forged-tenant vector
 // the spec guards against.

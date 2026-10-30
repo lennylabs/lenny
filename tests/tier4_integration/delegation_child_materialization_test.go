@@ -95,14 +95,24 @@ const (
 func materializeFixedClock() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 
 // materializeRespondingRuntime is an adapter.RuntimeProcess that replies to
-// every written envelope with a §15.4.1 response frame, so the PodExecutor
+// every written envelope with a §28.5.3 response frame, so the PodExecutor
 // Attach round-trip against a materialized child returns a concrete response
 // rather than blocking. It mirrors the executor package's respondingRuntime.
+// It plays a runtime that keeps no per-session context, which ignores the
+// session_start and session_end frames the adapter writes at each start and
+// teardown (§28.5.3, CH-MSGSOCK, Inbound: session_start rule 2).
 type materializeRespondingRuntime struct{ out chan []byte }
 
 func (r *materializeRespondingRuntime) Start(context.Context, string) error { return nil }
 
-func (r *materializeRespondingRuntime) WriteEnvelope(string, []byte) error {
+func (r *materializeRespondingRuntime) WriteEnvelope(_ string, envelope []byte) error {
+	var probe struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(envelope, &probe)
+	if probe.Type == "session_start" || probe.Type == "session_end" {
+		return nil
+	}
 	r.out <- []byte(`{"type":"response","text":"ack"}`)
 	return nil
 }
@@ -113,17 +123,25 @@ func (r *materializeRespondingRuntime) Output(context.Context, string) (<-chan [
 func (r *materializeRespondingRuntime) Interrupt(context.Context, string, bool) error { return nil }
 func (r *materializeRespondingRuntime) Close(context.Context, string) error           { return nil }
 
-// materializeRaceAssigner fails every AssignProto, modelling the §8.3 line 470
+// materializeRaceAssigner fails every AssignProto, modelling the §8.3
 // post-pod-claim credential-assignment race: the pre-claim resolution found the
 // pool yet the lease mint fails in the assignment window after the warm pod is
 // claimed, so the engine must release the pod and surface the assignment-race
 // sentinel.
 type materializeRaceAssigner struct{}
 
-func (materializeRaceAssigner) AssignProto(_, _, _, _ string) (*adapterv1.CredentialLease, error) {
+func (materializeRaceAssigner) AssignProto(_, _, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	return nil, credential.ErrPoolExhausted
 }
-func (materializeRaceAssigner) ReleaseSession(string) {}
+func (materializeRaceAssigner) ReleaseSession(string) error { return nil }
+
+// ReleaseThrough is the generation-scoped pod release; this fake records
+// nothing for it.
+func (materializeRaceAssigner) ReleaseThrough(string, int64) error { return nil }
+
+// Release is the attempt-scoped lease release podsession.CredentialAssigner
+// requires; this fake records nothing for it.
+func (materializeRaceAssigner) Release(string) error { return nil }
 
 // materializeCluster boots one envtest control plane and seeds the three warm
 // pools the sub-tests claim from: an assignable pool with an idle pod, an
@@ -291,8 +309,7 @@ func materializeServer(
 ) (*mcp.Server, sessionstore.Store, *podsession.Registry, executor.Executor) {
 	t.Helper()
 	adapterSrv := adapter.New("materialize-adapter")
-	adapterSrv.WorkspaceRoot = t.TempDir()
-	adapterSrv.StagingDir = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.CredentialsDir = t.TempDir()
 	adapterSrv.Runtime = rt
 
@@ -309,6 +326,7 @@ func materializeServer(
 	store := memstore.New()
 	registry := podsession.NewRegistry()
 	sessionSrv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -324,6 +342,7 @@ func materializeServer(
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback: true,
 		Store:             store,
 		Executor:          podExec,
 		Runtimes:          runtimes,
@@ -410,6 +429,7 @@ func materializeHandle(t *testing.T, resp map[string]any) struct {
 // 8.2.17 divergence), never claimed a pod, or launched but stayed unregistered
 // so Executor.Send rejects it as unbound (pod.go: "is not bound to a pod").
 func TestDelegateTaskMaterializesChildToRunning_spec_8_2(t *testing.T) {
+	t.Parallel()
 	envtest.SkipUnlessAvailable(t)
 	cluster := materializeCluster(t)
 	tenants, runtimes, credPools := materializeStores(t)
@@ -446,7 +466,7 @@ func TestDelegateTaskMaterializesChildToRunning_spec_8_2(t *testing.T) {
 	if row.PodAssignment == "" {
 		t.Error("child row has no PodAssignment; the materialization claimed no warm pod")
 	}
-	// spec: §8.3 lines 472, 488 — the inherit hop threads the parent as the
+	// spec: §8.3 — the inherit hop threads the parent as the
 	// child's credential origin, so the inherit resolution (not the
 	// independent self-origin mint) ran through claim-and-start. An
 	// independent child would carry its own id here.
@@ -455,8 +475,7 @@ func TestDelegateTaskMaterializesChildToRunning_spec_8_2(t *testing.T) {
 			row.CredentialOriginSessionID)
 	}
 	// The credential lease was assigned to the child during the launch,
-	// constrained to the origin∩child provider intersection (spec/08 §8.3
-	// line 470): the parent runtime and the child runtime both support
+	// constrained to the origin∩child provider intersection (spec/08 §8.3): the parent runtime and the child runtime both support
 	// anthropic_direct, so the inherit child draws from poolAnthropic.
 	if pools := assigner.assignedPools(); len(pools) != 1 || pools[0] != poolAnthropic {
 		t.Errorf("assigned pools = %v, want [%s] (the inherit child drew its lease from the origin∩child pool at materialization)", pools, poolAnthropic)
@@ -489,6 +508,7 @@ func TestDelegateTaskMaterializesChildToRunning_spec_8_2(t *testing.T) {
 // tool code, admitted a running child on a failed assignment, or leaked the
 // loser's warm pod, which spec/08 line 470 forbids.
 func TestDelegateTaskMaterializationAssignmentRaceFailsClosed_spec_8_3(t *testing.T) {
+	t.Parallel()
 	envtest.SkipUnlessAvailable(t)
 	cluster := materializeCluster(t)
 	tenants, runtimes, credPools := materializeStores(t)
@@ -544,6 +564,7 @@ func TestDelegateTaskMaterializationAssignmentRaceFailsClosed_spec_8_3(t *testin
 // sentinel-to-tool-code mapping mislabeled a pool-warming outcome (for example
 // as a credential exhaustion) or swallowed it as INTERNAL_ERROR.
 func TestDelegateTaskMaterializationPoolWarmingMapsRuntimeUnavailable_spec_8_2(t *testing.T) {
+	t.Parallel()
 	envtest.SkipUnlessAvailable(t)
 	cluster := materializeCluster(t)
 	tenants, runtimes, credPools := materializeStores(t)

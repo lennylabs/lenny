@@ -1,0 +1,1 @@
+// spec: §25.8 Image Resolution (lines 3333-3358), line 3404-3406.

@@ -65,6 +65,18 @@ type SlotBindError struct {
 	Stage string
 	// Err is the underlying adapter/stage error.
 	Err error
+	// Leaked is the slot's §6.2 disposition after the failure: true when the
+	// compensating Shutdown was not acknowledged clean (the adapter did not
+	// answer it, or its answer reported an unclean exit) or when the
+	// reservation release itself failed. It is false for a connect-stage
+	// failure, where the slot was reserved before any workspace RPC and the
+	// adapter holds nothing for it. The reservation release and the §5.2
+	// slot-health accounting read it, so a slot whose pod-side state may
+	// survive stays counted rather than freeing occupancy.
+	//
+	// spec: §7.1 (normal flow); §6.2 (pod state machine); §5.2 (pool
+	// configuration and execution modes).
+	Leaked bool
 }
 
 func (e *SlotBindError) Error() string {
@@ -119,19 +131,25 @@ func slotErrCode(err error) codes.Code {
 // the failure reason is non-retryable or the single retry was exhausted.
 // Category is the failure reason (error.category), Retryable is always
 // false from the platform's perspective (the client may resubmit a new
-// request), and SlotID identifies the failed slot (error.slotId).
+// request), and SessionID identifies the session whose slot failed
+// (error.sessionId). The error carries no separate slot address: a
+// session-mode slot's identifier is its session's identifier. The routes
+// that reach the §15.1 mapper are the two that start a session on the slot
+// they bind, the one-call POST /v1/sessions/start and the two-step
+// POST /v1/sessions/{id}/start, and the one-call route carries no session
+// identifier in its path, so its 422 body would otherwise name nothing.
 //
-// spec: §5.2 "Client error on exhaustion".
+// spec: §5.2 "Client error on exhaustion"; §5.2 (identity invariant).
 type SlotFailedError struct {
-	Category string
-	SlotID   string
-	Pool     string
-	Err      error
+	Category  string
+	SessionID string
+	Pool      string
+	Err       error
 }
 
 func (e *SlotFailedError) Error() string {
-	return fmt.Sprintf("podsession: concurrent slot %s failed (%s) with no further retry: %v",
-		e.SlotID, e.Category, e.Err)
+	return fmt.Sprintf("podsession: slot for session %s failed (%s) with no further retry: %v",
+		e.SessionID, e.Category, e.Err)
 }
 
 func (e *SlotFailedError) Unwrap() error { return e.Err }

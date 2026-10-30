@@ -17,6 +17,7 @@ var spec161Metrics = []string{
 	"lenny_warmpool_stale_pods",
 	"lenny_pod_scrub_failure_count", "lenny_gateway_pod_retirement_total",
 	"lenny_controller_pod_retirement_total", "lenny_slot_failure_total",
+	"lenny_slot_compensation_superseded_total", "lenny_adapter_leaked_slots",
 	"lenny_slot_pod_replacement_total", "lenny_session_startup_duration_seconds",
 	"lenny_session_time_to_first_token_seconds", "lenny_session_creation_duration_seconds",
 	"lenny_pod_claim_duration_seconds", "lenny_pod_state_transition_duration_seconds",
@@ -134,22 +135,23 @@ var spec161Metrics = []string{
 	"lenny_legal_hold_escrow_region_unresolvable_total", "lenny_platform_audit_region_unresolvable_total",
 	"lenny_restore_artifact_missing_total", "lenny_restore_test_artifact_success_rate",
 	"lenny_restore_test_artifact_missing_total", "lenny_artifact_upload_error_total",
-	"lenny_gateway_kms_signing_errors_total", "lenny_t4_kms_probe_last_success_timestamp",
+	"lenny_gateway_kms_signing_errors_total", "lenny_jwt_sign_requests_total",
+	"lenny_t4_kms_probe_last_success_timestamp",
 	"lenny_t4_kms_probe_result_total", "lenny_warmpool_sdk_connect_timeout_total",
 	"lenny_crd_ssa_conflict_total", "lenny_data_residency_violation_total",
 	"lenny_session_eviction_total_loss_total", "lenny_network_policy_cidr_drift_total",
 	"lenny_billing_redis_stream_oldest_entry_age_seconds", "lenny_otlp_export_tls_handshake_total",
 	"lenny_ops_admin_api_tls_handshake_total",
-	// §12.5 line 321 — retention GC metrics.
+	// §12.5 — retention GC metrics.
 	"lenny_gc_runs_total", "lenny_gc_artifacts_deleted", "lenny_gc_errors_total",
 	"lenny_gc_duration_seconds",
-	// §12.5 line 291 — drain readiness check counter.
+	// §12.5 — drain readiness check counter.
 	"lenny_drain_readiness_checks_total",
-	// §12.8 line 739 — legal-hold checkpoint-gap reconciler counter.
+	// §12.8 — legal-hold checkpoint-gap reconciler counter.
 	"lenny_legal_hold_checkpoint_gaps_total",
-	// §25.6 line 2926 — diagnostic endpoint latency histogram.
+	// §25.6 — diagnostic endpoint latency histogram.
 	"lenny_diagnostics_request_duration_seconds",
-	// §16.1 line 713 / §25.13 lines 4833–4835 — bundled-alerting
+	// §16.1 / §25.13 — bundled-alerting
 	// observability surface.
 	"lenny_alerting_rules_bundled", "lenny_alerting_rule_overrides",
 	"lenny_alerting_rule_eval_duration_seconds",
@@ -255,4 +257,28 @@ func TestMetricNamesAreSorted(t *testing.T) {
 			t.Errorf("MetricNames not sorted at index %d: %q > %q", i, names[i-1], names[i])
 		}
 	}
+}
+
+// TestEnvProductionAlertSupportHelp_spec_16_5 pins the catalog entry of the
+// lenny_env_production gauge to the §17.9.1 production-mode definition, so
+// the catalog names --environment=prod rather than the retired LENNY_ENV
+// spelling.
+//
+// spec: §16.5 (AuditSIEMNotConfigured and AuditRetentionLow);
+// §17.9.1 (Composition Dimensions) "Production mode".
+func TestEnvProductionAlertSupportHelp_spec_16_5(t *testing.T) {
+	const want = "1 when the deployment runs in production mode (--environment=prod, §17.9.1), 0 otherwise; gates the production-only audit alerts (§16.5)."
+	for _, m := range AlertSupportCatalog() {
+		if m.Name != "lenny_env_production" {
+			continue
+		}
+		if m.Type != TypeGauge {
+			t.Errorf("type = %q, want gauge", m.Type)
+		}
+		if m.Help != want {
+			t.Errorf("help = %q, want %q", m.Help, want)
+		}
+		return
+	}
+	t.Fatal("lenny_env_production missing from AlertSupportCatalog")
 }

@@ -14,6 +14,10 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
 // SessionRecord is the §27.3.1 opaque server-side playground session
@@ -31,7 +35,7 @@ type SessionRecord struct {
 	// envelope so a downstream reader does not have to infer it.
 	Origin string `json:"origin"`
 
-	// Labels is the §27.2 line 41 playground.sessionLabels map
+	// Labels is the §27.2 playground.sessionLabels map
 	// applied to the session record for audit/accounting consumers.
 	// Config.EffectiveLabels guarantees the load-bearing origin label
 	// is present; operators can add labels via the chart value.
@@ -45,7 +49,7 @@ type SessionRecord struct {
 	// per-session heartbeat). The §27.6 idle-timeout sweep reclaims a
 	// record whose LastActivityAt predates the idle reclamation window. A
 	// zero value (a legacy record written before this field existed)
-	// falls back to IssuedAt. spec: §27.6 line 201.
+	// falls back to IssuedAt. spec: §27.6.
 	LastActivityAt time.Time `json:"last_activity_at,omitempty"`
 
 	// CSRFToken is the §27.3.1 anti-forgery token bound to the record.
@@ -54,7 +58,7 @@ type SessionRecord struct {
 	// BearerJTIs tracks the jti of every bearer the session has minted
 	// within the record's lifetime, newest last. The §27.3.1
 	// revocation path revokes every entry. The slice is bounded by
-	// ⌈oidcSessionTtlSeconds / bearerTtlSeconds⌉ + 1.
+	// ⌈oidcSessionTtlSeconds / auth.capabilityTokenTtlSeconds⌉ + 1.
 	BearerJTIs []string `json:"bearer_jtis,omitempty"`
 
 	// CurrentExp is the exp of the most-recently-minted bearer.
@@ -155,8 +159,7 @@ type SessionStore interface {
 	// (Handler.RevokeSessionsForUser) reads it to revoke every playground
 	// session the user established. The ids are a best-effort lookup
 	// hint: the caller revalidates each against GetSession, so a stale id
-	// (a session already revoked or expired) is harmless. spec: §27.3.1
-	// line 148, §11.4.
+	// (a session already revoked or expired) is harmless. spec: §27.3.1, §11.4.
 	SessionsForUser(ctx context.Context, tenant, userID string) ([]string, error)
 
 	// IdleSessions returns a reference to every playground session record
@@ -165,42 +168,41 @@ type SessionStore interface {
 	// falls back to its IssuedAt. An already-invalidated record is skipped
 	// (the §11.4 path revoked it). The scan is best-effort: a record that
 	// expires or is revoked between the scan and the sweep's RevokeSession
-	// is harmless because revocation is idempotent. spec: §27.6 line 201.
+	// is harmless because revocation is idempotent. spec: §27.6.
 	IdleSessions(ctx context.Context, cutoff time.Time) ([]SessionRef, error)
 
 	// TenantForSession resolves the tenant that owns an opaque session
-	// id through the §27.3.1 fan-in index, so the
-	// lenny_playground_session cookie carries only the opaque session id
-	// (line 81) and never the tenant. ok is false when no index entry
+	// id through the §27.3.1 fan-in index, so the lenny_playground_session cookie carries only the opaque session id and never the tenant. ok is false when no index entry
 	// exists (the cookie expired or was never issued). The error is
 	// non-nil only when the backing store is unreachable, so a caller on
 	// the auth path fails closed. The index is written by PutSession and
-	// removed by RevokeSession. spec: §27.3.1 line 81 (the cookie carries
-	// only the opaque session id).
+	// removed by RevokeSession. spec: §27.3.1.
 	TenantForSession(ctx context.Context, id string) (tenant string, ok bool, err error)
 }
 
 // sessionKey is the §12.4 / §27.3.1 Redis key for a playground
-// session record.
+// session record. Every tenant-scoped playground key and channel is built
+// from rediskeys.TenantPrefix, whose literal braces are a Redis Cluster
+// hash tag, so a tenant's playground keys share one hash slot.
 func sessionKey(tenant, id string) string {
-	return "t:" + tenant + ":pg:sess:" + id
+	return rediskeys.TenantPrefix(tenant) + "pg:sess:" + id
 }
 
 // revokedKey is the §27.3.1 Redis key for a minted-bearer revocation
 // marker.
 func revokedKey(tenant, jti string) string {
-	return "t:" + tenant + ":pg:revoked:" + jti
+	return rediskeys.TenantPrefix(tenant) + "pg:revoked:" + jti
 }
 
 // sessTenantIndexKey is the §27.3.1 fan-in index that recovers the
 // tenant owning an opaque session id. It lets the
 // lenny_playground_session cookie carry only the opaque session id
-// (§27.3.1 line 81) rather than embedding the tenant in the cookie
+// (§27.3.1) rather than embedding the tenant in the cookie
 // value. The session id is a 256-bit opaque random (newOpaqueID), so
 // this platform-scoped lookup discloses no tenant data on its own:
 // resolving the index requires already possessing the opaque id, which
 // is the cookie credential. The entry is written under the session TTL
-// by PutSession and deleted by RevokeSession. spec: §27.3.1 line 81.
+// by PutSession and deleted by RevokeSession. spec: §27.3.1.
 func sessTenantIndexKey(id string) string {
 	return "pg:sess-tenant:" + id
 }
@@ -209,9 +211,9 @@ func sessTenantIndexKey(id string) string {
 // ids a user holds. The §11.4 user-invalidation fan-out reads it to
 // revoke every playground session the user established. It carries the
 // §12.4 per-tenant prefix so a cross-tenant read is impossible. spec:
-// §27.3.1 line 148, §27.6 line 204.
+// §27.3.1, §27.6.
 func userIndexKey(tenant, userID string) string {
-	return "t:" + tenant + ":pg:user:" + userID
+	return rediskeys.TenantPrefix(tenant) + "pg:user:" + userID
 }
 
 // revocationChannel is the §27.3.1 per-tenant pub/sub channel the
@@ -219,31 +221,34 @@ func userIndexKey(tenant, userID string) string {
 // channel that sits alongside the EventBus channels rather than
 // multiplexing onto them.
 func revocationChannel(tenant string) string {
-	return "t:" + tenant + ":pg:revocations"
+	return rediskeys.TenantPrefix(tenant) + revocationChannelSuffix
 }
+
+// revocationChannelSuffix is the role segment that follows the tenant
+// prefix in every revocation channel name.
+const revocationChannelSuffix = "pg:revocations"
 
 // revocationChannelPattern matches every tenant's §27.3.1 revocation
 // channel. A single PSUBSCRIBE on this pattern subscribes a gateway
 // replica to all current and future tenants, so a tenant provisioned
 // after gateway start still warms the replica's negative cache without
-// a per-tenant subscription enrolment step. spec: §27.6 line 204 /
-// §27.3.1 line 96 — "Every gateway replica subscribes to this channel".
+// a per-tenant subscription enrolment step. The braces are literal in a
+// Redis glob, so the pattern matches exactly the hash-tagged channel names
+// revocationChannel builds. Classic pub/sub is broadcast cluster-wide, so
+// the one PSUBSCRIBE also covers a Redis Cluster. spec: §27.6 /
+// §27.3.1 — "Every gateway replica subscribes to this channel".
 // F-27.6.7.
-const revocationChannelPattern = "t:*:pg:revocations"
+const revocationChannelPattern = "t:{*}:" + revocationChannelSuffix
 
 // tenantFromRevocationChannel extracts the tenant id from a concrete
 // revocation channel name produced by revocationChannel. It returns
-// ok=false for any string that is not a t:{tenant}:pg:revocations
-// channel. Tenant ids match ^[a-zA-Z0-9_-]{1,128}$ (§10.2) and carry no
-// colon, so trimming the fixed prefix and suffix is unambiguous.
+// ok=false for any string that is not a braced t:{tenant}:pg:revocations
+// channel; an unbraced name is rejected. Tenant ids match
+// ^[a-zA-Z0-9_-]{1,128}$ (§10.2) and carry no brace or colon, so the
+// round trip through revocationChannel is unambiguous.
 func tenantFromRevocationChannel(channel string) (string, bool) {
-	const prefix = "t:"
-	const suffix = ":pg:revocations"
-	if !strings.HasPrefix(channel, prefix) || !strings.HasSuffix(channel, suffix) {
-		return "", false
-	}
-	tenant := channel[len(prefix) : len(channel)-len(suffix)]
-	if tenant == "" {
+	tenant, ok := rediskeys.TenantOf(channel)
+	if !ok || channel != revocationChannel(tenant) {
 		return "", false
 	}
 	return tenant, true
@@ -255,7 +260,7 @@ func tenantFromRevocationChannel(channel string) (string, bool) {
 // propagation latency, and the publish timestamp lets a peer compute
 // the end-to-end §27.8 propagation sample on receipt. The jti is placed
 // last so a SplitN keeps it intact even though §10.2 jti material never
-// contains the delimiter. spec: §27.8 line 241. F-27.6.6.
+// contains the delimiter. spec: §27.8. F-27.6.6.
 func encodeRevocationMsg(originReplicaID string, publishNano int64, jti string) string {
 	return originReplicaID + "|" + strconv.FormatInt(publishNano, 10) + "|" + jti
 }
@@ -468,7 +473,7 @@ type RedisSessionStore struct {
 	// subscriber including the originating replica, so the subscribe
 	// loop compares this id against the message origin to record the
 	// §27.8 propagation sample only for messages a *peer* published.
-	// spec: §27.8 line 241. F-27.6.6.
+	// spec: §27.8. F-27.6.6.
 	replicaID string
 
 	// propObserver, when set, receives the §27.8
@@ -502,7 +507,7 @@ func NewRedisSessionStore(client redis.UniversalClient) *RedisSessionStore {
 // subscribe loop and returns s for chaining. The gateway calls it so a
 // peer-observed revocation records a lenny_playground_session_revocation_propagation_seconds
 // sample. revocationPropagation is itself nil-safe, so WithMetrics(nil)
-// leaves sampling disabled. spec: §27.8 line 241. F-27.6.6.
+// leaves sampling disabled. spec: §27.8. F-27.6.6.
 func (s *RedisSessionStore) WithMetrics(m *Metrics) *RedisSessionStore {
 	if m == nil {
 		return s
@@ -519,6 +524,20 @@ var _ SessionStore = (*RedisSessionStore)(nil)
 // index is a best-effort lookup hint (RevokeSessionsForUser revalidates
 // each member against GetSession), so a member that outlives its record
 // is harmless; the index set self-expires at the session TTL.
+//
+// The write runs in two steps because the keys sit in different Redis
+// Cluster hash slots: the tenant-tagged session record and user index
+// share the tenant's slot and commit in one MULTI, while the
+// platform-scoped `pg:sess-tenant:` fan-in index carries no tenant tag and
+// is written afterwards. §27.3.1 ("Session record backing store") requires
+// no atomicity across them. The order fails closed: until the fan-in index
+// is written, TenantForSession misses, so the cookie resolves to no
+// session. A failure of the index write is returned, so the caller does
+// not issue the cookie; the orphaned record is unreachable without the
+// index and expires at its TTL.
+//
+// spec: §27.3.1 ("Session record backing store"); §12.4 Redis HA and
+// Failure Modes.
 func (s *RedisSessionStore) PutSession(ctx context.Context, tenant, id string, rec SessionRecord, ttl time.Duration) error {
 	payload, err := json.Marshal(rec)
 	if err != nil {
@@ -526,9 +545,6 @@ func (s *RedisSessionStore) PutSession(ctx context.Context, tenant, id string, r
 	}
 	pipe := s.client.TxPipeline()
 	pipe.Set(ctx, sessionKey(tenant, id), payload, ttl)
-	// §27.3.1 fan-in index so the cookie carries only the opaque id; it
-	// shares the session TTL so it self-expires with the record.
-	pipe.Set(ctx, sessTenantIndexKey(id), tenant, ttl)
 	if rec.UserID != "" {
 		uk := userIndexKey(tenant, rec.UserID)
 		pipe.SAdd(ctx, uk, id)
@@ -536,8 +552,12 @@ func (s *RedisSessionStore) PutSession(ctx context.Context, tenant, id string, r
 			pipe.Expire(ctx, uk, ttl)
 		}
 	}
-	_, err = pipe.Exec(ctx)
-	return err
+	if _, err := pipe.Exec(ctx); err != nil {
+		return err
+	}
+	// §27.3.1 fan-in index so the cookie carries only the opaque id; it
+	// shares the session TTL so it self-expires with the record.
+	return s.client.Set(ctx, sessTenantIndexKey(id), tenant, ttl).Err()
 }
 
 // TenantForSession implements SessionStore. It reads the §27.3.1 fan-in
@@ -571,14 +591,26 @@ func (s *RedisSessionStore) GetSession(ctx context.Context, tenant, id string) (
 }
 
 // RevokeSession implements SessionStore. It DELs the session record,
-// SETs a revocation marker for every bearer jti, and PUBLISHes each
-// jti on the per-tenant revocation channel so peer replicas warm
-// their negative cache. The writes complete before the method
-// returns.
+// SETs a revocation marker for every bearer jti, deletes the fan-in
+// index, and PUBLISHes each jti on the per-tenant revocation channel so
+// peer replicas warm their negative cache. The writes complete before the
+// method returns.
+//
+// The tenant-tagged session record and revocation markers share the
+// tenant's Redis Cluster hash slot and commit in one MULTI; the
+// platform-scoped `pg:sess-tenant:` fan-in index sits in another slot and
+// is deleted afterwards. §27.3.1 ("Session record backing store") requires
+// no atomicity across them. The order fails closed: the revocation is
+// durable once the first step commits, and an index entry left behind by a
+// failed second step resolves to a tenant whose session record is gone, so
+// GetSession misses and the cookie authorizes nothing. The index failure is
+// still returned so the caller reports it, and a retry is idempotent.
+//
+// spec: §27.3.1 ("Session record backing store"); §27.6; §12.4 Redis HA
+// and Failure Modes.
 func (s *RedisSessionStore) RevokeSession(ctx context.Context, tenant, id string, jtis []string, revokedTTL time.Duration) error {
 	pipe := s.client.TxPipeline()
 	pipe.Del(ctx, sessionKey(tenant, id))
-	pipe.Del(ctx, sessTenantIndexKey(id))
 	for _, jti := range jtis {
 		if jti == "" {
 			continue
@@ -586,6 +618,9 @@ func (s *RedisSessionStore) RevokeSession(ctx context.Context, tenant, id string
 		pipe.Set(ctx, revokedKey(tenant, jti), "1", revokedTTL)
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
+		return err
+	}
+	if err := s.client.Del(ctx, sessTenantIndexKey(id)).Err(); err != nil {
 		return err
 	}
 	publishNano := s.now().UnixNano()
@@ -632,7 +667,7 @@ func (s *RedisSessionStore) IsBearerRevoked(ctx context.Context, tenant, jti str
 	}
 	if n > 0 {
 		s.cacheMu.Lock()
-		s.cache[key] = s.now().Add(maxBearerTTL)
+		s.cache[key] = s.now().Add(jwt.MaxCapabilityTokenTTL)
 		s.cacheMu.Unlock()
 		return true, nil
 	}
@@ -647,11 +682,11 @@ func (s *RedisSessionStore) SessionsForUser(ctx context.Context, tenant, userID 
 }
 
 // idleSessionScanPattern matches every tenant's playground session-record
-// key (t:{tenant}:pg:sess:{id}). It deliberately excludes the global
-// pg:sess-tenant:{id} fan-in index (no t: prefix) and the per-user
-// pg:user:* index (pg:user:, not pg:sess:), so a single SCAN over it
-// enumerates session records and nothing else.
-const idleSessionScanPattern = "t:*:pg:sess:*"
+// key (t:{tenant}:pg:sess:{id}, braces literal). It deliberately excludes
+// the global pg:sess-tenant:{id} fan-in index (no t: prefix) and the
+// per-user pg:user:* index (pg:user:, not pg:sess:), so a single SCAN over
+// it enumerates session records and nothing else.
+const idleSessionScanPattern = "t:{*}:pg:sess:*"
 
 // IdleSessions implements SessionStore. It SCANs every tenant's session
 // record (the §12.4 hash-tagged keys), unmarshals each, and returns a
@@ -659,25 +694,23 @@ const idleSessionScanPattern = "t:*:pg:sess:*"
 // record whose JSON cannot be parsed is skipped rather than failing the
 // whole sweep, so one corrupt entry does not strand the rest. The SCAN is
 // O(records) and runs on the sweep cadence (minutes), well outside the
-// per-request hot path. spec: §27.6 line 201.
+// per-request hot path. The pattern spans tenants, so on a Redis Cluster
+// the SCAN runs on every master (redisconn.ScanKeys with no routing key);
+// a SCAN on the cluster client alone would cover one master and leave
+// the other masters' idle sessions unexpired (F-12.4.29).
+//
+// spec: §27.6; §12.4 Redis HA and Failure Modes.
 func (s *RedisSessionStore) IdleSessions(ctx context.Context, cutoff time.Time) ([]SessionRef, error) {
 	const scanBatch = 256
-	var (
-		cursor uint64
-		refs   []SessionRef
-	)
-	for {
-		keys, next, err := s.client.Scan(ctx, cursor, idleSessionScanPattern, scanBatch).Result()
-		if err != nil {
-			return nil, err
-		}
+	var refs []SessionRef
+	err := redisconn.ScanKeys(ctx, s.client, "", idleSessionScanPattern, scanBatch, func(keys []string) error {
 		for _, key := range keys {
 			raw, err := s.client.Get(ctx, key).Bytes()
 			if errors.Is(err, redis.Nil) {
 				continue // expired between SCAN and GET
 			}
 			if err != nil {
-				return nil, err
+				return err
 			}
 			var rec SessionRecord
 			if json.Unmarshal(raw, &rec) != nil {
@@ -689,10 +722,10 @@ func (s *RedisSessionStore) IdleSessions(ctx context.Context, cutoff time.Time) 
 			id := strings.TrimPrefix(key, sessionKey(rec.TenantID, ""))
 			refs = append(refs, SessionRef{Tenant: rec.TenantID, ID: id})
 		}
-		cursor = next
-		if cursor == 0 {
-			break
-		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return refs, nil
 }
@@ -706,7 +739,7 @@ func (s *RedisSessionStore) IdleSessions(ctx context.Context, cutoff time.Time) 
 // a §27.8 {outcome="resubscribe"} sample. A nil client subscribes to
 // nothing and returns when ctx is cancelled.
 //
-// spec: §27.6 line 204 / §27.3.1 line 96 — every replica subscribes and
+// spec: §27.6 / §27.3.1 — every replica subscribes and
 // a dropped subscription re-subscribes and emits the resubscribe
 // outcome. F-27.6.6, F-27.6.7.
 func (s *RedisSessionStore) SubscribeAllRevocations(ctx context.Context) {
@@ -767,7 +800,7 @@ func (s *RedisSessionStore) drainRevocations(ctx context.Context, ch <-chan *red
 // timestamp, records the §27.8 end-to-end propagation latency under the
 // pubsub_delivered outcome. A message this replica published itself
 // warms the cache but is not sampled (it is not a cross-replica
-// observation). spec: §27.8 line 241. F-27.6.6.
+// observation). spec: §27.8. F-27.6.6.
 func (s *RedisSessionStore) handleRevocationMessage(channel, payload string) {
 	tenant, ok := tenantFromRevocationChannel(channel)
 	if !ok {
@@ -778,7 +811,7 @@ func (s *RedisSessionStore) handleRevocationMessage(channel, payload string) {
 		return
 	}
 	s.cacheMu.Lock()
-	s.cache[revokedKey(tenant, jti)] = s.now().Add(maxBearerTTL)
+	s.cache[revokedKey(tenant, jti)] = s.now().Add(jwt.MaxCapabilityTokenTTL)
 	s.cacheMu.Unlock()
 	if tsOK && originReplicaID != s.replicaID {
 		latency := s.now().Sub(time.Unix(0, publishNano)).Seconds()

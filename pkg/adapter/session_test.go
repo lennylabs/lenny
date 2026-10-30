@@ -4,7 +4,9 @@ package adapter_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -15,10 +17,11 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/linefanout"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// fakeRuntime is the test double for RuntimeProcess. The §15.4.1
+// fakeRuntime is the test double for RuntimeProcess. The §28.5.3
 // heartbeat monitor writes frames and may interrupt from a background
 // goroutine while a test reads the recorded slices, so the recording
 // fields are guarded by mu; use the *Snapshot accessors from a test that
@@ -39,18 +42,33 @@ type fakeRuntime struct {
 	outputErr    error
 	echoInput    bool // when set, WriteEnvelope echoes the envelope to output
 
-	// subs holds the per-Output subscriber channels the single f.output
-	// stream fans out to, mirroring the production SocketRuntimeProcess:
-	// one runtime process per pod serves every slot over one connection,
-	// so each concurrent Attach stream sees the runtime's full output and
-	// demultiplexes by slotId. fanOnce starts the single fan-out reader on
-	// the first Output call. subCond signals every change to len(subs) so a
-	// concurrent-slot test can wait for both Attach handlers to subscribe
-	// before writing to f.output, since a frame written before a slot
-	// subscribes is not delivered to that slot's later subscription.
-	subs    []chan []byte
+	// hub fans the single f.output stream out to every Output subscriber,
+	// through the same linefanout hub the production transports use: one
+	// runtime process per pod serves every slot over one connection, so
+	// each concurrent Attach stream sees the runtime's full output and
+	// demultiplexes by sessionId, and a subscription whose context ends,
+	// such as a start's session_started wait, is removed and consumes
+	// nothing afterwards. fanOnce starts the pump that feeds f.output into
+	// the hub on the first Output call. subs counts Output subscriptions,
+	// and subCond signals every change to it so a concurrent-slot test can
+	// wait for both Attach handlers to subscribe before writing to
+	// f.output, since a frame written before a slot subscribes is not
+	// delivered to that slot's later subscription.
+	hub     *linefanout.Hub
+	subs    int
 	subCond *sync.Cond
 	fanOnce sync.Once
+	// tap is the adapter's activity tap, installed by NewGRPCServer through
+	// TapOutput and set on the hub when the first Output creates it.
+	tap func([]byte)
+}
+
+// TapOutput records the adapter's activity tap, as the production
+// transports do, so a server built over the fake reads its frames.
+func (f *fakeRuntime) TapOutput(fn func(line []byte)) {
+	f.mu.Lock()
+	f.tap = fn
+	f.mu.Unlock()
 }
 
 func (f *fakeRuntime) Start(_ context.Context, sessionID string) error {
@@ -77,12 +95,76 @@ func (f *fakeRuntime) WriteEnvelope(_ string, envelope []byte) error {
 	// Echo outside the lock so a blocking channel send never stalls a
 	// concurrent reader of the recorded slices.
 	if echo {
-		out <- append([]byte(nil), envelope...)
+		if reply := echoReply(envelope); reply != nil {
+			out <- reply
+		}
 	}
 	return nil
 }
 
-func (f *fakeRuntime) Output(_ context.Context, _ string) (<-chan []byte, error) {
+// echoReply is what the echoing fake writes back for one inbound frame. It
+// plays a runtime that keeps per-session context for the §28.5.3 session
+// frames: a session_start is answered with its session_started, which the
+// adapter consumes and relays to no Attach stream, and a session_end is
+// answered with nothing. Every other frame is echoed verbatim.
+func echoReply(envelope []byte) []byte {
+	var probe struct {
+		Type      string `json:"type"`
+		SessionID string `json:"sessionId"`
+		StartID   string `json:"startId"`
+	}
+	if err := json.Unmarshal(envelope, &probe); err != nil {
+		return append([]byte(nil), envelope...)
+	}
+	switch probe.Type {
+	case "session_start":
+		b, _ := json.Marshal(map[string]string{
+			"type": "session_started", "sessionId": probe.SessionID, "startId": probe.StartID,
+		})
+		return b
+	case "session_end":
+		return nil
+	default:
+		return append([]byte(nil), envelope...)
+	}
+}
+
+// contentEnvelopes returns the frames written to the runtime other than
+// the §28.5.3 session_start and session_end the adapter writes itself, for
+// a test that counts the content it delivered.
+func (f *fakeRuntime) contentEnvelopes() [][]byte {
+	var out [][]byte
+	for _, e := range f.envelopesSnapshot() {
+		switch frameTypeOf(e) {
+		case "session_start", "session_end":
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// frameTypes returns the type discriminator of each recorded frame, in
+// write order.
+func (f *fakeRuntime) frameTypes() []string {
+	var out []string
+	for _, e := range f.envelopesSnapshot() {
+		out = append(out, frameTypeOf(e))
+	}
+	return out
+}
+
+// frameTypeOf returns one JSONL frame's type discriminator, empty when the
+// frame does not decode.
+func frameTypeOf(frame []byte) string {
+	var probe struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(frame, &probe)
+	return probe.Type
+}
+
+func (f *fakeRuntime) Output(ctx context.Context, _ string) (<-chan []byte, error) {
 	if f.outputErr != nil {
 		return nil, f.outputErr
 	}
@@ -91,35 +173,40 @@ func (f *fakeRuntime) Output(_ context.Context, _ string) (<-chan []byte, error)
 		close(ch)
 		return ch, nil
 	}
-	// Subscribe to the fanned-out stream. The first Output call starts the
-	// single reader that broadcasts f.output to every subscriber, so two
-	// concurrent per-slot Attach streams each receive the full output and
-	// demultiplex by slotId (matching SocketRuntimeProcess).
-	sub := make(chan []byte, 8)
 	f.mu.Lock()
-	f.subs = append(f.subs, sub)
+	if f.hub == nil {
+		f.hub = linefanout.New()
+		if f.tap != nil {
+			f.hub.Tap(f.tap)
+		}
+	}
+	hub := f.hub
+	f.mu.Unlock()
+	sub, err := hub.Subscribe(ctx)
+	if err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	f.subs++
 	if f.subCond == nil {
 		f.subCond = sync.NewCond(&f.mu)
 	}
 	f.subCond.Broadcast()
 	f.mu.Unlock()
+	// The first Output starts the pump that writes f.output into the hub's
+	// source, one frame per line, and closes the source when f.output is
+	// closed, which ends every subscription.
 	f.fanOnce.Do(func() {
+		pr, pw := io.Pipe()
 		go func() {
 			for line := range f.output {
-				f.mu.Lock()
-				subs := append([]chan []byte(nil), f.subs...)
-				f.mu.Unlock()
-				for _, s := range subs {
-					s <- line
+				if _, err := pw.Write(append(append([]byte(nil), line...), '\n')); err != nil {
+					return
 				}
 			}
-			f.mu.Lock()
-			subs := append([]chan []byte(nil), f.subs...)
-			f.mu.Unlock()
-			for _, s := range subs {
-				close(s)
-			}
+			_ = pw.Close()
 		}()
+		hub.Serve(pr, 64*1024*1024, nil)
 	})
 	return sub, nil
 }
@@ -176,10 +263,10 @@ func (f *fakeRuntime) waitForSubscribers(t *testing.T, n int) {
 		f.mu.Unlock()
 	})
 	defer timer.Stop()
-	for len(f.subs) < n && !timedOut {
+	for f.subs < n && !timedOut {
 		f.subCond.Wait()
 	}
-	got := len(f.subs)
+	got := f.subs
 	f.mu.Unlock()
 	if got < n {
 		t.Fatalf("only %d of %d Output subscribers registered before timeout", got, n)
@@ -214,12 +301,12 @@ func shortSocketName(t *testing.T, name string) string {
 // directory and a fake runtime.
 func sessionServer(t *testing.T) (*adapter.Server, *fakeRuntime, string) {
 	t.Helper()
-	root := t.TempDir()
+	base := t.TempDir()
 	rt := &fakeRuntime{}
 	s := adapter.New("test")
-	s.WorkspaceRoot = root
+	s.WorkspaceBase = base
 	s.Runtime = rt
-	return s, rt, root
+	return s, rt, base
 }
 
 func startReq(sessionID string) *adapterv1.StartSessionRequest {
@@ -241,22 +328,68 @@ func TestStartSessionStartsRuntime(t *testing.T) {
 	}
 }
 
-func TestStartSessionRejectsSecondSession(t *testing.T) {
+// spec: 4.7 (StartSession Unavailable for a repeated start), 5.2 (every
+// session is bound to a slot on every pod)
+//
+// A second session arrives on its own slot and is admitted; what the claim
+// refuses is a second start for a session that has already started. The
+// ceiling on how many sessions a pod takes is the gateway's, which
+// allocates the slot and counts occupancy at the same site.
+func TestStartSessionRefusesARepeatedStartAndAdmitsASecondSession_spec_4_7(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("first StartSession: %v", err)
 	}
-	_, err := s.StartSession(context.Background(), startReq("sess-2"))
-	if status.Code(err) != codes.Unavailable {
-		t.Errorf("second StartSession code = %v, want Unavailable", status.Code(err))
+	if _, err := s.StartSession(context.Background(), startReq("sess-2")); err != nil {
+		t.Errorf("second session's StartSession = %v, want admitted on its own slot", err)
+	}
+	_, err := s.StartSession(context.Background(), startReq("sess-1"))
+	// spec: §4.7.1 rule 6 (the started-session rule).
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("repeated start code = %v, want FailedPrecondition", status.Code(err))
 	}
 }
 
+// TestStartSessionRejectsEmptySessionID asserts the primary arm of the
+// address guard: a session-scoped request whose session identifier is empty
+// is refused at the adapter boundary before any root is resolved.
+//
+// spec: §5.2 (the address is required and non-empty)
 func TestStartSessionRejectsEmptySessionID(t *testing.T) {
 	s, _, _ := sessionServer(t)
 	_, err := s.StartSession(context.Background(), startReq(""))
 	if status.Code(err) != codes.InvalidArgument {
 		t.Errorf("code = %v, want InvalidArgument", status.Code(err))
+	}
+}
+
+// malformedSessionAddresses are the values slotlayout.ValidateSlotID
+// refuses: a value that is not a safe single path segment. The session
+// identifier crosses the wire into filesystem paths, so a handler that
+// resolved a root from one of these would write outside the session's own
+// slot tree.
+var malformedSessionAddresses = []string{".", "..", "a/b", `a\b`, "a\x00b", "./a", "a/"}
+
+// TestStartSessionRejectsAMalformedSessionAddress asserts the fail-closed
+// arm of the address guard: a session id that is not a safe path segment
+// is refused with InvalidArgument before a root is resolved, before a
+// registry entry exists, and before any tree is written.
+// spec: §5.2 (the address is required and well formed), §6.4 (the per-slot
+// tree the address resolves)
+func TestStartSessionRejectsAMalformedSessionAddress_spec_5_2(t *testing.T) {
+	for _, id := range malformedSessionAddresses {
+		s, rt, _ := sessionServer(t)
+		_, err := s.StartSession(context.Background(), startReq(id))
+		if status.Code(err) != codes.InvalidArgument {
+			t.Errorf("StartSession(%q) code = %v, want InvalidArgument", id, status.Code(err))
+		}
+		if len(rt.started) != 0 {
+			t.Errorf("StartSession(%q) started the runtime: %+v", id, rt.started)
+		}
+		entries, readErr := os.ReadDir(filepath.Join(s.WorkspaceBase, "slots"))
+		if readErr == nil && len(entries) != 0 {
+			t.Errorf("StartSession(%q) wrote a slot tree: %v", id, entries)
+		}
 	}
 }
 
@@ -268,7 +401,12 @@ func TestStartSessionRequiresConfiguration(t *testing.T) {
 	}
 }
 
-func TestSendMessageForwardsEnvelopeToRuntime(t *testing.T) {
+// TestSendMessageForwardsStampedEnvelopeToRuntime pins that the handler
+// hands the shared runtime the gateway's envelope carrying the session's
+// address, since §28.5.3 makes the population of the per-session
+// identifier an adapter-side obligation on every session-scoped frame.
+// spec: §28.5.3; §5.2.
+func TestSendMessageForwardsStampedEnvelopeToRuntime(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
@@ -281,8 +419,20 @@ func TestSendMessageForwardsEnvelopeToRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
-	if len(rt.envelopes) != 1 || string(rt.envelopes[0]) != string(envelope) {
-		t.Errorf("runtime received envelopes %v, want one matching the request", rt.envelopes)
+	// The start's session_start precedes the message on the connection
+	// (§28.5.3, CH-MSGSOCK, Inbound: session_start rule 1).
+	if got := rt.frameTypes(); len(got) != 2 || got[0] != "session_start" || got[1] != "message" {
+		t.Fatalf("runtime received frames %v, want [session_start message]", got)
+	}
+	var frame map[string]any
+	if err := json.Unmarshal(rt.envelopes[1], &frame); err != nil {
+		t.Fatalf("the envelope the adapter wrote is not a JSON object: %v (%s)", err, rt.envelopes[1])
+	}
+	if frame["sessionId"] != "sess-1" {
+		t.Errorf("runtime received %s, want the request's session address stamped on it", rt.envelopes[1])
+	}
+	if frame["type"] != "message" || frame["input"] == nil {
+		t.Errorf("the stamp dropped the gateway's own fields: %s", rt.envelopes[0])
 	}
 }
 
@@ -295,8 +445,8 @@ func TestSendMessageRejectsUnknownSession(t *testing.T) {
 		SessionId:    &adapterv1.SessionId{Value: "sess-other"},
 		EnvelopeJson: []byte(`{}`),
 	})
-	if status.Code(err) != codes.NotFound {
-		t.Errorf("code = %v, want NotFound for a session not assigned to the pod", status.Code(err))
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("code = %v, want FailedPrecondition for a session the pod holds no bound entry for", status.Code(err))
 	}
 }
 
@@ -330,7 +480,8 @@ func TestShutdownClosesRuntimeAndReleasesPod(t *testing.T) {
 		t.Fatalf("StartSession: %v", err)
 	}
 	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 	})
 	if err != nil {
 		t.Fatalf("Shutdown: %v", err)
@@ -349,17 +500,18 @@ func TestShutdownClosesRuntimeAndReleasesPod(t *testing.T) {
 
 // TestShutdownPlumbsDeadlineMsIntoRuntimeClose asserts §11.4 step 3:
 // the §4.7 ShutdownRequest.deadline_ms field flows into the runtime
-// adapter's Close as a context deadline, so the §11.4 10s graceful
-// window is honored by the adapter instead of an internal default.
-// spec: §11.4 line 258.
+// adapter's Close as a context deadline, so the gateway's deadline
+// bounds the session teardown instead of an internal default.
+// spec: §11.4.
 func TestShutdownPlumbsDeadlineMsIntoRuntimeClose_spec_11_4_258(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId:  &adapterv1.SessionId{Value: "sess-1"},
-		DeadlineMs: 10_000,
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
+		DeadlineMs:            10_000,
 	}); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
@@ -376,14 +528,15 @@ func TestShutdownPlumbsDeadlineMsIntoRuntimeClose_spec_11_4_258(t *testing.T) {
 // TestShutdownWithoutDeadlineMsInheritsContext asserts that a request
 // with a zero (or absent) deadline_ms falls through to the inbound RPC
 // context, preserving the legacy behavior for callers that do not pin
-// the §11.4 graceful window. spec: §11.4 line 258.
+// the §11.4 graceful window. spec: §11.4.
 func TestShutdownWithoutDeadlineMsInheritsContext_spec_11_4_258(t *testing.T) {
 	s, rt, _ := sessionServer(t)
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
 	if _, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-1"},
 	}); err != nil {
 		t.Fatalf("Shutdown: %v", err)
 	}
@@ -392,23 +545,44 @@ func TestShutdownWithoutDeadlineMsInheritsContext_spec_11_4_258(t *testing.T) {
 	}
 }
 
-func TestShutdownRejectsUnknownSession(t *testing.T) {
-	s, _, _ := sessionServer(t)
+// spec: 4.7 (Shutdown), 5.2, 11.4 (full revoke)
+//
+// The teardown clause is conditional rather than guarded, so a request
+// naming a session the registry holds no bound entry for is a no-op. It
+// reports a clean exit when no other Shutdown that removed the session's
+// entry is still tearing it down and the last such Shutdown did not report
+// an unclean exit, which holds here because the session never started.
+// Returning an error there would make every revoked session hold its slot
+// for the life of the pod, because the gateway's slot release records a
+// leaked outcome as a leaked:<sessionId> member of the pod's slot set.
+//
+// diagnosis: a failure means a second teardown for an already-released
+// session is refused again, which the occupancy-zero recycle edge produces
+// on every release.
+func TestShutdownIsANoOpForAnAlreadyReleasedSession_spec_4_7(t *testing.T) {
+	s, rt, _ := sessionServer(t)
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	_, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-other"},
+	resp, err := s.Shutdown(context.Background(), &adapterv1.ShutdownRequest{
+		UnconditionalTeardown: true,
+		SessionId:             &adapterv1.SessionId{Value: "sess-other"},
 	})
-	if status.Code(err) != codes.NotFound {
-		t.Errorf("code = %v, want NotFound", status.Code(err))
+	if err != nil {
+		t.Fatalf("Shutdown for a session the pod does not hold = %v, want a clean no-op", err)
+	}
+	if !resp.GetExitedCleanly() {
+		t.Error("ExitedCleanly = false for a session the pod does not hold")
+	}
+	if len(rt.closed) != 0 {
+		t.Errorf("the no-op teardown closed %v on the shared runtime, want nothing", rt.closed)
 	}
 }
 
 func TestStartSessionReleasesPodOnRuntimeFailure(t *testing.T) {
 	root := t.TempDir()
 	s := adapter.New("test")
-	s.WorkspaceRoot = root
+	s.WorkspaceBase = root
 	s.Runtime = &fakeRuntime{startErr: errors.New("runtime crashed")}
 
 	_, err := s.StartSession(context.Background(), startReq("sess-1"))

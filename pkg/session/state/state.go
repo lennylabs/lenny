@@ -64,9 +64,23 @@ type Transition struct {
 }
 
 // ValidTransitions returns every legal edge per spec §7.2. The list is the
-// authoritative contract; the IsValid function below reads it.
+// authoritative contract; the IsValid function below reads it. It holds
+// every edge of the §7.2 session state machine block, including the /start
+// edges ready → starting, starting → running, and starting → failed, the
+// maxSessionAge expiry edges from starting, resume_pending, and resuming,
+// the terminate edge from input_required, the retries-exhausted failure
+// edges into awaiting_client_action, and the resuming → resume_pending edge.
+// The pre-running edges created → finalizing → ready come from the §6.2 pod
+// state machine. It also holds the → failed and → expired edge from every
+// non-terminal state, which the §7.2 "Terminal writes from any non-terminal
+// state." paragraph adds for the operator force-terminate, the budget,
+// credential-lease, and fallback exhaustion, orphan cleanup, and the
+// perChildMaxAge expiry.
+//
+// spec: §7.2 (Interactive Session Model; Terminal writes from any
+// non-terminal state), §6.2 (Pod State Machine)
 func ValidTransitions() []Transition {
-	return []Transition{
+	edges := []Transition{
 		// derive failure path (only when gateway.persistDeriveFailureRows is true)
 		{Created, Failed},
 		// happy path
@@ -74,22 +88,26 @@ func ValidTransitions() []Transition {
 		{Finalizing, Ready},
 		{Ready, Starting},
 		{Starting, Running},
-		// session-start failure paths
-		{Starting, ResumePending},
+		// /start failure and expiry paths
 		{Starting, Failed},
+		{Starting, Expired},
 		// running: agent-driven transitions
 		{Running, InputRequired},
 		{Running, Suspended},
 		{Running, Completed},
 		{Running, ResumePending},
+		{Running, AwaitingClientAction},
 		{Running, Failed},
 		{Running, Cancelled},
 		{Running, Expired},
 		// input_required exits
 		{InputRequired, Running},
+		{InputRequired, Completed},
 		{InputRequired, Cancelled},
 		{InputRequired, Expired},
 		{InputRequired, Failed},
+		{InputRequired, ResumePending},
+		{InputRequired, AwaitingClientAction},
 		// suspended exits
 		{Suspended, Running},
 		{Suspended, ResumePending},
@@ -97,44 +115,82 @@ func ValidTransitions() []Transition {
 		{Suspended, Cancelled},
 		{Suspended, Expired},
 		{Suspended, Failed},
+		{Suspended, AwaitingClientAction},
 		// resume path
 		{ResumePending, Resuming},
 		{ResumePending, AwaitingClientAction},
 		{ResumePending, Cancelled},
 		{ResumePending, Completed},
+		{ResumePending, Expired},
 		{Resuming, Running},
+		{Resuming, ResumePending},
 		{Resuming, AwaitingClientAction},
 		{Resuming, Cancelled},
 		{Resuming, Completed},
+		{Resuming, Expired},
 		// awaiting-client-action exits
 		{AwaitingClientAction, ResumePending},
 		{AwaitingClientAction, Completed},
 		{AwaitingClientAction, Cancelled},
 		{AwaitingClientAction, Expired},
 	}
+	return appendAnyStateTerminalEdges(edges)
+}
+
+// anyStateTerminalTargets are the terminal states the §7.2 "Terminal writes
+// from any non-terminal state." paragraph reaches from every non-terminal
+// state: operator force-terminate writes failed; budget, credential-lease,
+// or LLM fallback exhaustion and a perChildMaxAge expiry write expired; and
+// orphan cleanup writes cancelled (under a terminal cancel_all parent) or
+// expired.
+//
+// spec: §7.2 (Terminal writes from any non-terminal state); §8.10 (Orphan cleanup)
+var anyStateTerminalTargets = []State{Failed, Expired, Cancelled}
+
+// appendAnyStateTerminalEdges adds the → failed, → expired, and → cancelled
+// edge from every non-terminal state that edges does not already list, in
+// All() order, so the result holds each edge once. The → cancelled edge is
+// orphan cleanup's write over an orphan of any non-terminal state.
+func appendAnyStateTerminalEdges(edges []Transition) []Transition {
+	listed := make(map[Transition]bool, len(edges))
+	for _, e := range edges {
+		listed[e] = true
+	}
+	for _, from := range All() {
+		if IsTerminal(from) {
+			continue
+		}
+		for _, to := range anyStateTerminalTargets {
+			e := Transition{From: from, To: to}
+			if !listed[e] {
+				edges = append(edges, e)
+				listed[e] = true
+			}
+		}
+	}
+	return edges
 }
 
 // MCPProtocolState projects a §7.2 Lenny session state into the §8.8
-// MCP Tasks surface per the supplementary table (spec §8.8 lines
-// 871–883). It returns the protocol state string and any metadata
+// MCP Tasks surface per the supplementary table (spec §8.8). It returns the protocol state string and any metadata
 // annotations the §8.8 contract requires.
 //
 //   - Pre-running states (created, finalizing, ready, starting) collapse
-//     to `submitted` per §8.8 line 883.
+//     to `submitted` per §8.8.
 //   - `running` → `working`; `input_required` → `input_required`.
-//   - `suspended` → `working` + metadata.suspended=true (§8.8 line 879).
-//   - `resume_pending` → `working` + metadata.resuming=true (§8.8 line 880).
-//   - `awaiting_client_action` → `input_required` (§8.8 line 881).
+//   - `suspended` → `working` + metadata.suspended=true (§8.8).
+//   - `resume_pending` → `working` + metadata.resuming=true (§8.8).
+//   - `awaiting_client_action` → `input_required` (§8.8).
 //   - `resuming` is internal to the recovery cycle; it is surfaced as
 //     `working` + metadata.resuming=true alongside `resume_pending` so
 //     external observers do not flicker through a transient state.
-//   - Terminal states use the §8.8 line 857 task-level mapping
+//   - Terminal states use the §8.8 task-level mapping
 //     (`cancelled` → `canceled`, `expired` → `failed`).
 //   - An unknown state returns ("", nil).
 //
 // The metadata map is nil when the surface needs no annotations.
 //
-// spec: §8.8 lines 855-883. F-8.8.9.
+// spec: §8.8. F-8.8.9.
 func MCPProtocolState(s State) (string, map[string]any) {
 	switch s {
 	case Created, Finalizing, Ready, Starting:

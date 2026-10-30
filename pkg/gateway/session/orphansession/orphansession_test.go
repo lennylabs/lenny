@@ -5,6 +5,7 @@ package orphansession_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -67,9 +68,18 @@ func (f *fakeFallback) PodPhase(_ context.Context, _, podID, _ string) (string, 
 	return r.phase, r.found, nil
 }
 
-type fakeTerminal struct{ called []string }
+type fakeTerminal struct {
+	// mu guards called, which dispatched hook goroutines append to.
+	mu     sync.Mutex
+	called []string
+}
+
+// BeginTerminal opens no claim; the fake records only the terminal hook.
+func (*fakeTerminal) BeginTerminal(string) func() { return func() {} }
 
 func (f *fakeTerminal) OnSessionTerminal(_ context.Context, _ session.State, s sessionstore.Session) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.called = append(f.called, s.ID)
 }
 
@@ -115,7 +125,7 @@ func getState(t *testing.T, store *memstore.Store, tenant, id string) sessionsto
 
 // ----- tests -----
 
-// spec: §10.1 line 51 — a non-terminal session whose mirror pod is
+// spec: §10.1.4 — a non-terminal session whose mirror pod is
 // `terminated` is forced to failed/orphan_pod_terminated, the counter
 // increments, the per-pool gauge publishes, and the terminal pipeline
 // runs.
@@ -136,6 +146,7 @@ func TestTick_orphanViaFreshMirror_spec10_1_line51(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
+	r.WaitDispatched()
 	if n != 1 {
 		t.Fatalf("failed count = %d, want 1", n)
 	}
@@ -160,7 +171,7 @@ func TestTick_orphanViaFreshMirror_spec10_1_line51(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 51 — a live pod (non-terminated mirror phase) is left
+// spec: §10.1.4 — a live pod (non-terminated mirror phase) is left
 // alone.
 func TestTick_livePodLeftAlone_spec10_1_line51(t *testing.T) {
 	store := memstore.New()
@@ -186,7 +197,7 @@ func TestTick_livePodLeftAlone_spec10_1_line51(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 51 — "Sessions in `suspended` state with no pod
+// spec: §10.1.4 — "Sessions in `suspended` state with no pod
 // binding … are excluded — there is no pod to cross-reference."
 func TestTick_suspendedNoPodExcluded_spec10_1_line51(t *testing.T) {
 	store := memstore.New()
@@ -214,7 +225,7 @@ func TestTick_suspendedNoPodExcluded_spec10_1_line51(t *testing.T) {
 	}
 }
 
-// spec: §15.1 / §10.1 line 51 — terminal sessions and non-eligible
+// spec: §15.1 / §10.1.4 — terminal sessions and non-eligible
 // states (resume_pending, created) are skipped even when they carry a
 // pod binding pointing at a terminated mirror row.
 func TestTick_terminalAndNonEligibleSkipped(t *testing.T) {
@@ -241,7 +252,7 @@ func TestTick_terminalAndNonEligibleSkipped(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 51 — "When mirror staleness exceeds 60s, the orphan
+// spec: §10.1.4 — "When mirror staleness exceeds 60s, the orphan
 // reconciler falls back to direct Kubernetes API queries." A stale pool
 // routes straight to the fallback, ignoring the (potentially wrong)
 // mirror row.
@@ -278,7 +289,7 @@ func TestTick_staleMirrorFallsBackToKube_spec10_1_line51(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 51 — a stale mirror with a live pod (fallback reports
+// spec: §10.1.4 — a stale mirror with a live pod (fallback reports
 // the pod still running) is left alone.
 func TestTick_staleMirrorFallbackAlive(t *testing.T) {
 	store := memstore.New()
@@ -299,7 +310,7 @@ func TestTick_staleMirrorFallbackAlive(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 51 — a missing mirror row resolves through the
+// spec: §10.1.4 — a missing mirror row resolves through the
 // fallback; a deleted Sandbox (found=false) is itself a terminal signal.
 func TestTick_mirrorMissFallbackPodGone_spec10_1_line51(t *testing.T) {
 	store := memstore.New()
@@ -386,7 +397,7 @@ func TestTick_mirrorErrorSkips(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 51 — the reconciler runs across every tenant.
+// spec: §10.1.4 — the reconciler runs across every tenant.
 func TestTick_multiTenant(t *testing.T) {
 	store := memstore.New()
 	mkSession(t, store, "acme", "a1", session.StateRunning, "pod-a", "pool-a")

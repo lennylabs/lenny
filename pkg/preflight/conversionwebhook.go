@@ -19,9 +19,7 @@ import (
 // so the admission-webhook-inventory check excludes it and it is verified
 // here instead.
 //
-// spec: §17.2 line 53 (baseline item 12), §15.5 line 2438 (preflight
-// "validates conversion webhook availability ... will fail the upgrade if
-// the webhook Service is absent or not ready"). F-15.5.3 / F-17.2.4 /
+// spec: §17.2, §15.5. F-15.5.3 / F-17.2.4 /
 // F-10.5.6.
 const ConversionWebhookName = "lenny-crd-conversion"
 
@@ -41,7 +39,7 @@ type ConversionWebhookState struct {
 	DeploymentReady bool
 }
 
-// CheckConversionWebhook reports the §15.5 line 2438 preflight outcome for
+// CheckConversionWebhook reports the §15.5 preflight outcome for
 // the CRD conversion webhook. A missing Deployment is treated as
 // "not yet deployed" and passes, matching the install-time semantics of
 // CheckAdmissionWebhooks: on a fresh install the workload is applied in
@@ -51,7 +49,7 @@ type ConversionWebhookState struct {
 // upgrade is aborted, because a missing or unready conversion webhook
 // makes every multi-version CRD operation fail at the API server.
 //
-// spec: §15.5 line 2438; §17.2 line 58. F-15.5.3 / F-17.2.4 / F-10.5.6.
+// spec: §15.5; §17.2. F-15.5.3 / F-17.2.4 / F-10.5.6.
 func CheckConversionWebhook(state ConversionWebhookState) Decision {
 	if !state.DeploymentPresent {
 		return Decision{Passed: true, Reason: fmt.Sprintf(

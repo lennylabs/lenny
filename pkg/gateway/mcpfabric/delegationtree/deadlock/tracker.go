@@ -13,7 +13,7 @@ import (
 // parent's children are all blocked; those edges are ephemeral (only a
 // running await call holds them), so the await handler registers the
 // edge for the duration of its poll loop via Begin and drops it on
-// return. spec: §8.8 line 981. F-8.8.6.
+// return. spec: §8.8. F-8.8.6.
 type AwaitTracker struct {
 	mu       sync.Mutex
 	awaiting map[string][]*awaitReg

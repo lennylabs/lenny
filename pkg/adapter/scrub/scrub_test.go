@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -21,8 +22,9 @@ type fakeOps struct {
 	ipcErr   error
 	clearErr map[string]error // dir -> err
 
-	removed []string
-	cleared []string
+	removed   []string
+	removeErr map[string]error // path -> err
+	cleared   []string
 
 	// state maps a path to its reported (exists, empty). A path absent from
 	// the map reports (false, true) — does not exist, vacuously empty.
@@ -37,9 +39,10 @@ type pathState struct {
 
 func newFakeOps() *fakeOps {
 	return &fakeOps{
-		clearErr: map[string]error{},
-		state:    map[string]pathState{},
-		stateErr: map[string]error{},
+		clearErr:  map[string]error{},
+		removeErr: map[string]error{},
+		state:     map[string]pathState{},
+		stateErr:  map[string]error{},
 	}
 }
 
@@ -56,7 +59,7 @@ func (f *fakeOps) PurgeIPCShm(context.Context) error {
 func (f *fakeOps) RemoveAll(path string) error {
 	f.calls = append(f.calls, "rm:"+path)
 	f.removed = append(f.removed, path)
-	return nil
+	return f.removeErr[path]
 }
 
 func (f *fakeOps) ClearContents(dir string) error {
@@ -94,13 +97,14 @@ func stepErr(rep *Report, step StepName) error {
 	return errors.New("step not present")
 }
 
-// spec: §5.2 lines 422-437 — a clean scrub with no cleanup commands runs
+// spec: §5.2 — a clean scrub with no cleanup commands runs
 // every step and verifies clean, reporting Succeeded.
 func TestRun_CleanScrub_spec_5_2(t *testing.T) {
 	ops := newFakeOps()
 	rep, err := Run(context.Background(), ops, Config{
-		CredentialFile: "/run/lenny/credentials.json",
-		WorkspaceDir:   "/workspace/current",
+		CredentialFiles: []string{"/run/lenny/slots/sess-a/credentials.json"},
+		WorkspaceDirs:   []string{"/workspace/slots/sess-1/current"},
+		CleanupDir:      "/workspace/slots/sess-1/current",
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -118,14 +122,15 @@ func TestRun_CleanScrub_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 424 — step 0 (credential purge) MUST precede cleanupCommands,
+// spec: §5.2 — step 0 (credential purge) MUST precede cleanupCommands,
 // which MUST precede the post-cleanup scrub steps 1-6.
 func TestRun_StepOrdering_spec_5_2_424(t *testing.T) {
 	ops := newFakeOps()
 	rep, err := Run(context.Background(), ops, Config{
-		CredentialFile:  "/run/lenny/credentials.json",
+		CredentialFiles: []string{"/run/lenny/slots/sess-a/credentials.json"},
 		CleanupCommands: []string{"true"},
-		WorkspaceDir:    "/workspace/current",
+		WorkspaceDirs:   []string{"/workspace/slots/sess-1/current"},
+		CleanupDir:      "/workspace/slots/sess-1/current",
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -160,31 +165,40 @@ func TestRun_IPCAfterKill_spec_5_2_step1b(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 436 — step 6 fails the scrub when the workspace is left
+// spec: §5.2 — step 6 fails the scrub when the workspace is left
 // non-empty.
+// One surviving member of the set fails step 6 even when its sibling
+// verified clean, which is what keeps a leaked slot's residue from being
+// masked by the pod's other trees.
 func TestRun_DirtyWorkspaceFailsVerify_spec_5_2_436(t *testing.T) {
 	ops := newFakeOps()
-	ops.state["/workspace/current"] = pathState{exists: true, empty: false}
-	rep, err := Run(context.Background(), ops, Config{WorkspaceDir: "/workspace/current"})
+	dirty := "/workspace/slots/sess-a"
+	clean := "/workspace/slots/sess-b"
+	ops.state[dirty] = pathState{exists: true, empty: false}
+	ops.state[clean] = pathState{exists: false}
+	rep, err := Run(context.Background(), ops, Config{WorkspaceDirs: []string{dirty, clean}})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if rep.Result != Failed {
 		t.Fatalf("Result = %v, want Failed", rep.Result)
 	}
-	if len(rep.VerifyDirty) != 1 || rep.VerifyDirty[0] != "/workspace/current" {
-		t.Fatalf("VerifyDirty = %v, want [/workspace/current]", rep.VerifyDirty)
+	if len(rep.VerifyDirty) != 1 || rep.VerifyDirty[0] != dirty {
+		t.Fatalf("VerifyDirty = %v, want [%s]", rep.VerifyDirty, dirty)
 	}
 }
 
-// spec: §5.2 line 436 — if /run/lenny/credentials.json still exists despite
+// spec: §5.2 — if a per-slot credential file still exists despite
 // step 0, the scrub is marked failed.
 func TestRun_CredentialStillPresentFailsVerify_spec_5_2_436(t *testing.T) {
 	ops := newFakeOps()
-	cred := "/run/lenny/credentials.json"
-	// The credential file exists at verify time (step 0 removal did not take).
+	cred := "/run/lenny/slots/sess-a/credentials.json"
+	sibling := "/run/lenny/slots/sess-b/credentials.json"
+	// One member of the set exists at verify time (step 0 removal did not
+	// take for it); its sibling was removed. One survivor fails the scrub.
 	ops.state[cred] = pathState{exists: true, empty: false}
-	rep, err := Run(context.Background(), ops, Config{CredentialFile: cred})
+	ops.state[sibling] = pathState{exists: false}
+	rep, err := Run(context.Background(), ops, Config{CredentialFiles: []string{cred, sibling}})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -202,13 +216,14 @@ func TestRun_CredentialStillPresentFailsVerify_spec_5_2_436(t *testing.T) {
 	}
 }
 
-// spec: §5.2 lines 426-437 — a cleanup-command failure marks the scrub
+// spec: §5.2 — a cleanup-command failure marks the scrub
 // failed but does not abort steps 1-6 (the workspace is still scrubbed).
 func TestRun_CleanupFailureStillRunsScrub_spec_5_2_426(t *testing.T) {
 	ops := newFakeOps()
 	rep, err := Run(context.Background(), ops, Config{
 		CleanupCommands: []string{"false"}, // exits non-zero
-		WorkspaceDir:    "/workspace/current",
+		WorkspaceDirs:   []string{"/workspace/slots/sess-1/current"},
+		CleanupDir:      "/workspace/slots/sess-1/current",
 	})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -225,7 +240,7 @@ func TestRun_CleanupFailureStillRunsScrub_spec_5_2_426(t *testing.T) {
 	}
 	removedWorkspace := false
 	for _, p := range ops.removed {
-		if p == "/workspace/current" {
+		if p == "/workspace/slots/sess-1/current" {
 			removedWorkspace = true
 		}
 	}
@@ -239,7 +254,7 @@ func TestRun_CleanupFailureStillRunsScrub_spec_5_2_426(t *testing.T) {
 func TestRun_KillErrorIsBestEffort_spec_5_2_step1(t *testing.T) {
 	ops := newFakeOps()
 	ops.killErr = errors.New("boom")
-	rep, err := Run(context.Background(), ops, Config{WorkspaceDir: "/workspace/current"})
+	rep, err := Run(context.Background(), ops, Config{WorkspaceDirs: []string{"/workspace/slots/sess-a"}})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -346,9 +361,10 @@ func stepSequence(rep *Report) []StepName {
 // second verify for a MicrovmRestart config).
 func TestRun_VMRestartRunsIdenticalSteps0To6AsStandard_spec_5_2_step7(t *testing.T) {
 	cfg := Config{
-		CredentialFile: "/run/lenny/credentials.json",
-		WorkspaceDir:   "/workspace/current",
-		ScratchDirs:    []string{"/var/adapter-scratch"},
+		CredentialFiles: []string{"/run/lenny/slots/sess-a/credentials.json"},
+		WorkspaceDirs:   []string{"/workspace/slots/sess-1/current"},
+		CleanupDir:      "/workspace/slots/sess-1/current",
+		ScratchDirs:     []string{"/var/adapter-scratch"},
 	}
 
 	// A standard pool and a vm-restart pool both drive Run with the same
@@ -417,11 +433,11 @@ func TestRun_NilOps(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 424 — cleanupCommands run with the sanitized
+// spec: §5.2 — cleanupCommands run with the sanitized
 // LENNY_PREV_CREDENTIAL_PROVIDER / LENNY_PREV_LEASE_ID metadata and the
 // minimal §7.5 whitelist, never the credential file.
 func TestCleanupEnv_spec_5_2_424(t *testing.T) {
-	env := CleanupEnv("/workspace/current", "anthropic", "lease-abc123")
+	env := CleanupEnv("/workspace", "anthropic", "lease-abc123")
 	want := map[string]bool{
 		"LENNY_PREV_CREDENTIAL_PROVIDER=anthropic": false,
 		"LENNY_PREV_LEASE_ID=lease-abc123":         false,
@@ -442,7 +458,7 @@ func TestCleanupEnv_spec_5_2_424(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 424 — the credential purge runs before cleanupCommands, so
+// spec: §5.2 — the credential purge runs before cleanupCommands, so
 // a cleanup command cannot read the just-purged credential file. This drives
 // the real DefaultOps.RemoveAll and the real bounded cleanup executor.
 func TestRun_CredentialPurgedBeforeCleanup_integration_spec_5_2_424(t *testing.T) {
@@ -454,7 +470,8 @@ func TestRun_CredentialPurgedBeforeCleanup_integration_spec_5_2_424(t *testing.T
 	marker := filepath.Join(dir, "leaked")
 
 	rep, err := Run(context.Background(), killSafeOps{DefaultOps{}}, Config{
-		CredentialFile: cred,
+		CredentialFiles: []string{cred},
+		CleanupDir:      dir,
 		// If the credential file still existed, `cat` would succeed and the
 		// shell would create the marker. Step 0 removes it first, so cat
 		// fails and the marker is never written.
@@ -484,3 +501,121 @@ type killSafeOps struct{ DefaultOps }
 
 func (killSafeOps) KillUserProcesses(context.Context) error { return nil }
 func (killSafeOps) PurgeIPCShm(context.Context) error       { return nil }
+
+// spec: §5.2 (step 0 purges the credential file before cleanupCommands
+// run; step 2 removes the workspace)
+//
+// The purge is ordered ahead of the deployer's cleanupCommands so that no
+// session's credential file is on disk while third-party code runs as the
+// pod user. Every session on the pod owns its own credential file, so a
+// purge that returned on the first unremovable member would leave the rest
+// of the set in place for exactly that window. Every member is attempted
+// and every failure is reported.
+//
+// diagnosis: the credential purge short-circuits on the first failure
+// again, so one unremovable file shields the rest of the pod's per-session
+// credential files from the purge and they are still on disk while the
+// deployer's cleanup commands run.
+func TestRun_PurgeAttemptsEveryMemberAfterAFailure_spec_5_2(t *testing.T) {
+	ops := newFakeOps()
+	ops.removeErr["/run/lenny/slots/sess-b/credentials.json"] = errors.New("permission denied")
+	ops.removeErr["/workspace/slots/sess-b"] = errors.New("io error")
+	creds := []string{
+		"/run/lenny/slots/sess-a/credentials.json",
+		"/run/lenny/slots/sess-b/credentials.json",
+		"/run/lenny/slots/sess-c/credentials.json",
+	}
+	workspaces := []string{
+		"/workspace/slots/sess-a",
+		"/workspace/slots/sess-b",
+		"/workspace/slots/sess-c",
+	}
+	rep, err := Run(context.Background(), ops, Config{
+		CredentialFiles: creds,
+		WorkspaceDirs:   workspaces,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	for _, want := range append(append([]string{}, creds...), workspaces...) {
+		found := false
+		for _, got := range ops.removed {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s was never attempted; the purge short-circuited on an earlier failure", want)
+		}
+	}
+	for _, step := range []StepName{StepCredentialPurge, StepRemoveWorkspace} {
+		if stepErr(rep, step) == nil {
+			t.Errorf("%s reported no error, want the failing member's error", step)
+		}
+	}
+	if rep.Result != Failed {
+		t.Errorf("scrub result = %v, want %v", rep.Result, Failed)
+	}
+}
+
+// spec: §5.2 (the deployer's cleanupCommands run at the recycle boundary,
+// after every session on the pod has been torn down)
+//
+// Each session's teardown removes that session's slot tree and credential
+// file before the pod scrub runs, so by the time the cleanupCommands run
+// the two slot containers are empty and no slot root exists to run them
+// in. They run with the workspace base as their working directory. This
+// case drives the real cleanup executor and asserts what a deployer's
+// command observes: its own PWD is the base, nothing remains under the
+// base's slots container, and nothing remains under the credential root's
+// slots container.
+//
+// diagnosis: the cleanup working directory was left empty or pointed at
+// one session's slot root, so the deployer's cleanup code runs in a
+// directory that the preceding per-session teardowns already removed, or
+// beside another session's residue.
+func TestRun_CleanupRunsInTheWorkspaceBaseWithNoSlotResidue_spec_5_2(t *testing.T) {
+	base := t.TempDir()
+	credRoot := t.TempDir()
+	// The per-session teardowns have already run, so both containers exist
+	// and hold nothing.
+	if err := os.MkdirAll(filepath.Join(base, "slots"), 0o700); err != nil {
+		t.Fatalf("seed workspace slots container: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(credRoot, "slots"), 0o700); err != nil {
+		t.Fatalf("seed credential slots container: %v", err)
+	}
+
+	observed := filepath.Join(t.TempDir(), "observed")
+	rep, err := Run(context.Background(), newFakeOps(), Config{
+		CleanupDir: base,
+		CleanupCommands: []string{
+			"sh -c 'pwd > " + observed + "; ls " + filepath.Join(base, "slots") +
+				" >> " + observed + " 2>&1; ls " + filepath.Join(credRoot, "slots") +
+				" >> " + observed + " 2>&1'",
+		},
+		ShellMode: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.Result != Succeeded {
+		t.Fatalf("Result = %v, want Succeeded: %+v", rep.Result, rep.Steps)
+	}
+
+	out, readErr := os.ReadFile(observed)
+	if readErr != nil {
+		t.Fatalf("cleanup command wrote no observation: %v", readErr)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if lines[0] != base {
+		t.Errorf("cleanup PWD = %q, want the workspace base %q", lines[0], base)
+	}
+	for _, residue := range lines[1:] {
+		if residue != "" {
+			t.Errorf("cleanup observed slot residue %q; every session's teardown precedes the pod scrub", residue)
+		}
+	}
+}

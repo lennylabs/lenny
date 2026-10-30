@@ -3,7 +3,7 @@
 //go:build contract
 
 // §15.2.1 `RegisterAdapterUnderTest` test matrix — error classes.
-// The spec (§15.2.1 lines 1408-1413) requires the contract harness to
+// The spec (§15.2.1) requires the contract harness to
 // exercise the full error-class set across the REST surface and its MCP
 // `create_session` counterpart, asserting identical `code`, `category`,
 // and `retryable` on each surface. Because both transports populate the
@@ -14,18 +14,28 @@
 package rest_mcp_consistency_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
-// matrixErrorClasses is the §15.2.1 lines 1408-1413 error-class list:
+// matrixErrorClasses is the §15.2.1 error-class list:
 // the named classes plus the §15.4 session-creation rejection family.
 // Per the spec the list MUST stay in lockstep with the §15.4 error code
 // catalog — any session-creation rejection added to §15.4 is added here
-// in the same change. spec: §15.2.1 line 1413.
+// in the same change. spec: §15.2.1.
 var matrixErrorClasses = []string{
 	// Named error classes.
 	"VALIDATION_ERROR",
@@ -45,14 +55,15 @@ var matrixErrorClasses = []string{
 	"GIT_CLONE_REF_UNRESOLVABLE",
 	"GIT_CLONE_REF_RESOLVE_TRANSIENT",
 	"ENV_VAR_BLOCKLISTED",
-	"SDK_DEMOTION_NOT_SUPPORTED",
 	"POOL_DRAINING",
 	"CIRCUIT_BREAKER_OPEN",
 	"ERASURE_IN_PROGRESS",
 	"TENANT_SUSPENDED",
+	"TENANT_NOT_ACTIVE",
+	"USER_INVALIDATED",
 }
 
-// spec: §15.2.1 line 1413
+// spec: §15.2.1
 // diagnosis: the §15.2.1 `RegisterAdapterUnderTest` matrix requires the
 // `category` and `retryable` flag to be identical across REST and every
 // adapter surface for each error class. Both surfaces classify through
@@ -146,7 +157,7 @@ func decodeMCPError(t *testing.T, res map[string]any) restErrorTriple {
 	return restErrorTriple{body.Code, body.Category, body.Retryable}
 }
 
-// spec: §15.2.1 lines 1408-1413
+// spec: §15.2.1
 // diagnosis: the matrix requires each error class to be "exercised with
 // a canonical triggering input on POST /v1/sessions and its MCP
 // create_session counterpart", asserting identical code/category/
@@ -242,6 +253,91 @@ func TestRegisterAdapterUnderTestErrorMatrixEndToEnd(t *testing.T) {
 			if rest.Category != string(wantCat) || rest.Retryable != wantRetry {
 				t.Errorf("REST envelope diverges from errorclassify for %q: got (%q,%v) want (%q,%v)",
 					tc.wantCode, rest.Category, rest.Retryable, wantCat, wantRetry)
+			}
+		})
+	}
+}
+
+// newFencedConsistencyServers builds the REST and MCP surfaces of the
+// consistency harness over a session store that runs the creation fence
+// and over the tenant and user registries the early creation gate reads.
+func newFencedConsistencyServers(t *testing.T, tenants tenantstore.Store, users userstore.Store) (*httptest.Server, *httptest.Server) {
+	t.Helper()
+	store := memstore.New(memstore.WithCreationMarkers(sessionstore.StoreMarkers(tenants, users)))
+	rest := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Tenants: tenants, Users: users})
+	tsREST := httptest.NewServer(rest.Handler())
+	t.Cleanup(tsREST.Close)
+	mcpSrv := mcp.NewServer()
+	mcptools.Register(mcpSrv, mcptools.Deps{
+		DevTenantFallback: true,
+		Store:             store, SessionCreator: rest, SessionService: rest,
+		Executor: executor.NewEchoExecutor(), Users: users, Tenants: tenants,
+		IDFunc: func() string { return "sess_mcp_fence" }, TenantID: "acme",
+	})
+	tsMCP := httptest.NewServer(mcpSrv.Handler())
+	t.Cleanup(tsMCP.Close)
+	return tsREST, tsMCP
+}
+
+// spec: 15.2.1 (REST/MCP Consistency Contract), 12.8 (Compliance Interfaces: Lifecycle fence and drain), 15.1 (REST API: Error code catalog)
+// diagnosis: TENANT_NOT_ACTIVE and USER_INVALIDATED are creation-fence
+// rejections in the matrix list. A failure means POST /v1/sessions and MCP
+// lenny/create_session answer the same trigger with a different code,
+// category, retryable flag, or status, most likely because the classifier
+// lacks the code and MCP falls back to (TRANSIENT, true), or because the
+// creation gate is not wired on one of the two surfaces.
+func TestErrorMatrixCreationFenceCodes(t *testing.T) {
+	cases := []struct {
+		code  string
+		setup func(*testing.T, *tenantstore.Memory, *userstore.Memory)
+	}{
+		{"TENANT_NOT_ACTIVE", func(t *testing.T, ts *tenantstore.Memory, _ *userstore.Memory) {
+			if _, err := ts.Update(context.Background(), "acme", func(tn *tenantstore.Tenant) error {
+				tn.State = tenantstore.TenantStateDeleting
+				return nil
+			}); err != nil {
+				t.Fatalf("tenant state: %v", err)
+			}
+		}},
+		{"USER_INVALIDATED", func(t *testing.T, _ *tenantstore.Memory, us *userstore.Memory) {
+			if _, err := us.Update(context.Background(), "acme", "alice@acme.com", func(u *userstore.User) error {
+				u.Disabled = true
+				return nil
+			}); err != nil {
+				t.Fatalf("disable user: %v", err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			tenants := tenantstore.NewMemory()
+			users := userstore.NewMemory()
+			if err := tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"}); err != nil {
+				t.Fatalf("seed tenant: %v", err)
+			}
+			if err := users.Create(context.Background(), userstore.User{Subject: "alice@acme.com", TenantID: "acme"}); err != nil {
+				t.Fatalf("seed user: %v", err)
+			}
+			tc.setup(t, tenants, users)
+			tsREST, tsMCP := newFencedConsistencyServers(t, tenants, users)
+
+			resp, raw := postJSON(t, tsREST.URL+"/v1/sessions", "acme",
+				[]byte(`{"runtimeRef":"claude-code","userId":"alice@acme.com"}`))
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("REST status = %d, want 403; body %s", resp.StatusCode, raw)
+			}
+			rest := decodeRESTError(t, raw)
+			mcpRes := decodeMCPError(t, mcpCall(t, tsMCP.URL+"/mcp", "lenny/create_session", map[string]any{
+				"runtimeRef": "claude-code", "userId": "alice@acme.com",
+			}))
+			if rest.Code != tc.code || mcpRes.Code != tc.code {
+				t.Fatalf("codes REST=%q MCP=%q, want %q", rest.Code, mcpRes.Code, tc.code)
+			}
+			if rest.Category != mcpRes.Category || rest.Retryable != mcpRes.Retryable {
+				t.Errorf("parity: REST=(%s,%v) MCP=(%s,%v)", rest.Category, rest.Retryable, mcpRes.Category, mcpRes.Retryable)
+			}
+			if rest.Category != string(errorclassify.CategoryPolicy) || rest.Retryable {
+				t.Errorf("REST = (%s,%v), want (POLICY,false)", rest.Category, rest.Retryable)
 			}
 		})
 	}

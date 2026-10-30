@@ -50,7 +50,7 @@ func mkClient(t *testing.T, objs ...client.Object) client.Client {
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
 }
 
-// spec: §10.4 line 385 / §16.5 PDBBlockedEvictions — a polling sample
+// spec: §10.4 / §16.5 PDBBlockedEvictions — a polling sample
 // observing DisruptionsAllowed == 0 increments the counter. F-10.4.4.
 func TestTickIncrementsCounter_WhenDisruptionsAllowedZero_spec_10_4(t *testing.T) {
 	pdb := &policyv1.PodDisruptionBudget{
@@ -79,7 +79,7 @@ func TestTickIncrementsCounter_WhenDisruptionsAllowedZero_spec_10_4(t *testing.T
 	}
 }
 
-// spec: §10.4 line 385 — when DisruptionsAllowed > 0 the PDB is not
+// spec: §10.4 — when DisruptionsAllowed > 0 the PDB is not
 // blocking; the counter MUST NOT advance. F-10.4.4.
 func TestTickDoesNotIncrementCounter_WhenDisruptionsAllowedPositive_spec_10_4(t *testing.T) {
 	pdb := &policyv1.PodDisruptionBudget{

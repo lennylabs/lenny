@@ -17,10 +17,10 @@ import (
 // single checkpoint archive can carry more than one tree, and
 // ExtractTree routes each entry back to the root that owns its prefix.
 //
-// spec: §7.3 lines 408-409 — a session resume replays the workspace
+// spec: §7.3 — a session resume replays the workspace
 // checkpoint (step e) and restores the session file to its expected
-// path (step f). The workspace (`/workspace/current`, §6.4 line 407)
-// and the session-file tmpfs (`/sessions`, §6.4 line 380 / §6.1 line 13)
+// path (step f). The workspace (`/workspace/slots/{sessionId}/current`, §6.4)
+// and the session-file tmpfs (`/sessions`, §6.4 / §6.1)
 // are distinct mounts, so the checkpoint bundles both under distinct
 // prefixes rather than archiving a single tree.
 type NamedRoot struct {
@@ -35,12 +35,19 @@ type NamedRoot struct {
 }
 
 // Reserved checkpoint-bundle prefixes. WorkspacePrefix carries the
-// session workspace (`/workspace/current`); SessionsPrefix carries the
+// session workspace (`/workspace/slots/{sessionId}/current`); SessionsPrefix carries the
 // `/sessions` session-file tmpfs the §7.3 step-f restore replays.
 const (
 	WorkspacePrefix = "workspace"
 	SessionsPrefix  = "sessions"
 )
+
+// ArchiveTreeEncoding is the §10.1 chunk_encoding value naming the bytes
+// ArchiveTree writes: a gzip-compressed tar. The Checkpoint handler refuses
+// a CheckpointStart that declares any other encoding, because the manifest
+// the gateway writes records the declared value and an operator selects the
+// decoder from it (§4.4 "MinIO object key logging for manual recovery").
+const ArchiveTreeEncoding = "tar.gz"
 
 // ArchiveTree writes a gzip-compressed tar bundling several roots under
 // their prefixes to w and returns the number of compressed bytes

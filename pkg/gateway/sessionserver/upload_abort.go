@@ -10,18 +10,18 @@ import (
 )
 
 // errUploadAborted is the sentinel returned by an abortableReader after
-// the per-session abort signal fires. The §7.4 line 463 finalize path
+// the per-session abort signal fires. The §7.4 finalize path
 // raises the signal so any in-flight /upload Read aborts before the
 // next chunk lands in the blob store. The upload handler maps the
 // sentinel to a 410 GONE / UPLOAD_CHANNEL_CLOSED response and
 // soft-deletes the partially-written blob.
 //
-// spec: §7.4 line 463 — "Upload channel closes after workspace
+// spec: §7.4 — "Upload channel closes after workspace
 // finalization." F-7.4.16.
 var errUploadAborted = errors.New("sessionserver: upload aborted by finalize")
 
 // uploadAbortRegistry tracks per-session in-flight /upload handlers
-// so the §7.4 line 463 finalize transition can sever them. Each
+// so the §7.4 finalize transition can sever them. Each
 // handler registers a chan struct{} keyed by a process-local id; the
 // finalize handler closes every chan still keyed under the session
 // after the row transitions out of the upload-admitting state. A
@@ -106,7 +106,7 @@ func (r *uploadAbortRegistry) register(sid string) (ch <-chan struct{}, release 
 // number of in-flight registrations that were aborted (zero when no
 // upload was in-flight or when finalize fires twice).
 //
-// closeSession is the §7.4 line 463 entry point invoked from the
+// closeSession is the §7.4 entry point invoked from the
 // finalize handler. Calling closeSession on a nil registry is a safe
 // no-op.
 func (r *uploadAbortRegistry) closeSession(sid string) int {
@@ -136,7 +136,7 @@ func (r *uploadAbortRegistry) closeSession(sid string) int {
 // abortableReader wraps an io.Reader with the per-session abort
 // signal. On every Read the channel is polled non-blockingly; a
 // closed channel surfaces as errUploadAborted before the underlying
-// Read fires. This is the §7.4 line 463 channel-close mechanism the
+// Read fires. This is the §7.4 channel-close mechanism the
 // finalize handler drives. F-7.4.16.
 //
 // The check is non-preemptive: a Read already blocked inside the

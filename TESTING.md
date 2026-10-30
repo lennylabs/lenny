@@ -374,6 +374,9 @@ lenny-test --group <pr|nightly|pre-release|...>   # Named selection (see §8)
 # Change-aware selection
 lenny-test --changed                              # Inspects git diff
 lenny-test --changed --max-tier component         # Layered escalation
+lenny-test --since main                           # Diff from the merge base with main
+lenny-test --changed --rdeps-depth -1             # Unit scope takes every transitive importer
+lenny-test --changed --all                        # Unit tier runs every package
 lenny-test --spec 4.2,12.3                        # Spec sections
 lenny-test --pkg pkg/store/session                # Explicit package
 
@@ -384,8 +387,8 @@ lenny-test validate-maps                          # CI gate: maps in sync
 lenny-test validate-diagnosis                     # CI gate: diagnosis coverage
 
 # Infrastructure lifecycle (see §10)
-lenny-test infra up   --profile compose|kind|all
-lenny-test infra down --profile compose|kind|all
+lenny-test infra up   --profile compose|compose-mtls|compose-redis-cluster|kind|all
+lenny-test infra down --profile compose|compose-mtls|compose-redis-cluster|kind|all
 lenny-test infra prune
 lenny-test infra status
 
@@ -435,14 +438,18 @@ lenny-test --verdict-file tests/results/<name>.json
    - `--tier` → all tests with that build tag.
    - `--max-tier` → all tests with tags up to and including that tier.
    - `--group` → the set named in `tests/groups.yaml`.
-   - `--changed` → walks `git diff --name-only` (staged plus unstaged plus untracked under `pkg/`, `schemas/`, `migrations/`, `charts/`) through the change graph.
+   - `--changed` → walks `git diff --name-only` (staged plus unstaged plus untracked under `pkg/`, `schemas/`, `migrations/`, `charts/`) through the change graph. `--since <ref>` diffs from the merge base of `<ref>` and `HEAD` instead, and accepts an explicit `A..B` or `A...B` range. The change graph selects the tiers. The unit tier runs a package scope rather than `./...`: the unit targets the change graph lists for each changed path, the Go package that owns each changed path, and the in-module packages that import an owning package (test imports included) to the depth `--rdeps-depth` sets. The default depth is 1; 0 runs the owning packages alone, and -1 walks the full transitive closure. Tier 0 type-checks every package with `go vet ./...`, so a signature change that breaks a distant importer still fails the run. A changed path that no change-graph key covers is reported, and its owning package joins the unit scope, so an unmapped change still runs the nearest tests. A change to `go.mod`, `go.sum`, or `go.work` is reported as module-wide, and `--all` runs every package in the unit tier. `--dry-run` prints the scope and these reports without running anything.
    - `--spec` → resolves each section through the spec map.
-   - `--pkg` → resolves through the change graph.
+   - `--pkg` → resolves through the change graph. The unit tier runs the named package recursively plus the unit targets of the change-graph keys it matches.
 2. Intersect with `--max-tier` if both selectors are present.
 3. Order by tier ascending. Within a tier, group by package to maximize test-binary reuse.
 4. For each tier, ensure required infrastructure is up. If `lenny-test infra status` reports the dependency stack as not running, start it (subject to `--no-infra`).
 5. Execute. Stop after the first failing tier unless `--continue-on-failure` is set.
 6. Emit the verdict to `tests/results/latest.json` and, if `--verdict-file` is set, to that path.
+
+### Test temp root
+
+Every process the harness starts inherits a temp root outside `/tmp`, because a host cleanup of `/tmp` during a run removes the fixture binaries a `TestMain` builds once and the socket directories a package reuses, and every later test in the package then fails with `fork/exec ... no such file or directory`. The harness exports the root as `TMPDIR` and `LENNY_TEST_TMPDIR`, and as `GOTMPDIR` unless the operator already set `GOTMPDIR` outside `/tmp`. The root is `$LENNY_TEST_TMPDIR` when set, otherwise the operator's `TMPDIR` when it is outside `/tmp`, otherwise `$HOME/.lenny-tmp`. A test creates a build-once fixture with `testtmp.MkdirTemp` (`tests/testinfra/testtmp`) and a Unix socket directory with `testtmp.ShortDir`, so a plain `go test` resolves the same root. The tier-0 check `TestBuildOnceFixturesStayOutOfTmp_spec_17_10` refuses an `os.MkdirTemp` call in the default temp directory inside a `TestMain` or a `sync.Once`, and any literal `/tmp` parent.
 
 ### Container caching daemon
 
@@ -518,8 +525,8 @@ Every `lenny-test` invocation writes `tests/results/latest.json`. The format is 
 
 ### Field semantics
 
-- `verdict` is one of `PASS`, `FAIL`, `INCONCLUSIVE`. `INCONCLUSIVE` means the harness could not complete the run (for example, infrastructure failed to start).
-- `tiers.<name>.status` is one of `pass`, `fail`, `skipped`, `not-selected`. `skipped` carries a `reason`.
+- `verdict` is one of `PASS`, `FAIL`, `INCONCLUSIVE`, and `UNVERIFIED`. `INCONCLUSIVE` means the harness could not complete the run (for example, infrastructure failed to start), and the harness exits 2. `UNVERIFIED` means a check could not reach a conclusion, so the run establishes neither success nor failure, and the harness exits 3.
+- `tiers.<name>.status` is one of `pass`, `fail`, `skipped`, `inconclusive`, `unverified`, and `not-selected`. `skipped` carries a `reason`. `inconclusive` marks a tier whose failure the harness classified as infrastructure-class rather than a test failure. `unverified` marks a tier in which a check could not reach a conclusion.
 - `next_action` is one short, machine-readable sentence describing what the implementing agent should do next.
 - `spec_section_status` aggregates test results by spec section. An agent working on section 4.2 reads this field to know whether the section is currently green.
 - `rerun_command` is a copy-paste-ready command that runs the single failing test.
@@ -785,7 +792,7 @@ The reference catalog (§spec/26) defines nine production runtimes. The test inf
 
 - Extends `echo` with simulated streaming output (configurable chunk count and inter-chunk delay).
 - Implements `ReportUsage` with deterministic token counts.
-- Implements the lifecycle channel: `checkpoint_request` → `checkpoint_ready`, `interrupt_request` → `interrupt_acknowledged`, `credentials_rotated` → `credentials_acknowledged`, `deadline_approaching`.
+- Implements the CH-RUNTIMEOPS: `checkpoint_request` → `checkpoint_ready`, `interrupt_request` → `interrupt_acknowledged`, `credentials_rotated` → `credentials_acknowledged`, `deadline_approaching`.
 - Built from Phase 2.8 onward.
 - Used to validate streaming reconnect, quota enforcement, checkpoint timing, credential rotation, and interrupt flows.
 
@@ -813,26 +820,32 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 
 **Scope.** Anything that does not need a running process or container.
 
-**Checks.**
+**Checks.** The harness composes the check table in `cmd/lenny-test` and runs it in this order. A tier-11 test reconciles this list against that table, so a check added to or removed from the harness must be reflected here.
+
 1. `go vet ./...`
-2. `golangci-lint run` with the project's `.golangci.yml`. Enabled linters include `errcheck`, `staticcheck` (which absorbs the former `gosimple` checks in the v2 series), `unused`, `govet`, `ineffassign`, and `misspell`.
-3. `gofumpt -l .` — formatting.
-4. `goimports -l -local github.com/lenny-labs/lenny .` — import ordering.
-5. `helm lint charts/lenny`.
-6. `helm template charts/lenny --values tests/testinfra/kind/values.yaml | conftest test --policy charts/lenny/policy/` — chart policy.
-7. `buf lint schemas/` and `buf breaking schemas/ --against .git#branch=main`.
+2. `go vet -tags=contract ./tests/tier3_contract/...` — the contract-tagged tests compile, even where they are expected to fail at runtime in the current phase.
+3. `buf lint` over the proto sources under `schemas/`.
+4. `buf breaking` against `.git#branch=main`. Off `main` the findings are reported as advisory, because a long-lived feature branch evolves the proto deliberately; on `main` the check hard-fails.
+5. `gofumpt -l .` — formatting. The walk from the repository root also reaches directories outside the checkout under test, such as other git worktrees under `.claude/worktrees/` and git-ignored scratch trees. The harness therefore judges only the Go files that `git ls-files --cached --others --exclude-standard` lists, and it keeps the whole report when git is unavailable.
+6. `goimports -l -local github.com/lennylabs/lenny .` — import ordering, scoped to the same files as `gofumpt`.
+7. `golangci-lint run` with the project's `.golangci.yml`. Enabled linters include `errcheck`, `staticcheck` (which absorbs the former `gosimple` checks in the v2 series), `unused`, `govet`, `ineffassign`, and `misspell`.
 8. `scripts/lint-schema.sh` — every tenant-scoped table has `tenant_id` as the leading index column (R-01).
 9. `scripts/lint-queries.sh` — no cross-tenant JOIN without the matching `a.tenant_id = b.tenant_id` clause (R-02), and the cross-tenant exception annotation inventory matches the documented list.
 10. `scripts/lint-migrations.sh` — every migration has a corresponding rollback script and a non-empty test under `tests/tier2_component/migrations/`.
-11. JSON Schema validation of every example payload under `docs/`.
-12. `markdown-link-check` over `docs/` and `spec/`.
-13. License header on every Go source file.
-14. ADR catalog cross-check: every ADR file has a matching entry in `docs/adr/index.md` and the spec §19 table.
-15. Spec-map and change-graph integrity (`lenny-test validate-maps`).
-16. Diagnosis-comment coverage (`lenny-test validate-diagnosis`).
-17. Proto-generated code is up to date (`buf generate && git diff --exit-code`).
+11. `scripts/check-adr-catalog.sh` — every ADR file has a matching entry in `docs/adr/index.md` and the spec §19 table.
+12. `scripts/check-doc-examples.sh` — JSON Schema validation of every example payload under `docs/`.
+13. `scripts/check-helm-charts.sh` — `helm lint charts/lenny` and the chart policy (`conftest test` over the rendered chart).
+14. `scripts/check-schema-breaking.sh` — breaking changes in the JSON Schema files under `schemas/` against `main`.
+15. `scripts/check-action-pins.sh` — every external `uses:` reference in a workflow is pinned to a commit digest (§20.16).
+16. `scripts/check-tool-pins.sh` — no `go install <path>@latest` in a workflow; tool installs are version-pinned (§20.16).
+17. `scripts/lint-determinism.sh` — §17.4 determinism rules across the test surface. Findings are reported without failing the tier while the pre-existing violations are migrated to `testinfra`.
+18. `scripts/lint-test-conventions.sh` — §17.6 and §17.7 test-authoring conventions. Findings are reported without failing the tier.
+19. `scripts/check-markdown-links.sh` — `markdown-link-check` over `docs/` and `spec/`. Findings are reported without failing the tier, because many internal links resolve only in the rendered site; the PR workflow keeps a hard gate against the rendered site.
+20. `go test ./tests/tier0_static/...` — the tier-0 Go tests. They cover the license header on every Go source file, the CRD and JSON Schema inventories, the change-graph selection tables, and the generated-code no-drift check for `pkg/proto/`. The no-drift test reproduces the whole `make generate-proto` target (`buf generate` plus the SPDX-header prepend and the `goimports` local-prefix rewrite) into a temporary tree and diffs the result against the committed stubs, because the plugins alone emit neither the header nor the regrouped import block. A tier-0 test that runs but cannot reach a conclusion, such as the no-drift test on a host missing `buf`, `protoc-gen-go`, `protoc-gen-go-grpc`, or `goimports`, reports `unverified` rather than passing.
+21. `lenny-test validate-diagnosis` — diagnosis-comment coverage.
+22. `lenny-test validate-maps` — spec-map and change-graph integrity.
 
-**Gate.** Every check must pass. No retries.
+**Gate.** Every check must pass. A check that reaches no conclusion reports `unverified`, and the tier carries that status rather than `pass`. No retries.
 
 **Wall-clock target.** Under 30 seconds on a laptop.
 
@@ -855,7 +868,7 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 - Workspace plan parsing and validation. Every source type. Every mode validation. Path normalization. Last-writer-wins.
 - Setup command allowlist. Argument splitting, shell-false enforcement.
 - Adapter manifest generation. Nonce computation. Schema correctness.
-- Lifecycle channel message parsing.
+- CH-RUNTIMEOPS message parsing.
 - Output part validation. Inline-versus-ref mutual exclusion, size thresholds, MIME type checks, schema version handling.
 - MCP message framing. Protocol version negotiation.
 - OCSF translation. Lenny event → OCSF event mapping is exhaustive over the event catalog.
@@ -871,7 +884,7 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 **Conventions.**
 - Table-driven tests are the default. Each row carries a name, an input, and an expected output (or expected error).
 - `go test -race -count=1` is the default. Race detection is non-negotiable for any code that uses goroutines or channels.
-- Fuzz targets exist for every parser: lifecycle channel, MCP envelope, adapter manifest, output parts, workspace plan, OCSF event.
+- Fuzz targets exist for every parser: CH-RUNTIMEOPS, MCP envelope, adapter manifest, output parts, workspace plan, OCSF event.
 - Property-based tests via `pgregory.net/rapid` cover algebraic invariants: monotonicity of budget carving, idempotency of GC sweeps, stability of state-machine round-trips.
 
 **Coverage target.** 80% on new code, measured by `go-cover` and enforced by CI. The threshold is not a project-wide floor; refactoring is not penalized.
@@ -990,7 +1003,7 @@ The harness drives an adapter binary over its stdin/stdout JSON Lines channel an
 - Heartbeat ack arrives within 10 seconds.
 - Shutdown completes within the declared deadline.
 - Forward compatibility: future-typed messages do not crash the adapter.
-- Lifecycle channel handshake (`lifecycle_capabilities` → `lifecycle_support`) is correct.
+- CH-RUNTIMEOPS handshake (`lifecycle_capabilities` → `lifecycle_support`) is correct.
 
 This suite runs against every test runtime and every reference runtime. A third-party runtime registers via `lenny-compliance` (see §12.10).
 
@@ -1029,7 +1042,7 @@ EventBus publishes CloudEvents v1.0.2 messages. The suite asserts every document
 | credential_lifecycle | Credential assignment → rotation (`credentials_rotated` lifecycle message) → runtime re-bind → emergency revoke → active session terminated |
 | credential_fallback | Primary provider unavailable; fallback chain activates; health scores update; cooldown respected |
 | credential_revocation | Emergency revoke → deny-list propagation via Redis pub/sub → active leases terminated within propagation SLO |
-| concurrent_workspace | `slotId` multiplexing: N prompts on same pod; per-slot credential isolation; per-slot cleanup timeout |
+| concurrent_workspace | `sessionId` multiplexing: N prompts on same pod; per-slot credential isolation; per-slot cleanup timeout |
 | concurrent_stateless | Tenant-affinity routing; cross-tenant routing rejected; pod assignment correctness |
 | quota_enforcement | Token budget exhaustion → `budget_exhausted` → session termination; storage quota → upload rejection; per-tenant rate limit → 429 |
 | quota_recovery | Redis outage → fail-open with timer; Redis recovery → MAX-rule reconciliation |
@@ -1296,6 +1309,15 @@ Pre-release only. Production images are signed with cosign; trivy reports zero c
 
 **External pen-test.** Pre-release ships an artifact bundle to the external pen-test partner. The pen-test driver under `tests/tier9_security/pentest/` is the harness for replaying the partner's findings against future builds.
 
+**Build tag and invocation.**
+
+```bash
+lenny-test --tier security
+go test -tags security -count=1 -timeout 1h ./tests/tier9_security/...
+```
+
+The tier runs under its own budget of one hour, which `LENNY_TEST_SECURITY_TIMEOUT` overrides with a Go duration such as `90m`. Several cases wait for a Ready agent workload on the Kind cluster, so the package runtime follows cluster load, and recorded whole-package runs range from about 70 seconds to about 1630 seconds. The load and chaos tiers share the separate 600-second long-tier budget that `LENNY_TEST_LONG_TIMEOUT` overrides.
+
 **Cadence.** Critical subset (12.9.1, 12.9.2, 12.9.3): PR. Full suite: nightly. External pen-test: per release.
 
 ### 12.10 Tier 10 — Conformance
@@ -1312,7 +1334,7 @@ lenny-compliance --image ghcr.io/example/my-runtime:1.0 --level full --json
 
 - Basic: every adapter binary protocol message; stdin/stdout JSON Lines; shutdown deadline; heartbeat ack; unknown message types.
 - Standard: Basic plus MCP socket connection, nonce auth via adapter manifest, platform-tool discovery, capability inference at registration.
-- Full: Standard plus lifecycle channel handshake, checkpoint flow with timeouts, interrupt flow, credential rotation, deadline notification, task lifecycle (task mode).
+- Full: Standard plus CH-RUNTIMEOPS handshake, checkpoint flow with timeouts, interrupt flow, credential rotation, deadline notification, task lifecycle (task mode).
 
 **Built-in vs. registered runtimes.**
 - The three test runtimes (`echo`, `streaming-echo`, `delegation-echo`) run conformance on every PR.
@@ -1517,14 +1539,14 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 ### 13.5 Phase 2.8 — `streaming-echo` runtime
 
 **Test infrastructure delivered in Phase 2.8.**
-- `cmd/runtimes/streaming-echo/` is the Full-level reference runtime. It inherits the Basic stdin/stdout protocol from `cmd/runtimes/echo` and adds a lifecycle-channel client over a Unix socket (abstract on Linux, file-based on macOS). The runtime handles `lifecycle_capabilities` / `lifecycle_support`, `checkpoint_request` / `checkpoint_ready`, `interrupt_request` / `interrupt_acknowledged`, `credentials_rotated`, `deadline_signal`, and `draining`.
-- `schemas/lifecycle-events.schema.json` is the JSON Schema for the lifecycle-channel envelope. Example fixtures live under `schemas/examples/lifecycle.*.json` and are validated by `tests/tier0_static/schemas_test.go::TestLifecycleEventExamplesValidate`.
+- `cmd/runtimes/streaming-echo/` is the Full-level reference runtime. It inherits the Basic stdin/stdout protocol from `cmd/runtimes/echo` and adds a CH-RUNTIMEOPS client over a Unix socket (abstract on Linux, file-based on macOS). The runtime handles `lifecycle_capabilities` / `lifecycle_support`, `checkpoint_request` / `checkpoint_ready`, `interrupt_request` / `interrupt_acknowledged`, `credentials_rotated`, `deadline_signal`, and `draining`.
+- `schemas/runtime-ops-events.schema.json` is the JSON Schema for the CH-RUNTIMEOPS envelope. Example fixtures live under `schemas/examples/runtime-ops.*.json` and are validated by `tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesValidate`, whose fixture list `tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesBijection` holds to the set committed under `schemas/examples`.
 - `cmd/lenny-compliance --level full` adds the Full-level conformance battery (lifecycle handshake, checkpoint quiesce/resume, interrupt acknowledgement, credentials_rotated, deadline_signal). The harness opens a Unix-socket lifecycle server, writes a manifest pointing the runtime at it, and asserts each event round-trip.
 - `streaming-echo` passes both `lenny-compliance --level basic` (7/7) and `lenny-compliance --level full` (12/12).
 
 **Test infrastructure deferred to later phases.**
 - The integration `streaming_reconnect` suite is deferred to the phase that ships the gateway. The runtime can be checkpointed and restarted, but the reconnect flow runs through the gateway's stream proxy.
-- The Phase 2 checkpoint-duration baseline re-validation with cooperative quiescence overhead is deferred to Phase 8 (checkpoint/resume). The lifecycle channel handshake in Phase 2.8 demonstrates the quiescence protocol; the duration baseline requires the gateway's checkpoint manager.
+- The Phase 2 checkpoint-duration baseline re-validation with cooperative quiescence overhead is deferred to Phase 8 (checkpoint/resume). The CH-RUNTIMEOPS handshake in Phase 2.8 demonstrates the quiescence protocol; the duration baseline requires the gateway's checkpoint manager.
 
 ### 13.6 Phase 3 — Pool scaling, delegation policy, runtime upgrade, mTLS
 
@@ -1969,7 +1991,7 @@ Lenny publishes two SDK families across three languages (spec/15.6 and spec/15.7
 | Family | Audience | Languages | What it wraps |
 |:-------|:---------|:----------|:--------------|
 | Client SDK | External applications that talk to a Lenny gateway | Go, Python, TypeScript | REST + MCP + streaming + webhook signature verification |
-| Runtime-author SDK | Authors of agent binaries running on Lenny | Go, Python, TypeScript | Adapter binary protocol + MCP platform tools + lifecycle channel |
+| Runtime-author SDK | Authors of agent binaries running on Lenny | Go, Python, TypeScript | Adapter binary protocol + MCP platform tools + CH-RUNTIMEOPS |
 
 Both families ship under `sdks/<family>/<language>/`. The harness runs each through its language-native test runner (`go test`, `pytest`, `vitest`) and includes results in the Tier 3 contract verdict and the Tier 10 conformance verdict.
 
@@ -1993,7 +2015,7 @@ Both families ship under `sdks/<family>/<language>/`. The harness runs each thro
 
 1. Adapter binary protocol compliance. Every Basic-level message type. The SDK skeleton (the equivalent of `lenny runtime init --language <lang> --template minimal`) passes `lenny-compliance --level basic`.
 2. MCP socket integration. Standard-level: connect to `@lenny`, read `_lennyNonce` from the manifest, invoke platform tools. Compliance against `--level standard`.
-3. Lifecycle channel. Full-level: connect to `@lenny-lifecycle`, capability handshake, checkpoint flow, interrupt flow, credential rotation, deadline notification. Compliance against `--level full`.
+3. CH-RUNTIMEOPS. Full-level: connect to `@lenny-runtime-ops`, capability handshake, checkpoint flow, interrupt flow, credential rotation, deadline notification. Compliance against `--level full`.
 4. Workspace helpers. `read_file`, `write_file`, `list_dir`, `delete_file` confined to `/workspace/current` and `/workspace/output`. Path traversal blocked.
 5. Delegation tools. `lenny/delegate_task` invoked through the SDK; budget metadata propagates; child results awaited and parsed.
 6. Heartbeat handling. Automatic `heartbeat_ack` within 10 seconds without runtime-author intervention.
@@ -2245,7 +2267,7 @@ Targeted properties:
 
 Go fuzz targets for every parser and every wire-format boundary:
 - Adapter JSON Lines messages.
-- Lifecycle channel messages.
+- CH-RUNTIMEOPS messages.
 - MCP envelope.
 - Adapter manifest.
 - Output parts (inline and ref, every type).
@@ -2570,6 +2592,8 @@ The annotation is a hint, not a verdict. The author confirms the cause.
 ### 21.3 Infrastructure failures
 
 A test that fails because infrastructure failed (testcontainer crash, Kind cluster bring-up timeout, cloud quota exceeded) reports `verdict: INCONCLUSIVE`. The harness retries up to two times with fresh infrastructure before declaring `FAIL`.
+
+A check that completes without reaching a conclusion (for example, a tool the check invokes is absent from the environment) reports `verdict: UNVERIFIED`. The harness does not retry that run, because fresh infrastructure supplies no conclusion the check was unable to reach. The run is resolved by making the check able to run and running it again.
 
 ### 21.4 Tracking
 

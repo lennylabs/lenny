@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// spec: §12.5 line 332 — the AlwaysLeader elector is the single-process
+// spec: §12.5 — the AlwaysLeader elector is the single-process
 // dev fallback: it is always the GC writer so every gateway-singleton
 // sweep runs for the whole process lifetime and stops on shutdown.
 func TestAlwaysLeader_RunsUntilContextCancel(t *testing.T) {
@@ -42,7 +42,7 @@ func TestAlwaysLeader_RunsUntilContextCancel(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 317 — when leadership is held, every registered
+// spec: §12.5 — when leadership is held, every registered
 // gateway-singleton sweep runs.
 func TestGate_RunsAllJobsWhileLeader(t *testing.T) {
 	var jobAStarted, jobBStarted atomic.Bool
@@ -68,7 +68,7 @@ func TestGate_AddNilJobIgnored(t *testing.T) {
 	}
 }
 
-// spec: §12.5 line 332 — on leadership loss the leader-scoped context is
+// spec: §12.5 — on leadership loss the leader-scoped context is
 // cancelled so every sweep's loop exits; on re-acquire the sweeps are
 // re-launched. The fakeElector drives the leader/follower transitions a
 // real Lease would produce during failover.
@@ -116,7 +116,7 @@ func TestGate_StopsJobsOnLeadershipLossAndRestartsOnReacquire(t *testing.T) {
 	waitFor(t, func() bool { return launches.Load() == 2 })
 }
 
-// spec: §12.5 line 332 — the lease name and failover durations are the
+// spec: §12.5 — the lease name and failover durations are the
 // gateway-scoped constants; the failover bound is LeaseDuration +
 // RenewDeadline = 25s.
 func TestLeaseConstants(t *testing.T) {

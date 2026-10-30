@@ -29,19 +29,20 @@ kubectl get sandboxwarmpools -A
 # Check for warmup failures
 kubectl logs -n lenny-system -l app=lenny-controller --tail=100 | grep warmup
 
-# Check the warmup failure reason
-# Query: rate(lenny_warmpool_warmup_failure_total[5m]) by (reason)
+# Check the warmup failure error type
+# Query: sum by (pool, error_type) (rate(lenny_warmpool_warmup_failure_total[5m]))
 ```
 
 **Common causes and resolution:**
 
 | Cause | Indicator | Resolution |
 |---|---|---|
-| Image pull errors | `reason: image_pull_error` in warmup failures | Verify image registry access, check ImagePullPolicy |
-| Setup command failures | `reason: setup_command_failed` | Check runtime setup commands, increase `setupPolicy.timeoutSeconds` |
-| Resource quota exceeded | `reason: resource_quota_exceeded` | Increase `agentNamespaces[].resourceQuota.pods` |
-| Node pressure | `reason: node_pressure` | Add nodes, check node resource utilization |
+| Image pull errors | `error_type: image_pull_error` in warmup failures | Verify image registry access, check ImagePullPolicy |
+| Resource quota exceeded | `error_type: resource_quota_exceeded` | Increase `agentNamespaces[].resourceQuota.pods` |
+| Node pressure | `error_type: node_pressure` | Add nodes, check node resource utilization |
 | Insufficient minWarm | Low idle count before exhaustion | Increase `minWarm` or review scaling formula |
+
+The `setup_command_failed` value of the warm-up failure counter counts sessions whose [setup commands](../getting-started/concepts.md#setup-commands) fail after their pod is claimed, rather than pods that fail to reach `idle`, so it does not explain an empty pool. It still counts toward the `WarmPoolReplenishmentFailing` alert.
 
 **Emergency scaling:**
 
@@ -213,6 +214,34 @@ kubectl logs -n lenny-system -l app=lenny-token-service --tail=50
 
 ---
 
+### Recycling Pool Does Not Reuse Pods
+
+On a `keep` pod the runtime process lives as long as the pod, unless `DemoteSDK` ends it, and on a `restart` pod each runtime process lives from its launch to the next whole-pod scrub ([Pod Lifecycle](../runtime-author-guide/lifecycle.md#runtime-process-lifetime)). Under either lifetime reuse depends on the runtime serving sequential sessions, and a pool under `recycle.runtimeProcess: keep` also needs the matching acknowledgment.
+
+**Symptoms:**
+- `lenny_pod_session_reuse_count` p50 is 1 on a pool with `recycle.enabled: true` and `recycle.maxSessionsPerPod` above 1
+- Gateway `Info` records `recycle: pod retired at the recycle boundary` carry `reason=runtime_not_live`
+- A pool create or update is refused with `400 VALIDATION_ERROR` naming `acknowledgeProcessLevelIsolation`
+- Pods drain after a pool update, and gateway `Info` records carry `reason=kept_runtime_outside_rule`
+
+**Diagnosis:**
+
+```bash
+# Retirement reasons recorded at the recycle boundary
+kubectl logs -n lenny-system -l app=lenny-gateway --tail=500 | grep "retired at the recycle boundary"
+
+# Drains of pods refused after a pool update
+kubectl logs -n lenny-system -l app=lenny-gateway --tail=500 | grep kept_runtime_outside_rule
+```
+
+**Resolution:**
+
+1. Retirements with `reason=runtime_not_live` mean the adapter reported at the recycle boundary that the runtime cannot serve the next session. The common cause is a runtime process that exits after each session, which no lifetime tolerates: a runtime does not exit at the end of a session. Fix the runtime so it keeps running and serves each later session keyed by `sessionId`. `reason=runtime_not_live` also follows every other cause of the adapter's not-live state, such as a hung runtime or a failed launch, end, or sweep by the runtime supervisor, which the [Pod Lifecycle](../runtime-author-guide/lifecycle.md#runtime-supervisor) page lists; read the adapter container's log of a retired pod for the cause.
+2. A `400 VALIDATION_ERROR` naming `acknowledgeProcessLevelIsolation` means the pool is concurrent (`maxConcurrentSessions` above 1), or recycles with `maxSessionsPerPod` above 1, a `scrubProfile` other than `vm-restart`, and `recycle.runtimeProcess: keep`. Set `sessionPolicy.acknowledgeProcessLevelIsolation: true`. On a sequential pool, `recycle.runtimeProcess: restart`, `recycle.maxSessionsPerPod: 1`, or `recycle.scrubProfile: vm-restart` also removes the requirement. The `restart` value requires a restartable runtime, which carries `command`, runs in `session` mode, and does not declare `capabilities.preConnect: true`. The `maxSessionsPerPod: 1` and `scrubProfile: vm-restart` alternatives also require removing `recycle.runtimeProcess`, because pool admission rejects the field on a pool that does not reuse pods. Pool admission currently refuses `recycle.runtimeProcess: restart` on every pool with `400 VALIDATION_ERROR`, so the remedies available today are `acknowledgeProcessLevelIsolation: true`, `recycle.maxSessionsPerPod: 1`, and `recycle.scrubProfile: vm-restart`. <!-- interim: remove this sentence together with the pool-admission refusal of recycle.runtimeProcess: restart -->
+3. Pods draining with `reason=kept_runtime_outside_rule` after an update that ended process reuse (`recycle.enabled: false`, `maxSessionsPerPod: 1`, `scrubProfile: vm-restart`, or a sequential pool's change of `recycle.runtimeProcess` from `keep` to `restart`) are expected. The gateway places no later session on a pod that served an earlier session and that the updated configuration no longer admits, which is every such pod when the pool no longer reuses pods and each `keep` pod after the change to `restart`, and drains each such pod an acquisition reads, so each tenant's next session starts on a fresh pod.
+
+---
+
 ### PoolConfigDrift Alert
 
 **Symptoms:**
@@ -324,7 +353,7 @@ lenny-ctl admin sessions force-terminate <session-id>
 
 | Alert | Condition | Action |
 |---|---|---|
-| `SandboxClaimOrphanRateHigh` | > 10 orphans in 15 min | Check gateway stability |
+| `SandboxClaimOrphanRateHigh` | > 10 orphans in 15 min | Check gateway stability and the gateway log for pod releases that failed or did not run. The controller drains the pod of an orphaned claim once the claim's last binding change is older than the claim orphan timeout (`controller.claimOrphanTimeoutSeconds`, default 15 minutes) and no session uses the pod, where a session that has ended counts until the gateway releases its pod, for at most the claim orphan timeout. |
 | `OrphanTasksPerTenantHigh` | > 80% of `maxOrphanTasksPerTenant` | Check for misbehaving orchestrator |
 
 ---

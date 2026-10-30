@@ -36,6 +36,7 @@ require (
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/launchdarkly/go-server-sdk/v6 v6.2.1
 	github.com/minio/minio-go/v7 v7.1.0
+	github.com/moby/moby/api v1.54.1
 	github.com/open-feature/go-sdk v1.17.2
 	github.com/open-feature/go-sdk-contrib/providers/launchdarkly v0.1.6
 	github.com/open-feature/go-sdk-contrib/providers/statsig v0.0.4
@@ -75,6 +76,8 @@ require (
 	sigs.k8s.io/yaml v1.4.0
 )
 
+require github.com/moby/moby/client v0.4.0 // indirect
+
 require (
 	cel.dev/expr v0.25.1 // indirect
 	cloud.google.com/go v0.123.0 // indirect
@@ -96,7 +99,7 @@ require (
 	github.com/Masterminds/semver/v3 v3.1.1 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.10 // indirect
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.16 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.16
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.23 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.23 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.23 // indirect
@@ -109,7 +112,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.17 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.21 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.1 // indirect
-	github.com/aws/smithy-go v1.25.1 // indirect
+	github.com/aws/smithy-go v1.25.1
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
@@ -151,7 +154,7 @@ require (
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.14 // indirect
-	github.com/googleapis/gax-go/v2 v2.21.0 // indirect
+	github.com/googleapis/gax-go/v2 v2.21.0
 	github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853 // indirect
 	github.com/gregjones/httpcache v0.0.0-20190611155906-901d90724c79 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0 // indirect
@@ -182,8 +185,6 @@ require (
 	github.com/minio/md5-simd v1.1.2 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.2.0 // indirect
-	github.com/moby/moby/api v1.54.1 // indirect
-	github.com/moby/moby/client v0.4.0 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.6.0 // indirect
 	github.com/moby/sys/user v0.4.0 // indirect
@@ -240,7 +241,7 @@ require (
 	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect
 	golang.org/x/net v0.54.0 // indirect
-	golang.org/x/sys v0.44.0 // indirect
+	golang.org/x/sys v0.44.0
 	golang.org/x/term v0.43.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
 	google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7 // indirect

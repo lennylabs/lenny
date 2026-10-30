@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/embedded/stack"
 )
 
-// spec: §22.7 (time-to-hello-world: lenny session new entry point)
+// spec: time-to-hello-world (lenny session new entry point)
 // diagnosis: the quick-start documents `lenny session new --runtime
 // <name>` as the entry point for starting a session against the
 // embedded gateway. The CLI dispatch must wire `session` so an

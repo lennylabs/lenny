@@ -9,10 +9,10 @@ package v1alpha1
 // reader (pkg/gateway/podsession sync-status lookup) share one literal
 // and cannot drift.
 const (
-	// AnnotationConfigGeneration carries the §4.6.2 line 558
+	// AnnotationConfigGeneration carries the §4.6.2
 	// pool_config_generation the gateway-side sync-status / PoolConfigDrift
 	// check compares against the Postgres counter.
-	// spec: spec/04_system-components.md line 558.
+	// spec: §4.6.2.
 	AnnotationConfigGeneration = "lenny.dev/config-generation"
 
 	// AnnotationLastReconciledAt carries the RFC3339Nano instant at which
@@ -21,14 +21,16 @@ const (
 	// the generation changes, so a steady-state pool does not rewrite the
 	// CRD every tick. The gateway sync-status endpoint reports it as
 	// lastReconciledAt and derives lagSeconds from it.
-	// spec: spec/04_system-components.md line 560.
+	// spec: §4.6.2.
 	AnnotationLastReconciledAt = "lenny.dev/last-reconciled-at"
 
 	// AnnotationDrainRequest is stamped by the gateway on an agent Pod when
 	// the pod crosses the §5.2 unhealthy-slot threshold (ceil(maxConcurrent/2)
-	// slots failed or leaked within the rolling window). The
-	// WarmPoolController consumes the annotation as the source of the
-	// unhealthy-threshold drain transition, so the gateway never writes
+	// slots failed or leaked within the rolling window), when a concurrent
+	// pod's release count reaches maxSessionsPerPod, or when an acquisition
+	// refuses a pinned idle pod that no SandboxClaim holds (§5.2 deployer
+	// acknowledgment). The WarmPoolController consumes the annotation as
+	// the source of the drain transition, so the gateway never writes
 	// Sandbox.status.phase=draining itself: the WarmPoolController is the
 	// sole writer of Sandbox.status (§4.6.3 ownership decomposition). The
 	// gateway's `get`/`patch` on agent Pods grant covers this annotation
@@ -46,7 +48,7 @@ const (
 	// the pool carrying residual-state risk from a failed cleanup; it
 	// persists through the §6.2 preConnect re-warm because the residual-state
 	// risk is orthogonal to SDK readiness. The §5.2 workspace materializer
-	// removes all files from /workspace/current before reuse regardless of
+	// removes all files from each slot's current tree before reuse regardless of
 	// the annotation. The gateway's `get`/`patch` on agent Pods grant covers
 	// this annotation write alongside the lenny.dev/drain-request stamp and
 	// the lenny.dev/tenant-id pin; the gateway never writes Sandbox.status

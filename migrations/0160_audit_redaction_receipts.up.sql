@@ -1,4 +1,4 @@
--- §12.8 lines 812-827 — the RedactionReceipt store. One append-only row
+-- §12.8 — the RedactionReceipt store. One append-only row
 -- per audit_log row that the §12.8 step-14 OCSF dead-letter PII redaction
 -- rewrites in place under GDPR Article 17. The receipt is the sole
 -- provenance token that distinguishes an authorized GDPR redaction from a
@@ -12,10 +12,10 @@
 --
 -- The table holds no personal data (hashes and identifiers only, by
 -- construction), so it is exempt from DeleteByUser / DeleteByTenant under
--- the same rationale as gdpr.* receipts (§12.8 line 827).
+-- the same rationale as gdpr.* receipts (§12.8).
 CREATE TABLE IF NOT EXISTS audit_redaction_receipts (
     receipt_id           UUID        PRIMARY KEY,
-    -- §12.8 line 815 — FK to audit_log.id (the redacted row). audit_log
+    -- §12.8 — FK to audit_log.id (the redacted row). audit_log
     -- carries a single-column UNIQUE (id) precisely so this FK is legal.
     audit_event_id       UUID        NOT NULL
         REFERENCES audit_log (id),
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS audit_redaction_receipts (
 CREATE INDEX idx_audit_redaction_receipts_event
     ON audit_redaction_receipts (audit_event_id);
 
--- §12.8 line 827 grant separation: lenny_erasure INSERTs receipts as it
+-- §12.8 grant separation: lenny_erasure INSERTs receipts as it
 -- redacts dead-lettered rows; lenny_app reads them for chain verification.
 -- No role holds UPDATE or DELETE — the table is append-only like the
 -- ledgers it protects.

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,17 +37,37 @@ import (
 // exhaustion to the client.
 var ErrNoIdlePod = errors.New("podclaim: pool has no idle pod")
 
+// NoIdlePodError is the idle scan's ErrNoIdlePod result. It matches
+// ErrNoIdlePod under errors.Is and names, in Refused, each pod the scan
+// refused through AdmitTenantPin. The Postgres-backed fallback claim skips
+// those pods, so it does not read, lock, or offer a pod the scan already
+// refused. A refusal stays valid for the rest of the acquisition, because the
+// tenant-label webhook permits no pin transition other than unset to a
+// tenant and a tenant to `unassigned`, and AdmitTenantPin refuses
+// `unassigned` for every request. spec: §5.2 (Tenant pinning), §4.6.1
+// (Postgres-backed fallback claim).
+type NoIdlePodError struct {
+	// Refused names the pods the idle scan refused on the tenant pin.
+	Refused []string
+}
+
+// Error returns the ErrNoIdlePod message.
+func (e *NoIdlePodError) Error() string { return ErrNoIdlePod.Error() }
+
+// Is reports whether target is ErrNoIdlePod.
+func (e *NoIdlePodError) Is(target error) bool { return target == ErrNoIdlePod }
+
 // Claimer binds a session to an idle Sandbox.
 type Claimer struct {
 	// Client is the controller-runtime client addressing the cluster.
 	Client client.Client
 	// Namespace is the agent namespace the pool's Sandboxes live in.
 	Namespace string
-	// Now supplies the wall clock for the §3.2 reserved-hold-window check on
+	// Now supplies the wall clock for the §4.6.1 reserved-hold-window check on
 	// the rebind branch. Nil uses time.Now.
 	Now func() time.Time
 	// OnRebind is invoked with the rebound pod's identifier after a successful
-	// §3.2 acquisition-path rebind, so the gateway can cancel the holding
+	// §4.6.1 acquisition-path rebind, so the gateway can cancel the holding
 	// replica's local hold-TTL timer. The rebind patch already changed the
 	// claim resourceVersion, so a missed cancellation only costs a no-op
 	// aborted expiry DELETE; the callback is an optimization. Nil is a no-op.
@@ -71,6 +92,21 @@ type ClaimRequest struct {
 	SessionID string
 	// TenantID is the tenant that owns the session.
 	TenantID string
+	// ReusesPods is true only when the resolved pool reuses pods: a pool with
+	// maxConcurrentSessions above 1, or a reusing recycling pool
+	// (poolstore.ReusesPods). The zero value refuses every pod that has
+	// served a session, including the `reserved → bound` rebind.
+	ReusesPods bool
+	// RequiresProcessAcknowledgment is true when the resolved pool requires
+	// the runtime-process acknowledgment: a concurrent pool, or a reusing
+	// recycling pool under recycle.runtimeProcess: keep
+	// (poolstore.RequiresProcessAcknowledgment). When it is false, an
+	// acquisition refuses a `keep` pod that has served a session and admits
+	// a `restart` pod. The request carries no cross-tenant setting, because
+	// recycle.allowCrossTenantReuse changes no acquisition decision.
+	// spec: §5.2 (Runtime-process lifetime; Deployer acknowledgment (runtime
+	// process kept across sessions)).
+	RequiresProcessAcknowledgment bool
 }
 
 // Claim acquires an idle Sandbox pod in the request's pool by creating the
@@ -86,11 +122,14 @@ type ClaimRequest struct {
 // Sandbox.status; the WarmPoolController projects the pod's occupancy
 // phase from the claim binding state (§4.6.1 occupancy projection).
 //
-// ErrNoIdlePod is returned when no idle pod can be claimed. spec:
+// When no idle pod can be claimed, Claim returns a *NoIdlePodError, which
+// matches ErrNoIdlePod and names the pods the tenant pin refused. A failed
+// pin read is returned wrapped and is not ErrNoIdlePod. spec: §5.2 (Tenant
+// pinning),
 // §4.6.1 (pod claim mechanism, occupancy projection), §4.6.3 (ownership
 // decomposition), §5.2 (slot assignment atomicity).
 func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv1.SandboxClaim, retErr error) {
-	// spec: §16.3 line 337 — the session.claim_pod span. The spec marks
+	// spec: §16.3 — the session.claim_pod span. The spec marks
 	// the span "Controller"; in this implementation the idle-pod claim is
 	// performed gateway-side (this package), so the span is emitted here.
 	// The deferred RecordError captures every claim-failure return path.
@@ -108,22 +147,62 @@ func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv
 		return nil, fmt.Errorf("list sandboxes for pool %s: %w", req.Pool, err)
 	}
 
-	// §3.2 acquisition-path rebind branch: before acquiring a fresh idle pod,
+	// §4.6.1 acquisition-path rebind branch: before acquiring a fresh idle pod,
 	// dispatch onto a pod the same tenant already holds in `reserved` within
 	// its hold window. A reserved pod is scrubbed (and, on preConnect pools,
 	// SDK-warm), so a same-tenant session rebinds it (`reserved → bound`) with
 	// no acquisition round trip. Any gateway replica may rebind; the rebinding
-	// replica re-reads the claim after its patch before dispatching. spec:
-	// §3.2, §4.6.1 (within-hold rebind).
-	if claim, rebound, err := c.rebindReserved(ctx, &list, req); err != nil {
+	// replica re-reads the claim after its patch before dispatching. On a pool
+	// that reuses no pod, the acquisition refuses every reserved pod under the
+	// runtime-process acknowledgment, ends every reserved hold, and rebinds
+	// none; on a pool that reuses pods, the rebind refuses a `keep` candidate
+	// when the pool does not require the acknowledgment and ends its hold.
+	// spec: §4.6.1 (within-hold rebind; Reserved hold), §5.2 (Deployer
+	// acknowledgment (runtime process kept across sessions)).
+	if !req.ReusesPods {
+		if err := c.endReservedHolds(ctx, &list); err != nil {
+			return nil, err
+		}
+	} else if claim, rebound, err := c.rebindReserved(ctx, &list, req); err != nil {
 		return nil, err
 	} else if rebound {
 		return claim, nil
 	}
 
+	claim, refused, err := c.claimIdle(ctx, &list, req)
+	if err != nil || claim != nil {
+		return claim, err
+	}
+	return nil, &NoIdlePodError{Refused: refused}
+}
+
+// claimIdle walks the listed Sandboxes in order and claims the first idle
+// pod the tenant pin admits. It returns the claim, or a nil claim and the
+// names of the pods AdmitTenantPin refused when no pod could be claimed. A
+// failed pin read ends the scan with its error, so no later candidate is
+// tried and the Postgres-backed fallback does not start. spec: §4.6.1 (pod
+// claim mechanism), §5.2 (Tenant pinning).
+func (c *Claimer) claimIdle(ctx context.Context, list *lennyv1.SandboxList, req ClaimRequest) (*lennyv1.SandboxClaim, []string, error) {
+	var refused []string
 	for i := range list.Items {
 		sb := &list.Items[i]
 		if sb.Status.Phase != string(state.Idle) {
+			continue
+		}
+		// §5.2 tenant pinning: read the pin before the claim is created. A
+		// pod refused under the runtime-process acknowledgment has served a
+		// session that it must not follow with another, so the scan requests
+		// its drain and moves on; a pod refused only for its tenant stays
+		// pinned for that tenant and the scan writes nothing to it.
+		admitted, drain, err := AdmitTenantPin(ctx, c.Client, c.Namespace, sb.Name, req)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !admitted {
+			refused = append(refused, sb.Name)
+			if drain {
+				DrainRefusedPod(ctx, c.Client, c.Namespace, req.Pool, sb.Name, c.now())
+			}
 			continue
 		}
 		// §4.6.1 CREATE-first: the per-pod SandboxClaim is the
@@ -138,7 +217,7 @@ func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv
 			if apierrors.IsAlreadyExists(err) || apierrors.IsForbidden(err) {
 				continue
 			}
-			return nil, err
+			return nil, nil, err
 		}
 		// §4.6.1: the claim is created with spec only; write the first
 		// `bound` binding state with a subsequent status patch (the status
@@ -147,22 +226,65 @@ func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv
 		// reclaims by its CREATE-before-status creation-timestamp predicate.
 		if err := writeBoundStatus(ctx, c.Client, c.Namespace, claim.Name, time.Now); err != nil {
 			_ = c.Client.Delete(ctx, claim)
-			return nil, err
+			return nil, nil, err
 		}
 		// §5.2 / §17.2 item 5: a warm-pool pod is labeled with its tenant
 		// on first assignment by the gateway so the pod-scoped
 		// lenny-tenant-label-immutability webhook backstops the pin at the
 		// Kubernetes layer (the §13.2 NET-003 NetworkPolicies select pods,
 		// not Sandboxes). A missing pod is tolerated by the helper.
-		if err := stampPodTenant(ctx, c.Client, c.Namespace, sb.Name, req.TenantID); err != nil {
-			return nil, fmt.Errorf("label pod %s with tenant: %w", sb.Name, err)
+		if err := StampPodTenant(ctx, c.Client, c.Namespace, sb.Name, req.TenantID); err != nil {
+			return nil, nil, fmt.Errorf("label pod %s with tenant: %w", sb.Name, err)
 		}
-		return claim, nil
+		return claim, nil, nil
 	}
-	return nil, ErrNoIdlePod
+	return nil, refused, nil
 }
 
-// rebindReserved implements the §3.2 acquisition-path rebind: it finds a pod
+// endReservedHolds ends every reserved hold in the pool on an acquisition
+// for a pool that reuses no pod, which refuses every reserved pod under the
+// runtime-process acknowledgment.
+// For each Sandbox projecting `reserved` it reads claim-<name>, skips a
+// missing claim or one no longer in `reserved`, and deletes it with the
+// precondition-guarded DELETE hold expiry uses (the claim's UID and
+// resourceVersion), so a rebind that landed first aborts the delete. The pod
+// returns to `idle` through the occupancy projection, pinned to its tenant;
+// the next acquisition that reads it there refuses it through AdmitTenantPin
+// and stamps its drain request through DrainRefusedPod. No drain request is
+// stamped here, because a stamp written before that projection lands would
+// drive `reserved → draining`. It never rebinds and never calls OnRebind.
+// Any read or delete error other than a NotFound or an aborted precondition
+// is returned, so the acquisition fails closed.
+//
+// spec: §5.2 (Deployer acknowledgment (runtime process kept across
+// sessions)), §4.6.1 (Reserved hold: when an acquisition refuses the pod
+// under the runtime-process acknowledgment, it ends the hold with the same
+// precondition-guarded DELETE).
+func (c *Claimer) endReservedHolds(ctx context.Context, list *lennyv1.SandboxList) error {
+	for i := range list.Items {
+		sb := &list.Items[i]
+		if sb.Status.Phase != string(state.Reserved) {
+			continue
+		}
+		claim, err := c.claimByName(ctx, ClaimName(sb.Name))
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("podclaim: get reserved claim for sandbox %s: %w", sb.Name, err)
+		}
+		if claim.Status.Phase != string(claimstate.Reserved) {
+			continue
+		}
+		hold := ReservedHold{UID: claim.UID, ResourceVersion: claim.ResourceVersion}
+		if _, err := DeleteOnHoldExpiry(ctx, c.Client, c.Namespace, claim.Name, hold); err != nil {
+			return fmt.Errorf("podclaim: end reserved hold of sandbox %s: %w", sb.Name, err)
+		}
+	}
+	return nil
+}
+
+// rebindReserved implements the §4.6.1 acquisition-path rebind: it finds a pod
 // the request's tenant holds in `reserved` within its hold window and
 // dispatches the session onto it by patching the claim `reserved → bound`,
 // returning the rebound claim. rebound is false when no eligible reserved pod
@@ -174,18 +296,27 @@ func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv
 // has already expired is left to the holder's expiry DELETE or the orphan GC;
 // rebinding an expired hold would race the DELETE for no benefit.
 //
+// Before the rebind patch the candidate pod is read and its runtime-process
+// lifetime checked (refuseReservedLifetime): an acquisition that refuses the
+// pod under the runtime-process acknowledgment ends its hold with the
+// precondition-guarded DELETE hold expiry uses rather than rebinding it, a
+// NotFound pod read skips the candidate, and any other pod read error ends
+// the acquisition as a failed pin read does.
+//
 // The rebind patch (WriteRebindStatus) changes the claim resourceVersion, so
 // the holder's precondition-guarded hold-expiry DELETE fenced on the
-// reserved-patch version fails and aborts (§3.2 rebind-vs-hold-expiry race).
+// reserved-patch version fails and aborts (§4.6.1 rebind-vs-hold-expiry race).
 // A WriteRebindStatus that loses to a concurrent expiry DELETE (the claim
 // vanished) is tolerated as not-rebound so the caller falls through to normal
 // acquisition. After a successful patch the claim is re-read so the returned
 // object reflects the post-rebind state the caller dispatches against, per
-// §3.2 ("the rebinding replica re-reads the claim after its patch before
+// §4.6.1 ("the rebinding replica re-reads the claim after its patch before
 // dispatching").
 //
-// spec: §3.2 (within-hold rebind, any replica may rebind, re-read after
-// patch), §4.6.1 (reserved hold, holdExpiresAt), §4.6.3 (reserved → bound).
+// spec: §4.6.1 (within-hold rebind, any replica may rebind, re-read after
+// patch), §4.6.1 (reserved hold, holdExpiresAt), §4.6.3 (reserved → bound),
+// §5.2 (Runtime-process lifetime; Deployer acknowledgment (runtime process
+// kept across sessions)).
 func (c *Claimer) rebindReserved(ctx context.Context, list *lennyv1.SandboxList, req ClaimRequest) (*lennyv1.SandboxClaim, bool, error) {
 	now := c.now()
 	for i := range list.Items {
@@ -200,6 +331,13 @@ func (c *Claimer) rebindReserved(ctx context.Context, list *lennyv1.SandboxList,
 		if !found {
 			continue
 		}
+		refused, err := c.refuseReservedLifetime(ctx, sb.Name, claim, req)
+		if err != nil {
+			return nil, false, err
+		}
+		if refused {
+			continue
+		}
 		if err := WriteRebindStatus(ctx, c.Client, c.Namespace, claim.Name, c.now); err != nil {
 			if apierrors.IsNotFound(err) {
 				// A concurrent hold-expiry DELETE reclaimed the claim before the
@@ -209,7 +347,7 @@ func (c *Claimer) rebindReserved(ctx context.Context, list *lennyv1.SandboxList,
 			}
 			return nil, false, fmt.Errorf("podclaim: rebind reserved claim %s: %w", claim.Name, err)
 		}
-		// §3.2: re-read the claim after the rebind patch so the dispatched
+		// §4.6.1: re-read the claim after the rebind patch so the dispatched
 		// object reflects the post-rebind `bound` state and resourceVersion.
 		rebound, reErr := c.claimByName(ctx, claim.Name)
 		if reErr != nil {
@@ -223,13 +361,43 @@ func (c *Claimer) rebindReserved(ctx context.Context, list *lennyv1.SandboxList,
 		}
 		// Cancel the holding replica's local hold-TTL timer (a no-op on a
 		// peer-held claim). The precondition guard already aborts a stale
-		// expiry DELETE, so this only avoids a wasted API call. spec: §3.2.
+		// expiry DELETE, so this only avoids a wasted API call. spec: §4.6.1.
 		if c.OnRebind != nil {
 			c.OnRebind(sb.Name)
 		}
 		return rebound, true, nil
 	}
 	return nil, false, nil
+}
+
+// refuseReservedLifetime reads the reserved candidate pod and applies the
+// runtime-process lifetime refusal (refusesUsedPodLifetime) before the
+// rebind. refused is true when the candidate must not be rebound: the pod is
+// gone (a NotFound read skips the candidate), or the acquisition refuses it
+// under the runtime-process acknowledgment, in which case the hold ends with
+// the precondition-guarded DELETE hold expiry uses and the pod returns to
+// `idle` pinned to its tenant, where the next idle scan refuses it and
+// stamps its drain request. A precondition abort means a rebind landed first
+// and is not an error. Any other pod read or delete error is returned, so
+// the acquisition fails closed as a failed pin read does. spec: §5.2
+// (Deployer acknowledgment (runtime process kept across sessions)), §4.6.1
+// (Reserved hold).
+func (c *Claimer) refuseReservedLifetime(ctx context.Context, sandboxName string, claim *lennyv1.SandboxClaim, req ClaimRequest) (bool, error) {
+	var pod corev1.Pod
+	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: sandboxName}, &pod); err != nil {
+		if apierrors.IsNotFound(err) {
+			return true, nil
+		}
+		return false, fmt.Errorf("podclaim: read reserved pod %s: %w", sandboxName, err)
+	}
+	if !refusesUsedPodLifetime(&pod, req) {
+		return false, nil
+	}
+	hold := ReservedHold{UID: claim.UID, ResourceVersion: claim.ResourceVersion}
+	if _, err := DeleteOnHoldExpiry(ctx, c.Client, c.Namespace, claim.Name, hold); err != nil {
+		return false, fmt.Errorf("podclaim: end reserved hold of refused sandbox %s: %w", sandboxName, err)
+	}
+	return true, nil
 }
 
 // reservedClaimForTenant reads the per-pod claim for sandboxName and returns
@@ -252,18 +420,18 @@ func (c *Claimer) reservedClaimForTenant(ctx context.Context, sandboxName, tenan
 	}
 	if claim.Spec.TenantID != tenantID {
 		// A reserved pod is held for its pinned tenant alone; never rebind it
-		// to a different tenant. spec: §3.2, §5.2 (tenant pinning).
+		// to a different tenant. spec: §5.2 (tenant pinning).
 		return nil, false, nil
 	}
 	if claim.Status.HoldExpiresAt == nil || !claim.Status.HoldExpiresAt.Time.After(now) {
 		// The hold has expired (or carries no deadline); leave it to the
-		// holder's expiry DELETE or the orphan GC. spec: §3.2.
+		// holder's expiry DELETE or the orphan GC.
 		return nil, false, nil
 	}
 	return &claim, true, nil
 }
 
-// claimByName re-reads a SandboxClaim by its claim name. It backs the §3.2
+// claimByName re-reads a SandboxClaim by its claim name. It backs the
 // post-rebind re-read so the caller dispatches against the current object.
 func (c *Claimer) claimByName(ctx context.Context, claimName string) (*lennyv1.SandboxClaim, error) {
 	var claim lennyv1.SandboxClaim
@@ -311,9 +479,7 @@ func CreateClaim(ctx context.Context, cl client.Client, namespace, sandboxName s
 // the gateway's only action when a session-mode occupancy episode ends: the
 // gateway never writes Sandbox.status (§4.6.3 ownership decomposition), so it
 // releases the pod by deleting the claim and the WarmPoolController projects
-// the resulting occupancy phase (a claim deleted on a `recycle.enabled:
-// false` pod projects `draining` then `terminated`; on a recycling pod under
-// its limits it projects `idle`, §4.6.1 occupancy projection). The delete is
+// the resulting occupancy phase (§4.6.1 occupancy projection). The delete is
 // idempotent: a missing claim is a no-op so a double release or a claim the
 // orphan GC already collected does not error.
 //

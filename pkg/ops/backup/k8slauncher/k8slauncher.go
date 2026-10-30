@@ -14,11 +14,11 @@
 // non-root read-only-rootfs security context with a writable /tmp
 // emptyDir, and the Postgres/MinIO credentials from the lenny-backup-postgres
 // and lenny-backup-minio Secrets. The pod carries the app: lenny-backup
-// label the lenny-backup-job NetworkPolicy selects (§25.4 lines 1345-1403)
+// label the lenny-backup-job NetworkPolicy selects (§25.4)
 // and the lenny.dev/backup-id annotation the §25.11 orphan reconciler
 // matches against ops_backups rows.
 //
-// spec: §25.11 lines 3963-3994.
+// spec: §25.11.
 package k8slauncher
 
 import (
@@ -43,7 +43,7 @@ const (
 	componentLabel = "lenny.dev/component"
 	appLabel       = "app"
 	appValue       = "lenny-backup"
-	// backupIDAnnotation is the §25.11 lines 3972/3978 correlation
+	// backupIDAnnotation is the §25.11 correlation
 	// annotation the orphan reconciler reads.
 	backupIDAnnotation = "lenny.dev/backup-id"
 	// backupRegionAnnotation records the §12.8 data-residency region a
@@ -227,7 +227,7 @@ func (l *Launcher) renderJob(spec backup.JobSpec) *batchv1.Job {
 	if correlationID != "" {
 		podAnnotations[backupIDAnnotation] = correlationID
 	}
-	// §12.8 line 935: a per-region Job records the region it dumped.
+	// §12.8: a per-region Job records the region it dumped.
 	if spec.Region != "" {
 		podAnnotations[backupRegionAnnotation] = spec.Region
 	}
@@ -290,7 +290,7 @@ type jobTarget struct {
 // target resolves the MinIO coordinates for spec. A per-region Job
 // (spec.Region set) uses its RegionConfig so one region's Job cannot
 // authenticate to or write into another region's MinIO; a single-region
-// Job uses the launcher defaults. spec: §12.8 line 934.
+// Job uses the launcher defaults. spec: §12.8.
 func (l *Launcher) target(spec backup.JobSpec) jobTarget {
 	t := jobTarget{
 		minioEndpoint: l.cfg.MinIOEndpoint,
@@ -357,7 +357,7 @@ func (l *Launcher) args(spec backup.JobSpec) []string {
 // the MinIO bucket coordinates, and the Postgres/MinIO/report credentials
 // from their Secrets. A per-region Job is scoped to its
 // backups.regions.<region> endpoint, bucket, KMS key, and credential
-// Secret (§12.8 line 934).
+// Secret (§12.8).
 func (l *Launcher) env(spec backup.JobSpec) []corev1.EnvVar {
 	t := l.target(spec)
 	env := []corev1.EnvVar{

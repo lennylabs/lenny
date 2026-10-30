@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// spec: §5.1 lines 121-126, 197-198, 199, 208 — workspaceDefaults,
+// spec: §5.1 — workspaceDefaults,
 // sharedAssets, and runtimeOptionsSchema are modeled on the runtime and
 // round-trip through the admin API.
 func TestCreateRuntimeModelsWorkspaceDefaultsSharedAssetsOptionsSchema(t *testing.T) {
@@ -71,6 +71,16 @@ func TestCreateRuntimeRejectsInvalidWorkspaceBlocks(t *testing.T) {
 			Name: "r2", Image: "x@sha256:a",
 			WorkspaceDefaults: &runtimestore.WorkspaceDefaults{SetupCommands: []runtimestore.WorkspaceSetupCommand{{Cmd: ""}}},
 		}},
+		// spec: §5.1 Derived Runtime Instantiation — a default file carries
+		// its content inline at a valid workspace-relative path.
+		{"file-with-ref", admin.RuntimePayload{
+			Name: "r7", Image: "x@sha256:a",
+			WorkspaceDefaults: &runtimestore.WorkspaceDefaults{Files: []runtimestore.WorkspaceFile{{Path: "big.bin", Ref: "lenny-blob://acme/x/y/z"}}},
+		}},
+		{"file-path-escapes", admin.RuntimePayload{
+			Name: "r8", Image: "x@sha256:a",
+			WorkspaceDefaults: &runtimestore.WorkspaceDefaults{Files: []runtimestore.WorkspaceFile{{Path: "../outside", Content: "x"}}},
+		}},
 		{"shared-asset-bad-type", admin.RuntimePayload{
 			Name: "r3", Image: "x@sha256:a",
 			SharedAssets: []runtimestore.SharedAsset{{Type: "bogus", DestPath: "x/"}},
@@ -99,7 +109,7 @@ func TestCreateRuntimeRejectsInvalidWorkspaceBlocks(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 199 — a derived runtimeOptionsSchema may only reference
+// spec: §5.1 — a derived runtimeOptionsSchema may only reference
 // property names present in the base schema; an unknown property is
 // rejected with INVALID_DERIVED_RUNTIME: runtimeOptionsSchema declares
 // forbidden property.
@@ -131,7 +141,7 @@ func TestCreateDerivedRuntimeRejectsForbiddenOptionsSchemaProperty(t *testing.T)
 	}
 }
 
-// spec: §5.1 line 174 — a base runtime's image is immutable via the admin
+// spec: §5.1 — a base runtime's image is immutable via the admin
 // API; a PUT changing it is rejected with IMAGE_IMMUTABLE.
 func TestUpdateRuntimeRejectsBaseImageMutation(t *testing.T) {
 	router, store, _ := newRuntimeAdmin(t)

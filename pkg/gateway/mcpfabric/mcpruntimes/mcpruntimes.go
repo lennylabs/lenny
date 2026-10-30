@@ -21,7 +21,7 @@
 //   - HTTP 503 + `RUNTIME_UNAVAILABLE`    when the runtime exists but no
 //     active MCP client is registered for it on this replica.
 //
-// spec: §4.1 line 53; §5.1 type: mcp; §15.2 MCP transport
+// spec: §4.1; §5.1 type: mcp; §15.2 MCP transport
 package mcpruntimes
 
 import (
@@ -33,6 +33,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
@@ -79,14 +80,14 @@ type Handler struct {
 	// environments resolves the §10.6 environment named by the optional
 	// `?environment=` query parameter so a tools/call can be gated by that
 	// environment's mcpRuntimeFilters. nil leaves the capability gate off.
-	// spec: §10.6 line 607.
+	// spec: §10.6.
 	environments EnvironmentResolver
 }
 
 // EnvironmentResolver loads a §10.6 environment by (tenant, name). It is
 // the seam the per-runtime dispatcher uses to apply an environment's
 // mcpRuntimeFilters capability filter; *environmentstore.Memory and the
-// pgstore satisfy it. spec: §10.6 line 607.
+// pgstore satisfy it. spec: §10.6.
 type EnvironmentResolver interface {
 	Get(ctx context.Context, tenantID, name string) (environmentstore.Environment, error)
 }
@@ -104,7 +105,7 @@ func New(store runtimestore.Store, dispatcher Dispatcher) *Handler {
 
 // WithEnvironments wires the §10.6 environment registry so a tools/call
 // scoped to an environment (`?environment=<name>`) is gated by that
-// environment's mcpRuntimeFilters capability filter. spec: §10.6 line 607.
+// environment's mcpRuntimeFilters capability filter. spec: §10.6.
 func (h *Handler) WithEnvironments(envs EnvironmentResolver) *Handler {
 	h.environments = envs
 	return h
@@ -120,7 +121,7 @@ func (h *Handler) WithEnvironments(envs EnvironmentResolver) *Handler {
 // mode; an un-annotated, un-overridden tool resolves to the conservative
 // admin default so a restrictive filter fails closed.
 //
-// spec: §10.6 line 607; §5.1 capability inference.
+// spec: §10.6; §5.1 capability inference.
 func (h *Handler) mcpRuntimeFilterDenies(r *http.Request, rt runtimestore.Runtime, req jsonRPCRequest) (bool, string) {
 	if h.environments == nil {
 		return false, ""
@@ -133,7 +134,14 @@ func (h *Handler) mcpRuntimeFilterDenies(r *http.Request, rt runtimestore.Runtim
 	if envName == "" {
 		return false, ""
 	}
+	// spec: §10.2 — the environment is the caller's tenant's, read from
+	// the authenticated principal. The X-Lenny-Tenant-ID header is the
+	// auth middleware's echo of that principal; outside dev mode the
+	// middleware deletes any client-sent value. F-10.2.21.
 	tenantID := r.Header.Get("X-Lenny-Tenant-ID")
+	if p, ok := authmw.FromContext(r.Context()); ok && p.TenantID != "" {
+		tenantID = p.TenantID
+	}
 	if tenantID == "" {
 		return false, ""
 	}
@@ -209,7 +217,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// spec: §10.6 line 607 — when the caller scopes the call to an
+	// spec: §10.6 — when the caller scopes the call to an
 	// environment (`?environment=<name>`), the environment's
 	// mcpRuntimeFilters gate a tools/call on this type:mcp runtime by the
 	// tool's inferred §5.1 capability. A denied tool is rejected before

@@ -6,7 +6,7 @@
 //
 // spec: §12.4 ("Quota counter reconciliation after fail-open" — source (2)
 // is "the in-memory counter accumulated during the fail-open window on the
-// recovering replica"); §11.2 lines 44, 48. The §11.2 line 48 / §24.6
+// recovering replica"); §11.2. The §11.2 / §24.6
 // reconcile restores each still-current window to
 // MAX(redis_current, postgres_checkpoint, in_memory_counter). The Redis
 // counter and the Postgres checkpoint are the other two sources; this
@@ -63,7 +63,7 @@ func key(tenantID, userID string, period quota.ResetPeriod) string {
 // those scopes as well. The counter is cumulative within a fixed window
 // and resets when the window rolls.
 //
-// spec: §12.4 source (2); §11.2 lines 44, 48.
+// spec: §12.4 source (2); §11.2.
 func (a *Accumulator) Record(tenantID, userID string, period quota.ResetPeriod, at time.Time, tokens int64) {
 	if a == nil || tokens <= 0 {
 		return
@@ -94,7 +94,7 @@ func (a *Accumulator) addLocked(k string, period quota.ResetPeriod, label string
 
 // UserWindow returns the accumulated token total for the per-user window of
 // period containing at, or 0 when the window has rolled or no record
-// exists. It is the §11.2 line 48 MAX-rule source (2) for the per-user
+// exists. It is the §11.2 MAX-rule source (2) for the per-user
 // scope.
 func (a *Accumulator) UserWindow(tenantID, userID string, period quota.ResetPeriod, at time.Time) int64 {
 	return a.read(key(tenantID, userID, period), period, at)
@@ -102,7 +102,7 @@ func (a *Accumulator) UserWindow(tenantID, userID string, period quota.ResetPeri
 
 // TenantRollup returns the accumulated token total for the per-tenant
 // rollup window of period containing at, or 0 when the window has rolled or
-// no record exists. It is the §11.2 line 48 MAX-rule source (2) for the
+// no record exists. It is the §11.2 MAX-rule source (2) for the
 // per-tenant rollup scope.
 func (a *Accumulator) TenantRollup(tenantID string, period quota.ResetPeriod, at time.Time) int64 {
 	return a.read(key(tenantID, "", period), period, at)
@@ -136,7 +136,7 @@ type Sample struct {
 }
 
 // Snapshot returns every entry whose window is still current as of now, so
-// the §11.2 line 48 recovery reconcile can also restore fail-open-only
+// the §11.2 recovery reconcile can also restore fail-open-only
 // windows — windows that opened entirely during the outage and therefore
 // have no Postgres checkpoint row to drive the row-based reconcile. Entries
 // whose window has already rolled are skipped.
@@ -223,7 +223,7 @@ func (a *Accumulator) Sweep(now time.Time) int {
 // billing-buffer purge prevents. The per-tenant rollup window (userID="")
 // is preserved; only the named user's per-user windows are removed. An
 // empty scope is rejected so erasure is never treated as a wildcard
-// (§12.8 line 753). spec: §12.1 line 5; §12.8 step 6.
+// (§12.8). spec: §12.1; §12.8 step 6.
 func (a *Accumulator) DeleteByUser(_ context.Context, tenantID, userID string) (int, error) {
 	if a == nil {
 		return 0, nil
@@ -246,7 +246,7 @@ func (a *Accumulator) DeleteByUser(_ context.Context, tenantID, userID string) (
 // DeleteByTenant drops every accumulated window for tenantID, including the
 // per-tenant rollup. It is the §12.8 Phase-4 tenant-deletion erasure of the
 // in-memory fail-open budget source. An empty tenant id is rejected (never
-// a wildcard). spec: §12.1 line 5; §12.8 Phase 4.
+// a wildcard). spec: §12.1; §12.8 Phase 4.
 func (a *Accumulator) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
 	if a == nil {
 		return 0, nil

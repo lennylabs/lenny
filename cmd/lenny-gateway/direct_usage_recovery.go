@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/quota"
 )
 
-// directUsageRecoveryReader is the gateway-side §11.2 line 46 crash-recovery
+// directUsageRecoveryReader is the gateway-side §11.2 crash-recovery
 // MAX-rule source: it supplies the pod-reported cumulative token total each
 // bound direct-mode session's runtime adapter retains and re-reports on
 // reconnection. On a Redis-recovery edge (or an operator-driven reconcile) a
@@ -44,8 +44,7 @@ import (
 // reconcile, all with the same `now`, so the reader caches the aggregation
 // keyed on that `now` and reuses it across the fold sites.
 //
-// spec: §11.2 line 46 (crash-recovery MAX rule; pod-reported cumulative
-// total), §4.7 (ReportUsage cumulative read). F-15.3.7.
+// spec: §11.2, §4.7 (ReportUsage cumulative read). F-15.3.7.
 type directUsageRecoveryReader struct {
 	registry    podBindingRegistry
 	leases      directUsageLeaseLookup
@@ -204,7 +203,7 @@ func (r *directUsageRecoveryReader) pull(ctx context.Context, at time.Time) map[
 		if !ok || lease.DeliveryMode != credential.DeliveryDirect {
 			// No lease resolved, or a proxy-mode session: proxy-extracted counts
 			// are already authoritative and recorded on the §4.9 path, so pulling
-			// here would double-count. Skip. spec: §4.9 line 1468.
+			// here would double-count. Skip. spec: §4.9.
 			continue
 		}
 		r.pullSession(ctx, sessionID, lease, at, agg)

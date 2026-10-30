@@ -23,7 +23,7 @@ import (
 // from the chain's next pool and pushes it to the session's pod via the
 // §4.7 RotateCredentials RPC, mirroring the proactive-renewal push path.
 //
-// spec: spec/04_system-components.md lines 1383-1411 (Fallback Flow).
+// spec: §4.9.
 
 // proxyFallbackRotator mints a §4.9 replacement lease from the fallback
 // chain's next pool and pushes it to the session's pod. It reuses the
@@ -37,7 +37,7 @@ type proxyFallbackRotator struct {
 
 // Rotate issues a replacement lease for the faulted lease's provider
 // from nextPool and pushes it to the session's pod (Fallback Flow steps
-// 5-7). spec: spec/04_system-components.md lines 1405-1411.
+// 5-7). spec: §4.9.
 func (r proxyFallbackRotator) Rotate(faulted credential.Lease, nextPool string, trigger credential.RotationTrigger) {
 	if r.assign == nil {
 		return
@@ -45,7 +45,10 @@ func (r proxyFallbackRotator) Rotate(faulted credential.Lease, nextPool string, 
 	// The SPIFFE-binding identity is re-derived from the lease record at
 	// proxy-request time, so the fault mint does not need it here (the
 	// renewal path mints the same way).
-	wire, err := r.assign.AssignProto(nextPool, faulted.SessionID, "", faulted.TenantID)
+	// spec: §7.3 (Credential leases on the replacement pod) — the
+	// replacement records the faulted lease's coordination generation, so
+	// the session's pod release scopes it as it scoped the faulted lease.
+	wire, err := r.assign.AssignProto(nextPool, faulted.SessionID, "", faulted.TenantID, faulted.CoordinationGeneration)
 	if err != nil {
 		log.Printf("lenny-gateway: §4.9 fallback: mint replacement for session %s from pool %s: %v",
 			faulted.SessionID, nextPool, err)
@@ -67,7 +70,7 @@ func (r proxyFallbackRotator) Rotate(faulted credential.Lease, nextPool string, 
 	wire.Provider = provider
 	ctx, cancel := context.WithTimeout(context.Background(), credRotateRPCTimeout)
 	defer cancel()
-	// §4.9 line 1413 / §4.7 line 822: the fault trigger that drove this
+	// §4.9 / §4.7: the fault trigger that drove this
 	// fallback rides the RPC so the adapter applies the 300s in-flight
 	// gate ceiling rather than the unbounded proactive_renewal wait — the
 	// faulted credential is no longer trustworthy. An empty trigger
@@ -87,7 +90,7 @@ type proxyFallbackAudit struct {
 }
 
 // FallbackExhausted records the §4.9.2 audit event with the spec-named
-// fields. spec: spec/04_system-components.md line 1746.
+// fields. spec: §4.9.2.
 func (a proxyFallbackAudit) FallbackExhausted(ev llmproxy.FallbackExhaustedEvent) {
 	if a.sink == nil {
 		return

@@ -15,8 +15,35 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
-// spec: §4.9 lines 1640-1652 — the gateway-side emergency-revocation
+// spec: §4.9 — the gateway-side emergency-revocation
 // lease terminator.
+
+// newLocalRevocationDenyList builds the §4.9 emergency-revocation deny list
+// poolCredentialRevoker requires: a *credrenewalprop.Propagator wrapping a
+// fresh single-replica DenyList with a nil bus. The returned
+// denylist.DenyList is the underlying state for assertions.
+func newLocalRevocationDenyList() (*credrenewalprop.Propagator, *denylist.DenyList) {
+	dl := denylist.New()
+	return credrenewalprop.New(dl, nil, nil), dl
+}
+
+// TestPoolCredentialRevokerRequiresTheCrossReplicaPropagator pins the
+// cross-replica marker on the emergency-revocation deny list: the
+// credential-lease revocation propagator satisfies credentialDenyList and
+// a bare *denylist.DenyList does not, so a wiring that hands the revoker
+// the local deny list fails to build.
+//
+// spec: §4.9 (Credential Leasing Service: Emergency Credential Revocation)
+func TestPoolCredentialRevokerRequiresTheCrossReplicaPropagator(t *testing.T) {
+	var p any = (*credrenewalprop.Propagator)(nil)
+	if _, ok := p.(credentialDenyList); !ok {
+		t.Fatal("*credrenewalprop.Propagator does not satisfy credentialDenyList")
+	}
+	var d any = denylist.New()
+	if _, ok := d.(credentialDenyList); ok {
+		t.Fatal("a bare *denylist.DenyList satisfies credentialDenyList; the cross-replica marker is missing, so an emergency revocation would stay on one replica")
+	}
+}
 
 // credLease returns a pool-backed proxy lease against credID.
 func credLease(leaseID, credID string) credential.Lease {
@@ -28,7 +55,6 @@ func credLease(leaseID, credID string) credential.Lease {
 func TestPoolCredentialRevokerRevokesAndDenies(t *testing.T) {
 	leases := credleasestore.New()
 	prop, deny := newLocalRevocationDenyList()
-	_ = prop // wired below for the §11.4 step-6 cross-replica marker
 	_ = leases.Put(credLease("l1", "key-1"))
 	_ = leases.Put(credLease("l2", "key-1")) // same credential
 	_ = leases.Put(credLease("l3", "key-2")) // a different credential
@@ -66,7 +92,6 @@ func TestPoolCredentialRevokerRevokesAndDenies(t *testing.T) {
 func TestPoolCredentialRevokerPoolWide(t *testing.T) {
 	leases := credleasestore.New()
 	prop, deny := newLocalRevocationDenyList()
-	_ = prop // wired below for the §11.4 step-6 cross-replica marker
 	_ = leases.Put(credLease("l1", "key-1"))
 	_ = leases.Put(credLease("l2", "key-2"))
 
@@ -111,7 +136,6 @@ func TestPoolCredentialHealthReaderCountsLeases(t *testing.T) {
 func TestPoolCredentialRevokerNoLeasesStillDenies(t *testing.T) {
 	leases := credleasestore.New()
 	prop, deny := newLocalRevocationDenyList()
-	_ = prop // wired below for the §11.4 step-6 cross-replica marker
 	rev := &poolCredentialRevoker{leases: leases, denyList: prop}
 	n := rev.RevokePoolCredentials(context.Background(), "claude-prod", []string{"key-1"})
 	if n != 0 {
@@ -159,7 +183,7 @@ func newSyncRotator(leases poolLeaseStore) (*directModeRevocationRotator, *[]rot
 	return r, &rotates, &marks
 }
 
-// TestDirectModeRotatorRotatesDirectLeasesOnly asserts the §4.9 line 1649
+// TestDirectModeRotatorRotatesDirectLeasesOnly asserts the §4.9
 // step-5 rotate fires for direct-delivery leases against a revoked
 // credential and skips proxy-mode leases (the deny list handles those).
 func TestDirectModeRotatorRotatesDirectLeasesOnly(t *testing.T) {
@@ -206,7 +230,7 @@ func TestDirectModeRotatorRotatesDirectLeasesOnly(t *testing.T) {
 
 // TestDirectModeRotatorMarksBeforeRotate asserts the credential is marked
 // unselectable before any rotate is dispatched, so a replacement mint
-// (§4.9 line 1649 "a different credential in the pool") never re-selects
+// (§4.9) never re-selects
 // the credential just revoked.
 func TestDirectModeRotatorMarksBeforeRotate(t *testing.T) {
 	leases := credleasestore.New()
@@ -264,7 +288,7 @@ func TestRevocationRotateThroughPropagatorPicksDifferentCredential(t *testing.T)
 	})
 
 	// Seed a direct-mode lease against key-1, the way a session start would.
-	seed, err := svc.Assign("claude-prod", "s_1", "", "")
+	seed, err := svc.Assign("claude-prod", "s_1", "", "", 0)
 	if err != nil {
 		t.Fatalf("seed Assign: %v", err)
 	}
@@ -279,7 +303,7 @@ func TestRevocationRotateThroughPropagatorPicksDifferentCredential(t *testing.T)
 		rotate: func(l credential.Lease, nextPool string, trigger credential.RotationTrigger) {
 			// The production rotate is proxyFallbackRotator.Rotate, which
 			// mints from nextPool via the same Assign path used here.
-			next, aerr := svc.Assign(nextPool, l.SessionID, "", "")
+			next, aerr := svc.Assign(nextPool, l.SessionID, "", "", 0)
 			if aerr != nil {
 				t.Errorf("replacement Assign: %v", aerr)
 				return

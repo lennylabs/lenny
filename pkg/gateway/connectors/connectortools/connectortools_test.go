@@ -87,7 +87,7 @@ func sessionResolver() *fakeSessions {
 	return &fakeSessions{sess: sessionstore.Session{TenantID: "acme", UserID: "alice", Environment: "prod"}}
 }
 
-// spec: §9.3 line 142 — ListSessionConnectors lists the tenant's
+// spec: §9.3 — ListSessionConnectors lists the tenant's
 // connectors and filters them by the session's effective delegation
 // policy, so a denied or soft-deleted connector is never advertised.
 // F-9.1.2.
@@ -140,7 +140,7 @@ func TestBridgeUnknownSession_spec_9_3_142(t *testing.T) {
 	}
 }
 
-// spec: §9.3 lines 142-164 — ListConnectorTools forwards the session's
+// spec: §9.3 — ListConnectorTools forwards the session's
 // owner/environment to the Invoker and maps the catalog. F-9.1.2.
 func TestBridgeListConnectorTools_spec_9_3_142(t *testing.T) {
 	inv := &fakeInvoker{tools: []connectorinvoke.ToolDescriptor{
@@ -160,7 +160,7 @@ func TestBridgeListConnectorTools_spec_9_3_142(t *testing.T) {
 	}
 }
 
-// spec: §9.3 line 164 — a policy denial from the Invoker maps to the
+// spec: §9.3 — a policy denial from the Invoker maps to the
 // leasecontrol ErrConnectorNotPermitted sentinel. F-9.1.2.
 func TestBridgePolicyDenialMapped_spec_9_3_164(t *testing.T) {
 	inv := &fakeInvoker{toolsErr: connectorauthz.ErrConnectorNotPermitted, callErr: connectorauthz.ErrConnectorNotPermitted}
@@ -174,7 +174,7 @@ func TestBridgePolicyDenialMapped_spec_9_3_164(t *testing.T) {
 	}
 }
 
-// spec: §9.3 line 142 — CallConnectorTool returns the external result
+// spec: §9.3 — CallConnectorTool returns the external result
 // verbatim and parses its isError flag. F-9.1.2.
 func TestBridgeCallConnectorToolParsesIsError_spec_9_3_142(t *testing.T) {
 	inv := &fakeInvoker{result: json.RawMessage(`{"content":[{"type":"text","text":"boom"}],"isError":true}`)}

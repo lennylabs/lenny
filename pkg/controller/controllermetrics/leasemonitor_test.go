@@ -25,7 +25,7 @@ func leaseScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-// spec: §4.6.1 line 416 — the gauge reports seconds since the leader last
+// spec: §4.6.1 — the gauge reports seconds since the leader last
 // renewed its Lease, feeding the ControllerLeaderElectionFailed alert.
 func TestLeaseRenewalMonitorReportsAge(t *testing.T) {
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)

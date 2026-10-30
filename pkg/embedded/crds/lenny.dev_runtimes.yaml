@@ -4,10 +4,6 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
-    # spec: §10 line 437 / §10 line 443 — CRD schema-version annotation
-    # read at controller startup + lenny-preflight; mismatch causes a
-    # FATAL exit so stale CRDs never silently strip new fields.
-    # F-15.5.12.
     lenny.dev/schema-version: "1"
   name: runtimes.lenny.dev
 spec:
@@ -61,7 +57,12 @@ spec:
               RuntimeSpec is the desired state of a registered agent Runtime
               (§5.1). The gateway mirrors the registered runtimes into its
               runtime_definitions registry; the CRD is the declarative source.
-            x-kubernetes-preserve-unknown-fields: true
+
+              The CEL rules enforce the §5.1 `command` and `env` placement rules at the
+              API server: `command` is required on a `type: agent` runtime whose
+              deploymentModel is sidecar (an empty deploymentModel defaults to sidecar)
+              and forbidden on every other runtime, and `env` is forbidden wherever
+              `command` is. spec: §5.1 (command), §5.1 (env).
             properties:
               agentInterface:
                 description: |-
@@ -73,7 +74,7 @@ spec:
                   generation has a source. The runtime controller mirrors it into the
                   gateway registry; the admin path regenerates the agent card from it.
                   It is nil for type:mcp runtimes and for type:agent runtimes that omit
-                  the block. spec: §5.1 lines 102-130; §26.3 lines 185-199 — F-26.2.1 /
+                  the block. spec: §5.1; §26.3 — F-26.2.1 /
                   F-26.3.5.
                 properties:
                   description:
@@ -155,14 +156,14 @@ spec:
               archivePolicy:
                 description: |-
                   ArchivePolicy is the §13.4 per-Runtime archive-extraction opt-in
-                  block: AllowSymlinks lifts the §7.4 line 458 default-deny on symlink
+                  block: AllowSymlinks lifts the §7.4 default-deny on symlink
                   entries inside uploadArchive sources. An empty block leaves the
-                  platform default (symlinks rejected). spec: §7.4 lines 458, 462;
-                  §13.4 lines 663-672 — F-7.4.4.
+                  platform default (symlinks rejected). spec: §7.4;
+                  §13.4 — F-7.4.4.
                 properties:
                   allowSymlinks:
                     description: |-
-                      AllowSymlinks lifts the §7.4 line 458 default-deny on symlink
+                      AllowSymlinks lifts the §7.4 default-deny on symlink
                       entries inside uploadArchive sources. When false (the default),
                       extraction aborts on any symlink with details.reason = "symlink".
                     type: boolean
@@ -177,8 +178,7 @@ spec:
                   runtime controller mirrors them into the gateway registry's
                   RuntimeCapabilities at reconciliation time so §7.2 path-4 (queued
                   injection) is gated on the runtime's declared injection.modes.
-                  spec: §5.1 lines 60-64; §26.9 line 407; §26.10 line 432; §26.11
-                  line 466 — F-26.9.2 / F-26.10.2 / F-26.11.2.
+                  spec: §5.1; §26.9; §26.10; §26.11 — F-26.9.2 / F-26.10.2 / F-26.11.2.
                 properties:
                   injection:
                     description: |-
@@ -198,7 +198,7 @@ spec:
                       supported:
                         description: |-
                           Supported is the §5.1 capabilities.injection.supported flag. False
-                          (the default) rejects injection per §7.2 line 222.
+                          (the default) rejects injection per §7.2.
                         type: boolean
                     type: object
                   interaction:
@@ -213,10 +213,31 @@ spec:
                   preConnect:
                     description: |-
                       PreConnect is the §5.1 capabilities.preConnect flag: when true the
-                      §6.1 warm-pool controller pre-connects the agent SDK process during
-                      the warm phase. Default false.
+                      pod's adapter starts the agent SDK process during warm-up, before the
+                      pod becomes idle, so the pool's pods are SDK-warm. In the sidecar
+                      model the adapter does so through the runtime supervisor. Default
+                      false. spec: §6.1.
                     type: boolean
                 type: object
+              command:
+                description: |-
+                  Command is the §5.1 argv of the runtime process. The runtime
+                  supervisor launches it as the runtime process (§4.7.10 Runtime
+                  supervisor), ignoring the image's ENTRYPOINT and CMD. Required on a
+                  `type: agent` sidecar runtime and forbidden on every other runtime
+                  (the RuntimeSpec CEL rules); its first element is an absolute path in
+                  the runtime image. It is settable only on the Runtime CRD: the
+                  RuntimeReconciler mirrors only the derived restartable flag into the
+                  gateway registry, and the pod builder reads the argv from the live
+                  CRD. spec: §5.1 (command).
+                items:
+                  minLength: 1
+                  type: string
+                minItems: 1
+                type: array
+                x-kubernetes-validations:
+                - message: the first element of command must be an absolute path
+                  rule: self[0].startsWith('/')
               credentialCapabilities:
                 description: |-
                   CredentialCapabilities declares the runtime's §4.9 credential
@@ -244,8 +265,7 @@ spec:
                   before falling back to platform defaults. The §26 coding-agent
                   catalog declares it (warmCount 2, resourceClass medium, egressProfile
                   restricted). The runtime controller mirrors it into the gateway
-                  registry. An empty block leaves the platform defaults. spec: §5.1
-                  lines 97-100; §26.3 lines 181-184 — F-26.2.1 / F-26.3.5.
+                  registry. An empty block leaves the platform defaults. spec: §5.1; §26.3 — F-26.2.1 / F-26.3.5.
                 properties:
                   egressProfile:
                     description: |-
@@ -268,7 +288,7 @@ spec:
                   DelegationPolicy this runtime is bound to. §26.11 (crewai) declares
                   the field as required on a runtime that delegates. The runtime
                   controller propagates it through the gateway registry.
-                  spec: §5.1 line 68; §26.11 line 467 — F-26.11.2.
+                  spec: §5.1; §26.11 — F-26.11.2.
                 type: string
               deploymentModel:
                 description: |-
@@ -282,6 +302,45 @@ spec:
                 - sidecar
                 - embedded
                 type: string
+              env:
+                description: |-
+                  Env is the §5.1 list of variables the runtime supervisor gives the
+                  runtime process, which starts from an empty environment rather than
+                  the image's ENV (§4.7.10 Runtime supervisor). Forbidden wherever
+                  Command is (the RuntimeSpec CEL rules). Names are unique (the map
+                  list key), match the POSIX variable-name pattern, and never begin
+                  with the platform-reserved LENNY_ prefix. Values are readable by the
+                  runtime, so the field carries no Secret or ConfigMap reference;
+                  secrets reach the runtime through its credential file. The field is
+                  not mirrored into the gateway registry. spec: §5.1 (env).
+                items:
+                  description: |-
+                    RuntimeEnvVar is one §5.1 `env` pair the runtime supervisor sets in the
+                    runtime process's environment. spec: §5.1 (env).
+                  properties:
+                    name:
+                      description: |-
+                        Name is the variable name: a non-empty POSIX variable name that does
+                        not begin with LENNY_, which the platform reserves for its own
+                        variables.
+                      pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+                      type: string
+                      x-kubernetes-validations:
+                      - message: env names beginning with LENNY_ are reserved for
+                          the platform
+                        rule: '!self.startsWith(''LENNY_'')'
+                    value:
+                      description: |-
+                        Value is the variable value. An empty value sets the variable to the
+                        empty string.
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               executionMode:
                 description: |-
                   ExecutionMode is the §5.2 pod-reuse mode: `session` (a pod
@@ -329,19 +388,18 @@ spec:
                   §11.3 / §6.2 session-age watchdog, the upload-handler cap, and the
                   inter-agent request_input timeout read the values the deployer
                   declared on the Runtime resource. An empty block leaves the platform
-                  defaults. spec: §5.1 lines 76-79; §26.2 lines 81-86; §26.3 lines
-                  166-169 — F-26.2.1 / F-26.3.2.
+                  defaults. spec: §5.1; §26.2; §26.3 — F-26.2.1 / F-26.3.2.
                 properties:
                   maxElicitationWaitSeconds:
                     description: |-
-                      MaxElicitationWaitSeconds is the §11.3 line 202 human-facing
+                      MaxElicitationWaitSeconds is the §11.3 human-facing
                       lenny/request_elicitation wait timeout in seconds. Zero selects the
                       platform default (600s).
                     minimum: 0
                     type: integer
                   maxElicitationsPerSession:
                     description: |-
-                      MaxElicitationsPerSession is the §11.3 line 203 per-session lifetime
+                      MaxElicitationsPerSession is the §11.3 per-session lifetime
                       elicitation budget. Zero selects the platform default (50).
                     minimum: 0
                     type: integer
@@ -392,8 +450,7 @@ spec:
                   declaratively register schemas hosted at
                   `https://schemas.lenny.dev/runtime-options/<name>/v1.json` per §26.
                   The runtime controller stamps it into the gateway registry as a
-                  JSON `{"$ref": "<url>"}` schema fragment. spec: §5.1 line 92; §26.9
-                  line 408; §26.10 line 434; §26.11 line 465 — F-26.9.2 / F-26.10.2 /
+                  JSON `{"$ref": "<url>"}` schema fragment. spec: §5.1; §26.9; §26.10; §26.11 — F-26.9.2 / F-26.10.2 /
                   F-26.11.2.
                 pattern: ^https?://
                 type: string
@@ -402,7 +459,7 @@ spec:
                   SetupCommandPolicy is the §5.1 / §7.5 setupCommandPolicy block: the
                   per-runtime command allow/block list, shell-execution flag, and
                   per-session command cap the gateway enforces at session create-time
-                  (§7.5 line 488). An empty block declares no policy (the legacy
+                  (§7.5). An empty block declares no policy (the legacy
                   admit-everything path). F-7.5.10.
                 properties:
                   allowlist:
@@ -440,7 +497,7 @@ spec:
                     description: |-
                       Shell selects shell-vs-argv setup-command execution. False splits on
                       whitespace and execs the argv directly, neutering shell
-                      metacharacters per §7.5 line 490.
+                      metacharacters per §7.5.
                     type: boolean
                 type: object
               setupPolicy:
@@ -451,7 +508,7 @@ spec:
                   fail). The runtime controller mirrors it into the gateway registry
                   so the §6.2 finalizing-state watchdog enforces the runtime-declared
                   setup timeout. An empty block leaves the runtime with no aggregate
-                  setup cap. spec: §5.1 lines 90-92; §26.3 lines 174-176 — F-26.2.1 /
+                  setup cap. spec: §5.1; §26.3 — F-26.2.1 /
                   F-26.3.4.
                 properties:
                   onTimeout:
@@ -465,7 +522,7 @@ spec:
                   timeoutSeconds:
                     description: |-
                       TimeoutSeconds is the aggregate cap on the setup phase in seconds.
-                      Zero declares no aggregate cap (§5.1 line 260). The §26 coding-agent
+                      Zero declares no aggregate cap (§5.1). The §26 coding-agent
                       catalog declares 600.
                     minimum: 0
                     type: integer
@@ -480,14 +537,13 @@ spec:
                   mounted (empty, read-only) even when this list is empty, denying the
                   runtime writable scratch space there. Artifact-reference assets
                   (§4.5) are delivered by the gateway during pod initialization and are
-                  not expressed inline here. spec: §6.4 line 409 — F-6.4.3.
+                  not expressed inline here. spec: §6.4 — F-6.4.3.
                 items:
                   description: |-
                     SharedAsset is one §6.4 read-only shared-asset entry the platform
                     materializes into the pod's `/workspace/shared/` directory at warm
                     time. The directory is mounted read-only on the runtime container, so
-                    the agent reads these files but a write returns EROFS. spec: §6.4 line
-                    409 — F-6.4.3.
+                    the agent reads these files but a write returns EROFS. spec: §6.4 — F-6.4.3.
                   properties:
                     content:
                       description: |-
@@ -536,7 +592,7 @@ spec:
                   runtime processes. The default workspace classification is `T3`
                   (Confidential); runtimes that handle Restricted data (PHI, regulated
                   credentials) declare `T4`. A `T4` Runtime forbids cross-tenant pod
-                  reuse (§5.2 line 396) and triggers the §6.4 dedicated-node controls:
+                  reuse (§5.2) and triggers the §6.4 dedicated-node controls:
                   the sandbox reconciler injects the `lenny.dev/workspace-tier: t4`
                   pod label, the T4 nodeSelector, and the T4 NoSchedule toleration so
                   the lenny-t4-node-isolation admission webhook admits the pod onto a
@@ -550,9 +606,18 @@ spec:
             - integrationLevel
             - type
             type: object
+            x-kubernetes-preserve-unknown-fields: true
+            x-kubernetes-validations:
+            - message: 'command is required on a type: agent runtime whose deploymentModel
+                is sidecar and forbidden on every other runtime'
+              rule: (self.type == 'agent' && (!has(self.deploymentModel) || self.deploymentModel
+                == 'sidecar')) == has(self.command)
+            - message: 'env is forbidden on a runtime that is not a type: agent sidecar
+                runtime'
+              rule: '!has(self.env) || (self.type == ''agent'' && (!has(self.deploymentModel)
+                || self.deploymentModel == ''sidecar''))'
           status:
             description: RuntimeStatus is the observed state of a Runtime.
-            x-kubernetes-preserve-unknown-fields: true
             properties:
               conditions:
                 description: |-
@@ -624,6 +689,7 @@ spec:
                 format: int64
                 type: integer
             type: object
+            x-kubernetes-preserve-unknown-fields: true
         type: object
     served: true
     storage: true

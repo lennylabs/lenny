@@ -42,8 +42,8 @@ These are the client-facing tools exposed by the Lenny gateway as an MCP server:
 |---|---|
 | `create_session` | Create a new agent session |
 | `create_and_start_session` | Create, upload inline files, and start in one call |
-| `upload_files` | Upload workspace files |
-| `finalize_workspace` | Seal workspace, run setup |
+| `upload_files` | Upload one workspace file; returns its `uploadRef` |
+| `finalize_workspace` | Bind the optional `workspacePlan`, materialize the workspace, and run setup |
 | `start_session` | Start the agent runtime |
 | `attach_session` | Attach to a running session (returns streaming task) |
 | `send_message` | Send a message to a session |
@@ -55,7 +55,7 @@ These are the client-facing tools exposed by the Lenny gateway as an MCP server:
 | `list_artifacts` | List artifacts for a session |
 | `download_artifact` | Download a specific artifact |
 | `terminate_session` | End a session |
-| `resume_session` | Resume a suspended or paused session |
+| `resume_session` | Resume a `suspended` session or a session in `awaiting_client_action` |
 | `list_sessions` | List active/recent sessions (filterable) |
 | `list_runtimes` | List available runtimes (identity-filtered, policy-scoped) |
 
@@ -263,29 +263,32 @@ async function createSessionStepByStep(
   const uploadToken = data.uploadToken;
   console.log(`Created session: ${sessionId}`);
 
-  // Step 2: Upload files
+  // Step 2: Upload a file; the response carries its uploadRef
+  const mainTs =
+    'import { greet } from "./example.js";\n\nconsole.log(greet("world"));\n';
   result = await client.callTool({
     name: "upload_files",
     arguments: {
       sessionId,
       uploadToken,
-      files: [
-        {
-          path: "main.ts",
-          content:
-            'import { greet } from "./example.js";\n\nconsole.log(greet("world"));\n',
-        },
-      ],
+      contentBase64: Buffer.from(mainTs, "utf-8").toString("base64"),
+      mimeType: "text/plain",
     },
   });
-  console.log("Files uploaded");
+  const { uploadRef } = JSON.parse(
+    (result.content as Array<{ type: string; text: string }>)[0].text
+  );
+  console.log(`Uploaded: ${uploadRef}`);
 
-  // Step 3: Finalize workspace
+  // Step 3: Finalize workspace, binding a plan that places the upload
   result = await client.callTool({
     name: "finalize_workspace",
     arguments: {
       sessionId,
-      uploadToken,
+      workspacePlan: {
+        schemaVersion: 1,
+        sources: [{ type: "uploadFile", path: "main.ts", uploadRef }],
+      },
     },
   });
   data = JSON.parse(
@@ -766,7 +769,7 @@ main().catch(console.error);
 
 ### Step-by-Step Walkthrough with Interrupt/Resume
 
-This example demonstrates suspending and resuming a session mid-work:
+This example suspends a session mid-work and then sends it new instructions. A message to a `suspended` session resumes it, whatever its `delivery` value, so the example makes no separate `resume_session` call:
 
 ```typescript
 // interrupt_resume.ts: interrupt and resume a session
@@ -844,8 +847,8 @@ async function main(): Promise<void> {
     console.log(`State after interrupt: ${status.state}`);
     // Expected: "suspended"
 
-    // Send a new message and resume
-    console.log("Sending new instructions and resuming...");
+    // Send new instructions; a message to a suspended session resumes it
+    console.log("Sending new instructions, which resumes the session...");
     await client.callTool({
       name: "send_message",
       arguments: {
@@ -857,12 +860,6 @@ async function main(): Promise<void> {
           },
         ],
       },
-    });
-
-    // Resume the session
-    await client.callTool({
-      name: "resume_session",
-      arguments: { sessionId },
     });
 
     // Poll until complete
@@ -916,6 +913,7 @@ Usage:
 """
 
 import asyncio
+import base64
 import json
 import os
 from typing import Any
@@ -1117,32 +1115,35 @@ async def create_session_stepwise(
     upload_token = data["uploadToken"]
     print(f"Created: {session_id}")
 
-    # Step 2: Upload files
-    await session.call_tool(
+    # Step 2: Upload a file; the response carries its uploadRef
+    main_py = (
+        "from example import greet\n\n"
+        'if __name__ == "__main__":\n'
+        '    print(greet("world"))\n'
+    )
+    result = await session.call_tool(
         "upload_files",
         arguments={
             "sessionId": session_id,
             "uploadToken": upload_token,
-            "files": [
-                {
-                    "path": "main.py",
-                    "content": (
-                        "from example import greet\n\n"
-                        'if __name__ == "__main__":\n'
-                        '    print(greet("world"))\n'
-                    ),
-                },
-            ],
+            "contentBase64": base64.b64encode(main_py.encode("utf-8")).decode("ascii"),
+            "mimeType": "text/x-python",
         },
     )
-    print("Files uploaded")
+    upload_ref = parse_tool_result(result)["uploadRef"]
+    print(f"Uploaded: {upload_ref}")
 
-    # Step 3: Finalize
+    # Step 3: Finalize, binding a plan that places the upload
     result = await session.call_tool(
         "finalize_workspace",
         arguments={
             "sessionId": session_id,
-            "uploadToken": upload_token,
+            "workspacePlan": {
+                "schemaVersion": 1,
+                "sources": [
+                    {"type": "uploadFile", "path": "main.py", "uploadRef": upload_ref},
+                ],
+            },
         },
     )
     data = parse_tool_result(result)
@@ -1568,7 +1569,7 @@ async def main() -> None:
             data = parse_result(result)
             print(f"State: {data['state']}")  # Expected: "suspended"
 
-            # Send new instructions
+            # Send new instructions; a message to a suspended session resumes it
             await session.call_tool(
                 "send_message",
                 arguments={
@@ -1580,13 +1581,6 @@ async def main() -> None:
                         }
                     ],
                 },
-            )
-
-            # Resume
-            print("Resuming...")
-            await session.call_tool(
-                "resume_session",
-                arguments={"sessionId": session_id},
             )
 
             # Poll until done

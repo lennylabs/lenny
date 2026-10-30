@@ -39,12 +39,12 @@ func endedSpanNamed(spans []sdktrace.ReadOnlySpan, name string) sdktrace.ReadOnl
 	return nil
 }
 
-// TestFinalizeWorkspaceEmitsSpan_spec_16_3 asserts the §16.3 line 339
+// TestFinalizeWorkspaceEmitsSpan_spec_16_3 asserts the §16.3
 // Pod-emitted `session.finalize_workspace` span fires on a clean
 // materialization. F-16.3.6.
 func TestFinalizeWorkspaceEmitsSpan_spec_16_3(t *testing.T) {
 	rec := installInternalSpanRecorder(t)
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 
 	if _, err := srv.FinalizeWorkspace(context.Background(), finalizeReq("sess-1",
 		wsSource("mkdir", "docs", "", "755"),
@@ -66,9 +66,10 @@ func TestFinalizeWorkspaceEmitsSpan_spec_16_3(t *testing.T) {
 // the error on the span (the §16.3 PERMANENT category).
 func TestFinalizeWorkspaceSpanRecordsSchemaError_spec_16_3(t *testing.T) {
 	rec := installInternalSpanRecorder(t)
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 
 	req := &adapterv1.FinalizeWorkspaceRequest{
+		BindAttempt:   "attempt-a",
 		SessionId:     &adapterv1.SessionId{Value: "sess-1"},
 		WorkspacePlan: &adapterv1.WorkspacePlan{SchemaVersion: 9999},
 	}
@@ -85,11 +86,11 @@ func TestFinalizeWorkspaceSpanRecordsSchemaError_spec_16_3(t *testing.T) {
 	}
 }
 
-// TestRunSetupEmitsSpan_spec_16_3 asserts the §16.3 line 340 Pod-emitted
+// TestRunSetupEmitsSpan_spec_16_3 asserts the §16.3 Pod-emitted
 // `session.run_setup` span fires on a clean setup run. F-16.3.6.
 func TestRunSetupEmitsSpan_spec_16_3(t *testing.T) {
 	rec := installInternalSpanRecorder(t)
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 
 	if _, err := srv.RunSetup(context.Background(), runSetupReq("sess-1", nil, "true")); err != nil {
 		t.Fatalf("RunSetup: %v", err)
@@ -110,7 +111,7 @@ func TestRunSetupEmitsSpan_spec_16_3(t *testing.T) {
 // is in the runtime's own setup command).
 func TestRunSetupSpanRecordsCommandFailure_spec_16_3(t *testing.T) {
 	rec := installInternalSpanRecorder(t)
-	srv := &Server{WorkspaceRoot: t.TempDir()}
+	srv := &Server{WorkspaceBase: t.TempDir()}
 
 	// `false` exits non-zero, which surfaces as a hard setup failure.
 	_, err := srv.RunSetup(context.Background(), runSetupReq("sess-1", nil, "false"))

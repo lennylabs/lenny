@@ -74,7 +74,7 @@ func TestScheduledBackupsRespectScheduleEnabled_spec_25_11(t *testing.T) {
 	}
 }
 
-// spec: §25.11 lines 4108-4111 — when a Kubernetes launcher is wired, the
+// spec: §25.11 — when a Kubernetes launcher is wired, the
 // daily retention sweep orchestrates a lenny-backup --mode=retention Job
 // (which deletes expired objects from MinIO with the credentials the Job
 // pod mounts) rather than running retention in-process. F-17.3.9.
@@ -119,7 +119,7 @@ func TestRetentionCronLaunchesJobWithRealLauncher_spec_25_11(t *testing.T) {
 	}
 }
 
-// spec: §25.11 lines 4146-4149 — the leader-only restore-completion
+// spec: §25.11 — the leader-only restore-completion
 // reconciler (steps 5-8) is registered as an every-minute cron job and
 // runs without error when no restore is in flight. F-17.3.5 / F-25.11.10.
 func TestRestoreCompleteJobWired_spec_25_11(t *testing.T) {
@@ -148,7 +148,7 @@ func TestRestoreCompleteJobWired_spec_25_11(t *testing.T) {
 	}
 }
 
-// spec: §25.11 line 4106 — "The schedule is stored in Postgres and
+// spec: §25.11 — "The schedule is stored in Postgres and
 // modifiable at runtime via PUT /v1/admin/backups/schedule." The cron
 // jobs expose ExpressionFunc so the evaluator fires on the stored cron,
 // reflecting an edit without a restart. F-25.11.5.

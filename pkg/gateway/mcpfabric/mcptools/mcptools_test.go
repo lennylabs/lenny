@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -43,12 +44,13 @@ func newMCPWithRuntimes(t *testing.T) (*mcp.Server, sessionstore.Store, runtimes
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        store,
-		Executor:     executor.NewEchoExecutor(),
-		Runtimes:     runtimes,
-		Events:       sessionevents.NewBus(0),
-		InputWaits:   inputwait.NewRegistry(),
-		Interactions: interactionstore.NewMemory(),
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
+		Events:            sessionevents.NewBus(0),
+		InputWaits:        inputwait.NewRegistry(),
+		Interactions:      interactionstore.NewMemory(),
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -67,6 +69,7 @@ func newMCPForInput(t *testing.T, timeout time.Duration) (*mcp.Server, sessionst
 	reg := inputwait.NewRegistry()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:   true,
 		Store:               store,
 		Executor:            executor.NewEchoExecutor(),
 		InputWaits:          reg,
@@ -80,7 +83,7 @@ func newMCPForInput(t *testing.T, timeout time.Duration) (*mcp.Server, sessionst
 
 // newMCPForInputWithRuntimes builds the MCP server like newMCPForInput
 // and also returns the §5.1 runtime registry + a session event bus so
-// the §8.8 line 869 `one_shot` tests can seed a runtime and read the
+// the §8.8 tests can seed a runtime and read the
 // elicitation_request SSE payload. F-8.8.10.
 func newMCPForInputWithRuntimes(t *testing.T, timeout time.Duration) (*mcp.Server, sessionstore.Store, runtimestore.Store, *inputwait.Registry, *sessionevents.Bus) {
 	t.Helper()
@@ -90,6 +93,7 @@ func newMCPForInputWithRuntimes(t *testing.T, timeout time.Duration) (*mcp.Serve
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:   true,
 		Store:               store,
 		Executor:            executor.NewEchoExecutor(),
 		Runtimes:            runtimes,
@@ -106,18 +110,29 @@ func newMCPForInputWithRuntimes(t *testing.T, timeout time.Duration) (*mcp.Serve
 // newMCPForArchive builds the MCP server with a §8.10 tree archive and
 // returns the archive so the cancel_child archiving test can read it.
 func newMCPForArchive(t *testing.T) (*mcp.Server, sessionstore.Store, treearchive.Store) {
+	srv, store, archive, _ := newMCPForArchiveHook(t)
+	return srv, store, archive
+}
+
+// newMCPForArchiveHook builds the archive server with a post-terminal hook
+// fake wired and returns the fake, whose waitSettled waits for the hooks a
+// cancel runs on goroutines.
+func newMCPForArchiveHook(t *testing.T) (*mcp.Server, sessionstore.Store, treearchive.Store, *hookTerminal) {
 	t.Helper()
 	store := memstore.New()
 	archive := treearchive.NewMemory()
+	hook := newHookTerminal(nil)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:       store,
-		TreeArchive: archive,
-		Clock:       func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:      func() string { return "sess_mcp" },
-		TenantID:    "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		TreeArchive:       archive,
+		Terminal:          hook,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
-	return srv, store, archive
+	return srv, store, archive, hook
 }
 
 // newMCPForElicitation builds the MCP server with a §9.2 interaction
@@ -128,6 +143,7 @@ func newMCPForElicitation(t *testing.T, timeout time.Duration) (*mcp.Server, ses
 	interactions := interactionstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:  true,
 		Store:              store,
 		Interactions:       interactions,
 		ElicitationTimeout: timeout,
@@ -151,17 +167,23 @@ func waitElicitation(t *testing.T, interactions interactionstore.Store, sessionI
 	t.Fatalf("elicitation %s was never recorded", id)
 }
 
-// waitPending blocks until a request is registered, or fails the test.
-func waitPending(t *testing.T, reg *inputwait.Registry, sessionID, requestID string) {
+// waitPending blocks until sessionID holds a pending request whose id is not
+// in seen, and returns that request id, or fails the test. The gateway
+// generates every lenny/request_input requestId (§15.4), so a test learns the
+// id from the registry rather than choosing it.
+func waitPending(t *testing.T, reg *inputwait.Registry, sessionID string, seen ...string) string {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if reg.Pending(sessionID, requestID) {
-			return
+		for _, id := range reg.PendingForSession(sessionID) {
+			if !slices.Contains(seen, id) {
+				return id
+			}
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatalf("request %s/%s never became pending", sessionID, requestID)
+	t.Fatalf("no new request became pending on %s", sessionID)
+	return ""
 }
 
 // newMCPForOutput builds the MCP server with a §15.1 event bus and
@@ -172,12 +194,13 @@ func newMCPForOutput(t *testing.T) (*mcp.Server, sessionstore.Store, *sessioneve
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Executor: executor.NewEchoExecutor(),
-		Events:   bus,
-		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:   func() string { return "sess_mcp" },
-		TenantID: "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Events:            bus,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
 	return srv, store, bus
 }
@@ -257,12 +280,11 @@ func TestCreateSessionTool(t *testing.T) {
 	}
 }
 
-// TestCreateSessionToolDevModeIsolation_spec_5_3 verifies the §5.3 line
-// 677 dev-mode fallback in the lenny/create_session tool: the default
+// TestCreateSessionToolDevModeIsolation_spec_5_3 verifies the §5.3 dev-mode fallback in the lenny/create_session tool: the default
 // session profile is sandboxed normally and standard (runc) when the
 // adapter is wired with DevMode.
 //
-// spec: §5.3 line 677.
+// spec: §5.3.
 func TestCreateSessionToolDevModeIsolation_spec_5_3(t *testing.T) {
 	// Default (production) mode: sandboxed.
 	_, store := newMCP(t)
@@ -283,13 +305,14 @@ func TestCreateSessionToolDevModeIsolation_spec_5_3(t *testing.T) {
 	devStore := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    devStore,
-		Executor: executor.NewEchoExecutor(),
-		Runtimes: runtimestore.NewMemory(),
-		DevMode:  true,
-		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:   func() string { return "sess_dev" },
-		TenantID: "acme",
+		DevTenantFallback: true,
+		Store:             devStore,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimestore.NewMemory(),
+		DevMode:           true,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_dev" },
+		TenantID:          "acme",
 	})
 	_ = call(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"echo","userId":"alice"}`)
 	row, err := devStore.Get(context.Background(), "acme", "sess_dev")
@@ -333,12 +356,13 @@ func newMCPWithChain(t *testing.T, chain *interceptor.Chain) (*mcp.Server, sessi
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:        store,
-		Executor:     executor.NewEchoExecutor(),
-		Interceptors: chain,
-		Clock:        func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:       func() string { return "sess_mcp" },
-		TenantID:     "acme",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Interceptors:      chain,
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_mcp" },
+		TenantID:          "acme",
 	})
 	return srv, store
 }
@@ -363,7 +387,7 @@ func TestSendMessageTool(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	})
 	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_x","message":"ping"}`)
-	// spec: §15.4 lines 1725-1737 — every lenny/send_message call
+	// spec: §15.4 — every lenny/send_message call
 	// returns a `delivery_receipt` envelope as the first text block,
 	// followed by the runtime's text output. F-7.2.10.
 	result, _ := resp["result"].(map[string]any)
@@ -383,7 +407,7 @@ func TestSendMessageTool(t *testing.T) {
 		t.Errorf("delivery receipt status = %q, want %q", envelope.DeliveryReceipt.Status, session.DeliveryStatusDelivered)
 	}
 	if envelope.DeliveryReceipt.MessageID == "" {
-		t.Error("delivery receipt messageId is empty; §15.4 line 1784 requires a gateway-assigned id")
+		t.Error("delivery receipt messageId is empty; §15.4 requires a gateway-assigned id")
 	}
 	if envelope.DeliveryReceipt.DeliveredAt.IsZero() {
 		t.Error("delivery receipt deliveredAt is zero for status=delivered")
@@ -400,7 +424,7 @@ func TestSendMessageTool(t *testing.T) {
 // and the text projection echoes back. This is the MCP-side half of the
 // §15.2.1 REST/MCP parity the contract suite pins end to end.
 // spec: §15.4 (MessageEnvelope.input oneOf(string, MessagePart[])), §15.2.1
-// (REST/MCP parity), §8.5 line 537.
+// (REST/MCP parity), §8.5.
 func TestSendMessageToolAcceptsContentUnion_spec_15_4(t *testing.T) {
 	cases := []struct {
 		name string
@@ -452,7 +476,7 @@ func TestSendMessageToolAcceptsContentUnion_spec_15_4(t *testing.T) {
 // runtime consumed the answer, so status = delivered. The pre-fix
 // shape `{"resolved":"req-1"}` carried no receipt and clients tracking
 // receipts to reconcile retries had no signal on the inReplyTo path.
-// spec: §15.4 lines 1725-1737; §8.5 inReplyTo resolution. F-7.2.10.
+// spec: §15.4; §8.5 inReplyTo resolution. F-7.2.10.
 func TestSendMessageToolDeliveryReceiptOnInReplyTo(t *testing.T) {
 	srv, store, reg := newMCPForInput(t, 5*time.Second)
 	mkSession(t, store, "sess_i", session.StateRunning, "")
@@ -460,12 +484,12 @@ func TestSendMessageToolDeliveryReceiptOnInReplyTo(t *testing.T) {
 
 	go func() {
 		_ = call(t, h, "lenny/request_input",
-			`{"sessionId":"sess_i","requestId":"req-1","parts":[{"type":"text","text":"pick a color"}]}`)
+			`{"sessionId":"sess_i","parts":[{"type":"text","text":"pick a color"}]}`)
 	}()
-	waitPending(t, reg, "sess_i", "req-1")
+	req := waitPending(t, reg, "sess_i")
 
 	resp := call(t, h, "lenny/send_message",
-		`{"to":"sess_i","message":"blue","inReplyTo":"req-1","messageId":"msg_caller"}`)
+		fmt.Sprintf(`{"to":"sess_i","message":"blue","inReplyTo":%q,"messageId":"msg_caller"}`, req))
 	result, _ := resp["result"].(map[string]any)
 	content, _ := result["content"].([]any)
 	if len(content) < 1 {
@@ -486,8 +510,8 @@ func TestSendMessageToolDeliveryReceiptOnInReplyTo(t *testing.T) {
 	if envelope.DeliveryReceipt.MessageID != "msg_caller" {
 		t.Errorf("inReplyTo receipt messageId = %q, want the sender-supplied msg_caller", envelope.DeliveryReceipt.MessageID)
 	}
-	if envelope.Resolved != "req-1" {
-		t.Errorf("inReplyTo receipt `resolved` = %q, want req-1", envelope.Resolved)
+	if envelope.Resolved != req {
+		t.Errorf("inReplyTo receipt `resolved` = %q, want %q", envelope.Resolved, req)
 	}
 }
 
@@ -561,7 +585,7 @@ func (c *captureTreeCycle) OnTreeCycle(_ context.Context, ev mcptools.TreeCycleE
 }
 
 // TestDelegateTaskRejectsMCPTargetSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10
-// verifies that the §8.2 line 50 type rejection in `lenny/delegate_task`
+// verifies that the §8.2 type rejection in `lenny/delegate_task`
 // surfaces TARGET_NOT_AN_AGENT through the §15.2.1 lenny error envelope
 // rather than falling back to INTERNAL_ERROR. spec: §15.2.1 rule 3
 // (shared error taxonomy); F-8.5.10.
@@ -571,7 +595,7 @@ func TestRequestInputTimeoutSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10(t *testing
 		ID: "sess_in", TenantID: "acme", State: session.StateRunning,
 	})
 	resp := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_in","requestId":"req-x","parts":[{"type":"text","text":"hi"}]}`)
+		`{"sessionId":"sess_in","parts":[{"type":"text","text":"hi"}]}`)
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
 	if env["code"] != "REQUEST_INPUT_TIMEOUT" {
@@ -585,12 +609,12 @@ func TestRequestInputTimeoutSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10(t *testing
 	}
 }
 
-// TestToolErrorsCarryCanonicalEnvelopeCode asserts the §15.2.12
+// TestToolErrorsCarryCanonicalEnvelopeCode asserts the §15.2
 // conversion: tool error paths that previously returned a plain Go
 // error (and so fell back to INTERNAL_ERROR / TRANSIENT / retryable=true
 // in handleToolCall) now return *mcp.ToolError carrying the canonical
 // lenny code, so the §15.2.1 rule 5(d) (category, retryable) pair
-// matches the REST surface. spec: §15.2.1 rule 5(d) line 1396. F-15.2.12.
+// matches the REST surface. spec: §15.2.1 rule 5(d). F-15.2.12.
 func TestToolErrorsCarryCanonicalEnvelopeCode(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
@@ -643,7 +667,7 @@ func TestToolErrorsCarryCanonicalEnvelopeCode(t *testing.T) {
 }
 
 // TestDelegateTaskRejectsInsideInterceptorWeakeningCooldown_spec_8_3_181
-// verifies that the §8.3 line 181 cluster-scoped weakening cooldown
+// verifies that the §8.3 cluster-scoped weakening cooldown
 // rejects every `delegate_task` whose effective DelegationPolicy is
 // the freshly-weakened row, surfacing INTERCEPTOR_WEAKENING_COOLDOWN
 // (TRANSIENT, HTTP 503) through the §15.2.1 lenny envelope with
@@ -655,7 +679,7 @@ func TestRequestInputTimeoutCarriesExpiredAt_spec_11_3_238(t *testing.T) {
 		ID: "sess_t1", TenantID: "acme", State: session.StateRunning,
 	})
 	resp := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_t1","requestId":"req-t1","parts":[{"type":"text","text":"hi"}]}`)
+		`{"sessionId":"sess_t1","parts":[{"type":"text","text":"hi"}]}`)
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
 	if env["code"] != "REQUEST_INPUT_TIMEOUT" {
@@ -665,8 +689,8 @@ func TestRequestInputTimeoutCarriesExpiredAt_spec_11_3_238(t *testing.T) {
 	if details == nil {
 		t.Fatalf("envelope.details missing: %+v", env)
 	}
-	if got := details["requestId"]; got != "req-t1" {
-		t.Errorf("details.requestId = %v, want req-t1", got)
+	if got, _ := details["requestId"].(string); !strings.HasPrefix(got, "req_") {
+		t.Errorf("details.requestId = %q, want the gateway-generated req_ value", got)
 	}
 	if _, ok := details["timeoutSeconds"]; !ok {
 		t.Errorf("details.timeoutSeconds missing: %+v", details)
@@ -692,7 +716,7 @@ func TestRequestInputTimeoutCarriesExpiredAt_spec_11_3_238(t *testing.T) {
 // TestGetTaskTreeIncludesRuntimeRef_spec_8_5_F_8_5_1 verifies that
 // `lenny/get_task_tree` surfaces `runtimeRef` on every node, matching
 // the REST `/tree` projection (§15.2.1 REST↔MCP semantic equivalence).
-// spec: §8.5 line 530. F-8.5.1.
+// spec: §8.5. F-8.5.1.
 func mkSession(t *testing.T, store sessionstore.Store, id string, state session.State, parent string) {
 	t.Helper()
 	now := time.Now()
@@ -710,7 +734,7 @@ func mkSession(t *testing.T, store sessionstore.Store, id string, state session.
 // so the traversal does NOT descend through it — sess_a2x stays
 // running below the already-terminal sess_a2.
 // spec: §8.5 row for `cancel_child` ("cascades to its descendants per
-// policy"); §8.10 lines 1066-1076. F-8.5.19.
+// policy"); §8.10. F-8.5.19.
 func mkRuntime(t *testing.T, runtimes runtimestore.Store, name string, typ runtimestore.RuntimeType) {
 	t.Helper()
 	if err := runtimes.Create(context.Background(), runtimestore.Runtime{Name: name, Type: typ}); err != nil {
@@ -944,14 +968,14 @@ func TestRequestInputResolvedByMessage(t *testing.T) {
 	got := make(chan map[string]any, 1)
 	go func() {
 		got <- call(t, h, "lenny/request_input",
-			`{"sessionId":"sess_i","requestId":"req-1","parts":[{"type":"text","text":"pick a color"}]}`)
+			`{"sessionId":"sess_i","parts":[{"type":"text","text":"pick a color"}]}`)
 	}()
-	waitPending(t, reg, "sess_i", "req-1")
+	req := waitPending(t, reg, "sess_i")
 
 	resp := call(t, h, "lenny/send_message",
-		`{"to":"sess_i","message":"blue","inReplyTo":"req-1"}`)
-	if text := resultText(t, resp); !strings.Contains(text, `"resolved":"req-1"`) {
-		t.Errorf("send_message inReplyTo result = %q, want resolved req-1", text)
+		fmt.Sprintf(`{"to":"sess_i","message":"blue","inReplyTo":%q}`, req))
+	if text := resultText(t, resp); !strings.Contains(text, `"resolved":"`+req+`"`) {
+		t.Errorf("send_message inReplyTo result = %q, want resolved %s", text, req)
 	}
 
 	select {
@@ -969,7 +993,7 @@ func TestRequestInputTimeout(t *testing.T) {
 	mkSession(t, store, "sess_i", session.StateRunning, "")
 
 	resp := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_i","requestId":"req-1","parts":[{"type":"text","text":"ask"}]}`)
+		`{"sessionId":"sess_i","parts":[{"type":"text","text":"ask"}]}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("a timed-out request_input should be a tool error: %+v", resp)
@@ -986,7 +1010,7 @@ func TestRequestInputRejectsTerminalSession(t *testing.T) {
 	mkSession(t, store, "sess_done", session.StateCompleted, "")
 
 	resp := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_done","requestId":"req-1","parts":[{"type":"text","text":"ask"}]}`)
+		`{"sessionId":"sess_done","parts":[{"type":"text","text":"ask"}]}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Errorf("request_input on a terminal session should be a tool error: %+v", resp)
@@ -995,16 +1019,17 @@ func TestRequestInputRejectsTerminalSession(t *testing.T) {
 
 // TestRequestInputPublishesElicitationRequestEvent_spec_7_2 asserts that
 // lenny/request_input surfaces the prompt on the session stream as the
-// canonical §7.2 line 136 `elicitation_request` SSE event, not as the
+// canonical §7.2 SSE event, not as the
 // pre-fix `request_input` synonym that was not in the §7.2 catalog and
 // silently bypassed clients filtering on the documented event name.
-// spec: §7.2 line 136. F-7.2.17.
+// spec: §7.2. F-7.2.17.
 func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	reg := inputwait.NewRegistry()
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:   true,
 		Store:               store,
 		Events:              bus,
 		InputWaits:          reg,
@@ -1019,21 +1044,21 @@ func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 	got := make(chan map[string]any, 1)
 	go func() {
 		got <- call(t, h, "lenny/request_input",
-			`{"sessionId":"sess_i","requestId":"req-1","parts":[{"type":"text","text":"pick a color"}]}`)
+			`{"sessionId":"sess_i","parts":[{"type":"text","text":"pick a color"}]}`)
 	}()
-	waitPending(t, reg, "sess_i", "req-1")
+	req := waitPending(t, reg, "sess_i")
 
 	hist := bus.History("sess_i", 0)
 	if len(hist) != 1 {
 		t.Fatalf("event history has %d events, want 1: %+v", len(hist), hist)
 	}
 	if hist[0].Type != "elicitation_request" {
-		t.Errorf("event type = %q, want elicitation_request (§7.2 line 136 canonical name)", hist[0].Type)
+		t.Errorf("event type = %q, want elicitation_request (§7.2 canonical name)", hist[0].Type)
 	}
-	// spec: §8.5 line 539 — the elicitation_request event payload now
+	// spec: §8.5 — the elicitation_request event payload now
 	// carries the structured `parts` array (F-8.5.12) rather than the
 	// legacy flat `prompt` string.
-	if !strings.Contains(hist[0].Data, "req-1") || !strings.Contains(hist[0].Data, "pick a color") {
+	if !strings.Contains(hist[0].Data, req) || !strings.Contains(hist[0].Data, "pick a color") {
 		t.Errorf("event data = %q, want it to carry the requestId + parts", hist[0].Data)
 	}
 	if !strings.Contains(hist[0].Data, `"parts"`) {
@@ -1041,7 +1066,7 @@ func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 	}
 
 	// Unblock the goroutine so the test does not hang on teardown.
-	reg.Cancel("sess_i", "req-1")
+	reg.Cancel("sess_i", req)
 	select {
 	case <-got:
 	case <-time.After(2 * time.Second):
@@ -1050,7 +1075,7 @@ func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 }
 
 // TestRequestInputOneShotRejectsSecondCall_spec_8_8_869 verifies the
-// §8.8 line 869 enforcement: a `one_shot` runtime's first
+// §8.8 enforcement: a `one_shot` runtime's first
 // lenny/request_input call lands; the second is rejected with
 // ONE_SHOT_INPUT_EXHAUSTED. F-8.8.10.
 func TestRequestInputOneShotRejectsSecondCall_spec_8_8_869(t *testing.T) {
@@ -1072,7 +1097,7 @@ func TestRequestInputOneShotRejectsSecondCall_spec_8_8_869(t *testing.T) {
 	// timeout is what we want — it lets the call return so we can issue
 	// the second call. The Consumed counter has bumped to 1.
 	resp1 := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_os","requestId":"req-1","parts":[{"type":"text","text":"go?"}]}`)
+		`{"sessionId":"sess_os","parts":[{"type":"text","text":"go?"}]}`)
 	result1, _ := resp1["result"].(map[string]any)
 	env1 := readLennyErrorEnvelope(t, result1)
 	if env1["code"] != "REQUEST_INPUT_TIMEOUT" {
@@ -1084,11 +1109,11 @@ func TestRequestInputOneShotRejectsSecondCall_spec_8_8_869(t *testing.T) {
 	// Second call: rejected with ONE_SHOT_INPUT_EXHAUSTED — the channel
 	// is never allocated so the Consumed counter does NOT bump again.
 	resp2 := call(t, srv.Handler(), "lenny/request_input",
-		`{"sessionId":"sess_os","requestId":"req-2","parts":[{"type":"text","text":"again?"}]}`)
+		`{"sessionId":"sess_os","parts":[{"type":"text","text":"again?"}]}`)
 	result2, _ := resp2["result"].(map[string]any)
 	env2 := readLennyErrorEnvelope(t, result2)
 	if env2["code"] != "ONE_SHOT_INPUT_EXHAUSTED" {
-		t.Errorf("second call code = %v, want ONE_SHOT_INPUT_EXHAUSTED (§8.8 line 869)", env2["code"])
+		t.Errorf("second call code = %v, want ONE_SHOT_INPUT_EXHAUSTED (§8.8)", env2["code"])
 	}
 	details, _ := env2["details"].(map[string]any)
 	if details == nil || details["maxInputRounds"] == nil {
@@ -1118,19 +1143,19 @@ func TestRequestInputMultiTurnAllowsRepeat_spec_8_8_869(t *testing.T) {
 		t.Fatalf("Create session: %v", err)
 	}
 	for i := 0; i < 2; i++ {
-		args := fmt.Sprintf(`{"sessionId":"sess_mt","requestId":"req-%d","parts":[{"type":"text","text":"q"}]}`, i)
+		args := `{"sessionId":"sess_mt","parts":[{"type":"text","text":"q"}]}`
 		resp := call(t, srv.Handler(), "lenny/request_input", args)
 		result, _ := resp["result"].(map[string]any)
 		env := readLennyErrorEnvelope(t, result)
 		// Both should time out (no responder), neither should be ONE_SHOT_INPUT_EXHAUSTED.
 		if env["code"] == "ONE_SHOT_INPUT_EXHAUSTED" {
-			t.Errorf("multi_turn runtime got ONE_SHOT_INPUT_EXHAUSTED on call %d (§8.8 line 869 only applies to one_shot)", i)
+			t.Errorf("multi_turn runtime got ONE_SHOT_INPUT_EXHAUSTED on call %d (§8.8 only applies to one_shot)", i)
 		}
 	}
 }
 
 // TestRequestInputOneShotStampsMaxInputRoundsOnEvent_spec_8_8_869
-// verifies the §8.8 line 869 elicitation_request annotation: a
+// verifies the §8.8 elicitation_request annotation: a
 // `one_shot` runtime's first request publishes the event with
 // `metadata.maxInputRounds: 1` so client renderers see the constraint
 // alongside the question. A `multi_turn` runtime emits no such
@@ -1154,9 +1179,9 @@ func TestRequestInputOneShotStampsMaxInputRoundsOnEvent_spec_8_8_869(t *testing.
 	done := make(chan map[string]any, 1)
 	go func() {
 		done <- call(t, h, "lenny/request_input",
-			`{"sessionId":"sess_os2","requestId":"req-os2","parts":[{"type":"text","text":"pick"}]}`)
+			`{"sessionId":"sess_os2","parts":[{"type":"text","text":"pick"}]}`)
 	}()
-	waitPending(t, reg, "sess_os2", "req-os2")
+	req := waitPending(t, reg, "sess_os2")
 
 	hist := bus.History("sess_os2", 0)
 	if len(hist) != 1 {
@@ -1165,7 +1190,7 @@ func TestRequestInputOneShotStampsMaxInputRoundsOnEvent_spec_8_8_869(t *testing.
 	if !strings.Contains(hist[0].Data, `"maxInputRounds":1`) {
 		t.Errorf("event data = %q, want metadata.maxInputRounds:1 for one_shot runtime", hist[0].Data)
 	}
-	reg.Cancel("sess_os2", "req-os2")
+	reg.Cancel("sess_os2", req)
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -1173,9 +1198,9 @@ func TestRequestInputOneShotStampsMaxInputRoundsOnEvent_spec_8_8_869(t *testing.
 	}
 }
 
-// TestSendMessageTopologyAcceptsDirectChild — spec §7.2 line 240
+// TestSendMessageTopologyAcceptsDirectChild — spec §7.2
 // `direct` scope admits a parent→child message.
-// spec: §7.2 line 240, 373; F-7.2.22.
+// spec: §7.2; F-7.2.22.
 func TestSendMessageTopologyAcceptsDirectChild(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_parent", session.StateRunning, "")
@@ -1190,9 +1215,9 @@ func TestSendMessageTopologyAcceptsDirectChild(t *testing.T) {
 	}
 }
 
-// TestSendMessageTopologyAcceptsParent — spec §7.2 line 373 child→
+// TestSendMessageTopologyAcceptsParent — spec §7.2 child→
 // parent path is allowed under `direct` scope.
-// spec: §7.2 line 373; F-7.2.22.
+// spec: §7.2; F-7.2.22.
 func TestSendMessageTopologyAcceptsParent(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_parent", session.StateRunning, "")
@@ -1211,7 +1236,7 @@ func TestSendMessageTopologyAcceptsParent(t *testing.T) {
 // sessions sharing a parent can message each other. The default `direct`
 // scope denies this (see TestSendMessageScopeDirectRejectsSibling); the
 // deployment must opt in to `siblings`.
-// spec: §7.2 line 241; F-7.2.6, F-7.2.22.
+// spec: §7.2; F-7.2.6, F-7.2.22.
 func TestSendMessageTopologyAcceptsSibling(t *testing.T) {
 	srv, store := newMCPMessaging(t, session.MessagingScopeSiblings, session.MessagingScopeSiblings, mcptools.MessagingRateLimit{})
 	mkSession(t, store, "sess_parent", session.StateRunning, "")
@@ -1229,7 +1254,7 @@ func TestSendMessageTopologyAcceptsSibling(t *testing.T) {
 
 // TestSendMessageTopologyRejectsUnrelatedSession — any session pair
 // that is not parent/child/sibling is rejected with SCOPE_DENIED.
-// spec: §7.2 line 240; §15.1 SCOPE_DENIED. F-7.2.22.
+// spec: §7.2; §15.1 SCOPE_DENIED. F-7.2.22.
 func TestSendMessageTopologyRejectsUnrelatedSession(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_a", session.StateRunning, "")
@@ -1245,7 +1270,7 @@ func TestSendMessageTopologyRejectsUnrelatedSession(t *testing.T) {
 
 // TestSendMessageTopologyRejectsGrandparent — two-hop relationships
 // fall outside the parent/child/sibling neighborhood.
-// spec: §7.2 line 240; F-7.2.22.
+// spec: §7.2; F-7.2.22.
 func TestSendMessageTopologyRejectsGrandparent(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_root", session.StateRunning, "")
@@ -1261,7 +1286,7 @@ func TestSendMessageTopologyRejectsGrandparent(t *testing.T) {
 }
 
 // TestSendMessageTopologyRejectsSelf — sender cannot target itself.
-// spec: §7.2 line 240; F-7.2.22.
+// spec: §7.2; F-7.2.22.
 func TestSendMessageTopologyRejectsSelf(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_self", session.StateRunning, "")
@@ -1277,7 +1302,7 @@ func TestSendMessageTopologyRejectsSelf(t *testing.T) {
 // TestSendMessageTopologyDegradesWhenFromSessionIDOmitted — until
 // every caller upgrades to declare fromSessionId, the topology check
 // is skipped (the existing tests cover this baseline).
-// spec: §7.2 line 373; F-7.2.22.
+// spec: §7.2; F-7.2.22.
 func TestSendMessageTopologyDegradesWhenFromSessionIDOmitted(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_a", session.StateRunning, "")
@@ -1372,6 +1397,7 @@ func TestRequestInputPerRuntimeTimeoutOverride(t *testing.T) {
 	}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		DevTenantFallback:   true,
 		Store:               store,
 		Executor:            executor.NewEchoExecutor(),
 		InputWaits:          reg,
@@ -1392,13 +1418,13 @@ func TestRequestInputPerRuntimeTimeoutOverride(t *testing.T) {
 	got := make(chan map[string]any, 1)
 	go func() {
 		got <- call(t, h, "lenny/request_input",
-			`{"sessionId":"sess_r","requestId":"req-1","parts":[{"type":"text","text":"pick"}]}`)
+			`{"sessionId":"sess_r","parts":[{"type":"text","text":"pick"}]}`)
 	}()
-	waitPending(t, reg, "sess_r", "req-1")
+	req := waitPending(t, reg, "sess_r")
 	// Sleep well past the 40ms platform default to prove the per-runtime
 	// override (3600s) kept the request pending.
 	time.Sleep(200 * time.Millisecond)
-	call(t, h, "lenny/send_message", `{"to":"sess_r","message":"blue","inReplyTo":"req-1"}`)
+	call(t, h, "lenny/send_message", fmt.Sprintf(`{"to":"sess_r","message":"blue","inReplyTo":%q}`, req))
 
 	select {
 	case ri := <-got:

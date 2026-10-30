@@ -13,7 +13,7 @@ import (
 )
 
 // fakeQuota is a QuotaReleaser that records the net delta per tenant so
-// a test can assert the §11 line 37 storage-quota decrement fired with
+// a test can assert the §11 storage-quota decrement fired with
 // the deleted artifacts' byte total.
 type fakeQuota struct {
 	mu    sync.Mutex
@@ -53,7 +53,7 @@ func putSized(t *testing.T, store *Store, tenantID, sessionID, partID string, bo
 	}
 }
 
-// spec: §11 line 37 — GC-triggered decrement. SoftDeleteSession (the
+// spec: §11 — GC-triggered decrement. SoftDeleteSession (the
 // §7.1 retention GC path) releases the deleted artifacts' bytes back to
 // the per-tenant storage-quota counter once the catalog rows commit.
 func TestSoftDeleteSessionReleasesStorageQuota(t *testing.T) {
@@ -77,7 +77,7 @@ func TestSoftDeleteSessionReleasesStorageQuota(t *testing.T) {
 	}
 }
 
-// spec: §11 line 37 — the decrement is keyed to the live→soft_deleted
+// spec: §11 — the decrement is keyed to the live→soft_deleted
 // transition. A second SoftDeleteSession finds no live rows and must
 // not double-decrement (the catalog's single-writer guard).
 func TestSoftDeleteSessionDecrementIsIdempotent(t *testing.T) {
@@ -100,7 +100,7 @@ func TestSoftDeleteSessionDecrementIsIdempotent(t *testing.T) {
 	}
 }
 
-// spec: §11 line 37 — the §12.8 erasure DeleteBySession path releases a
+// spec: §11 — the §12.8 erasure DeleteBySession path releases a
 // session's live artifact bytes too.
 func TestDeleteBySessionReleasesStorageQuota(t *testing.T) {
 	inner := blobstore.NewMemoryStore(nil)
@@ -119,7 +119,7 @@ func TestDeleteBySessionReleasesStorageQuota(t *testing.T) {
 	}
 }
 
-// spec: §11 line 37 — a single-object SoftDelete releases that object's
+// spec: §11 — a single-object SoftDelete releases that object's
 // bytes; a replayed SoftDelete on the already-deleted row does not.
 func TestSoftDeleteSingleObjectReleasesOnceThenIsIdempotent(t *testing.T) {
 	inner := blobstore.NewMemoryStore(nil)
@@ -148,7 +148,7 @@ func TestSoftDeleteSingleObjectReleasesOnceThenIsIdempotent(t *testing.T) {
 	}
 }
 
-// spec: §11 line 37 — with no releaser wired (dev mode / tests), the
+// spec: §11 — with no releaser wired (dev mode / tests), the
 // soft-delete paths must not panic and still transition the rows.
 func TestSoftDeleteSessionWithoutReleaserDoesNotPanic(t *testing.T) {
 	inner := blobstore.NewMemoryStore(nil)
@@ -227,7 +227,7 @@ func TestSoftDeleteRowOnMissingRowIsNoOp(t *testing.T) {
 	}
 }
 
-// spec: §11 line 37 — SetQuotaReleaser installs the counter after
+// spec: §11 — SetQuotaReleaser installs the counter after
 // construction (the gateway resolves the Redis-backed counter after the
 // decorator is built). A delete after the setter decrements.
 func TestSetQuotaReleaserInstallsDecrement(t *testing.T) {

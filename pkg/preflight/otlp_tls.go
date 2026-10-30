@@ -55,8 +55,7 @@ type OTLPTLSCheck struct {
 // passes (the chart's render-time guard and NOTES banner carry that
 // posture).
 //
-// spec: §13.2 lines 176-178 (otlp-tls live handshake + http:// scheme
-// rejection when otlpTlsEnabled is true). F-13.2.9.
+// spec: §13.2. F-13.2.9.
 func (c OTLPTLSCheck) Decide(ctx context.Context) Decision {
 	if c.Config.Endpoint == "" || !c.Config.TLSEnabled {
 		return Decision{Passed: true}

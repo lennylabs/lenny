@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package pgwritemetrics implements the §12.3 lines 115-125 sustained
+// Package pgwritemetrics implements the §12.3 sustained
 // Postgres write-IOPS sampler. Each gateway replica periodically reads a
 // monotonic cumulative write counter (production wires the
 // pg_stat_database row-write total), differentiates successive reads
@@ -16,7 +16,7 @@
 // keeps the rate arithmetic — including counter-reset and zero-interval
 // handling — unit-testable without a live database.
 //
-// spec: §12.3 lines 115-125, §16.5 PostgresWriteSaturation. F-12.3.7.
+// spec: §12.3, §16.5 PostgresWriteSaturation. F-12.3.7.
 package pgwritemetrics
 
 import (

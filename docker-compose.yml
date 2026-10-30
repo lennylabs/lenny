@@ -6,7 +6,7 @@
 #
 # Starts the production gateway against real Postgres, Redis, and MinIO
 # backends, with the built-in echo runtime serving as the single agent
-# (the §17.4 line 262 zero-credential mode). The gateway runs the
+# (the §17.4 zero-credential mode). The gateway runs the
 # controller simulation and the echo agent in-process, the same
 # substitution Source Mode (`make run`) makes for a full Kubernetes pod
 # path; the production CRD/controller/pod-scheduling path is exercised by
@@ -57,9 +57,13 @@ services:
       timeout: 2s
       retries: 30
 
-  # Single MinIO container for §4.5 artifact storage.
+  # Single MinIO-compatible container for §4.5 artifact storage. The
+  # community minio/minio and minio/mc images are no longer distributed,
+  # so compose runs pgsty/silo, the maintained fork of the MinIO server,
+  # pinned by tag and index digest. The silo image also carries mc, which
+  # the healthcheck runs.
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: lenny
@@ -79,7 +83,9 @@ services:
   # blobstore client does not create the bucket itself, so this runs
   # before the gateway.
   minio-setup:
-    image: minio/mc:RELEASE.2025-04-08T15-39-49Z
+    # pgsty/mc, the maintained fork of the MinIO client, pinned by tag and
+    # index digest.
+    image: pgsty/mc:RELEASE.2026-10-26T00-00-00Z@sha256:ce62c9053c69ce12a527a322345b5ad9f44b5f8a7b8189f82e516f2e3f30f1d8
     depends_on:
       minio:
         condition: service_healthy
@@ -108,7 +114,7 @@ services:
     restart: "no"
 
   # The production gateway, dev mode, wired to the embedded backends. The
-  # built-in echo runtime is the single agent (§17.4 line 262).
+  # built-in echo runtime is the single agent (§17.4).
   gateway:
     build:
       context: .
@@ -129,6 +135,11 @@ services:
       LENNY_DEV_TLS: "${LENNY_DEV_TLS:-false}"
       LENNY_POSTGRES_DSN: "postgres://lenny:lenny@postgres:5432/lenny?sslmode=disable"
       LENNY_REDIS_URL: "redis://redis:6379"
+      # §10.1.1 Replica address: Redis configures a coordination lease
+      # store, so the gateway advertises its forward listener address in
+      # its lease holder value. Dev mode without certificate material runs
+      # no forward listener; the single gateway coordinates every session.
+      LENNY_HOLDER_FORWARD_ADVERTISE_ADDR: "gateway:50054"
       LENNY_MINIO_ENDPOINT: "minio:9000"
       LENNY_MINIO_ACCESS_KEY: "lenny"
       LENNY_MINIO_SECRET_KEY: "lenny-secret"
@@ -148,7 +159,7 @@ services:
     volumes:
       - ./lenny-data/certs:/lenny-data/certs:ro
 
-  # §17.4 line 276 Compose Mode smoke test: create an echo session, send
+  # §17.4 Compose Mode smoke test: create an echo session, send
   # a prompt, verify the response, and exit. Run with
   # `docker compose run smoke-test`; it is profiled out of `up`.
   smoke-test:
@@ -176,7 +187,7 @@ services:
       - ./lenny-data/certs:/lenny-data/certs
     restart: "no"
 
-  # §17.4 line 258 optional observability containers.
+  # §17.4 optional observability containers.
   prometheus:
     profiles: ["observability"]
     image: prom/prometheus:v3.2.1

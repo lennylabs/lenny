@@ -25,6 +25,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
 // Store is the Redis-backed §12.2 SemanticCache. Construct with New.
@@ -195,7 +197,7 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) error
 	if userID == "" {
 		return semanticcache.ErrEmptyUser
 	}
-	return s.deletePrefix(ctx, semanticcache.UserKeyPrefix(tenantID, userID))
+	return s.deletePrefix(ctx, tenantID, semanticcache.UserKeyPrefix(tenantID, userID))
 }
 
 // DeleteByTenant implements semanticcache.Store. It deletes every key
@@ -204,31 +206,16 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) error {
 	if tenantID == "" {
 		return semanticcache.ErrEmptyTenant
 	}
-	return s.deletePrefix(ctx, semanticcache.TenantKeyPrefix(tenantID))
+	return s.deletePrefix(ctx, tenantID, semanticcache.TenantKeyPrefix(tenantID))
 }
 
-// deletePrefix SCANs prefix* and deletes every matching key in
-// batches. SCAN is non-blocking, so a large cache does not stall
-// Redis; DEL of each batch is bounded.
-func (s *Store) deletePrefix(ctx context.Context, prefix string) error {
-	iter := s.client.Scan(ctx, 0, prefix+"*", 256).Iterator()
-	var batch []string
-	for iter.Next(ctx) {
-		batch = append(batch, iter.Val())
-		if len(batch) >= 256 {
-			if err := s.client.Del(ctx, batch...).Err(); err != nil {
-				return fmt.Errorf("semanticcache: erase batch: %w", err)
-			}
-			batch = batch[:0]
-		}
-	}
-	if err := iter.Err(); err != nil {
-		return fmt.Errorf("semanticcache: scan %q: %w", prefix, err)
-	}
-	if len(batch) > 0 {
-		if err := s.client.Del(ctx, batch...).Err(); err != nil {
-			return fmt.Errorf("semanticcache: erase final batch: %w", err)
-		}
+// deletePrefix deletes every key matching prefix*. The SCAN runs on the
+// master that owns the tenant's hash slot (every key under prefix carries
+// the tenant's hash tag), and each batch is deleted with single-key
+// commands, so a large cache does not stall Redis.
+func (s *Store) deletePrefix(ctx context.Context, tenantID, prefix string) error {
+	if _, err := redisconn.ScanDelete(ctx, s.client, rediskeys.TenantPrefix(tenantID), prefix+"*"); err != nil {
+		return fmt.Errorf("semanticcache: erase %q: %w", prefix, err)
 	}
 	return nil
 }

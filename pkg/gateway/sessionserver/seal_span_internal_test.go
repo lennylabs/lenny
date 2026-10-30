@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §16.3 line 356 — the gateway-side seal-and-export path must open a
+// spec: §16.3 — the gateway-side seal-and-export path must open a
 // `session.seal_and_export` span. sealWorkspace is unexported, so these
 // tests live in the internal package and drive it directly through the
 // existing flakySealer / advancingClock harness from seal_internal_test.go.
@@ -50,8 +50,10 @@ func TestSealWorkspaceStartsSealAndExportSpan_spec_16_3(t *testing.T) {
 	defer restore()
 
 	srv := New(memstore.New(), Options{
-		Sealer: &flakySealer{failUntil: 0}, // succeeds first try
-		Clock:  func() time.Time { return time.Unix(0, 0).UTC() },
+		DevTenantHeader: true,
+		PodRegistry:     sealBoundRegistry("s1"),
+		Sealer:          &flakySealer{failUntil: 0}, // succeeds first try
+		Clock:           func() time.Time { return time.Unix(0, 0).UTC() },
 	})
 	sess := sessionstore.Session{ID: "s1", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted}
 	if err := srv.sealWorkspace(context.Background(), sess); err != nil {
@@ -73,9 +75,11 @@ func TestSealWorkspaceSpanRecordsTimeoutError_spec_16_3(t *testing.T) {
 
 	clock, sleep, _ := advancingClock(time.Unix(0, 0).UTC())
 	srv := New(memstore.New(), Options{
-		Sealer:    &flakySealer{failUntil: -1, err: errors.New("minio: connection refused")}, // never succeeds
-		SealSleep: sleep,
-		Clock:     clock,
+		DevTenantHeader: true,
+		PodRegistry:     sealBoundRegistry("s1"),
+		Sealer:          &flakySealer{failUntil: -1, err: errors.New("minio: connection refused")}, // never succeeds
+		SealSleep:       sleep,
+		Clock:           clock,
 	})
 	sess := sessionstore.Session{ID: "s1", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted}
 	if err := srv.sealWorkspace(context.Background(), sess); err == nil {

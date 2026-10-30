@@ -113,7 +113,7 @@ func accessTokenHash(token string) []byte {
 }
 
 // Put implements connectorcredstore.Store. The (tenant, connector,
-// user, environment) four-tuple is the upsert key per §4.3 line 202;
+// user, environment) four-tuple is the upsert key per §4.3;
 // a re-store advances UpdatedAt and rewrites the token blobs and the
 // hash.
 func (s *Store) Put(ctx context.Context, cred connectorcredstore.ConnectorCredential) error {
@@ -187,7 +187,7 @@ func (s *Store) Put(ctx context.Context, cred connectorcredstore.ConnectorCreden
 }
 
 // Get implements connectorcredstore.Store.
-// spec: §4.3 line 202.
+// spec: §4.3.
 func (s *Store) Get(ctx context.Context, tenantID, connectorID, userID, environment string) (connectorcredstore.ConnectorCredential, error) {
 	var out connectorcredstore.ConnectorCredential
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
@@ -247,7 +247,7 @@ func (s *Store) Get(ctx context.Context, tenantID, connectorID, userID, environm
 }
 
 // Delete implements connectorcredstore.Store.
-// spec: §4.3 line 202.
+// spec: §4.3.
 func (s *Store) Delete(ctx context.Context, tenantID, connectorID, userID, environment string) error {
 	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
@@ -270,7 +270,7 @@ func (s *Store) Delete(ctx context.Context, tenantID, connectorID, userID, envir
 // user-erasure path for the §12.2 TokenStore role. Returns the number
 // of rows removed.
 //
-// spec: §12.1 line 5, §12.8 step `TokenStore`.
+// spec: §12.1, §12.8 step `TokenStore`.
 func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {
 		return 0, errors.New("connectorcredstore/pgstore: DeleteByUser requires non-empty tenant_id and user_id")
@@ -296,7 +296,7 @@ func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int,
 // Hard-deletes every connector credential row owned by tenantID — the
 // §12.8 Phase 4 tenant-teardown path for the TokenStore role.
 //
-// spec: §12.1 line 5, §12.8 Phase 4.
+// spec: §12.1, §12.8 Phase 4.
 func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
 	if tenantID == "" {
 		return 0, errors.New("connectorcredstore/pgstore: DeleteByTenant requires a concrete tenant_id")
@@ -318,7 +318,7 @@ func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error
 }
 
 // ListByConnector implements connectorcredstore.Store.
-// spec: §4.3 line 202.
+// spec: §4.3.
 func (s *Store) ListByConnector(ctx context.Context, tenantID, connectorID string) ([]connectorcredstore.ConnectorCredential, error) {
 	var out []connectorcredstore.ConnectorCredential
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
@@ -389,7 +389,7 @@ func (s *Store) ListByConnector(ctx context.Context, tenantID, connectorID strin
 // index. The (tenant, connector, user) triple must already exist;
 // ErrNotFound is returned otherwise.
 //
-// spec: §4.3 line 200 ("Refresh tokens stored encrypted at rest"),
+// spec: §4.3,
 // §9.3 (connector OAuth token lifecycle), migration 0048's
 // `rotated_at` column.
 func (s *Store) RotateAccessToken(ctx context.Context, rot connectorcredstore.RotationRecord) error {
@@ -489,7 +489,7 @@ func (s *Store) RotateAccessToken(ctx context.Context, rot connectorcredstore.Ro
 // it to resolve a presented bearer to a stored row without
 // decrypting every credential under the tenant. The matched row's
 // Environment is populated on the result so callers can audit the
-// scope the credential belongs to. spec: §4.3 line 202.
+// scope the credential belongs to. spec: §4.3.
 func (s *Store) FindByAccessTokenHash(ctx context.Context, tenantID string, hash []byte) (connectorcredstore.ConnectorCredential, error) {
 	var (
 		connectorID, userID  string

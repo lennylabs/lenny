@@ -38,7 +38,7 @@ services:
     volumes:
       - lenny-postgres-data:/var/lib/postgresql/data
 
-  # §12.2.2 connection-pooler context-leak harness. The pooler runs
+  # TESTING.md §12.2.2 connection-pooler context-leak harness. The pooler runs
   # in session pooling mode so a returned connection retains its
   # SET LOCAL state. The tier-2 TestRLSPoolerReuseDoesNotLeakContext
   # scaffold uses this to exercise the gateway's pre-checkout
@@ -143,8 +143,12 @@ services:
     container_name: lenny-redis-sentinel-3
     ports: ["26381:26379"]
 
+  # The community minio/minio image is no longer distributed, so the
+  # stack runs pgsty/silo, the maintained fork of the MinIO server, pinned
+  # by tag and index digest. The silo image also carries mc, which the
+  # healthcheck runs.
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    image: pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7
     container_name: lenny-minio
     command: ["server", "/data", "--console-address", ":9001"]
     environment:

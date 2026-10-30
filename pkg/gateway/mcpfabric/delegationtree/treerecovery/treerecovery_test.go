@@ -28,8 +28,14 @@ func (f *fakeLister) ListByRoot(_ context.Context, _, rootID string) ([]sessions
 }
 
 type reattachRecorder struct {
-	order  []string
-	failOn map[string]error
+	started []string
+	order   []string
+	failOn  map[string]error
+}
+
+// StartNode records the node the traversal drove.
+func (r *reattachRecorder) StartNode(_ context.Context, node sessionstore.Session) {
+	r.started = append(r.started, node.ID)
 }
 
 func (r *reattachRecorder) ReattachNode(_ context.Context, node sessionstore.Session) error {
@@ -125,7 +131,7 @@ func newOrch(t *testing.T, cfg treerecovery.Config) *treerecovery.Orchestrator {
 
 // --- tests -----------------------------------------------------------
 
-// spec: §8.10 line 1016 — recovery is bottom-up (leaves first), and
+// spec: §8.10 — recovery is bottom-up (leaves first), and
 // within a level deterministically by session id.
 func TestRecoverTreeBottomUpOrder_spec_8_10_1016(t *testing.T) {
 	lister := &fakeLister{rows: map[string][]sessionstore.Session{"r": tree("gvisor-default")}}
@@ -170,7 +176,7 @@ func TestRecoverTreeBottomUpOrder_spec_8_10_1016(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 1014 — the root and already-terminal nodes are not
+// spec: §8.10 — the root and already-terminal nodes are not
 // recovered; the recovery acts only on the in-flight descendants.
 func TestRecoverTreeSkipsRootAndTerminal_spec_8_10_1014(t *testing.T) {
 	rows := []sessionstore.Session{
@@ -198,7 +204,7 @@ func TestRecoverTreeSkipsRootAndTerminal_spec_8_10_1014(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 1016 — the Recoverable predicate scopes recovery to
+// spec: §8.10 — the Recoverable predicate scopes recovery to
 // genuinely orphaned nodes, so a descendant still live on its pod is not
 // torn down when the root resumes for its own reasons.
 func TestRecoverTreeRecoverablePredicate(t *testing.T) {
@@ -225,7 +231,7 @@ func TestRecoverTreeRecoverablePredicate(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 1025 — a node whose reattach fails is marked
+// spec: §8.10 — a node whose reattach fails is marked
 // terminally failed; the pass reports partial_failure.
 func TestRecoverTreeReattachErrorFailsNode_spec_8_10_1025(t *testing.T) {
 	lister := &fakeLister{rows: map[string][]sessionstore.Session{"r": tree("p")}}
@@ -256,7 +262,7 @@ func TestRecoverTreeReattachErrorFailsNode_spec_8_10_1025(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 1025 — when maxLevelRecoverySeconds is exceeded, the
+// spec: §8.10 — when maxLevelRecoverySeconds is exceeded, the
 // unrecovered nodes at that depth are marked failed and the metric
 // records a level timeout.
 func TestRecoverTreeLevelTimeout_spec_8_10_1025(t *testing.T) {
@@ -299,7 +305,7 @@ func TestRecoverTreeLevelTimeout_spec_8_10_1025(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 1025 — when maxTreeRecoverySeconds is exceeded, every
+// spec: §8.10 — when maxTreeRecoverySeconds is exceeded, every
 // remaining node is marked failed and the pass reports total_timeout.
 func TestRecoverTreeTreeTimeout_spec_8_10_1025(t *testing.T) {
 	lister := &fakeLister{rows: map[string][]sessionstore.Session{"r": tree("p")}}
@@ -369,30 +375,126 @@ func TestRecoverTreeListerErrorPropagates(t *testing.T) {
 	}
 }
 
-// spec: §8.10 line 1027 — the per-node maxResumeWindowSeconds runs
-// concurrently with tree recovery; a node whose remaining window is
-// shorter than the level/tree budgets is bounded by its own window.
-func TestRecoverTreeNodeResumeWindow_spec_8_10_1027(t *testing.T) {
+// spec: §8.10 (Delegation Tree Recovery), §6.2 (resume_pending wall-clock cap)
+// diagnosis: the traversal reads no per-node resume window, so a node whose
+// ResumeEligibleUntil lies in the past or ends during the traversal is driven
+// and recovered under the level and tree budgets alone. A failure means tree
+// recovery again bounds a node by its resume window, a second owner of the
+// window the §6.2 cap owns.
+func TestRecoverTreeIgnoresResumeEligibleUntil_spec_8_10(t *testing.T) {
 	base := time.Unix(1000, 0)
-	c1 := node("c1", "r", "r", 1, session.StateRunning)
-	// Resume window already elapsed at enumeration time: the reattach is
-	// still attempted (the resume path itself enforces the §7.3 window),
-	// so a zero-remaining window does not pre-empt the traversal.
-	c1.ResumeEligibleUntil = base.Add(-time.Minute)
-	rows := []sessionstore.Session{node("r", "", "r", 0, session.StateRunning), c1}
+	past := node("c1", "r", "r", 1, session.StateResumePending)
+	past.ResumeEligibleUntil = base.Add(-time.Minute)
+	soon := node("c2", "r", "r", 1, session.StateResumePending)
+	soon.ResumeEligibleUntil = base.Add(time.Millisecond)
+	rows := []sessionstore.Session{node("r", "", "r", 0, session.StateRunning), past, soon}
 	lister := &fakeLister{rows: map[string][]sessionstore.Session{"r": rows}}
 	reatt := &reattachRecorder{}
+	term := &terminalRecorder{}
 	o := newOrch(t, treerecovery.Config{
-		Lister: lister, Reattacher: reatt, Terminal: &terminalRecorder{},
+		Lister: lister, Reattacher: reatt, Terminal: term,
 		LevelTimeout: time.Hour, TreeTimeout: time.Hour,
-		Clock: (&stepClock{base: base}).now,
+		Clock: (&stepClock{base: base, step: 10 * time.Millisecond}).now,
 	})
 	got, err := o.RecoverTree(context.Background(), "acme", "r")
 	if err != nil {
 		t.Fatalf("RecoverTree: %v", err)
 	}
-	if got.Recovered != 1 || len(reatt.order) != 1 {
-		t.Fatalf("summary = %+v / order %v, want the node reattached", got, reatt.order)
+	if got.Recovered != 2 || got.Failed != 0 || len(reatt.started) != 2 {
+		t.Fatalf("summary = %+v, started %v; want both nodes driven and recovered", got, reatt.started)
+	}
+	if len(term.failed) != 0 {
+		t.Errorf("FailNode calls = %v, want none: an elapsed resume window is not a tree-recovery failure", term.failed)
+	}
+}
+
+// spec: §8.10 (Delegation Tree Recovery), §6.2 (resume_pending wall-clock cap)
+// diagnosis: a node the §6.2 cap moved to awaiting_client_action during its
+// wait ends its reattach with an error; the traversal counts it failed in the
+// summary and hands it to the terminal marker once, which decides whether its
+// row may be written. A failure means such a node is counted recovered or
+// marked more than once.
+func TestRecoverTreeCountsAwaitingClientActionNodeFailed_spec_8_10(t *testing.T) {
+	rows := []sessionstore.Session{
+		node("r", "", "r", 0, session.StateRunning),
+		node("c1", "r", "r", 1, session.StateResumePending),
+	}
+	lister := &fakeLister{rows: map[string][]sessionstore.Session{"r": rows}}
+	reatt := &reattachRecorder{failOn: map[string]error{"c1": errors.New("tree recovery of node c1 ended in awaiting_client_action")}}
+	term := &terminalRecorder{}
+	mx := &metricsRecorder{}
+	o := newOrch(t, treerecovery.Config{
+		Lister: lister, Reattacher: reatt, Terminal: term, Metrics: mx,
+		LevelTimeout: time.Hour, TreeTimeout: time.Hour,
+		Clock: (&stepClock{base: time.Unix(0, 0)}).now,
+	})
+	got, err := o.RecoverTree(context.Background(), "acme", "r")
+	if err != nil {
+		t.Fatalf("RecoverTree: %v", err)
+	}
+	if got != (treerecovery.Summary{Recoverable: 1, Failed: 1}) {
+		t.Fatalf("summary = %+v, want one failed node", got)
+	}
+	if len(term.failed) != 1 || term.failed[0].id != "c1" {
+		t.Errorf("FailNode calls = %v, want [c1] once", term.failed)
+	}
+	if len(mx.timeouts) != 0 {
+		t.Errorf("timeouts = %v, want none: the node was not lost to a budget", mx.timeouts)
+	}
+}
+
+// sequenceRecorder records the reattacher's StartNode calls and the terminal
+// marker's FailNode calls on one sequence.
+type sequenceRecorder struct {
+	events []string
+	failOn map[string]error
+}
+
+func (r *sequenceRecorder) StartNode(_ context.Context, n sessionstore.Session) {
+	r.events = append(r.events, "start:"+n.ID)
+}
+
+func (r *sequenceRecorder) ReattachNode(_ context.Context, n sessionstore.Session) error {
+	return r.failOn[n.ID]
+}
+
+func (r *sequenceRecorder) FailNode(_ context.Context, n sessionstore.Session, _ string) {
+	r.events = append(r.events, "fail:"+n.ID)
+}
+
+func (r *sequenceRecorder) index(event string) int {
+	for i, e := range r.events {
+		if e == event {
+			return i
+		}
+	}
+	return -1
+}
+
+// spec: §8.10 (Delegation Tree Recovery)
+// diagnosis: tree recovery fails each level's unrecovered nodes before it
+// continues upward, so a depth-2 node whose reattach errors is failed before
+// the depth-1 node is started. A failure means the orchestrator fails nodes
+// only after the whole traversal, so a parent is driven while an unrecovered
+// child is still in resume_pending.
+func TestRecoverTreeFailsDeeperLevelBeforeShallowerStart_spec_8_10(t *testing.T) {
+	lister := &fakeLister{rows: map[string][]sessionstore.Session{"r": tree("p")}}
+	seq := &sequenceRecorder{failOn: map[string]error{"g2": errors.New("restore failed")}}
+	o := newOrch(t, treerecovery.Config{
+		Lister: lister, Reattacher: seq, Terminal: seq,
+		LevelTimeout: time.Hour, TreeTimeout: time.Hour,
+		Clock: (&stepClock{base: time.Unix(0, 0)}).now,
+	})
+	got, err := o.RecoverTree(context.Background(), "acme", "r")
+	if err != nil {
+		t.Fatalf("RecoverTree: %v", err)
+	}
+	if got.Failed != 1 || got.Recovered != 2 {
+		t.Fatalf("summary = %+v, want 2 recovered 1 failed", got)
+	}
+	failG2, startC1 := seq.index("fail:g2"), seq.index("start:c1")
+	if failG2 < 0 || startC1 < 0 || failG2 > startC1 {
+		t.Errorf("events = %v, want fail:g2 before start:c1", seq.events)
 	}
 }
 

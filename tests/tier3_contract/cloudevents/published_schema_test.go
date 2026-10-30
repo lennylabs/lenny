@@ -7,7 +7,7 @@
 // tests/testdata/cloudevents/v1.0.2-cloudevents.schema.json (see the
 // README next to it for provenance), rather than against Lenny's own
 // eventbus.Event.Validate(). The rest of this package's tests confirm the
-// envelope satisfies Lenny's reading of §12.3.7; they do not catch an
+// envelope satisfies Lenny's reading of TESTING.md §12.3.7; they do not catch an
 // envelope that is well-formed per Lenny's own validator but violates the
 // externally published CloudEvents contract (a malformed uri-reference
 // source, a non-RFC-3339 time the schema's date-time format rejects, or

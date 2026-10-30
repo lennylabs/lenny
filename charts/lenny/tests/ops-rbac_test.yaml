@@ -1,5 +1,5 @@
 suite: lenny-ops RBAC
-# spec: §25.4 "ServiceAccount and RBAC" (spec/25_agent-operability.md:1073-1122).
+# spec: §25.4 "ServiceAccount and RBAC" (§25.4).
 # The lenny-ops-sa ServiceAccount binds the namespace Role
 # lenny-ops-namespace and the cluster-scoped ClusterRole lenny-ops-cluster,
 # beyond the leader-election Lease grant.
@@ -43,7 +43,7 @@ tests:
             apiGroups: [""]
             resources: ["pods", "pods/log", "events"]
             verbs: ["get", "list", "watch"]
-      # spec: §25.4 (spec/25_agent-operability.md:2214). Endpoints reads so
+      # spec: §25.4 (§25.4). Endpoints reads so
       # the single-replica-only lock policy can detect the replica count via
       # a K8s Endpoints lookup at startup and every 30s thereafter.
       - contains:

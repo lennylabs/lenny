@@ -5,6 +5,8 @@ package partialmanifeststore_test
 import (
 	"context"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,7 +30,7 @@ func intentRow(clock time.Time, tenant, checkpointID, session string, gen int64)
 	}
 }
 
-// spec: §10.1 lines 141-151 — the intent-row Put + Get round-trip must
+// spec: §10.1 — the intent-row Put + Get round-trip must
 // persist every spec-mandated field, keyed on (tenant_id, checkpoint_id).
 func TestPutAndGet(t *testing.T) {
 	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
@@ -49,9 +51,6 @@ func TestPutAndGet(t *testing.T) {
 	if got.ChunkEncoding != partialmanifeststore.ChunkEncodingTarGz {
 		t.Errorf("ChunkEncoding = %q, want tar.gz", got.ChunkEncoding)
 	}
-	if got.SlotID != partialmanifeststore.SlotDefault {
-		t.Errorf("SlotID = %q, want %q", got.SlotID, partialmanifeststore.SlotDefault)
-	}
 	if got.ManifestReason != partialmanifeststore.ReasonInProgress {
 		t.Errorf("ManifestReason = %q, want in_progress", got.ManifestReason)
 	}
@@ -66,7 +65,7 @@ func TestPutAndGet(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 141 — baseline_full_checkpoint_bytes is nullable and
+// spec: §10.1.7 — baseline_full_checkpoint_bytes is nullable and
 // the NULL state is load-bearing; a nil pointer round-trips as NULL.
 func TestPutRoundTripsNullBaseline(t *testing.T) {
 	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
@@ -129,7 +128,7 @@ func TestSoftDeleteIsIdempotent(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 157 — LatestActive is the resume-time cleanup
+// spec: §10.1.7 — LatestActive is the resume-time cleanup
 // selector and carries the `partial = TRUE` predicate, so a completed
 // checkpoint (partial = false) is never returned to the cleaner and thus
 // never destroyed by its own restore.
@@ -166,7 +165,7 @@ func TestLatestActiveSelectsPartialOnly(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 154 — LatestActiveAny is the resume-reassembly selector.
+// spec: §10.1.7 — LatestActiveAny is the resume-reassembly selector.
 // Unlike LatestActive (partial = TRUE), it returns the highest-generation
 // active row regardless of partial, so a completed checkpoint is returned
 // when it is the only active row, and a newer partial drain attempt at a
@@ -181,7 +180,7 @@ func TestLatestActiveAnyIgnoresPartialPredicate(t *testing.T) {
 		t.Fatalf("Put complete intent: %v", err)
 	}
 	// A confirmed chunk keeps the completed row active (a zero-chunk row is
-	// soft-deleted by Finalise, §10.1 line 132).
+	// soft-deleted by Finalise, §10.1.7).
 	if err := store.ConfirmChunk(context.Background(), "acme", "cp-complete", 0, 4096); err != nil {
 		t.Fatalf("ConfirmChunk complete: %v", err)
 	}
@@ -215,10 +214,10 @@ func TestLatestActiveAnyIgnoresPartialPredicate(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 137 — supersede-on-write collapses the active partial
-// set to the highest-generation row for the (session, slot). A same-slot
-// write at or above the incoming generation soft-deletes the prior
-// active partial row, even at the same coordination_generation (two
+// spec: §10.1.7 — supersede-on-write collapses the active partial
+// set to the highest-generation row for the session. A write at or above the
+// incoming generation soft-deletes the prior active partial row, even at the
+// same coordination_generation (two
 // attempts on one coordinator share a generation).
 func TestPutSupersedesAtOrBelowGeneration(t *testing.T) {
 	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
@@ -250,7 +249,7 @@ func TestPutSupersedesAtOrBelowGeneration(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — a write whose coordination_generation sits
+// spec: §10.1.7 — a write whose coordination_generation sits
 // below an already-active strictly-higher generation is a fenced
 // stale-coordinator write; Put rejects it with ErrStaleGeneration
 // without mutating the active manifest.
@@ -274,71 +273,7 @@ func TestPutRejectsStaleLowerGeneration(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 147 — the supersede predicate is scoped to
-// (session_id, slot_id); a write in a different slot does not supersede
-// another slot's active partial row.
-func TestPutSupersedeScopedToSlot(t *testing.T) {
-	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
-	store := partialmanifeststore.NewMemoryStore(func() time.Time { return clock })
-
-	a := intentRow(clock, "acme", "cp-a", "s1", 5)
-	a.SlotID = "slot-0"
-	b := intentRow(clock, "acme", "cp-b", "s1", 5)
-	b.SlotID = "slot-1"
-	if err := store.Put(context.Background(), a); err != nil {
-		t.Fatalf("Put slot-0: %v", err)
-	}
-	if err := store.Put(context.Background(), b); err != nil {
-		t.Fatalf("Put slot-1: %v", err)
-	}
-	// Both survive: distinct slots hold independent active partials.
-	got, _ := store.Get(context.Background(), "acme", "cp-a")
-	if !got.DeletedAt.IsZero() {
-		t.Error("slot-0 row should not be superseded by a slot-1 write")
-	}
-}
-
-// spec: §10.1 line 137 — LatestActiveForSlot returns the active partial row
-// for the exact (session, slot) the supersede path scopes on, even when
-// another slot in the same session holds a higher-generation active row that
-// the session-wide LatestActive would return first.
-func TestLatestActiveForSlotIsSlotScoped(t *testing.T) {
-	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
-	store := partialmanifeststore.NewMemoryStore(func() time.Time { return clock })
-
-	target := intentRow(clock, "acme", "cp-target", "s1", 0)
-	target.SlotID = "slot-0"
-	other := intentRow(clock, "acme", "cp-other", "s1", 9) // higher generation, different slot
-	other.SlotID = "slot-1"
-	if err := store.Put(context.Background(), target); err != nil {
-		t.Fatalf("Put slot-0: %v", err)
-	}
-	if err := store.Put(context.Background(), other); err != nil {
-		t.Fatalf("Put slot-1: %v", err)
-	}
-
-	// The session-wide selector returns the higher-generation slot-1 row.
-	if latest, err := store.LatestActive(context.Background(), "acme", "s1"); err != nil {
-		t.Fatalf("LatestActive: %v", err)
-	} else if latest.CheckpointID != "cp-other" {
-		t.Fatalf("LatestActive = %q, want cp-other (the higher-generation row)", latest.CheckpointID)
-	}
-	// The slot-scoped selector returns slot-0's own row, not the winner.
-	got, err := store.LatestActiveForSlot(context.Background(), "acme", "s1", "slot-0")
-	if err != nil {
-		t.Fatalf("LatestActiveForSlot slot-0: %v", err)
-	}
-	if got.CheckpointID != "cp-target" {
-		t.Errorf("LatestActiveForSlot(slot-0) = %q, want cp-target", got.CheckpointID)
-	}
-
-	// A slot with no active partial row returns ErrNotFound.
-	if _, err := store.LatestActiveForSlot(context.Background(), "acme", "s1", "slot-2"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
-		t.Errorf("LatestActiveForSlot(empty slot) = %v, want ErrNotFound", err)
-	}
-}
-
-// spec: §10.1 line 131 — ConfirmChunk advances chunk_count and
+// spec: §10.1.7 — ConfirmChunk advances chunk_count and
 // workspace_bytes_uploaded monotonically under the `chunk_count < n + 1`
 // guard, so an out-of-order acknowledgement cannot decrement the counter.
 func TestConfirmChunkIsMonotonic(t *testing.T) {
@@ -367,7 +302,7 @@ func TestConfirmChunkIsMonotonic(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 141 — Finalise stamps the terminal disposition: a
+// spec: §10.1.7 — Finalise stamps the terminal disposition: a
 // complete checkpoint finalises partial = false, and every other arm
 // finalises partial = true with its reason.
 func TestFinalise(t *testing.T) {
@@ -389,7 +324,7 @@ func TestFinalise(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 132 — a terminal arm that finalises with chunk_count == 0
+// spec: §10.1.7 — a terminal arm that finalises with chunk_count == 0
 // soft-deletes the row in the same transaction, so an empty partial manifest
 // (an adapter crash or a quota refusal before the first chunk confirmed) is
 // never left active occupying the partial_manifest_active_uniq slot for a
@@ -415,8 +350,8 @@ func TestFinaliseSoftDeletesZeroChunkRow(t *testing.T) {
 	}
 	// The soft-deleted empty row is invisible to the resume-time cleanup
 	// selector, so no reclaimer ever picks it up.
-	if _, err := store.LatestActiveForSlot(context.Background(), "acme", "s1", partialmanifeststore.SlotDefault); !errors.Is(err, partialmanifeststore.ErrNotFound) {
-		t.Errorf("LatestActiveForSlot after zero-chunk finalise = %v, want ErrNotFound", err)
+	if _, err := store.LatestActive(context.Background(), "acme", "s1"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+		t.Errorf("LatestActive after zero-chunk finalise = %v, want ErrNotFound", err)
 	}
 
 	// A row that confirmed a chunk finalises partial without soft-deleting:
@@ -506,7 +441,7 @@ func TestListReclaimableResumeWindow(t *testing.T) {
 	// An old finalised-timeout row created at base. It confirmed a chunk
 	// before the deadline fired, so it is retained (not soft-deleted at
 	// finalise) for the resume path and remains reclaimable by the backstop
-	// once its resume window expires (§10.1 line 132 soft-deletes only the
+	// once its resume window expires (§10.1.7 soft-deletes only the
 	// zero-chunk finalisation).
 	_ = store.Put(context.Background(), intentRow(clock, "acme", "cp-old", "s1", 1))
 	_ = store.ConfirmChunk(context.Background(), "acme", "cp-old", 0, 128)
@@ -538,7 +473,7 @@ func TestListReclaimableResumeWindow(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 141 — a row with an empty chunk_object_key_prefix is
+// spec: §10.1.7 — a row with an empty chunk_object_key_prefix is
 // meaningless (the cleanup path cannot locate the chunks); reject at the
 // store boundary.
 func TestPutRejectsEmptyPrefix(t *testing.T) {
@@ -564,8 +499,9 @@ func TestPutRejectsInvalidChunkEncoding(t *testing.T) {
 	}
 }
 
-// spec: §10.1 — chunk_encoding defaults to `tar` and manifest_reason to
-// `in_progress` when the caller leaves them empty.
+// spec: §10.1 — chunk_encoding defaults to `tar.gz` (the encoding the
+// only producer writes) and manifest_reason to `in_progress` when the
+// caller leaves them empty.
 func TestPutDefaultsEncodingAndReason(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
 	r := intentRow(time.Now(), "acme", "cp-1", "s1", 1)
@@ -575,15 +511,15 @@ func TestPutDefaultsEncodingAndReason(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	got, _ := store.Get(context.Background(), "acme", "cp-1")
-	if got.ChunkEncoding != partialmanifeststore.ChunkEncodingTar {
-		t.Errorf("default ChunkEncoding = %q, want tar", got.ChunkEncoding)
+	if got.ChunkEncoding != partialmanifeststore.ChunkEncodingTarGz {
+		t.Errorf("default ChunkEncoding = %q, want tar.gz", got.ChunkEncoding)
 	}
 	if got.ManifestReason != partialmanifeststore.ReasonInProgress {
 		t.Errorf("default ManifestReason = %q, want in_progress", got.ManifestReason)
 	}
 }
 
-// spec: §10.1 line 141 — empty tenant, session, or checkpoint id is a
+// spec: §10.1.7 — empty tenant, session, or checkpoint id is a
 // programming error; reject at the store boundary.
 func TestPutRejectsEmptyIDs(t *testing.T) {
 	store := partialmanifeststore.NewMemoryStore(nil)
@@ -708,7 +644,7 @@ func TestChunkEncodingValidValues(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 141 — manifest_reason is a closed enum.
+// spec: §10.1.7 — manifest_reason is a closed enum.
 func TestManifestReasonValidValues(t *testing.T) {
 	for _, r := range []string{
 		partialmanifeststore.ReasonInProgress, partialmanifeststore.ReasonComplete,
@@ -758,7 +694,7 @@ func TestHasActivePartialManifest(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 155 — LatestFull returns the most-recently-created
+// spec: §10.1.7 — LatestFull returns the most-recently-created
 // active full checkpoint row (partial = false) and never a partial one.
 func TestLatestFullSelectsNewestCompleteRow(t *testing.T) {
 	clock := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
@@ -793,5 +729,99 @@ func TestLatestFullSelectsNewestCompleteRow(t *testing.T) {
 	}
 	if got.Partial {
 		t.Fatalf("LatestFull returned a partial row")
+	}
+}
+
+// spec: §10.1.7 (the manifest scoping key and the supersede-on-write rule
+// the selector serves), §5.2 (a session-mode slot's identifier is its
+// session's identifier, so the session identifier is the whole scoping key),
+// §10.1 (the manifest row is keyed on session_id). LatestActive is the
+// selector the supersede-on-write path reads, and after the slot column is
+// dropped from checkpoint_manifest its scope is exactly (tenant_id,
+// session_id): a co-tenant session's active partial and a same-identifier
+// session in another tenant are both outside the set, so neither is ever
+// returned as a row to supersede.
+func TestLatestActiveScopedToTenantAndSession(t *testing.T) {
+	clock := time.Date(2026, 5, 22, 13, 0, 0, 0, time.UTC)
+	store := partialmanifeststore.NewMemoryStore(func() time.Time { return clock })
+	ctx := context.Background()
+
+	// A co-tenant session's active partial row, at a higher generation than
+	// the row under test so a selector that ignored session_id would prefer
+	// it.
+	if err := store.Put(ctx, intentRow(clock, "acme", "cp-other-session", "s2", 9)); err != nil {
+		t.Fatalf("Put co-tenant session intent: %v", err)
+	}
+	// Another tenant's row carrying the same session identifier.
+	if err := store.Put(ctx, intentRow(clock, "globex", "cp-other-tenant", "s1", 9)); err != nil {
+		t.Fatalf("Put cross-tenant intent: %v", err)
+	}
+
+	// Nothing active for (acme, s1) yet: the neighbouring rows are out of
+	// scope, so the supersede path finds no prior attempt.
+	if _, err := store.LatestActive(ctx, "acme", "s1"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+		t.Fatalf("LatestActive for (acme, s1) with only neighbouring rows: got %v, want ErrNotFound", err)
+	}
+
+	// The session's own active partial is in scope and is returned even at a
+	// lower generation than the neighbours.
+	if err := store.Put(ctx, intentRow(clock, "acme", "cp-own", "s1", 3)); err != nil {
+		t.Fatalf("Put own intent: %v", err)
+	}
+	got, err := store.LatestActive(ctx, "acme", "s1")
+	if err != nil {
+		t.Fatalf("LatestActive: %v", err)
+	}
+	if got.CheckpointID != "cp-own" {
+		t.Errorf("LatestActive.CheckpointID = %q, want cp-own (the session identifier is the whole scoping key)", got.CheckpointID)
+	}
+
+	// The neighbouring rows are untouched by the session's own writes.
+	other, err := store.LatestActive(ctx, "acme", "s2")
+	if err != nil {
+		t.Fatalf("LatestActive for the co-tenant session: %v", err)
+	}
+	if other.CheckpointID != "cp-other-session" {
+		t.Errorf("LatestActive for (acme, s2) = %q, want cp-other-session", other.CheckpointID)
+	}
+	crossTenant, err := store.LatestActive(ctx, "globex", "s1")
+	if err != nil {
+		t.Fatalf("LatestActive for the cross-tenant row: %v", err)
+	}
+	if crossTenant.CheckpointID != "cp-other-tenant" {
+		t.Errorf("LatestActive for (globex, s1) = %q, want cp-other-tenant", crossTenant.CheckpointID)
+	}
+}
+
+// slotTerm is the word a per-pod resource is named for. No selector on this
+// store may be addressed by one, because the manifest row is keyed on the
+// session alone.
+const slotTerm = "Slot"
+
+// spec: §10.1.7 (the manifest scoping key and the supersede rule are scoped
+// to (tenant_id, session_id)), §5.2 (a session-mode slot's identifier is its
+// session's identifier, so a slot-addressed selector would duplicate the
+// session-addressed one rather than narrow it)
+func TestStoreActiveRowSelectorsAreSessionAddressed(t *testing.T) {
+	iface := reflect.TypeOf((*partialmanifeststore.Store)(nil)).Elem()
+	ctxType := reflect.TypeOf((*context.Context)(nil)).Elem()
+	strType := reflect.TypeOf("")
+
+	for i := 0; i < iface.NumMethod(); i++ {
+		m := iface.Method(i)
+		if strings.Contains(m.Name, slotTerm) {
+			t.Errorf("Store.%s is addressed by a slot; the manifest row is keyed on (tenant_id, session_id) alone", m.Name)
+		}
+		if !strings.HasPrefix(m.Name, "LatestActive") {
+			continue
+		}
+		fn := m.Type
+		if fn.NumIn() != 3 || fn.In(0) != ctxType || fn.In(1) != strType || fn.In(2) != strType {
+			t.Errorf("Store.%s takes %v, want (context.Context, tenantID, sessionID string)", m.Name, fn)
+		}
+	}
+
+	if _, ok := reflect.TypeOf(partialmanifeststore.Record{}).FieldByName(slotTerm + "ID"); ok {
+		t.Errorf("Record carries a slot identifier; the persisted column was dropped and the session identifier is the whole scoping key")
 	}
 }

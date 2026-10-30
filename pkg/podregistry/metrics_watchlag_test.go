@@ -9,7 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-// spec: §12.6 line 484 — lenny_pod_registry_watch_lag_seconds is labeled
+// spec: §12.6 — lenny_pod_registry_watch_lag_seconds is labeled
 // by pool and implementation, so an operator can compare watch
 // propagation latency across the CRD and Postgres backends.
 func TestObserveWatchLagLabelsByImplementation_spec_12_6_484(t *testing.T) {

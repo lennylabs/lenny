@@ -28,7 +28,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --leader-elect
 
-  # spec: §9.1 lines 14-31 — the controller points each agent pod's
+  # spec: §9.1 — the controller points each agent pod's
   # adapter at the gateway's GatewayControl listener so a type:agent
   # runtime's platform tool calls reach the gateway platform tool
   # surface. F-9.1.1.
@@ -43,7 +43,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --gateway-grpc-addr=lenny-gateway.NAMESPACE.svc:50051
 
-  # spec: §10.3 line 334 (NET-064) — when set the controller stamps the
+  # spec: §10.3 (NET-064) — when set the controller stamps the
   # audience-bound projected SA token on every warm pod. F-10.3.5.
   - it: passes --sa-token-audience when global.saTokenAudience is set
     documentSelector:
@@ -179,7 +179,7 @@ tests:
                 name: lenny-datastore-conn
                 key: postgres-dsn
 
-  - it: omits the §12.9.8 egress-capture image arg by default
+  - it: omits the egress-capture image arg by default
     documentSelector:
       path: kind
       value: Deployment
@@ -188,7 +188,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --egress-capture-image=lenny-egress-capture:e2e
 
-  - it: renders the §12.9.8 egress-capture image arg when controller.egressCaptureImage is set
+  - it: renders the egress-capture image arg when controller.egressCaptureImage is set
     documentSelector:
       path: kind
       value: Deployment
@@ -272,7 +272,7 @@ tests:
             port: 9123
             targetPort: metrics
 
-  # spec: §10.5 line 403 ("Rolling Deployment updates") / §17.1 — the
+  # spec: §10.5 / §17.1 — the
   # controller declares an explicit, auditable RollingUpdate strategy
   # rather than relying on the Kubernetes 25% default. F-10.5.9.
   - it: renders the §10.5 / §17.1 RollingUpdate strategy by default
@@ -407,6 +407,49 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --initial-fill-grace-period=120s
 
+  # spec: §4.7.10 (Runtime supervisor); §28.5.3 (CH-SUPERVISE, Timing);
+  # §17.8.1. A stock render leaves the supervisor image unset and the
+  # supervise timing flags to the controller defaults.
+  - it: omits the supervisor image and supervise timing flags by default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --supervise-ping-interval=5s
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --warm-up-timeout=2m
+
+  - it: renders the supervisor image and supervise timing flags when set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      controller.supervisorImage: ghcr.io/lennylabs/lenny-supervisor@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      controller.tuning:
+        supervisePingInterval: 3s
+        supervisePingTimeout: 4s
+        superviseWaitTimeout: 6m
+        warmUpTimeout: 90s
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --supervisor-image=ghcr.io/lennylabs/lenny-supervisor@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --supervise-ping-interval=3s
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --supervise-ping-timeout=4s
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --supervise-wait-timeout=6m
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --warm-up-timeout=90s
+
   # spec: §17.8.2 controller-tuning table — "Controller pod
   # anti-affinity". F-17.8.6.
   - it: renders a preferred anti-affinity against the PSC by default
@@ -469,7 +512,7 @@ tests:
                 lenny.dev/component: pool-scaling-controller
             topologyKey: kubernetes.io/hostname
 
-  # spec: §5.2 line 369 / §6.4 line 413 — F-6.1.3. A stock render leaves
+  # spec: §5.2 / §6.4 — F-6.1.3. A stock render leaves
   # the resource classes to the binary defaults (small/medium/large with
   # tmpfs-accounted memory limits).
   - it: omits resource-class flags by default
@@ -495,7 +538,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --resource-class=medium=requests.cpu:500m,requests.memory:2Gi,limits.cpu:2,limits.memory:2Gi
 
-  # spec: §13.1 line 7 — the controller stamps the operator-tunable
+  # spec: §13.1 — the controller stamps the operator-tunable
   # non-root pod UIDs (default 65532/65533/65534) onto every agent pod;
   # the lenny-webhook Deployments are wired from the same security.podUIDs
   # values so a built pod passes the pod-security UID checks. F-13.1.16.
@@ -532,3 +575,94 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --cred-readers-gid=70002
+
+  # spec: §4.6.1 Warm Pool Controller (Pod Lifecycle), "Orphaned
+  # SandboxClaim detection" — the leader-elected GarbageCollect loop and the
+  # agent_pod_state mirror reconciler list the agent namespaces, and the
+  # binary registers both only when --agent-namespaces names at least one
+  # namespace and LENNY_POSTGRES_DSN is set. The chart never rendered the
+  # flag, so no install ran the GC (F-4.6.30). The flag is one
+  # comma-separated value, the form splitNamespaces parses.
+  - it: renders --agent-namespaces from the default agentNamespaces
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-namespaces=lenny-agents,lenny-agents-kata
+
+  - it: renders --agent-namespaces for a single agent namespace
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      agentNamespaces:
+        - name: acme-agents
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-namespaces=acme-agents
+
+  - it: renders every agent namespace, in declared order, as one comma-separated --agent-namespaces value
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      agentNamespaces:
+        - name: acme-agents
+        - name: globex-agents
+        - name: initech-agents
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-namespaces=acme-agents,globex-agents,initech-agents
+      # A repeated flag would keep only the last value (flag.StringVar), so
+      # the chart must render exactly one --agent-namespaces argument.
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-namespaces=initech-agents
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-namespaces=acme-agents
+
+  - it: omits --agent-namespaces when agentNamespaces is empty
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      agentNamespaces: []
+    asserts:
+      # An unguarded template would render the bare "--agent-namespaces="
+      # argument here.
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-namespaces=
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --leader-elect
+
+  # The orphan-claim GC's active-session lookup and the mirror both need
+  # Postgres. With postgres.dsn set, the Deployment carries both inputs the
+  # binary gates the two runnables on.
+  - it: wires both GC inputs, the agent namespaces and the Postgres DSN, when postgres.dsn is set
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
+      agentNamespaces:
+        - name: acme-agents
+        - name: globex-agents
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --agent-namespaces=acme-agents,globex-agents
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_DSN
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: postgres-dsn

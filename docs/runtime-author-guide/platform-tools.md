@@ -18,9 +18,9 @@ These tools are unavailable at the Basic level and to `type: mcp` runtimes. A Ba
 Before calling any platform tool, connect to the platform MCP server:
 
 1. Read `/run/lenny/adapter-manifest.json`.
-2. Extract `platformMcpServer.socket` (e.g., `@lenny-platform-mcp`) and `mcpNonce`. The nonce is a 256-bit hex string regenerated for each task execution.
+2. Extract `platformMcpServer.socket` (e.g., `@lenny-platform-mcp`) and `mcpNonce`. The nonce is a 256-bit hex string written with each manifest. It authenticates a connection to the pod's intra-pod MCP servers, which are pod-wide and started at most once per pod.
 3. Connect over the abstract Unix socket. Abstract sockets are a Linux kernel feature, so they are available wherever the adapter runs inside an in-cluster Linux pod. Under Embedded Mode (`lenny up`) the adapter runs in an in-cluster pod, which on macOS and Windows runs under Docker Desktop's Linux VM, so Standard- and Full-level runtime authors can develop against Embedded Mode on any host. Only Source Mode (`make run`), which runs the adapter on the host, requires a Linux host for these levels.
-4. Send MCP `initialize` with the nonce as the top-level `_lennyNonce` field in `params`. The server speaks MCP `2025-03-26` and also accepts `2024-11-05` for a transition window. The adapter validates `_lennyNonce` against `mcpNonce`, strips it from `params`, and rejects any connection that omits a valid nonce before dispatching tools.
+4. Send MCP `initialize` with the nonce as the top-level `_lennyNonce` field in `params`. The server speaks MCP `2025-03-26` and also accepts `2024-11-05` for a transition window. The adapter validates `_lennyNonce` against the nonce the manifest carried at the start that bound the server you are connecting to, strips it from `params`, and rejects any connection that does not present a valid nonce before dispatching tools. A later session's manifest write does not re-arm a running server. The server resolves the calling session at call time and refuses the call unless the pod's shared runtime process has been given exactly one session and that session is the caller.
 
 ```json
 {
@@ -34,6 +34,8 @@ Before calling any platform tool, connect to the platform MCP server:
 ```
 
 5. Call `tools/list` to discover available tools.
+
+The `_lennyNonce` member of `initialize` is the form the nonce takes on an MCP connection. The other runtime sockets, the message channel when your binary dials it as a socket and the CH-RUNTIMEOPS, take the same `mcpNonce` as a first line on the connection, `{"_lennyNonce":"<nonce_hex>"}`, checked once when the adapter accepts the connection. For those sockets, wait for the manifest before dialing, answer a nonce-only `_lennyChallenge` that arrives before the first protocol frame, and read the manifest again and redial when the adapter closes the connection before that frame. The [Adapter Contract](../reference/adapter-contract.md#connection-handshake) states the handshake in full.
 
 ---
 
@@ -234,7 +236,7 @@ Request human input via the elicitation chain. The request is forwarded hop-by-h
 | `schema` | object | Yes | JSON Schema describing the input to collect |
 | `message` | string | Yes | Human-readable prompt displayed to the user |
 
-**Returns:** The user's response (matching the provided schema), or an error if the elicitation was dismissed or timed out.
+**Returns:** The user's response (matching the provided schema), or an error if the elicitation was dismissed or timed out. When the session leaves its pod before the user answers, through the release of a suspended session's pod, a pod failure, or the end of the session, the pending elicitation expires and its answer is never delivered. A runtime restored onto a new pod raises the elicitation again if it still needs the input. While your runtime waits inside the call, the call counts as activity for the session. The wait keeps the session from idle suspension when the call began before the adapter sealed the session. The pod or slot release that follows a seal ends a call your runtime began after the seal, as the [session seal](../reference/adapter-contract.md#session-seal) section of the adapter contract states.
 
 **Example:**
 
@@ -423,9 +425,9 @@ Register tracing identifiers that the gateway propagates to child sessions. Use 
 
 **Notes:**
 
-- The adapter stores the context and attaches it to every subsequent `lenny/delegate_task` call. The LLM never sees or sets the tracing context; the runtime manages it as infrastructure plumbing.
+- The gateway merges the submitted context into your session's recorded context, validates the merged result at registration time, and attaches the registered context to each child's delegation lease when you delegate. The adapter itself stores no context and attaches none to later calls. The LLM never sees or sets the tracing context; the runtime manages it as infrastructure plumbing.
 - A child runtime can extend the inherited context with additional entries. Child entries merge with parent entries and cannot overwrite or remove them.
-- The same registration is available to all integration levels through the stdout JSONL `set_tracing_context` message. The MCP tool exists for Standard- and Full-level runtimes that already hold an MCP connection.
+- The same registration is available to all integration levels through the stdout JSONL `set_tracing_context` message. The MCP tool exists for Standard- and Full-level runtimes that already hold an MCP connection. The JSONL frame carries the per-session identifier in `sessionId` on every pod, whatever the pool's `maxConcurrentSessions`, and the runtime echoes the identifier the adapter handed it. A frame that carries no identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected, counted in `lenny_adapter_unaddressed_frame_rejected_total`, and logged. A frame whose identifier names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`, and logged. See [Adapter Contract](../reference/adapter-contract.md).
 
 ---
 
@@ -446,4 +448,4 @@ Register tracing identifiers that the gateway propagates to child sessions. Use 
 | `lenny/get_task_tree` | -- | Yes | Yes |
 | `lenny/set_tracing_context` | -- | Yes | Yes |
 
-All platform tools require the Standard level or higher. Basic-level runtimes use only the stdin/stdout protocol and the adapter-local file tools (`read_file`, `write_file`, `list_dir`, and `delete_file`). A Basic-level runtime that needs to propagate a tracing context can still do so through the stdout JSONL `set_tracing_context` message, which is available at every level.
+All platform tools require the Standard level or higher. Basic-level runtimes use only the stdin/stdout protocol and the adapter-local file tools (`read_file`, `write_file`, `list_dir`, and `delete_file`). A Basic-level runtime that needs to propagate a tracing context can still do so through the stdout JSONL `set_tracing_context` message, which is available at every level. The frame carries the per-session identifier in `sessionId` on every pod, and a Basic-level runtime echoes the identifier the adapter handed it. A frame that carries no identifier resolves to the receiving stream's own binding on a pod holding at most one slot, and on a pod holding more than one slot it is rejected, counted in `lenny_adapter_unaddressed_frame_rejected_total`, and logged. A frame whose identifier names no live binding on the receiving stream is dropped, counted in `lenny_adapter_set_tracing_context_dropped_total`, and logged.

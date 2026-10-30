@@ -15,7 +15,7 @@ import (
 )
 
 // fakeFlusher records the (tenant, experiment) flush calls the PATCH handler
-// makes so the §10.7 line 1096 invalidation wiring can be asserted.
+// makes so the §10.7 invalidation wiring can be asserted.
 type fakeFlusher struct {
 	mu    sync.Mutex
 	calls [][3]string
@@ -53,7 +53,7 @@ func patchStatus(t *testing.T, h http.Handler, id, status string) *int {
 	return &rr.Code
 }
 
-// spec: §10.7 line 1096 — a transition to paused or concluded flushes the
+// spec: §10.7 — a transition to paused or concluded flushes the
 // experiment's sticky cache; a paused→active transition does not.
 func TestPatchExperiment_FlushesStickyOnPauseAndConclude_spec_10_7(t *testing.T) {
 	router, flusher := newStickyExperimentAdmin(t)

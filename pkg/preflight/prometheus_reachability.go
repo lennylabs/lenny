@@ -9,7 +9,7 @@ import (
 )
 
 // PrometheusConfig carries the §25.4 "Preflight validation" inputs the
-// prometheus-reachability check evaluates. spec: §25.4 lines 1466-1470,
+// prometheus-reachability check evaluates. spec: §25.4,
 // §17.6.
 type PrometheusConfig struct {
 	// URL is the ops.prometheus.url chart value: the operator-supplied
@@ -59,8 +59,7 @@ func tierIsProduction(tier string) bool {
 }
 
 // Decide evaluates the §25.4 "Preflight validation" Prometheus
-// reachability posture. The check is non-blocking by design (§25.4 line
-// 1467 — "operators may have legitimate reasons to deploy without
+// reachability posture. The check is non-blocking by design (§25.4 — "operators may have legitimate reasons to deploy without
 // Prometheus temporarily and a hard install gate would be obstructive"),
 // so it always returns Passed: true. It emits a tier-specific advisory in
 // the Reason field: an INFO at Tier 1 and a WARN at Tier 2/3, the latter
@@ -72,8 +71,7 @@ func tierIsProduction(tier string) bool {
 // answering). When no prober is wired (skip-network-probes / airgap) a
 // configured URL is assumed reachable and passes silently.
 //
-// spec: §25.4 lines 1462-1470 (preflight validation, tier-specific
-// INFO/WARN, acknowledgeNoPrometheus suppression). F-25.4.25.
+// spec: §25.4. F-25.4.25.
 func (c PrometheusReachabilityCheck) Decide(ctx context.Context) Decision {
 	configured := strings.TrimSpace(c.Config.URL) != ""
 	reachable := false

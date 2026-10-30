@@ -5,13 +5,14 @@ package adapter_test
 import (
 	"context"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// echoLoop is the §15.4.1 in-process loop the SDK-warm reference runtime
+// echoLoop is the §28.5.3 in-process loop the SDK-warm reference runtime
 // drives: it echoes each inbound line back verbatim until EOF.
 func sdkWarmEchoLoop(_ context.Context, in io.Reader, out io.Writer) error {
 	buf := make([]byte, 4096)
@@ -31,13 +32,13 @@ func sdkWarmEchoLoop(_ context.Context, in io.Reader, out io.Writer) error {
 	}
 }
 
-// spec: §6.1 lines 30-40 — the SDK-warm reference runtime pre-connects at
+// spec: §6.1 — the SDK-warm reference runtime pre-connects at
 // warm time, binds to a session via ConfigureWorkspace, and tears down via
 // DemoteSDK so a subsequent StartSession runs the pod-warm path.
 func TestSDKWarmInProcessRuntime_spec_6_1(t *testing.T) {
 	rt := adapter.NewSDKWarmInProcessRuntime(sdkWarmEchoLoop)
 	s := adapter.New("test")
-	s.WorkspaceRoot = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	s.ManifestDir = t.TempDir()
 	s.Runtime = rt
 
@@ -55,7 +56,7 @@ func TestSDKWarmInProcessRuntime_spec_6_1(t *testing.T) {
 	// Claim: ConfigureWorkspace binds the pre-connected loop to the session.
 	if _, err := s.ConfigureWorkspace(context.Background(), &adapterv1.ConfigureWorkspaceRequest{
 		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		Cwd:       s.WorkspaceRoot,
+		Cwd:       s.WorkspaceBase,
 	}); err != nil {
 		t.Fatalf("ConfigureWorkspace: %v", err)
 	}
@@ -64,6 +65,12 @@ func TestSDKWarmInProcessRuntime_spec_6_1(t *testing.T) {
 	ch, err := rt.Output(context.Background(), "sess-1")
 	if err != nil {
 		t.Fatalf("Output: %v", err)
+	}
+	// spec: §28.5.3 (CH-MSGSOCK, Session frame writes) — the SDK-warm
+	// start wrote the session's session_start to the bound loop, which
+	// echoes it ahead of the ping.
+	if got := <-ch; frameTypeOf(got) != "session_start" || !strings.Contains(string(got), `"sessionId":"sess-1"`) {
+		t.Fatalf("first echoed frame = %q, want the SDK-warm start's session_start for sess-1", got)
 	}
 	if err := rt.WriteEnvelope("sess-1", []byte(`{"type":"ping"}`)); err != nil {
 		t.Fatalf("WriteEnvelope: %v", err)

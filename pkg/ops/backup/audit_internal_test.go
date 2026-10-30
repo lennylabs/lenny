@@ -11,7 +11,7 @@ import (
 // TestAuditEventTypesAreCatalogued_spec_16_7 asserts every §25.11
 // backup/restore audit event the Service emits is a recognized §16.7
 // catalog entry, so an audit-sink validator does not discard the rows
-// as unknown. spec: §16.7 / §25.11 line 4343.
+// as unknown. spec: §16.7 / §25.11.
 func TestAuditEventTypesAreCatalogued_spec_16_7(t *testing.T) {
 	for _, typ := range auditEventTypes() {
 		if !audit.IsKnownEventType(audit.EventType(typ)) {
@@ -28,8 +28,7 @@ func TestAuditEventTypesAreCatalogued_spec_16_7(t *testing.T) {
 // empty field. Both branches are asserted; the empty case would regress
 // silently if the guard were dropped, recording operationId:"".
 //
-// spec: §25.1 line 121 (operationId on every request audit event), §25.2
-// line 350 (operationId propagated to audit events). (F-OID-1)
+// spec: §25.1, §25.2. (F-OID-1)
 func TestAuditFieldsWithOperationID(t *testing.T) {
 	// Non-empty: the key is set to the caller operationId.
 	withID := auditFieldsWithOperationID("op-123", map[string]any{"tenant": "acme"})

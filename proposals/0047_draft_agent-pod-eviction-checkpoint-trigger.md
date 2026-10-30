@@ -1,7 +1,7 @@
 # Proposal: Agent-pod eviction-checkpoint trigger and its prerequisites
 
 - **Status:** **Early draft. Not ready for review.** Blocked on prerequisites (§3) and on the checkpoint data path settling in the successor to `0046_withdrawn_gateway-mediated-checkpoint-relay.md`.
-- **Date:** 2026-07-14.
+- **Date:** 2026-07-14. Re-verified against the tree on 2026-09-08: the core defect stands, no gateway path drives an eviction checkpoint and the only `TriggerEviction` reference outside `pkg/checkpoint` is a metric increment on the recovery path (`pkg/gateway/sessionserver/start.go:4220`). Blockers (B) and (D) stand: `preStopDrainHook` is still attached to both containers (`pkg/controller/sandbox/podspec/podspec.go:606`, `:700`), and no forward-to-coordinator hop or lease-steal primitive exists. Blocker (A) and prerequisite 1 are discharged, recorded in place. Proposal 0062, which attempted the build, is SUPERSEDED with its content re-scoped into deferral steps R12 and R13, which the claim register still carries as unwired.
 - **Scope:** The §4.4 eviction checkpoint is never driven when an individual agent pod is terminated by a node drain, the kubelet Eviction API, a cluster upgrade, or a direct pod delete. This draft records the design space and the prerequisites that must land before the trigger can be built. It carries no staged changes yet.
 
 This document records analysis. It stages no spec, code, or doc change.
@@ -22,7 +22,7 @@ An attempt to fold this trigger into the checkpoint data-path proposal was made 
 
 `CheckpointRequest` (`schemas/lenny-adapter.proto:1021`) carries `session_id` and `deadline_ms` and no `slot_id`. `Server.checkpointRoots()` (`pkg/adapter/checkpoint.go:313`) bundles the pod-global `WorkspaceRoot` and `SessionsRoot`, not a slot-scoped path. On a pool with `sessionPolicy.maxConcurrentSessions > 1`, where each slot owns `/workspace/slots/{slotId}/current/` (`spec/05_runtime-registry-and-pool-model.md` §5.2), the RPC has no way to name the slot to checkpoint, and its session gate cannot pass.
 
-**Concurrent-session pods therefore cannot be checkpointed at all today, on any trigger.** This is not specific to eviction and is arguably the highest-value item in this draft.
+~~**Concurrent-session pods therefore cannot be checkpointed at all today, on any trigger.**~~ **No longer true as of the 2026-09-08 re-verification; see prerequisite 1.** It was the highest-value item in this draft and it is discharged.
 
 ### (B) The preStop hook cannot run on the runtime container
 
@@ -44,7 +44,7 @@ The agent pod's `terminationGracePeriodSeconds` is 120s. `spec/10_gateway-intern
 
 The trigger is buildable once these land. Each is separable and each is worth landing on its own merits.
 
-1. **Slot-aware checkpointing.** `slot_id` on `CheckpointRequest`, slot-scoped `checkpointRoots()`, and a slot-scoped session gate. Unblocks (A). Independent of eviction.
+1. ~~**Slot-aware checkpointing.**~~ **LANDED, 2026-09-08 re-verification.** It arrived by a different route than this draft anticipated. Rather than adding `slot_id` to `CheckpointRequest`, proposal 0073 gave every session a slot and addressed the contract by session, and `CheckpointRequest` is now a stream envelope whose opening `CheckpointStart` frame carries the address. `checkpointRoots()` is `checkpointRootsForSession(sessionID)` at `pkg/adapter/slot.go:183`, resolving the slot entry the identifier names. Blocker (A) above is therefore discharged, and with it this draft's claim that concurrent-session pods cannot be checkpointed at all.
 2. **Coordinator resolution for pod-originated signals.** Either a forward-to-coordinator hop or a fenced lease-steal primitive on `LeaseStore` (noting the interface has multiple implementations and production wires a `*Failover`). Unblocks (D).
 3. **Agent-pod grace-period arithmetic.** A CRD/webhook rule relating `maxConcurrentSessions`, the Stage-2 tier cap, the Postgres fallback budget, and the preStop drain margin to `terminationGracePeriodSeconds`, plus a defensible default. Unblocks (E).
 4. **A container-termination story for the runtime container.** Either a preStop hook the runtime image can actually run, or a design that does not place one there. Unblocks (B), and constrains (C).

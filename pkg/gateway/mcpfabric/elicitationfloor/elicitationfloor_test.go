@@ -10,7 +10,7 @@ import (
 )
 
 func TestProviderSeedAndFloor(t *testing.T) {
-	// spec: §17.2 line 86 — the startup seed (flag value) is the floor
+	// spec: §17.2 — the startup seed (flag value) is the floor
 	// until a ConfigMap reconcile supplies a value.
 	if got := NewProvider("enforce").Floor(); got != "enforce" {
 		t.Fatalf("Floor() = %q, want enforce", got)
@@ -21,7 +21,7 @@ func TestProviderSeedAndFloor(t *testing.T) {
 }
 
 func TestProviderSetValidChange(t *testing.T) {
-	// spec: §17.2 line 86 — a valid floor change is adopted.
+	// spec: §17.2 — a valid floor change is adopted.
 	p := NewProvider("off")
 	prev, changed := p.Set("enforce")
 	if !changed || prev != "off" {
@@ -40,7 +40,7 @@ func TestProviderSetSameValueNoChange(t *testing.T) {
 }
 
 func TestProviderSetInvalidIgnored(t *testing.T) {
-	// spec: §17.2 line 86 — a malformed ConfigMap value must never
+	// spec: §17.2 — a malformed ConfigMap value must never
 	// weaken or corrupt the in-force floor.
 	p := NewProvider("enforce")
 	prev, changed := p.Set("bogus")
@@ -82,7 +82,7 @@ func (s *stubReader) ReadFloor(context.Context) (string, bool, error) {
 }
 
 func TestReconcileOnceAdoptsPresentValue(t *testing.T) {
-	// spec: §17.2 line 86 — startup read seeds the floor from the
+	// spec: §17.2 — startup read seeds the floor from the
 	// ConfigMap, raising the flag-default off to enforce.
 	p := NewProvider("off")
 	var changes [][2]string
@@ -116,7 +116,7 @@ func TestReconcileOnceRetainsOnError(t *testing.T) {
 }
 
 func TestReconcileOnceRetainsOnAbsentKey(t *testing.T) {
-	// spec: §17.2 line 86 — an absent/empty floor key (legacy or
+	// spec: §17.2 — an absent/empty floor key (legacy or
 	// hand-edited ConfigMap) retains the last-known floor rather than
 	// weakening to a default.
 	p := NewProvider("enforce")
@@ -144,7 +144,7 @@ func TestReconcileOnceIgnoresInvalidValue(t *testing.T) {
 }
 
 func TestReconcileOnceLowersFloor(t *testing.T) {
-	// spec: §17.2 line 86 — lowering the floor is a legitimate operator
+	// spec: §17.2 — lowering the floor is a legitimate operator
 	// posture change (no downgrade guard on the floor key).
 	p := NewProvider("enforce")
 	r := &Reconciler{

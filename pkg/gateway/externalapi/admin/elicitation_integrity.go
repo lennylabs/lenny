@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
-// elicitationIntegrityResponse is the §15.1 line 824
+// elicitationIntegrityResponse is the §15.1
 // elicitation-content-integrity GET/PUT body. storedMode is the
 // tenant's persisted mode (an unset stored value reports the §9.2
 // tenant default of `enforce`). effectiveMode is the resolved
@@ -57,8 +57,7 @@ func effectiveStoredMode(t tenantstore.Tenant) string {
 // mode that results from clamping it against the platform-wide floor,
 // the platform floor itself, and the provenance (justification,
 // changedAt, changedBy) of the last write.
-// spec: §15.1 (tenant-admin gate, line 823,824; full GET body, line
-// 824), §9.2 (elicitation content integrity).
+// spec: §15.1, §9.2 (elicitation content integrity).
 func (r *Router) handleGetElicitationIntegrity(w http.ResponseWriter, req *http.Request) {
 	// §10.2: a tenant-admin reads only its own tenant; a path naming a
 	// different tenant is rejected. A platform-admin may read any.
@@ -78,7 +77,7 @@ func (r *Router) handleGetElicitationIntegrity(w http.ResponseWriter, req *http.
 	}
 	stored := effectiveStoredMode(row)
 	effective := r.resolveElicitationEffective(stored)
-	// spec: §15.1 line 1209 — the elicitation-content-integrity
+	// spec: §15.1 — the elicitation-content-integrity
 	// sub-resource's ETag is the tenant row's version, since the mode is
 	// stored on the tenant. GET carries it so the next PUT can supply
 	// If-Match.
@@ -102,7 +101,7 @@ func (r *Router) handleGetElicitationIntegrity(w http.ResponseWriter, req *http.
 // stored mode; an invalid floor is treated as `off`. The shared
 // elicitation.ResolveEffectiveWithDefaults resolver applies the spec
 // defaults so this surface and the §16.5 weakened-mode gauge agree on
-// the effective mode. spec: §9.2 lines 60, 64. F-9.2.5.
+// the effective mode. spec: §9.2. F-9.2.5.
 func (r *Router) resolveElicitationEffective(stored string) string {
 	return string(elicitation.ResolveEffectiveWithDefaults(r.elicitationFloorValue(), stored))
 }
@@ -110,13 +109,12 @@ func (r *Router) resolveElicitationEffective(stored string) string {
 // handlePutElicitationIntegrity serves
 // PUT /v1/admin/tenants/{id}/elicitation-content-integrity (§9.2). A
 // write that relaxes the mode below `enforce` requires a non-empty
-// justification; the change emits the §16.7 line 675
+// justification; the change emits the §16.7
 // `tenant.elicitation_content_integrity_changed` audit event with the
 // `previous_stored_mode`, `new_stored_mode`, `platform_floor_at_change`,
 // `effective_mode_at_change`, `justification`, `changed_by`,
 // `changed_by_tenant_id`, `changed_at` payload SIEM consumers index on.
-// spec: §9.2 line 66; §16.7 line 675; §15.1 (tenant-admin gate, line
-// 823; PUT records mode, justification, changedAt, changedBy). F-9.2.9,
+// spec: §9.2; §16.7; §15.1. F-9.2.9,
 // ADM-3.
 func (r *Router) handlePutElicitationIntegrity(w http.ResponseWriter, req *http.Request) {
 	// §10.2: a tenant-admin writes only its own tenant; a path naming a
@@ -174,7 +172,7 @@ func (r *Router) handlePutElicitationIntegrity(w http.ResponseWriter, req *http.
 		}
 	}
 
-	// spec: §15.1 lines 1207-1211 — the elicitation-content-integrity PUT
+	// spec: §15.1 — the elicitation-content-integrity PUT
 	// enforces If-Match against the tenant row's version (the
 	// sub-resource's entity tag). A missing tenant 404s ahead of the
 	// precondition.
@@ -196,14 +194,14 @@ func (r *Router) handlePutElicitationIntegrity(w http.ResponseWriter, req *http.
 	changedAt := r.clock().UTC()
 	// previousStoredRaw captures the tenant's literal stored value
 	// before the update so the audit row can distinguish "first write"
-	// (null) from "explicit prior value". The §16.7 line 675 payload
+	// (null) from "explicit prior value". The §16.7 payload
 	// requires `previous_stored_mode` ∈ {enforce | detect-only | off |
 	// null}; the §9.2 default of `enforce` is computed at resolve-time,
 	// not persisted, so an unset stored value emits null.
 	var previousStoredRaw string
 	updated, err := r.tenants.Update(req.Context(), id, func(t *tenantstore.Tenant) error {
 		previousStoredRaw = t.ElicitationContentIntegrity
-		// spec: §15.1 line 823 — the PUT records mode, justification,
+		// spec: §15.1 — the PUT records mode, justification,
 		// changedAt, and changedBy on the tenant in the same write.
 		t.ElicitationContentIntegrity = string(mode)
 		t.ElicitationContentIntegrityJustification = body.Justification
@@ -221,7 +219,7 @@ func (r *Router) handlePutElicitationIntegrity(w http.ResponseWriter, req *http.
 	}
 	stored := string(mode)
 	effective := r.resolveElicitationEffective(stored)
-	// §16.7 line 675 — `platform_floor_at_change` records the floor
+	// §16.7 — `platform_floor_at_change` records the floor
 	// value rendered at the time of the write so audit analysis can
 	// reconstruct the effective mode without re-resolving the floor
 	// post-hoc. Empty string when the floor is unset.
@@ -248,7 +246,7 @@ func (r *Router) handlePutElicitationIntegrity(w http.ResponseWriter, req *http.
 			"changed_by_tenant_id":     principal.TenantID,
 			"changed_at":               rfc3339Nano(changedAt),
 		})
-	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag.
+	// spec: §15.1 — a successful PUT carries the bumped ETag.
 	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(elicitationIntegrityResponse{

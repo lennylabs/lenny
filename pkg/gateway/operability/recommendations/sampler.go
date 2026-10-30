@@ -22,7 +22,7 @@ const DefaultSampleInterval = 30 * time.Second
 // aggregation selects how the Sampler collapses a metric family's
 // per-label-set series into the single aggregate value the §25.3
 // recommendation evaluators read (they query the store with nil labels,
-// the platform-wide aggregate). spec: §25.3 lines 588-597.
+// the platform-wide aggregate). spec: §25.3.
 type aggregation int
 
 const (
@@ -53,7 +53,7 @@ type seriesSpec struct {
 // `lenny-ops` through its Prometheus-backed reader instead — the §25.3
 // per-replica-scope note. Listing every evaluator metric here means a
 // metric added to the gateway registry later is sampled with no further
-// wiring. spec: §25.3 lines 580-597.
+// wiring. spec: §25.3.
 func recommendationSeries() []seriesSpec {
 	return []seriesSpec{
 		{"lenny_warmpool_claims_total", aggSum},
@@ -72,7 +72,7 @@ func recommendationSeries() []seriesSpec {
 // the WindowStore the rules engine evaluates against. It is the
 // production caller that populates the otherwise-empty ring buffers, so
 // `/v1/admin/recommendations` serves real per-replica data rather than a
-// permanently-empty result. spec: §25.3 lines 588-597 — "The gateway's
+// permanently-empty result. spec: §25.3 — "The gateway's
 // metric registry feeds the ring buffers, and the rules engine reads
 // from those buffers via MetricReader."
 type Sampler struct {

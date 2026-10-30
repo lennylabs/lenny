@@ -123,7 +123,7 @@ func TestSyncResumeEpochFirstObservationDoesNotClear_spec_4_6_2(t *testing.T) {
 	}
 }
 
-// spec: §4.6.2 lines 558, 560 — the reconcile timestamp annotation is
+// spec: §4.6.2 — the reconcile timestamp annotation is
 // stamped alongside the generation when the generation changes, and is
 // not rewritten when the generation is unchanged (so a steady-state pool
 // does not churn the CRD every tick).

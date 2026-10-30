@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 )
 
-// PoolDrainMetrics records the §15.1 line 797
+// PoolDrainMetrics records the §15.1
 // `lenny_pool_draining_sessions_total` gauge — the in-flight session
 // count for a pool while it is draining, labelled by pool. A nil seam
 // leaves the gauge unset; the drain operation still succeeds.
@@ -24,7 +24,7 @@ type PoolDrainMetrics interface {
 	SetPoolDrainingSessions(pool string, count int)
 }
 
-// WithPoolDrainMetrics wires the §15.1 line 797 pool-drain gauge onto
+// WithPoolDrainMetrics wires the §15.1 pool-drain gauge onto
 // the Router. Without it the drain endpoint still operates; the
 // `lenny_pool_draining_sessions_total` gauge is simply not updated.
 func (r *Router) WithPoolDrainMetrics(m PoolDrainMetrics) *Router {
@@ -32,7 +32,7 @@ func (r *Router) WithPoolDrainMetrics(m PoolDrainMetrics) *Router {
 	return r
 }
 
-// PoolDrainResponse is the §15.1 line 797 drain API response body:
+// PoolDrainResponse is the §15.1 drain API response body:
 // `{"status": "draining", "activeSessions": <n>, "estimatedDrainSeconds": <n>}`.
 type PoolDrainResponse struct {
 	Status                string `json:"status"`
@@ -40,14 +40,14 @@ type PoolDrainResponse struct {
 	EstimatedDrainSeconds int    `json:"estimatedDrainSeconds"`
 }
 
-// handleDrainPool implements the §15.1 line 797
+// handleDrainPool implements the §15.1
 // POST /v1/admin/pools/{name}/drain endpoint. It transitions the pool to
 // the `draining` phase so the gateway stops admitting new sessions to it
 // (session creation that would select the pool is rejected with 503
 // POOL_DRAINING by the sessionserver gate), and reports the current
 // in-flight session count and the estimated drain-completion seconds.
 // Drain is a pool action endpoint and does not support `?dryRun=true`
-// (§15.1 line 1205). It is idempotent: draining an already-draining pool
+// (§15.1). It is idempotent: draining an already-draining pool
 // returns the current stats without resetting the drain clock.
 func (r *Router) handleDrainPool(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
@@ -68,7 +68,7 @@ func (r *Router) handleDrainPool(w http.ResponseWriter, req *http.Request) {
 	}
 	// Only write when the pool is not already draining so repeated drain
 	// calls do not churn pool_config_generation (drain is idempotent per
-	// §15.1 line 797).
+	// §15.1).
 	if !row.IsDraining() {
 		row, err = r.pools.Update(req.Context(), name, func(p *poolstore.Pool) error {
 			if p.DrainingSince.IsZero() {
@@ -104,7 +104,7 @@ func (r *Router) handleDrainPool(w http.ResponseWriter, req *http.Request) {
 	})
 }
 
-// poolDrainStats returns the §15.1 line 797 in-flight session count and
+// poolDrainStats returns the §15.1 in-flight session count and
 // the estimated drain-completion seconds for a pool. The estimate is the
 // longest active session age in the pool capped at maxSessionAgeSeconds
 // (poolstore.EstimatedDrainSeconds). With no session store wired, or no

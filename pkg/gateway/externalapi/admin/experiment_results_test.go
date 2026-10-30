@@ -287,7 +287,7 @@ func TestExperimentResultsRejectsBadFilter(t *testing.T) {
 }
 
 // TestExperimentResultsRejectsBreakdownFilterOverlap_spec_10_7_952 pins
-// §10.7 line 952: breakdown_by is not combinable with the equality /
+// §10.7: breakdown_by is not combinable with the equality /
 // exclusion filter on the same field — the combination would collapse to
 // a degenerate single-bucket response, so it is rejected with 400
 // INVALID_QUERY_PARAMS. F-10.7.10.
@@ -330,8 +330,7 @@ func TestExperimentResultsAllowsBreakdownWithDifferentFilter_spec_10_7_952(t *te
 	}
 }
 
-// TestExperimentResultsPerDimensionCount_spec_10_7_1088 pins §10.7 line
-// 1088: a dimension's count equals the number of EvalResult rows that
+// TestExperimentResultsPerDimensionCount_spec_10_7_1088 pins §10.7: a dimension's count equals the number of EvalResult rows that
 // supplied a non-null value for that dimension, which may be lower than
 // the enclosing scorer's count when some rows omit the dimension.
 // F-10.7.9.
@@ -384,7 +383,7 @@ func TestExperimentResultsNotFound(t *testing.T) {
 // fakeAggReader wraps a real evalstore.Store and adds the §10.7
 // materialized-view read path, returning canned aggregates distinct
 // from the base-table rows so a test can tell which path served the
-// response. spec: §10.7 lines 954, 1088. F-10.7.12.
+// response. spec: §10.7. F-10.7.12.
 type fakeAggReader struct {
 	evalstore.Store
 	aggregates map[string]evalstore.VariantAggregate
@@ -408,7 +407,7 @@ func newMatviewAdmin(t *testing.T, agg *fakeAggReader, enabled bool) (*admin.Rou
 	return router, exps
 }
 
-// spec: §10.7 line 1088 — an unfiltered, no-breakdown request is served
+// spec: §10.7 — an unfiltered, no-breakdown request is served
 // from the lenny_eval_aggregates matview when the view is enabled.
 func TestExperimentResultsRoutesUnfilteredToMatview_spec_10_7_1088(t *testing.T) {
 	agg := &fakeAggReader{
@@ -461,7 +460,7 @@ func TestExperimentResultsRoutesUnfilteredToMatview_spec_10_7_1088(t *testing.T)
 	}
 }
 
-// spec: §10.7 line 954 — a filtered or broken-down request bypasses the
+// spec: §10.7 — a filtered or broken-down request bypasses the
 // matview and recomputes from the base table.
 func TestExperimentResultsFilteredBypassesMatview_spec_10_7_954(t *testing.T) {
 	agg := &fakeAggReader{
@@ -490,7 +489,7 @@ func TestExperimentResultsFilteredBypassesMatview_spec_10_7_954(t *testing.T) {
 	}
 }
 
-// spec: §10.7 line 1088 — with the matview disabled, even an unfiltered
+// spec: §10.7 — with the matview disabled, even an unfiltered
 // request aggregates on read from the base table.
 func TestExperimentResultsMatviewDisabledUsesBaseTable_spec_10_7_1088(t *testing.T) {
 	agg := &fakeAggReader{
@@ -511,7 +510,7 @@ func TestExperimentResultsMatviewDisabledUsesBaseTable_spec_10_7_1088(t *testing
 	}
 }
 
-// spec: §10.7 line 950 — a malformed filter is a 400 on the matview path
+// spec: §10.7 — a malformed filter is a 400 on the matview path
 // too (validated before the read path is chosen).
 func TestExperimentResultsMalformedFilterRejected_spec_10_7_950(t *testing.T) {
 	agg := &fakeAggReader{Store: evalstore.NewMemory(0, nil)}

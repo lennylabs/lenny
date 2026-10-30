@@ -28,7 +28,7 @@ const DefaultIntegrationLevelProbeWaitMs = 10000
 
 // RuntimeLevelUnderperforms is returned by Bind when the §5.1 observed
 // integration level from the adapter handshake is below the runtime's
-// declared integrationLevel. Per §5.1 line 42 the gateway rejects the
+// declared integrationLevel. Per §5.1 the gateway rejects the
 // first session assignment with RUNTIME_LEVEL_UNDERPERFORMS rather than
 // silently degrading checkpoint, clean interrupt, and credential-rotation
 // features the caller expects.
@@ -64,7 +64,7 @@ func integrationLevelRank(level string) int {
 	}
 }
 
-// verifyIntegrationLevel runs the §5.1 lines 41-44 declared-vs-observed
+// verifyIntegrationLevel runs the §5.1 declared-vs-observed
 // admission check once per runtime, after the runtime has booted (post
 // StartSession / ConfigureWorkspace) so the adapter has had the runtime's
 // first §4.7 lifecycle handshake.
@@ -100,7 +100,7 @@ func (b *Binder) verifyIntegrationLevel(ctx context.Context, cl observedLevelPro
 		return nil
 	}
 	if integrationLevelRank(observed) < declaredRank {
-		// spec: §5.1 line 42 — reject the first session assignment and log a
+		// spec: §5.1 — reject the first session assignment and log a
 		// structured error. Not recorded as verified so every assignment to
 		// the underperforming runtime keeps being rejected until it is fixed.
 		log.Printf("lenny-gateway: RUNTIME_LEVEL_UNDERPERFORMS runtime=%s declaredLevel=%s observedLevel=%s",
@@ -108,7 +108,7 @@ func (b *Binder) verifyIntegrationLevel(ctx context.Context, cl observedLevelPro
 		return &RuntimeLevelUnderperforms{Runtime: runtime, Declared: normalizeLevel(declared), Observed: observed}
 	}
 	if integrationLevelRank(observed) > declaredRank && b.IntegrationLevelUnderdeclared != nil {
-		// spec: §5.1 line 43 — the runtime delivers more than it declares.
+		// spec: §5.1 — the runtime delivers more than it declares.
 		b.IntegrationLevelUnderdeclared(runtime, normalizeLevel(declared), observed)
 	}
 	b.integrationVerified.Store(runtime, struct{}{})

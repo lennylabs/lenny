@@ -55,8 +55,7 @@ func spanStringAttr(s sdktrace.ReadOnlySpan, key string) (string, bool) {
 	return "", false
 }
 
-// TestStartSessionEmitsSessionStartSpan_spec_16_3 asserts the §16.3
-// line 341 Pod-emitted `session.start` span fires on a clean StartSession.
+// TestStartSessionEmitsSessionStartSpan_spec_16_3 asserts the §16.3 Pod-emitted `session.start` span fires on a clean StartSession.
 // This is the Go-side adapter OTel emitter F-16.3.6 was missing.
 func TestStartSessionEmitsSessionStartSpan_spec_16_3(t *testing.T) {
 	rec := installSpanRecorder(t)
@@ -85,7 +84,7 @@ func TestStartSessionSpanRecordsRuntimeStartError_spec_16_3(t *testing.T) {
 	rec := installSpanRecorder(t)
 	root := t.TempDir()
 	s := adapter.New("test")
-	s.WorkspaceRoot = root
+	s.WorkspaceBase = root
 	s.Runtime = &fakeRuntime{startErr: errors.New("runtime crashed")}
 
 	if _, err := s.StartSession(context.Background(), startReq("sess-1")); err == nil {
@@ -101,8 +100,7 @@ func TestStartSessionSpanRecordsRuntimeStartError_spec_16_3(t *testing.T) {
 	}
 }
 
-// TestAttachEmitsToolCallSpanPerInvocation_spec_16_3 asserts the §16.3
-// line 343 Pod-emitted `session.tool_call` span fires once per
+// TestAttachEmitsToolCallSpanPerInvocation_spec_16_3 asserts the §16.3 Pod-emitted `session.tool_call` span fires once per
 // adapter-local tool invocation, carrying the tool name attribute.
 func TestAttachEmitsToolCallSpanPerInvocation_spec_16_3(t *testing.T) {
 	rec := installSpanRecorder(t)
@@ -199,13 +197,13 @@ func TestAttachToolCallSpanRecordsToolError_spec_16_3(t *testing.T) {
 }
 
 // TestPrepareWorkspaceEmitsUploadSpan_spec_16_3 asserts the Pod half of
-// the §16.3 line 338 Gateway + Pod `session.upload` span: the adapter's
+// the §16.3 Gateway + Pod `session.upload` span: the adapter's
 // staging-stream RPC runs under a `session.upload` span carrying the
 // staged byte/file counts.
 func TestPrepareWorkspaceEmitsUploadSpan_spec_16_3(t *testing.T) {
 	rec := installSpanRecorder(t)
 	s := adapter.New("test")
-	s.StagingDir = t.TempDir()
+	s.WorkspaceBase = t.TempDir()
 	client, _ := adapterClient(t, s)
 
 	stream, err := client.PrepareWorkspace(context.Background())
@@ -213,9 +211,10 @@ func TestPrepareWorkspaceEmitsUploadSpan_spec_16_3(t *testing.T) {
 		t.Fatalf("PrepareWorkspace: %v", err)
 	}
 	if err := stream.Send(&adapterv1.PrepareWorkspaceRequest{
-		SessionId: &adapterv1.SessionId{Value: "sess-1"},
-		UploadRef: "u1",
-		Chunk:     []byte("hello upload"),
+		BindAttempt: "attempt-a",
+		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
+		UploadRef:   "u1",
+		Chunk:       []byte("hello upload"),
 	}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}

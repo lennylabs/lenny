@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// spec: §24.4 line 63 / §24.6 line 99 — the runbook-invoked CLI surface.
+// spec: §24.4 / §24.6 — the runbook-invoked CLI surface.
 // F-17.7.5. These commands back the warm-pool-exhaustion, redis-failure,
 // and redis-sentinel-failover runbook remediation steps.
 

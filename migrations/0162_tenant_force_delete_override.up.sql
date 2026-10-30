@@ -1,5 +1,4 @@
--- §12.8 lines 880-889 ("`--acknowledge-hold-override` admin action,
--- tenant scope"): a platform-admin force-delete of a tenant under active
+-- §12.8: a platform-admin force-delete of a tenant under active
 -- legal hold authorizes the Phase 3.5 escrow segregation rather than
 -- blocking. The override intent is durable on the tenant row so the
 -- §12.8 tenant-deletion controller, which reconstructs its deletion job

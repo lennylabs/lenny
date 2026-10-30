@@ -19,15 +19,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 )
 
 func TestGatewayRedisBreakerE2E(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	rd := containers.StartRedis(t, containers.RedisOptions{})
-	gw := gateway.StartWith(t, "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--redis-url=redis://"+rd.Addr+"/0")
 	base := gw.BaseURL()
 	ctx := context.Background()
 
@@ -75,10 +77,11 @@ func TestGatewayRedisBreakerE2E(t *testing.T) {
 // acquires its coordination lease in Redis within a sweep interval,
 // held by the gateway replica.
 func TestGatewayRedisCoordinationE2E(t *testing.T) {
+	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 
 	rd := containers.StartRedis(t, containers.RedisOptions{})
-	gw := gateway.StartWith(t, "--dev-mode",
+	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode",
 		"--redis-url=redis://"+rd.Addr+"/0",
 		"--coordination-interval=300ms")
 	ctx := context.Background()
@@ -130,7 +133,7 @@ func TestGatewayRedisCoordinationE2E(t *testing.T) {
 
 	// Within a few sweep intervals the coordination sweeper must have
 	// acquired the session's lease in Redis.
-	leaseKey := "t:default:lease:session:" + sid
+	leaseKey := leasestore.Key("default", sid)
 	deadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
 		holder, err := rd.Client.Get(ctx, leaseKey).Result()

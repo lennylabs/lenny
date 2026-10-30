@@ -21,7 +21,7 @@ import (
 // listSessions issues GET /v1/sessions with the supplied raw query and an
 // optional request mutator (e.g. to attach a Principal), returning the
 // decoded session ids in the §15.1 `{"items":[...]}` canonical
-// cursor-paginated envelope order (spec §15.1 lines 1228-1253).
+// cursor-paginated envelope order (spec §15.1).
 func listSessions(t *testing.T, h http.Handler, rawQuery string, mods ...func(*http.Request)) []sessionserver.SessionResponse {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions?"+rawQuery, nil)
@@ -52,7 +52,7 @@ func listIDs(rows []sessionserver.SessionResponse) []string {
 }
 
 // sessionPage is the canonical §15.1 cursor envelope the list endpoint
-// returns (spec §15.1 lines 1228-1253).
+// returns (spec §15.1).
 type sessionPage struct {
 	Items   []sessionserver.SessionResponse `json:"items"`
 	Cursor  string                          `json:"cursor"`
@@ -76,7 +76,7 @@ func getSessionPage(t *testing.T, h http.Handler, rawQuery string) sessionPage {
 	return page
 }
 
-// spec: §15.1 lines 1228-1253 — GET /v1/sessions returns the canonical
+// spec: §15.1 — GET /v1/sessions returns the canonical
 // cursor-paginated envelope. limit clamps the page, the cursor walks the
 // remainder exactly once in created_at:desc order, total reports the full
 // match count, and the last page carries no cursor. F-15.1.6.
@@ -89,7 +89,7 @@ func TestListSessionsCanonicalCursorEnvelope_spec_15_1_1228(t *testing.T) {
 			State: session.StateRunning, CreatedAt: time.Unix(int64(10+i), 0),
 		})
 	}
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	h := srv.Handler()
 
 	first := getSessionPage(t, h, "limit=2")
@@ -122,10 +122,10 @@ func TestListSessionsCanonicalCursorEnvelope_spec_15_1_1228(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 1236 — an unsupported sort field is rejected with
+// spec: §15.1 — an unsupported sort field is rejected with
 // VALIDATION_ERROR carrying details.fields[0].rule. F-15.1.6.
 func TestListSessionsRejectsUnknownSortField_spec_15_1_1236(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions?sort=bogus:asc", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -153,7 +153,7 @@ func TestListSessionsRejectsUnknownSortField_spec_15_1_1236(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 598 — GET /v1/sessions is filterable by labels. The
+// spec: §15.1 — GET /v1/sessions is filterable by labels. The
 // create path persists the §14 labels and the list `?label=k=v`
 // (repeatable, AND) filter narrows on them. F-15.1.15.
 func TestListFilterByLabels_spec_15_1_598(t *testing.T) {
@@ -162,7 +162,7 @@ func TestListFilterByLabels_spec_15_1_598(t *testing.T) {
 	_ = store.Create(ctx, sessionstore.Session{ID: "gold", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(3, 0), Labels: map[string]string{"team": "payments", "tier": "gold"}})
 	_ = store.Create(ctx, sessionstore.Session{ID: "silver", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(2, 0), Labels: map[string]string{"team": "payments", "tier": "silver"}})
 	_ = store.Create(ctx, sessionstore.Session{ID: "search", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0), Labels: map[string]string{"team": "search"}})
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	h := srv.Handler()
 
 	got := listSessions(t, h, "label=team=payments")
@@ -180,7 +180,7 @@ func TestListFilterByLabels_spec_15_1_598(t *testing.T) {
 	}
 }
 
-// spec: §15.1 line 598 — a platform-admin may scope the listing to another
+// spec: §15.1 — a platform-admin may scope the listing to another
 // tenant via `?tenant=`; a non-admin's `?tenant=` is ignored so they only
 // ever see their own tenant. F-15.1.15.
 func TestListTenantFilterPlatformAdmin_spec_15_1_598(t *testing.T) {
@@ -188,7 +188,7 @@ func TestListTenantFilterPlatformAdmin_spec_15_1_598(t *testing.T) {
 	ctx := context.Background()
 	_ = store.Create(ctx, sessionstore.Session{ID: "acme_s", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
 	_ = store.Create(ctx, sessionstore.Session{ID: "globex_s", TenantID: "globex", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	h := srv.Handler()
 
 	admin := func(req *http.Request) {
@@ -216,7 +216,7 @@ func TestListTenantFilterPlatformAdmin_spec_15_1_598(t *testing.T) {
 	}
 }
 
-// spec: §15.1 lines 652, 661 — derive_failure audit rows are included in
+// spec: §15.1 — derive_failure audit rows are included in
 // GET /v1/sessions by default and excluded only with
 // `?includeDeriveFailures=false`. F-15.1.14.
 func TestListIncludeDeriveFailures_spec_15_1_652(t *testing.T) {
@@ -224,7 +224,7 @@ func TestListIncludeDeriveFailures_spec_15_1_652(t *testing.T) {
 	ctx := context.Background()
 	_ = store.Create(ctx, sessionstore.Session{ID: "live", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(2, 0)})
 	_ = store.Create(ctx, sessionstore.Session{ID: "df", TenantID: "acme", State: session.StateFailed, FailureClass: session.FailureClassDeriveFailure, CreatedAt: time.Unix(1, 0)})
-	srv := sessionserver.New(store, sessionserver.Options{})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	h := srv.Handler()
 
 	// Default includes the derive_failure row.
@@ -243,10 +243,10 @@ func TestListIncludeDeriveFailures_spec_15_1_652(t *testing.T) {
 	}
 }
 
-// spec: §14 line 311 — a label key that is empty is rejected at the create
+// spec: §14 — a label key that is empty is rejected at the create
 // boundary so the on-row selector set stays well-formed. F-15.1.15.
 func TestCreateRejectsEmptyLabelKey_spec_14_311(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		Labels:     map[string]string{"": "oops"},
@@ -260,10 +260,10 @@ func TestCreateRejectsEmptyLabelKey_spec_14_311(t *testing.T) {
 	}
 }
 
-// spec: §14 line 311 / §15.1 line 598 — labels submitted at create survive
+// spec: §14 / §15.1 — labels submitted at create survive
 // the round trip onto the GET /v1/sessions/{id} envelope. F-15.1.15.
 func TestCreateLabelsRoundTripOnGet_spec_15_1_598(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	h := srv.Handler()
 	rr := createRequest(t, h, sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",

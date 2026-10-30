@@ -12,10 +12,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/alerting/alertingmetrics"
 )
 
-// spec: §25.4 line 1339 / §25.13 lines 4833-4834 — the leader-only
+// spec: §25.4 / §25.13 — the leader-only
 // bundleRules reconciler re-stamps the bundled-rules observability
-// gauges from the chart-supplied format set and override count. §25.13
-// line 4816 forbids runtime rule mutation, so the reconciler only
+// gauges from the chart-supplied format set and override count. §25.13 forbids runtime rule mutation, so the reconciler only
 // re-asserts the metrics; it never re-renders rules.
 func TestBundleRulesReconciler_StampsGauges_spec_25_4_17(t *testing.T) {
 	reg := prometheus.NewRegistry()
@@ -48,7 +47,7 @@ func TestBundleRulesReconciler_StampsGauges_spec_25_4_17(t *testing.T) {
 	}
 }
 
-// spec: §25.13 line 4705 — the format selector is closed-enum; a single
+// spec: §25.13 — the format selector is closed-enum; a single
 // rendered format leaves the other at 0 rather than absent.
 func TestBundleRulesReconciler_SingleFormat_spec_25_4_17(t *testing.T) {
 	reg := prometheus.NewRegistry()

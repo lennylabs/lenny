@@ -29,7 +29,7 @@ func restoreOperationsServer(t *testing.T, store *backup.MemStore) *opsserver.Se
 	})
 }
 
-// spec §25.4 lines 1694, 1707-1711: a running restore (an ops_restore_state
+// spec §25.4: a running restore (an ops_restore_state
 // row) appears in the Operations Inventory under kind "restore" in status
 // in_progress, with a decodable "restore-"-prefixed operationId and a
 // resources block pointing at the restore's status/resume endpoints. The
@@ -81,7 +81,7 @@ func TestOperationsInventoryListsRunningRestore(t *testing.T) {
 		t.Error("resources block must expose the restore/resume endpoint")
 	}
 	if op["progress"] == nil {
-		t.Error("a restore must carry a progress object in the inventory (spec §25.2 line 358)")
+		t.Error("a restore must carry a progress object in the inventory (spec §25.2)")
 	}
 
 	// The operationId is decodable: GET /v1/admin/operations/{id} resolves it.
@@ -95,7 +95,7 @@ func TestOperationsInventoryListsRunningRestore(t *testing.T) {
 	}
 }
 
-// spec §25.4 line 1811: a failed restore is included in the inventory
+// spec §25.4: a failed restore is included in the inventory
 // (under ?status=failed) because it requires operator resolution via
 // restore/resume; it is not silently dropped.
 func TestOperationsInventoryListsFailedRestore(t *testing.T) {

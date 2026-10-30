@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -57,6 +58,22 @@ type chunkedAdapter struct {
 	// store is the object store the adapter "PUTs" into: it records the
 	// object so the gateway's Stat confirm observes it.
 	store *blobstore.MemoryStore
+	// stall, while set, makes the adapter hold the stream open after
+	// stallAfterChunks chunks commit (zero holds it right after the Probe)
+	// until the gateway ends the attempt, standing in for a producer that
+	// never reaches its summary before the attempt's deadline.
+	stall            atomic.Bool
+	stallAfterChunks int
+}
+
+// holdUntilCancelled blocks until the gateway ends the stream when the
+// adapter is stalling at this point of the attempt.
+func (a *chunkedAdapter) holdUntilCancelled(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse], committed int) (bool, error) {
+	if !a.stall.Load() || committed != a.stallAfterChunks {
+		return false, nil
+	}
+	<-stream.Context().Done()
+	return true, stream.Context().Err()
 }
 
 func (a *chunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
@@ -78,6 +95,9 @@ func (a *chunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.Ch
 	}
 	var total int64
 	for i, ln := range a.chunkLens {
+		if held, err := a.holdUntilCancelled(stream, i); held {
+			return err
+		}
 		if err := stream.Send(&adapterv1.CheckpointResponse{
 			Msg: &adapterv1.CheckpointResponse_ChunkReady{ChunkReady: &adapterv1.ChunkReady{Index: uint32(i), Length: ln}},
 		}); err != nil {
@@ -119,6 +139,9 @@ func (a *chunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.Ch
 				}},
 			})
 		}
+	}
+	if held, err := a.holdUntilCancelled(stream, len(a.chunkLens)); held {
+		return err
 	}
 	return stream.Send(&adapterv1.CheckpointResponse{
 		Msg: &adapterv1.CheckpointResponse_Summary{Summary: &adapterv1.CheckpointSummary{
@@ -195,15 +218,6 @@ func newChunkReleaseSpy() *chunkReleaseSpy {
 	return &chunkReleaseSpy{softDeleted: map[string]bool{}, rows: map[string]int64{}}
 }
 
-// seedChunk registers a chunk object and its live catalog row so the release
-// path discovers it under the checkpoint's prefix and releases its bytes.
-func (s *chunkReleaseSpy) seedChunk(u blobstore.URI, size int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.objects = append(s.objects, u)
-	s.rows[u.String()] = size
-}
-
 func (s *chunkReleaseSpy) ListByPrefix(_ context.Context, u blobstore.URI) ([]blobstore.BlobInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -270,12 +284,6 @@ func (s *chunkReleaseSpy) listedCheckpoint(checkpointID string) bool {
 	return false
 }
 
-func (s *chunkReleaseSpy) freedBytes() int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.freed
-}
-
 // driverHarness wires a Checkpointer with the full seam set over a
 // chunked adapter and an in-memory object store, manifest store, and
 // quota counter.
@@ -290,11 +298,21 @@ type driverHarness struct {
 
 func newDriverHarness(t *testing.T, adapter *chunkedAdapter, limit int64) (*driverHarness, string) {
 	t.Helper()
+	return newDriverHarnessOnSlot(t, adapter, limit, "")
+}
+
+// newDriverHarnessOnSlot is newDriverHarness with the pod-side slot the
+// binding records. A concurrent pool records the session's own identifier
+// there and an exclusive bind leaves it empty, and no checkpoint path may
+// read the difference: the manifest row is keyed on the session alone
+// (spec: §10.1, §5.2).
+func newDriverHarnessOnSlot(t *testing.T, adapter *chunkedAdapter, limit int64, slotID string) (*driverHarness, string) {
+	t.Helper()
 	store := blobstore.NewMemoryStore(time.Now)
 	adapter.store = store
 	client := dialAdapter(t, adapter)
 	registry := podsession.NewRegistry()
-	registry.Put(&podsession.BindResult{SessionID: "s1", TenantID: "acme", Adapter: client})
+	registry.Put(&podsession.BindResult{SessionID: "s1", TenantID: "acme", SlotID: slotID, Adapter: client})
 	sessions := memstore.New()
 	runningSession(t, sessions, "acme", "s1")
 
@@ -317,7 +335,7 @@ func newDriverHarness(t *testing.T, adapter *chunkedAdapter, limit int64) (*driv
 }
 
 // seedRetainedTimeoutRow seeds a partial = true / manifest_reason = 'timeout'
-// row for the session's default slot, with its reservation already released on
+// row for the session, with its reservation already released on
 // its own deadline-fire arm. A deadline-fire (timeout) abort is the one arm
 // that retains its row active for the resume path, so it is the prior active
 // row a later attempt supersedes; the stream-truncation, adapter-crash,
@@ -329,7 +347,6 @@ func seedRetainedTimeoutRow(t *testing.T, h *driverHarness, tenantID, sessionID,
 		TenantID:              tenantID,
 		CheckpointID:          checkpointID,
 		SessionID:             sessionID,
-		SlotID:                partialmanifeststore.SlotDefault,
 		Partial:               true,
 		ManifestReason:        partialmanifeststore.ReasonTimeout,
 		ChunkObjectKeyPrefix:  "/" + tenantID + "/checkpoint/" + sessionID + "/" + checkpointID + "/",
@@ -341,18 +358,17 @@ func seedRetainedTimeoutRow(t *testing.T, h *driverHarness, tenantID, sessionID,
 }
 
 // seedAbandonedIntentRow seeds a partial = true / manifest_reason =
-// 'in_progress' row for the session's default slot with its reservation still
+// 'in_progress' row for the session with its reservation still
 // outstanding. An abandoned intent row is one a prior attempt wrote at
 // intent-row INSERT and never carried to a terminal arm, so no finaliseAbort
-// arm ever counted it on the partial counter. It is active for the (session,
-// slot), so the next attempt's supersede path finds and fences it.
+// arm ever counted it on the partial counter. It is the session's active
+// row, so the next attempt's supersede path finds and fences it.
 func seedAbandonedIntentRow(t *testing.T, h *driverHarness, tenantID, sessionID, checkpointID string) {
 	t.Helper()
 	if err := h.manifests.Put(context.Background(), partialmanifeststore.Record{
 		TenantID:             tenantID,
 		CheckpointID:         checkpointID,
 		SessionID:            sessionID,
-		SlotID:               partialmanifeststore.SlotDefault,
 		Partial:              true,
 		ManifestReason:       partialmanifeststore.ReasonInProgress,
 		ChunkObjectKeyPrefix: "/" + tenantID + "/checkpoint/" + sessionID + "/" + checkpointID + "/",
@@ -489,7 +505,7 @@ func TestDriverAbortsWhenQuotaLimitLookupFails_spec_11_2(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 157 — the intent row is partial = true from INSERT and
+// spec: §10.1.7 — the intent row is partial = true from INSERT and
 // stays partial until every declared byte is confirmed. A stream that
 // truncates before the Summary leaves partial = true and the sweep removes
 // the confirmed chunks.
@@ -548,7 +564,7 @@ func TestDriverAbortSweepSoftDeletesRowAfterPrefixEmpty_spec_4_4(t *testing.T) {
 	}
 }
 
-// spec: §4.4 "Checkpoint abort cleanup"; §4.4 line 248 — when a chunk
+// spec: §4.4 "Checkpoint abort cleanup"; §4.4 — when a chunk
 // DeleteObject fails during the abort sweep the gateway increments
 // lenny_checkpoint_orphaned_objects_total (labeled by pool and trigger) for
 // that object and leaves the manifest row active (deleted_at IS NULL) so the
@@ -595,7 +611,7 @@ func TestDriverAbortSweepCountsOrphanOnDeleteFailure_spec_4_4(t *testing.T) {
 	}
 }
 
-// spec: §16.1 line 195 — every terminal abort arm emits
+// spec: §16.1 — every terminal abort arm emits
 // lenny_checkpoint_partial_total once, with recovered = false, the
 // manifest_reason that named the arm, and the trigger the attempt was
 // started with. The Checkpoint entry point drives a periodic attempt, so the
@@ -634,7 +650,7 @@ func TestDriverEmitsPartialCounterOnAbortArm_spec_16_1(t *testing.T) {
 	}
 }
 
-// spec: §16.1 line 195 — the partial counter increments once per partial-
+// spec: §16.1 — the partial counter increments once per partial-
 // manifest row finalised. An attempt whose stream errors before onProbe
 // commits the intent row finalises zero rows, so no lenny_checkpoint_partial_
 // total is emitted.
@@ -660,7 +676,7 @@ func TestDriverEmitsNoPartialCounterWhenNoIntentRowWritten_spec_16_1(t *testing.
 	}
 }
 
-// spec: §16.1 line 195 — the success arm (onSummary, partial = false) is not
+// spec: §16.1 — the success arm (onSummary, partial = false) is not
 // a partial-manifest write, so it emits no lenny_checkpoint_partial_total.
 //
 // diagnosis: an emission on the complete arm would count a successful full
@@ -682,7 +698,7 @@ func TestDriverEmitsNoPartialCounterOnCompleteArm_spec_16_1(t *testing.T) {
 	}
 }
 
-// spec: §16.1 line 195 — the supersede arm finalises an abandoned in_progress
+// spec: §16.1 — the supersede arm finalises an abandoned in_progress
 // intent row manifest_reason = 'superseded', so it emits
 // lenny_checkpoint_partial_total once with that reason (recovered = false),
 // alongside the supersede-specific counter. An abandoned intent is a row no
@@ -705,7 +721,42 @@ func TestDriverEmitsPartialCounterOnSupersedeArm_spec_16_1(t *testing.T) {
 	}
 }
 
-// spec: §16.1 line 195 — the partial counter increments once per finalised
+// spec: §10.1.7 (the supersede-on-write set is scoped to the session),
+// §10.1 (the manifest row is keyed on session_id), §5.2 (a session-mode
+// slot's identifier is its session's identifier). The upload driver's
+// supersede lookup is addressed by the session alone, so it finds the
+// session's prior active row whatever the pod-side slot the binding
+// records. A lookup that also matched on a per-pod identifier missed the
+// prior row whenever the two disagreed, leaking its reservation and
+// orphaning its chunk objects.
+func TestDriverSupersedeLookupIgnoresTheBindingSlot_spec_10_1_7(t *testing.T) {
+	// The binding records a slot, while the prior active row is addressed by
+	// the session alone.
+	h, sid := newDriverHarnessOnSlot(t, &chunkedAdapter{
+		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
+	}, 1<<30, "s1")
+	seedAbandonedIntentRow(t, h, "acme", sid, "cp-intent")
+	m := &captureDriverMetrics{}
+	h.cp.DriverMetrics = m
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	if superseded := countSupersededPartialEmissions(t, m); superseded != 1 {
+		t.Fatalf("superseded partial-counter emissions = %d, want 1 (the prior row is in scope whatever slot the binding records)", superseded)
+	}
+	prior, err := h.manifests.Get(context.Background(), "acme", "cp-intent")
+	if err != nil {
+		t.Fatalf("Get prior row: %v", err)
+	}
+	if prior.DeletedAt.IsZero() {
+		t.Error("the prior active row survived the supersede; its reservation and chunk objects are orphaned")
+	}
+	if prior.ReservationReleasedAt.IsZero() {
+		t.Error("the superseded attempt's reservation was never released")
+	}
+}
+
+// spec: §16.1 — the partial counter increments once per finalised
 // partial-manifest row. A deadline-fire (timeout) row is counted on its own
 // finaliseAbort arm and then retained active for the resume path. When the next
 // attempt fences that still-active row, the supersede arm must NOT count it a
@@ -758,7 +809,7 @@ func TestDriverAbortsOnOverSizeConfirm_spec_11_2(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 139 / §13.2 — a declared chunk length larger than the
+// spec: §10.1.7 / §13.2 — a declared chunk length larger than the
 // gateway-chosen chunk_size_bytes gets no capability; the attempt aborts
 // with stream_truncated before anything is signed, so the bytes a
 // capability can carry are a gateway constant.
@@ -780,16 +831,16 @@ func TestDriverRejectsOverChunkSizeDeclaration_spec_10_1(t *testing.T) {
 	if rec.ChunkCount != 0 {
 		t.Errorf("chunk_count = %d, want 0 (no grant minted)", rec.ChunkCount)
 	}
-	// spec: §10.1 line 132 — a zero-chunk finalisation soft-deletes the row
+	// spec: §10.1.7 — a zero-chunk finalisation soft-deletes the row
 	// in the same transaction, so an empty partial manifest is never left
-	// active occupying the (session, slot) slot for a later supersede or the
-	// §12.5 backstop to reclaim.
+	// active occupying the session's active-partial slot for a later
+	// supersede or the §12.5 backstop to reclaim.
 	if rec.DeletedAt.IsZero() {
 		t.Errorf("zero-chunk abort left the manifest row active, want soft-deleted at finalisation")
 	}
 }
 
-// spec: §12.5 line 303 — a kms:-coded object-store rejection maps onto a
+// spec: §12.5 — a kms:-coded object-store rejection maps onto a
 // classification-control violation: no retry, the KMS telemetry fires, and
 // the checkpoint fails.
 func TestDriverMapsKMSRejectionToControlViolation_spec_12_5(t *testing.T) {
@@ -813,7 +864,7 @@ func TestDriverMapsKMSRejectionToControlViolation_spec_12_5(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 255 — a workspace-size-probe rejection increments
+// spec: §4.4 — a workspace-size-probe rejection increments
 // lenny_checkpoint_size_exceeded_total, emits the checkpoint.skipped
 // session event, and writes no manifest row.
 func TestDriverEmitsSkippedOnSizeLimit_spec_4_4(t *testing.T) {
@@ -889,7 +940,7 @@ func TestDriverCountersCarrySessionBoundPool_spec_16_1(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 35 — reservation release is exactly-once and guarded:
+// spec: §11.2 — reservation release is exactly-once and guarded:
 // when a next attempt supersedes a retained 'timeout' resume-aid row whose
 // reservation was already released on its own deadline-fire arm, the guarded
 // UPDATE reports rows_affected == 0 and the tenant storage counter is NOT
@@ -908,7 +959,7 @@ func TestDriverSupersedeDoesNotDoubleReleaseReservation_spec_11_2(t *testing.T) 
 		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
 	}, 1<<30)
 
-	// Inject a retained 'timeout' resume-aid row for the same (session, slot)
+	// Inject a retained 'timeout' resume-aid row for the same session
 	// whose reservation was already released on its own deadline-fire arm
 	// (ReservationReleasedAt set, reserved 30, 10 bytes confirmed). Those 10
 	// confirmed bytes are the only storage this row still accounts for, so
@@ -918,7 +969,6 @@ func TestDriverSupersedeDoesNotDoubleReleaseReservation_spec_11_2(t *testing.T) 
 		TenantID:               "acme",
 		CheckpointID:           "cp-timeout",
 		SessionID:              sid,
-		SlotID:                 partialmanifeststore.SlotDefault,
 		Partial:                true,
 		ManifestReason:         partialmanifeststore.ReasonTimeout,
 		ChunkObjectKeyPrefix:   "/acme/checkpoint/s1/cp-timeout/",
@@ -950,22 +1000,22 @@ func TestDriverSupersedeDoesNotDoubleReleaseReservation_spec_11_2(t *testing.T) 
 	}
 }
 
-// spec: §10.1 lines 137, 155 — the supersede predicate fences on
+// spec: §10.1 — the supersede predicate fences on
 // coordination_generation. A prior active row at a strictly higher
 // generation is a fenced newer writer, so a stale coordinator (a lower
 // incoming generation) must not release its reservation or sweep its chunk
 // objects; the stale attempt's own intent-row Put is rejected instead.
 //
 // diagnosis: supersedePriorAttempts released the prior row's reservation and
-// swept its chunk prefix under only a slot / checkpoint-id guard, with no
+// swept its chunk prefix under only a checkpoint-id guard, with no
 // coordination_generation check, so a stale coordinator destroyed a live
 // newer writer's state before its own Put rejected the write as stale.
 // Against the pre-fix code the higher-generation row's reservation is
 // released and its prefix swept; the fix leaves both intact.
 func TestDriverSupersedeSkipsHigherGenerationActiveRow_spec_10_1(t *testing.T) {
-	// The incoming attempt runs at the session's generation 0 (runningSession
-	// seeds generation 0), so it is stale against a prior active row at
-	// generation 1.
+	// The incoming attempt runs at the session's generation 1 (runningSession
+	// creates the row with the field unset and the store baselines it at 1),
+	// so it is stale against a prior active row at generation 2.
 	h, sid := newDriverHarness(t, &chunkedAdapter{
 		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
 	}, 1<<30)
@@ -977,8 +1027,7 @@ func TestDriverSupersedeSkipsHigherGenerationActiveRow_spec_10_1(t *testing.T) {
 		TenantID:               "acme",
 		CheckpointID:           "cp-higher",
 		SessionID:              sid,
-		SlotID:                 partialmanifeststore.SlotDefault,
-		CoordinationGeneration: 1, // a fenced newer writer
+		CoordinationGeneration: 2, // a fenced newer writer
 		ChunkObjectKeyPrefix:   higherPrefix,
 		ReservedBytes:          50,
 	}); err != nil {
@@ -1010,95 +1059,6 @@ func TestDriverSupersedeSkipsHigherGenerationActiveRow_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 137 — supersede is scoped to (session_id, slot_id). In a
-// multi-slot session the driver releases the prior active row for the exact
-// slot it is superseding, not a session-wide winner that may belong to a
-// different slot.
-//
-// diagnosis: supersedePriorAttempts resolved the prior row via the
-// session-scoped LatestActive, which returns the highest-generation row
-// across every slot. With a higher-generation row active on another slot,
-// the release skipped on the slot guard while Put still soft-deleted this
-// slot's prior row, leaking its reservation and orphaning its chunks.
-// Against the pre-fix code the target slot's row is never released; the fix
-// releases it and sweeps its chunks.
-func TestDriverSupersedeReleasesTargetSlotPriorRow_spec_10_1(t *testing.T) {
-	h, sid := newDriverHarness(t, &chunkedAdapter{
-		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
-	}, 1<<30)
-	m := &captureDriverMetrics{}
-	h.cp.DriverMetrics = m
-
-	// The incoming attempt targets the default slot at generation 0. A prior
-	// active row sits on the default slot (the row it must supersede), and a
-	// higher-generation row sits on a different slot (the session-wide
-	// selector's winner).
-	const targetPrefix = "/acme/checkpoint/s1/cp-target/"
-	if err := h.manifests.Put(context.Background(), partialmanifeststore.Record{
-		TenantID:             "acme",
-		CheckpointID:         "cp-target",
-		SessionID:            sid,
-		SlotID:               partialmanifeststore.SlotDefault,
-		ChunkObjectKeyPrefix: targetPrefix,
-		ReservedBytes:        40,
-	}); err != nil {
-		t.Fatalf("seed target-slot active row: %v", err)
-	}
-	if err := h.manifests.Put(context.Background(), partialmanifeststore.Record{
-		TenantID:               "acme",
-		CheckpointID:           "cp-other",
-		SessionID:              sid,
-		SlotID:                 "slot-other",
-		CoordinationGeneration: 1, // higher generation: the session-wide selector's winner
-		ChunkObjectKeyPrefix:   "/acme/checkpoint/s1/cp-other/",
-		ReservedBytes:          40,
-	}); err != nil {
-		t.Fatalf("seed other-slot active row: %v", err)
-	}
-	// Seed a confirmed chunk (object + live catalog row) under the target
-	// slot's prefix so the supersede release must run it through the cataloging
-	// decorator. Against a plain prefix delete the row stays live and its bytes
-	// stay charged; the fix soft-deletes the row and frees the bytes.
-	h.release.seedChunk(blobstore.URI{
-		TenantID: "acme", ObjectType: blobstore.ObjectTypeCheckpoint,
-		SessionID: sid, PartID: "cp-target/chunk-00000.tar",
-	}, 40)
-
-	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
-		t.Fatalf("Checkpoint: %v", err)
-	}
-
-	// The target-slot prior row's reservation is released and its prefix swept.
-	target, err := h.manifests.Get(context.Background(), "acme", "cp-target")
-	if err != nil {
-		t.Fatalf("get target-slot row: %v", err)
-	}
-	if target.ReservationReleasedAt.IsZero() {
-		t.Errorf("target-slot prior row reservation not released; the supersede release missed it")
-	}
-	if !h.release.listedCheckpoint("cp-target") {
-		t.Errorf("target-slot prior row chunk prefix not swept")
-	}
-	if h.release.freedBytes() != 40 {
-		t.Errorf("target-slot chunk bytes freed = %d, want 40 (the confirmed chunk released, not orphaned)", h.release.freedBytes())
-	}
-	if m.superseded != 1 {
-		t.Errorf("supersede counter fired %d times, want 1", m.superseded)
-	}
-	// The other slot's row is untouched: it is a different slot the incoming
-	// attempt does not supersede.
-	other, err := h.manifests.Get(context.Background(), "acme", "cp-other")
-	if err != nil {
-		t.Fatalf("get other-slot row: %v", err)
-	}
-	if !other.ReservationReleasedAt.IsZero() {
-		t.Errorf("other-slot row reservation released, want untouched (different slot)")
-	}
-	if !other.DeletedAt.IsZero() {
-		t.Errorf("other-slot row soft-deleted, want left active (different slot)")
-	}
-}
-
 // ctxHonoringManifests fails Finalise and ReleaseReservation when the
 // supplied context is already cancelled or expired, mirroring pgstore and
 // storagequota (which honour ctx) rather than the ctx-ignoring MemoryStore.
@@ -1122,7 +1082,7 @@ func (s ctxHonoringManifests) ReleaseReservation(ctx context.Context, tenantID, 
 	return s.MemoryStore.ReleaseReservation(ctx, tenantID, checkpointID)
 }
 
-// spec: §10.1 line 132 — every abort arm finalises the intent row
+// spec: §10.1.7 — every abort arm finalises the intent row
 // partial = true with its manifest_reason and releases the reservation the
 // attempt did not keep, even though a latched abort cancels the attempt's
 // stream context before the terminal handler runs.
@@ -1160,7 +1120,7 @@ func TestDriverAbortFinalisesOnDetachedContext_spec_10_1(t *testing.T) {
 	}
 }
 
-// spec: §11.2 line 35 — reservation release is exactly-once and guarded, and
+// spec: §11.2 — reservation release is exactly-once and guarded, and
 // a config with Quota wired but QuotaLimitFor nil disables reservation by
 // contract: no Reserve runs, so no abort-arm release may decrement the tenant
 // counter even though the intent row records a probed reserved_bytes.
@@ -1202,7 +1162,7 @@ func (s failingPutManifests) Put(context.Context, partialmanifeststore.Record) e
 	return fmt.Errorf("failingPutManifests: put rejected")
 }
 
-// spec: §11.2 line 35 — the early-abort reservation release on an intent-row
+// spec: §11.2 — the early-abort reservation release on an intent-row
 // Put failure is exactly-once and guarded: with reservation disabled
 // (QuotaLimitFor nil) no Reserve ran, so releaseReservation must not decrement
 // the tenant counter.
@@ -1265,7 +1225,7 @@ func (a *preProbeChunkAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapte
 	return nil
 }
 
-// spec: §10.1 line 130 — the gateway mints a chunk capability only after the
+// spec: §10.1.7 — the gateway mints a chunk capability only after the
 // intent-row INSERT commits. A ChunkReady that arrives before the Probe wrote
 // the row gets an Abort, not a Grant, so no PUT can orphan an object under a
 // checkpoint_id with no manifest row.
@@ -1379,7 +1339,7 @@ func (p *countingPresigner) count() int {
 	return p.signed
 }
 
-// spec: §10.1 line 130 — the chunk-capability gate is unconditional: no PUT
+// spec: §10.1.7 — the chunk-capability gate is unconditional: no PUT
 // capability may be minted before an intent row commits. A gateway with a
 // Presigner wired but no manifest store writes no intent row (onProbe returns
 // early), so a ChunkReady must still receive an Abort and sign nothing;
@@ -1500,7 +1460,7 @@ func latestManifest(t *testing.T, h *driverHarness, tenantID, sessionID string) 
 		}
 	}
 	// A zero-chunk abort soft-deletes its row in the finalising transaction
-	// (§10.1 line 132), so LatestActive no longer returns it and the failed
+	// (§10.1.7), so LatestActive no longer returns it and the failed
 	// attempt left no session ref. Recover the tombstoned row so the test can
 	// assert its finalised disposition.
 	deleted, derr := h.manifests.ListSoftDeletedBefore(context.Background(), time.Now().Add(time.Hour))
@@ -1520,3 +1480,160 @@ func latestManifest(t *testing.T, h *driverHarness, tenantID, sessionID string) 
 }
 
 var _ = checkpoint.TriggerPeriodic
+
+// spec: §10.1.7 (supersede is scoped to (tenant_id, session_id)), §5.2 (a
+// session-mode slot's identifier is its session's identifier, so the session
+// identifier is the whole scoping key). The upload driver reads the row it
+// supersedes through the session-keyed active-partial selector. A co-tenant
+// session's active partial row and a same-identifier session in another
+// tenant are both outside that scope, so a fresh attempt on one session
+// supersedes its own prior attempt and leaves every neighbouring row active.
+// diagnosis: the supersede lookup resolved a row outside (tenant_id,
+// session_id) — a wider selector destroys another session's live attempt, and
+// a narrower one leaves the superseded row active and orphans its
+// reservation.
+func TestDriverSupersedeLookupScopedToTenantAndSession_spec_10_1(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{
+		probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1,
+	}, 1<<30)
+	// The session's own abandoned attempt, plus two neighbours a mis-scoped
+	// selector would reach: a co-tenant session, and another tenant carrying
+	// this session's identifier.
+	seedAbandonedIntentRow(t, h, "acme", sid, "cp-own-prior")
+	seedAbandonedIntentRow(t, h, "acme", "s2", "cp-co-tenant-session")
+	seedAbandonedIntentRow(t, h, "globex", sid, "cp-other-tenant")
+
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+
+	prior, err := h.manifests.Get(context.Background(), "acme", "cp-own-prior")
+	if err != nil {
+		t.Fatalf("Get the session's prior row: %v", err)
+	}
+	if prior.DeletedAt.IsZero() {
+		t.Errorf("the session's own prior attempt is still active; the supersede lookup did not resolve it")
+	}
+	if prior.ManifestReason != partialmanifeststore.ReasonSuperseded {
+		t.Errorf("prior row manifest_reason = %q, want superseded", prior.ManifestReason)
+	}
+	// The supersede arm releases the reservation of exactly the row the
+	// session-keyed lookup resolved, so the release lands here and nowhere
+	// else.
+	if prior.ReservationReleasedAt.IsZero() {
+		t.Errorf("the session's own prior attempt kept its reservation; the supersede lookup resolved a different row")
+	}
+
+	for _, n := range []struct {
+		tenantID, sessionID, checkpointID string
+	}{
+		{"acme", "s2", "cp-co-tenant-session"},
+		{"globex", sid, "cp-other-tenant"},
+	} {
+		rec, err := h.manifests.Get(context.Background(), n.tenantID, n.checkpointID)
+		if err != nil {
+			t.Fatalf("Get neighbouring row %s/%s: %v", n.tenantID, n.checkpointID, err)
+		}
+		if !rec.DeletedAt.IsZero() {
+			t.Errorf("neighbouring row %s/%s was soft-deleted; the supersede lookup reached outside (tenant_id, session_id)", n.tenantID, n.checkpointID)
+		}
+		if rec.ManifestReason != partialmanifeststore.ReasonInProgress {
+			t.Errorf("neighbouring row %s/%s manifest_reason = %q, want in_progress (untouched)", n.tenantID, n.checkpointID, rec.ManifestReason)
+		}
+		if !rec.ReservationReleasedAt.IsZero() {
+			t.Errorf("neighbouring row %s/%s had its reservation released; the supersede lookup reached outside (tenant_id, session_id)", n.tenantID, n.checkpointID)
+		}
+	}
+}
+
+// TestSealIntentRowCarriesTheSealWindowDeadline_spec_10_1_7 pins the intent
+// row's checkpoint_timeout_at on a seal attempt: with Checkpointer.Deadline
+// zero, as production leaves it, the row records the deadline of the
+// context the seal runs on. Before the fix the row recorded its own start
+// time, so the §12.5 backstop could reclaim a live seal's row and chunks.
+// spec: 10.1.7 (preStop Hook Drain), 4.4.3 (Checkpoint Quiescence, Timeout, and Abort Handling), 7.1 (Normal Flow)
+func TestSealIntentRowCarriesTheSealWindowDeadline_spec_10_1_7(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{probeBytes: 10, chunkLens: []int64{10}, truncateAfter: -1}, 1<<30)
+	h.cp.Deadline = 0
+	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Minute)
+	defer cancel()
+	want, _ := ctx.Deadline()
+
+	if err := h.cp.Seal(ctx, "acme", sid); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	rec := latestManifest(t, h, "acme", sid)
+	if d := rec.CheckpointTimeoutAt.Sub(want); d < -time.Second || d > time.Second {
+		t.Fatalf("checkpoint_timeout_at = %v, want the seal context deadline %v (started %v)",
+			rec.CheckpointTimeoutAt, want, rec.CheckpointStartedAt)
+	}
+}
+
+// TestPeriodicIntentRowDeadlineIsTheCheckpointTimeout_spec_4_4_3 pins the
+// deadline of a periodic attempt on a context with no deadline and a zero
+// Checkpointer.Deadline: the attempt runs under the §4.4 60-second
+// checkpoint timeout and its intent row records start plus 60 s. Before the
+// fix the row's deadline equalled its start.
+// spec: 4.4.3 (Checkpoint Quiescence, Timeout, and Abort Handling), 10.1.7 (preStop Hook Drain), 12.5 (Artifact Store)
+func TestPeriodicIntentRowDeadlineIsTheCheckpointTimeout_spec_4_4_3(t *testing.T) {
+	h, sid := newDriverHarness(t, &chunkedAdapter{probeBytes: 10, chunkLens: []int64{10}, truncateAfter: -1}, 1<<30)
+	h.cp.Deadline = 0
+
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	rec := latestManifest(t, h, "acme", sid)
+	got := rec.CheckpointTimeoutAt.Sub(rec.CheckpointStartedAt)
+	if got <= checkpoint.CheckpointTimeout-time.Second || got > checkpoint.CheckpointTimeout {
+		t.Fatalf("checkpoint_timeout_at - checkpoint_started_at = %v, want the %v checkpoint timeout",
+			got, checkpoint.CheckpointTimeout)
+	}
+}
+
+// TestDeadlineCutAttemptRetainsItsRowForTheNextSupersede_spec_4_4_3 pins
+// the deadline-fire arm on an attempt bounded by its context rather than by
+// Checkpointer.Deadline: the cut attempt finalises its row timeout with the
+// row and its chunks retained, and the next attempt's supersede step
+// reclaims them.
+// spec: 4.4.3 (Checkpoint Quiescence, Timeout, and Abort Handling), 10.1.7 (preStop Hook Drain), 12.5 (Artifact Store)
+func TestDeadlineCutAttemptRetainsItsRowForTheNextSupersede_spec_4_4_3(t *testing.T) {
+	adapter := &chunkedAdapter{probeBytes: 20, chunkLens: []int64{10, 10}, truncateAfter: -1, stallAfterChunks: 1}
+	adapter.stall.Store(true)
+	h, sid := newDriverHarness(t, adapter, 1<<30)
+	h.cp.Deadline = 0
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if err := h.cp.Checkpoint(ctx, "acme", sid); err == nil {
+		t.Fatal("Checkpoint succeeded though the adapter stalled past the attempt deadline")
+	}
+	cut, err := h.manifests.LatestActive(context.Background(), "acme", sid)
+	if err != nil {
+		t.Fatalf("the deadline-cut row is not active: %v", err)
+	}
+	if cut.ManifestReason != partialmanifeststore.ReasonTimeout || !cut.Partial {
+		t.Fatalf("deadline-cut row = partial %v reason %q, want partial timeout", cut.Partial, cut.ManifestReason)
+	}
+	if !cut.DeletedAt.IsZero() {
+		t.Fatal("deadline-cut row was soft-deleted; a deadline fire retains its row for resume")
+	}
+	if h.release.listedCheckpoint(cut.CheckpointID) {
+		t.Fatal("the deadline-cut attempt swept its own chunks; a deadline fire retains them")
+	}
+
+	adapter.stall.Store(false)
+	if err := h.cp.Checkpoint(context.Background(), "acme", sid); err != nil {
+		t.Fatalf("next Checkpoint: %v", err)
+	}
+	superseded, err := h.manifests.Get(context.Background(), "acme", cut.CheckpointID)
+	if err != nil {
+		t.Fatalf("Get superseded row: %v", err)
+	}
+	if superseded.DeletedAt.IsZero() && superseded.ManifestReason != partialmanifeststore.ReasonSuperseded {
+		t.Fatalf("deadline-cut row after the next attempt = reason %q deleted %v, want it superseded",
+			superseded.ManifestReason, superseded.DeletedAt)
+	}
+	if !h.release.listedCheckpoint(cut.CheckpointID) {
+		t.Error("the next attempt's supersede did not reclaim the deadline-cut row's chunks")
+	}
+}

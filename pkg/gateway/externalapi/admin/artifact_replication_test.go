@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
-// spec: §25.11 lines 3898-3899 — POST/GET
+// spec: §25.11 — POST/GET
 // /v1/admin/artifact-replication/{region}/{resume,status}. F-25.11.1.
 
 // fakeArtifactReplication is an in-memory admin.ArtifactReplicationController.

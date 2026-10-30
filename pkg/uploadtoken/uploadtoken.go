@@ -28,7 +28,7 @@
 //     gateway's Rotator (see rotator.go) drives the 24h rotation
 //     cadence and the overlap-window sweep.
 //
-// **Secret-credential handling — gateway side.** Per §7.1 line 63 the
+// **Secret-credential handling — gateway side.** Per §7.1 the
 // uploadToken is a secret credential: clients MUST NOT log it, embed
 // it in URLs, or include it in client-side error reports. On the
 // gateway side this package is the sole holder of the plaintext

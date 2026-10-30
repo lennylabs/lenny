@@ -236,7 +236,7 @@ func TestStateStoreSweep(t *testing.T) {
 	}
 }
 
-// spec: §9.3 line 157 — pending state entries have TTL=10 min. The
+// spec: §9.3 — pending state entries have TTL=10 min. The
 // in-memory store grows monotonically without a periodic Sweep; the
 // gateway main schedules one every minute under the watchdog. This
 // test asserts that repeated periodic Sweep calls reclaim consumed and

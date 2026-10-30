@@ -122,13 +122,12 @@ func TestBootstrapHappyPath(t *testing.T) {
 	}
 }
 
-// TestBootstrapSkipsDifferingFieldsWithoutForceUpdate covers the §17.6
-// line 450 upsert table: an existing resource whose seed fields differ is
+// TestBootstrapSkipsDifferingFieldsWithoutForceUpdate covers the §17.6 upsert table: an existing resource whose seed fields differ is
 // left unchanged (skip) unless --force-update is supplied. The skip is
-// not a failure (HTTP 200), carries the §15.1 line 1007 SEED_CONFLICT
+// not a failure (HTTP 200), carries the §15.1 SEED_CONFLICT
 // code, and lists the conflicting fields.
 //
-// spec: §17.6 lines 450-451; §15.1 line 1007.
+// spec: §17.6; §15.1.
 func TestBootstrapSkipsDifferingFieldsWithoutForceUpdate_spec_17_6_450(t *testing.T) {
 	router, tenants, runtimes, _, _ := newBootstrapRouter(t)
 	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme", DisplayName: "Old name"})
@@ -172,11 +171,10 @@ func TestBootstrapSkipsDifferingFieldsWithoutForceUpdate_spec_17_6_450(t *testin
 	}
 }
 
-// TestBootstrapForceUpdateOverwritesDifferingFields covers the §17.6 line
-// 450 with-force-update column: ?forceUpdate=true replaces differing
+// TestBootstrapForceUpdateOverwritesDifferingFields covers the §17.6 with-force-update column: ?forceUpdate=true replaces differing
 // fields on an existing resource.
 //
-// spec: §17.6 line 450.
+// spec: §17.6.
 func TestBootstrapForceUpdateOverwritesDifferingFields_spec_17_6_450(t *testing.T) {
 	router, tenants, runtimes, _, _ := newBootstrapRouter(t)
 	_ = tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme", DisplayName: "Old name"})
@@ -298,12 +296,12 @@ func TestBootstrapAuditCarriesPerEntryErrors_spec_24_1_R6(t *testing.T) {
 	}
 }
 
-// TestBootstrapDryRunValidatesWithoutPersisting covers §15.1 line 1140:
+// TestBootstrapDryRunValidatesWithoutPersisting covers §15.1:
 // ?dryRun=true runs full validation, persists nothing, sets the
 // X-Dry-Run response header, and (per the bootstrap exception) still
 // emits the platform.bootstrap_applied audit event with dryRun: true.
 //
-// spec: §15.1 lines 863, 1140; §17.6 line 419.
+// spec: §15.1; §17.6.
 func TestBootstrapDryRunValidatesWithoutPersisting_spec_15_1_1140(t *testing.T) {
 	router, tenants, runtimes, users, audit := newBootstrapRouter(t)
 	body := admin.BootstrapRequest{
@@ -350,11 +348,10 @@ func TestBootstrapDryRunValidatesWithoutPersisting_spec_15_1_1140(t *testing.T) 
 	}
 }
 
-// TestBootstrapAuditCarriesSeedHashAndResourceSummary covers the §15.1
-// line 863 audit-detail contract: a seed-file SHA-256 hash and a
+// TestBootstrapAuditCarriesSeedHashAndResourceSummary covers the §15.1 audit-detail contract: a seed-file SHA-256 hash and a
 // per-resource {type, name, action} summary.
 //
-// spec: §15.1 line 863.
+// spec: §15.1.
 func TestBootstrapAuditCarriesSeedHashAndResourceSummary_spec_15_1_863(t *testing.T) {
 	router, _, _, _, audit := newBootstrapRouter(t)
 	body := admin.BootstrapRequest{
@@ -401,11 +398,10 @@ func TestBootstrapAuditCarriesSeedHashAndResourceSummary_spec_15_1_863(t *testin
 	}
 }
 
-// TestBootstrapBlocksSecurityCriticalFieldOverwrite covers §17.6 line
-// 451: a seed that would overwrite a runtime's isolationProfile is an
+// TestBootstrapBlocksSecurityCriticalFieldOverwrite covers §17.6: a seed that would overwrite a runtime's isolationProfile is an
 // error regardless of --force-update, and the resource is not changed.
 //
-// spec: §17.6 line 451.
+// spec: §17.6.
 func TestBootstrapBlocksSecurityCriticalFieldOverwrite_spec_17_6_451(t *testing.T) {
 	router, _, runtimes, _, _ := newBootstrapRouter(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{

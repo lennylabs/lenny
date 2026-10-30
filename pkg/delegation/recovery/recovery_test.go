@@ -3,7 +3,10 @@
 package recovery_test
 
 import (
+	"context"
 	"errors"
+	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,12 +36,22 @@ func TestLevelsGroupsBottomUp(t *testing.T) {
 	}
 }
 
+// recoverAll is a recoverFn that reports every node recovered.
+func recoverAll(context.Context, recovery.Node) error { return nil }
+
+// waitForDeadline is a recoverFn whose restore never commits: it waits until
+// the node's deadline ends the wait.
+func waitForDeadline(ctx context.Context, _ recovery.Node) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
 func TestRecoverAllSucceed(t *testing.T) {
 	nodes := []recovery.Node{
 		{SessionID: "root", Depth: 0},
 		{SessionID: "leaf", Depth: 1},
 	}
-	results := recovery.Recover(nodes, func(recovery.Node) error { return nil }, recovery.Config{})
+	results := recovery.Recover(context.Background(), nodes, nil, recoverAll, recovery.Config{})
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))
 	}
@@ -55,17 +68,16 @@ func TestRecoverOrderIsBottomUp(t *testing.T) {
 		{SessionID: "mid", Depth: 1},
 		{SessionID: "leaf", Depth: 2},
 	}
-	var order []string
-	recovery.Recover(nodes, func(n recovery.Node) error {
-		order = append(order, n.SessionID)
+	var started, waited []string
+	recovery.Recover(context.Background(), nodes, func(n recovery.Node) {
+		started = append(started, n.SessionID)
+	}, func(_ context.Context, n recovery.Node) error {
+		waited = append(waited, n.SessionID)
 		return nil
 	}, recovery.Config{})
 	want := []string{"leaf", "mid", "root"}
-	for i := range want {
-		if order[i] != want[i] {
-			t.Errorf("recovery order = %v, want %v (bottom-up)", order, want)
-			break
-		}
+	if !reflect.DeepEqual(started, want) || !reflect.DeepEqual(waited, want) {
+		t.Errorf("start order %v, wait order %v, want both %v (bottom-up)", started, waited, want)
 	}
 }
 
@@ -74,77 +86,129 @@ func TestRecoverMarksNodeFailureFailed(t *testing.T) {
 		{SessionID: "ok", Depth: 1},
 		{SessionID: "broken", Depth: 1},
 	}
-	results := recovery.Recover(nodes, func(n recovery.Node) error {
+	results := recovery.Recover(context.Background(), nodes, nil, func(_ context.Context, n recovery.Node) error {
 		if n.SessionID == "broken" {
 			return errors.New("pod gone")
 		}
 		return nil
 	}, recovery.Config{})
-	got := map[string]recovery.Outcome{}
-	for _, r := range results {
-		got[r.Node.SessionID] = r.Outcome
-	}
-	if got["ok"] != recovery.OutcomeRecovered {
-		t.Errorf("ok outcome = %s, want recovered", got["ok"])
-	}
-	if got["broken"] != recovery.OutcomeFailed {
-		t.Errorf("broken outcome = %s, want failed", got["broken"])
-	}
-}
-
-func TestRecoverLevelTimeoutFailsRemainingLevelNodes(t *testing.T) {
-	// Three nodes at the same depth. Each recovery consumes 60s; the
-	// level budget is 100s, so the third node is past the level
-	// deadline before it is attempted.
-	nodes := []recovery.Node{
-		{SessionID: "a", Depth: 1},
-		{SessionID: "b", Depth: 1},
-		{SessionID: "c", Depth: 1},
-	}
-	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	var attempted []string
-	results := recovery.Recover(nodes, func(n recovery.Node) error {
-		attempted = append(attempted, n.SessionID)
-		clock = clock.Add(60 * time.Second)
-		return nil
-	}, recovery.Config{
-		LevelTimeout: 100 * time.Second,
-		TreeTimeout:  10 * time.Minute,
-		Now:          func() time.Time { return clock },
-	})
 	got := map[string]recovery.NodeResult{}
 	for _, r := range results {
 		got[r.Node.SessionID] = r
 	}
-	if got["a"].Outcome != recovery.OutcomeRecovered || got["b"].Outcome != recovery.OutcomeRecovered {
-		t.Errorf("a/b should recover within the level budget: %+v", got)
+	if got["ok"].Outcome != recovery.OutcomeRecovered {
+		t.Errorf("ok outcome = %s, want recovered", got["ok"].Outcome)
 	}
-	if got["c"].Outcome != recovery.OutcomeFailed {
-		t.Fatalf("c should fail past the level deadline: %+v", got["c"])
+	if got["broken"].Outcome != recovery.OutcomeFailed || got["broken"].Reason != "pod gone" {
+		t.Errorf("broken = %+v, want failed with the restore's error", got["broken"])
 	}
-	if got["c"].Reason != "level recovery deadline exceeded" {
-		t.Errorf("c reason = %q, want the level-deadline reason", got["c"].Reason)
+}
+
+// TestRecoverDrivesEveryNodeOfALevelBeforeWaiting_spec_8_10 asserts that the
+// traversal starts every selected node of a level before it waits on any of
+// them, because maxLevelRecoverySeconds bounds the wait for all nodes at one
+// depth together: two siblings whose restores each take more than half the
+// level budget both recover.
+//
+// spec: §8.10 (Delegation Tree Recovery).
+func TestRecoverDrivesEveryNodeOfALevelBeforeWaiting_spec_8_10(t *testing.T) {
+	nodes := []recovery.Node{
+		{SessionID: "a", Depth: 1},
+		{SessionID: "b", Depth: 1},
 	}
-	// c was never attempted — a node past the level deadline is not retried.
-	for _, id := range attempted {
-		if id == "c" {
-			t.Error("node c was attempted despite being past the level deadline")
+	var mu sync.Mutex
+	commitAt := map[string]time.Time{}
+	start := func(n recovery.Node) {
+		mu.Lock()
+		defer mu.Unlock()
+		commitAt[n.SessionID] = time.Now().Add(120 * time.Millisecond)
+	}
+	results := recovery.Recover(context.Background(), nodes, start, func(ctx context.Context, n recovery.Node) error {
+		mu.Lock()
+		at, ok := commitAt[n.SessionID]
+		started := len(commitAt)
+		mu.Unlock()
+		if !ok || started != 2 {
+			return errors.New("waited on a node before every sibling was driven")
+		}
+		select {
+		case <-time.After(time.Until(at)):
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}, recovery.Config{LevelTimeout: 200 * time.Millisecond, TreeTimeout: time.Minute})
+	for _, r := range results {
+		if r.Outcome != recovery.OutcomeRecovered {
+			t.Errorf("node %s = %+v, want recovered: each restore runs concurrently within the level budget", r.Node.SessionID, r)
 		}
 	}
 }
 
+// TestRecoverWaitEndsAtNodeDeadline_spec_8_10 asserts that a wait the node's
+// deadline ends returns at that deadline and is recorded with the reason of
+// the budget that set it, and that no later node is failed because of it.
+//
+// spec: §8.10 (Delegation Tree Recovery).
+func TestRecoverWaitEndsAtNodeDeadline_spec_8_10(t *testing.T) {
+	cases := []struct {
+		name   string
+		node   recovery.Node
+		cfg    recovery.Config
+		reason string
+	}{
+		{
+			"level budget",
+			recovery.Node{SessionID: "a", Depth: 1},
+			recovery.Config{LevelTimeout: 40 * time.Millisecond, TreeTimeout: time.Minute},
+			recovery.ReasonLevelTimeout,
+		},
+		{
+			"tree budget",
+			recovery.Node{SessionID: "a", Depth: 1},
+			recovery.Config{LevelTimeout: time.Minute, TreeTimeout: 40 * time.Millisecond},
+			recovery.ReasonTreeTimeout,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			nodes := []recovery.Node{tc.node, {SessionID: "b", Depth: 1}}
+			begin := time.Now()
+			results := recovery.Recover(context.Background(), nodes, nil, func(ctx context.Context, n recovery.Node) error {
+				if n.SessionID == "a" {
+					return waitForDeadline(ctx, n)
+				}
+				return nil
+			}, tc.cfg)
+			if elapsed := time.Since(begin); elapsed > 5*time.Second {
+				t.Fatalf("traversal took %v; the wait outlived its node's deadline", elapsed)
+			}
+			got := map[string]recovery.NodeResult{}
+			for _, r := range results {
+				got[r.Node.SessionID] = r
+			}
+			if got["a"].Outcome != recovery.OutcomeFailed || got["a"].Reason != tc.reason {
+				t.Errorf("a = %+v, want failed with %q", got["a"], tc.reason)
+			}
+			if got["b"].Outcome != recovery.OutcomeRecovered {
+				t.Errorf("b = %+v, want recovered: a sibling's expired wait fails no later node", got["b"])
+			}
+		})
+	}
+}
+
 func TestRecoverTreeTimeoutFailsRemainingLevels(t *testing.T) {
-	// A leaf and a root. Recovering the leaf consumes the whole tree
-	// budget, so the root (a shallower level) is failed without an
-	// attempt.
+	// A leaf and a root. Waiting on the leaf consumes the whole tree
+	// budget, so the root (a shallower level) is failed without a start.
 	nodes := []recovery.Node{
 		{SessionID: "leaf", Depth: 1},
 		{SessionID: "root", Depth: 0},
 	}
 	clock := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	var attempted []string
-	results := recovery.Recover(nodes, func(n recovery.Node) error {
-		attempted = append(attempted, n.SessionID)
+	var started []string
+	results := recovery.Recover(context.Background(), nodes, func(n recovery.Node) {
+		started = append(started, n.SessionID)
+	}, func(context.Context, recovery.Node) error {
 		clock = clock.Add(11 * time.Minute) // past the 10-minute tree budget
 		return nil
 	}, recovery.Config{
@@ -159,26 +223,23 @@ func TestRecoverTreeTimeoutFailsRemainingLevels(t *testing.T) {
 	if got["leaf"].Outcome != recovery.OutcomeRecovered {
 		t.Errorf("leaf should recover: %+v", got["leaf"])
 	}
-	if got["root"].Outcome != recovery.OutcomeFailed {
-		t.Fatalf("root should fail past the tree deadline: %+v", got["root"])
+	if got["root"].Outcome != recovery.OutcomeFailed || got["root"].Reason != recovery.ReasonTreeTimeout {
+		t.Fatalf("root = %+v, want failed past the tree deadline", got["root"])
 	}
-	if got["root"].Reason != "tree recovery deadline exceeded" {
-		t.Errorf("root reason = %q, want the tree-deadline reason", got["root"].Reason)
-	}
-	if len(attempted) != 1 || attempted[0] != "leaf" {
-		t.Errorf("attempted = %v, want only [leaf] — the root is past the tree deadline", attempted)
+	if len(started) != 1 || started[0] != "leaf" {
+		t.Errorf("started = %v, want only [leaf] — the root is past the tree deadline", started)
 	}
 }
 
 func TestRecoverEmptyTree(t *testing.T) {
-	results := recovery.Recover(nil, func(recovery.Node) error { return nil }, recovery.Config{})
+	results := recovery.Recover(context.Background(), nil, nil, recoverAll, recovery.Config{})
 	if len(results) != 0 {
 		t.Errorf("an empty tree produced %d results, want 0", len(results))
 	}
 }
 
 // TestQuiescenceDeadlineUsesDefault_spec_11_3_224 verifies the default
-// usage-quiescence window matches the §11.3 line 224 spec value (5s).
+// usage-quiescence window matches the §11.3 spec value (5s).
 // F-11.3.19.
 func TestQuiescenceDeadlineUsesDefault_spec_11_3_224(t *testing.T) {
 	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
@@ -188,7 +249,7 @@ func TestQuiescenceDeadlineUsesDefault_spec_11_3_224(t *testing.T) {
 		t.Errorf("QuiescenceDeadline default delta = %s, want %s", got, recovery.DefaultUsageQuiescenceTimeout)
 	}
 	if recovery.DefaultUsageQuiescenceTimeout != 5*time.Second {
-		t.Errorf("DefaultUsageQuiescenceTimeout = %s, want 5s (§11.3 line 224)", recovery.DefaultUsageQuiescenceTimeout)
+		t.Errorf("DefaultUsageQuiescenceTimeout = %s, want 5s (§11.3)", recovery.DefaultUsageQuiescenceTimeout)
 	}
 }
 
@@ -203,118 +264,34 @@ func TestQuiescenceDeadlineHonorsOverride_spec_11_3_224(t *testing.T) {
 	}
 }
 
-// TestDefaultLevelAndTreeRecovery_spec_8_10_1022_1023 pins the §8.10
-// line 1022/1023 defaults so a regression that drops the operator-tunable
+// TestDefaultLevelAndTreeRecovery_spec_8_10_1022_1023 pins the §8.10 defaults so a regression that drops the operator-tunable
 // path back to non-spec values is caught. F-8.10.6.
 func TestDefaultLevelAndTreeRecovery_spec_8_10_1022_1023(t *testing.T) {
 	if recovery.DefaultLevelTimeout != 120*time.Second {
-		t.Errorf("DefaultLevelTimeout = %s, want 120s (§8.10 line 1022)", recovery.DefaultLevelTimeout)
+		t.Errorf("DefaultLevelTimeout = %s, want 120s (§8.10)", recovery.DefaultLevelTimeout)
 	}
 	if recovery.DefaultTreeTimeout != 600*time.Second {
-		t.Errorf("DefaultTreeTimeout = %s, want 600s (§8.10 line 1023)", recovery.DefaultTreeTimeout)
+		t.Errorf("DefaultTreeTimeout = %s, want 600s (§8.10)", recovery.DefaultTreeTimeout)
 	}
 }
 
 // TestRecoverHonorsConfigLevelAndTreeOverrides_spec_8_10_1022_1023
 // covers the operator-tunable per-level / whole-tree budgets — the
 // flag-supplied Config values must take effect (an unused Config field
-// would silently re-apply the defaults). F-8.10.6.
+// would silently re-apply the defaults). A level whose wait outlives a 40ms
+// level budget ends at that budget rather than at the 120s default.
+// F-8.10.6.
 func TestRecoverHonorsConfigLevelAndTreeOverrides_spec_8_10_1022_1023(t *testing.T) {
-	// Two nodes at the same depth; recovery takes 6s each. A 5s level
-	// budget admits the first node (deadline check uses the pre-attempt
-	// clock at start) but the second node is past the budget after `a`'s
-	// 6s burn.
-	nodes := []recovery.Node{
-		{SessionID: "a", Depth: 1},
-		{SessionID: "b", Depth: 1},
-	}
-	clock := time.Date(2026, 5, 28, 0, 0, 0, 0, time.UTC)
-	results := recovery.Recover(nodes, func(recovery.Node) error {
-		clock = clock.Add(6 * time.Second)
-		return nil
-	}, recovery.Config{
-		LevelTimeout: 5 * time.Second,
-		TreeTimeout:  1 * time.Hour,
-		Now:          func() time.Time { return clock },
+	nodes := []recovery.Node{{SessionID: "a", Depth: 1}}
+	begin := time.Now()
+	results := recovery.Recover(context.Background(), nodes, nil, waitForDeadline, recovery.Config{
+		LevelTimeout: 40 * time.Millisecond,
+		TreeTimeout:  time.Hour,
 	})
-	got := map[string]recovery.NodeResult{}
-	for _, r := range results {
-		got[r.Node.SessionID] = r
+	if elapsed := time.Since(begin); elapsed > 5*time.Second {
+		t.Fatalf("operator-supplied LevelTimeout dropped: the wait took %v", elapsed)
 	}
-	if got["a"].Outcome != recovery.OutcomeRecovered {
-		t.Errorf("operator-supplied LevelTimeout dropped; a should recover within 5s budget: %+v", got["a"])
-	}
-	if got["b"].Outcome != recovery.OutcomeFailed || got["b"].Reason != "level recovery deadline exceeded" {
-		t.Errorf("b should fail past the 5s level budget after a's 6s burn: %+v", got["b"])
-	}
-}
-
-// TestRecoverNodeResumeWindowBindsBeforeLevel_spec_8_10_1027 covers the
-// §8.10 line 1027 effective recovery window contract — a node whose
-// individual maxResumeWindowSeconds is shorter than the level cap must
-// be force-failed with the node-window reason when the per-node budget
-// elapses. F-8.10.11.
-func TestRecoverNodeResumeWindowBindsBeforeLevel_spec_8_10_1027(t *testing.T) {
-	// Two nodes at the same depth. Node `short-rw` has a 2s per-node
-	// resume window; `long-rw` inherits the level cap. Each recovery
-	// consumes 3s, so the first node trips its per-node budget.
-	clock := time.Date(2026, 5, 28, 0, 0, 0, 0, time.UTC)
-	nodes := []recovery.Node{
-		{SessionID: "short-rw", Depth: 1, ResumeWindow: 2 * time.Second},
-		{SessionID: "long-rw", Depth: 1},
-	}
-	attempts := map[string]int{}
-	results := recovery.Recover(nodes, func(n recovery.Node) error {
-		attempts[n.SessionID]++
-		clock = clock.Add(3 * time.Second)
-		return nil
-	}, recovery.Config{
-		LevelTimeout: 60 * time.Second,
-		TreeTimeout:  10 * time.Minute,
-		Now:          func() time.Time { return clock },
-	})
-	got := map[string]recovery.NodeResult{}
-	for _, r := range results {
-		got[r.Node.SessionID] = r
-	}
-	if got["long-rw"].Outcome != recovery.OutcomeRecovered {
-		t.Errorf("long-rw should recover within the level cap: %+v", got["long-rw"])
-	}
-	// short-rw is attempted first (ordered by SessionID); it returns
-	// successfully but its 2s budget was already gone at attempt time.
-	if attempts["short-rw"] == 0 {
-		// either the attempt was skipped before the recoverFn fired
-		if got["short-rw"].Outcome != recovery.OutcomeFailed || got["short-rw"].Reason != "node resume window exceeded" {
-			t.Errorf("short-rw should fail with the node-window reason: %+v", got["short-rw"])
-		}
-	}
-}
-
-// TestRecoverTreeRemainingBindsNodeWindow_spec_8_10_1027 covers the
-// other direction of §8.10 line 1027 — when the per-node window would
-// outlive the remaining tree budget, the tree cap binds first. F-8.10.11.
-func TestRecoverTreeRemainingBindsNodeWindow_spec_8_10_1027(t *testing.T) {
-	clock := time.Date(2026, 5, 28, 0, 0, 0, 0, time.UTC)
-	nodes := []recovery.Node{
-		{SessionID: "leaf", Depth: 1, ResumeWindow: 30 * time.Minute},
-		{SessionID: "root", Depth: 0, ResumeWindow: 30 * time.Minute},
-	}
-	results := recovery.Recover(nodes, func(recovery.Node) error {
-		clock = clock.Add(11 * time.Minute) // burns the whole tree budget
-		return nil
-	}, recovery.Config{
-		LevelTimeout: 30 * time.Minute,
-		TreeTimeout:  10 * time.Minute,
-		Now:          func() time.Time { return clock },
-	})
-	got := map[string]recovery.NodeResult{}
-	for _, r := range results {
-		got[r.Node.SessionID] = r
-	}
-	if got["leaf"].Outcome != recovery.OutcomeRecovered {
-		t.Errorf("leaf should recover before the tree deadline: %+v", got["leaf"])
-	}
-	if got["root"].Outcome != recovery.OutcomeFailed || got["root"].Reason != "tree recovery deadline exceeded" {
-		t.Errorf("root should fail with the tree-deadline reason once the 10m budget elapses: %+v", got["root"])
+	if len(results) != 1 || results[0].Outcome != recovery.OutcomeFailed || results[0].Reason != recovery.ReasonLevelTimeout {
+		t.Errorf("results = %+v, want a failed node with the level reason", results)
 	}
 }

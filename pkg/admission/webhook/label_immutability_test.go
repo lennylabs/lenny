@@ -33,7 +33,7 @@ func podRaw(t *testing.T, labels map[string]string) runtime.RawExtension {
 	return runtime.RawExtension{Raw: raw}
 }
 
-// spec: §5.2 line 392 — tenant assignment by the gateway SA on CREATE
+// spec: §5.2 — tenant assignment by the gateway SA on CREATE
 // flows through the lenny-tenant-label-immutability webhook.
 func TestTenantLabelImmutabilityAllowsTenantAssignmentByGateway(t *testing.T) {
 	resp := webhook.TenantLabelImmutability()(context.Background(), &admissionv1.AdmissionRequest{
@@ -47,7 +47,7 @@ func TestTenantLabelImmutabilityAllowsTenantAssignmentByGateway(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 392 — non-gateway SA assigning tenant-id is rejected
+// spec: §5.2 — non-gateway SA assigning tenant-id is rejected
 // by the lenny-tenant-label-immutability webhook.
 func TestTenantLabelImmutabilityRejectsTenantAssignmentByOtherUser(t *testing.T) {
 	resp := webhook.TenantLabelImmutability()(context.Background(), &admissionv1.AdmissionRequest{
@@ -109,7 +109,7 @@ func TestLabelImmutabilityAllowsUnchangedUpdate(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 392 — cross-tenant change is rejected by the
+// spec: §5.2 — cross-tenant change is rejected by the
 // lenny-tenant-label-immutability webhook even when the gateway SA
 // issued the request.
 func TestTenantLabelImmutabilityRejectsCrossTenantChange(t *testing.T) {
@@ -128,8 +128,8 @@ func TestTenantLabelImmutabilityRejectsCrossTenantChange(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 392 — pool-return by the WarmPoolController is the
-// {tenant_id} → unassigned edge admitted by the tenant webhook.
+// spec: §5.2 — the tenant webhook admits the {tenant_id} → unassigned
+// edge for the WarmPoolController; a recycled pod never takes it.
 func TestTenantLabelImmutabilityAllowsPoolReturnByController(t *testing.T) {
 	resp := webhook.TenantLabelImmutability()(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "u6",

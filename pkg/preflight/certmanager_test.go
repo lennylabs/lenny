@@ -15,7 +15,7 @@ func proberReturning(version string, found bool, err error) CertManagerProber {
 	})
 }
 
-// spec: §10.3 line 304 — the cert-manager version preflight. F-10.3.12.
+// spec: §10.3 — the cert-manager version preflight. F-10.3.12.
 func TestCertManagerVersionCheck_spec_10_3_304(t *testing.T) {
 	cases := []struct {
 		name       string

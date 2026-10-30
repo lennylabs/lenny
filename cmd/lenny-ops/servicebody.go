@@ -22,7 +22,7 @@ import (
 // §25.4 leader-only reconciliation goroutines, and the §25.4 self-health
 // monitor. spec: §25.4.
 func (w *opsWiring) buildServiceBody() {
-	// §25.4 line 1339 — the bundleRules reconciler. §25.13 line 4816
+	// §25.4 — the bundleRules reconciler. §25.13
 	// makes the bundled alerting rules static manifests rendered at Helm
 	// install/upgrade time with no runtime mutation, so the leader-only
 	// reconciler does not re-render rules; it keeps the §25.13 bundled-rules
@@ -46,12 +46,12 @@ func (w *opsWiring) buildServiceBody() {
 		Elector:   w.elector,
 		Webhook:   w.webhook,
 		CronJobs:  w.cronJobs,
-		// §25.4 line 1337: the leader-only reconciliation goroutines. Each
+		// §25.4: the leader-only reconciliation goroutines. Each
 		// runs only on the replica holding the lenny-ops-leader Lease, so a
 		// multi-replica deployment drives one flush/cleanup/reconcile loop,
 		// not one per replica.
 		Reconcilers: opsservice.Reconcilers{
-			// §25.4 lines 2407-2415: drain the in-memory escalation buffer up
+			// §25.4: drain the in-memory escalation buffer up
 			// to a recovered durable tier (preserving the authoring timestamp
 			// and the emitted flag). F-25.4.7.
 			EscalationFlush: func(ctx context.Context) error {
@@ -61,7 +61,7 @@ func (w *opsWiring) buildServiceBody() {
 				}
 				return err
 			},
-			// §25.4 lines 2404, 2429: re-attempt the escalation_created
+			// §25.4: re-attempt the escalation_created
 			// publish for any record whose emitted flag is still false, so an
 			// escalation created during a dual Redis-plus-gateway-buffer
 			// outage is emitted once a destination recovers. F-REL-1.
@@ -71,7 +71,7 @@ func (w *opsWiring) buildServiceBody() {
 				}
 				return nil
 			},
-			// §25.4 lines 2070-2072, 2127: remove idempotency keys past their
+			// §25.4: remove idempotency keys past their
 			// TTL so the ops_idempotency_keys table does not grow unbounded.
 			IdempotencyCleanup: func(ctx context.Context) error {
 				n, err := w.idemStore.PruneExpired(ctx, time.Now().UTC())
@@ -80,14 +80,14 @@ func (w *opsWiring) buildServiceBody() {
 				}
 				return err
 			},
-			// §25.4 lines 2226-2267: resolve remediation locks orphaned by a
+			// §25.4: resolve remediation locks orphaned by a
 			// storage outage — bring the Postgres epoch up to MAX, copy the
 			// Redis locks in, and apply the deterministic split-brain
 			// resolution rule. F-25.4.6.
 			LockEpochReconcile: func(ctx context.Context) error {
 				return w.lockSvc.Reconcile(ctx)
 			},
-			// §25.4 line 1337: validate that the stored desired-state snapshot
+			// §25.4: validate that the stored desired-state snapshot
 			// is current, warning when it drifts past the staleness threshold.
 			DriftSnapshotValidate: func(ctx context.Context) error {
 				fresh, err := w.driftSvc.SnapshotFreshness(ctx)
@@ -102,17 +102,17 @@ func (w *opsWiring) buildServiceBody() {
 				}
 				return nil
 			},
-			// §25.2 lines 399-401: scan the Operations Inventory to maintain
+			// §25.2: scan the Operations Inventory to maintain
 			// the lenny_ops_operations_stalled gauge and emit
 			// operation_progressed on step transitions and percent-threshold
 			// crossings. Leader-only so a multi-replica deployment emits one
 			// stream. F-25.2.7 / F-25.2.14.
 			OperationsObserve: w.operationsObserver.Tick,
-			// §25.4 line 1339: the bundleRules reconciler. Leader-only so a
+			// §25.4: the bundleRules reconciler. Leader-only so a
 			// multi-replica deployment re-asserts the §25.13 bundled-rules
 			// gauges from one replica. F-25.4.17.
 			BundleRulesReconcile: w.bundleRulesReconcile,
-			// §25.4 line 2280: the Postgres-Redis clock-skew sampler. Reads
+			// §25.4: the Postgres-Redis clock-skew sampler. Reads
 			// both dependency clocks and publishes the absolute skew on
 			// lenny_ops_clock_skew_seconds so the OpsClockSkewExceeded alert
 			// has a producer. Leader-only so a multi-replica deployment
@@ -123,7 +123,7 @@ func (w *opsWiring) buildServiceBody() {
 		SelfHealthChecks:   w.selfChecks,
 		SelfHealthInterval: *w.f.selfHealthInterval,
 		OnSelfHealthChange: func(prev, next opsservice.SelfHealthReport) {
-			// §25.5 line 2590: lenny-ops emits ops_health_status_changed
+			// §25.5: lenny-ops emits ops_health_status_changed
 			// — one of the signals it originates itself — onto the same
 			// ops:events:stream the gateway writes to, so subscribers,
 			// pollers, and SSE clients on any replica observe the
@@ -147,7 +147,7 @@ func (w *opsWiring) buildServiceBody() {
 				log.Printf("lenny-ops: emit ops_health_status_changed: %v", err)
 			}
 		},
-		// §16.8 line 704 — publish lenny_ops_self_health_status{check} on
+		// §16.8 — publish lenny_ops_self_health_status{check} on
 		// every evaluation so the §16.9 /metrics scrape reflects the live
 		// per-check status, not only the last transition.
 		OnSelfHealthSample: publishSelfHealthMetric,

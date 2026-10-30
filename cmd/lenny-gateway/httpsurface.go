@@ -10,14 +10,17 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/introspection"
-	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/audit/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/jwtaudit"
+	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
@@ -25,6 +28,7 @@ import (
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -55,6 +59,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradeguard"
 	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore"
 	"github.com/lennylabs/lenny/pkg/storerouter"
@@ -85,11 +90,9 @@ func (w *gatewayWiring) buildHTTPSurface(
 	f := w.f
 	addr := f.addr
 	multiTenant := f.multiTenant
-	tenantIDClaim := f.tenantIDClaim
 	adminSATokenAudience := f.adminSATokenAudience
 	platformAdminServiceAccounts := f.platformAdminServiceAccounts
 	devMode := f.devMode
-	jwksPublish := f.jwksPublish
 	deprecatedAPIVersionsCSV := f.deprecatedAPIVersionsCSV
 	adapterTLSCert := f.adapterTLSCert
 	barrierAckTimeoutSeconds := f.barrierAckTimeoutSeconds
@@ -110,7 +113,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	playgroundSessionLabels := f.playgroundSessionLabels
 	playgroundMaxSessionMinutes := f.playgroundMaxSessionMinutes
 	playgroundMaxIdleTimeSeconds := f.playgroundMaxIdleTimeSeconds
-	playgroundBearerTTL := f.playgroundBearerTTL
+	capabilityTokenTTL := f.capabilityTokenTTL
 	playgroundGatewayHost := f.playgroundGatewayHost
 	playgroundOIDCSessionTTL := f.playgroundOIDCSessionTTL
 	mux := http.NewServeMux()
@@ -131,7 +134,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// /v1/admin/health* paths so Go's ServeMux routes them to the
 	// health handler ahead of the /v1/admin/ admin catch-all.
 	healthAgg := health.NewAggregator()
-	// §25.3 lines 538-542: per-component probe-latency histogram and
+	// §25.3: per-component probe-latency histogram and
 	// status gauge, registered on the gateway's Prometheus registry.
 	healthMetrics, err := health.NewMetrics(gwMetrics.Registerer())
 	if err != nil {
@@ -141,14 +144,14 @@ func (w *gatewayWiring) buildHTTPSurface(
 	healthAgg.Register(staticHealthy("gateway"))
 	healthAgg.Register(staticHealthy("sessionstore"))
 	healthAgg.Register(staticHealthy("executor"))
-	// spec: §25.3 line 441 / lines 527-528 — the MinIO/ArtifactStore probe
+	// spec: §25.3 — the MinIO/ArtifactStore probe
 	// runs the §12.5 HeadBucket-equivalent liveness check (blobProbe is the
 	// real bucket probe for self-managed MinIO and an always-ready stub for
 	// in-memory / managed cloud object storage). The component name matches
 	// the §25.3 Degradation section ("objectStore.status reports
 	// unhealthy"), replacing the prior static stub.
 	healthAgg.Register(backends.ObjectStore(w.blobProbe.Probe, "objectStore"))
-	// spec: §25.3 line 441 — registered-connectors dependency probe. A
+	// spec: §25.3 — registered-connectors dependency probe. A
 	// single List against the connector registry confirms the backing
 	// store answers; the platform tenant scope is a reachability ping (the
 	// query hits the same store regardless of tenant and an empty result
@@ -157,13 +160,13 @@ func (w *gatewayWiring) buildHTTPSurface(
 		_, err := w.connectors.List(ctx, "platform", connectorstore.ListFilter{})
 		return err
 	}, "connectors"))
-	// spec: §25.3 line 441 — Kubernetes API server (/healthz) dependency
+	// spec: §25.3 — Kubernetes API server (/healthz) dependency
 	// probe, registered only on an agent-namespace deployment where the
 	// cluster transport exists.
 	if w.kubeHealthzProbe != nil {
 		healthAgg.Register(backends.APIServer(w.kubeHealthzProbe, "kubernetes-api"))
 	}
-	// spec: §25.3 line 441 — cert-manager certificate-status probe over the
+	// spec: §25.3 — cert-manager certificate-status probe over the
 	// gateway's mounted mesh certificate. Registered only when a cert path
 	// is configured (mTLS deployments); reports degraded inside the §16.5
 	// CertExpiryImminent window and unhealthy once expired or unreadable.
@@ -188,13 +191,13 @@ func (w *gatewayWiring) buildHTTPSurface(
 		healthAgg.Register(backends.Postgres(w.pgPool, "postgres"))
 		readinessDeps = append(readinessDeps, "postgres")
 	}
-	if w.redisClient != nil {
-		healthAgg.Register(backends.Redis(w.redisClient, "redis"))
-	}
+	// §12.4: the base client plus each distinct dedicated concern
+	// client, so a split concern's outage is visible. F-12.4.30.
+	registerRedisHealth(healthAgg, w.redisClient, w.concernRedis)
 	if w.breakerCache != nil {
 		healthAgg.Register(backends.CircuitBreakerCache(w.breakerCache, "circuit-breaker-cache"))
 	}
-	// spec: §11.7 item 4 line 372 — the SIEM delivery health check feeds
+	// spec: §11.7 item 4 — the SIEM delivery health check feeds
 	// the §25.3 health verdict. Registered only when a SIEM endpoint is
 	// configured; a degraded verdict reports the external audit copy is
 	// lagging while the durable Postgres chain stays intact. The gateway
@@ -220,7 +223,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// pool health resolver below; it is stored once the tracker is
 	// constructed further down in this function.
 	var alertEvalPtr atomic.Pointer[evaluator.Evaluator]
-	// spec: §25.17 line 5254 — the watchdog's recovery-verification call
+	// spec: §25.17 — the watchdog's recovery-verification call
 	// `GET /v1/admin/health/{pool}` resolves a warm-pool name to its pool
 	// health view (status + activeAlerts) when no health subsystem of that
 	// name is registered. The §16.5 warm-pool alerts come from this
@@ -248,7 +251,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 			return e.Firing()
 		},
 	}
-	// spec: §25.3 lines 443-451 — derive each dependency/subsystem
+	// spec: §25.3 — derive each dependency/subsystem
 	// component's /v1/admin/health verdict from the §16.5 alert catalogue:
 	// a firing critical alert mapped to the component reports unhealthy, a
 	// warning reports degraded. The firing set comes from this replica's
@@ -262,11 +265,11 @@ func (w *gatewayWiring) buildHTTPSurface(
 	healthHandler := health.Handler(healthAgg, poolHealthResolver)
 	mux.Handle("/v1/admin/health", healthHandler)
 	mux.Handle("/v1/admin/health/", healthHandler)
-	// spec: §15.1 line 589 — served `info.version` must reflect the
+	// spec: §15.1 — served `info.version` must reflect the
 	// gateway's release version, not the embedded default.
 	openapiHandler := openapi.HandlerWithVersion(buildVersion)
 	mux.Handle("/openapi.yaml", openapiHandler)
-	// spec: §15.1 line 589 — `/openapi.json` is the canonical
+	// spec: §15.1 — `/openapi.json` is the canonical
 	// gateway-side JSON mount. spec: §15.1 (OpenAPI generation and
 	// discovery) — `/v1/openapi.json` and `/v1/openapi.yaml` are the
 	// admin-API discovery paths the §25.12 schema-discovery block and
@@ -276,7 +279,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	mux.Handle("/openapi.json", openapiHandler)
 	mux.Handle("/v1/openapi.json", openapiHandler)
 	mux.Handle("/v1/openapi.yaml", openapiHandler)
-	// §4.3 line 193 canonical token endpoint. The gateway reverse-
+	// §4.3 canonical token endpoint. The gateway reverse-
 	// proxies /v1/oauth/* to lenny-token-service so the Token Service
 	// is the actual minter for every Lenny bearer token. When the
 	// flag is empty (dev path without a Token Service binary), the
@@ -291,32 +294,9 @@ func (w *gatewayWiring) buildHTTPSurface(
 		log.Printf("lenny-gateway: §4.3 /v1/oauth/* reverse-proxied to %s", *tokenServiceHTTPURL)
 	}
 
-	// ----- §10.3 JWK Set publication -----
-	// The JWKS endpoint advertises the kid/alg of every key the
-	// §10.3 RotatingVerifier holds (the current key plus every
-	// retained previous key during the §10.3 24h overlap window).
-	// The endpoint is unauthenticated by design; the JWK Set carries
-	// only public metadata, never private key material. Suppress with
-	// --jwks-publish=false.
-	if *jwksPublish {
-		jwksHandler := jwt.NewJWKSHandler(w.rotatingVerifier)
-		mux.Handle("/.well-known/jwks.json", jwksHandler)
-		// spec: §10.2 line 195 / F-10.2.14. The v1 signer is HMAC; the
-		// published JWKS entries carry `kty: oct` with no `k` field, so
-		// the document advertises kid/alg only. Log a notice when the
-		// endpoint is mounted on top of an HMAC-only key set so
-		// operators understand that JWKS verification of the actual
-		// signature is not possible against the published document
-		// (the secret must be obtained out of band).
-		log.Printf("lenny-gateway: §10.3 JWKS published at /.well-known/jwks.json (current kid %s)",
-			w.rotatingVerifier.CurrentKeyID())
-		if !jwksAdvertisesAsymmetric(jwksHandler.Document()) {
-			log.Printf("lenny-gateway: §10.2 line 195 / F-10.2.14: published JWKS contains only `kty: oct` entries (HMAC). The document advertises kid/alg only; verifiers cannot validate signatures against it.")
-		}
-	}
-	// §15.0 ExternalAdapterRegistry. Each built-in adapter registers
+	// §15 ExternalAdapterRegistry. Each built-in adapter registers
 	// through the registry and the registry mounts its HTTPHandler on
-	// the shared mux. The §15.0 admin-API runtime-registration path
+	// the shared mux. The §15 admin-API runtime-registration path
 	// uses the same registry so a third-party adapter takes effect
 	// without a gateway restart.
 	adapterReg := adapterregistry.New()
@@ -325,21 +305,21 @@ func (w *gatewayWiring) buildHTTPSurface(
 		openaiHandler.Handler(),
 		gwadapter.Capabilities{PathPrefix: "/v1/chat/completions", Protocol: "openai-completions"},
 	)); err != nil {
-		log.Fatalf("lenny-gateway: §15.0 adapter registry: %v", err)
+		log.Fatalf("lenny-gateway: §15 adapter registry: %v", err)
 	}
 	if err := adapterReg.Register(adapterregistry.NewSimpleAdapter(
 		"open-responses",
 		responsesHandler.Handler(),
 		gwadapter.Capabilities{PathPrefix: "/v1/responses", Protocol: "open-responses"},
 	)); err != nil {
-		log.Fatalf("lenny-gateway: §15.0 adapter registry: %v", err)
+		log.Fatalf("lenny-gateway: §15 adapter registry: %v", err)
 	}
-	// §15.2 line 1335: the MCP adapter is the platform's primary streaming
+	// §15.2: the MCP adapter is the platform's primary streaming
 	// surface, so it overrides the BaseAdapter no-op OutboundCapabilities()
 	// with the mandatory six-kind push declaration (MCPAdapter, not a plain
 	// SimpleAdapter). F-15.2.8.
 	if err := adapterReg.Register(adapterregistry.NewMCPAdapter(mcpSrv.Handler())); err != nil {
-		log.Fatalf("lenny-gateway: §15.0 adapter registry: %v", err)
+		log.Fatalf("lenny-gateway: §15 adapter registry: %v", err)
 	}
 	adapterReg.Mount(mux)
 	// §4.1 long-lived interactive streams: the MCP WebSocket transport
@@ -348,7 +328,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// /mcp/v1/ws) and any other MCP-over-WebSocket client land on the
 	// same dispatch logic. The Streamable HTTP path remains on /mcp.
 	mux.Handle("/mcp/v1/ws", mcpSrv.WebSocketHandler())
-	// spec: §10.6 line 557 — the explicit-environment MCP surface. A
+	// spec: §10.6 — the explicit-environment MCP surface. A
 	// client opts into a named environment scope by speaking MCP to
 	// /mcp/environments/{name}; the dispatch is identical to POST /mcp
 	// with the environment attached to the request context so
@@ -359,7 +339,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// type validation surfaces RUNTIME_UNAVAILABLE per §15.2.1
 	// while preserving the spec-required 404 / 400 error patterns
 	// for unknown and non-mcp runtimes.
-	// spec: §10.6 line 607 — the per-runtime MCP dispatcher gates a
+	// spec: §10.6 — the per-runtime MCP dispatcher gates a
 	// tools/call scoped to an environment (`?environment=<name>`) by that
 	// environment's mcpRuntimeFilters capability filter. F-10.6.2.
 	mux.Handle("POST /mcp/runtimes/{name}", mcpruntimes.New(w.runtimes, nil).WithEnvironments(environments))
@@ -376,7 +356,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// traffic (§27.5); only the auth-gatekeeper endpoints are
 	// playground-specific.
 	//
-	// §27.6 line 204 — the playground handler's authoritative per-request
+	// §27.6 — the playground handler's authoritative per-request
 	// revocation check is hoisted here so the auth middleware (built
 	// below) can consult it for every origin=playground bearer. It stays
 	// nil when the playground is disabled, leaving the auth hot path
@@ -391,7 +371,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 			MaxSessionMinutes:  *playgroundMaxSessionMinutes,
 			MaxIdleTimeSeconds: *playgroundMaxIdleTimeSeconds,
 			OIDCSessionTTL:     time.Duration(*playgroundOIDCSessionTTL) * time.Second,
-			BearerTTL:          time.Duration(*playgroundBearerTTL) * time.Second,
+			CapabilityTokenTTL: time.Duration(*capabilityTokenTTL) * time.Second,
 			MultiTenant:        *multiTenant,
 			GatewayHost:        *playgroundGatewayHost,
 			SessionLabels:      parseKeyValueCSV(*playgroundSessionLabels),
@@ -423,8 +403,8 @@ func (w *gatewayWiring) buildHTTPSurface(
 		if w.redisClient != nil {
 			redisSessions := playground.NewRedisSessionStore(w.concernRedis.For(storerouter.RedisConcernCachePubSub)).WithMetrics(pgMetrics)
 			pgSessions = redisSessions
-			// §27.3.1 / §27.6 line 204 pub/sub: a single PSUBSCRIBE on
-			// t:*:pg:revocations subscribes this replica to every tenant's
+			// §27.3.1 / §27.6 pub/sub: a single PSUBSCRIBE on
+			// t:{*}:pg:revocations subscribes this replica to every tenant's
 			// revocation channel — including tenants provisioned after
 			// gateway start — so the auth hot path can short-circuit the
 			// Redis GET on a cache hit and the §27.8 propagation histogram
@@ -433,7 +413,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 			go redisSessions.SubscribeAllRevocations(context.Background())
 		} else {
 			pgSessions = playground.NewMemorySessionStore()
-			// spec: §27.6 line 204 — Logout endpoints MUST NOT return
+			// spec: §27.6 — Logout endpoints MUST NOT return
 			// 200 to the browser until the revocation writes have
 			// committed to Redis. The in-memory store has no cross-
 			// replica fan-out and loses every revocation marker on
@@ -445,17 +425,29 @@ func (w *gatewayWiring) buildHTTPSurface(
 			log.Printf("lenny-gateway: §27.6 playground SessionStore is in-memory (no --redis-url): bearer revocations are not durable across gateway restarts and do not propagate across replicas; production deployments MUST set --redis-url")
 		}
 		pg := playground.New(pgCfg, playground.Options{
-			// spec: §10.2 line 225 — Sign goes through the breaker so
-			// KMS outages convert to retryable KMS_SIGNING_UNAVAILABLE;
-			// Verify uses the inner signer (verification is local memory
-			// and never reaches KMS). F-10.2.6.
+			// spec: §10.2 — Sign goes through the breaker so
+			// KMS outages convert to retryable KMS_SIGNING_UNAVAILABLE.
+			// F-10.2.6. spec: §27.3, §27.3.1 — the apiKey mint verifies
+			// the pasted bearer with the standard auth chain's verifier:
+			// the key set, which holds public keys only and never reaches
+			// KMS, joined by the upstream IdP member when
+			// --oidc-issuer-url and --oidc-client-id are set, so a pasted
+			// IdP ID token is admitted as it is on the Client → Gateway
+			// path. F-27.3.14.
 			Signer:   w.jwtSigner,
-			Verifier: w.kmsBackedSigner,
+			Verifier: w.bearerVerifier,
 			Tenants:  playgroundTenantRegistry{store: w.tenants},
 			Sessions: pgSessions,
 			Metrics:  pgMetrics,
-		}).WithAuditEmitter(playgroundAuditEmitter{sink: auditSink})
-		// spec: §27.6 lines 200-201 — wire the playground idle/duration caps
+			// spec: §27.3.1 — the oidc-mode authorization-code
+			// exchanger against the --oidc-issuer-url provider. F-27.3.15.
+			OIDC: buildPlaygroundOIDC(w.f, w.idpVerifier, pgCfg.AuthMode),
+			// spec: §10.2 (Playground mint invariants, invariant 1) — the
+			// apiKey mint applies §13.3 step (1a) to the pasted subject's
+			// issued_tokens row.
+			IssuedTokens: playgroundIssuedTokens(w.pgPool),
+		}).WithAuditEmitter(playground.ChainAuditEmitter{Sink: auditSink})
+		// spec: §27.6 — wire the playground idle/duration caps
 		// into the session-creation path so an origin=playground session is
 		// bounded by min(runtime, playground) on both axes, and record the
 		// §27.8 lenny_playground_sessions_created_total counter once the claim
@@ -463,11 +455,11 @@ func (w *gatewayWiring) buildHTTPSurface(
 		// applied), so its EffectiveIdleSeconds / EffectiveSessionMinutes carry
 		// the resolved caps. F-27.3.3 / F-27.6.1 / F-27.6.2 / F-27.6.11.
 		sessionSrv.SetPlaygroundCaps(pg.Config(), pgMetrics.SessionCreated)
-		// §27.6 line 204 — expose the per-request revocation check to the
+		// §27.6 — expose the per-request revocation check to the
 		// auth middleware so an origin=playground bearer is rejected on
 		// every replica once its session is revoked. F-27.6.3 / F-27.3.1.
 		playgroundRevocations = pg
-		// §27.5.4 — wire the same revocation check into the MCP WebSocket
+		// §27.5 — wire the same revocation check into the MCP WebSocket
 		// transport so an origin=playground bearer revoked mid-stream
 		// (logout / idle / admin / user.invalidated) closes the in-flight
 		// connection with WebSocket code 4401. The principal is read from
@@ -481,7 +473,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 			}
 			return mcp.WSPrincipal{Tenant: p.TenantID, JTI: p.JTI, Origin: p.Origin}, true
 		}, pg, 0)
-		// §11.4 / §27.6 line 204 — drive the §11.4 user-invalidation
+		// §11.4 / §27.6 — drive the §11.4 user-invalidation
 		// fan-out into the playground revocation primitive so an OIDC
 		// principal invalidation revokes the user's playground sessions.
 		// adminRouter is a pointer the mounted handlers read at request
@@ -491,7 +483,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 		mux.Handle("/playground", pg.PlaygroundRoutes())
 		mux.Handle("/playground/", pg.PlaygroundRoutes())
 		mux.Handle("/v1/playground/token", pg.TokenRoutes())
-		// spec: §27.3.1 line 94 / §27.6 line 201/204 — drive the
+		// spec: §27.3.1 / §27.6 — drive the
 		// playground-auth-record idle-timeout sweep so an abandoned OIDC
 		// cookie-to-bearer session is reclaimed through the same revocation
 		// primitive (DEL record + SET pg:revoked + PUBLISH) as logout and
@@ -507,7 +499,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	mux.Handle("GET /metrics", gwMetrics.Handler())
 
 	// ----- Healthz (unauthenticated) -----
-	// spec: §13.3 line 595 — when this replica's NTP drift exceeds the
+	// spec: §13.3 — when this replica's NTP drift exceeds the
 	// 5s ceiling, /healthz reports degraded (503). Kubernetes responds
 	// by removing the pod from the Service endpoints, so traffic stops
 	// reaching a replica whose clock cannot be trusted for `exp`
@@ -533,12 +525,12 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// The lenny-sandboxtemplate-deletion-guard webhook probes this before
 	// admitting a SandboxTemplate DELETE, so the old template cannot be
 	// deleted while a RuntimeUpgrade referencing its pool is still active
-	// (§10.5 line 508). The same record's schemaGated flag gates a Phase 3
-	// migration for the pool (§10.5 line 502). Same internal-port
+	// (§10.5). The same record's schemaGated flag gates a Phase 3
+	// migration for the pool (§10.5). Same internal-port
 	// NetworkPolicy scope and unauthenticated posture as drain-readiness.
 	mux.Handle("GET /internal/runtime-upgrade/active", &runtimeupgradeguard.Handler{Store: ruStore})
 
-	// ----- §12.5 line 291 node.drain.forced audit endpoint (unauthenticated) -----
+	// ----- §12.5 node.drain.forced audit endpoint (unauthenticated) -----
 	// The webhook POSTs here on a drain-force override admission so the
 	// §16.7 audit event lands in the per-tenant §11.7 hash chain. The
 	// endpoint sits on the gateway's internal port (same NetworkPolicy
@@ -562,17 +554,16 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// bumps lenny_prestop_cap_selection_total labeled by source so
 	// the §16.5 PreStopCapFallbackRateHigh alert can fire.
 	//
-	// spec: §4.4 line 234, 263 / §10.1 preStop staged drain.
+	// spec: §4.4 / §10.1 preStop staged drain.
 	var prestopCheckpointer prestop.CheckpointTrigger
 	if w.checkpointSvc != nil {
 		prestopCheckpointer = w.checkpointSvc
 	}
-	// §10.1 lines 163-181 — the preStop CheckpointBarrier coordinator. At
+	// §10.1 — the preStop CheckpointBarrier coordinator. At
 	// Stage 1 it sends the barrier to every session this replica
 	// coordinates (the barrier-target set from the coordination_lease
 	// mirror, falling back to the in-memory registry), quiescing in-flight
-	// tool calls and flushing a best-effort checkpoint under the §11.3
-	// line 210 checkpointBarrierAckTimeoutSeconds budget. The barrier
+	// tool calls and flushing a best-effort checkpoint under the §11.3 checkpointBarrierAckTimeoutSeconds budget. The barrier
 	// reaches each pod through the live adapter connection the registry
 	// already holds for a coordinated session. F-10.1.19 / F-11.3.15.
 	var barrierDispatch prestop.BarrierDispatcher
@@ -584,7 +575,10 @@ func (w *gatewayWiring) buildHTTPSurface(
 			checkpointMeta = sessioncheckpointmeta.NewMemoryStore(nil)
 		}
 		barrierLister := &barrier.MirrorTargetLister{
-			ReplicaID: w.replica,
+			// spec: §10.1.8 — the barrier-target query filters the mirror
+			// on this replica's coordination holder value (§10.1.1 Replica
+			// address), which the Sweeper writes as coordinator_replica.
+			ReplicaID: w.coordHolder,
 			Mirror:    w.coordMirror,
 			Fallback: func() []barrier.Target {
 				bindings := w.podRegistry.Snapshot()
@@ -612,7 +606,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 				return b.Adapter, true
 			},
 		}
-		// §10.1 line 169 — hand the barrier the in-process checkpointer so
+		// §10.1.8 — hand the barrier the in-process checkpointer so
 		// it drives the gateway-side Checkpoint stream (with
 		// checkpoint.TriggerEviction) against each quiesced pod concurrently
 		// with the CheckpointBarrier RPC. A nil checkpointSvc (no store
@@ -650,10 +644,10 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// eviction-checkpoint drain begins. Liveness stays on /healthz so a
 	// draining pod is not also killed by the kubelet mid-drain. The
 	// readiness probe also fails on NTP drift so a clock-untrustworthy
-	// replica is removed from the endpoints (the §13.3.5 behaviour that
+	// replica is removed from the endpoints (the §13.3 behaviour that
 	// previously rode on /healthz serving double duty). F-10.1.6.
 	//
-	// spec: §10.4 line 386 — readiness additionally reflects the hard
+	// spec: §10.4 — readiness additionally reflects the hard
 	// backend dependency (Postgres session truth) so a replica whose
 	// store connection is broken is removed from traffic rather than
 	// serving until the process crashes. The dual-store-both-down case
@@ -686,8 +680,10 @@ func (w *gatewayWiring) buildHTTPSurface(
 	var handler http.Handler = mux
 
 	// The §11.2 per-tenant concurrent-session quota is enforced inside
-	// the session-creation handlers (sessionserver.requireSessionQuota)
-	// against each tenant's configured MaxConcurrentSessions.
+	// the session-creation handlers (sessionserver.requireSessionQuota),
+	// and on every resume of a suspended session, against each tenant's
+	// configured MaxConcurrentSessions. The quota counts non-terminal
+	// sessions other than suspended ones.
 
 	// Idempotency next (after auth + circuit; needs the
 	// authenticated tenant on the request to scope keys correctly).
@@ -695,13 +691,12 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// idempotent retry replays across gateway replicas and restarts.
 	// AllowedPaths restricts the cache to the §11.5-listed critical
 	// operations so a stray Idempotency-Key on an unrelated route
-	// cannot trap a non-mutating response for 24 hours. spec: §11.5
-	// line 268; F-11.5.7.
+	// cannot trap a non-mutating response for 24 hours. spec: §11.5; F-11.5.7.
 	var idemStore idemmw.Store = idemmw.NewMemoryStore()
 	if w.pgPool != nil {
 		idemStore = idempgstore.New(w.pgPool)
 	}
-	// spec: §11.5 line 277 — when an MCP client supplies idempotencyKey
+	// spec: §11.5 — when an MCP client supplies idempotencyKey
 	// inside a tool's arguments (lenny/create_session,
 	// lenny/delegate_task), the MCP server runs the call through the
 	// same §11.5 Store with per-tool key namespacing so retries collapse
@@ -721,13 +716,13 @@ func (w *gatewayWiring) buildHTTPSurface(
 	})
 	handler = idemmw.Wrap(handler, idemStore, idemmw.Options{
 		Metrics: gwMetrics,
-		// spec: §11.5 line 277 — the middleware buffers the request body
+		// spec: §11.5 — the middleware buffers the request body
 		// to hash and replay it. The default 8 MiB cap covers the
 		// critical-operation payloads and is operator-tunable via the
 		// flag for deployments that carry larger bodies (e.g. resume
 		// with a verbose TaskResult). F-11.5.8.
 		MaxBodyBytes: *idempotencyMaxBodyBytes,
-		// spec: §11.5 line 268 — the six "critical operations"
+		// spec: §11.5 — the six "critical operations"
 		// (CreateSession, FinalizeWorkspace, StartSession, SpawnChild,
 		// Approve/DenyDelegation, Resume) bound the §11.5 cache. The
 		// middleware also defaults to POST-only (Options.AllowedMethods),
@@ -750,7 +745,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// matches. The shared breakerstore.Memory satisfies cbmw.Registry
 	// so the admin /v1/admin/circuit-breakers endpoints share state
 	// with the request-path middleware.
-	// spec: §11.6 line 327 / §16.7 — on a breaker match the gate emits
+	// spec: §11.6 / §16.7 — on a breaker match the gate emits
 	// the `admission.circuit_breaker_rejected` audit row carrying the
 	// authenticated caller identity (resolved by the auth middleware,
 	// which wraps outside this gate), sampled per-(tenant, circuit,
@@ -768,7 +763,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 			return snap
 		},
 	}
-	// spec: §16.7 line 679 / §11.6 — when the breaker registry is the
+	// spec: §16.7 / §11.6 — when the breaker registry is the
 	// Redis-polling cache, surface its age so the gate emits the sampled
 	// `admission.circuit_breaker_cache_stale` audit event (and the
 	// stale-serve counter) for any decision served against a cache that
@@ -780,9 +775,9 @@ func (w *gatewayWiring) buildHTTPSurface(
 	}
 	handler = cbmw.Wrap(handler, w.breakers, cbOpts)
 
-	// spec: §12.4 lines 220-224 — the per-replica fail-open controller. The
+	// spec: §12.4 — the per-replica fail-open controller. The
 	// per-user fraction is validated config-time (a value outside (0, 1.0]
-	// fails the process fast per §12.4 line 222); the cumulative timer, the
+	// fails the process fast per §12.4); the cumulative timer, the
 	// per-user / per-tenant emergency backstop, and the cached replica count
 	// are assembled here and consulted by the ratelimit middleware while
 	// failing open on a Redis outage. F-12.4.9 / F-11.2.6.
@@ -791,7 +786,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	}
 	gwMetrics.SetQuotaUserFailopenFraction(*quotaUserFailOpenFraction)
 	if failopen.UserFractionWeakened(*quotaUserFailOpenFraction) {
-		// spec: §12.4 line 222 — QuotaFailOpenUserFractionInoperative: a
+		// spec: §12.4 — QuotaFailOpenUserFractionInoperative: a
 		// fraction >= 0.5 substantially weakens the monopolization control.
 		log.Printf("lenny-gateway: WARNING QuotaFailOpenUserFractionInoperative — quotaUserFailOpenFraction=%v >= 0.5 weakens the per-user fail-open cap; acknowledge the posture in the deployment answer file",
 			*quotaUserFailOpenFraction)
@@ -810,20 +805,20 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// §11.1 rate limiting next — runs just after auth so the per-user
 	// scope sees the authenticated principal. Limits default to zero
 	// (disabled); operators set them via the rate-limit flags. Metrics
-	// wires the §11.1 line 7 rejection counter and the §16.5
+	// wires the §11.1 rejection counter and the §16.5
 	// RateLimitDegraded fail-open gauge.
 	handler = ratelimitmw.Wrap(handler, ratelimitmw.Options{
 		Counter:          w.rateLimiter,
 		GlobalPerMinute:  *rlGlobalPerMin,
 		PerUserPerMinute: *rlPerUserPerMin,
-		// spec: §13.3 line 607 / §11.1 — per-tenant fair-share brake.
+		// spec: §13.3 / §11.1 — per-tenant fair-share brake.
 		// F-11.1.8.
 		PerTenantPerMinute: *rlPerTenantPerMin,
 		Metrics:            gwMetrics,
-		// spec: §11.3 line 222 / §12.4 line 220 — operator-tunable cap on
+		// spec: §11.3 / §12.4 — operator-tunable cap on
 		// the fail-open episode. F-11.3.22.
 		FailOpenMax: time.Duration(*rlFailOpenMaxSeconds) * time.Second,
-		// spec: §12.4 lines 220-224 — per-replica fail-open emergency
+		// spec: §12.4 — per-replica fail-open emergency
 		// ceilings + cumulative timer. F-12.4.9 / F-11.2.6.
 		FailOpen: failOpenController,
 	})
@@ -844,42 +839,45 @@ func (w *gatewayWiring) buildHTTPSurface(
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
 	})
 
-	// Auth next-to-outermost. AllowDevRoles is only honoured when the
-	// dev flag is set (LENNY_DEV_MODE=true or --dev-mode); production
-	// deployments leave it off so X-Lenny-Roles cannot self-grant
-	// platform-admin.
+	// Auth next-to-outermost. The dev-header transport (AllowDevHeaders,
+	// AllowDevRoles) is honoured only when the dev flag is set
+	// (LENNY_DEV_MODE=true or --dev-mode). Outside dev mode the middleware
+	// requires a verified bearer on every route except the spec's public
+	// routes and deletes any client-sent X-Lenny-* identity header, so a
+	// client can neither self-grant platform-admin through X-Lenny-Roles
+	// nor name a tenant through X-Lenny-Tenant-ID. See
+	// applyAuthPostureOptions. F-10.2.21.
 	//
 	// The §10.2 Bearer path is verified with the bearer verifier built
-	// above: the in-process Token Service signer, so a token minted by
-	// POST /v1/oauth/token round-trips through the gateway, plus the
-	// embedded OIDC provider's key when --bearer-trust-hmac-key-file is
-	// set under §17.4 Embedded Mode. Production swaps in the OIDC JWKS
-	// verifier.
+	// above: the §10.2 key set, so a token minted by any gateway replica
+	// or by POST /v1/oauth/token on any Token Service replica verifies
+	// here, plus the embedded OIDC provider's key when
+	// --bearer-trust-hmac-key-file is set under §17.4 Embedded Mode, plus
+	// the deployer's upstream IdP, through its discovered JWK Set, when
+	// --oidc-issuer-url and --oidc-client-id are set (buildIdPVerifier).
 	authOpts := authmw.Options{
-		MultiTenant: *multiTenant,
-		// spec: §10.2 line 212 — operator-configurable OIDC tenant claim
-		// name (`auth.tenantIdClaim` Helm value). F-10.2.9.
-		TenantClaimName: *tenantIDClaim,
-		AllowDevHeaders: true,
-		AllowDevRoles:   *devMode,
-		Verifier:        w.bearerVerifier,
-		Revocations:     revProp,
-		// §27.6 line 204 / §27.3.1 lines 95-97 — authoritative per-request
+		// spec: §10.2 — the bearer verifier resolves Claims.TenantID:
+		// IdP-key members read the configured `auth.tenantIdClaim`
+		// (embeddedHMACVerifier, composeBearerVerifier) and the key-set member keeps
+		// `tenant_id`. F-10.2.9.
+		Verifier:    w.bearerVerifier,
+		Revocations: revProp,
+		// §27.6 / §27.3.1 — authoritative per-request
 		// revocation check for origin=playground bearers; nil (and thus a
 		// no-op) when the playground is disabled. F-27.6.3 / F-27.3.1.
 		PlaygroundRevocations: playgroundRevocations,
-		// §4.2 line 185: every tenant-claim rejection writes an
+		// §4.2: every tenant-claim rejection writes an
 		// auth_failure audit row alongside the INFO log line.
 		AuthFailureSink: authFailureAuditAdapter{sink: auditSink},
-		// §4.8 line 1046: run the PreAuth chain (AuthEvaluator) after the
+		// §4.8: run the PreAuth chain (AuthEvaluator) after the
 		// principal resolves and before the request reaches the handler.
 		Interceptors: policyChain,
-		// spec: §10.2 line 294 — platform-managed user→role mapping
+		// spec: §10.2 — platform-managed user→role mapping
 		// overrides OIDC-derived roles. The userstore-backed adapter
 		// returns the user's stored Roles when the row exists; missing
 		// rows fall through to the JWT claim. F-10.2.3.
-		PlatformRoles: userstorePlatformRoles{store: w.users},
-		// spec: §10.6 line 661 — real-time group check. The introspection
+		PlatformRoles: userstore.PlatformRoles{Store: w.users},
+		// spec: §10.6 — real-time group check. The introspection
 		// verifier reads each tenant's identityProvider record; a tenant
 		// that leaves introspectionEnabled off pays nothing beyond a cached
 		// config read and keeps its JWT groups. F-10.6.8.
@@ -900,7 +898,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 			TenantID: jwtaudit.PlatformTenantID,
 		}),
 	}
-	// §13.3 line 601 — fail-closed token validation. Only when Postgres
+	// §13.3 — fail-closed token validation. Only when Postgres
 	// backs the revocation rehydration (below) is the staleness gate
 	// meaningful: a replica that cannot reach Postgres for longer than the
 	// freshness window refuses to validate (503 token_validation_unavailable)
@@ -910,21 +908,19 @@ func (w *gatewayWiring) buildHTTPSurface(
 	if w.pgPool != nil {
 		authOpts.RevocationFreshness = revCache
 	}
-	if !*multiTenant {
-		// Even in single-tenant mode, dev-header callers carry the
-		// tenant header. Flip to multi-tenant with a permissive
-		// registry so the header round-trips.
-		authOpts.MultiTenant = true
-		authOpts.Registry = permissiveRegistry{}
-	} else {
-		// spec: §10.2 lines 219-221 — in multi-tenant mode, an
-		// unregistered `tenant_id` claim is a hard 403 TENANT_NOT_FOUND.
-		// The bearer chain consults the real tenantstore so unprovisioned
-		// callers cannot ride a signature-valid token into the platform.
-		// F-10.2.1.
-		authOpts.Registry = bearerTenantRegistry{store: w.tenants}
-	}
+	// spec: §10.2 — a single-tenant gateway ignores the tenant claim and
+	// serves `default`; a multi-tenant gateway refuses an unregistered
+	// tenant with 403 TENANT_NOT_FOUND. See applyTenantAuthOptions for the
+	// dev-mode dev-header exception. F-10.2.1, T-10.2.11.
+	applyTenantAuthOptions(&authOpts, *multiTenant, *devMode, w.tenants)
+	// spec: §10.2 — outside dev mode every non-public route requires a
+	// verified bearer and the X-Lenny-* identity headers are ignored.
+	// F-10.2.21.
+	applyAuthPostureOptions(&authOpts, *devMode)
 	handler = authmw.Wrap(handler, authOpts)
+	// spec: §29.3 Forwarding rule 3 — the CH-HOLDERFORWARD listener
+	// authenticates a relayed credential with the REST listener's options.
+	w.restAuthOpts = authOpts
 
 	// §16.1 request metrics, wrapped before recovery so panics still
 	// surface in the request_total / request_duration histograms with
@@ -932,7 +928,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// high-cardinality path segments to a stable template.
 	handler = gwMetrics.Middleware(handler, routeTemplate)
 
-	// spec: §15.5 item 1 + docs/api/index.md line 124 — stamp the
+	// spec: §15.5 item 1 + docs/api/index.md — stamp the
 	// `X-Lenny-Deprecated-Version` response header onto every response
 	// served under a deprecated URL version prefix. The wrapper is a
 	// no-op when --deprecated-api-versions is empty, which is the v1
@@ -941,7 +937,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// panics. F-15.5.11.
 	handler = deprecationmw.Wrap(handler, splitCSV(*deprecatedAPIVersionsCSV)...)
 
-	// spec: §10.4 line 377 — handler-goroutine panic must surface as
+	// spec: §10.4 — handler-goroutine panic must surface as
 	// an explicit 500 response and a structured log line rather than
 	// the net/http default of silent recover + truncated response. The
 	// recovery wrapper is the outermost middleware so it catches a
@@ -949,7 +945,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// handlers, SSE writers). F-10.4.9.
 	handler = recovermw.Middleware(handler)
 
-	// spec: §16.4 lines 371-372 — outermost middleware. It reads the inbound
+	// spec: §16.4 — outermost middleware. It reads the inbound
 	// correlation headers (X-Lenny-Operation-ID, X-Lenny-Agent-Name,
 	// traceparent, X-Lenny-Session-ID, X-Lenny-Tenant-ID) and attaches them
 	// to the request context so the §16.4 logging handler projects them onto
@@ -966,7 +962,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 		},
 	})
 
-	// spec: §27.3.1 line 142 — outermost wrapper. The §27.5 MCP WebSocket
+	// spec: §27.3.1 — outermost wrapper. The §27.5 MCP WebSocket
 	// bearer carrier promotes `Sec-WebSocket-Protocol: lenny.bearer.<token>`
 	// (the browser fallback for upgrades that cannot set an Authorization
 	// header) to a standard `Authorization: Bearer` header and strips the
@@ -1028,4 +1024,39 @@ func platformAdminServiceAccountRoles(accounts []string) map[string][]auth.Role 
 		out[a] = []auth.Role{auth.RolePlatformAdmin}
 	}
 	return out
+}
+
+// playgroundIssuedTokens returns the issued-token reader the playground
+// apiKey mint applies §13.3 step (1a) through, or a nil interface when the
+// gateway has no Postgres pool. Returning an untyped nil rather than a
+// *issuedtokenstore.Store over a nil pool keeps the handler's nil check
+// meaningful.
+// spec: §10.2 (Playground mint invariants, invariant 1).
+func playgroundIssuedTokens(pool *pgxpool.Pool) playground.IssuedTokenReader {
+	if pool == nil {
+		return nil
+	}
+	return issuedtokenstore.New(pool)
+}
+
+// sessionCallerCheck returns the collaborators of the §10.2
+// session-creation caller check, or a zero callercheck.Deps when the
+// gateway has no Postgres pool. Without the pool no issued_tokens row and
+// no impersonation route exist, so the zero value passes every caller.
+// With the pool the reader is the issued-token store, and the auditor is
+// the gateway's tenant-scope-validated durable audit chain: its Append
+// takes the §11.7 per-tenant audit advisory lock and commits the
+// token.exchanged rejection row before it returns, so a refusal reaches
+// the client only once its row is durable. Session creation and
+// lenny/delegate_task both run over the value it returns.
+// spec: §10.2 (Signing topology), §11.7, §13.3, §16.7.
+func sessionCallerCheck(pool *pgxpool.Pool, auditor *auditscope.Validator) callercheck.Deps {
+	if pool == nil {
+		return callercheck.Deps{}
+	}
+	deps := callercheck.Deps{IssuedTokens: issuedtokenstore.New(pool)}
+	if auditor != nil {
+		deps.Audit = auditor
+	}
+	return deps
 }

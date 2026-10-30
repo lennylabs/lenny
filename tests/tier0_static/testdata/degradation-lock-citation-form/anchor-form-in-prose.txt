@@ -1,0 +1,2 @@
+// ActiveTier reports the §25.4 lock store currently serving
+// acquisitions (postgres, redis, or memory).

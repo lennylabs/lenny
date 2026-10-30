@@ -38,7 +38,7 @@ func sampleRow(eventType string, payload string) audit.Row {
 	}
 }
 
-// spec: §25.5 line 2556 / §16.7 line 661 — an escalating audit row is
+// spec: §25.5 / §16.7 — an escalating audit row is
 // emitted onto the operational event stream as an audit-bearing
 // CloudEvent: datacontenttype application/ocsf+json, the OCSF record in
 // data, type dev.lenny.<event_type>, and the tenant correlation
@@ -88,7 +88,7 @@ func TestEscalateToOpsStreamEmitsAuditBearing_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 661 — only the escalating subset reaches the stream;
+// spec: §16.7 — only the escalating subset reaches the stream;
 // an ordinary audit event is never double-emitted.
 func TestEscalateToOpsStreamSkipsNonEscalating_spec_16_7(t *testing.T) {
 	em := &captureEmitter{}
@@ -111,7 +111,7 @@ func TestEscalateToOpsStreamNilEmitter(t *testing.T) {
 		sampleRow("delegation.self_recursion_allowed", `{}`))
 }
 
-// spec: §25.5 line 2556 — escalation is best-effort; an emit failure is
+// spec: §25.5 — escalation is best-effort; an emit failure is
 // swallowed because the audit row is already durable.
 func TestEscalateToOpsStreamEmitErrorIsSwallowed_spec_25_5(t *testing.T) {
 	em := &captureEmitter{fail: errors.New("redis down")}

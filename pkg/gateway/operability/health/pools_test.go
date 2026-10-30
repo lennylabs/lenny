@@ -31,7 +31,7 @@ func poolFixture(phase string, last time.Time, firing ...string) health.FuncPool
 // TestPoolHealthResolverResolvedAlert_spec_25_17_5254 covers the §25.17
 // Step 6 recovery check: once the WarmPoolExhausted alert has resolved,
 // GET /v1/admin/health/{pool} reports healthy with an empty activeAlerts
-// list. spec: §25.17 line 5254.
+// list. spec: §25.17.
 func TestPoolHealthResolverResolvedAlert_spec_25_17_5254(t *testing.T) {
 	r := poolFixture("active", time.Time{})
 	ph, ok := r.PoolHealth(context.Background(), "default-gvisor")
@@ -118,7 +118,7 @@ func TestPoolHealthResolverNilFiring(t *testing.T) {
 // TestHandlerResolvesPoolName_spec_25_17_5254 drives the §25.17 worked
 // example end to end through the HTTP handler: GET /v1/admin/health/
 // default-gvisor returns 200 with the pool health body when the name is
-// not a registered subsystem. spec: §25.17 line 5254.
+// not a registered subsystem. spec: §25.17.
 func TestHandlerResolvesPoolName_spec_25_17_5254(t *testing.T) {
 	agg := health.NewAggregator()
 	agg.Register(healthy("warmPools")) // the real §25.4 subsystem component
@@ -168,7 +168,7 @@ func TestHandlerSubsystemTakesPrecedenceOverPool(t *testing.T) {
 }
 
 // TestHandlerUnknownNameWithResolver404 asserts a name that is neither a
-// subsystem nor a pool still returns the §25.3 line 547 404.
+// subsystem nor a pool still returns the §25.3 404.
 func TestHandlerUnknownNameWithResolver404(t *testing.T) {
 	agg := health.NewAggregator()
 	resolver := poolFixture("active", time.Time{}) // resolves only default-gvisor
@@ -183,7 +183,7 @@ func TestHandlerUnknownNameWithResolver404(t *testing.T) {
 // TestIsWarmPoolAlertAgainstCatalog guards the warm-pool alert classifier
 // against the live §16.5 catalogue: every WarmPool*/Pool* alert is
 // attributed to a pool, and credential-pool / connection-pool alerts are
-// not. spec: §16.5; §25.17 line 5254.
+// not. spec: §16.5; §25.17.
 func TestIsWarmPoolAlertAgainstCatalog(t *testing.T) {
 	want := map[string]bool{
 		"WarmPoolExhausted":         true,

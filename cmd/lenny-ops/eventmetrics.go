@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 )
 
-// The §25.5 line 2785-2791 event-stream and webhook-delivery metrics.
+// The §25.5 event-stream and webhook-delivery metrics.
 // Each is registered on the process default registry the §16.9 lenny-ops
 // /metrics exposition scrapes. A registration error leaves the variable
 // nil so the call sites no-op rather than panic.
@@ -80,8 +80,7 @@ var eventsStreamGapsTotal = func() *prometheus.CounterVec {
 }()
 
 // deliveryMetricsObserver implements opsservice.DeliveryMetrics over the
-// webhook-delivery counter and latency histogram. spec: §25.5 lines
-// 2790-2791.
+// webhook-delivery counter and latency histogram. spec: §25.5.
 type deliveryMetricsObserver struct{}
 
 func (deliveryMetricsObserver) ObserveDelivery(subID, status string, latency time.Duration) {
@@ -94,7 +93,7 @@ func (deliveryMetricsObserver) ObserveDelivery(subID, status string, latency tim
 }
 
 // observeStreamGap backs the §25.5 lenny_ops_events_stream_gaps_total
-// counter; it is wired to opsstream.Options.OnGap. spec: §25.5 line 2788.
+// counter; it is wired to opsstream.Options.OnGap. spec: §25.5.
 func observeStreamGap() {
 	if eventsStreamGapsTotal != nil {
 		eventsStreamGapsTotal.WithLabelValues().Inc()
@@ -109,7 +108,7 @@ type activeStreamCounter interface{ ActiveStreams() int }
 // ops:events:stream (0 when Redis is not wired); the SSE-connection
 // gauge reads the live connection count from the local stream service,
 // which counts every open connection whichever source it is served from.
-// spec: §25.5 lines 2787, 2789.
+// spec: §25.5.
 func sampleEventStreamGauges(ctx context.Context, client redis.UniversalClient, streams activeStreamCounter) {
 	if eventsStreamLength != nil && client != nil {
 		cctx, cancel := context.WithTimeout(ctx, 2*time.Second)

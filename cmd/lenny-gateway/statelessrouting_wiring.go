@@ -33,7 +33,7 @@ const labelPool = "lenny.dev/pool"
 // EndpointSlice mirrors as Conditions.Ready), sourced directly from the
 // pods because no per-pool Service fronts a stateless pool in v1.
 //
-// spec: §5.2 line 500.
+// spec: §5.2.
 type podEndpointLister struct {
 	client    client.Client
 	namespace string
@@ -59,7 +59,7 @@ func (l podEndpointLister) ListEndpoints(ctx context.Context) ([]tenantaffinity.
 	return out, nil
 }
 
-// podReady reports the §5.2 line 500 readiness signal for a pod: the
+// podReady reports the §5.2 readiness signal for a pod: the
 // PodReady condition is True (driven by the pod's slot-capacity
 // readiness probe).
 func podReady(p *corev1.Pod) bool {
@@ -74,7 +74,7 @@ func podReady(p *corev1.Pod) bool {
 	return false
 }
 
-// podTenantLabeler stamps the §5.2 line 500 lenny.dev/tenant-id pin label
+// podTenantLabeler stamps the §5.2 lenny.dev/tenant-id pin label
 // on the pod at a given IP when the router newly pins it. It resolves
 // IP→pod by scanning the agent namespace (status.podIP is not a
 // server-selectable field for pods); the scan runs only on a NewlyPinned

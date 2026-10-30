@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache"
 )
 
-// spec: §4.9 lines 1542-1556 — the SemanticCache wiring on the LLM proxy
+// spec: §4.9 — the SemanticCache wiring on the LLM proxy
 // path: per-pool opt-in, the §12.4 (tenant, scope, model, provider) key
 // space, and per-user keying on the session's owning user.
 
@@ -63,7 +63,7 @@ const (
 	resp = `{"id":"msg_1","content":"hello"}`
 )
 
-// TestDisabledPoolIsUncached covers §4.9 line 1549: caching is disabled
+// TestDisabledPoolIsUncached covers §4.9: caching is disabled
 // by default and opt-in per pool. A nil CachePolicy, or one with Enabled
 // false, never stores or hits.
 func TestDisabledPoolIsUncached(t *testing.T) {

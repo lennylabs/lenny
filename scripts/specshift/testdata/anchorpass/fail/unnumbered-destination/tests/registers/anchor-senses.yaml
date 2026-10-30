@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+#
+# The occurrence names a specification heading that carries no number and
+# sits under no numbered heading, so there is no section for a bare
+# citation of it to name. The entry fails the run rather than being
+# written as the path and anchor that address the heading, which would
+# put a fragment link where a sentence expects a section number.
+kind: anchor-senses
+version: 1
+entries:
+  - file: pkg/carrier/glossary.go
+    occurrence: 1
+    destination: spec/29_glossary.md#envelope-terms

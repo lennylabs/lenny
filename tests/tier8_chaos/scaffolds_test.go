@@ -99,7 +99,7 @@ func TestKMSKeyProbeStale(t *testing.T) {
 }
 
 // §12.8 PgBouncer saturation — covered by:
-//   - tests/tier2_component/rls/pgbouncer_test.go (the §12.2.2
+//   - tests/tier2_component/rls/pgbouncer_test.go (the TESTING.md §12.2.2
 //     PgBouncer session-pooling reuse invariant against the compose
 //     profile's PgBouncer).
 //
@@ -177,7 +177,7 @@ func TestGatewayToPodPartition(t *testing.T) {
 
 // §12.8 agent-to-LLM partition — covered structurally by:
 //   - pkg/gateway/llmproxy (circuit breaker + per-provider translator).
-//   - cmd/lenny-egress-capture (the §12.9.8 sidecar that records
+//   - cmd/lenny-egress-capture (the TESTING.md §12.9.8 sidecar that records
 //     outbound bytes; pairing it with a partition driver is the
 //     remaining ops follow-on).
 //
@@ -214,7 +214,7 @@ func TestEmergencyRevocationDuringActiveSession(t *testing.T) {
 // §12.8 rotation failure — covered structurally by:
 //   - pkg/adapter/credentials.go (credentials_rotated /
 //     credentials_acknowledged handshake; unit tests).
-//   - pkg/adapter/lifecyclechannel.go (lifecycle channel).
+//   - pkg/adapter/runtimeops.go (CH-RUNTIMEOPS).
 //   - sdks/runtime/go/runtime/lifecycle.go.
 //
 // Live rotation-failure exercise needs the fault-injection knob on
@@ -222,7 +222,7 @@ func TestEmergencyRevocationDuringActiveSession(t *testing.T) {
 // spec: 12.8
 // diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestRotationFailure(t *testing.T) {
-	t.Logf("§12.8: pkg/adapter credential-rotation handshake + lifecyclechannel + sdks/runtime/go/runtime/lifecycle. Rotate fault injection on the ops backlog.")
+	t.Logf("§12.8: pkg/adapter credential-rotation handshake + runtimeops + sdks/runtime/go/runtime/lifecycle. Rotate fault injection on the ops backlog.")
 }
 
 // §12.8 deny-list propagation under Redis outage — covered by:
@@ -387,7 +387,6 @@ func TestOpsClockSkewExceeded(t *testing.T) {
 
 // §10.3 certificate expiry — covered structurally by:
 //   - pkg/mtls/rotation.go (CA-rotation state machine; unit tests).
-//   - pkg/auth/jwt/jwks (rotating-verifier + JWKS publication).
 //   - pkg/clockinject (clock harness).
 //
 // Live expiry exercise pairs the clock harness with a deployed
@@ -395,7 +394,7 @@ func TestOpsClockSkewExceeded(t *testing.T) {
 // spec: 12.8
 // diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestCertificateExpiryAdvance(t *testing.T) {
-	t.Logf("§12.8: pkg/mtls/rotation + pkg/auth/jwt/jwks + pkg/clockinject; live expiry exercise on the ops backlog.")
+	t.Logf("§12.8: pkg/mtls/rotation + pkg/clockinject; live expiry exercise on the ops backlog.")
 }
 
 // --- Configuration ---

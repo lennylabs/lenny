@@ -44,15 +44,14 @@ _EXIT_PROTOCOL_ERROR = 2
 class RuntimeHandler:
     """Standard-level handler.
 
-    It holds a per-process sequence counter so multi-message sessions
-    can be correlated.
+    One process serves every session the pod holds, and calls for
+    different sessions run on different threads, so the handler keeps
+    any per-session state keyed by session and guards it with a lock.
     """
 
-    def __init__(self) -> None:
-        self._seq = 0
-
     def on_create(self, req: CreateRequest) -> None:
-        """Receive the task-scoped context snapshot.
+        """Receive the session's context snapshot from its
+        ``session_start``.
 
         This skeleton has no task-scoped setup.
         """
@@ -63,16 +62,15 @@ class RuntimeHandler:
         Text parts are prefixed with the per-session sequence number;
         non-text parts are returned unchanged.
         """
-        self._seq += 1
         out = []
         for part in msg.envelope.input:
             if part.type == "text" and part.inline:
-                out.append(text(f"[{{.Name}} seq={self._seq}] {part.inline}"))
+                out.append(text(f"[{{.Name}} seq={msg.sequence}] {part.inline}"))
             else:
                 out.append(part)
         return Reply(parts=out, final=True)
 
-    def on_terminate(self, reason: TerminationReason) -> None:
+    def on_terminate(self, session_id: str, reason: TerminationReason) -> None:
         """Run once when the session ends. This skeleton has no teardown."""
 
 

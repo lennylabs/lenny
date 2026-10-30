@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// fakeTamperRecorder captures §16.1 line 64 tamper-metric calls so a
+// fakeTamperRecorder captures §16.1 tamper-metric calls so a
 // test can assert the {origin_pod, tampering_pod, enforcement_mode}
 // label tuple.
 type fakeTamperRecorder struct {
@@ -114,7 +114,7 @@ func (r *recordingDispatcherDrop) RecordElicitationDrop(reason string) {
 // blocked for a disallowed domain is not auditable through the §16.7 path,
 // so a security review cannot reconstruct the drop from the audit log.
 //
-// spec: §16.7 (elicitation.url_mode_domain_rejected); §9.2 line 86. F-EL3,
+// spec: §16.7 (elicitation.url_mode_domain_rejected); §9.2. F-EL3,
 // F-9.2.11.
 func TestDispatchURLModeDropWritesAuditRow_spec_16_7(t *testing.T) {
 	drops := &recordingDispatcherDrop{}
@@ -172,7 +172,7 @@ func TestDispatchURLModeDropWritesAuditRow_spec_16_7(t *testing.T) {
 // TestDispatchURLModeDropNilAuditorNoPanic_spec_16_7 proves the drop path
 // is safe when no auditor is wired (the metric and tool error still fire),
 // so a binary without an audit sink degrades to the metric-only behavior
-// rather than panicking. spec: §16.7; §9.2 line 86. F-EL3.
+// rather than panicking. spec: §16.7; §9.2. F-EL3.
 func TestDispatchURLModeDropNilAuditorNoPanic_spec_16_7(t *testing.T) {
 	drops := &recordingDispatcherDrop{}
 	d, raising := urlModeDispatcher(elicitation.URLModeAllowlist{

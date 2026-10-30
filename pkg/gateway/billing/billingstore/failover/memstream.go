@@ -64,21 +64,38 @@ func (m *MemStream) SetUnavailable(err error) {
 // userID within tenantID and returns the count removed — the §12.8
 // step-5 erasure of the in-process stream's staged events.
 //
-// spec: §12.8 line 788 (Billing write-ahead buffer), step 5.
+// spec: §12.8, step 5.
 func (m *MemStream) PurgeUser(_ context.Context, tenantID, userID string) (int, error) {
+	return m.removeMatching(func(e billingstore.Event) bool {
+		return e.TenantID == tenantID && e.UserID == userID
+	}), nil
+}
+
+// PurgeTenant implements StreamTier. It drops every queued event for
+// tenantID and returns the count removed: the tenant-deletion Phase 4
+// erasure of the in-process stream's staged events.
+//
+// spec: §12.8 (Compliance Interfaces: Tenant deletion lifecycle, Phase 4).
+func (m *MemStream) PurgeTenant(_ context.Context, tenantID string) (int, error) {
+	return m.removeMatching(func(e billingstore.Event) bool { return e.TenantID == tenantID }), nil
+}
+
+// removeMatching drops every queued event match reports true for and
+// returns the count removed.
+func (m *MemStream) removeMatching(match func(billingstore.Event) bool) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	kept := make([]billingstore.Event, 0, len(m.events))
-	purged := 0
+	removed := 0
 	for _, e := range m.events {
-		if e.TenantID == tenantID && e.UserID == userID {
-			purged++
+		if match(e) {
+			removed++
 			continue
 		}
 		kept = append(kept, e)
 	}
 	m.events = kept
-	return purged, nil
+	return removed
 }
 
 // Drain replays every queued event into the primary store in

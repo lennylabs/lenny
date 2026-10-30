@@ -9,11 +9,14 @@
 // (TokenStore, ConnectorCredStore, ArtifactStore SSE-KMS) work
 // against AWS KMS without changes.
 //
+// It also signs with an asymmetric ECC_NIST_P256 key for the §10.2 ES256
+// JWT signer (Sign, PublicKey); the private key never leaves AWS KMS.
+//
 // Mapping a Lenny alias to an AWS KMS key:
 //
 //   - The Provider holds a static `aliasToKeyID` map populated at
 //     construction. Each entry maps a Lenny alias
-//     ("platform:token-service-signing", "tenant:acme", etc.) to
+//     ("platform:jwt-signing", "tenant:acme", etc.) to
 //     either an AWS KMS key ID, an ARN, or a Lenny-managed alias
 //     ("alias/lenny/<release>/platform"). The Provider passes the
 //     value through verbatim as the KeyId field on Encrypt / Decrypt
@@ -46,12 +49,14 @@ import (
 )
 
 // keyClient narrows the AWS KMS client surface this Provider uses to
-// the four RPCs that matter. Tests inject a fake; production passes
+// the RPCs that matter. Tests inject a fake; production passes
 // *awskms.Client.
 type keyClient interface {
 	Encrypt(ctx context.Context, in *awskms.EncryptInput, opts ...func(*awskms.Options)) (*awskms.EncryptOutput, error)
 	Decrypt(ctx context.Context, in *awskms.DecryptInput, opts ...func(*awskms.Options)) (*awskms.DecryptOutput, error)
 	DescribeKey(ctx context.Context, in *awskms.DescribeKeyInput, opts ...func(*awskms.Options)) (*awskms.DescribeKeyOutput, error)
+	Sign(ctx context.Context, in *awskms.SignInput, opts ...func(*awskms.Options)) (*awskms.SignOutput, error)
+	GetPublicKey(ctx context.Context, in *awskms.GetPublicKeyInput, opts ...func(*awskms.Options)) (*awskms.GetPublicKeyOutput, error)
 }
 
 // Provider implements kms.Provider over AWS KMS.

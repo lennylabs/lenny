@@ -36,7 +36,7 @@ func TestResolveMemoryProvider_spec_17_9_3(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 165 — provider=filesystem resolves to the
+// spec: §17.4 — provider=filesystem resolves to the
 // local-filesystem store rooted at the configured directory.
 func TestResolveFilesystemProvider_spec_17_4_165(t *testing.T) {
 	root := t.TempDir()
@@ -49,7 +49,7 @@ func TestResolveFilesystemProvider_spec_17_4_165(t *testing.T) {
 	}
 }
 
-// spec: §17.4 line 165 — filesystem without a root is a hard error so a
+// spec: §17.4 — filesystem without a root is a hard error so a
 // misconfiguration fails startup rather than silently losing artifacts.
 func TestResolveFilesystemRequiresRoot_spec_17_4_165(t *testing.T) {
 	if _, err := Resolve(context.Background(), Options{Provider: ProviderFilesystem}); err == nil {
@@ -146,7 +146,7 @@ func TestURIResolverNilIsNil(t *testing.T) {
 	}
 }
 
-// spec: §12.9 line 1048 — the in-memory backend resolved with an SSE
+// spec: §12.9 — the in-memory backend resolved with an SSE
 // resolver installs a tier guard, so a confirmed-T4 tenant's write is
 // rejected with CLASSIFICATION_CONTROL_VIOLATION / tier_store_mismatch
 // rather than persisted in the clear.
@@ -171,7 +171,7 @@ func TestResolveMemoryInstallsTierGuard_spec_12_9_1048(t *testing.T) {
 	}
 }
 
-// spec: §12.9 line 1048 — the filesystem backend likewise installs the
+// spec: §12.9 — the filesystem backend likewise installs the
 // tier guard from the SSE resolver.
 func TestResolveFilesystemInstallsTierGuard_spec_12_9_1048(t *testing.T) {
 	s, err := Resolve(context.Background(), Options{

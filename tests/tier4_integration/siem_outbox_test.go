@@ -15,15 +15,12 @@ package tier4_integration_test
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit/siem"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
-	"github.com/lennylabs/lenny/tests/testinfra/containers"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	siemstub "github.com/lennylabs/lenny/tests/testinfra/stubs/siem"
 )
 
@@ -58,7 +55,7 @@ func acmeEvents(stub *siemstub.Stub) int {
 	return n
 }
 
-// spec: §12.3 line 97 — the outbox forwarder reads committed rows past
+// spec: §12.3 — the outbox forwarder reads committed rows past
 // the siem_delivery_state high-water mark, delivers them, and advances
 // the mark only after acknowledgement; a re-run delivers no duplicate.
 // diagnosis: a failure means the SIEM outbox forwarder advances the
@@ -68,9 +65,7 @@ func TestSIEMOutboxForwarder(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	stub := siemstub.New(t)
 
 	const tenant = "acme"

@@ -32,14 +32,14 @@ func (w *opsWiring) buildHTTPSurface() {
 	// so a future commit that supplies a real ExprEvaluator only swaps
 	// the backend.
 	//
-	// spec: §25.16 line 5124. When --prometheus-url is set, the operator
+	// spec: §25.16. When --prometheus-url is set, the operator
 	// has supplied a BYO Prometheus HTTP API endpoint; the §25.13
 	// ExprEvaluator and the §25.4 cross-replica health aggregator should
 	// route through it (the HTTP client is built here so the future
 	// backend swap is a single-line change). When empty, lenny-ops
 	// degrades to the per-replica fan-out fallback the §25.16 Minimal
 	// block accepts. F-25.16.4.
-	// §25.4 lines 1914-1916 — register lenny_prometheus_query_duration_seconds
+	// §25.4 — register lenny_prometheus_query_duration_seconds
 	// {kind} on the default registry so the §16.9 /metrics surface exposes it.
 	// The histogram receives observations once a PromQL query path consumes a
 	// PrometheusClient built with this adapter (below); until then the
@@ -73,16 +73,29 @@ func (w *opsWiring) buildHTTPSurface() {
 	)
 	go alertEvaluator.Run(w.ctx)
 
-	// §25.4 lines 1562-1564: build the OIDC authentication + role gate.
-	// The verify key is the shared HMAC signing key (the gateway Token
-	// Service / §17.4 embedded OIDC key). When no key is configured the
-	// surface is unauthenticated, which is rejected in production: serving
-	// the platform-admin remediation-lock / backup / drift surface without
-	// authentication is the §25.4 security regression the gate closes.
-	authCfg, err := buildAuthConfig(*w.f.bearerTrustHMACKeyFile, *w.f.oidcIssuerURL, *w.f.authMultiTenant,
-		*w.f.production, *w.f.rateLimitRPS, *w.f.rateLimitBurst)
+	// §25.4: build the authentication + role gate. Lenny-issued tokens
+	// verify against the §10.2 key set and meet the §25.4 revocation set;
+	// in dev mode the dev embedded-OIDC trust hook is accepted too. A
+	// process outside dev mode, and a production process, always
+	// authenticates (§17.4 "Dev mode guard rails").
+	revocations := newOpsRevocation()
+	authCfg, err := buildAuthConfig(authInputs{
+		keySet:        w.jwtKeySet,
+		revocations:   revocations,
+		platformRoles: opsPlatformRoles(w.pgPool),
+		hmacKeyFile:   *w.f.bearerTrustHMACKeyFile,
+		issuer:        *w.f.oidcIssuerURL,
+		multiTenant:   *w.f.authMultiTenant,
+		devMode:       *w.f.devMode,
+		production:    w.f.productionMode(),
+		rps:           *w.f.rateLimitRPS,
+		burst:         *w.f.rateLimitBurst,
+	})
 	if err != nil {
 		log.Fatalf("lenny-ops: %v", err)
+	}
+	if authCfg != nil {
+		w.startRevocationSet(revocations)
 	}
 
 	// The §25.4 HTTP surface. Every replica serves it, leader or not. It
@@ -90,7 +103,7 @@ func (w *opsWiring) buildHTTPSurface() {
 	// self-health, remediation-lock, and escalation endpoints, the
 	// §25.10 drift endpoints, the §25.11 backup endpoints, and the
 	// §25.12 MCP management server.
-	// §25.4 lines 2528-2534: the pod-log proxy reads container logs via the
+	// §25.4: the pod-log proxy reads container logs via the
 	// Kubernetes API so agents do not need kubectl access. Wired only when a
 	// cluster connection is available; otherwise the endpoint reports the
 	// proxy unavailable.
@@ -127,8 +140,9 @@ func (w *opsWiring) buildHTTPSurface() {
 		},
 	}
 
-	// §25.4 audit recorder for identity.discovered (line 1641) +
-	// operations.inventory_queried (line 1779). Each emits a durable §11.7
+	// §25.4 audit recorder for the identity.discovered event of Caller
+	// Identity and Capability Discovery and the operations.inventory_queried
+	// event of Operations Inventory. Each emits a durable §11.7
 	// platform-audit row through auditRecorder (logged only in the degraded
 	// no-Postgres mode). F-25.4.22.
 	opsAudit := opsserver.LogAuditRecorder{Sink: func(event string, fields map[string]any) {
@@ -148,21 +162,22 @@ func (w *opsWiring) buildHTTPSurface() {
 		Escalations:        w.escalationSvc,
 		EventStream:        w.eventStream,
 		EventSubscriptions: w.eventSubscriptions,
-		// §25.5 line 2751: the subscription_cache_invalidate peer RPC.
-		CacheInvalidator:     w.subscriptionCache,
-		CacheInvalidateToken: w.delivery.InvalidateToken,
-		ReleaseChannel:       w.releaseChannelPub,
-		Upgrade:              w.upgradeSvc,
-		UpgradeChecker:       w.upgradeChecker,
-		UpgradePreflighter:   w.upgradePreflighter,
-		VersionAggregator:    w.versionAggregator,
-		PlatformConfig:       w.platformConfigSvc,
-		Registry:             w.registrySvc,
-		BuildVersion:         buildVersion,
-		PodLogs:              podLogs,
-		Production:           *w.f.production,
-		DiagnosticsAudit:     buildDiagnosticsAudit(*w.f.diagnosticsAuditRate, w.auditRecorder),
-		Auth:                 authCfg,
+		// §25.5: the subscription_cache_invalidate peer RPC.
+		CacheInvalidator:       w.subscriptionCache,
+		CacheInvalidateToken:   w.delivery.InvalidateToken,
+		ReleaseChannel:         w.releaseChannelPub,
+		Upgrade:                w.upgradeSvc,
+		UpgradeChecker:         w.upgradeChecker,
+		UpgradePreflighter:     w.upgradePreflighter,
+		VersionAggregator:      w.versionAggregator,
+		PlatformConfig:         w.platformConfigSvc,
+		Registry:               w.registrySvc,
+		BuildVersion:           buildVersion,
+		PodLogs:                podLogs,
+		Production:             w.f.productionMode(),
+		IdempotencyKeyRequired: w.f.idempotencyKeyRequired(),
+		DiagnosticsAudit:       buildDiagnosticsAudit(*w.f.diagnosticsAuditRate, w.auditRecorder),
+		Auth:                   authCfg,
 		// §25.12: route gateway-owned MCP management tools through the same
 		// GatewayClient built for the config/drift/events fan-out. A nil
 		// gwClient (single-process degraded mode) leaves gateway-owned tools
@@ -194,7 +209,7 @@ func (w *opsWiring) buildHTTPSurface() {
 // HTTP surface until shutdown and drains the background loops. It blocks
 // until the server stops and the loops return. spec: §25.4, §25.5, §4.4.
 func (w *opsWiring) runServer() {
-	// spec: §25.9 lines 3699-3700 — flush closed diagnostics-audit
+	// spec: §25.9 — flush closed diagnostics-audit
 	// coalescing windows on a periodic tick so a window emits even during
 	// an idle period, and drain every open window on shutdown.
 	go func() {
@@ -211,12 +226,12 @@ func (w *opsWiring) runServer() {
 		}
 	}()
 
-	// spec: §25.5 lines 2787, 2789 — refresh the event-stream gauges
+	// spec: §25.5 — refresh the event-stream gauges
 	// (lenny_ops_events_stream_length from the Redis XLEN of
 	// ops:events:stream, lenny_ops_events_sse_active_connections from the
 	// live SSE subscriber count) on every replica so the §16.9 scrape
 	// reflects current depth and connection count.
-	// §25.4 lines 2491-2497 — refresh the self-health source gauges
+	// §25.4 — refresh the self-health source gauges
 	// (postgres pool-active connections, redis consumer lag, webhook
 	// backlog) on the same cadence so the §16.9 scrape exposes the raw
 	// inputs behind the lenny_ops_self_health_status{check} statuses.
@@ -238,7 +253,7 @@ func (w *opsWiring) runServer() {
 		}
 	}()
 
-	// spec: §25.4 line 2193 — the remediation-lock reap. Expired locks are
+	// spec: §25.4 — the remediation-lock reap. Expired locks are
 	// cleaned up lazily on acquire and by this 60s periodic sweep on every
 	// replica: the in-memory tier is replica-local so each replica reaps its
 	// own, and the durable-tier DELETE is idempotent across replicas. The
@@ -259,7 +274,7 @@ func (w *opsWiring) runServer() {
 		}
 	}()
 
-	// §4.4 line 232: when --pgaudit-log-file is set, start the pgaudit
+	// §4.4: when --pgaudit-log-file is set, start the pgaudit
 	// shipper. The shipper tails the file, parses each AUDIT line,
 	// translates to OCSF, and delivers to the NoOp sink (deployers
 	// override the sink by editing pkg/audit/pgaudit/main wiring to

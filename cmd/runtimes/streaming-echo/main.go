@@ -3,19 +3,23 @@
 // Command streaming-echo is the Full-level reference adapter binary. It
 // inherits the Basic-level stdin/stdout protocol from cmd/runtimes/echo
 // (message → response, heartbeat → heartbeat_ack, shutdown → clean exit)
-// and adds the lifecycle channel from spec §15.4.3 Full level:
+// and adds the CH-RUNTIMEOPS from spec §15.4.3 Full level:
 //
 //   - lifecycle_capabilities / lifecycle_support  — handshake on connect
 //   - checkpoint_request / checkpoint_ready / checkpoint_complete
 //   - interrupt_request / interrupt_acknowledged
 //   - credentials_rotated / credentials_acknowledged
 //   - deadline_approaching — advance warning, logged (no exit)
-//   - terminate            — emit a final response and exit
 //
-// The lifecycle channel transport is a Unix socket whose path is taken
+// It answers every CH-MSGSOCK session_start with session_started, because
+// a runtime that has opened CH-RUNTIMEOPS acknowledges every start, and
+// it ignores session_end, because it keeps no per-session context. No
+// CH-RUNTIMEOPS frame ends the process: it exits on shutdown or stdin EOF.
+//
+// The CH-RUNTIMEOPS transport is a Unix socket whose path is taken
 // from the adapter manifest (`/run/lenny/adapter-manifest.json` by
 // default, or the path in $LENNY_ADAPTER_MANIFEST). The manifest's
-// `lifecycleChannel.socket` field carries the path. Production deploys
+// `runtimeOps.socket` field carries the path. Production deploys
 // use a Linux abstract socket (path begins with `@`); on macOS, where
 // abstract sockets are not supported (spec §15.4.3 platform note), a
 // regular file-based socket path is used so the conformance harness can
@@ -52,15 +56,13 @@ const (
 	exitOK            = 0
 	exitRuntimeError  = 1
 	exitProtocolError = 2
-
-	defaultManifestPath = "/run/lenny/adapter-manifest.json"
 )
 
 func main() {
-	// §4.7: resolve the §15.4.1 transport. LENNY_ADAPTER_SOCKET selects
+	// §4.7: resolve the §28.5.3 transport. LENNY_ADAPTER_SOCKET selects
 	// the sidecar-pod abstract socket; its absence selects stdin/stdout.
-	// The Full-level lifecycle channel is a separate Unix socket
-	// resolved from the adapter manifest, unaffected by this choice.
+	// The Full-level CH-RUNTIMEOPS conversation runs on a separate Unix
+	// socket resolved from the adapter manifest, unaffected by this choice.
 	transport, err := runtimekit.Open(context.Background())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -84,17 +86,18 @@ func run(stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Optional lifecycle channel. Resolved from the manifest path in
-	// $LENNY_ADAPTER_MANIFEST (falling back to /run/lenny/adapter-manifest.json).
-	// A missing manifest is not fatal: streaming-echo can be exercised in
-	// the Basic-only test paths without a manifest. The lifecycle channel
-	// is opened in a background goroutine so a slow connect does not block
-	// stdin processing.
-	manifest, manifestErr := loadManifest(os.Getenv("LENNY_ADAPTER_MANIFEST"))
-	if manifestErr == nil && manifest.LifecycleChannel.Socket != "" {
-		go runLifecycleChannel(ctx, manifest.LifecycleChannel.Socket, stdoutWriter, stderr, cancel)
+	// Optional CH-RUNTIMEOPS runtime operations socket. Resolved from the
+	// manifest path in $LENNY_ADAPTER_MANIFEST (falling back to
+	// /run/lenny/adapter-manifest.json). A missing manifest is not fatal:
+	// streaming-echo can be exercised in the Basic-only test paths without
+	// a manifest. The socket is opened in a background goroutine so a slow
+	// connect does not block stdin processing.
+	manifestPath := runtimekit.ManifestPath()
+	manifest, manifestErr := loadManifest(manifestPath)
+	if manifestErr == nil && manifest.RuntimeOps.Socket != "" {
+		go runRuntimeOps(ctx, manifest.RuntimeOps.Socket, manifestPath, stderr)
 	} else if manifestErr != nil {
-		fmt.Fprintf(stderr, "streaming-echo: no adapter manifest (%v); lifecycle channel disabled\n", manifestErr)
+		fmt.Fprintf(stderr, "streaming-echo: no adapter manifest (%v); runtime operations channel disabled\n", manifestErr)
 	}
 
 	scanner := bufio.NewScanner(stdin)
@@ -119,6 +122,13 @@ func run(stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
 			return protocolError{msg: fmt.Sprintf("malformed JSONL on stdin: %v", err)}
 		}
 		switch env.Type {
+		case "session_start":
+			if err := handleSessionStart(stdoutWriter, line); err != nil {
+				return err
+			}
+		case "session_end":
+			// Nothing to release: streaming-echo keeps no per-session
+			// context. spec: §28.5.3 (CH-MSGSOCK, Inbound: session_end).
 		case "message":
 			if err := handleMessage(ctx, stdoutWriter, line, &seq); err != nil {
 				return err
@@ -142,16 +152,13 @@ func run(stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
 // adapterManifest is the subset of /run/lenny/adapter-manifest.json this
 // runtime reads. Unknown fields on the file are ignored.
 type adapterManifest struct {
-	LifecycleChannel struct {
+	RuntimeOps struct {
 		Socket string `json:"socket"`
-	} `json:"lifecycleChannel"`
+	} `json:"runtimeOps"`
 	MCPNonce string `json:"mcpNonce"`
 }
 
 func loadManifest(path string) (adapterManifest, error) {
-	if path == "" {
-		path = defaultManifestPath
-	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return adapterManifest{}, err
@@ -163,17 +170,17 @@ func loadManifest(path string) (adapterManifest, error) {
 	return m, nil
 }
 
-// runLifecycleChannel dials the lifecycle Unix socket, completes the
+// runRuntimeOps dials the lifecycle Unix socket, completes the
 // capabilities/support handshake, and processes incoming events from the
 // adapter side. Each event response is written back on the same socket.
 //
 // Connection failures are logged but not fatal — the spec permits the
 // adapter side of the channel to be temporarily unavailable. A failed
 // connect on first try gets one retry pause and then gives up.
-func runLifecycleChannel(ctx context.Context, socket string, stdoutWriter *writer, stderr io.Writer, cancel context.CancelFunc) {
-	conn, err := dialLifecycleSocket(ctx, socket)
+func runRuntimeOps(ctx context.Context, socket, manifestPath string, stderr io.Writer) {
+	conn, err := dialLifecycleSocket(ctx, socket, manifestPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "streaming-echo: lifecycle channel dial failed: %v\n", err)
+		fmt.Fprintf(stderr, "streaming-echo: runtime operations channel dial failed: %v\n", err)
 		return
 	}
 	defer conn.Close()
@@ -245,42 +252,19 @@ func runLifecycleChannel(ctx context.Context, socket string, stdoutWriter *write
 			handleCredentialsRotated(line, w, stderr)
 		case "deadline_approaching":
 			fmt.Fprintf(stderr, "streaming-echo: lifecycle: deadline approaching: %s\n", strings.TrimSpace(string(line)))
-		case "terminate":
-			handleTerminate(line, stdoutWriter, stderr, cancel)
-			return
 		default:
 			fmt.Fprintf(stderr, "streaming-echo: lifecycle: ignoring unknown event type %q\n", env.Type)
 		}
 	}
 }
 
-func dialLifecycleSocket(ctx context.Context, socket string) (net.Conn, error) {
-	// Linux abstract socket addresses start with @ and are translated to
-	// a leading NUL when dialled. The net package handles this by passing
-	// the @-prefixed name unchanged to the syscall; the kernel resolves
-	// it. On macOS, abstract sockets are not supported — the path is
-	// taken as-is on the filesystem.
-	addr := socket
-	if strings.HasPrefix(socket, "@") {
-		// net.Dial expects "\x00..." for abstract sockets when not on
-		// Linux; on Linux net handles the @ prefix natively. Strip the
-		// @ and let the kernel decide — this matches the Go stdlib
-		// behaviour for unix-abstract addresses.
-		addr = "\x00" + socket[1:]
-	}
-	d := net.Dialer{}
-	conn, err := d.DialContext(ctx, "unix", addr)
-	if err == nil {
-		return conn, nil
-	}
-	// One bounded retry. Helps the test harness that may not have its
-	// listener up at the instant the runtime starts.
-	select {
-	case <-time.After(200 * time.Millisecond):
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-	return d.DialContext(ctx, "unix", addr)
+// dialLifecycleSocket dials CH-RUNTIMEOPS through the runtime connection
+// handshake: the first line on each connection is the nonce from the
+// manifest at manifestPath, read again before each redial, and a challenge
+// that arrives before the adapter's lifecycle_capabilities is answered.
+// spec: §4.7.11 (Runtime connection handshake).
+func dialLifecycleSocket(ctx context.Context, socket, manifestPath string) (net.Conn, error) {
+	return runtimekit.DialAuthenticated(ctx, socket, manifestPath)
 }
 
 func readJSONLine(r *bufio.Reader) ([]byte, error) {
@@ -330,19 +314,30 @@ func handleInterrupt(line []byte, w *writer, stderr io.Writer) {
 	})
 }
 
+// handleCredentialsRotated re-reads the credential file the frame names
+// before it acknowledges the rotation, so the Full credential rotation
+// check observes the re-read. streaming-echo has no upstream client to
+// rebind, so it discards the bundle once read. A failed read is logged and
+// left unacknowledged: the adapter's rotation then ends as it ends for a
+// runtime that does not answer.
+//
+// spec: §15.4.6 (credential rotation handling), §28.5.3 (CH-RUNTIMEOPS,
+// credentials_rotated).
 func handleCredentialsRotated(line []byte, w *writer, stderr io.Writer) {
 	var req struct {
-		Type     string `json:"type"`
-		Provider string `json:"provider"`
-		LeaseID  string `json:"leaseId"`
+		Type            string `json:"type"`
+		Provider        string `json:"provider"`
+		LeaseID         string `json:"leaseId"`
+		CredentialsPath string `json:"credentialsPath"`
 	}
 	if err := json.Unmarshal(line, &req); err != nil {
 		fmt.Fprintf(stderr, "streaming-echo: credentials_rotated decode: %v\n", err)
 		return
 	}
-	// streaming-echo has no upstream credentials to refresh; a real
-	// runtime would re-read the rotated credential file here. §4.7
-	// requires the runtime to acknowledge the rotation regardless.
+	if _, err := os.ReadFile(req.CredentialsPath); err != nil {
+		fmt.Fprintf(stderr, "streaming-echo: credentials_rotated re-read %s: %v\n", req.CredentialsPath, err)
+		return
+	}
 	_ = w.write(map[string]any{
 		"type":     "credentials_acknowledged",
 		"leaseId":  req.LeaseID,
@@ -350,24 +345,27 @@ func handleCredentialsRotated(line []byte, w *writer, stderr io.Writer) {
 	})
 }
 
-func handleTerminate(line []byte, stdoutWriter *writer, stderr io.Writer, cancel context.CancelFunc) {
-	var req struct {
-		Type       string `json:"type"`
-		DeadlineMS int    `json:"deadlineMs"`
-		Reason     string `json:"reason"`
+// handleSessionStart answers a session_start with session_started,
+// echoing its sessionId and startId. streaming-echo keeps no per-session
+// context, so the session is ready as soon as the frame is read.
+//
+// spec: §28.5.3 (CH-MSGSOCK, Outbound: session_started).
+func handleSessionStart(w *writer, line []byte) error {
+	var start struct {
+		SessionID string `json:"sessionId"`
+		StartID   string `json:"startId"`
 	}
-	_ = json.Unmarshal(line, &req)
-	// Emit a final response with the DEADLINE_EXCEEDED marker per
-	// spec §15.4.6 Full-level deadline-signal-handling expectation,
-	// then signal the stdin loop to exit.
-	_ = stdoutWriter.write(map[string]any{
-		"type": "response",
-		"output": []map[string]any{
-			{"type": "text", "inline": "deadline reached"},
-		},
-		"error": map[string]any{"code": "DEADLINE_EXCEEDED"},
-	})
-	cancel()
+	if err := json.Unmarshal(line, &start); err != nil {
+		return protocolError{msg: fmt.Sprintf("malformed session_start: %v", err)}
+	}
+	if err := w.write(map[string]any{
+		"type":      "session_started",
+		"sessionId": start.SessionID,
+		"startId":   start.StartID,
+	}); err != nil {
+		return fmt.Errorf("write session_started: %w", err)
+	}
+	return nil
 }
 
 // writer / stdin helpers below are identical to cmd/runtimes/echo. They
@@ -394,9 +392,13 @@ func (w *writer) write(v any) error {
 
 func handleMessage(_ context.Context, w *writer, line []byte, seq *atomic.Uint64) error {
 	var inbound struct {
-		Type  string        `json:"type"`
-		ID    string        `json:"id"`
-		Input []messagePart `json:"input"`
+		Type string `json:"type"`
+		ID   string `json:"id"`
+		// SessionID is the session the adapter addressed the frame to. A
+		// Basic-level runtime echoes it on the frames it emits in
+		// response, on every pod. spec: §15.4.3; §28.5.3.
+		SessionID string        `json:"sessionId"`
+		Input     []messagePart `json:"input"`
 	}
 	if err := json.Unmarshal(line, &inbound); err != nil {
 		return protocolError{msg: fmt.Sprintf("malformed message envelope: %v", err)}
@@ -413,14 +415,14 @@ func handleMessage(_ context.Context, w *writer, line []byte, seq *atomic.Uint64
 				MimeTyp:       p.MimeTyp,
 			})
 		} else {
-			// §15.4.1 line 1499: stamp the producer schemaVersion even when
+			// §28.5.3: stamp the producer schemaVersion even when
 			// echoing an input part verbatim, so every emitted MessagePart
 			// satisfies the required field. 15.4-MED-021.
 			p.SchemaVersion = messagePartSchemaVersion
 			out = append(out, p)
 		}
 	}
-	return w.write(response{Type: "response", Output: out})
+	return w.write(response{Type: "response", SessionID: inbound.SessionID, Output: out})
 }
 
 func handleShutdown(_ *writer, line []byte, cancel context.CancelFunc) error {
@@ -444,11 +446,11 @@ func handleShutdown(_ *writer, line []byte, cancel context.CancelFunc) error {
 }
 
 type messagePart struct {
-	// SchemaVersion is the §15.4.1 line 1499 producer obligation: a
+	// SchemaVersion is the §28.5.3 producer obligation: a
 	// producer MUST set schemaVersion to the highest version required by
 	// the fields it emits. messagepart.schema.json:66 makes it required, so
 	// it is not omitempty — a v1 text/blob part is stamped with 1. spec:
-	// §15.4.1 line 1499-1501 / 15.4-MED-021.
+	// §15.4.1 / 15.4-MED-021.
 	SchemaVersion int            `json:"schemaVersion"`
 	Type          string         `json:"type"`
 	ID            string         `json:"id,omitempty"`
@@ -459,13 +461,16 @@ type messagePart struct {
 	Status        string         `json:"status,omitempty"`
 }
 
-// messagePartSchemaVersion is the §15.4.1 MessagePart schema revision this
+// messagePartSchemaVersion is the §28.5.3 MessagePart schema revision this
 // reference runtime emits. v1 text/blob parts require version 1.
 const messagePartSchemaVersion = 1
 
 type response struct {
-	Type   string        `json:"type"`
-	Output []messagePart `json:"output"`
+	Type string `json:"type"`
+	// SessionID echoes the session the inbound message was addressed to,
+	// which §28.5.3 requires of a Basic-level runtime on every pod.
+	SessionID string        `json:"sessionId,omitempty"`
+	Output    []messagePart `json:"output"`
 }
 
 type heartbeatAck struct {

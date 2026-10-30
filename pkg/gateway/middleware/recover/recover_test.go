@@ -21,7 +21,7 @@ func (c *captureLogger) Printf(format string, args ...any) {
 	c.lines = append(c.lines, fmt.Sprintf(format, args...))
 }
 
-// spec: §10.4 line 377 — a recovered panic must surface as a 500
+// spec: §10.4 — a recovered panic must surface as a 500
 // response instead of the net/http default of silent truncation.
 // F-10.4.9.
 func TestMiddlewareRecoversPanicAsInternalError_spec_10_4(t *testing.T) {
@@ -44,7 +44,7 @@ func TestMiddlewareRecoversPanicAsInternalError_spec_10_4(t *testing.T) {
 	}
 }
 
-// spec: §10.4 line 377 — when the handler already wrote a status
+// spec: §10.4 — when the handler already wrote a status
 // (e.g. an SSE stream that panicked mid-body), the middleware MUST
 // NOT rewrite the header so the existing framing stays valid.
 // F-10.4.9.

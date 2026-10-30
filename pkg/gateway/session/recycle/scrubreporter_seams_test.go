@@ -5,6 +5,7 @@ package recycle_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -179,6 +180,7 @@ func TestInspectForRecyclePreConnectRecyclingPool_spec_5_2(t *testing.T) {
 		"agents": recyclingPool("agents", "rt", isolation.ProfileSandboxed, &runtimestore.RecyclePolicy{
 			Enabled: true, OnScrubFailure: runtimestore.CleanupFailureWarn,
 			MaxScrubFailures: 3, MaxSessionsPerPod: 50, MaxPodUptimeSeconds: 3600,
+			RuntimeProcess: runtimestore.RuntimeProcessKeep,
 		}),
 	}}
 	runtimes := fakeRuntimeReader{runtimes: map[string]runtimestore.Runtime{
@@ -246,7 +248,8 @@ func TestInspectForRecycleVMRestartProfileSetsSignal_spec_5_2(t *testing.T) {
 				"agents": recyclingPool("agents", "rt", isolation.ProfileMicrovm, &runtimestore.RecyclePolicy{
 					Enabled: true, OnScrubFailure: runtimestore.CleanupFailureWarn,
 					MaxScrubFailures: 3, MaxSessionsPerPod: 50,
-					ScrubProfile: tc.profile,
+					ScrubProfile:   tc.profile,
+					RuntimeProcess: runtimestore.RuntimeProcessKeep,
 				}),
 			}}
 			runtimes := fakeRuntimeReader{runtimes: map[string]runtimestore.Runtime{
@@ -285,6 +288,7 @@ func TestInspectForRecycleRuntimeDefaultProfile_spec_16_1(t *testing.T) {
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	pool := recyclingPool("agents", "rt", "", &runtimestore.RecyclePolicy{
 		Enabled: true, MaxSessionsPerPod: 50,
+		RuntimeProcess: runtimestore.RuntimeProcessKeep,
 	})
 	cl := inspectorClient(t, agentPod("pod-1", "agents", "true", now), recyclingClaim("pod-1"))
 	insp, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
@@ -319,6 +323,7 @@ func TestInspectForRecyclePoolProfileOverridesRuntimeDefault_spec_16_1(t *testin
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	pool := recyclingPool("agents", "rt", isolation.ProfileSandboxed, &runtimestore.RecyclePolicy{
 		Enabled: true, MaxSessionsPerPod: 50,
+		RuntimeProcess: runtimestore.RuntimeProcessKeep,
 	})
 	cl := inspectorClient(t, agentPod("pod-1", "agents", "true", now), recyclingClaim("pod-1"))
 	insp, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
@@ -342,7 +347,7 @@ func TestInspectForRecyclePoolProfileOverridesRuntimeDefault_spec_16_1(t *testin
 }
 
 // TestInspectForRecycleAbsentHostScheduleLabelFailsSafe verifies a missing
-// lenny.dev/host-schedulable label resolves to unschedulable, the §6.39
+// lenny.dev/host-schedulable label resolves to unschedulable, the §6.2
 // fail-safe so a cordoned-or-unknown host retires rather than reuses.
 // spec: 6.39 (absent label treated as unschedulable)
 //
@@ -356,6 +361,7 @@ func TestInspectForRecycleAbsentHostScheduleLabelFailsSafe_spec_6_39(t *testing.
 	insp := mustInspector(t, cl, map[string]poolstore.Pool{
 		"agents": recyclingPool("agents", "rt", isolation.ProfileStandard, &runtimestore.RecyclePolicy{
 			Enabled: true, MaxSessionsPerPod: 50,
+			RuntimeProcess: runtimestore.RuntimeProcessKeep,
 		}),
 	}, map[string]runtimestore.Runtime{"rt": {Name: "rt"}})
 	policy, found, err := insp.InspectForRecycle(context.Background(), "pod-1")
@@ -401,6 +407,7 @@ func TestInspectForRecycleClaimGonePodPresentIsNoOp_spec_4_7(t *testing.T) {
 	insp := mustInspector(t, cl, map[string]poolstore.Pool{
 		"agents": recyclingPool("agents", "rt", isolation.ProfileStandard, &runtimestore.RecyclePolicy{
 			Enabled: true, MaxSessionsPerPod: 50,
+			RuntimeProcess: runtimestore.RuntimeProcessKeep,
 		}),
 	}, map[string]runtimestore.Runtime{"rt": {Name: "rt"}})
 	_, found, err := insp.InspectForRecycle(context.Background(), "pod-1")
@@ -479,17 +486,19 @@ func concurrentPool(name string, maxConcurrent int) poolstore.Pool {
 		ExecutionMode: runtimestore.ExecutionModeSession,
 		SessionPolicy: &runtimestore.SessionPolicy{
 			MaxConcurrentSessions: maxConcurrent,
-			Recycle:               &runtimestore.RecyclePolicy{Enabled: true, MaxSessionsPerPod: 50},
+			Recycle:               &runtimestore.RecyclePolicy{Enabled: true, MaxSessionsPerPod: 50, RuntimeProcess: runtimestore.RuntimeProcessKeep},
 		},
 	}
 }
 
 // recordNLeaks records n leaked session-scrub outcomes against podID through
-// the ledger, failing the test on any error.
+// the ledger, one per distinct slot identifier, failing the test on any
+// error. The slots are distinct because the ledger keys its record by slot
+// and a repeated slot counts once.
 func recordNLeaks(t *testing.T, ledger leasecontrol.DrainLedger, podID string, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
-		if err := ledger.RecordLeak(context.Background(), podID); err != nil {
+		if err := ledger.RecordLeak(context.Background(), podID, fmt.Sprintf("slot-%d", i)); err != nil {
 			t.Fatalf("RecordLeak %d: %v", i, err)
 		}
 	}
@@ -585,9 +594,41 @@ func TestDrainLedgerStampsAtConcurrentThreshold_spec_5_2(t *testing.T) {
 	if drainRequested(t, cl, "pod-1") {
 		t.Fatal("drain-request stamped at 3 leaks, below the ceil(8/2)=4 threshold")
 	}
-	recordNLeaks(t, ledger, "pod-1", 1)
+	if err := ledger.RecordLeak(context.Background(), "pod-1", "slot-3"); err != nil {
+		t.Fatalf("RecordLeak slot-3: %v", err)
+	}
 	if !drainRequested(t, cl, "pod-1") {
 		t.Error("drain-request not stamped at 4 leaks, the ceil(8/2) threshold")
+	}
+}
+
+// TestDrainLedgerCountsARepeatedSlotOnce verifies the drain ledger keys its
+// leak record by slot: a slot whose leak reaches the ledger twice, as a slot
+// whose compensation's runtime close fails does through its cleanup-outcome
+// report and again through the unclean response, counts once toward the
+// ceil(maxConcurrentSessions/2) threshold, while a second distinct slot
+// reaches it.
+// spec: §5.2 (pool configuration and execution modes); §6.2 (pod state machine)
+//
+// diagnosis: a failure means the ledger counts leak records rather than leaked
+// slots, so one slot reported twice drains a pod that holds a single leak.
+func TestDrainLedgerCountsARepeatedSlotOnce_spec_5_2(t *testing.T) {
+	pod := agentPod("pod-1", "agents", "true", time.Unix(0, 0))
+	cl := fake.NewClientBuilder().WithObjects(pod).Build()
+	ledger := mustDrainLedger(t, cl, map[string]poolstore.Pool{"agents": concurrentPool("agents", 4)})
+	for i := 0; i < 2; i++ {
+		if err := ledger.RecordLeak(context.Background(), "pod-1", "sess-1"); err != nil {
+			t.Fatalf("RecordLeak sess-1 #%d: %v", i, err)
+		}
+	}
+	if drainRequested(t, cl, "pod-1") {
+		t.Fatal("drain-request stamped after one slot recorded twice, below the ceil(4/2)=2 threshold")
+	}
+	if err := ledger.RecordLeak(context.Background(), "pod-1", "sess-2"); err != nil {
+		t.Fatalf("RecordLeak sess-2: %v", err)
+	}
+	if !drainRequested(t, cl, "pod-1") {
+		t.Error("drain-request not stamped at two distinct leaked slots, the ceil(4/2) threshold")
 	}
 }
 
@@ -607,7 +648,7 @@ func TestDrainLedgerUnsetMaxConcurrentDefaultsToOne_spec_5_2(t *testing.T) {
 		Name:          "agents",
 		ExecutionMode: runtimestore.ExecutionModeSession,
 		SessionPolicy: &runtimestore.SessionPolicy{
-			Recycle: &runtimestore.RecyclePolicy{Enabled: true, MaxSessionsPerPod: 50},
+			Recycle: &runtimestore.RecyclePolicy{Enabled: true, MaxSessionsPerPod: 50, RuntimeProcess: runtimestore.RuntimeProcessKeep},
 		},
 	}
 	ledger := mustDrainLedger(t, cl, map[string]poolstore.Pool{"agents": pool})
@@ -630,7 +671,7 @@ func TestDrainLedgerNoPoolLabelFailsClosed_spec_5_2(t *testing.T) {
 	delete(pod.Labels, warmpool.LabelPool)
 	cl := fake.NewClientBuilder().WithObjects(pod).Build()
 	ledger := mustDrainLedger(t, cl, nil)
-	if err := ledger.RecordLeak(context.Background(), "pod-1"); err == nil {
+	if err := ledger.RecordLeak(context.Background(), "pod-1", "slot-1"); err == nil {
 		t.Error("RecordLeak on a pod with no pool label: err = nil, want non-nil")
 	}
 }
@@ -648,7 +689,7 @@ func TestDrainLedgerNoPoolLabelFailsClosed_spec_5_2(t *testing.T) {
 func TestDrainLedgerMissingPodFallsBackToDefaultBound_spec_3_4(t *testing.T) {
 	cl := fake.NewClientBuilder().Build()
 	ledger := mustDrainLedger(t, cl, nil)
-	if err := ledger.RecordLeak(context.Background(), "ghost"); err != nil {
+	if err := ledger.RecordLeak(context.Background(), "ghost", "slot-1"); err != nil {
 		t.Fatalf("RecordLeak on a missing pod: %v", err)
 	}
 }
@@ -666,7 +707,7 @@ func TestDrainLedgerMissingPoolFallsBackToDefaultBound_spec_3_4(t *testing.T) {
 	pod := agentPod("pod-1", "deleted-pool", "true", time.Unix(0, 0))
 	cl := fake.NewClientBuilder().WithObjects(pod).Build()
 	ledger := mustDrainLedger(t, cl, nil) // no pools => ErrNotFound on resolve
-	if err := ledger.RecordLeak(context.Background(), "pod-1"); err != nil {
+	if err := ledger.RecordLeak(context.Background(), "pod-1", "slot-1"); err != nil {
 		t.Fatalf("RecordLeak with a deleted pool: %v", err)
 	}
 	if !drainRequested(t, cl, "pod-1") {
@@ -1232,7 +1273,7 @@ func TestClaimDispositionRetireClaimGoneIsNoOp_spec_3_4(t *testing.T) {
 		},
 	})
 	d := mustDispositionDriver(t, cl)
-	if err := d.Retire(context.Background(), "pod-1", true, false, "cleanup_fail_policy", "shred timed out"); err != nil {
+	if err := d.Retire(context.Background(), "pod-1", true, false, "cleanup_fail_policy", leasecontrol.PodLifetime{}, "shred timed out"); err != nil {
 		t.Errorf("Retire with gone claim: err = %v, want nil (no-op)", err)
 	}
 }

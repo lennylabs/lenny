@@ -16,7 +16,7 @@ import (
 // is a standalone runtime, a derived runtime, or an external registered
 // agent.
 //
-// spec: §8.2 line 23 — "Target id is opaque — the runtime does not know
+// spec: §8.2 — "Target id is opaque — the runtime does not know
 // whether the target is a standalone runtime, derived runtime, or
 // external registered agent."
 type delegationTargetKind string
@@ -41,7 +41,7 @@ const (
 // this resolver short-circuiting it. When no registry is wired (the dev
 // path), the opaque id passes through unchanged.
 //
-// spec: §8.2 lines 12-23 (opaque target signature); §8.2 line 50
+// spec: §8.2; §8.2
 // (type: mcp targets rejected with target_not_an_agent).
 func resolveDelegationTarget(ctx context.Context, deps Deps, target string) (ref string, kind delegationTargetKind) {
 	if deps.Runtimes == nil || target == "" {
@@ -82,8 +82,9 @@ func resolveDelegationTarget(ctx context.Context, deps Deps, target string) (ref
 // non-text parts flattens to the empty string and the child receives no
 // initial message — the same behaviour as an omitted input.
 //
-// spec: §8.2 lines 25-28 (TaskSpec.input is MessagePart[]); §15.4.1
-// lines 1483-1540 (MessagePart envelope, v1 `text` parts).
+// spec: §8.2 (TaskSpec.input is MessagePart[]); §28.5.3 (the adapter
+// `message` type carries its input as a MessagePart array); §15.4
+// Internal MessagePart Format (the envelope and its v1 `text` parts).
 func flattenTaskInput(parts []sessionrecord.MessagePart) string {
 	var b strings.Builder
 	for _, p := range parts {

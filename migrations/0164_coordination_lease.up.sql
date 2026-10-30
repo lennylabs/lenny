@@ -1,11 +1,11 @@
--- §10.1 lines 163-165 CheckpointBarrier barrier-target mirror. The
+-- §10.1 CheckpointBarrier barrier-target mirror. The
 -- preStop graceful-drain barrier dispatches a CheckpointBarrier to every
--- session this gateway replica coordinates; §10.1 line 165 sources that
+-- session this gateway replica coordinates; §10.1.8 sources that
 -- barrier-target set from a Postgres query against this mirror table of
 -- the form
 --
 --   SELECT session_id FROM coordination_lease
---   WHERE coordinator_replica = $this_replica_id AND released_at IS NULL
+--   WHERE coordinator_replica = $this_holder_value AND released_at IS NULL
 --
 -- (not the in-memory lease cache). Reading from Postgres observes
 -- coordinator handoffs that occurred in the seconds before preStop:
@@ -28,18 +28,20 @@
 -- primitives on the store role interface, run by the §12.8 orchestrator
 -- before the tenant row is deleted.
 --
--- spec: §10.1 lines 163-181; §12.1 line 5 (mandatory erasure primitives).
+-- spec: §10.1; §12.1.
 
 CREATE TABLE coordination_lease (
     tenant_id               TEXT        NOT NULL,
     session_id              TEXT        NOT NULL,
-    -- coordinator_replica is the OTel service.instance.id of the gateway
-    -- replica that currently holds the session-coordination lease. The
-    -- §10.1 line 165 barrier-target query filters on it.
+    -- coordinator_replica is the coordination holder value of the gateway
+    -- replica that currently holds the session-coordination lease: its
+    -- replica identity, its process token, and its forward address
+    -- (§10.1.1 Replica address). The §10.1.8 barrier-target query filters
+    -- on it.
     coordinator_replica     TEXT        NOT NULL,
     -- coordination_generation is the §4.2 fenced generation the holder
     -- last observed for the session. The CheckpointBarrier message
-    -- carries it (§10.1 line 165); the adapter rejects a barrier whose
+    -- carries it (§10.1.8); the adapter rejects a barrier whose
     -- generation does not match its last fenced value.
     coordination_generation BIGINT      NOT NULL DEFAULT 0,
     acquired_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -52,7 +54,7 @@ CREATE TABLE coordination_lease (
     PRIMARY KEY (tenant_id, session_id)
 );
 
--- The §10.1 line 165 barrier-target query is `WHERE coordinator_replica
+-- The §10.1.8 barrier-target query is `WHERE coordinator_replica
 -- = $1 AND released_at IS NULL`; a partial index on coordinator_replica
 -- over the active rows keeps the drain-time fan-out read bounded under
 -- the 2-second deadline.

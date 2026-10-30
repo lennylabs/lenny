@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
-// spec: §4.9 lines 1303-1336 — the tenant credentialPolicy round-trips
+// spec: §4.9 — the tenant credentialPolicy round-trips
 // through POST /v1/admin/tenants: the providerPools, preferredSource,
 // fallback, and userCredentialsEnabled all persist and surface on the
 // response payload.
@@ -61,7 +61,7 @@ func TestCreateTenantWithCredentialPolicy(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1310-1319 — an invalid credentialPolicy (unknown
+// spec: §4.9 — an invalid credentialPolicy (unknown
 // preferredSource) is rejected at admission with 400.
 func TestCreateTenantRejectsInvalidCredentialPolicy(t *testing.T) {
 	router, _ := newAdminServer(t)
@@ -95,7 +95,7 @@ func TestCreateTenantRejectsEmptyProviderPool(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1303-1336 — PUT /v1/admin/tenants/{id} sets the
+// spec: §4.9 — PUT /v1/admin/tenants/{id} sets the
 // credentialPolicy on an existing tenant.
 func TestUpdateTenantSetsCredentialPolicy(t *testing.T) {
 	router, store := newAdminServer(t)

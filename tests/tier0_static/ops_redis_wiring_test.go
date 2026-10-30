@@ -58,9 +58,9 @@ func secretKeyRefOf(entry map[string]any) (secret, key string, ok bool) {
 	return secret, key, true
 }
 
-// spec: §25.5 (spec/25_agent-operability.md lines 2558, 2602) "`lenny-ops`
+// spec: §25.5 (§25.5) "`lenny-ops`
 // reads from the Redis stream" / "**Redis capped stream.** Key:
-// `ops:events:stream`", and §25.4 line 1512 (StoreRouter: the event stream
+// `ops:events:stream`", and §25.4 (StoreRouter: the event stream
 // routes to `PlatformRedis()`). When redis.url is set, the lenny-ops
 // Deployment must read LENNY_REDIS_URL from the lenny-datastore-conn Secret
 // so the read side has a Redis source to consume and, on a Redis outage,
@@ -95,7 +95,7 @@ func TestOpsDeploymentWiresRedisURLFromDatastoreSecret_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.5 cold-start (spec/25_agent-operability.md line 2784-2786) —
+// spec: §25.5 cold-start (§25.5) —
 // without Redis the read side runs on lenny-ops's own per-replica in-memory
 // ring buffer. A stock render that leaves redis.url empty must therefore
 // wire no LENNY_REDIS_URL, so the binary takes the degraded single-process

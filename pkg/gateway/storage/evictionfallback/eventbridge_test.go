@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/evictionfallback"
 )
 
-// spec: §4.4 line 285 — `session.lost` event.
+// spec: §4.4 — `session.lost` event.
 
 func TestSessionEventsBridgePublishesToBus(t *testing.T) {
 	bus := sessionevents.NewBus(0)

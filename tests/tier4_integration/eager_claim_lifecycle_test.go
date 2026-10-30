@@ -14,7 +14,8 @@
 //   - Uploads buffer in the Artifact Store during the created window; the
 //     workspace is NOT streamed into the claimed pod until finalize.
 //   - /finalize is the preparation barrier: it streams the buffered blob into
-//     /workspace/current AND assigns the credential lease, returning ready.
+//     the session's /workspace/slots/{sessionId}/current AND assigns the
+//     credential lease, returning ready.
 //   - /start launches only: it assigns no lease and runs no materialization.
 //
 // This crosses the gateway, the datastore (the per-pod SandboxClaim on the
@@ -105,7 +106,7 @@ type recordingAssigner struct {
 	released []string // session ids passed to ReleaseSession
 }
 
-func (a *recordingAssigner) AssignProto(pool, sessionID, _, _ string) (*adapterv1.CredentialLease, error) {
+func (a *recordingAssigner) AssignProto(pool, sessionID, _, _ string, _ int64) (*adapterv1.CredentialLease, error) {
 	a.mu.Lock()
 	a.assigns = append(a.assigns, sessionID)
 	a.mu.Unlock()
@@ -117,11 +118,26 @@ func (a *recordingAssigner) AssignProto(pool, sessionID, _, _ string) (*adapterv
 	}, nil
 }
 
-func (a *recordingAssigner) ReleaseSession(sessionID string) {
+func (a *recordingAssigner) ReleaseSession(sessionID string) error {
 	a.mu.Lock()
 	a.released = append(a.released, sessionID)
 	a.mu.Unlock()
+	return nil
 }
+
+// ReleaseThrough is the generation-scoped pod release. It records the session
+// as ReleaseSession does, because a pod release returns the session's leases
+// through the binding's stamp.
+func (a *recordingAssigner) ReleaseThrough(sessionID string, _ int64) error {
+	a.mu.Lock()
+	a.released = append(a.released, sessionID)
+	a.mu.Unlock()
+	return nil
+}
+
+// Release is the attempt-scoped lease release podsession.CredentialAssigner
+// requires; this fake records nothing for it.
+func (*recordingAssigner) Release(string) error { return nil }
 
 func (a *recordingAssigner) assignCount() int {
 	a.mu.Lock()
@@ -186,11 +202,13 @@ func eagerCluster(t *testing.T) client.Client {
 	return c
 }
 
-// eagerAdapterDialer serves srv over an in-memory connection.
-func eagerAdapterDialer(t *testing.T, srv *adapter.Server) func(string) (*adapterclient.Client, error) {
+// eagerAdapterDialer serves srv over an in-memory connection. Any opts are
+// passed to adapter.NewGRPCServer, so a test can install interceptors that
+// observe the RPCs the gateway issues to the pod.
+func eagerAdapterDialer(t *testing.T, srv *adapter.Server, opts ...grpc.ServerOption) func(string) (*adapterclient.Client, error) {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
-	gs := adapter.NewGRPCServer(srv)
+	gs := adapter.NewGRPCServer(srv, opts...)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 	return func(string) (*adapterclient.Client, error) {
@@ -203,23 +221,23 @@ func eagerAdapterDialer(t *testing.T, srv *adapter.Server) func(string) (*adapte
 }
 
 // spec: 7.1, 7.4, 15.1 (decomposed create → upload → finalize → start; upload
-// buffers in the Artifact Store; finalize materializes /workspace/current and
+// buffers in the Artifact Store; finalize materializes the session's slot cwd and
 // assigns the lease; start launches only)
 // diagnosis: a failure means the end-to-end eager-claim lifecycle diverges
 // from the proposal across components. If the uploaded file appears in the pod
 // workspace before finalize, the gateway streamed bytes into the pod during
 // the upload window instead of buffering them in the Artifact Store. If the
 // file is absent after finalize, the finalize barrier did not stream the
-// buffered blob into /workspace/current. If the lease is assigned at create or
+// buffered blob into the session's slot cwd. If the lease is assigned at create or
 // start rather than once at finalize, the §4.9 lease-assignment step did not
 // move to the finalize barrier. If the runtime starts before /start, the
 // launch leaked into an earlier phase.
 func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
+	t.Parallel()
 	rt := &eagerRuntime{}
 	wsRoot := t.TempDir()
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = wsRoot
-	adapterSrv.StagingDir = t.TempDir()
+	adapterSrv.WorkspaceBase = wsRoot
 	adapterSrv.CredentialsDir = t.TempDir()
 	adapterSrv.Runtime = rt
 
@@ -240,36 +258,10 @@ func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
 	binder.Credentials = assigner
 
 	ctx := context.Background()
-	tenants := tenantstore.NewMemory()
-	if err := tenants.Create(ctx, tenantstore.Tenant{
-		ID: "acme",
-		CredentialPolicy: credential.CredentialPolicy{
-			PreferredSource: credential.PreferredSourcePool,
-			ProviderPools: map[string]credential.ProviderPool{
-				"anthropic_direct": {DefaultPool: "claude-prod"},
-			},
-		},
-	}); err != nil {
-		t.Fatalf("create tenant: %v", err)
-	}
-	runtimes := runtimestore.NewMemory()
-	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "echo", SupportedProviders: []string{"anthropic_direct"}}); err != nil {
-		t.Fatalf("create runtime: %v", err)
-	}
-	credPools := credentialpoolstore.NewMemory()
-	if err := credPools.Create(ctx, credentialpoolstore.CredentialPool{
-		TenantID:              "acme",
-		Name:                  "claude-prod",
-		Provider:              "anthropic_direct",
-		MaxConcurrentSessions: 10,
-		Credentials: []credentialpoolstore.Credential{
-			{ID: "claude-prod-cred-a", SecretRef: "secret-claude-prod", Status: credentialpoolstore.CredentialActive},
-		},
-	}); err != nil {
-		t.Fatalf("create pool: %v", err)
-	}
+	tenants, runtimes, credPools := eagerCredentialStores(t)
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-eager" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -329,12 +321,12 @@ func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
 	}
 	// The uploaded file must NOT be in the pod workspace yet: the upload window
 	// buffers in the store and performs no pod I/O (§7.4 store-mediated staging).
-	if _, err := os.Stat(filepath.Join(wsRoot, "CLAUDE.md")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(wsRoot, "slots", "sess-eager", "current", "CLAUDE.md")); !os.IsNotExist(err) {
 		t.Fatalf("CLAUDE.md present in the pod workspace before finalize (err=%v); uploads must buffer in the Artifact Store, not stream into the pod", err)
 	}
 
 	// 3. Finalize: the preparation barrier streams the buffered blob into
-	// /workspace/current, runs setup, and assigns the credential lease; returns
+	// the session's slot cwd, runs setup, and assigns the credential lease; returns
 	// ready.
 	finalizeBody, _ := json.Marshal(map[string]any{
 		"workspacePlan": map[string]any{
@@ -353,8 +345,8 @@ func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
 	if finResp.State != string(session.StateReady) {
 		t.Fatalf("after finalize, state = %q, want ready (finalize is the barrier and returns ready)", finResp.State)
 	}
-	// The buffered blob was streamed into /workspace/current at finalize.
-	got, err := os.ReadFile(filepath.Join(wsRoot, "CLAUDE.md"))
+	// The buffered blob was streamed into the session's slot cwd at finalize.
+	got, err := os.ReadFile(filepath.Join(wsRoot, "slots", "sess-eager", "current", "CLAUDE.md"))
 	if err != nil {
 		t.Fatalf("the buffered upload was not materialized into the pod workspace at finalize: %v", err)
 	}
@@ -387,4 +379,43 @@ func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
 	if n := assigner.assignCount(); n != 1 {
 		t.Errorf("AssignProto called %d times total, want 1; /start must assign no lease", n)
 	}
+}
+
+// eagerCredentialStores seeds the tenant, runtime, and credential-pool stores
+// the finalize prepare phase resolves the §4.9 lease against: tenant acme
+// routes anthropic_direct to the claude-prod pool, and runtime echo supports
+// that provider.
+func eagerCredentialStores(t *testing.T) (*tenantstore.Memory, *runtimestore.Memory, *credentialpoolstore.Memory) {
+	t.Helper()
+	ctx := context.Background()
+	tenants := tenantstore.NewMemory()
+	if err := tenants.Create(ctx, tenantstore.Tenant{
+		ID: "acme",
+		CredentialPolicy: credential.CredentialPolicy{
+			PreferredSource: credential.PreferredSourcePool,
+			ProviderPools: map[string]credential.ProviderPool{
+				"anthropic_direct": {DefaultPool: "claude-prod"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	runtimes := runtimestore.NewMemory()
+	if err := runtimes.Create(ctx, runtimestore.Runtime{Name: "echo", SupportedProviders: []string{"anthropic_direct"}}); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	credPools := credentialpoolstore.NewMemory()
+	if err := credPools.Create(ctx, credentialpoolstore.CredentialPool{
+		TenantID:              "acme",
+		Name:                  "claude-prod",
+		Provider:              "anthropic_direct",
+		MaxConcurrentSessions: 10,
+		Credentials: []credentialpoolstore.Credential{
+			{ID: "claude-prod-cred-a", SecretRef: "secret-claude-prod", Status: credentialpoolstore.CredentialActive},
+		},
+	}); err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	return tenants, runtimes, credPools
 }

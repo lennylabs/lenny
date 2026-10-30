@@ -15,14 +15,14 @@ import (
 
 // ErasureSaltRotator rotates a tenant's §12.8 billing-pseudonymization
 // erasure_salt: it generates a fresh per-tenant 256-bit salt and persists
-// it under the §12.8 line 856 advisory lock, deleting the prior salt in
+// it under the §12.8 advisory lock, deleting the prior salt in
 // the same store write. *erasurejob.BillingEraser satisfies it. F-12.8.5.
 type ErasureSaltRotator interface {
 	RotateErasureSalt(ctx context.Context, tenantID string) error
 }
 
 // WithErasureSaltRotation wires
-// POST /v1/admin/tenants/{id}/rotate-erasure-salt (§12.8 line 857). A nil
+// POST /v1/admin/tenants/{id}/rotate-erasure-salt (§12.8). A nil
 // rotator leaves the route unregistered. F-12.8.5.
 func (r *Router) WithErasureSaltRotation(rotator ErasureSaltRotator) *Router {
 	r.saltRotator = rotator
@@ -30,12 +30,12 @@ func (r *Router) WithErasureSaltRotation(rotator ErasureSaltRotator) *Router {
 }
 
 // handleRotateErasureSalt implements
-// POST /v1/admin/tenants/{id}/rotate-erasure-salt. Per §12.8 line 857 a
+// POST /v1/admin/tenants/{id}/rotate-erasure-salt. Per §12.8 a
 // platform admin rotates a compromised salt: the old salt is deleted
 // immediately (not archived) and a security audit event is emitted. The
-// rotation runs under the §12.8 line 856 `erasure_salt_migration:{tenant_id}`
+// rotation runs under the §12.8
 // advisory lock so it never races a concurrent erasure pseudonymization.
-// spec: §12.8 lines 856-857. F-12.8.5.
+// spec: §12.8. F-12.8.5.
 func (r *Router) handleRotateErasureSalt(w http.ResponseWriter, req *http.Request) {
 	id := req.PathValue("id")
 	principal, ok := authmw.FromContext(req.Context())
@@ -60,7 +60,7 @@ func (r *Router) handleRotateErasureSalt(w http.ResponseWriter, req *http.Reques
 
 	if err := r.saltRotator.RotateErasureSalt(req.Context(), id); err != nil {
 		if errors.Is(err, erasurejob.ErrBillingErasureExempt) {
-			// §12.8 line 855: an exempt tenant uses no salt, so there is
+			// §12.8: an exempt tenant uses no salt, so there is
 			// nothing to rotate.
 			writeError(w, http.StatusConflict, "BILLING_ERASURE_EXEMPT",
 				"tenant is exempt from billing erasure; no erasure_salt to rotate", nil)
@@ -70,7 +70,7 @@ func (r *Router) handleRotateErasureSalt(w http.ResponseWriter, req *http.Reques
 		return
 	}
 
-	// §12.8 line 857: emit the security audit event recording the rotation.
+	// §12.8: emit the security audit event recording the rotation.
 	r.emit(req.Context(), principal, "tenant.erasure_salt_rotated", id, map[string]any{
 		"reason": "admin_initiated_rotation",
 	})

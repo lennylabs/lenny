@@ -77,9 +77,7 @@ func requireArtifactReplication(t *testing.T) (artifactReplParams, bool) {
 	}, true
 }
 
-// spec: §25.11 (ArtifactStore Backup — Runtime residency preflight, lines
-// 4077-4079; status endpoint line 3903; resume endpoint line 3902;
-// ARTIFACT_REPLICATION_REGION_UNRESOLVABLE line 4341).
+// spec: §25.11.
 // diagnosis: this is the only end-to-end exercise of the §25.11
 // provider-native ArtifactStore replication residency control against a
 // real cloud destination bucket. The runtime preflight issues a
@@ -155,8 +153,7 @@ func TestCloudArtifactReplicationResidency(t *testing.T) {
 	// 1. Same-jurisdiction destination: the runtime preflight's
 	// jurisdiction-tag probe succeeds, so replication stays `active`
 	// and the status carries the destination's advertised jurisdiction
-	// tag (equal to the source region's dataResidencyRegion). §25.11
-	// lines 4077-4079.
+	// tag (equal to the source region's dataResidencyRegion). §25.11.
 	status, body := get("/v1/admin/artifact-replication/" + params.sameRegion + "/status")
 	if status != http.StatusOK {
 		t.Fatalf("§25.11: GET status for same-jurisdiction region %q returned %d body %s; "+
@@ -180,9 +177,9 @@ func TestCloudArtifactReplicationResidency(t *testing.T) {
 	}
 
 	// 2. Cross-jurisdiction destination: the cross-region prohibition
-	// (§25.11 line 4075) means the preflight tag comparison fails and
+	// (§25.11) means the preflight tag comparison fails and
 	// replication is suspended with suspended_residency_violation
-	// (§25.11 line 4077). Only run when a cross-region fixture is
+	// (§25.11). Only run when a cross-region fixture is
 	// provisioned.
 	if params.crossRegion == "" {
 		t.Log("§25.11: LENNY_ARTIFACT_REPL_CROSS_REGION unset; skipping the cross-jurisdiction " +
@@ -209,7 +206,7 @@ func TestCloudArtifactReplicationResidency(t *testing.T) {
 	// 3. Resume re-runs the preflight synchronously; because the
 	// jurisdiction mismatch persists, the resume is rejected with the
 	// PERMANENT 422 ARTIFACT_REPLICATION_REGION_UNRESOLVABLE and
-	// replication stays suspended (§25.11 lines 3902, 4341).
+	// replication stays suspended (§25.11).
 	status, body = post("/v1/admin/artifact-replication/"+params.crossRegion+"/resume",
 		map[string]any{"justification": "tier-6 residency preflight verification"})
 	if status != http.StatusUnprocessableEntity {

@@ -39,6 +39,7 @@ func newQuotaUploadServer(t *testing.T, quotaBytes int64) (*sessionserver.Server
 	}
 	counter := storagequota.NewMemory()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Clock:               clock,
 		IDFunc:              func() string { return "sess_upload" },
 		UploadTokenIssuer:   issuer,
@@ -141,7 +142,7 @@ func TestUploadWithoutContentLengthRejectedUnderQuota(t *testing.T) {
 }
 
 // unavailableCounter is a storagequota.Counter whose Reserve reports the
-// §12.4 line 210 dual-store outage (Redis down AND the Postgres fallback
+// §12.4 dual-store outage (Redis down AND the Postgres fallback
 // down). Used to assert the upload handler fails closed with 503.
 type unavailableCounter struct{}
 
@@ -154,7 +155,7 @@ func (unavailableCounter) Used(context.Context, string) (int64, error) {
 }
 func (unavailableCounter) Set(context.Context, string, int64) error { return nil }
 
-// spec: §12.4 line 210 — when the quota counter and its Postgres fallback
+// spec: §12.4 — when the quota counter and its Postgres fallback
 // are both unreachable the upload is rejected with 503 (fail closed); no
 // blob is written so the quota can never be bypassed by infrastructure
 // degradation.
@@ -169,6 +170,7 @@ func TestUploadStorageQuotaDualOutageFailsClosed_spec_12_4_210(t *testing.T) {
 		t.Fatalf("seed tenant: %v", err)
 	}
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
 		Clock:               clock,
 		IDFunc:              func() string { return "sess_upload" },
 		UploadTokenIssuer:   issuer,

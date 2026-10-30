@@ -11,9 +11,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
-// spec: §27.3.1 line 148 / §27.6 line 204 — user.invalidated drives the
+// spec: §27.3.1 / §27.6 — user.invalidated drives the
 // playground revocation primitive for every session the user holds. The
 // §11.4 user-invalidation fan-out (Handler.RevokeSessionsForUser) looks
 // the user's sessions up through the user index and revokes each.
@@ -48,8 +51,8 @@ func newRevokeHandler(t *testing.T, store SessionStore) (*Handler, *MemoryAuditE
 		}, []string{"reason"}),
 	}
 	audit := NewMemoryAuditEmitter()
-	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, BearerTTL: 15 * time.Minute, OIDCSessionTTL: time.Hour},
-		Options{Signer: devSigner(), Sessions: store, Metrics: m}).WithAuditEmitter(audit)
+	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, CapabilityTokenTTL: 15 * time.Minute, OIDCSessionTTL: time.Hour},
+		Options{Signer: jwtsign.HMAC(devSigner()), Verifier: devSigner(), Sessions: store, Metrics: m}).WithAuditEmitter(audit)
 	return h, audit, m
 }
 
@@ -169,7 +172,7 @@ func TestRevokeSessionsForUserIdempotentAndNilStore_spec_27_6_204(t *testing.T) 
 		t.Fatalf("idempotent revoke = %d, %v; want 0, nil", n, err)
 	}
 	// A handler with no session store (apiKey/dev mode) is a no-op.
-	noStore := New(Config{Enabled: true, AuthMode: AuthModeOIDC}, Options{Signer: devSigner()})
+	noStore := New(Config{Enabled: true, AuthMode: AuthModeOIDC}, Options{Signer: jwtsign.HMAC(devSigner()), Verifier: devSigner()})
 	if n, err := noStore.RevokeSessionsForUser(ctx, "acme", "alice@acme.com"); n != 0 || err != nil {
 		t.Fatalf("nil-store revoke = %d, %v; want 0, nil", n, err)
 	}
@@ -177,7 +180,7 @@ func TestRevokeSessionsForUserIdempotentAndNilStore_spec_27_6_204(t *testing.T) 
 
 func TestRedisSessionStoreUserIndexAndRevoke_spec_11_4(t *testing.T) {
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := slotguard.Install(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	t.Cleanup(func() { _ = client.Close() })
 	store := NewRedisSessionStore(client)
 	ctx := context.Background()

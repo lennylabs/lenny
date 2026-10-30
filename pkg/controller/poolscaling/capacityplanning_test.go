@@ -9,7 +9,7 @@ import (
 )
 
 // TestDefaultCapacityPlanningAtDefaults verifies the default workload
-// profile reports AtDefaults. spec: §16.5 lines 594-601.
+// profile reports AtDefaults. spec: §16.5.
 func TestDefaultCapacityPlanningAtDefaults_spec_16_5_601(t *testing.T) {
 	if !poolscaling.DefaultCapacityPlanning().AtDefaults() {
 		t.Error("DefaultCapacityPlanning().AtDefaults() = false, want true")
@@ -31,7 +31,7 @@ func TestDefaultCapacityPlanningAtDefaults_spec_16_5_601(t *testing.T) {
 
 // TestAtDefaultsFalseWhenAnyFieldOverridden verifies that substituting
 // any single workload-profile value clears the at-defaults flag. spec:
-// §16.5 line 601.
+// §16.5.
 func TestAtDefaultsFalseWhenAnyFieldOverridden_spec_16_5_601(t *testing.T) {
 	mutators := map[string]func(*poolscaling.CapacityPlanning){
 		"avgSessionDurationSeconds":          func(c *poolscaling.CapacityPlanning) { c.AvgSessionDurationSeconds = 600 },
@@ -54,7 +54,7 @@ func TestAtDefaultsFalseWhenAnyFieldOverridden_spec_16_5_601(t *testing.T) {
 
 // TestShouldWarnCapacityPlanningDefaults verifies the warning fires only
 // for a Tier 2 / Tier 3 deployment running unsubstituted defaults. spec:
-// §16.5 line 601.
+// §16.5.
 func TestShouldWarnCapacityPlanningDefaults_spec_16_5_601(t *testing.T) {
 	def := poolscaling.DefaultCapacityPlanning()
 	custom := def
@@ -84,7 +84,7 @@ func TestShouldWarnCapacityPlanningDefaults_spec_16_5_601(t *testing.T) {
 
 // TestDefaultSafetyFactorForTier verifies the §17.8.2 normative agent-type
 // per-tier safety_factor default: 1.2 at Tier 3, 1.5 otherwise. spec:
-// spec/17_deployment-topology.md line 1008.
+// §17.8.2.
 func TestDefaultSafetyFactorForTier_spec_17_8_2_1008(t *testing.T) {
 	cases := map[string]float64{
 		"tier1":   1.5,

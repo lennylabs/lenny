@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 )
 
-// spec: §25.8 Error Codes table (line 3629) — all nine canonical codes
+// spec: §25.8 Error Codes table — all nine canonical codes
 // must be declared with their spec-table wire values.
 func TestSection258ErrorCodesMatchSpecTable(t *testing.T) {
 	want := map[string]bool{

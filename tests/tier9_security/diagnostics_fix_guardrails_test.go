@@ -20,10 +20,7 @@
 // skipped over the wire, with the skip reason in the JSON response, when
 // each of the three guardrails is active.
 //
-// spec: §25.6 lines 2971-2976 ("Guardrails: ... Fixes never run when
-// global.maintenanceMode=true. Fixes never run against components whose
-// lenny.dev/doctor-optout: "true" annotation is set. The set of fixable
-// findings is gated by admin.doctor.allowedFixes ...").
+// spec: §25.6.
 
 package tier9_security_test
 
@@ -93,7 +90,7 @@ func postDiagnosticsRun(t *testing.T, srv *opsserver.Server, findings []string) 
 	return report
 }
 
-// spec: §25.6 line 2974 — "Fixes never run when global.maintenanceMode=true."
+// spec: §25.6 — "Fixes never run when global.maintenanceMode=true."
 //
 // diagnosis: a failure here means the maintenanceMode guardrail is
 // enforced by the in-process Orchestrator but the REST handler either
@@ -120,7 +117,7 @@ func TestDiagnosticsRunFixThroughREST_MaintenanceModeSkips_spec_25_6_2974(t *tes
 	}
 }
 
-// spec: §25.6 line 2974 — "Fixes never run against components whose
+// spec: §25.6 — "Fixes never run against components whose
 // lenny.dev/doctor-optout: \"true\" annotation is set."
 //
 // diagnosis: a failure here means a resource carrying the opt-out
@@ -147,7 +144,7 @@ func TestDiagnosticsRunFixThroughREST_DoctorOptOutSkips_spec_25_6_2974(t *testin
 	}
 }
 
-// spec: §25.6 line 2976 — "The set of fixable findings is gated by
+// spec: §25.6 — "The set of fixable findings is gated by
 // admin.doctor.allowedFixes (Helm value, defaults to the full list
 // above). Operators can narrow the list per environment."
 //
@@ -176,7 +173,7 @@ func TestDiagnosticsRunFixThroughREST_NotAllowedSkips_spec_25_6_2976(t *testing.
 	}
 }
 
-// spec: §25.6 lines 2943-2969 — a finding that is detected, allowed, not
+// spec: §25.6 — a finding that is detected, allowed, not
 // opted out, and not in maintenance mode is applied over the REST
 // endpoint. This is the guardrail suite's control case: it confirms the
 // three skip assertions above are exercising a request that would

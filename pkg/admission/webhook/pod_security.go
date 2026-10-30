@@ -21,6 +21,15 @@ import (
 // a missing or wrong credential fsGroup, a root pod, a privileged or
 // privilege-escalating container, a writable root filesystem, an
 // undropped capability, or a seccomp profile other than RuntimeDefault.
+// It also enforces the §13.1 container identity clause on every init,
+// regular, and ephemeral container after mutating admission: each sets a
+// nonzero container-level runAsUser and runAsGroup, and only the regular
+// adapter container runs at adapterUID and only the regular runtime
+// container at agentUID.
+//
+// adapterUID and agentUID are the reserved UIDs from the chart values
+// security.podUIDs.adapter and security.podUIDs.agent. The parameter
+// order matches EphemeralContainerCredGuard.
 //
 // credReadersGID is the lenny-cred-readers GID the §13.1 cross-UID
 // credential-delivery path requires on the pod-level fsGroup. The
@@ -39,17 +48,22 @@ import (
 // deployment: a pod the webhook cannot inspect must not be admitted
 // with a pod-security posture it could not verify (§13.1).
 // credVolumeName is the name of the pod-level credential tmpfs volume
-// carrying /run/lenny/credentials.json. The §13.1 membership boundary
+// carrying the per-session credential files under /run/lenny/slots/. The §13.1 membership boundary
 // (POD_SPEC_CRED_GROUP_OVERBROAD) rejects a non-adapter, non-agent
 // container that mounts it; the binary passes podspec.CredVolumeName.
-func PodSecurity(credReadersGID int64, credVolumeName string, rcPolicy podsecurity.RuntimeClassPolicy) Decider {
+//
+// supervisorVolumeName is the name of the runtime supervisor volume. The
+// §13.1 Runtime supervisor volume rule refuses a read-write mount of it on
+// every container except the non-restartable init container
+// lenny-supervisor-stage; the binary passes podspec.SupervisorVolumeName.
+func PodSecurity(adapterUID, agentUID, credReadersGID int64, credVolumeName, supervisorVolumeName string, rcPolicy podsecurity.RuntimeClassPolicy) Decider {
 	return func(_ context.Context, req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
 		var pod corev1.Pod
 		if err := json.Unmarshal(req.Object.Raw, &pod); err != nil {
 			return Deny(http.StatusBadRequest, "decode Pod object: "+err.Error())
 		}
 
-		if err := podsecurity.ValidateAgentPod(translatePodSpec(&pod, credVolumeName), credReadersGID, rcPolicy); err != nil {
+		if err := podsecurity.ValidateAgentPod(translatePodSpec(&pod, adapterUID, agentUID, credVolumeName, supervisorVolumeName), credReadersGID, rcPolicy); err != nil {
 			return Deny(http.StatusForbidden, err.Error())
 		}
 		return Allow()
@@ -58,8 +72,9 @@ func PodSecurity(credReadersGID int64, credVolumeName string, rcPolicy podsecuri
 
 // Agent-pod credential-container names. The Sandbox podspec builder
 // names the §4.7 adapter container "adapter" and the agent runtime
-// container "runtime"; §13.1 confines the lenny-cred-readers GID to
-// exactly those two. The sidecar deployment model emits both; the
+// container "runtime"; §13.1 permits only those two to mount the
+// credential volume or declare the lenny-cred-readers GID in
+// container-level runAsGroup. The sidecar deployment model emits both; the
 // embedded model emits only "runtime".
 const (
 	adapterContainerName = "adapter"
@@ -69,17 +84,18 @@ const (
 // translatePodSpec projects a Kubernetes Pod into the transport-agnostic
 // podsecurity.PodSpec the §13.1 validator consults. Init, regular, and
 // ephemeral containers are all flattened into the validator's container
-// list: §13.1 applies the per-container invariants to "every container
-// in the pod" (line 16), and line 27 calls out ephemeral debug
-// containers attached post-hoc via the pods/ephemeralcontainers
-// subresource as a specific risk surface — an actor that does not trip
-// the dedicated lenny-ephemeral-container-cred-guard can still attach an
-// ephemeral container that breaches the general baseline (privileged,
-// added capabilities, writable root, disabled seccomp). Ephemeral
+// list: §13.1 applies the per-container invariants across init and
+// sidecar containers alike, and its lenny-cred-readers membership
+// boundary calls out ephemeral debug containers attached post-hoc via
+// the pods/ephemeralcontainers subresource as a specific risk surface.
+// An actor that does not trip the dedicated
+// lenny-ephemeral-container-cred-guard can still attach an ephemeral
+// container that breaches the general baseline (privileged, added
+// capabilities, writable root, disabled seccomp). Ephemeral
 // containers are never treated as credential containers, so an ephemeral
 // container that mounts the credential volume trips the §13.1 membership
 // boundary here in addition to the cred-guard.
-func translatePodSpec(pod *corev1.Pod, credVolumeName string) podsecurity.PodSpec {
+func translatePodSpec(pod *corev1.Pod, adapterUID, agentUID int64, credVolumeName, supervisorVolumeName string) podsecurity.PodSpec {
 	spec := podsecurity.PodSpec{
 		ShareProcessNamespace: derefBool(pod.Spec.ShareProcessNamespace),
 		HostPID:               pod.Spec.HostPID,
@@ -87,6 +103,9 @@ func translatePodSpec(pod *corev1.Pod, credVolumeName string) podsecurity.PodSpe
 		HostIPC:               pod.Spec.HostIPC,
 		RuntimeClassName:      derefString(pod.Spec.RuntimeClassName),
 		CredVolumeName:        credVolumeName,
+		SupervisorVolumeName:  supervisorVolumeName,
+		AdapterUID:            adapterUID,
+		AgentUID:              agentUID,
 	}
 
 	if sc := pod.Spec.SecurityContext; sc != nil {
@@ -96,8 +115,15 @@ func translatePodSpec(pod *corev1.Pod, credVolumeName string) podsecurity.PodSpe
 		spec.SeccompProfileType = seccompType(sc.SeccompProfile)
 	}
 
+	// spec: §13.1 (Runtime supervisor volume) — an init container is
+	// marked as one, with whether it is restartable, because the read-write
+	// supervisor volume mount is admitted only on a non-restartable init
+	// container named lenny-supervisor-stage.
 	for _, c := range pod.Spec.InitContainers {
-		spec.Containers = append(spec.Containers, translateContainer(c))
+		ic := translateContainer(c)
+		ic.Init = true
+		ic.RestartPolicyAlways = c.RestartPolicy != nil && *c.RestartPolicy == corev1.ContainerRestartPolicyAlways
+		spec.Containers = append(spec.Containers, ic)
 	}
 	for _, c := range pod.Spec.Containers {
 		spec.Containers = append(spec.Containers, translateContainer(c))
@@ -105,7 +131,7 @@ func translatePodSpec(pod *corev1.Pod, credVolumeName string) podsecurity.PodSpe
 			spec.CredentialContainerNames = append(spec.CredentialContainerNames, c.Name)
 		}
 	}
-	// spec: §13.1 line 27 — ephemeral containers attached via the
+	// spec: §13.1 — ephemeral containers attached via the
 	// pods/ephemeralcontainers subresource carry the same per-container
 	// baseline. EphemeralContainerCommon is a field-for-field copy of
 	// Container, so the conversion reuses the same translation.
@@ -124,6 +150,10 @@ func translateContainer(c corev1.Container) podsecurity.ContainerSpec {
 		out.Privileged = sc.Privileged
 		out.ReadOnlyRootFilesystem = sc.ReadOnlyRootFilesystem
 		out.RunAsNonRoot = sc.RunAsNonRoot
+		// spec: §13.1 (Container identity). Only the container-level
+		// value is copied: a pod-level runAsUser does not satisfy the
+		// identity clause.
+		out.RunAsUser = sc.RunAsUser
 		out.RunAsGroup = sc.RunAsGroup
 		out.SeccompProfileType = seccompType(sc.SeccompProfile)
 		if caps := sc.Capabilities; caps != nil {
@@ -135,7 +165,7 @@ func translateContainer(c corev1.Container) podsecurity.ContainerSpec {
 	// non-adapter, non-agent container that mounts the credential volume
 	// or the /run/lenny path prefix.
 	for _, m := range c.VolumeMounts {
-		out.VolumeMounts = append(out.VolumeMounts, podsecurity.VolumeMount{Name: m.Name, MountPath: m.MountPath})
+		out.VolumeMounts = append(out.VolumeMounts, podsecurity.VolumeMount{Name: m.Name, MountPath: m.MountPath, ReadOnly: m.ReadOnly})
 	}
 	return out
 }

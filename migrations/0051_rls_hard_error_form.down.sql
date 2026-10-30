@@ -1,4 +1,4 @@
--- Revert the §4.2 line 163 hard-error rewrite: restore the
+-- Revert the §4.2 hard-error rewrite: restore the
 -- migration-0047 lenient `true` form on the per-tenant predicate.
 
 DO $$

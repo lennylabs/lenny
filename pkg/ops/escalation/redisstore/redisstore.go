@@ -11,7 +11,7 @@
 // records, not tenant data), so the keys carry no tenant prefix —
 // matching the other ops: Redis namespaces.
 //
-// spec: §25.4 lines 2376-2429.
+// spec: §25.4.
 package redisstore
 
 import (
@@ -24,12 +24,13 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
+	"github.com/lennylabs/lenny/pkg/redisconn"
 )
 
-// keyPrefix is the §25.4 line 2383 escalation key namespace.
+// keyPrefix is the §25.4 escalation key namespace.
 const keyPrefix = "ops:escalations:"
 
-// recordTTL is the §25.4 line 2383 Tier 2 escalation TTL.
+// recordTTL is the §25.4 Tier 2 escalation TTL.
 const recordTTL = 24 * time.Hour
 
 // dataField is the hash field holding the JSON-encoded escalation.
@@ -60,7 +61,7 @@ func unavailable(err error) error {
 
 // Put writes esc to ops:escalations:{id} as a JSON blob with a fresh 24h
 // TTL. A re-put of the same id overwrites the record, so the
-// reconciliation flush is idempotent (§25.4 line 2413).
+// reconciliation flush is idempotent (§25.4).
 func (s *Store) Put(ctx context.Context, esc escalation.Escalation) error {
 	blob, err := json.Marshal(esc)
 	if err != nil {
@@ -88,7 +89,7 @@ func (s *Store) Get(ctx context.Context, id string) (*escalation.Escalation, err
 // records newest-first as one page capped by limit. The Redis scan is the
 // CursorKindNone query path: it paginates by limit only and reports
 // HasMore when more matching records exist beyond the page, but issues no
-// continuation cursor (§25.4 line 2428, cursorKind "none").
+// continuation cursor (§25.4, cursorKind "none").
 func (s *Store) List(ctx context.Context, f escalation.Filter, _ string, limit int) (escalation.ListPage, error) {
 	all, err := s.scanAll(ctx)
 	if err != nil {
@@ -179,20 +180,28 @@ func (s *Store) read(ctx context.Context, k string) (*escalation.Escalation, err
 }
 
 // scanAll iterates the escalation keyspace and decodes every live record.
-// Keys that expire between the scan and the read are skipped.
+// Keys that expire between the scan and the read are skipped. The
+// ops:escalations:{id} keys carry no shared hash tag, so on a Redis Cluster
+// they spread over every master: the SCAN runs on each master
+// (redisconn.ScanKeys with no routing key) and each record is read with
+// its own command, so the listing is complete (F-12.4.29).
+//
+// spec: §25.4; §12.4 Redis HA and Failure Modes.
 func (s *Store) scanAll(ctx context.Context) ([]escalation.Escalation, error) {
-	iter := s.client.Scan(ctx, 0, keyPrefix+"*", 256).Iterator()
 	var out []escalation.Escalation
-	for iter.Next(ctx) {
-		esc, err := s.read(ctx, iter.Val())
-		if err != nil {
-			return nil, err
+	err := redisconn.ScanKeys(ctx, s.client, "", keyPrefix+"*", 256, func(keys []string) error {
+		for _, k := range keys {
+			esc, err := s.read(ctx, k)
+			if err != nil {
+				return err
+			}
+			if esc != nil {
+				out = append(out, *esc)
+			}
 		}
-		if esc != nil {
-			out = append(out, *esc)
-		}
-	}
-	if err := iter.Err(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return out, nil

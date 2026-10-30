@@ -18,9 +18,7 @@ import (
 // projects the identical error envelope onto its wire format instead of
 // inventing its own code/category pair.
 //
-// spec: §15.2.1 rule 1 line 1380 ("Both API surfaces share a common
-// service layer ... validation ... implemented exactly once"); §15.2.1
-// rule 3 line 1384 (shared error envelope). F-15.2.4.
+// spec: §15.2.1 rule 1; §15.2.1 rule 3. F-15.2.4.
 type ServiceError struct {
 	HTTPStatus int
 	Code       string
@@ -34,7 +32,7 @@ type ServiceError struct {
 	// hint in its native envelope. It is zero when the surface set no
 	// header, for example the §4.9 CREDENTIAL_POOL_EXHAUSTED pre-claim
 	// rejection, which carries no Retry-After. spec: §7.1 create-and-start
-	// atomicity; §15.1 line 1138 (Retry-After).
+	// atomicity; §15.1.
 	RetryAfterSeconds int
 }
 
@@ -45,7 +43,7 @@ func (e *ServiceError) Error() string { return e.Code + ": " + e.Message }
 // bytes verbatim, and the response Content-Type. The §15.2 MCP tool
 // projects Body onto its wire format (a JSON tool result for a JSON body,
 // a base64 content block for a binary blob), so the two surfaces return
-// byte-identical payloads. spec: §15.2.1 rule 1 line 1380. F-15.2.3.
+// byte-identical payloads. spec: §15.2.1 rule 1. F-15.2.3.
 type ServiceResult struct {
 	Status      int
 	Body        []byte
@@ -57,7 +55,7 @@ type ServiceResult struct {
 // surface mounts, so an overlapping operation invoked from the §15.2 MCP
 // tool runs the identical route, validation, and response shaping — the
 // §15.2.1 rule-1 "implemented exactly once" guarantee, with no parallel
-// route table to drift. spec: §15.2.1 rule 1 line 1380. F-15.2.3.
+// route table to drift. spec: §15.2.1 rule 1. F-15.2.3.
 func (s *Server) serviceMux() http.Handler {
 	s.serviceHandlerOnce.Do(func() {
 		s.serviceHandler = s.Handler()
@@ -70,8 +68,16 @@ func (s *Server) serviceMux() http.Handler {
 // code/category/HTTP-status/retryable the REST surface would have
 // written. The caller's authenticated principal rides on ctx exactly as
 // it does on a real request (the §10.2 permission gate runs and admits a
-// roleless dev principal); tenantID is stamped on the synthetic request's
-// X-Lenny-Tenant-ID header for the principal-less transport.
+// roleless dev principal); tenantID is recorded on the synthetic request's
+// context as its service tenant, which resolveTenant consults after the
+// principal. A client-sent X-Lenny-Tenant-ID header plays no part here.
+// spec: §10.2 (Authentication). F-10.2.21.
+//
+// The synthetic request keeps ctx, so the client credential the auth
+// middleware recorded on the MCP request, or at WebSocket upgrade, rides on
+// it with no Authorization header, and a handler that forwards the request
+// to the coordinating replica relays that credential. spec: §29.3
+// (Interactive message send) Forwarding rule 2.
 //
 // target is the full request target including any query string (for
 // example "/v1/sessions/abc/start" or "/v1/sessions?state=running").
@@ -81,8 +87,9 @@ func (s *Server) serviceMux() http.Handler {
 // returns the result and a nil error; any other status is decoded as the
 // §15.1 error envelope.
 //
-// spec: §15.2.1 rule 1 line 1380; rule 3 line 1384 (shared error
-// envelope). F-15.2.3.
+// spec: §15.2.1, the semantic-equivalence item (REST and MCP share one
+// service layer) and the shared error-taxonomy item (both surfaces
+// return the same error envelope). F-15.2.3.
 func (s *Server) ServiceCall(ctx context.Context, tenantID, method, target string, body []byte, contentType string, headers map[string]string) (ServiceResult, *ServiceError) {
 	var reader *bytes.Reader
 	if len(body) > 0 {
@@ -90,12 +97,9 @@ func (s *Server) ServiceCall(ctx context.Context, tenantID, method, target strin
 	} else {
 		reader = bytes.NewReader(nil)
 	}
-	req := httptest.NewRequest(method, target, reader).WithContext(ctx)
+	req := httptest.NewRequest(method, target, reader).WithContext(contextWithServiceTenant(ctx, tenantID))
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
-	}
-	if tenantID != "" {
-		req.Header.Set("X-Lenny-Tenant-ID", tenantID)
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -145,12 +149,13 @@ func (s *Server) ServiceCall(ctx context.Context, tenantID, method, target strin
 // surfaces cannot drift in validation order, error codes, or response
 // shaping. The caller's authenticated principal and explicit-environment
 // binding ride on ctx exactly as they do on a real request; tenantID is
-// stamped on the synthetic request's X-Lenny-Tenant-ID header so a caller
-// with no principal (the dev-headers / minimal transport) still scopes the
-// row to the resolved tenant (resolveTenant prefers a principal when one is
-// present, so this header is inert under an authenticated principal).
+// recorded on the synthetic request's context as its service tenant, so a
+// caller with no principal still scopes the row to the tenant it resolved
+// (resolveTenant prefers a principal when one is present, so the service
+// tenant is inert under an authenticated principal). A call with neither
+// is refused with UNAUTHORIZED. spec: §10.2. F-10.2.21.
 //
-// spec: §15.2.1 rule 1 line 1380; §15.1 session-creation flow. F-15.2.4.
+// spec: §15.2.1 rule 1; §15.1 session-creation flow. F-15.2.4.
 func (s *Server) CreateSessionService(ctx context.Context, tenantID string, req CreateSessionRequest) (CreateSessionResponse, *ServiceError) {
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -161,13 +166,10 @@ func (s *Server) CreateSessionService(ctx context.Context, tenantID string, req 
 			Message:    "create request is not serialisable: " + err.Error(),
 		}
 	}
-	httpReq := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(body)).WithContext(ctx)
+	httpReq := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(body)).WithContext(contextWithServiceTenant(ctx, tenantID))
 	httpReq.Header.Set("Content-Type", "application/json")
-	if tenantID != "" {
-		httpReq.Header.Set("X-Lenny-Tenant-ID", tenantID)
-	}
 	rec := httptest.NewRecorder()
-	s.handleCreate(rec, httpReq)
+	s.guardTenant(s.handleCreate)(rec, httpReq)
 
 	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
 		var resp CreateSessionResponse
@@ -223,9 +225,10 @@ func (s *Server) CreateSessionService(ctx context.Context, tenantID string, req 
 // response header rather than in the body, and it is zero when absent (the
 // §4.9 CREDENTIAL_POOL_EXHAUSTED pre-claim rejection sets no header). The
 // caller's authenticated principal rides on ctx as it does on a real
-// request; tenantID is stamped on the synthetic request's X-Lenny-Tenant-ID
-// header so a principal-less transport still scopes the row to the resolved
-// tenant.
+// request; tenantID is recorded on the synthetic request's context as its
+// service tenant, so a principal-less caller still scopes the row to the
+// tenant it resolved, and a call with neither is refused with
+// UNAUTHORIZED. spec: §10.2. F-10.2.21.
 //
 // spec: §15.2.1 rule 1; §7.1 create-and-start atomicity.
 func (s *Server) CreateAndStartService(ctx context.Context, tenantID string, req CreateSessionRequest) (CreateSessionResponse, *ServiceError) {
@@ -238,13 +241,10 @@ func (s *Server) CreateAndStartService(ctx context.Context, tenantID string, req
 			Message:    "create request is not serialisable: " + err.Error(),
 		}
 	}
-	httpReq := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body)).WithContext(ctx)
+	httpReq := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body)).WithContext(contextWithServiceTenant(ctx, tenantID))
 	httpReq.Header.Set("Content-Type", "application/json")
-	if tenantID != "" {
-		httpReq.Header.Set("X-Lenny-Tenant-ID", tenantID)
-	}
 	rec := httptest.NewRecorder()
-	s.handleCreateAndStart(rec, httpReq)
+	s.guardTenant(s.handleCreateAndStart)(rec, httpReq)
 
 	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
 		var resp CreateSessionResponse
@@ -260,7 +260,7 @@ func (s *Server) CreateAndStartService(ctx context.Context, tenantID string, req
 		return resp, nil
 	}
 
-	// spec: §15.1 line 1138 — the pod-claim exhaustion 503 carries its
+	// spec: §15.1 — the pod-claim exhaustion 503 carries its
 	// backoff hint on the Retry-After response header, so read it off the
 	// recorder for every non-2xx result. parseRetryAfterHeader returns zero
 	// when the header is absent (the §4.9 CREDENTIAL_POOL_EXHAUSTED rejection
@@ -293,7 +293,7 @@ func (s *Server) CreateAndStartService(ctx context.Context, tenantID string, req
 // response header into an int, returning zero when the header is empty or
 // not a valid non-negative integer. The gateway writes Retry-After only in
 // the delta-seconds form (strconv.Itoa on a seconds count), so the HTTP-date
-// form is intentionally unsupported. spec: §15.1 line 1138.
+// form is intentionally unsupported. spec: §15.1.
 func parseRetryAfterHeader(v string) int {
 	if v == "" {
 		return 0

@@ -35,7 +35,7 @@ func newCache(t *testing.T) (*tokencache.Cache, *miniredis.Miniredis) {
 	return c, mr
 }
 
-// spec: §4.3 line 201 — Put then Get round-trips the claims through the
+// spec: §4.3 — Put then Get round-trips the claims through the
 // envelope-encrypted cache.
 func TestPutGetRoundtrip(t *testing.T) {
 	c, _ := newCache(t)
@@ -62,7 +62,7 @@ func TestPutGetRoundtrip(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 201 — Get on a missing jti returns ErrNotFound so
+// spec: §4.3 — Get on a missing jti returns ErrNotFound so
 // callers fall through to the authoritative Postgres lookup.
 func TestGetMissingReturnsErrNotFound(t *testing.T) {
 	c, _ := newCache(t)
@@ -72,7 +72,7 @@ func TestGetMissingReturnsErrNotFound(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 201 — Invalidate removes the entry; a subsequent
+// spec: §4.3 — Invalidate removes the entry; a subsequent
 // Get falls back to the authoritative store.
 func TestInvalidateRemovesEntry(t *testing.T) {
 	c, _ := newCache(t)
@@ -92,7 +92,7 @@ func TestInvalidateRemovesEntry(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 201 — Invalidate of an absent jti is a no-op (DEL
+// spec: §4.3 — Invalidate of an absent jti is a no-op (DEL
 // against a missing key is harmless).
 func TestInvalidateMissingIsNoop(t *testing.T) {
 	c, _ := newCache(t)
@@ -101,7 +101,7 @@ func TestInvalidateMissingIsNoop(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 201 — empty jti is rejected (Put returns an error
+// spec: §4.3 — empty jti is rejected (Put returns an error
 // without contacting Redis).
 func TestPutEmptyJTIRejected(t *testing.T) {
 	c, _ := newCache(t)
@@ -111,7 +111,7 @@ func TestPutEmptyJTIRejected(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 201 — Put of claims with no Expiry is a no-op so a
+// spec: §4.3 — Put of claims with no Expiry is a no-op so a
 // non-expiring or already-expired token does not waste a key.
 func TestPutExpiredClaimsIsNoop(t *testing.T) {
 	c, mr := newCache(t)
@@ -125,7 +125,7 @@ func TestPutExpiredClaimsIsNoop(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 201 — TTL of the entry matches the claim's remaining
+// spec: §4.3 — TTL of the entry matches the claim's remaining
 // lifetime; an entry past its TTL no longer reads.
 func TestEntryRespectsTTL(t *testing.T) {
 	c, mr := newCache(t)
@@ -149,7 +149,7 @@ func TestEntryRespectsTTL(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 201 — a nil *Cache is callable: every method is a
+// spec: §4.3 — a nil *Cache is callable: every method is a
 // no-op so a caller can pass nil to disable caching at the call site
 // (the "degrade to direct-Postgres when no Redis" path).
 func TestNilCacheIsSafe(t *testing.T) {
@@ -165,7 +165,7 @@ func TestNilCacheIsSafe(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 201 — New rejects a nil provider (KMS-envelope
+// spec: §4.3 — New rejects a nil provider (KMS-envelope
 // encryption is mandatory for the cache).
 func TestNewRejectsNilKMS(t *testing.T) {
 	mr := miniredis.RunT(t)
@@ -176,7 +176,7 @@ func TestNewRejectsNilKMS(t *testing.T) {
 	}
 }
 
-// spec: §4.3 line 201 — New rejects a nil Redis client.
+// spec: §4.3 — New rejects a nil Redis client.
 func TestNewRejectsNilClient(t *testing.T) {
 	provider, _ := kms.NewLocalRandom()
 	if _, err := tokencache.New(nil, provider); err == nil {

@@ -1,0 +1,2 @@
+// degradingWriter injects the degradation envelope into an optional
+// endpoint's JSON response when the idempotency store is unavailable.

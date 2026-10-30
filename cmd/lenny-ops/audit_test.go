@@ -54,7 +54,7 @@ func TestBuildPlatformAuditRecorder_DegradedWithoutRouter(t *testing.T) {
 	}
 }
 
-// spec: §25.11 line 4343 — every backup/restore transition commits a
+// spec: §25.11 — every backup/restore transition commits a
 // durable audit row; a blank outcome defaults to "success". F-25.4.22.
 func TestBackupAuditSink_RecordsDurable_spec_25_11(t *testing.T) {
 	app := &recordingAppender{}
@@ -73,7 +73,7 @@ func TestBackupAuditSink_RecordsDurable_spec_25_11(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2415 — each escalation flush commits a durable
+// spec: §25.4 — each escalation flush commits a durable
 // remediation.escalation_persisted row. F-25.4.22.
 func TestEscalationAuditSink_RecordsDurable_spec_25_4_2415(t *testing.T) {
 	app := &recordingAppender{}
@@ -90,7 +90,7 @@ func TestEscalationAuditSink_RecordsDurable_spec_25_4_2415(t *testing.T) {
 	}
 }
 
-// spec: §25.10 line 3871 — each drift event commits a durable audit row
+// spec: §25.10 — each drift event commits a durable audit row
 // carrying the actor and merged detail fields. F-25.4.22.
 func TestDriftAuditSink_RecordsDurable_spec_25_10(t *testing.T) {
 	app := &recordingAppender{}

@@ -57,7 +57,7 @@ func joinTable(kind tenantaccessstore.ResourceKind) (table, resourceColumn strin
 // reports created=false rather than an error, mirroring
 // tenantaccessstore.Memory.
 //
-// spec: §4.2 line 177 — writes to runtime_tenant_access /
+// spec: §4.2 — writes to runtime_tenant_access /
 // pool_tenant_access are guarded by the lenny_admin_mode_required
 // trigger. The write runs inside an InAdminMode transaction so the
 // trigger admits it; the platform-admin RBAC check at the admin-API
@@ -101,7 +101,7 @@ func (s *Store) Grant(ctx context.Context, kind tenantaccessstore.ResourceKind, 
 // Revoke removes a grant. Returns ErrNotFound when no grant exists for
 // the (kind, resource, tenant).
 //
-// spec: §4.2 line 177 — runs inside an InAdminMode transaction so the
+// spec: §4.2 — runs inside an InAdminMode transaction so the
 // lenny_admin_mode_required trigger admits the DELETE.
 func (s *Store) Revoke(ctx context.Context, kind tenantaccessstore.ResourceKind, resource, tenantID string) error {
 	table, resourceColumn, ok := joinTable(kind)

@@ -83,7 +83,7 @@ func seedIdleSandbox(t *testing.T, ctx context.Context, c client.Client, ns, nam
 }
 
 // spec: §4.6.1 (per-pod occupancy claim), §4.6.3 (gateway is not a
-// Sandbox.status writer), §3.3 (occupancy projection). The CRD-backed
+// Sandbox.status writer), occupancy projection. The CRD-backed
 // ClaimPod creates the deterministic per-pod SandboxClaim with a `bound`
 // binding state validated by the real CRD OpenAPI schema, and leaves the
 // claimed Sandbox.status untouched for the WarmPoolController to project.
@@ -179,8 +179,7 @@ func TestCRDPodRegistryClaimSingleClaimGuard_spec_4_6_1(t *testing.T) {
 
 // spec: §4.6.1 (occupancy projection on claim DELETE), §4.6.3 (gateway is not
 // a Sandbox.status writer). ReleasePod deletes the deterministic per-pod
-// SandboxClaim and writes no Sandbox.status against a real API server: the
-// WarmPoolController projects the pod back to idle from the claim's absence.
+// SandboxClaim and writes no Sandbox.status against a real API server.
 // A second release of the same pod is idempotent.
 //
 // diagnosis: a failure means the CRD-backed ReleasePod still writes
@@ -282,11 +281,10 @@ func claimTestEnvIntercepted(t *testing.T, patches, updates *int) (*podregistry.
 	return r, base, ns
 }
 
-// spec: §12.6 line 424 (ClaimOpts carries RequiresDemotion, Priority,
-// ClusterID; v1 leaves them inert), §4.6.1 (first `bound` status patch),
+// spec: §12.6, §4.6.1 (first `bound` status patch),
 // §4.6.3 (gateway holds `get`/`patch` and no `update` on sandboxclaims/status).
 //
-// A claim with all the inert §12.6.424 opts set still succeeds via the per-pod
+// A claim with all the inert §12.6 opts set still succeeds via the per-pod
 // claim, and the binding-state write is a status-subresource PATCH. The
 // gateway ServiceAccount is granted `get`/`patch` and explicitly no `update`
 // on sandboxclaims/status, so a regression to client.Status().Update — which
@@ -307,12 +305,11 @@ func TestCRDPodRegistryClaimInertOptsUsePatchNotUpdate_spec_4_6_3(t *testing.T) 
 	prio := int32(5)
 	cid := podregistry.ClusterID("east-1")
 	rec, err := r.ClaimPod(ctx, podregistry.ClaimOpts{
-		PoolID:           podregistry.PoolID(pool),
-		TenantID:         "acme",
-		SessionID:        "sess-1",
-		RequiresDemotion: true,
-		Priority:         &prio,
-		ClusterID:        &cid,
+		PoolID:    podregistry.PoolID(pool),
+		TenantID:  "acme",
+		SessionID: "sess-1",
+		Priority:  &prio,
+		ClusterID: &cid,
 	})
 	if err != nil {
 		t.Fatalf("ClaimPod with inert opts: %v", err)

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -22,6 +24,7 @@ func failureTestServer(t *testing.T, caps session.RetryPolicyCaps) (*sessionserv
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:   true,
 		Clock:             clock,
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
 		RetryPolicyCaps:   caps,
@@ -41,7 +44,7 @@ func seedRow(t *testing.T, store sessionstore.Store, row sessionstore.Session) s
 	return got
 }
 
-// spec: §7.3 line 403 — Retryable + budget remaining → resume_pending.
+// spec: §7.3 — Retryable + budget remaining → resume_pending.
 // RetryCount is bumped in the same transaction so the watchdog and
 // failure detector agree on the budget. The status_change SSE frame
 // fires for the new state. F-7.3.4.
@@ -79,8 +82,8 @@ func TestReportSessionFailureRetryableEntersResumePending(t *testing.T) {
 	}
 }
 
-// spec: §7.3 line 411 — Retryable but retries exhausted →
-// awaiting_client_action. The platform deploys the §7.3 line 427
+// spec: §7.3 — Retryable but retries exhausted →
+// awaiting_client_action. The platform deploys the §7.3
 // webhook + §11.7 audit row via the existing emitAwaitingClientActionEntered
 // helper. F-7.3.4 / F-7.3.16.
 func TestReportSessionFailureRetryableExhaustedEntersAwaiting(t *testing.T) {
@@ -116,7 +119,7 @@ func TestReportSessionFailureRetryableExhaustedEntersAwaiting(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 174 — Non-retryable from running → failed. The
+// spec: §6.2 — Non-retryable from running → failed. The
 // terminal pipeline runs (the row carries the FailureReason for the
 // failed-row body). F-7.3.4 / F-7.3.5.
 func TestReportSessionFailureNonRetryableFromRunningGoesFailed(t *testing.T) {
@@ -150,17 +153,18 @@ func TestReportSessionFailureNonRetryableFromRunningGoesFailed(t *testing.T) {
 	}
 }
 
-// spec: §6.2 line 250 — Non-retryable during resuming →
+// spec: §6.2 — Non-retryable during resuming →
 // awaiting_client_action (regardless of retry budget). F-7.3.4 / F-7.3.5.
 func TestReportSessionFailureNonRetryableDuringResumingEntersAwaiting(t *testing.T) {
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
 	row := sessionstore.Session{
 		ID: "sess-r4", TenantID: "acme", RuntimeRef: "claude-code",
-		State: session.StateResuming, RetryCount: 0,
+		State: session.StateResuming, RetryCount: 0, CoordinationGeneration: 1,
 	}
 	seedRow(t, store, row)
 	disp, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
 		TenantID: "acme", SessionID: "sess-r4", Reason: "workspace_validation_failed",
+		ExpectedCoordinationGeneration: 1,
 	})
 	if err != nil {
 		t.Fatalf("ReportSessionFailure: %v", err)
@@ -194,7 +198,7 @@ func TestReportSessionFailureUnknownReasonDegradesNonRetryable(t *testing.T) {
 	}
 }
 
-// spec: §7.3 line 382 — client_only mode disables auto-retry; every
+// spec: §7.3 — client_only mode disables auto-retry; every
 // classifiable cause goes straight to awaiting_client_action when
 // reached from a running source (no resume budget consumed). F-7.3.5.
 func TestReportSessionFailureClientOnlyModeBypassesRetry(t *testing.T) {
@@ -211,7 +215,7 @@ func TestReportSessionFailureClientOnlyModeBypassesRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReportSessionFailure: %v", err)
 	}
-	// client_only forces non-retryable. From running → failed per §6.2 line 174.
+	// client_only forces non-retryable. From running → failed per §6.2.
 	if disp.To != session.StateFailed {
 		t.Errorf("To = %q, want failed", disp.To)
 	}
@@ -276,7 +280,7 @@ func TestReportSessionFailureIgnoredOnPreRunningState(t *testing.T) {
 	}
 }
 
-// spec: §7.3 line 401 — the gateway is the failure-detector entry; a
+// spec: §7.3 — the gateway is the failure-detector entry; a
 // malformed report is rejected so a programming error never silently
 // loses a failure signal.
 func TestReportSessionFailureRejectsMalformedReports(t *testing.T) {
@@ -319,40 +323,63 @@ func TestReportSessionFailureUsesPerSessionMaxRetries(t *testing.T) {
 	}
 }
 
-// PodAssignment is stamped onto the row when supplied so the §15.1
-// /resume handler can correlate the new pod's claim with the failed
-// pod's name on the audit chain.
+// TestReportSessionFailureStampsPodAssignment pins the slot-holder
+// predicate on the failure funnel's edge writes: the resume_pending and
+// awaiting_client_action edges clear pod_assignment, because the funnel
+// releases the pod's slot and a resume claims a fresh pod, while the failed
+// edge still stamps the supplied pod on the terminal row, which no
+// slot-holder reader counts.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity), §7.3 (Resume flow after
+// pod failure)
 func TestReportSessionFailureStampsPodAssignment(t *testing.T) {
-	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 2})
-	row := sessionstore.Session{
-		ID: "sess-r8", TenantID: "acme", RuntimeRef: "claude-code",
-		State: session.StateRunning, PodAssignment: "old-pod",
+	cases := []struct {
+		name       string
+		retryCount int64
+		reason     string
+		wantState  session.State
+		wantPod    string
+	}{
+		{"resume_pending edge clears", 0, "pod_evicted", session.StateResumePending, ""},
+		{"awaiting_client_action edge clears", 2, "pod_evicted", session.StateAwaitingClientAction, ""},
+		{"failed edge stamps the supplied pod", 0, "workspace_validation_failed", session.StateFailed, "evicted-pod-1"},
 	}
-	seedRow(t, store, row)
-	_, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
-		TenantID: "acme", SessionID: "sess-r8", Reason: "pod_evicted",
-		PodAssignment: "evicted-pod-1",
-	})
-	if err != nil {
-		t.Fatalf("ReportSessionFailure: %v", err)
-	}
-	got, err := store.Get(context.Background(), "acme", "sess-r8")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if got.PodAssignment != "evicted-pod-1" {
-		t.Errorf("PodAssignment = %q, want evicted-pod-1", got.PodAssignment)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 2})
+			row := sessionstore.Session{
+				ID: "sess-r8", TenantID: "acme", RuntimeRef: "claude-code",
+				State: session.StateRunning, PodAssignment: "old-pod", RetryCount: tc.retryCount,
+			}
+			seedRow(t, store, row)
+			disp, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
+				TenantID: "acme", SessionID: "sess-r8", Reason: tc.reason,
+				PodAssignment: "evicted-pod-1",
+			})
+			if err != nil {
+				t.Fatalf("ReportSessionFailure: %v", err)
+			}
+			if disp.To != tc.wantState {
+				t.Fatalf("To = %q, want %q", disp.To, tc.wantState)
+			}
+			got, err := store.Get(context.Background(), "acme", "sess-r8")
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got.PodAssignment != tc.wantPod {
+				t.Errorf("PodAssignment = %q, want %q", got.PodAssignment, tc.wantPod)
+			}
+		})
 	}
 }
 
-// spec: §7.2 line 214 (a) — every exit from `resuming` that aborts
-// the in-flight resume bumps coordination_generation by exactly one in
-// the same logical write that records the new state. The bump fences
-// any stale coordinator still mid-restore against the prior generation
-// so its next operational RPC fails the §4.2 CoordinatorFence check.
-// recovery_generation is frozen — the interrupted resume is not retried
-// (the next /resume call mints a fresh one). F-7.1.14.
-func TestReportSessionFailureBumpsCoordinationOnExitFromResuming_spec_7_2_F_7_1_14(t *testing.T) {
+// spec: §7.3 (Resume driver), §6.2 (Pod State Machine) — a resume attempt
+// reports a failure after its entry write at the generation G that write
+// committed. The report's exit from `resuming` to awaiting_client_action
+// writes at G and leaves coordination_generation unchanged, because the entry
+// write already advanced it once for the incarnation, and leaves
+// recovery_generation frozen. F-7.1.14.
+func TestReportSessionFailureExitFromResumingKeepsCoordinationGeneration_spec_7_3(t *testing.T) {
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
 	row := sessionstore.Session{
 		ID: "sess-cg1", TenantID: "acme", RuntimeRef: "claude-code",
@@ -362,6 +389,7 @@ func TestReportSessionFailureBumpsCoordinationOnExitFromResuming_spec_7_2_F_7_1_
 	seedRow(t, store, row)
 	disp, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
 		TenantID: "acme", SessionID: "sess-cg1", Reason: "workspace_validation_failed",
+		ExpectedCoordinationGeneration: 7,
 	})
 	if err != nil {
 		t.Fatalf("ReportSessionFailure: %v", err)
@@ -373,20 +401,19 @@ func TestReportSessionFailureBumpsCoordinationOnExitFromResuming_spec_7_2_F_7_1_
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.CoordinationGeneration != 8 {
-		t.Errorf("CoordinationGeneration = %d, want 8 (bumped by 1)", got.CoordinationGeneration)
+	if got.CoordinationGeneration != 7 {
+		t.Errorf("CoordinationGeneration = %d, want 7 unchanged", got.CoordinationGeneration)
 	}
 	if got.RecoveryGeneration != 3 {
-		t.Errorf("RecoveryGeneration = %d, want 3 (frozen on snapshot-close)", got.RecoveryGeneration)
+		t.Errorf("RecoveryGeneration = %d, want 3 (frozen)", got.RecoveryGeneration)
 	}
 }
 
-// spec: §7.2 line 214 — the bump also fires on the retryable+budget
-// branch (resuming → resume_pending) because the in-flight resume is
-// aborted before the next attempt; without the fence, a stale
-// coordinator could still race the new resume_pending → resuming
-// transition. F-7.1.14.
-func TestReportSessionFailureBumpsCoordinationOnResumingToResumePending_spec_7_2_F_7_1_14(t *testing.T) {
+// spec: §7.3 (Resume driver; Retry and Resume) — the retryable branch from
+// `resuming` (resume_pending with RetryCount + 1) also writes at G and leaves
+// coordination_generation unchanged; the next attempt's entry write advances
+// it. F-7.1.14.
+func TestReportSessionFailureResumingToResumePendingKeepsCoordinationGeneration_spec_7_3(t *testing.T) {
 	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
 	row := sessionstore.Session{
 		ID: "sess-cg2", TenantID: "acme", RuntimeRef: "claude-code",
@@ -396,6 +423,7 @@ func TestReportSessionFailureBumpsCoordinationOnResumingToResumePending_spec_7_2
 	seedRow(t, store, row)
 	disp, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
 		TenantID: "acme", SessionID: "sess-cg2", Reason: "pod_evicted",
+		ExpectedCoordinationGeneration: 1,
 	})
 	if err != nil {
 		t.Fatalf("ReportSessionFailure: %v", err)
@@ -407,39 +435,206 @@ func TestReportSessionFailureBumpsCoordinationOnResumingToResumePending_spec_7_2
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.CoordinationGeneration != 2 {
-		t.Errorf("CoordinationGeneration = %d, want 2 (bumped on resuming → resume_pending)", got.CoordinationGeneration)
+	if got.CoordinationGeneration != 1 || got.RetryCount != 1 {
+		t.Errorf("row = gen %d retry %d, want gen 1 retry 1", got.CoordinationGeneration, got.RetryCount)
 	}
 }
 
-// spec: §7.2 line 219-225 — the pre-attach terminal-collapse path
-// (resume_pending → cancelled/completed) intentionally does NOT bump
-// coordination_generation: no pod is attached, no CoordinatorFence
-// round-trip is pending, so the bump is unnecessary. Verify that a
-// failure report from resume_pending bumps RetryCount but leaves the
-// CG counter untouched. F-7.1.14.
+// spec: §7.3 (Resume driver), §6.2 (Pod State Machine)
+// diagnosis: a failure report on a `resuming` row writes only when its
+// ExpectedCoordinationGeneration matches the row's generation, so a report
+// with the field unset, or from an attempt a later entry write or a takeover
+// has passed, writes nothing and leaves the row, its RetryCount, and its
+// UpdatedAt unchanged. A failure means a stale attempt's report spent a retry
+// of, or parked, the incarnation that replaced it.
+func TestReportSessionFailureOnResumingRequiresTheAttemptGeneration_spec_7_3(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		expected int64
+	}{
+		{"unset", 0},
+		{"behind a bump", 4},
+		{"ahead of the row", 6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
+			seedRow(t, store, sessionstore.Session{
+				ID: "sess-gen", TenantID: "acme", RuntimeRef: "claude-code",
+				State: session.StateResuming, CoordinationGeneration: 5,
+			})
+			before, _ := store.Get(context.Background(), "acme", "sess-gen")
+			for _, reason := range []string{"pod_evicted", "workspace_validation_failed"} {
+				if _, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
+					TenantID: "acme", SessionID: "sess-gen", Reason: reason,
+					ExpectedCoordinationGeneration: tc.expected,
+				}); err != nil {
+					t.Fatalf("ReportSessionFailure(%s): %v", reason, err)
+				}
+			}
+			got, _ := store.Get(context.Background(), "acme", "sess-gen")
+			if got.State != session.StateResuming || got.RetryCount != 0 ||
+				got.CoordinationGeneration != 5 || !got.UpdatedAt.Equal(before.UpdatedAt) {
+				t.Errorf("row = %q retry %d gen %d updated %v, want resuming retry 0 gen 5 updated %v",
+					got.State, got.RetryCount, got.CoordinationGeneration, got.UpdatedAt, before.UpdatedAt)
+			}
+		})
+	}
+}
+
+// spec: §7.2 (Interactive Session Model), §7.3 (Retry and Resume)
+// diagnosis: §7.2 gives resume_pending no failure edge, so a report on a
+// resume_pending row duplicates the report that entered it and is a no-op. It
+// must leave State, RetryCount, and CoordinationGeneration unchanged and
+// release nothing. A failure means a duplicate report spends a retry, moves
+// the row to failed, or releases a binding a later bind published.
 func TestReportSessionFailureDoesNotBumpCoordinationFromResumePending_spec_7_2_F_7_1_14(t *testing.T) {
-	srv, store := failureTestServer(t, session.RetryPolicyCaps{MaxRetries: 5})
-	row := sessionstore.Session{
-		ID: "sess-cg3", TenantID: "acme", RuntimeRef: "claude-code",
-		State: session.StateResumePending, RetryCount: 0,
-		CoordinationGeneration: 11,
+	for _, reason := range []string{"pod_evicted", "workspace_validation_failed"} {
+		t.Run(reason, func(t *testing.T) {
+			f := newReportFixture(t)
+			seedRow(t, f.store, sessionstore.Session{
+				ID: "sess-cg3", TenantID: "acme", RuntimeRef: "claude-code",
+				State: session.StateResumePending, RetryCount: 1,
+				CoordinationGeneration: 11,
+			})
+			f.bind("sess-cg3")
+			disp, err := f.srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
+				TenantID: "acme", SessionID: "sess-cg3", Reason: reason,
+			})
+			if err != nil {
+				t.Fatalf("ReportSessionFailure: %v", err)
+			}
+			if disp.From != session.StateResumePending || disp.To != session.StateResumePending {
+				t.Fatalf("disposition %q → %q, want the resume_pending no-op", disp.From, disp.To)
+			}
+			got, err := f.store.Get(context.Background(), "acme", "sess-cg3")
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got.State != session.StateResumePending || got.RetryCount != 1 || got.CoordinationGeneration != 11 {
+				t.Errorf("row = %q/retries %d/generation %d, want resume_pending/1/11 unchanged",
+					got.State, got.RetryCount, got.CoordinationGeneration)
+			}
+			if len(f.exec.released) != 0 {
+				t.Errorf("released = %v, want none", f.exec.released)
+			}
+		})
 	}
-	seedRow(t, store, row)
-	disp, err := srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
-		TenantID: "acme", SessionID: "sess-cg3", Reason: "pod_evicted",
+}
+
+// reportFixture is a server whose executor records each release and whose
+// coordination lease store names this replica, rep-1, as every seeded
+// session's holder.
+type reportFixture struct {
+	srv      *sessionserver.Server
+	store    sessionstore.Store
+	registry *podsession.Registry
+	exec     *releaseRecordingExecutor
+	leases   *componentLeaseStore
+}
+
+func newReportFixture(t *testing.T) *reportFixture {
+	t.Helper()
+	f := &reportFixture{
+		store:    memstore.New(),
+		registry: podsession.NewRegistry(),
+		exec:     &releaseRecordingExecutor{},
+		leases:   newComponentLeaseStore(),
+	}
+	f.srv = sessionserver.New(f.store, sessionserver.Options{
+		DevTenantHeader:        true,
+		RetryPolicyCaps:        session.RetryPolicyCaps{MaxRetries: 2},
+		Executor:               f.exec,
+		PodRegistry:            f.registry,
+		CoordinationLeaseStore: f.leases,
+		ReplicaID:              "rep-1",
 	})
-	if err != nil {
-		t.Fatalf("ReportSessionFailure: %v", err)
+	return f
+}
+
+// bind publishes an exclusive binding for id and gives rep-1 its lease.
+func (f *reportFixture) bind(id string) {
+	f.registry.Put(&podsession.BindResult{SessionID: id, TenantID: "acme", SandboxName: "pod-" + id})
+	f.leases.holders[clk("acme", id)] = "rep-1"
+}
+
+// spec: §7.3 (Retry and Resume), §6.2 (Pod State Machine), §10.1.1
+// (Stateless Replicas and Per-Session Coordination), §28.5.1 (Gateway-to-pod)
+// diagnosis: a failure report that moves an active session off its pod
+// releases the binding with the failed disposition exactly once, on every
+// edge and from every active source state. The resume_pending and
+// awaiting_client_action edges leave the coordination lease naming this
+// replica. A failure means a failed session keeps its slot, claim, and
+// workspace until terminate or the watchdog, a recycling pod is recycled after
+// a crash, or the funnel hands away the lease the Sweeper must keep renewing.
+func TestReportSessionFailureReleasesTheBindingOnEveryEdge_spec_7_3(t *testing.T) {
+	cases := []struct {
+		name    string
+		retries int64
+		reason  string
+		want    session.State
+	}{
+		{"retries left", 0, "runtime_crash", session.StateResumePending},
+		{"retries exhausted", 2, "runtime_crash", session.StateAwaitingClientAction},
+		{"non-retryable", 0, "workspace_validation_failed", session.StateFailed},
 	}
-	if disp.From != session.StateResumePending {
-		t.Fatalf("From = %q, want resume_pending", disp.From)
+	for _, from := range []session.State{session.StateRunning, session.StateInputRequired, session.StateSuspended} {
+		for _, tc := range cases {
+			t.Run(string(from)+"/"+tc.name, func(t *testing.T) {
+				f := newReportFixture(t)
+				seedRow(t, f.store, sessionstore.Session{
+					ID: "sess-rel", TenantID: "acme", RuntimeRef: "claude-code",
+					State: from, RetryCount: tc.retries,
+				})
+				f.bind("sess-rel")
+				disp, err := f.srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
+					TenantID: "acme", SessionID: "sess-rel", Reason: tc.reason,
+				})
+				if err != nil {
+					t.Fatalf("ReportSessionFailure: %v", err)
+				}
+				if disp.To != tc.want {
+					t.Fatalf("To = %q, want %q", disp.To, tc.want)
+				}
+				if len(f.exec.released) != 1 || f.exec.released[0] != executor.DispositionFailed {
+					t.Errorf("released = %v, want exactly one failed release", f.exec.released)
+				}
+				if tc.want != session.StateFailed {
+					if h := f.leases.holders[clk("acme", "sess-rel")]; h != "rep-1" {
+						t.Errorf("lease holder = %q, want rep-1 kept by the coordinating replica", h)
+					}
+				}
+			})
+		}
 	}
-	got, err := store.Get(context.Background(), "acme", "sess-cg3")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if got.CoordinationGeneration != 11 {
-		t.Errorf("CoordinationGeneration = %d, want 11 (pre-attach collapse must NOT bump)", got.CoordinationGeneration)
+}
+
+// spec: §7.3 (Retry and Resume), §7.2 (Interactive Session Model)
+// diagnosis: a report that changes nothing releases nothing: a report on a
+// session in awaiting_client_action, on a terminal session, or on a session
+// whose report loses a concurrent transition. A report on a resuming session
+// leaves the in-flight resume's binding to the resume rollback. A failure
+// means a duplicate or late report tears down a binding it does not own.
+func TestReportSessionFailureWithoutACommitReleasesNothing_spec_7_3(t *testing.T) {
+	for _, st := range []session.State{
+		session.StateAwaitingClientAction, session.StateFailed, session.StateResuming,
+	} {
+		t.Run(string(st), func(t *testing.T) {
+			f := newReportFixture(t)
+			seedRow(t, f.store, sessionstore.Session{
+				ID: "sess-none", TenantID: "acme", RuntimeRef: "claude-code", State: st,
+			})
+			f.bind("sess-none")
+			if _, err := f.srv.ReportSessionFailure(context.Background(), sessionserver.FailureReport{
+				TenantID: "acme", SessionID: "sess-none", Reason: "runtime_crash",
+			}); err != nil {
+				t.Fatalf("ReportSessionFailure: %v", err)
+			}
+			if len(f.exec.released) != 0 {
+				t.Errorf("released = %v, want none", f.exec.released)
+			}
+			if _, ok := f.registry.Get("sess-none"); !ok {
+				t.Error("binding removed by a report that released nothing")
+			}
+		})
 	}
 }

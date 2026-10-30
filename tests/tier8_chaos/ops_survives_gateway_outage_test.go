@@ -189,14 +189,15 @@ func TestOpsSurfaceSurvivesGatewayOutageEndToEnd(t *testing.T) {
 		t.Fatalf("%s did not scale down to zero replicas after the scale command", gatewayDeployment)
 	}
 	// The endpoint set must be empty before the outage assertions so the
-	// gateway is genuinely unreachable — a request that still reached a
-	// draining pod would not exercise the outage.
-	endpointGone := pollUntil(storeRecoveryBound, 2*time.Second, func() bool {
-		return endpointCount(t, c, gatewayDeployment) == 0
-	})
-	if !endpointGone {
-		t.Fatalf("Service %s still has endpoints after the Deployment scaled to zero; "+
-			"the gateway is not genuinely unreachable", gatewayDeployment)
+	// gateway is genuinely unreachable. A request that still reached a
+	// draining pod would not exercise the outage, and kube-proxy keeps
+	// routing to a terminating gateway pod in its preStop drain until the
+	// readiness probe observes the drain flip, so the wait covers the
+	// serving EndpointSlice endpoints as well as the ready addresses.
+	if !waitServiceUnreachable(t, c, gatewayDeployment, storeRecoveryBound) {
+		t.Fatalf("Service %s still routes to a gateway pod after the Deployment scaled to zero "+
+			"(%d ready addresses, %d serving endpoints); the gateway is not genuinely unreachable",
+			gatewayDeployment, endpointCount(t, c, gatewayDeployment), servingEndpointCount(t, c, gatewayDeployment))
 	}
 	t.Logf("injected: %s scaled to zero, Service has no endpoints; the gateway is unreachable", gatewayDeployment)
 

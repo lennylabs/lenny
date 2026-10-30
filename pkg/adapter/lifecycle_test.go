@@ -30,6 +30,21 @@ func startedSession(t *testing.T, sessionID string) (*adapter.Server, *fakeRunti
 	return s, rt
 }
 
+// twoStartedSessions builds a concurrent-pool adapter Server with two
+// sessions bound to the pod's one shared runtime, so a test can assert
+// that a session-scoped CH-RUNTIMEOPS frame names the session its RPC
+// addressed rather than its co-tenant.
+func twoStartedSessions(t *testing.T, first, second string) (*adapter.Server, *fakeRuntime) {
+	t.Helper()
+	s, rt := concurrentServer(t)
+	for _, id := range []string{first, second} {
+		if _, err := s.StartSession(context.Background(), slotStartReq(id)); err != nil {
+			t.Fatalf("StartSession(%s): %v", id, err)
+		}
+	}
+	return s, rt
+}
+
 func TestInterruptCleanSignalsTheRuntime(t *testing.T) {
 	s, rt := startedSession(t, "sess-1")
 
@@ -120,18 +135,18 @@ func TestInterruptReportsARuntimeFailure(t *testing.T) {
 	}
 }
 
-// startLifecycle creates a lifecycle channel on a temporary socket and
+// startLifecycle creates a CH-RUNTIMEOPS on a temporary socket and
 // runs it; Run is torn down on test cleanup.
-func startLifecycle(t *testing.T) *adapter.LifecycleChannel {
+func startLifecycle(t *testing.T) *adapter.RuntimeOps {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "lc-*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	lc, err := adapter.NewLifecycleChannel(filepath.Join(dir, "lifecycle.sock"))
+	lc, err := newRuntimeOps(t, filepath.Join(dir, "lifecycle.sock"), adapter.SocketPeerAuth{ExpectedUID: uint32(os.Getuid())})
 	if err != nil {
-		t.Fatalf("NewLifecycleChannel: %v", err)
+		t.Fatalf("NewRuntimeOps: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -144,8 +159,7 @@ func startLifecycle(t *testing.T) *adapter.LifecycleChannel {
 	return lc
 }
 
-// lifecycleRuntime is a scripted fake runtime for the §4.7 lifecycle
-// channel, exercising the adapter's Full-level RPC paths.
+// lifecycleRuntime is a scripted fake runtime for the §4.7 CH-RUNTIMEOPS, exercising the adapter's Full-level RPC paths.
 type lifecycleRuntime struct {
 	t    *testing.T
 	conn net.Conn
@@ -155,13 +169,16 @@ type lifecycleRuntime struct {
 
 // dialLifecycle dials lc as a runtime, completes the handshake, and
 // blocks until the adapter has recorded the runtime's capabilities.
-func dialLifecycle(t *testing.T, lc *adapter.LifecycleChannel) *lifecycleRuntime {
+func dialLifecycle(t *testing.T, lc *adapter.RuntimeOps) *lifecycleRuntime {
 	t.Helper()
 	conn, err := net.Dial("unix", lc.SocketPath())
 	if err != nil {
 		t.Fatalf("dial lifecycle socket: %v", err)
 	}
 	t.Cleanup(func() { conn.Close() })
+	if err := writeListenerNonce(conn, lc.SocketPath()); err != nil {
+		t.Fatalf("nonce line: %v", err)
+	}
 	lr := &lifecycleRuntime{t: t, conn: conn, dec: json.NewDecoder(conn), enc: json.NewEncoder(conn)}
 
 	caps := lr.recv()
@@ -197,8 +214,12 @@ func (lr *lifecycleRuntime) send(m map[string]any) {
 	}
 }
 
-func TestInterruptCleanUsesLifecycleChannel(t *testing.T) {
-	s, rt := startedSession(t, "sess-1")
+// spec: §4.7, §28.5.3 (CH-RUNTIMEOPS, Messages)
+// A clean interrupt of a Full-level runtime goes over CH-RUNTIMEOPS, and
+// with two sessions bound to the pod the interrupt_request names the
+// session the RPC addressed.
+func TestInterruptCleanUsesRuntimeOps(t *testing.T) {
+	s, rt := twoStartedSessions(t, "sess-1", "sess-2")
 	lc := startLifecycle(t)
 	s.Lifecycle = lc
 	lr := dialLifecycle(t, lc)
@@ -206,7 +227,7 @@ func TestInterruptCleanUsesLifecycleChannel(t *testing.T) {
 	respc := make(chan *adapterv1.InterruptResponse, 1)
 	go func() {
 		resp, err := s.Interrupt(context.Background(), &adapterv1.InterruptRequest{
-			SessionId:  &adapterv1.SessionId{Value: "sess-1"},
+			SessionId:  &adapterv1.SessionId{Value: "sess-2"},
 			Mode:       adapterv1.InterruptRequest_MODE_CLEAN,
 			DeadlineMs: 2000,
 		})
@@ -221,6 +242,9 @@ func TestInterruptCleanUsesLifecycleChannel(t *testing.T) {
 	req := lr.recv()
 	if req["type"] != "interrupt_request" {
 		t.Fatalf("runtime saw %v, want interrupt_request", req["type"])
+	}
+	if req["sessionId"] != "sess-2" {
+		t.Errorf("interrupt_request sessionId = %v, want sess-2", req["sessionId"])
 	}
 	lr.send(map[string]any{"type": "interrupt_acknowledged", "interruptId": req["interruptId"]})
 
@@ -237,16 +261,17 @@ func TestInterruptCleanUsesLifecycleChannel(t *testing.T) {
 	}
 }
 
-// spec: §11.3 line 240 — DEADLINE_APPROACHING is delivered over the
-// lifecycle channel. F-11.3.5.
-func TestSignalDeadlineDeliversOverLifecycleChannel_spec_11_3_240(t *testing.T) {
-	s, _ := startedSession(t, "sess-1")
+// spec: §11.3, §28.5.3 (CH-RUNTIMEOPS, Messages) — DEADLINE_APPROACHING
+// is delivered over the CH-RUNTIMEOPS, and with two sessions bound to the
+// pod the frame names the session the RPC addressed. F-11.3.5.
+func TestSignalDeadlineDeliversOverRuntimeOps_spec_11_3_240(t *testing.T) {
+	s, _ := twoStartedSessions(t, "sess-1", "sess-2")
 	lc := startLifecycle(t)
 	s.Lifecycle = lc
 	lr := dialLifecycle(t, lc)
 
 	resp, err := s.SignalDeadline(context.Background(), &adapterv1.SignalDeadlineRequest{
-		SessionId:   &adapterv1.SessionId{Value: "sess-1"},
+		SessionId:   &adapterv1.SessionId{Value: "sess-2"},
 		RemainingMs: 300000,
 		Trigger:     "session_age",
 	})
@@ -260,6 +285,9 @@ func TestSignalDeadlineDeliversOverLifecycleChannel_spec_11_3_240(t *testing.T) 
 	if frame["type"] != "deadline_approaching" {
 		t.Fatalf("runtime saw %v, want deadline_approaching", frame["type"])
 	}
+	if frame["sessionId"] != "sess-2" {
+		t.Errorf("deadline_approaching sessionId = %v, want sess-2", frame["sessionId"])
+	}
 	if frame["trigger"] != "session_age" {
 		t.Errorf("trigger = %v, want session_age", frame["trigger"])
 	}
@@ -268,7 +296,7 @@ func TestSignalDeadlineDeliversOverLifecycleChannel_spec_11_3_240(t *testing.T) 
 	}
 }
 
-// spec: §15 line 2141 — a Basic/Standard runtime with no lifecycle channel
+// spec: §15 — a Basic/Standard runtime with no CH-RUNTIMEOPS
 // receives no advance notice; the adapter reports delivered=false rather than
 // erroring. F-11.3.5.
 func TestSignalDeadlineWithoutLifecycleReturnsNotDelivered_spec_11_3_240(t *testing.T) {
@@ -283,11 +311,11 @@ func TestSignalDeadlineWithoutLifecycleReturnsNotDelivered_spec_11_3_240(t *test
 		t.Fatalf("SignalDeadline: %v", err)
 	}
 	if resp.GetDelivered() {
-		t.Error("delivered = true, want false for a runtime without a lifecycle channel")
+		t.Error("delivered = true, want false for a runtime without CH-RUNTIMEOPS")
 	}
 }
 
-// spec: §11.3 line 240 — an empty trigger defaults to session_age, the only
+// spec: §11.3 — an empty trigger defaults to session_age, the only
 // trigger the maxSessionAge warning uses. F-11.3.5.
 func TestSignalDeadlineDefaultsTriggerToSessionAge_spec_11_3_240(t *testing.T) {
 	s, _ := startedSession(t, "sess-1")
@@ -330,7 +358,7 @@ func TestSignalDeadlineRejectsAnUnassignedSession_spec_11_3_240(t *testing.T) {
 	}
 }
 
-func TestInterruptCleanTimesOutOnLifecycleChannel(t *testing.T) {
+func TestInterruptCleanTimesOutOnRuntimeOps(t *testing.T) {
 	s, _ := startedSession(t, "sess-1")
 	lc := startLifecycle(t)
 	s.Lifecycle = lc

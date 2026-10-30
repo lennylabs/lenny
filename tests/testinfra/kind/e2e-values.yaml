@@ -6,6 +6,13 @@
 # so the install never reaches a remote registry, and runs the gateway
 # in dev mode so it starts without external Postgres, Redis, or MinIO.
 #
+# install.sh passes a generated overlay, image-tags.gen.yaml, after this
+# file. It replaces each e2e tag below with the content tag
+# (src-<hash>) of the image the install built and loaded, so a rebuilt
+# image changes the rendered reference and its Deployment rolls out. The
+# e2e tag remains a moving alias of the same images, so rendering this
+# file alone still names loaded images.
+#
 # This overlay is for the e2e test harness only. Production installs
 # use the chart defaults with real images and external data stores.
 
@@ -63,7 +70,23 @@ controller:
   # The Sandbox reconciler stamps this adapter image into every agent
   # pod. install.sh builds and kind-loads lenny-adapter:e2e.
   adapterImage: lenny-adapter:e2e
-  # §12.9.8 tier-9 egress-capture sidecar. The reconciler injects it
+  # The runtime supervisor image every sidecar pod of a type: agent runtime
+  # stages into its read-only supervisor volume through the
+  # lenny-supervisor-stage init container (§4.7.10 Runtime supervisor; §13.1
+  # Runtime supervisor volume). install.sh builds it from
+  # Dockerfile.supervisor and kind-loads lenny-supervisor:e2e. Without it the
+  # controller creates no pod for any sidecar type: agent pool.
+  supervisorImage: lenny-supervisor:e2e
+  # The §28.5.3 CH-SUPERVISE ping bounds, shortened from the 5s defaults so
+  # a stopped supervisor is detected (interval plus timeout, 4s) inside the
+  # §4.6.1 reserved hold (claimHoldTTLSeconds, 10s), which the tier-8 case
+  # that stops a reserved pod's supervisor needs. The probe Runtimes' 30s
+  # CH-MSGSOCK dial delay stays above interval plus timeout and below the
+  # default 2m warm-up timeout (tests/testinfra/kind/agent-workload.yaml).
+  tuning:
+    supervisePingInterval: 2s
+    supervisePingTimeout: 2s
+  # TESTING.md §12.9.8 tier-9 egress-capture sidecar. The reconciler injects it
   # into every Sandbox whose template carries the
   # `lenny.dev/test-egress-capture-upstream` annotation (today, only
   # the cred-shell-echo template in agent-workload.yaml).
@@ -137,21 +160,27 @@ gateway:
     limits:
       cpu: "1"
       memory: 1536Mi
-  # The Kind e2e overlay wires no checkpoint sink into lenny-adapter's
-  # args (see agent-workload.yaml / install.sh's generated bootstrap
-  # overlay): every adapter Checkpoint RPC returns Unimplemented
-  # ("adapter is not configured with a checkpoint sink"). §7.1's
-  # seal-and-export step on /terminate retries a failing checkpoint for
-  # the full maxWorkspaceSealDurationSeconds window (compiled-in default
-  # 300s) before releasing the pod anyway, so on this cluster every real
-  # session termination would otherwise hold its pod for five minutes.
-  # Shortening the window to the backoff floor (5s: one attempt, no
-  # retry) lets a tier-5 test that claims and terminates a real session
-  # (for example tests/tier5_e2e_kind/execution_modes_test.go) observe
-  # pod release and recycling promptly. This is the e2e harness overlay
-  # only; production deployments keep the chart's 300s default (or set
-  # their own once a checkpoint sink is wired).
-  workspaceSealMaxDurationSeconds: 5
+  # §7.1's seal-and-export step on /terminate runs a real checkpoint: the
+  # gateway grants presigned chunk PUTs against the in-cluster MinIO and
+  # the adapter uploads the workspace archive. A seal that keeps failing
+  # retries for the full maxWorkspaceSealDurationSeconds window
+  # (compiled-in default 300s), so a broken object store would hold every
+  # terminated session's pod for five minutes. Shortening the window to
+  # 6s (one attempt and one retry) keeps a tier-5 or tier-9 test that
+  # claims and terminates a real session prompt. 6s is the shortest window
+  # the gateway admits at the default 5s usage quiescence timeout: the
+  # gateway refuses to start when the seal window is not greater than that
+  # timeout, which a delegated child's §8.3 budget return waits inside the
+  # terminal pipeline. A seal that
+  # fails inside the window relabels the session failed with
+  # workspace_seal_timeout and releases the pod with the failed
+  # disposition, which retires the pod even on a recycling pool. A test
+  # that expects recycling or a reserved hold after /terminate therefore
+  # needs MinIO to accept writes; MinIO answers 507 Insufficient Storage
+  # when the host disk under the Kind nodes is nearly full. This is the
+  # e2e harness overlay only; production deployments keep the chart's
+  # 300s default.
+  workspaceSealMaxDurationSeconds: 6
 
 ops:
   image:
@@ -327,7 +356,7 @@ global:
   # `required`. The Kind e2e overlay pins a deployment-unique placeholder.
   spiffeTrustDomain: lenny-kind-e2e
 
-# §25.4 line 1567 — "No anonymous access except /healthz." lenny-ops
+# §25.4 — "No anonymous access except /healthz." lenny-ops
 # leaves that authentication MUST unenforced when no bearer-trust key is
 # configured: cmd/lenny-ops/main.go buildAuthConfig returns a nil
 # AuthConfig outside production, so the surface admits anonymous callers.
@@ -354,8 +383,17 @@ security:
 # sslmode=disable is the simplest working setting for the in-cluster
 # e2e Postgres, which has no TLS configured. Plaintext is acceptable
 # inside the test cluster; this does not change any production default.
+#
+# billingAuditDdlDsn gives the gateway the CREATE-privileged connection it
+# provisions each new tenant's billing_seq_ and audit_seq_ sequences
+# through. The e2e Postgres has a single login role that owns the schema,
+# so the DDL connection reuses it. Without it a tenant a test bootstraps
+# has no audit sequence, and every audit append for that tenant fails,
+# including the §12.8 erasure completion receipt, so an erasure job on
+# such a tenant never completes.
 postgres:
   dsn: "postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable"
+  billingAuditDdlDsn: "postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable"
 
 redis:
   url: "redis://lenny-redis.lenny-system.svc:6379"
@@ -374,7 +412,7 @@ minio:
   # rendered NetworkPolicies (the gateway reaches MinIO through minio.endpoint,
   # which carries its own :9000 port); production keeps the chart-default 9443.
   tlsPort: 9000
-  # §12.5 line 280 — the artifact-store TLS mandate binds the plaintext-MinIO
+  # §12.5 — the artifact-store TLS mandate binds the plaintext-MinIO
   # exception to backends: embedded only; all other backends enforce TLS. The
   # e2e MinIO is a real in-cluster (non-embedded) backend, so the chart's
   # §12.5 guard requires tls.enabled: true. datastores.yaml issues a
@@ -388,6 +426,9 @@ minio:
   tls:
     enabled: true
     caBundleConfigMap: lenny-minio-ca
+  # The bucket-lifecycle Job runs the chart's default mc image, the pinned
+  # pgsty/mc reference. install.sh loads it and names the same reference
+  # as minio.lifecycle.image in the generated image-tag overlay.
 
 # §13.2 NET-071 — the object-store artifact backend and its agent-pod
 # checkpoint-egress allow-list. The e2e MinIO is an out-of-band self-managed

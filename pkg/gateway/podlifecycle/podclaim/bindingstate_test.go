@@ -27,12 +27,13 @@ func fixedClock(t time.Time) func() time.Time {
 // the common precondition for the recycle-path writer tests.
 func seedBoundClaim(t *testing.T, name string) (client.WithWatch, string) {
 	t.Helper()
+	ns := testNamespace(t)
 	claim := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "sbx-1", TenantID: "acme"},
 	}
 	c := newEnvtestClient(t, claim)
-	if err := podclaim.WriteBoundStatus(context.Background(), c, testNS, name); err != nil {
+	if err := podclaim.WriteBoundStatus(context.Background(), c, ns, name); err != nil {
 		t.Fatalf("seed bound status: %v", err)
 	}
 	return c, name
@@ -41,8 +42,9 @@ func seedBoundClaim(t *testing.T, name string) (client.WithWatch, string) {
 // getClaim reads the named claim off the envtest API server.
 func getClaim(t *testing.T, c client.Client, name string) *lennyv1.SandboxClaim {
 	t.Helper()
+	ns := testNamespace(t)
 	var got lennyv1.SandboxClaim
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: name}, &got); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &got); err != nil {
 		t.Fatalf("get claim %s: %v", name, err)
 	}
 	return &got
@@ -52,7 +54,7 @@ func getClaim(t *testing.T, c client.Client, name string) *lennyv1.SandboxClaim 
 // contract that the gateway writes the first `bound` binding state on the
 // per-pod SandboxClaim via the status-subresource PATCH verb, never a PUT
 // (`update`). The chart grants the gateway `get`/`patch` on
-// `sandboxclaims/status` and no `update` verb (§6.13 RBAC), so a regression
+// `sandboxclaims/status` and no `update` verb (§4.6.3 RBAC), so a regression
 // to client.Status().Update — which issues an HTTP PUT the API server
 // authorizes against `update` — would be denied Forbidden in any real
 // cluster while passing the envtest suite (which does not enforce RBAC). The
@@ -66,8 +68,9 @@ func getClaim(t *testing.T, c client.Client, name string) *lennyv1.SandboxClaim 
 // spec: §4.6.1 (first `bound` status patch); §4.6.3 (gateway granted
 // `patch`, not `update`, on sandboxclaims/status).
 func TestWriteBoundStatusUsesPatchNotUpdate_spec_4_6_3(t *testing.T) {
+	ns := testNamespace(t)
 	claim := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "claim-sbx-1", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-sbx-1", Namespace: ns},
 		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "sbx-1", TenantID: "acme"},
 	}
 	base := newEnvtestClient(t, claim)
@@ -88,7 +91,7 @@ func TestWriteBoundStatusUsesPatchNotUpdate_spec_4_6_3(t *testing.T) {
 		},
 	})
 
-	if err := podclaim.WriteBoundStatus(context.Background(), c, testNS, "claim-sbx-1"); err != nil {
+	if err := podclaim.WriteBoundStatus(context.Background(), c, ns, "claim-sbx-1"); err != nil {
 		t.Fatalf("WriteBoundStatus: %v", err)
 	}
 
@@ -100,7 +103,7 @@ func TestWriteBoundStatusUsesPatchNotUpdate_spec_4_6_3(t *testing.T) {
 	}
 
 	var got lennyv1.SandboxClaim
-	if err := base.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "claim-sbx-1"}, &got); err != nil {
+	if err := base.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &got); err != nil {
 		t.Fatalf("get claim: %v", err)
 	}
 	if got.Status.Phase != string(claimstate.Bound) {
@@ -122,13 +125,14 @@ func TestWriteBoundStatusUsesPatchNotUpdate_spec_4_6_3(t *testing.T) {
 //
 // spec: §4.6.1 (idempotent first `bound` status patch).
 func TestWriteBoundStatusIdempotentOnAlreadyBound_spec_4_6_1(t *testing.T) {
+	ns := testNamespace(t)
 	claim := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "claim-sbx-1", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-sbx-1", Namespace: ns},
 		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "sbx-1", TenantID: "acme"},
 	}
 	base := newEnvtestClient(t, claim)
 	// Establish the bound state, then count writes on the second call.
-	if err := podclaim.WriteBoundStatus(context.Background(), base, testNS, "claim-sbx-1"); err != nil {
+	if err := podclaim.WriteBoundStatus(context.Background(), base, ns, "claim-sbx-1"); err != nil {
 		t.Fatalf("seed bound status: %v", err)
 	}
 
@@ -142,7 +146,7 @@ func TestWriteBoundStatusIdempotentOnAlreadyBound_spec_4_6_1(t *testing.T) {
 		},
 	})
 
-	if err := podclaim.WriteBoundStatus(context.Background(), c, testNS, "claim-sbx-1"); err != nil {
+	if err := podclaim.WriteBoundStatus(context.Background(), c, ns, "claim-sbx-1"); err != nil {
 		t.Fatalf("WriteBoundStatus on already-bound claim: %v", err)
 	}
 	if patches != 0 {
@@ -160,18 +164,19 @@ func TestWriteBoundStatusIdempotentOnAlreadyBound_spec_4_6_1(t *testing.T) {
 //
 // diagnosis: a failure means a recycle-path binding-state write either
 // stamped the wrong phase, skipped the transition-time stamp the orphan GC
-// keys on, or left a stale holdExpiresAt/rewarmStartedAt that the §6.14
+// keys on, or left a stale holdExpiresAt/rewarmStartedAt that the §4.6.3
 // projection would misread.
 //
 // spec: §4.6.1 (recycle binding states, reserved hold), §4.6.3 (binding-state
-// enumeration, status stamps), §6.14 (recycling/reserved projection).
+// enumeration, status stamps), §4.6.3 (recycling/reserved projection).
 func TestRecyclePathBindingStateTransitions_spec_4_6_3(t *testing.T) {
+	ns := testNamespace(t)
 	const name = "claim-sbx-1"
 	c, _ := seedBoundClaim(t, name)
 	ctx := context.Background()
 
 	t1 := time.Date(2026, 6, 14, 10, 0, 0, 0, time.UTC)
-	if err := podclaim.WriteRecyclingStatus(ctx, c, testNS, name, fixedClock(t1)); err != nil {
+	if err := podclaim.WriteRecyclingStatus(ctx, c, ns, name, fixedClock(t1)); err != nil {
 		t.Fatalf("WriteRecyclingStatus: %v", err)
 	}
 	got := getClaim(t, c, name)
@@ -185,7 +190,7 @@ func TestRecyclePathBindingStateTransitions_spec_4_6_3(t *testing.T) {
 	// preConnect re-warm begins: rewarmStartedAt is stamped, phase stays
 	// recycling, the binding-state transition time is not churned.
 	t2 := t1.Add(2 * time.Second)
-	if err := podclaim.WriteRewarmStartedStatus(ctx, c, testNS, name, fixedClock(t2)); err != nil {
+	if err := podclaim.WriteRewarmStartedStatus(ctx, c, ns, name, fixedClock(t2)); err != nil {
 		t.Fatalf("WriteRewarmStartedStatus: %v", err)
 	}
 	got = getClaim(t, c, name)
@@ -204,7 +209,7 @@ func TestRecyclePathBindingStateTransitions_spec_4_6_3(t *testing.T) {
 	// token.
 	t3 := t2.Add(3 * time.Second)
 	const holdTTL = 10 * time.Second
-	hold, err := podclaim.WriteReservedStatus(ctx, c, testNS, name, holdTTL, fixedClock(t3))
+	hold, err := podclaim.WriteReservedStatus(ctx, c, ns, name, holdTTL, fixedClock(t3))
 	if err != nil {
 		t.Fatalf("WriteReservedStatus: %v", err)
 	}
@@ -232,7 +237,7 @@ func TestRecyclePathBindingStateTransitions_spec_4_6_3(t *testing.T) {
 	// Same-tenant rebind within the hold window: reserved → bound drops
 	// holdExpiresAt and advances the transition time.
 	t4 := t3.Add(4 * time.Second)
-	if err := podclaim.WriteRebindStatus(ctx, c, testNS, name, fixedClock(t4)); err != nil {
+	if err := podclaim.WriteRebindStatus(ctx, c, ns, name, fixedClock(t4)); err != nil {
 		t.Fatalf("WriteRebindStatus: %v", err)
 	}
 	got = getClaim(t, c, name)
@@ -259,17 +264,18 @@ func TestRecyclePathBindingStateTransitions_spec_4_6_3(t *testing.T) {
 // spec: §4.6.1 (rewarmStartedAt stamped only when the recycle disposition
 // begins the SDK re-warm), §4.6.3.
 func TestRewarmStartedRequiresRecyclingClaim_spec_4_6_3(t *testing.T) {
+	ns := testNamespace(t)
 	const name = "claim-sbx-1"
 	c, _ := seedBoundClaim(t, name)
 	// The claim is `bound`, not `recycling`.
-	if err := podclaim.WriteRewarmStartedStatus(context.Background(), c, testNS, name, nil); err == nil {
+	if err := podclaim.WriteRewarmStartedStatus(context.Background(), c, ns, name, nil); err == nil {
 		t.Fatalf("WriteRewarmStartedStatus on a bound claim returned nil, want error")
 	}
 }
 
 // TestWriteDispositionTerminalAndGuard_spec_4_6_3 pins the terminal
 // disposition writer: it stamps `released`/`failed` on the claim status so
-// the §6.14 projection drains then terminates the pod, and it rejects a
+// the §4.6.3 projection drains then terminates the pod, and it rejects a
 // non-terminal disposition rather than writing an out-of-enum value.
 //
 // diagnosis: a failure means the gateway wrote a non-terminal disposition (a
@@ -277,14 +283,15 @@ func TestRewarmStartedRequiresRecyclingClaim_spec_4_6_3(t *testing.T) {
 // retirement the WarmPoolController keys the drain on.
 //
 // spec: §4.6.1 (terminal disposition), §4.6.3 (released/failed terminal),
-// §6.14 (draining/terminated projection).
+// §4.6.3 (draining/terminated projection).
 func TestWriteDispositionTerminalAndGuard_spec_4_6_3(t *testing.T) {
+	ns := testNamespace(t)
 	const name = "claim-sbx-1"
 	c, _ := seedBoundClaim(t, name)
 	ctx := context.Background()
 
 	tt := time.Date(2026, 6, 14, 11, 0, 0, 0, time.UTC)
-	if err := podclaim.WriteDispositionStatus(ctx, c, testNS, name, claimstate.Released, fixedClock(tt)); err != nil {
+	if err := podclaim.WriteDispositionStatus(ctx, c, ns, name, claimstate.Released, fixedClock(tt)); err != nil {
 		t.Fatalf("WriteDispositionStatus released: %v", err)
 	}
 	got := getClaim(t, c, name)
@@ -296,7 +303,7 @@ func TestWriteDispositionTerminalAndGuard_spec_4_6_3(t *testing.T) {
 	}
 
 	// A non-terminal disposition is a caller bug: fail closed.
-	if err := podclaim.WriteDispositionStatus(ctx, c, testNS, name, claimstate.Bound, nil); err == nil {
+	if err := podclaim.WriteDispositionStatus(ctx, c, ns, name, claimstate.Bound, nil); err == nil {
 		t.Error("WriteDispositionStatus(bound) returned nil, want error (bound is not terminal)")
 	}
 }
@@ -313,18 +320,19 @@ func TestWriteDispositionTerminalAndGuard_spec_4_6_3(t *testing.T) {
 //
 // spec: §4.6.1 (precondition-guarded hold-expiry DELETE).
 func TestHoldExpiryDeleteHonorsPreconditions_spec_4_6_1(t *testing.T) {
+	ns := testNamespace(t)
 	const name = "claim-sbx-1"
 	c, _ := seedBoundClaim(t, name)
 	ctx := context.Background()
-	if err := podclaim.WriteRecyclingStatus(ctx, c, testNS, name, nil); err != nil {
+	if err := podclaim.WriteRecyclingStatus(ctx, c, ns, name, nil); err != nil {
 		t.Fatalf("recycling: %v", err)
 	}
-	hold, err := podclaim.WriteReservedStatus(ctx, c, testNS, name, 10*time.Second, nil)
+	hold, err := podclaim.WriteReservedStatus(ctx, c, ns, name, 10*time.Second, nil)
 	if err != nil {
 		t.Fatalf("reserved: %v", err)
 	}
 
-	aborted, err := podclaim.DeleteOnHoldExpiry(ctx, c, testNS, name, hold)
+	aborted, err := podclaim.DeleteOnHoldExpiry(ctx, c, ns, name, hold)
 	if err != nil {
 		t.Fatalf("DeleteOnHoldExpiry: %v", err)
 	}
@@ -332,11 +340,11 @@ func TestHoldExpiryDeleteHonorsPreconditions_spec_4_6_1(t *testing.T) {
 		t.Fatal("DeleteOnHoldExpiry reported aborted, want delete (no rebind raced)")
 	}
 	var got lennyv1.SandboxClaim
-	if err := c.Get(ctx, client.ObjectKey{Namespace: testNS, Name: name}, &got); err == nil {
+	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &got); err == nil {
 		t.Fatal("claim still present after hold-expiry delete")
 	}
 	// Idempotent: a repeat expiry on the already-deleted claim is a no-op.
-	aborted, err = podclaim.DeleteOnHoldExpiry(ctx, c, testNS, name, hold)
+	aborted, err = podclaim.DeleteOnHoldExpiry(ctx, c, ns, name, hold)
 	if err != nil {
 		t.Fatalf("DeleteOnHoldExpiry repeat: %v", err)
 	}
@@ -358,26 +366,27 @@ func TestHoldExpiryDeleteHonorsPreconditions_spec_4_6_1(t *testing.T) {
 // to prevent.
 //
 // spec: §4.6.1 (precondition-guarded DELETE), §4.6.3 (reserved → bound
-// rebind), §3.2 (rebind-vs-hold-expiry race).
+// rebind), §4.6.1 (rebind-vs-hold-expiry race).
 func TestRebindAbortsHoldExpiry_spec_3_2(t *testing.T) {
+	ns := testNamespace(t)
 	const name = "claim-sbx-1"
 	c, _ := seedBoundClaim(t, name)
 	ctx := context.Background()
-	if err := podclaim.WriteRecyclingStatus(ctx, c, testNS, name, nil); err != nil {
+	if err := podclaim.WriteRecyclingStatus(ctx, c, ns, name, nil); err != nil {
 		t.Fatalf("recycling: %v", err)
 	}
-	hold, err := podclaim.WriteReservedStatus(ctx, c, testNS, name, 10*time.Second, nil)
+	hold, err := podclaim.WriteReservedStatus(ctx, c, ns, name, 10*time.Second, nil)
 	if err != nil {
 		t.Fatalf("reserved: %v", err)
 	}
 
 	// A same-tenant session rebinds the claim before the hold expires; the
 	// rebind status patch changes the resourceVersion the expiry is fenced on.
-	if err := podclaim.WriteRebindStatus(ctx, c, testNS, name, nil); err != nil {
+	if err := podclaim.WriteRebindStatus(ctx, c, ns, name, nil); err != nil {
 		t.Fatalf("WriteRebindStatus: %v", err)
 	}
 
-	aborted, err := podclaim.DeleteOnHoldExpiry(ctx, c, testNS, name, hold)
+	aborted, err := podclaim.DeleteOnHoldExpiry(ctx, c, ns, name, hold)
 	if err != nil {
 		t.Fatalf("DeleteOnHoldExpiry after rebind: %v", err)
 	}

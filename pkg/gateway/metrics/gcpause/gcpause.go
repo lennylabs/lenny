@@ -63,7 +63,7 @@ type Gauge interface {
 // to the configured Gauge. When no pauses have been recorded yet, p99
 // is 0 — the gateway has not stalled, so the gauge should not lie.
 //
-// spec: §4.1 lines 130-132
+// spec: §4.1
 type Collector struct {
 	// Source is the runtime/debug.ReadGCStats indirection. nil
 	// selects DefaultGCStatsSource.

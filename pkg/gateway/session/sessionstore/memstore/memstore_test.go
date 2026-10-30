@@ -5,6 +5,7 @@ package memstore_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -30,7 +31,7 @@ func TestCreateAndGet(t *testing.T) {
 	}
 }
 
-// spec: §24.11 lines 135-136 — GetByID resolves a session across tenants
+// spec: §24.11 — GetByID resolves a session across tenants
 // for the platform-admin investigation surface, unlike the tenant-scoped
 // Get. F-24.11.2.
 func TestGetByIDResolvesAcrossTenants(t *testing.T) {
@@ -123,7 +124,7 @@ func TestListFiltersByState(t *testing.T) {
 // TestListFiltersByUserID asserts the §11.4 full_revoke step-1
 // SessionStore lookup narrows to the invalidation subject, so a tenant
 // with many sessions does not read tenant-wide on every revoke.
-// spec: §11.4 line 256.
+// spec: §11.4.
 func TestListFiltersByUserID_spec_11_4_256(t *testing.T) {
 	s := memstore.New()
 	ctx := context.Background()
@@ -146,7 +147,7 @@ func TestListFiltersByUserID_spec_11_4_256(t *testing.T) {
 }
 
 // TestListUserIDIsTenantScoped asserts a UserID match in a peer tenant
-// is not surfaced by the §11.4 lookup. spec: §11.4 line 256.
+// is not surfaced by the §11.4 lookup. spec: §11.4.
 func TestListUserIDIsTenantScoped_spec_11_4_256(t *testing.T) {
 	s := memstore.New()
 	ctx := context.Background()
@@ -159,7 +160,7 @@ func TestListUserIDIsTenantScoped_spec_11_4_256(t *testing.T) {
 	}
 }
 
-// TestListFiltersByLabels asserts the §15.1 line 598 labels filter is
+// TestListFiltersByLabels asserts the §15.1 labels filter is
 // AND-containment: a row matches only when its Labels map contains every
 // requested key=value pair. F-15.1.15.
 func TestListFiltersByLabels_spec_15_1_598(t *testing.T) {
@@ -192,7 +193,7 @@ func TestListFiltersByLabels_spec_15_1_598(t *testing.T) {
 	}
 }
 
-// TestListExcludeDeriveFailures asserts the §15.1 lines 652/661
+// TestListExcludeDeriveFailures asserts the §15.1
 // `?includeDeriveFailures=false` behaviour: derive_failure audit rows are
 // returned by default and dropped only when the flag is set. F-15.1.14.
 func TestListExcludeDeriveFailures_spec_15_1_652(t *testing.T) {
@@ -305,9 +306,11 @@ func TestDeleteByUserNoSessionsIsNoOp(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 156 — newly created sessions are written at
-// schema_version=1 by default. Recovery and coordination generations
-// start at zero. Cwd and PodAssignment are empty.
+// spec: §4.2, §10.1 — newly created sessions are written at
+// schema_version=1 by default. The recovery generation starts at zero and the
+// coordination generation is baselined at 1, so each coordinator handoff
+// mints a value strictly above the one a replica already holds for the session.
+// Cwd and PodAssignment are empty.
 func TestCreateDefaultsSessionRecordFields(t *testing.T) {
 	s := memstore.New()
 	ctx := context.Background()
@@ -321,8 +324,8 @@ func TestCreateDefaultsSessionRecordFields(t *testing.T) {
 	if got.RecoveryGeneration != 0 {
 		t.Errorf("RecoveryGeneration: want 0, got %d", got.RecoveryGeneration)
 	}
-	if got.CoordinationGeneration != 0 {
-		t.Errorf("CoordinationGeneration: want 0, got %d", got.CoordinationGeneration)
+	if got.CoordinationGeneration != 1 {
+		t.Errorf("CoordinationGeneration: want 1, got %d", got.CoordinationGeneration)
 	}
 	if got.Cwd != "" {
 		t.Errorf("Cwd: want empty, got %q", got.Cwd)
@@ -332,7 +335,7 @@ func TestCreateDefaultsSessionRecordFields(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 156 — recovery_generation and coordination_generation
+// spec: §4.2 — recovery_generation and coordination_generation
 // are monotonically non-decreasing across every state transition; never
 // rolled back, never reset. The store clamps an accidental decrement
 // in the mutate callback back to the prior value.
@@ -360,7 +363,7 @@ func TestUpdateClampsGenerationCountersMonotonically(t *testing.T) {
 	}
 }
 
-// TestUpdateClampsLastSeqMonotonically covers F-7.3.3 / §7.3 line 397:
+// TestUpdateClampsLastSeqMonotonically covers F-7.3.3 / §7.3:
 // sessions.last_seq is monotonic and an accidental rollback in the
 // mutate callback must be clamped back to the prior value. The
 // production pgstore enforces the same floor via GREATEST in updateSQL.
@@ -383,7 +386,7 @@ func TestUpdateClampsLastSeqMonotonically(t *testing.T) {
 	}
 }
 
-// TestUpdateAdvancesLastSeq covers F-7.3.3 / §7.3 line 397: a legitimate
+// TestUpdateAdvancesLastSeq covers F-7.3.3 / §7.3: a legitimate
 // advance writes through the store and round-trips on subsequent reads.
 func TestUpdateAdvancesLastSeq(t *testing.T) {
 	s := memstore.New()
@@ -408,7 +411,7 @@ func TestUpdateAdvancesLastSeq(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 156 — both counters advance monotonically on
+// spec: §4.2 — both counters advance monotonically on
 // legitimate increments.
 func TestUpdateAdvancesGenerationCounters(t *testing.T) {
 	s := memstore.New()
@@ -427,8 +430,9 @@ func TestUpdateAdvancesGenerationCounters(t *testing.T) {
 	if updated.RecoveryGeneration != 1 {
 		t.Errorf("RecoveryGeneration: want 1, got %d", updated.RecoveryGeneration)
 	}
-	if updated.CoordinationGeneration != 2 {
-		t.Errorf("CoordinationGeneration: want 2, got %d", updated.CoordinationGeneration)
+	// The row starts at the §4.2 baseline of 1, so a bump of 2 leaves 3.
+	if updated.CoordinationGeneration != 3 {
+		t.Errorf("CoordinationGeneration: want 3, got %d", updated.CoordinationGeneration)
 	}
 	if updated.PodAssignment != "pod-xyz" {
 		t.Errorf("PodAssignment: want pod-xyz, got %q", updated.PodAssignment)
@@ -438,7 +442,7 @@ func TestUpdateAdvancesGenerationCounters(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 160 — the pod_assignment field is the cross-replica
+// spec: §4.2 — the pod_assignment field is the cross-replica
 // source of truth for the pod-to-session binding. Get must read back
 // what Update wrote so a fresh replica observes the binding without
 // touching the in-memory Registry.
@@ -461,7 +465,7 @@ func TestPodAssignmentReadBackAcrossReadAfterWrite(t *testing.T) {
 	}
 }
 
-// spec: §4.2 line 156 — concurrent Updates on the same row maintain
+// spec: §4.2 — concurrent Updates on the same row maintain
 // the monotonicity floor even when mutate callbacks race. The store's
 // mutex serializes the read-mutate-write so successive bumps preserve
 // the latest counter value.
@@ -487,12 +491,14 @@ func TestUpdateConcurrentGenerationBumpsPreserveMonotonicity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.CoordinationGeneration != int64(n) {
-		t.Errorf("CoordinationGeneration: want %d, got %d", n, got.CoordinationGeneration)
+	// The row is created with the field unset, so it starts at the §4.2
+	// baseline of 1 and n bumps leave it at n+1.
+	if got.CoordinationGeneration != int64(n)+1 {
+		t.Errorf("CoordinationGeneration: want %d, got %d", n+1, got.CoordinationGeneration)
 	}
 }
 
-// spec: §4.2 line 156 — a Create call carrying an explicit schema
+// spec: §4.2 — a Create call carrying an explicit schema
 // version preserves it (so a forward-compat path can write a
 // non-default value without the store overriding it).
 func TestCreatePreservesExplicitSchemaVersion(t *testing.T) {
@@ -510,66 +516,81 @@ func TestCreatePreservesExplicitSchemaVersion(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 521 — GetActiveSlotsByPod counts only the live
-// (non-terminal) sessions bound to a pod, across every tenant, and
-// excludes sessions on other pods.
+// TestGetActiveSlotsByPod_spec_5_2_521 pins the slot-holder predicate on
+// the rehydration seed: GetActiveSlotsByPod returns exactly the identifiers
+// of the non-terminal sessions whose row names the pod, and none for another
+// pod, a podless row, or an empty pod name.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
 func TestGetActiveSlotsByPod_spec_5_2_521(t *testing.T) {
 	s := memstore.New()
 	ctx := context.Background()
-	// Two live sessions on pod-a for tenant acme.
 	_ = s.Create(ctx, sessionstore.Session{ID: "a1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-a"})
 	_ = s.Create(ctx, sessionstore.Session{ID: "a2", TenantID: "acme", State: session.StateStarting, PodAssignment: "pod-a"})
-	// A terminal session on pod-a must not count.
 	_ = s.Create(ctx, sessionstore.Session{ID: "a3", TenantID: "acme", State: session.StateCompleted, PodAssignment: "pod-a"})
-	// A live session on a different pod must not count toward pod-a.
 	_ = s.Create(ctx, sessionstore.Session{ID: "b1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-b"})
-	// A session with no pod binding must not count.
-	_ = s.Create(ctx, sessionstore.Session{ID: "u1", TenantID: "acme", State: session.StateRunning, PodAssignment: ""})
+	_ = s.Create(ctx, sessionstore.Session{ID: "u1", TenantID: "acme", State: session.StateResumePending, PodAssignment: ""})
 
 	got, err := s.GetActiveSlotsByPod(ctx, "pod-a")
-	if err != nil {
-		t.Fatalf("GetActiveSlotsByPod: %v", err)
+	if err != nil || fmt.Sprint(got) != "[a1 a2]" {
+		t.Fatalf("pod-a slot holders = (%v, %v), want [a1 a2]", got, err)
 	}
-	if got != 2 {
-		t.Errorf("pod-a active slots = %d, want 2 (live only, this pod only)", got)
+	if got, _ := s.GetActiveSlotsByPod(ctx, "pod-b"); fmt.Sprint(got) != "[b1]" {
+		t.Errorf("pod-b slot holders = %v, want [b1]", got)
 	}
-
-	// pod-b has one live slot.
-	if got, _ := s.GetActiveSlotsByPod(ctx, "pod-b"); got != 1 {
-		t.Errorf("pod-b active slots = %d, want 1", got)
+	if got, err := s.GetActiveSlotsByPod(ctx, "pod-none"); err != nil || len(got) != 0 {
+		t.Errorf("pod-none = (%v, %v), want none", got, err)
 	}
-	// A pod with no sessions returns zero, never an error.
-	if got, err := s.GetActiveSlotsByPod(ctx, "pod-none"); err != nil || got != 0 {
-		t.Errorf("pod-none = (%d, %v), want (0, nil)", got, err)
-	}
-	// An empty pod identity matches no slot.
-	if got, _ := s.GetActiveSlotsByPod(ctx, ""); got != 0 {
-		t.Errorf("empty pod = %d, want 0", got)
+	if got, _ := s.GetActiveSlotsByPod(ctx, ""); len(got) != 0 {
+		t.Errorf("empty pod = %v, want none", got)
 	}
 }
 
-// spec: §5.2 line 521 — the count aggregates across tenants because the
-// rehydration path holds only the pod identity (a pod is pinned to one
-// tenant by §5.2, but the query itself is pod-scoped).
+// TestGetActiveSlotsByPodCrossTenant_spec_5_2_521 pins that the seed reads
+// across tenants, because the rehydration path holds only the pod identity.
+//
+// spec: §5.2 (Post-recovery rehydration atomicity)
 func TestGetActiveSlotsByPodCrossTenant_spec_5_2_521(t *testing.T) {
 	s := memstore.New()
 	ctx := context.Background()
-	// Two tenants both reference pod-shared (a pathological pre-pinning
-	// state the count must still tally rather than tenant-filter).
 	_ = s.Create(ctx, sessionstore.Session{ID: "x", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-shared"})
 	_ = s.Create(ctx, sessionstore.Session{ID: "y", TenantID: "globex", State: session.StateRunning, PodAssignment: "pod-shared"})
-
 	got, err := s.GetActiveSlotsByPod(ctx, "pod-shared")
-	if err != nil {
-		t.Fatalf("GetActiveSlotsByPod: %v", err)
-	}
-	if got != 2 {
-		t.Errorf("cross-tenant active slots = %d, want 2", got)
+	if err != nil || fmt.Sprint(got) != "[x y]" {
+		t.Fatalf("cross-tenant slot holders = (%v, %v), want [x y]", got, err)
 	}
 }
 
-// TestCreateStandaloneSessionIsItsOwnRoot_spec_8_9_1010 pins the §8.9
-// line 1010 default: a session created without a parent has
+// TestListPodsWithActiveSlots_spec_12_4 pins the recovery rebuild's listing:
+// each pod a non-terminal best-effort-per-slot row names is returned once,
+// across tenants, and no pod that only terminal rows, exclusive-pool rows, or
+// a podless recovery row names, and never the empty string.
+//
+// spec: §12.4 (Redis failure behavior), §5.2 (Post-recovery rehydration atomicity)
+func TestListPodsWithActiveSlots_spec_12_4(t *testing.T) {
+	s := memstore.New()
+	ctx := context.Background()
+	const perSlot = "best-effort-per-slot"
+	rows := []sessionstore.Session{
+		{ID: "a1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-a", ScrubPolicy: perSlot},
+		{ID: "a2", TenantID: "globex", State: session.StateReady, PodAssignment: "pod-a", ScrubPolicy: perSlot},
+		{ID: "b1", TenantID: "acme", State: session.StateCompleted, PodAssignment: "pod-b", ScrubPolicy: perSlot},
+		{ID: "c1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-c", ScrubPolicy: "best-effort"},
+		{ID: "d1", TenantID: "acme", State: session.StateResumePending, PodAssignment: "", ScrubPolicy: perSlot},
+		{ID: "e1", TenantID: "globex", State: session.StateRunning, PodAssignment: "pod-e", ScrubPolicy: perSlot},
+	}
+	for _, r := range rows {
+		if err := s.Create(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.ListPodsWithActiveSlots(ctx)
+	if err != nil || fmt.Sprint(got) != "[pod-a pod-e]" {
+		t.Fatalf("ListPodsWithActiveSlots = (%v, %v), want [pod-a pod-e]", got, err)
+	}
+}
+
+// TestCreateStandaloneSessionIsItsOwnRoot_spec_8_9_1010 pins the §8.9 default: a session created without a parent has
 // RootSessionID equal to its own id (a standalone session is the root
 // of its own tree). F-8.9.8.
 func TestCreateStandaloneSessionIsItsOwnRoot_spec_8_9_1010(t *testing.T) {
@@ -586,8 +607,7 @@ func TestCreateStandaloneSessionIsItsOwnRoot_spec_8_9_1010(t *testing.T) {
 	}
 }
 
-// TestCreateChildInheritsParentRoot_spec_8_9_1010 pins the §8.9 line
-// 1010 inheritance: a session created with ParentSessionID inherits
+// TestCreateChildInheritsParentRoot_spec_8_9_1010 pins the §8.9 inheritance: a session created with ParentSessionID inherits
 // its parent's RootSessionID so all rows in one delegation tree share
 // the same root_session_id. F-8.9.8.
 func TestCreateChildInheritsParentRoot_spec_8_9_1010(t *testing.T) {
@@ -701,7 +721,7 @@ func TestListByRootCrossTenantIsolation_spec_8_9_1010(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 / §12.8 Phase 4 — DeleteByTenant hard-deletes
+// spec: §12.1 / §12.8 Phase 4 — DeleteByTenant hard-deletes
 // every session row belonging to the tenant; rows owned by other
 // tenants survive unchanged.
 func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
@@ -728,7 +748,7 @@ func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: §12.1 line 5 — DeleteByTenant is idempotent: a second call on
+// spec: §12.1 — DeleteByTenant is idempotent: a second call on
 // an empty scope returns (0, nil), never ErrNotFound.
 func TestDeleteByTenantIdempotent_spec_12_1(t *testing.T) {
 	s := memstore.New()
@@ -738,7 +758,8 @@ func TestDeleteByTenantIdempotent_spec_12_1(t *testing.T) {
 	}
 }
 
-// spec: 8.3 lines 472, 488 — the credential-origin session id records the
+// spec: 8.3 (Delegation Policy and Lease, Delegation Lease: "Credential pool identity in multi-hop `inherit` chains")
+// — the credential-origin session id records the
 // origin credential pool a `credentialPropagation: inherit` hop draws from.
 // The memstore is the §17.4 embedded backend, so the field must survive both
 // a Create/Get round-trip and an ExportState/ImportState snapshot cycle for a

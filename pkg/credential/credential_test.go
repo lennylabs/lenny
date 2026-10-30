@@ -8,7 +8,7 @@ import (
 )
 
 func TestAllProvidersIsExhaustive(t *testing.T) {
-	// spec: §4.9 + §26.6 line 296 — cursor_direct is a §26 reference-runtime
+	// spec: §4.9 + §26.6 — cursor_direct is a §26 reference-runtime
 	// provider added to the built-in surface.
 	if got := len(AllProviders()); got != 7 {
 		t.Errorf("AllProviders() returned %d, want 7 (six §4.9 + cursor_direct §26.6)", got)
@@ -23,7 +23,7 @@ func TestAllProvidersIsExhaustive(t *testing.T) {
 	}
 }
 
-// TestCursorDirectProviderIsBuiltIn pins §26.6 line 296: the cursor-cli
+// TestCursorDirectProviderIsBuiltIn pins §26.6: the cursor-cli
 // runtime declares supportedProviders: [cursor_direct], so the credential
 // package must accept it as a built-in.
 func TestCursorDirectProviderIsBuiltIn_spec_26_6_296(t *testing.T) {

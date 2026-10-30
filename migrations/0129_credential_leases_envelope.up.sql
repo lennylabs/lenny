@@ -45,7 +45,7 @@
 -- JSONB lease body is reinterpreted as a ciphertext blob and the plaintext
 -- bearer token is dropped, with no per-row backfill.
 --
--- §10.5 Phase 3 column drop (spec §10.5 line 417). The DROP COLUMN lease_token
+-- §10.5 Phase 3 column drop (spec §10.5). The DROP COLUMN lease_token
 -- is irreversible and the lease-body type change reinterprets stored bytes
 -- without decrypting them, so the up-file is fronted by a PL/pgSQL DO $$
 -- preflight gate that counts un-migrated rows and RAISE EXCEPTIONs when any

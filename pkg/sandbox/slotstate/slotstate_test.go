@@ -7,12 +7,14 @@ import (
 	"testing"
 )
 
-// spec: §6.2 lines 171-176 — the per-slot sub-state edge list is exactly
-// the six edges the spec enumerates, and no others are legal.
+// spec: §6.2 — the per-slot sub-state edge list is exactly the edges the
+// spec enumerates, including the pre-running cleanup edge
+// receiving_uploads → slot_cleanup, and no others are legal.
 func TestValidTransitions_spec_6_2(t *testing.T) {
 	want := map[Transition]bool{
 		{SlotAssigned, ReceivingUploads}: true,
 		{ReceivingUploads, Running}:      true,
+		{ReceivingUploads, SlotCleanup}:  true,
 		{Running, SlotCleanup}:           true,
 		{Running, Failed}:                true,
 		{SlotCleanup, Released}:          true,
@@ -34,6 +36,11 @@ func TestValidTransitions_spec_6_2(t *testing.T) {
 			t.Errorf("IsValid(%q,%q) = %v, want nil", e.From, e.To, err)
 		}
 	}
+	// A bind abandoned before the slot reaches running is reclaimed from
+	// receiving_uploads (spec §6.2 "Pre-running slot cleanup").
+	if err := IsValid(ReceivingUploads, SlotCleanup); err != nil {
+		t.Errorf("receiving_uploads → slot_cleanup must be legal, got %v", err)
+	}
 	if err := IsValid(SlotAssigned, Running); err == nil {
 		t.Error("slot_assigned → running must be illegal (must pass through receiving_uploads)")
 	}
@@ -43,8 +50,8 @@ func TestValidTransitions_spec_6_2(t *testing.T) {
 	}
 }
 
-// spec: §6.2 lines 175-176 — released/leaked/failed are terminal; spec
-// §6.2 line 179 — a leaked slot still occupies a slot, a released one does
+// spec: §6.2 — released/leaked/failed are terminal; spec
+// §6.2 — a leaked slot still occupies a slot, a released one does
 // not.
 func TestTerminalAndOccupancy_spec_6_2(t *testing.T) {
 	for _, s := range []SubState{Released, Leaked, Failed} {
@@ -62,12 +69,12 @@ func TestTerminalAndOccupancy_spec_6_2(t *testing.T) {
 	}
 	for _, s := range []SubState{SlotAssigned, ReceivingUploads, Running, SlotCleanup, Leaked, Failed} {
 		if !OccupiesSlot(s) {
-			t.Errorf("OccupiesSlot(%q) = false, want true (§6.2 line 179 leaked still counts)", s)
+			t.Errorf("OccupiesSlot(%q) = false, want true (§6.2 leaked still counts)", s)
 		}
 	}
 }
 
-// spec: §6.2 lines 170-176 — IsValidState covers exactly the seven
+// spec: §6.2 — IsValidState covers exactly the seven
 // sub-states and All() enumerates them.
 func TestStateEnum_spec_6_2(t *testing.T) {
 	if got := len(All()); got != 7 {

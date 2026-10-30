@@ -88,7 +88,7 @@ func (l SessionTreeLister) ListActiveTrees(ctx context.Context) ([]TreeRef, erro
 
 var _ TreeLister = SessionTreeLister{}
 
-// SessionEnumerator derives a tree's §11.2 line 48 live estimate from the
+// SessionEnumerator derives a tree's §11.2 live estimate from the
 // SessionStore's single-shard tree projection. The SessionStore is
 // Postgres-authoritative and survives a gateway replica loss, so it can
 // enumerate live descendants even when the coordinating replica is gone;

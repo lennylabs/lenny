@@ -6,12 +6,12 @@
 // those counters are volatile, so this package adds the two obligations
 // §11.2 attaches to them:
 //
-//   - the periodic Postgres checkpoint (§11.2 line 44): every
+//   - the periodic Postgres checkpoint (§11.2): every
 //     quotaSyncIntervalSeconds the gateway persists each active
 //     (tenant, user) window total and the per-tenant rollup total to the
 //     token_usage_checkpoint table, plus a final checkpoint on session
 //     completion ("final reconciliation"), and
-//   - the two-source reconstruction on Redis recovery (§11.2 line 48): the
+//   - the two-source reconstruction on Redis recovery (§11.2): the
 //     gateway restores each checkpointed counter to
 //     MAX(redis_current, postgres_checkpoint) so a stale checkpoint can
 //     never lower a counter below its actual accumulated usage and
@@ -33,7 +33,7 @@
 // returns an error for the rolling period and the checkpoint/reconcile
 // paths drop the subject).
 //
-// spec: §11.2 lines 42-48; §12.4; §24.6 line 99.
+// spec: §11.2; §12.4; §24.6.
 package quotacheckpoint
 
 import (
@@ -46,7 +46,7 @@ import (
 
 // Scope discriminates a checkpoint row: a per-user window or the
 // per-tenant rollup window the §11.2 hierarchy keeps alongside it. The
-// §11.2 line 48 MAX rule restores "each active session and tenant scope";
+// §11.2 MAX rule restores "each active session and tenant scope";
 // the platform-wide global rollup is not checkpointed (it lives under a
 // synthetic tenant slot with no tenants(id) row).
 const (
@@ -65,14 +65,14 @@ const (
 
 // ErrTenantNotFound — a per-tenant reconcile named a tenant the registry
 // does not hold. Service.Reconcile returns it so the admin adapter can map
-// it to 404. spec: §24.6 line 99.
+// it to 404. spec: §24.6.
 var ErrTenantNotFound = errors.New("quotacheckpoint: tenant not found")
 
 // Row is one token_usage_checkpoint row: the recorded token total for a
 // single §11.2 window at checkpoint time. CheckpointAt is populated on
 // read from the server-side clock_timestamp().
 //
-// spec: §11.2 line 44.
+// spec: §11.2.
 type Row struct {
 	TenantID     string
 	Scope        string
@@ -132,7 +132,7 @@ type WindowReader interface {
 	TenantRollupUsage(ctx context.Context, tenantID string, period quota.ResetPeriod, at time.Time) (int64, error)
 }
 
-// CounterRestorer applies the §11.2 line 48 MAX rule to a window,
+// CounterRestorer applies the §11.2 MAX rule to a window,
 // returning the resulting total. quotastore.Counter satisfies it.
 type CounterRestorer interface {
 	RestoreUserWindow(ctx context.Context, tenantID, userID string, period quota.ResetPeriod, at time.Time, value int64) (int64, error)
@@ -150,10 +150,10 @@ type MetricEmitter interface {
 	IncQuotaCheckpointReconcile(outcome string)
 }
 
-// PodUsageReader is the §11.2 line 46 crash-recovery MAX-rule source: the
+// PodUsageReader is the §11.2 crash-recovery MAX-rule source: the
 // pod-reported cumulative token total each bound direct-mode session's
 // runtime adapter retains and re-reports on reconnection to a new gateway
-// replica. §11.2 line 46 reconstructs a direct-mode quota counter after a
+// replica. §11.2 reconstructs a direct-mode quota counter after a
 // gateway crash as MAX(postgres_checkpoint, pod-reported cumulative total);
 // this seam supplies that third source so the recovery reconcile writes
 // MAX(redis_current, postgres_checkpoint, in_memory_failopen,
@@ -170,8 +170,7 @@ type MetricEmitter interface {
 // adapter-client accessor, or the lease store degrades to the
 // MAX(redis, postgres, failopen) rule.
 //
-// spec: §11.2 line 46 (crash-recovery MAX rule; pod-reported cumulative
-// total); §4.7 (ReportUsage cumulative read).
+// spec: §11.2; §4.7 (ReportUsage cumulative read).
 type PodUsageReader interface {
 	// UserWindow returns the pod-reported cumulative token total for the
 	// per-user window of period containing at, or 0 when no bound direct-mode
@@ -191,7 +190,7 @@ type PodUsageReader interface {
 
 // PodUsageSample is one (tenant, user, period)-window pod-reported
 // cumulative total the recovery reconcile can restore. An empty UserID
-// addresses the per-tenant rollup window. spec: §11.2 line 46.
+// addresses the per-tenant rollup window. spec: §11.2.
 type PodUsageSample struct {
 	TenantID string
 	UserID   string

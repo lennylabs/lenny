@@ -85,7 +85,7 @@ func driftedService(t *testing.T) (*driftservice.Service, *driftservice.MemSnaps
 	return driftservice.NewService(store, running), store
 }
 
-// spec: §25.10 line 3765, 3842 — a confirmed reconcile applies each
+// spec: §25.10 — a confirmed reconcile applies each
 // drifted resource and emits the started/per-resource/completed audit
 // events plus operation_progressed per resource.
 func TestReconcileConfirmAppliesAllResources_spec_25_10(t *testing.T) {
@@ -146,7 +146,7 @@ func TestReconcileConfirmAppliesAllResources_spec_25_10(t *testing.T) {
 	}
 }
 
-// spec: §25.10 line 3852, 3865 — a reconcile where some resources fail
+// spec: §25.10 — a reconcile where some resources fail
 // returns the partial result with errorCode DRIFT_RECONCILE_PARTIAL.
 func TestReconcilePartialFailure_spec_25_10(t *testing.T) {
 	svc, _ := driftedService(t)
@@ -174,7 +174,7 @@ func TestReconcilePartialFailure_spec_25_10(t *testing.T) {
 	}
 }
 
-// spec: §25.2 / §25.10 line 3842 — without confirm the reconcile returns
+// spec: §25.2 / §25.10 — without confirm the reconcile returns
 // a preview without applying anything.
 func TestReconcileDryRun_spec_25_10(t *testing.T) {
 	svc, _ := driftedService(t)
@@ -206,7 +206,7 @@ func TestReconcileDryRun_spec_25_10(t *testing.T) {
 	}
 }
 
-// spec: §25.10 line 3765 — scope=resources reconciles only the named
+// spec: §25.10 — scope=resources reconciles only the named
 // resources.
 func TestReconcileResourceScope_spec_25_10(t *testing.T) {
 	svc, _ := driftedService(t)
@@ -229,7 +229,7 @@ func TestReconcileResourceScope_spec_25_10(t *testing.T) {
 	}
 }
 
-// spec: §25.10 line 3842 — a confirmed reconcile with no applier wired
+// spec: §25.10 — a confirmed reconcile with no applier wired
 // fails closed with DRIFT_RECONCILE_UNAVAILABLE.
 func TestReconcileConfirmNoApplier_spec_25_10(t *testing.T) {
 	svc, _ := driftedService(t)
@@ -239,7 +239,7 @@ func TestReconcileConfirmNoApplier_spec_25_10(t *testing.T) {
 	}
 }
 
-// spec: §25.10 line 3852 — reconcile honours a caller-supplied desired
+// spec: §25.10 — reconcile honours a caller-supplied desired
 // body (the Postgres-outage path) without a stored snapshot.
 func TestReconcileCallerSuppliedDesired_spec_25_10(t *testing.T) {
 	running := fixedRunning{state: map[string]any{
@@ -262,7 +262,7 @@ func TestReconcileCallerSuppliedDesired_spec_25_10(t *testing.T) {
 	}
 }
 
-// spec: §25.10 line 3844 — an in-flight reconciliation surfaces in the
+// spec: §25.10 — an in-flight reconciliation surfaces in the
 // Operations Inventory with kind drift_reconciliation and the canonical
 // progress envelope; it drops out when complete.
 func TestReconcileSourceSurfacesInFlight_spec_25_10(t *testing.T) {
@@ -322,7 +322,7 @@ func (f applierFunc) Apply(ctx context.Context, rtype, rid string, desired map[s
 	return f(ctx, rtype, rid, desired)
 }
 
-// spec: §25.10 line 3791 — against=both returns the live and target
+// spec: §25.10 — against=both returns the live and target
 // diffs in one response.
 func TestReportBoth_spec_25_10(t *testing.T) {
 	store := driftservice.NewMemSnapshotStore()
@@ -355,7 +355,7 @@ func TestReportBoth_spec_25_10(t *testing.T) {
 	}
 }
 
-// spec: §25.10 line 3791 — against=both with no target snapshot fails
+// spec: §25.10 — against=both with no target snapshot fails
 // DRIFT_NO_TARGET_SNAPSHOT (no upgrade in flight).
 func TestReportBothNoTarget_spec_25_10(t *testing.T) {
 	store := driftservice.NewMemSnapshotStore()
@@ -367,7 +367,7 @@ func TestReportBothNoTarget_spec_25_10(t *testing.T) {
 	}
 }
 
-// spec: §25.10 line 3791 — against=both rejects a caller-supplied
+// spec: §25.10 — against=both rejects a caller-supplied
 // desired body (both mode is defined only over the stored snapshots).
 func TestReportBothRejectsCallerDesired_spec_25_10(t *testing.T) {
 	store := driftservice.NewMemSnapshotStore()
@@ -380,7 +380,7 @@ func TestReportBothRejectsCallerDesired_spec_25_10(t *testing.T) {
 	}
 }
 
-// spec: §25.10 line 3858 — Report increments lenny_drift_detected_total
+// spec: §25.10 — Report increments lenny_drift_detected_total
 // per drifted field and emits drift.report_generated.
 func TestReportEmitsMetricsAndAudit_spec_25_10(t *testing.T) {
 	store := driftservice.NewMemSnapshotStore()
@@ -420,7 +420,7 @@ func TestReportEmitsMetricsAndAudit_spec_25_10(t *testing.T) {
 	}
 }
 
-// spec: §25.10 line 3871 — snapshot refresh emits drift.snapshot_refreshed
+// spec: §25.10 — snapshot refresh emits drift.snapshot_refreshed
 // carrying the previous provenance and the byteSize.
 func TestRefreshEmitsSnapshotRefreshedAudit_spec_25_10(t *testing.T) {
 	store := driftservice.NewMemSnapshotStore()
@@ -452,7 +452,7 @@ func TestRefreshEmitsSnapshotRefreshedAudit_spec_25_10(t *testing.T) {
 	}
 }
 
-// spec: §25.10 line 3765 — reconcile rejects an unknown scope.
+// spec: §25.10 — reconcile rejects an unknown scope.
 func TestReconcileInvalidScope_spec_25_10(t *testing.T) {
 	svc, _ := driftedService(t)
 	_, err := svc.Reconcile(context.Background(), driftservice.ReconcileParams{Scope: "bogus", Confirm: true})

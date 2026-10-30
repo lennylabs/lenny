@@ -6,7 +6,7 @@
 // every other user's and tenant's staged events intact so a later flush
 // cannot re-insert the erased user's raw user_id into Postgres.
 //
-// spec: §12.8 line 788 (Billing write-ahead buffer), step 5.
+// spec: §12.8, step 5.
 package failover
 
 import (

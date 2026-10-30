@@ -51,22 +51,21 @@ type Config struct {
 	// ReplicationLag supplies the §25.11 ArtifactStore replication-lag and
 	// orphan-row estimates the restore preview surfaces. A nil source
 	// leaves both preview fields zero (a deployment with no off-cluster
-	// replication configured). spec: §25.11 line 4094.
+	// replication configured). spec: §25.11.
 	ReplicationLag ReplicationLagSource
 	// DataLoss supplies the §25.11 safety-check data-loss estimate. A nil
 	// estimator leaves the estimate zero (a Postgres-less deployment).
-	// spec: §25.11 line 4225.
+	// spec: §25.11.
 	DataLoss DataLossEstimator
 	// RestoreThroughputBps overrides the per-second pg_restore byte rate
 	// the estimatedDowntime model uses; a zero value uses the §25.11
-	// default. spec: §25.11 line 3957.
+	// default. spec: §25.11.
 	RestoreThroughputBps int64
-	// Audit receives the §25.11 line 4343 backup/restore audit events the
+	// Audit receives the §25.11 backup/restore audit events the
 	// orchestrator emits on each state transition it owns. A nil sink
 	// drops them (a deployment whose audit-append path is not yet wired).
 	Audit AuditSink
-	// ObjectStore removes a backup's MinIO object during §25.11 retention
-	// enforcement (the MinIO half of the lines 4108-4111 deletion). A nil
+	// ObjectStore removes a backup's MinIO object during §25.11 retention enforcement. A nil
 	// store leaves physical deletion to the daily retention Job.
 	ObjectStore ObjectDeleter
 	// Erasure runs the §25.11 step-6 post-restore GDPR erasure reconciler:
@@ -74,15 +73,15 @@ type Config struct {
 	// DeleteByTenant replay against the restored databases. A nil
 	// reconciler means GDPR erasure reconciliation is not configured for
 	// this deployment, so the step is a vacuous success and the gateway
-	// rolls without it. spec: §25.11 line 4147.
+	// rolls without it. spec: §25.11.
 	Erasure ErasureReconciler
 	// GatewayRestart triggers the §25.11 step-7 rolling restart of the
 	// gateway Deployment on a successful restore and reconcile, blocking
 	// until the rollout completes. A nil restarter means a single-process
 	// deployment with no gateway Deployment to roll; step 8 then releases
-	// the lock immediately. spec: §25.11 line 4148.
+	// the lock immediately. spec: §25.11.
 	GatewayRestart GatewayRestarter
-	// Progress emits the §25.11 line 4196 operation_progressed event on
+	// Progress emits the §25.11 operation_progressed event on
 	// each shard completion. A nil emitter drops it.
 	Progress RestoreProgressEmitter
 	// Regions is the §12.8 / §25.11 per-region backup endpoint map
@@ -91,21 +90,21 @@ type Config struct {
 	// shards and fails closed (BACKUP_REGION_UNRESOLVABLE) on a shard whose
 	// region has no complete entry. An empty map keeps the single-region
 	// global dump path. Required only when a tenant has dataResidencyRegion
-	// set. spec: §12.8 lines 932-936.
+	// set. spec: §12.8.
 	Regions map[string]RegionBackupConfig
 	// ShardRegions resolves each Postgres shard to its data-residency
 	// region for the per-region dispatch. Required when Regions is
-	// non-empty; ignored otherwise. spec: §12.8 line 935.
+	// non-empty; ignored otherwise. spec: §12.8.
 	ShardRegions ShardRegionResolver
 	// Residency receives the §12.8 lenny_data_residency_violation_total
 	// increment on a fail-closed backup abort. A nil sink drops the metric
-	// (the audit event still fires through Audit). spec: §12.8 line 936.
+	// (the audit event still fires through Audit). spec: §12.8.
 	Residency ResidencyMetrics
-	// Reconcile receives the §25.11 line 4320
+	// Reconcile receives the §25.11
 	// lenny_backup_reconcile_blocked_total{reason} increment when the
 	// post-restore erasure reconciler blocks replay. A nil sink drops the
 	// metric (the gdpr.backup_reconcile_blocked audit event still fires).
-	// spec: §25.11 line 4320.
+	// spec: §25.11.
 	Reconcile ReconcileMetrics
 	// Now supplies the current time; nil uses time.Now in UTC.
 	Now func() time.Time
@@ -162,7 +161,7 @@ func NewService(cfg Config) (*Service, error) {
 	if preDays <= 0 {
 		preDays = preRestoreRetainDaysDefault
 	}
-	// §12.8 line 935: per-region dispatch needs a shard→region resolver.
+	// §12.8: per-region dispatch needs a shard→region resolver.
 	// A Regions map with no resolver is a misconfiguration that would
 	// silently fall back to the global dump and bypass the residency
 	// control, so reject it at construction.
@@ -232,7 +231,7 @@ func (s *Service) CreateBackup(ctx context.Context, req BackupRequest) (*Backup,
 		return nil, codedError(ErrCodeStorageUnreachable, "record backup: %v", err)
 	}
 
-	// §12.8 lines 932-936: when per-region backup endpoints are
+	// §12.8: when per-region backup endpoints are
 	// configured and this backup type dumps Postgres, run one pg_dump Job
 	// per region against that region's shards only, failing closed on any
 	// shard whose region has no complete backups.regions entry. There is
@@ -260,8 +259,8 @@ func (s *Service) CreateBackup(ctx context.Context, req BackupRequest) (*Backup,
 	if err := s.store.UpdateBackup(ctx, b); err != nil {
 		return nil, codedError(ErrCodeStorageUnreachable, "record backup job: %v", err)
 	}
-	// spec: §25.11 line 4343 — every backup creation is audited.
-	// spec: §25.1 line 121, §25.2 line 350 — the caller operationId is
+	// spec: §25.11 — every backup creation is audited.
+	// spec: §25.1, §25.2 — the caller operationId is
 	// propagated onto the audit event so the §25.17 watchdog operation
 	// correlation resolves on the backup-create record.
 	s.emitAudit(AuditEvent{
@@ -273,7 +272,7 @@ func (s *Service) CreateBackup(ctx context.Context, req BackupRequest) (*Backup,
 	return &b, nil
 }
 
-// createPerRegionBackup implements the §12.8 lines 932-936 per-region
+// createPerRegionBackup implements the §12.8 per-region
 // backup dispatch for an already-inserted pending row b. It resolves each
 // Postgres shard to its data-residency region, fails closed with
 // BACKUP_REGION_UNRESOLVABLE on a shard whose region has no complete
@@ -292,7 +291,7 @@ func (s *Service) createPerRegionBackup(ctx context.Context, b Backup) (*Backup,
 			"no Postgres shards resolved for per-region backup")
 	}
 
-	// §12.8 line 936: fail closed on the first shard whose resolved region
+	// §12.8: fail closed on the first shard whose resolved region
 	// has no complete backups.regions entry, before launching any Job.
 	for _, sr := range shards {
 		cfg, ok := s.regions[sr.Region]
@@ -342,8 +341,8 @@ func (s *Service) createPerRegionBackup(ctx context.Context, b Backup) (*Backup,
 	for _, c := range components {
 		regionJobs[c.Region] = c.JobID
 	}
-	// spec: §25.11 line 4343 — every backup creation is audited.
-	// spec: §25.1 line 121, §25.2 line 350 — the caller operationId is
+	// spec: §25.11 — every backup creation is audited.
+	// spec: §25.1, §25.2 — the caller operationId is
 	// propagated onto the per-region backup-create audit event.
 	s.emitAudit(AuditEvent{
 		Type:     string(audit.EventBackupCreated),
@@ -357,7 +356,7 @@ func (s *Service) createPerRegionBackup(ctx context.Context, b Backup) (*Backup,
 // abortResidency marks b failed for a BACKUP_REGION_UNRESOLVABLE
 // violation, emits the §12.8 DataResidencyViolationAttempt audit event
 // and increments lenny_data_residency_violation_total{operation="backup"},
-// then returns the coded error. spec: §12.8 line 936, §25.11 line 4336.
+// then returns the coded error. spec: §12.8, §25.11.
 func (s *Service) abortResidency(ctx context.Context, b Backup, region, shardID string) error {
 	detail := fmt.Sprintf(
 		"region %s has no backups.regions entry (or endpoint/KMS is unreachable)", region,
@@ -451,12 +450,12 @@ func (s *Service) GetBackup(ctx context.Context, id string) (*Backup, error) {
 // when its status is completed or verified and it carries a non-nil
 // completed_at. The result feeds the §25.11 metrics-table
 // lenny_backup_last_successful_timestamp{type} gauge, which the
-// BackupOverdue alert evaluates (§25.11 line 4317: full backup older
+// BackupOverdue alert evaluates (§25.11: full backup older
 // than 48h). A type with no successful backup is absent from the map so
 // the caller can leave its gauge series unset rather than reporting a
 // zero (epoch) timestamp that would read as a 1970 backup.
 //
-// spec: §25.11 line 4309.
+// spec: §25.11.
 func (s *Service) LastSuccessfulBackupTimes(ctx context.Context) (map[string]time.Time, error) {
 	backups, err := s.store.ListBackups(ctx, BackupFilter{})
 	if err != nil {
@@ -539,7 +538,7 @@ func (s *Service) UpdateSchedule(ctx context.Context, schedule BackupSchedule) (
 	if err := s.store.PutSchedule(ctx, schedule); err != nil {
 		return nil, codedError(ErrCodeStorageUnreachable, "write schedule: %v", err)
 	}
-	// spec: §25.11 line 4343 — a schedule edit is audited.
+	// spec: §25.11 — a schedule edit is audited.
 	s.emitAudit(AuditEvent{
 		Type: string(audit.EventBackupScheduleUpdated),
 		Fields: map[string]any{
@@ -567,7 +566,7 @@ func (s *Service) UpdatePolicy(ctx context.Context, policy RetentionPolicy) (*Re
 	if err := s.store.PutPolicy(ctx, policy); err != nil {
 		return nil, codedError(ErrCodeStorageUnreachable, "write policy: %v", err)
 	}
-	// spec: §25.11 line 4343 — a retention-policy edit is audited.
+	// spec: §25.11 — a retention-policy edit is audited.
 	s.emitAudit(AuditEvent{
 		Type: string(audit.EventBackupPolicyUpdated),
 		Fields: map[string]any{
@@ -596,7 +595,7 @@ func (s *Service) PreviewRestore(ctx context.Context, backupID string) (*Restore
 		CurrentVersion:    s.platVer,
 		Compatible:        compatible,
 		AffectedResources: []string{"postgres", "platform-config"},
-		// §25.11 line 3957: the downtime is scaled by backup size and
+		// §25.11: the downtime is scaled by backup size and
 		// component count rather than a fixed constant.
 		EstimatedDowntime: estimateDowntime(b, s.throughput),
 		RequiresFullStop:  true,
@@ -610,7 +609,7 @@ func (s *Service) PreviewRestore(ctx context.Context, backupID string) (*Restore
 			fmt.Sprintf("schema forward-migration required: backup is at version %d, current is %d",
 				b.SchemaVersion, s.schemaV))
 	}
-	// §25.11 line 4094: surface the ArtifactStore replication lag and the
+	// §25.11: surface the ArtifactStore replication lag and the
 	// orphan-row estimate so the operator can choose a restore point whose
 	// completed_at <= now() - lag. A nil source means no off-cluster
 	// replication is configured; a source error leaves the fields zero and
@@ -627,7 +626,7 @@ func (s *Service) PreviewRestore(ctx context.Context, backupID string) (*Restore
 			preview.EstimatedOrphanArtifactRows = orphans
 		}
 	}
-	// spec: §25.11 line 4343 — a restore preview is audited.
+	// spec: §25.11 — a restore preview is audited.
 	s.emitAudit(AuditEvent{
 		Type:     string(audit.EventRestorePreviewGenerated),
 		BackupID: b.ID,
@@ -679,11 +678,10 @@ func (s *Service) SafetyCheckRestore(ctx context.Context, backupID string) (*Res
 		},
 		DataLossEstimate: DataLossEstimate{TablesWithDivergence: []string{}},
 	}
-	// §25.11 line 4225: populate the data-loss estimate from Postgres
+	// §25.11: populate the data-loss estimate from Postgres
 	// write-transaction state. When the estimator reports no mutations
 	// since the backup, the platform has been idle and the restore is safe
-	// regardless of the backup's age (§25.11 line 4227 "or the platform
-	// has been idle"). A nil estimator leaves the zero estimate; an error
+	// regardless of the backup's age (§25.11). A nil estimator leaves the zero estimate; an error
 	// flags the uncertainty so the operator does not read the zero as
 	// "no data would be lost".
 	if s.dataLoss != nil {
@@ -797,7 +795,7 @@ func (s *Service) ExecuteRestore(ctx context.Context, req RestoreRequest) (*Rest
 		restore.Status = RestoreStatusFailed
 		restore.Error = "BACKUP_JOB_CREATION_FAILED"
 		_ = s.store.UpdateRestore(ctx, restore)
-		// spec: §25.11 line 4343 — a failed restore is audited.
+		// spec: §25.11 — a failed restore is audited.
 		s.emitAudit(AuditEvent{
 			Type:      string(audit.EventRestoreFailed),
 			RestoreID: restore.ID,
@@ -814,8 +812,8 @@ func (s *Service) ExecuteRestore(ctx context.Context, req RestoreRequest) (*Rest
 	// idempotent — so it is reported only in the result.
 	restore.JobID = launched.JobID
 	_ = s.store.UpdateRestore(ctx, restore)
-	// spec: §25.11 line 4343 — a started restore is audited.
-	// spec: §25.1 line 121, §25.2 line 350 — the caller operationId is
+	// spec: §25.11 — a started restore is audited.
+	// spec: §25.1, §25.2 — the caller operationId is
 	// propagated onto the audit event so the §25.17 watchdog operation
 	// correlation resolves on the restore-start record.
 	s.emitAudit(AuditEvent{
@@ -915,7 +913,7 @@ func (s *Service) ResumeRestore(ctx context.Context, restoreID, caller string) (
 	if err := s.store.UpdateRestore(ctx, r); err != nil {
 		return nil, codedError(ErrCodeStorageUnreachable, "record resume: %v", err)
 	}
-	// spec: §25.11 line 4343 — a resumed restore is audited.
+	// spec: §25.11 — a resumed restore is audited.
 	s.emitAudit(AuditEvent{
 		Type:      string(audit.EventRestoreResumed),
 		RestoreID: r.ID,
@@ -938,7 +936,7 @@ func (s *Service) ResumeRestore(ctx context.Context, restoreID, caller string) (
 // accepts it as ledgerLatestWriteAt on the next ResumeRestore. The
 // caller's identity and justification are recorded on the row, and the
 // §11.7 legal_hold.ledger_confirmed_current_at audit event is emitted
-// through the configured AuditSink (spec: §25.11 lines 4147/4343).
+// through the configured AuditSink (spec: §25.11).
 //
 // Preconditions: the restore row must exist and be in status "failed"
 // (the only state in which a reconciler block could have surfaced); a
@@ -968,7 +966,7 @@ func (s *Service) ConfirmLegalHoldLedger(ctx context.Context, restoreID, justifi
 	if err := s.store.UpdateRestore(ctx, r); err != nil {
 		return nil, codedError(ErrCodeStorageUnreachable, "record ledger confirmation: %v", err)
 	}
-	// spec: §25.11 lines 4147/4343 — the platform-admin legal-hold-ledger
+	// spec: §25.11 — the platform-admin legal-hold-ledger
 	// confirmation is audited with the operator identity and justification.
 	// The orchestrator owns the emission now; the opsserver handler no
 	// longer needs an audit wrapper.
@@ -985,12 +983,11 @@ func (s *Service) ConfirmLegalHoldLedger(ctx context.Context, restoreID, justifi
 
 // EnforceRetention evaluates the §25.11 retention policy against every
 // backup in the store and deletes the expired ones. It is invoked after
-// each successful backup and on the daily 03:30 UTC cron. §25.11 lines
-// 4108-4111 require deletion from both MinIO and Postgres: this method
+// each successful backup and on the daily 03:30 UTC cron. §25.11 require deletion from both MinIO and Postgres: this method
 // marks the ops_backups row expired (the Postgres half) and, when an
 // ObjectDeleter is configured, removes the backup's MinIO object inline
 // (the MinIO half) so an expired row no longer points at a live object
-// until the next sweep. Every pruned backup raises a §25.11 line 4343
+// until the next sweep. Every pruned backup raises a §25.11
 // backup.deleted_by_retention audit event. It returns the IDs it pruned.
 //
 // EnforceRetention reuses pkg/backup/retention.Plan for the policy
@@ -1034,8 +1031,7 @@ func (s *Service) EnforceRetention(ctx context.Context) ([]string, error) {
 		if err != nil {
 			continue
 		}
-		// §25.11 retention enforcement marks the row expired (the Postgres
-		// half of the lines 4108-4111 deletion).
+		// §25.11 retention enforcement marks the row expired.
 		b.Status = StatusExpired
 		expiresAt := s.now()
 		b.ExpiresAt = &expiresAt
@@ -1067,8 +1063,7 @@ func (s *Service) EnforceRetention(ctx context.Context) ([]string, error) {
 	return pruned, nil
 }
 
-// LaunchRetentionJob creates the §25.11 retention-enforcement Kubernetes
-// Job (lines 4108-4111): the lenny-backup image in retention mode reads
+// LaunchRetentionJob creates the §25.11 retention-enforcement Kubernetes Job: the lenny-backup image in retention mode reads
 // the ops_retention_policy, computes the prune set, and deletes each
 // expired backup from MinIO and Postgres in a coordinated sequence. This
 // is the production path for the daily 03:30 UTC sweep — lenny-ops
@@ -1123,7 +1118,7 @@ func (s *Service) ReconcilePending(ctx context.Context) ([]string, error) {
 	return failed, nil
 }
 
-// ReconcileOrphanedJobs implements the §25.11 lines 3976-3978 reconciler
+// ReconcileOrphanedJobs implements the §25.11 reconciler
 // half that deletes Kubernetes Jobs whose lenny.dev/backup-id annotation
 // has no matching ops_backups row (the row insert failed after the Job
 // was created, or the row was pruned out from under a still-present

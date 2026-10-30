@@ -144,7 +144,7 @@ const (
 	weakeningCooldownSecs = 60
 )
 
-// spec: §4.8 line 1058 — "the weakening transition additionally triggers
+// spec: §4.8 — "the weakening transition additionally triggers
 // a mandatory cooldown during which affected `delegate_task` and
 // `lenny/send_message` calls reject with `INTERCEPTOR_WEAKENING_COOLDOWN`
 // ... The reverse change (`fail-open` to `fail-closed`) emits an
@@ -231,15 +231,16 @@ func TestInterceptorWeakeningCooldownComposed_spec_4_8_1058(t *testing.T) {
 	}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:           sessions,
-		Executor:        executor.NewEchoExecutor(),
-		Delegation:      svc,
-		Runtimes:        runtimes,
-		Interceptors:    chain,
-		ContentPolicies: svc,
-		CooldownChecker: svc,
-		Clock:           clk.now,
-		TenantID:        weakeningTenant,
+		DevTenantFallback: true,
+		Store:             sessions,
+		Executor:          executor.NewEchoExecutor(),
+		Delegation:        svc,
+		Runtimes:          runtimes,
+		Interceptors:      chain,
+		ContentPolicies:   svc,
+		CooldownChecker:   svc,
+		Clock:             clk.now,
+		TenantID:          weakeningTenant,
 	})
 
 	// ---- register the interceptor (fail-closed) through the admin API ----

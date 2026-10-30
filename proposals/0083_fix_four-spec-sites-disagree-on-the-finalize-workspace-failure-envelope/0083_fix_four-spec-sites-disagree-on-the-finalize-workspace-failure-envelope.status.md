@@ -1,0 +1,18 @@
+---
+proposal: 0083_fix_four-spec-sites-disagree-on-the-finalize-workspace-failure-envelope
+title: Four spec sites disagree on the finalize workspace-failure envelope
+kind: fix
+status: Implemented
+drafted-date: 2026-09-25
+drafted-by: change-proposal
+reviewed-date: 2026-09-27
+reviewed-by: change-proposal
+approved-date: 2026-09-27
+approved-by: jaf@dubium.io
+implemented-date: 2026-09-27
+implemented-by: jaf@dubium.io
+---
+
+## Review history
+
+An adversarial review run completed on 2026-09-27. The spec loop ran 3 rounds and converged. The non-spec loop ran 3 rounds and converged. Both loops performed 1 full-pool sweep. The run fixed 2 findings. The review converged.

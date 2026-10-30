@@ -10,10 +10,9 @@
 //
 // The two §6.1 windows are:
 //
-//   - 5-minute — the circuit-breaker trip input (§6.1 line 50, hardcoded
+//   - 5-minute — the circuit-breaker trip input (§6.1, hardcoded
 //     90% threshold).
-//   - 1-hour — the SDKWarmDemotionRateHigh warning-event input (§6.1
-//     line 48, demotionRateThreshold default 60%).
+//   - 1-hour — the SDKWarmDemotionRateHigh warning-event input (§6.1, demotionRateThreshold default 60%).
 //
 // Both are computed as the ratio of the SDK-warm demotion rate to the
 // claim rate over the window:
@@ -43,7 +42,7 @@ type PromQLQuerier interface {
 
 // PrometheusDemotionSource is the production DemotionRateSource. It
 // queries a Prometheus-compatible backend for the rolling 5-minute and
-// 1-hour SDK-warm demotion rates per pool. spec: §6.1 lines 48, 50.
+// 1-hour SDK-warm demotion rates per pool. spec: §6.1.
 type PrometheusDemotionSource struct {
 	// Querier runs the instant queries. Required.
 	Querier PromQLQuerier
@@ -112,7 +111,7 @@ func escapePromLabel(v string) string {
 	return v
 }
 
-// demotionRateHighThresholdDefault is the §6.1 line 48
+// demotionRateHighThresholdDefault is the §6.1
 // demotionRateThreshold: when the rolling 1-hour demotion rate exceeds
 // it, the PoolScalingController emits the SDKWarmDemotionRateHigh warning
 // event unless the pool sets acknowledgeHighDemotionRate. It is a

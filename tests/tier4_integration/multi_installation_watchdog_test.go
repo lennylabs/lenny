@@ -15,14 +15,12 @@ import (
 	"bufio"
 	"context"
 	"net/http"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // installation is one independently deployed Lenny installation for the
@@ -41,9 +39,7 @@ type installation struct {
 // cannot affect the other.
 func startInstallation(t *testing.T) installation {
 	t.Helper()
-	pg := containers.StartPostgres(t, containers.PostgresOptions{
-		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
-	})
+	pg := sharedDatabase(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ops := opsprocess.StartWith(
 		t,
@@ -92,6 +88,7 @@ func openEventStream(t *testing.T, ctx context.Context, base string) (*http.Resp
 // connection pool — was not scoped per installation the way §25.17 requires
 // "independently per cluster" to mean).
 func TestMultiInstallationWatchdogIndependentPerInstallation(t *testing.T) {
+	t.Parallel()
 	opsprocess.SkipUnlessAvailable(t)
 
 	instA := startInstallation(t)

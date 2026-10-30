@@ -19,7 +19,7 @@ func TestOnTransitionFiresOnAggregateChange(t *testing.T) {
 	// §25.3: the OnTransition hook fires when the aggregate status
 	// changes between Reports — the health_status_changed signal. The
 	// probe cache is disabled so a mutated checker is re-evaluated on
-	// each Report rather than served from the §25.3 line 526 cache.
+	// each Report rather than served from the §25.3 cache.
 	agg := health.NewAggregatorWithCache(0, nil)
 	status := health.StatusHealthy
 	agg.Register(health.CheckerFunc{
@@ -216,7 +216,7 @@ func TestAggregatorTakesWorstStatus(t *testing.T) {
 	}
 }
 
-// spec: §10.4 line 386 — the readiness probe gates only on the named
+// spec: §10.4 — the readiness probe gates only on the named
 // hard backend dependencies, never on a non-gating checker (e.g. SIEM).
 // F-10.4.6.
 func TestHardDependencyStatus_spec_10_4_386(t *testing.T) {
@@ -279,7 +279,7 @@ func TestHandlerHealthyReturns200(t *testing.T) {
 // endpoint never returns 5xx: an unhealthy verdict still returns 200
 // with status: unhealthy in the body so an agent distinguishes "the
 // platform is unhealthy" from "the request to the health endpoint
-// failed". spec: §25.3 line 530.
+// failed". spec: §25.3.
 func TestHandlerUnhealthyReturns200_spec_25_3_530(t *testing.T) {
 	agg := health.NewAggregator()
 	agg.Register(failing("redis", health.StatusUnhealthy))
@@ -346,7 +346,7 @@ func TestHandlerUnknownComponent404(t *testing.T) {
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("unknown component: got %d, want 404", rr.Code)
 	}
-	// spec: §25.3 line 547 — the health surface's only error code.
+	// spec: §25.3 — the health surface's only error code.
 	var body struct {
 		Error struct {
 			Code string `json:"code"`
@@ -361,7 +361,7 @@ func TestHandlerUnknownComponent404(t *testing.T) {
 // TestProbeResultsCachedFor5Seconds_spec_25_3_526 asserts a component's
 // Check result is reused within the 5-second per-replica cache window
 // and re-run once the window elapses, so concurrent health requests do
-// not stampede the backing dependency. spec: §25.3 line 526.
+// not stampede the backing dependency. spec: §25.3.
 func TestProbeResultsCachedFor5Seconds_spec_25_3_526(t *testing.T) {
 	clock := time.Unix(1_000_000, 0)
 	agg := health.NewAggregatorWithCache(5*time.Second, func() time.Time { return clock })
@@ -405,7 +405,7 @@ func TestProbeResultsCachedFor5Seconds_spec_25_3_526(t *testing.T) {
 // runtime is bounded by the slowest probe rather than the sum of all
 // probe latencies, so a slow dependency does not stall the §25.3
 // /v1/admin/health response beyond a single probe's ceiling.
-// spec: §25.3 line 441.
+// spec: §25.3.
 func TestProbesRunInParallel_spec_25_3_441(t *testing.T) {
 	const (
 		n     = 8

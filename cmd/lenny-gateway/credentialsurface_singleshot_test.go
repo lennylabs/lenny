@@ -51,7 +51,7 @@ func TestSingleShotErrorFrom(t *testing.T) {
 // claim, exercising the error-mapping branch (the happy path needs a live pod
 // and is covered at tier 5). spec: §15.2.1 rule 1; §15 single-shot compute model.
 func TestSessionSingleShotBinderMapsServiceError(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	binder := sessionSingleShotBinder{srv: srv}
 
 	id, err := binder.BindSingleShot(context.Background(), translator.SingleShotSpec{TenantID: "acme"})

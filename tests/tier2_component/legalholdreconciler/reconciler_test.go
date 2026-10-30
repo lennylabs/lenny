@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Component test for the §12.8 line 739 legal-hold checkpoint-gap
+// Component test for the §12.8 legal-hold checkpoint-gap
 // reconciler against a real Postgres container with the production
 // migrations applied. It exercises the §12.5 scoping rule: a rotated
 // chunk row that belongs to a §10.1 checkpoint_manifest finalised
@@ -65,14 +65,13 @@ func seedTenant(t *testing.T, ctx context.Context, pg *containers.Postgres, id s
 	}
 }
 
-func seedManifest(t *testing.T, ctx context.Context, store *manifestpg.Store, tenant, session, checkpointID, slot string, complete bool) {
+func seedManifest(t *testing.T, ctx context.Context, store *manifestpg.Store, tenant, session, checkpointID string, complete bool) {
 	t.Helper()
 	started := time.Date(2026, 5, 24, 11, 0, 0, 0, time.UTC)
 	if err := store.Put(ctx, partialmanifeststore.Record{
 		TenantID:             tenant,
 		CheckpointID:         checkpointID,
 		SessionID:            session,
-		SlotID:               slot,
 		ChunkObjectKeyPrefix: "/" + tenant + "/checkpoints/" + session + "/" + checkpointID + "/",
 		ChunkSizeBytes:       1024,
 		ChunkCount:           1,
@@ -123,7 +122,7 @@ func seedRotatedCheckpointChunk(t *testing.T, ctx context.Context, cat *artifact
 	}
 }
 
-// spec: §12.8 line 739; §10.1 line 141 — the reconciler counts a rotated
+// spec: §12.8; §10.1 — the reconciler counts a rotated
 // chunk of a complete checkpoint as a gap and excludes a rotated chunk of
 // a partial-manifest attempt.
 // diagnosis: a failure means the legal-hold reconciler mis-scopes the gap
@@ -142,7 +141,7 @@ func TestReconcilerExcludesPartialManifestRotation(t *testing.T) {
 	seedTenant(t, ctx, pg, "acme")
 
 	t.Run("partial rotation is not a gap", func(t *testing.T) {
-		seedManifest(t, ctx, manifests, "acme", "sess-partial", cpPartial, "slot-p", false)
+		seedManifest(t, ctx, manifests, "acme", "sess-partial", cpPartial, false)
 		seedRotatedCheckpointRow(t, ctx, cat, "acme", "sess-partial", cpPartial)
 
 		app := &countingAppender{}
@@ -164,7 +163,7 @@ func TestReconcilerExcludesPartialManifestRotation(t *testing.T) {
 	})
 
 	t.Run("complete rotation is a gap", func(t *testing.T) {
-		seedManifest(t, ctx, manifests, "acme", "sess-complete", cpComplete, "slot-c", true)
+		seedManifest(t, ctx, manifests, "acme", "sess-complete", cpComplete, true)
 		seedRotatedCheckpointRow(t, ctx, cat, "acme", "sess-complete", cpComplete)
 
 		app := &countingAppender{}
@@ -200,7 +199,7 @@ func TestReconcilerExcludesPartialManifestRotation(t *testing.T) {
 		// per chunk. The reported rotated_checkpoints must be 1 even though
 		// three chunk rows rotated. Before the distinct-checkpoint fix the
 		// reconciler counted per chunk row and would have reported 3.
-		seedManifest(t, ctx, manifests, "acme", "sess-chunked", cpChunked, "slot-k", true)
+		seedManifest(t, ctx, manifests, "acme", "sess-chunked", cpChunked, true)
 		seedRotatedCheckpointChunk(t, ctx, cat, "acme", "sess-chunked", cpChunked, 0)
 		seedRotatedCheckpointChunk(t, ctx, cat, "acme", "sess-chunked", cpChunked, 1)
 		seedRotatedCheckpointChunk(t, ctx, cat, "acme", "sess-chunked", cpChunked, 2)

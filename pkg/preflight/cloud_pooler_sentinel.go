@@ -7,8 +7,7 @@ import (
 	"strings"
 )
 
-// cloudPoolerSentinelFailMessage is reproduced verbatim from the §17.6
-// line 488 preflight-check table ("Cloud-managed pooler sentinel
+// cloudPoolerSentinelFailMessage is reproduced verbatim from the §17.6 preflight-check table ("Cloud-managed pooler sentinel
 // defense"). The check appends the offending table list so the operator
 // knows which tenant-scoped tables lack the trigger.
 const cloudPoolerSentinelFailMessage = "Cloud-managed pooler detected but per-transaction tenant validation trigger 'lenny_tenant_guard' not found; required because cloud-managed proxies cannot enforce the __unset__ sentinel via connect_query — see Section 12.3"
@@ -20,7 +19,7 @@ const cloudPoolerSentinelFailMessage = "Cloud-managed pooler detected but per-tr
 // satisfy. A nil prober skips the live probe; an empty slice with a nil
 // error means every tenant-scoped table is protected.
 //
-// spec: §17.6 line 488; §12.3 line 56.
+// spec: §17.6; §12.3.
 type PoolerSentinelProber interface {
 	TenantGuardCoverageGaps(ctx context.Context) ([]string, error)
 }
@@ -33,7 +32,7 @@ func (f PoolerSentinelProbeFunc) TenantGuardCoverageGaps(ctx context.Context) ([
 	return f(ctx)
 }
 
-// CloudPoolerSentinelCheck is the §17.6 line 488 / §17.9.7 cloud-managed
+// CloudPoolerSentinelCheck is the §17.6 / §17.9.7 cloud-managed
 // pooler sentinel defense. When postgres.connectionPooler is "external"
 // the deployment fronts Postgres with a managed proxy (RDS Proxy, Cloud
 // SQL Auth Proxy, Azure PgBouncer) that cannot run the connect_query
@@ -51,7 +50,7 @@ func (f PoolerSentinelProbeFunc) TenantGuardCoverageGaps(ctx context.Context) ([
 // the check defers to the runtime defense rather than blocking the
 // install on a connection it cannot make.
 //
-// spec: §17.6 line 488; §17.9.7 line 1541; §12.3 line 56.
+// spec: §17.6; §17.9.7; §12.3.
 type CloudPoolerSentinelCheck struct {
 	// ConnectionPooler is the effective postgres.connectionPooler value
 	// (pgbouncer | external). Only "external" arms the live probe.
@@ -61,7 +60,7 @@ type CloudPoolerSentinelCheck struct {
 	Prober PoolerSentinelProber
 }
 
-// Decide evaluates the §17.6 line 488 cloud-managed pooler sentinel
+// Decide evaluates the §17.6 cloud-managed pooler sentinel
 // defense.
 func (c CloudPoolerSentinelCheck) Decide(ctx context.Context) Decision {
 	if !strings.EqualFold(strings.TrimSpace(c.ConnectionPooler), "external") {
@@ -70,7 +69,7 @@ func (c CloudPoolerSentinelCheck) Decide(ctx context.Context) Decision {
 	}
 	if c.Prober == nil {
 		return Decision{Passed: true, Reason: "SKIPPED: no Postgres connection wired for the cloud-pooler sentinel probe; " +
-			"the gateway LENNY_POOLER_MODE=external startup defense (§12.3 line 56) is the load-bearing check"}
+			"the gateway LENNY_POOLER_MODE=external startup defense (§12.3) is the load-bearing check"}
 	}
 	gaps, err := c.Prober.TenantGuardCoverageGaps(ctx)
 	if err != nil {

@@ -107,7 +107,7 @@ func translatableRow(tenant string, seq uint64, eventType string, at time.Time) 
 	}
 }
 
-// spec: §12.3 line 97 — the outbox forwarder tails committed audit rows,
+// spec: §12.3 — the outbox forwarder tails committed audit rows,
 // delivers each to the SIEM, and advances the durable per-tenant
 // high-water mark only after delivery. A clean cycle delivers every
 // pending row, checkpoints each one, and refreshes the lag gauge.
@@ -148,7 +148,7 @@ func TestOutbox_DeliversAndCheckpoints_spec_12_3(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 97 — a SIEM delivery failure must NOT advance the
+// spec: §12.3 — a SIEM delivery failure must NOT advance the
 // high-water mark: the row stays pending so the next cycle re-delivers
 // it. The forwarder stops at the failing row (head-of-line), and the lag
 // gauge is still refreshed so AuditSIEMDeliveryLag can fire.
@@ -193,7 +193,7 @@ func TestOutbox_DoesNotCheckpointOnDeliveryFailure_spec_12_3(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 95 / §11.7 — a row whose OCSF translation fails is
+// spec: §12.3 / §11.7 — a row whose OCSF translation fails is
 // delivered as a translation-failure receipt and the pointer advances
 // past it, so a persistently untranslatable event cannot head-of-line
 // block the SIEM stream.
@@ -227,7 +227,7 @@ func TestOutbox_DeadLettersUntranslatableRow_spec_12_3(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 97 — an empty cycle (forwarder caught up) delivers
+// spec: §12.3 — an empty cycle (forwarder caught up) delivers
 // nothing but still refreshes the lag gauge so a stalled SIEM is visible
 // even when no new rows committed.
 func TestOutbox_EmptyCycleEmitsLag_spec_12_3(t *testing.T) {
@@ -249,7 +249,7 @@ func TestOutbox_EmptyCycleEmitsLag_spec_12_3(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 97 — a PendingForward read error aborts the cycle
+// spec: §12.3 — a PendingForward read error aborts the cycle
 // before any delivery; no checkpoint is advanced.
 func TestOutbox_PendingForwardError_spec_12_3(t *testing.T) {
 	store := &fakeDeliveryStore{pendErr: errors.New("postgres down")}
@@ -262,7 +262,7 @@ func TestOutbox_PendingForwardError_spec_12_3(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 97 — NewOutbox fills zero config fields from the
+// spec: §12.3 — NewOutbox fills zero config fields from the
 // defaults so a caller can pass OutboxConfig{}.
 func TestOutbox_DefaultConfig_spec_12_3(t *testing.T) {
 	ob := NewOutbox(&fakeDeliveryStore{}, NewForwarder(&fakeSink{}, DefaultForwarderConfig(), nil), OutboxConfig{}, nil)

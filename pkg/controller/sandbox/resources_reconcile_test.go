@@ -22,9 +22,9 @@ import (
 // resourceclass.DefaultRegistry).
 func reconcileResources(t *testing.T, c client.Client, s *runtime.Scheme) {
 	t.Helper()
-	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1"}
+	r := &sandbox.Reconciler{Client: c, Scheme: s, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1", SupervisorImage: "ghcr.io/lennylabs/lenny-supervisor:v1"}
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: client.ObjectKey{Namespace: testNS, Name: testName},
+		NamespacedName: client.ObjectKey{Namespace: testNamespace(t), Name: testName},
 	}); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
@@ -33,7 +33,7 @@ func reconcileResources(t *testing.T, c client.Client, s *runtime.Scheme) {
 func runtimePodContainer(t *testing.T, c client.Client) corev1.Container {
 	t.Helper()
 	var pod corev1.Pod
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, &pod); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNamespace(t), Name: testName}, &pod); err != nil {
 		t.Fatalf("get pod: %v", err)
 	}
 	for _, cont := range pod.Spec.Containers {
@@ -48,18 +48,18 @@ func runtimePodContainer(t *testing.T, c client.Client) corev1.Container {
 // TestReconcileStampsTemplateResourceClass verifies the warm-pod path:
 // Sandbox.spec.resourceClass empty, so the reconciler resolves the class
 // from the pool's SandboxTemplate and stamps the resolved limits on the
-// container. spec: §5.2, §6.4 line 413.
+// container. spec: §5.2, §6.4.
 func TestReconcileStampsTemplateResourceClass_spec_6_4_413(t *testing.T) {
 	s := newScheme(t)
 	tmpl := &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-template", Namespace: testNS},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "claude-code", ResourceClass: "small"},
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-template", Namespace: testNamespace(t)},
+		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: testRuntime(t), ResourceClass: "small"},
 	}
 	pool := &lennyv1.SandboxWarmPool{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNamespace(t)},
 		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "claude-template", MinWarm: 1, MaxWarm: 3},
 	}
-	c := newClient(t, s, sandboxCR(""), runtimeCR(), tmpl, pool)
+	c := newClient(t, s, sandboxCR(t, ""), runtimeCR(t), tmpl, pool)
 	reconcileResources(t, c, s)
 
 	cont := runtimePodContainer(t, c)
@@ -72,9 +72,9 @@ func TestReconcileStampsTemplateResourceClass_spec_6_4_413(t *testing.T) {
 // path: Sandbox.spec.resourceClass is set directly and takes precedence.
 func TestReconcileStampsSandboxResourceClass_spec_12_6(t *testing.T) {
 	s := newScheme(t)
-	sb := sandboxCR("")
+	sb := sandboxCR(t, "")
 	sb.Spec.ResourceClass = "large"
-	c := newClient(t, s, sb, runtimeCR())
+	c := newClient(t, s, sb, runtimeCR(t))
 	reconcileResources(t, c, s)
 
 	cont := runtimePodContainer(t, c)
@@ -83,12 +83,11 @@ func TestReconcileStampsSandboxResourceClass_spec_12_6(t *testing.T) {
 	}
 }
 
-// TestReconcileDefaultsResourceClassWhenUnspecified verifies the §5.1 line
-// 357 deployer-safe default: neither the Sandbox nor any template names a
+// TestReconcileDefaultsResourceClassWhenUnspecified verifies the §5.1 deployer-safe default: neither the Sandbox nor any template names a
 // class, so the medium default applies.
 func TestReconcileDefaultsResourceClassWhenUnspecified_spec_5_1_357(t *testing.T) {
 	s := newScheme(t)
-	c := newClient(t, s, sandboxCR(""), runtimeCR())
+	c := newClient(t, s, sandboxCR(t, ""), runtimeCR(t))
 	reconcileResources(t, c, s)
 
 	cont := runtimePodContainer(t, c)

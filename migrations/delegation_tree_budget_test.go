@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-// spec: §11.2 lines 29, 48; §12.4 lines 193, 218; §8.6 lines 730-733.
+// spec: §11.2; §12.4; §8.6.
 // Migration 0115 creates the delegation_tree_budget table — the durable
 // Postgres checkpoint of the §8.2 Redis dlg:* tree-budget counters that
-// the §11.2 line 48 two-source reconstruction restores via the MAX rule
+// the §11.2 two-source reconstruction restores via the MAX rule
 // on Redis recovery. The table carries the standard §12.3 tenant-guard
 // trigger and RLS policy; the down migration drops the table (and with
 // it the trigger, policy, and index).

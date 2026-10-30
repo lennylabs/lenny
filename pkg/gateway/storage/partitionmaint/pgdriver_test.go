@@ -29,7 +29,7 @@ func TestDropPartitionSQL(t *testing.T) {
 	}
 }
 
-// spec: §16.4 line 378 — the catch-all occupancy probe counts the
+// spec: §16.4 — the catch-all occupancy probe counts the
 // <parent>_default partition migration 0149 attaches to each EventStore
 // parent, so a write that escaped its dated partition is observable.
 func TestDefaultPartitionCountSQL_spec_16_4_378(t *testing.T) {

@@ -75,7 +75,7 @@ type streamSession struct {
 	// untailable Redis source is served under. SourceHealth still reports Redis
 	// reachable in that state, so the envelope cannot be derived from the
 	// matrix alone. It is nil whenever the session is on the source the matrix
-	// selected. spec: §25.5 lines 2768-2780.
+	// selected. spec: §25.5.
 	forcedDeg *conventions.Degradation
 }
 
@@ -195,8 +195,7 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 // It mirrors pollRedisUnreachable: the gateway-buffer fan-out serves under the
 // case-1 envelope, and with no fan-out source wired this replica's own ring
 // serves under the case-4 envelope, since gateway-originated events then have
-// nowhere to come from. spec: §25.5 lines 2768-2780 (actualSource names the
-// source the response was served from).
+// nowhere to come from. spec: §25.5.
 func (s *Service) tailFallbackSource() (dataSource, *conventions.Degradation) {
 	if s.gateway != nil {
 		_, deg, _ := gatewayFallbackState()
@@ -213,7 +212,7 @@ func (s *Service) tailFallbackSource() (dataSource, *conventions.Degradation) {
 // each degraded serve loop re-emits it on the fall-back cadence for the
 // duration of its stint (see announceDegradation). A :gap comment on a switch
 // back to Redis is emitted by serveRedis when the resume position cannot be
-// honoured. spec: §25.5 (lines 2768-2780, transparent switch and recovery).
+// honoured. spec: §25.5.
 func (st *streamSession) announceRecovery(prev, src dataSource) {
 	if src != dsRedis || prev == dataSource(-1) || prev == dsRedis {
 		return
@@ -238,8 +237,7 @@ func (st *streamSession) announceRecovery(prev, src dataSource) {
 // The envelope is re-rendered on every call rather than remembered, so a change
 // in the fall-back's own reachability is reflected: fanOutDown selects the
 // dual-outage envelope, which is what the connection receives once no gateway
-// replica answers the buffer query. spec: §25.5 line 2691 (a periodic
-// :degradation comment line carries the canonical degradation envelope).
+// replica answers the buffer query. spec: §25.5.
 func (st *streamSession) announceDegradation(fanOutDown bool) {
 	_, deg, _ := st.s.selectSource()
 	if st.forcedDeg != nil {
@@ -546,7 +544,7 @@ func (st *streamSession) seedGatewayResume(window []gwevents.BufferedEvent, resu
 // Redis + gateway outage. It replays the backlog after
 // the carried resume position, then delivers live publishes until the request
 // is cancelled or SourceHealth moves the active source off the local buffer.
-// spec: §25.5 (line 2768-2780, dual-outage local-buffer serving).
+// spec: §25.5.
 func (st *streamSession) serveLocal(ctx context.Context, src dataSource) {
 	sub := st.s.subscribe(st.filter, 64)
 	defer st.s.unsubscribe(sub)
@@ -569,7 +567,7 @@ func (st *streamSession) serveLocal(ctx context.Context, src dataSource) {
 	// outage, so the envelope is announced on entry and re-emitted on the
 	// fall-back cadence for the life of the stint. A deployment with no Redis
 	// wired is not degraded and renders no envelope, so this writes nothing.
-	// spec: §25.5 line 2691 (periodic :degradation comment).
+	// spec: §25.5.
 	st.announceDegradation(false)
 
 	ticker := time.NewTicker(sourceCheckInterval)

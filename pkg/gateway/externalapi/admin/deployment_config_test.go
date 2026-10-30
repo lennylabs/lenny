@@ -85,7 +85,7 @@ func firstInstallRequest() admin.DeploymentConfigChangeRequest {
 	return req
 }
 
-// spec: §16.7 lines 672, 676 — a first install records every deployment
+// spec: §16.7 — a first install records every deployment
 // transition with a null previous value, off floor raises no tenant.
 func TestDeploymentConfigFirstInstallEmitsAllTransitions_spec_16_7(t *testing.T) {
 	h, _, dc, chains := newDeploymentAdminServer(t)
@@ -145,7 +145,7 @@ func TestDeploymentConfigReplayEmitsNothing_spec_16_7(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 676/677 — a floor raise emits one clamp per raised
+// spec: §16.7 — a floor raise emits one clamp per raised
 // tenant, joined to the platform event by paired_platform_event_id, and
 // each clamp is written under its own tenant.
 func TestDeploymentConfigFloorRaiseFansOutClamps_spec_16_7(t *testing.T) {
@@ -207,7 +207,7 @@ func TestDeploymentConfigFloorRaiseFansOutClamps_spec_16_7(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 676 — a floor lowering preserves stored modes and emits
+// spec: §16.7 — a floor lowering preserves stored modes and emits
 // no per-tenant clamp.
 func TestDeploymentConfigFloorLowerEmitsNoClamp_spec_16_7(t *testing.T) {
 	h, tenants, dc, chains := newDeploymentAdminServer(t)
@@ -233,7 +233,7 @@ func TestDeploymentConfigFloorLowerEmitsNoClamp_spec_16_7(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 672 — a transition into warn/permissive requires a
+// spec: §16.7 — a transition into warn/permissive requires a
 // justification; the endpoint rejects an empty one.
 func TestDeploymentConfigCycleModeJustificationRequired_spec_16_7(t *testing.T) {
 	h, _, dc, chains := newDeploymentAdminServer(t)
@@ -256,7 +256,7 @@ func TestDeploymentConfigCycleModeJustificationRequired_spec_16_7(t *testing.T) 
 	}
 }
 
-// spec: §16.7 line 672 — a no→yes self-recursion raise requires justification.
+// spec: §16.7 — a no→yes self-recursion raise requires justification.
 func TestDeploymentConfigSelfRecursionRaiseJustificationRequired_spec_16_7(t *testing.T) {
 	h, _, dc, _ := newDeploymentAdminServer(t)
 	_ = dc.Put(context.Background(), deploymentconfigstore.Config{AllowSelfRecursion: "no", LastRevision: 1})
@@ -268,7 +268,7 @@ func TestDeploymentConfigSelfRecursionRaiseJustificationRequired_spec_16_7(t *te
 	}
 }
 
-// spec: §16.7 line 682 — one acknowledged-downgrade event per (flag,
+// spec: §16.7 — one acknowledged-downgrade event per (flag,
 // webhook), with a required justification.
 func TestDeploymentConfigDowngradeAck_spec_16_7(t *testing.T) {
 	h, _, _, chains := newDeploymentAdminServer(t)

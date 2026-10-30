@@ -19,28 +19,32 @@ import (
 // type. It mirrors observability/audit.EventSessionForceTerminated; the
 // admin emit path serializes event-type strings (see r.emit), so the
 // constant is duplicated here as a string to avoid importing the catalog
-// package into the router. spec: §24.11 line 136 — F-24.11.3.
+// package into the router. spec: §24.11 — F-24.11.3.
 const eventSessionForceTerminated = "session.force_terminated"
 
 // SessionAdmin backs the §24.11 platform-admin session-investigation
 // surface. The operator supplies only the session id (a globally-unique
-// UUID), so both methods resolve across tenants; the router gates them
-// behind requireAdmin (platform-admin). spec: §24.11 lines 135-136.
+// UUID), so GetByID resolves across tenants and the force-terminate
+// handler passes the resolved row's tenant to ForceTerminate; the router
+// gates both behind requireAdmin (platform-admin). spec: §24.11.
 type SessionAdmin interface {
 	// GetByID returns the session row whose id equals id, across every
 	// tenant. Returns sessionstore.ErrNotFound when no row exists.
 	GetByID(ctx context.Context, id string) (sessionstore.Session, error)
 
-	// ForceTerminate transitions a stuck or unresponsive session to
-	// `failed` and releases its assigned pod to the pool, bypassing the
-	// interactive-state guard the normal lifecycle enforces. It returns
-	// the resulting row, the state the session held immediately before the
-	// force (empty when the session was already terminal), and a bool that
-	// is true only when the call actually transitioned the row — a repeat
-	// call against an already-terminal session is a no-op returning
-	// transitioned=false, so the endpoint is idempotent. Returns
-	// sessionstore.ErrNotFound when no row exists. spec: §24.11 line 136.
-	ForceTerminate(ctx context.Context, id string) (sess sessionstore.Session, previousState session.State, transitioned bool, err error)
+	// ForceTerminate transitions a stuck or unresponsive session of
+	// tenantID to `failed` and releases its assigned pod to the pool,
+	// bypassing the interactive-state guard the normal lifecycle enforces.
+	// The caller names the tenant, so the transition reads no replica: the
+	// locked update addresses the row on the primary. It returns the
+	// resulting row, the state the session held immediately before the
+	// force (the current terminal state when the session was already
+	// terminal), and a bool that is true only when the call actually
+	// transitioned the row — a repeat call against an already-terminal
+	// session is a no-op returning transitioned=false, so the endpoint is
+	// idempotent. Returns sessionstore.ErrNotFound when no row of id
+	// exists in tenantID. spec: §24.11; §12.8 (Lifecycle fence and drain).
+	ForceTerminate(ctx context.Context, tenantID, id string) (sess sessionstore.Session, previousState session.State, transitioned bool, err error)
 }
 
 // WithSessionAdmin wires the §24.11 session-investigation seam onto the
@@ -51,7 +55,7 @@ func (r *Router) WithSessionAdmin(s SessionAdmin) *Router {
 	return r
 }
 
-// adminSessionPayload is the §24.11 line 135 investigation view: session
+// adminSessionPayload is the §24.11 investigation view: session
 // state, the failure cause when terminal, scheduling metadata, and the
 // assigned pod. It is a read-only projection of the persisted row.
 type adminSessionPayload struct {
@@ -92,7 +96,7 @@ func newAdminSessionPayload(s sessionstore.Session) adminSessionPayload {
 
 // handleGetSession implements GET /v1/admin/sessions/{id} — the §24.11
 // platform-admin read-through used to investigate a stuck, orphaned, or
-// unexpectedly terminated session. spec: §24.11 line 135.
+// unexpectedly terminated session. spec: §24.11.
 func (r *Router) handleGetSession(w http.ResponseWriter, req *http.Request) {
 	id := strings.TrimSpace(req.PathValue("id"))
 	if id == "" {
@@ -101,24 +105,32 @@ func (r *Router) handleGetSession(w http.ResponseWriter, req *http.Request) {
 	}
 	sess, err := r.sessionAdmin.GetByID(req.Context(), id)
 	if err != nil {
-		if errors.Is(err, sessionstore.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		writeSessionAdminError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, newAdminSessionPayload(sess))
 }
 
+// writeSessionAdminError maps a session-admin seam error to the §15.1
+// envelope: sessionstore.ErrNotFound answers 404 RESOURCE_NOT_FOUND and
+// any other error 500 INTERNAL_ERROR. spec: §24.11.
+func writeSessionAdminError(w http.ResponseWriter, err error) {
+	if errors.Is(err, sessionstore.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+}
+
 // handleForceTerminateSession implements POST
-// /v1/admin/sessions/{id}/force-terminate — the §24.11 line 136
+// /v1/admin/sessions/{id}/force-terminate — the §24.11
 // operator-driven forced terminal transition. The session transitions
-// immediately to `failed` and the assigned pod is released to the pool.
+// immediately to `failed`, and the gateway releases the assigned pod, with
+// the claim effect §4.6.3 assigns.
 // An optional `reason` in the request body is recorded in the
 // session.force_terminated audit event. The endpoint is idempotent: a
 // force against an already-terminal session returns 200 with the current
-// state and emits no audit event. spec: §24.11 line 136.
+// state and emits no audit event. spec: §24.11.
 func (r *Router) handleForceTerminateSession(w http.ResponseWriter, req *http.Request) {
 	id := strings.TrimSpace(req.PathValue("id"))
 	if id == "" {
@@ -137,18 +149,22 @@ func (r *Router) handleForceTerminateSession(w http.ResponseWriter, req *http.Re
 		}
 	}
 
-	sess, previousState, transitioned, err := r.sessionAdmin.ForceTerminate(req.Context(), id)
+	// The operator supplies only the id, so the handler resolves the row
+	// first: an unknown id answers 404 before any transition, and the
+	// forced transition then runs under the row's own tenant.
+	found, err := r.sessionAdmin.GetByID(req.Context(), id)
 	if err != nil {
-		if errors.Is(err, sessionstore.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		writeSessionAdminError(w, err)
+		return
+	}
+	sess, previousState, transitioned, err := r.sessionAdmin.ForceTerminate(req.Context(), found.TenantID, found.ID)
+	if err != nil {
+		writeSessionAdminError(w, err)
 		return
 	}
 
 	if transitioned {
-		// spec: §24.11 line 136 / §16.7 — record operator identity, the
+		// spec: §24.11 / §16.7 — record operator identity, the
 		// session, and the pre-force state so an auditor can reconstruct
 		// the forced transition. The justification (reason) is optional.
 		p, _ := authmw.FromContext(req.Context())
@@ -159,7 +175,11 @@ func (r *Router) handleForceTerminateSession(w http.ResponseWriter, req *http.Re
 		if strings.TrimSpace(body.Reason) != "" {
 			detail["reason"] = strings.TrimSpace(body.Reason)
 		}
-		r.emit(req.Context(), p, eventSessionForceTerminated, sess.ID, detail)
+		// spec: §7.1 (Gateway-owned terminal writes), §11.7 — the audit
+		// emit runs detached from the admin request, so a client that
+		// disconnects during the synchronous force-terminate still leaves
+		// the session.force_terminated row for the write that committed.
+		r.emit(context.WithoutCancel(req.Context()), p, eventSessionForceTerminated, sess.ID, detail)
 	}
 	writeJSON(w, http.StatusOK, newAdminSessionPayload(sess))
 }

@@ -12,8 +12,10 @@ import (
 	apiextensionsclientset "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	"github.com/lennylabs/lenny/pkg/audit/pgaudit"
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/ops/backup"
 	"github.com/lennylabs/lenny/pkg/ops/configservice"
@@ -57,6 +59,9 @@ type opsWiringFields struct {
 	stop          context.CancelFunc
 	traceShutdown func(context.Context) error
 
+	// jwtKeySet is the §10.2 verifier key set, loaded once at startup.
+	jwtKeySet *jwt.KeySet
+
 	// §25.4 dependencies.
 	pgPool      *pgxpool.Pool
 	redisClient redis.UniversalClient
@@ -64,15 +69,24 @@ type opsWiringFields struct {
 	// platform Redis: the shared client for the range reads plus a dedicated
 	// client per live SSE tail. Nil when no Redis is wired. spec: §25.5.
 	opsStreamRedis opsstream.RedisStreamClient
-	clientset      *kubernetes.Clientset
-	dynClient      dynamic.Interface
-	apiextClient   apiextensionsclientset.Interface
-	gatewayHTTP    *http.Client
-	probes         map[string]probe.Func
-	storeRouter    *storerouter.SingleShardRouter
-	auditRecorder  *opsaudit.Recorder
-	runbookSource  opsserver.RunbookSource
-	elector        opsservice.Elector
+	// clientset is nil when no Kubernetes config was found or the
+	// clientset build failed. It is an interface held as an untyped nil in
+	// that case, never a nil *kubernetes.Clientset, so every consumer's
+	// `!= nil` check reads the absence correctly. spec: §25.4.
+	clientset kubernetes.Interface
+	// kubeConfig loads the Kubernetes REST config. Nil selects the
+	// controller-runtime loader (in-cluster config, then --kubeconfig,
+	// KUBECONFIG, and ~/.kube/config); a test injects a loader to exercise
+	// the no-cluster degraded mode.
+	kubeConfig    func() (*rest.Config, error)
+	dynClient     dynamic.Interface
+	apiextClient  apiextensionsclientset.Interface
+	gatewayHTTP   *http.Client
+	probes        map[string]probe.Func
+	storeRouter   *storerouter.SingleShardRouter
+	auditRecorder *opsaudit.Recorder
+	runbookSource opsserver.RunbookSource
+	elector       opsservice.Elector
 
 	// §25.5 event stream + webhook delivery.
 	eventStream *opsstream.Service

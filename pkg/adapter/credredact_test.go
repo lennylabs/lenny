@@ -28,7 +28,7 @@ func assignReq() *adapterv1.AssignCredentialsRequest {
 	}
 }
 
-// spec: §16.4 line 376 — AssignCredentials and RotateCredentials are the
+// spec: §16.4 — AssignCredentials and RotateCredentials are the
 // credential-sensitive methods; SendMessage is not. F-16.4.8.
 func TestIsCredentialSensitiveMethod_spec_16_4_376(t *testing.T) {
 	sensitive := []string{
@@ -46,7 +46,7 @@ func TestIsCredentialSensitiveMethod_spec_16_4_376(t *testing.T) {
 }
 
 // SafeCredentialFields returns the sorted, deduplicated lease IDs and
-// provider types and never the secret payload. spec: §16.4 line 376.
+// provider types and never the secret payload. spec: §16.4.
 func TestSafeCredentialFields_spec_16_4_376(t *testing.T) {
 	leaseIDs, providers := SafeCredentialFields(assignReq())
 	if got, want := strings.Join(leaseIDs, ","), "lease-a,lease-b"; got != want {
@@ -73,8 +73,7 @@ func jsonLogger(buf *bytes.Buffer) *slog.Logger {
 }
 
 // The interceptor emits a redacted access line for a credential RPC: it
-// carries the safe fields and never the secret payload bytes. spec: §16.4
-// line 376. F-16.4.8.
+// carries the safe fields and never the secret payload bytes. spec: §16.4. F-16.4.8.
 func TestCredentialRedactionInterceptorRedactsPayload_spec_16_4_376(t *testing.T) {
 	var buf bytes.Buffer
 	interceptor := credentialRedactionInterceptor(jsonLogger(&buf))
@@ -118,7 +117,7 @@ func TestCredentialRedactionInterceptorRedactsPayload_spec_16_4_376(t *testing.T
 }
 
 // On a handler error the line records outcome=error and the gRPC code,
-// still without the payload. spec: §16.4 line 376.
+// still without the payload. spec: §16.4.
 func TestCredentialRedactionInterceptorRecordsErrorOutcome_spec_16_4_376(t *testing.T) {
 	var buf bytes.Buffer
 	interceptor := credentialRedactionInterceptor(jsonLogger(&buf))
@@ -150,7 +149,7 @@ func TestCredentialRedactionInterceptorRecordsErrorOutcome_spec_16_4_376(t *test
 }
 
 // A non-credential method passes through with no credential access line.
-// spec: §16.4 line 376. F-16.4.8.
+// spec: §16.4. F-16.4.8.
 func TestCredentialRedactionInterceptorPassesThroughNonSensitive_spec_16_4_376(t *testing.T) {
 	var buf bytes.Buffer
 	interceptor := credentialRedactionInterceptor(jsonLogger(&buf))

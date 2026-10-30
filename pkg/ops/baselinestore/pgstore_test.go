@@ -20,7 +20,7 @@ import (
 // connected Store. It downloads the PostgreSQL bundle, so it is skipped
 // under -short.
 //
-// spec: §25.2 lines 393-394.
+// spec: §25.2.
 func newTestStore(t *testing.T) (*baselinestore.Store, *pgxpool.Pool, context.Context) {
 	t.Helper()
 	if testing.Short() {

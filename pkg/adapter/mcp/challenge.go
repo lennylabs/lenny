@@ -15,10 +15,10 @@ import (
 )
 
 // ChallengeBytes is the §4.7 nonce-only-mode adapterChallenge length: a
-// 128-bit random value (spec/04_system-components.md line 881).
+// 128-bit random value (§4.7.11).
 const ChallengeBytes = 16
 
-// ChallengeTimeout bounds the §4.7 line 882 challenge-response: the agent
+// ChallengeTimeout bounds the §4.7 challenge-response: the agent
 // must answer with its HMAC within 500 ms or the adapter closes the
 // socket.
 const ChallengeTimeout = 500 * time.Millisecond
@@ -46,10 +46,12 @@ var (
 	ErrChallengeResponseInvalid = errors.New("mcp: challenge response HMAC does not match")
 )
 
-// newChallenge returns a fresh §4.7 adapterChallenge: a 128-bit random
+// NewChallenge returns a fresh §4.7 adapterChallenge: a 128-bit random
 // value, lowercase hex-encoded. A new challenge is generated per
-// connection so an observed nonce cannot be replayed (spec lines 879-883).
-func newChallenge() (string, error) {
+// connection so an observed nonce cannot be replayed. The MCP servers and
+// the adapter's CH-MSGSOCK and CH-RUNTIMEOPS listeners both issue it.
+// spec: §4.7.11 (Nonce-only fallback, Runtime connection handshake).
+func NewChallenge() (string, error) {
 	b := make([]byte, ChallengeBytes)
 	if _, err := rand.Read(b); err != nil {
 		return "", fmt.Errorf("mcp: generate adapterChallenge: %w", err)
@@ -57,7 +59,7 @@ func newChallenge() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// ExpectedChallengeResponse computes the §4.7 line 882
+// ExpectedChallengeResponse computes the §4.7
 // HMAC-SHA256(key=manifestNonce, data=adapterChallenge), lowercase
 // hex-encoded. It is the value the agent must return and is exported so a
 // runtime SDK and its tests can compute the same response.

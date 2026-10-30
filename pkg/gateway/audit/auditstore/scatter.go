@@ -26,7 +26,7 @@ import (
 // spec: §25.9 "Degradation" — full outage → 503, partial-shard → 207.
 var ErrAllAuditShardsUnreachable = errors.New("auditstore: all audit shards unreachable")
 
-// WithScatterConfig pins the §25.9 line 3710 scatter-gather fan-out
+// WithScatterConfig pins the §25.9 scatter-gather fan-out
 // bounds (max concurrency, per-shard timeout, aggregate timeout) the
 // cross-tenant query uses. A zero value resolves to the storerouter
 // defaults; v1 is single-shard so the bounds are inert until a
@@ -35,17 +35,17 @@ func WithScatterConfig(cfg storerouter.ScatterConfig) Option {
 	return func(s *Store) { s.scatterCfg = cfg }
 }
 
-// ScatterGatherRows runs the §25.9 line 3668 platform-admin cross-tenant
+// ScatterGatherRows runs the §25.9 platform-admin cross-tenant
 // audit query: it reads every tenant's chain across all audit shards via
 // AllAuditShards, merged in memory and ordered by (tenant_id,
 // sequence_number) so each tenant's §11.7 chain stays contiguous for
 // verification. Shards are scanned in parallel under the configured
-// concurrency limit with a per-shard timeout (§25.9 line 3710); a shard
+// concurrency limit with a per-shard timeout (§25.9); a shard
 // that is unreachable or times out is reported in missingShards rather
 // than failing the whole query, driving the §25.9 207
 // AUDIT_PARTIAL_RESULTS path. When every shard is unreachable the read
 // returns ErrAllAuditShardsUnreachable so the handler emits 503. One
-// §12.3 line 141 cross_tenant_read receipt is emitted per invocation.
+// §12.3 cross_tenant_read receipt is emitted per invocation.
 func (s *Store) ScatterGatherRows(ctx context.Context) (rows []audit.Row, missingShards []string, err error) {
 	shards, err := s.allShards(ctx)
 	if err != nil {
@@ -119,7 +119,7 @@ func (s *Store) ScatterGatherRows(ctx context.Context) (rows []audit.Row, missin
 		return rows[i].Seq < rows[j].Seq
 	})
 
-	// spec: §12.3 line 141 — a SET lenny.tenant_id = '__all__' read MUST
+	// spec: §12.3 — a SET lenny.tenant_id = '__all__' read MUST
 	// emit one cross_tenant_read receipt per invocation.
 	if cerr := s.emitCrossTenantRead(ctx, "audit_query", len(rows)); cerr != nil {
 		return nil, nil, cerr
@@ -136,7 +136,7 @@ func rowsAcrossTenantsOnShard(ctx context.Context, pool *pgxpool.Pool) ([]audit.
 	err := pgtenant.InAllTenants(ctx, pool, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
 			// platform-admin-cross-tenant-allowed
-			// platform-admin-cross-tenant-justification: §25.9 line 3668 — the
+			// platform-admin-cross-tenant-justification: §25.9 — the
 			// platform-admin cross-tenant audit query reads every tenant's
 			// §11.7 chain across the shard via AllAuditShards scatter-gather,
 			// ordered by tenant so each per-tenant chain stays contiguous for

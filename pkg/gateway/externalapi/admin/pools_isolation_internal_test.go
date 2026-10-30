@@ -25,7 +25,7 @@ func (c *capturingAudit) EmitAdminEvent(_ context.Context, e AuditEvent) {
 	c.events = append(c.events, e)
 }
 
-// spec: §8.3 lines 349-352 / §11.2.1 — registering a weaker pool that a
+// spec: §8.3 / §11.2.1 — registering a weaker pool that a
 // more-restrictive parent could delegate to under an active
 // DelegationPolicy rule emits pool.isolation_warning to both the §11.7
 // audit chain and the §11.2.1 billing stream (under the affected

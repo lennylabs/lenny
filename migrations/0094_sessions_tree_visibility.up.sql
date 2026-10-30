@@ -1,11 +1,11 @@
--- §8.5 line 540 / §8.3 lines 311-319 — `treeVisibility` is the
+-- §8.5 / §8.3 — `treeVisibility` is the
 -- delegation-lease visibility boundary that scopes what
 -- `lenny/get_task_tree` and `GET /v1/sessions/{id}/tree` return for a
 -- session: `full` (the entire tree rooted at the apex, including
 -- siblings and their descendants), `parent-and-self` (only the session's
 -- own node and its direct parent), or `self-only` (only the session's
 -- own node). In v1 the delegation lease is realised by the child session
--- row (§4.2 line 161 design clarification), so the boundary persists on
+-- row (§4.2 design clarification), so the boundary persists on
 -- the sessions row rather than in a separate delegation_leases table.
 --
 -- The §8.2 delegation Service stamps an explicit resolved value onto

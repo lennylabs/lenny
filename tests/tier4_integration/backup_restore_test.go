@@ -69,6 +69,7 @@ func (r *captureReporter) BackupFailed(_ context.Context, id, msg string) error 
 // AES-256-GCM, MinIOUploader SSE-S3 upload, TarGzOpener decrypt,
 // ExecScratchRestorer pg_restore) does not round-trip tenant data.
 func TestBackupRestoreRoundTrip(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("starts Postgres and MinIO containers and downloads pg client tools; skipped under -short")
 	}

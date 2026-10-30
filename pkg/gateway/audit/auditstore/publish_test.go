@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 )
 
-// spec: §4.4 line 232 — audit-bearing EventBus first-publish path.
+// spec: §4.4 — audit-bearing EventBus first-publish path.
 
 // TestPublishingAppenderNilPublisherIsNoOp confirms the appender
 // commits the row to the chain even when no publisher is wired (the

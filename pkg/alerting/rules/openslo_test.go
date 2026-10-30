@@ -69,7 +69,8 @@ func parseOpenSLO(t *testing.T, b []byte) []parsedDoc {
 // AlertNotificationTarget document for the whole fragment. Each is a
 // well-formed OpenSLO v1 document.
 //
-// spec: §16.10 lines 742-746.
+// spec: §16.10 (OpenSLO Export), §16.5 (the bundled multi-window alert
+// catalog the export is a view of).
 func TestRenderOpenSLOEmitsFourDocsPerSLOPlusSharedTarget(t *testing.T) {
 	out, err := RenderOpenSLO(OpenSLOService, "tier1", OpenSLODefaultNotificationTarget)
 	if err != nil {
@@ -206,8 +207,7 @@ func TestRenderOpenSLOObjectivesMatchCatalog(t *testing.T) {
 // exactly the 6h/3x warning condition. OpenSLO v1 caps an AlertPolicy at
 // one condition, so a two-condition policy or a dropped window is a defect.
 //
-// spec: §16.10 (one condition per AlertPolicy), §16.5 line 627 (multi-window
-// burn rate preserved across two policies).
+// spec: §16.10 (one condition per AlertPolicy), §16.5.
 func TestRenderOpenSLOBurnRateMatchesAlerts(t *testing.T) {
 	out, err := RenderOpenSLO(OpenSLOService, "tier1", OpenSLODefaultNotificationTarget)
 	if err != nil {

@@ -52,6 +52,9 @@ metadata:
 spec:
   type: agent
   image: ${LOAD_RUNTIME_IMAGE}
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
@@ -83,7 +86,7 @@ spec:
 # acknowledgeProcessLevelIsolation deployer acknowledgment live in the
 # gateway poolstore per the §4.6.3 ownership boundary, so the CRD
 # template carries executionMode: session only; the runtime container
-# materializes a per-slot workspace under /workspace/slots/{slotId}/.
+# materializes a per-slot workspace under /workspace/slots/{sessionId}/.
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
@@ -91,6 +94,9 @@ metadata:
 spec:
   type: agent
   image: ${LOAD_RUNTIME_IMAGE}
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard
@@ -127,6 +133,9 @@ metadata:
 spec:
   type: agent
   image: ${LOAD_RUNTIME_IMAGE}
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: concurrent
   isolationProfile: standard
@@ -164,6 +173,9 @@ metadata:
 spec:
   type: agent
   image: ${LOAD_RUNTIME_IMAGE}
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: task
   isolationProfile: standard
@@ -209,6 +221,9 @@ metadata:
 spec:
   type: agent
   image: ${LOAD_PRECONNECT_RUNTIME_IMAGE}
+  # §5.1 command: the argv the image ENTRYPOINT gave, which the runtime
+  # supervisor launches; the image sets no ENV the binary relies on.
+  command: ["/usr/local/bin/lenny"]
   integrationLevel: basic
   executionMode: session
   isolationProfile: standard

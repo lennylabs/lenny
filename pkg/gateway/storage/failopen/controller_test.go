@@ -39,7 +39,7 @@ func newTestController(clk *fakeClock, emit AuditEmitter, fraction float64, hard
 	})
 }
 
-// spec: §12.4 line 224 — the quota_failopen_started audit event fires
+// spec: §12.4 — the quota_failopen_started audit event fires
 // exactly once per fail-open episode (on the leading edge).
 func TestControllerEmitsAuditOncePerEpisode_spec_12_4(t *testing.T) {
 	clk := &fakeClock{t: time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)}
@@ -64,7 +64,7 @@ func TestControllerEmitsAuditOncePerEpisode_spec_12_4(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 224 — once cumulative fail-open time exceeds the
+// spec: §12.4 — once cumulative fail-open time exceeds the
 // maximum, Evaluate fails closed for quota.
 func TestControllerEvaluateCumulativeExceeded_spec_12_4(t *testing.T) {
 	clk := &fakeClock{t: time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)}
@@ -80,7 +80,7 @@ func TestControllerEvaluateCumulativeExceeded_spec_12_4(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 222 — the per-user ceiling binds before the per-tenant
+// spec: §12.4 — the per-user ceiling binds before the per-tenant
 // ceiling, so a single user cannot monopolize the tenant allocation.
 func TestControllerEvaluateUserCeiling_spec_12_4(t *testing.T) {
 	clk := &fakeClock{t: time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)}
@@ -106,7 +106,7 @@ func TestControllerEvaluateUserCeiling_spec_12_4(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 224 — the per-tenant effective ceiling binds across all
+// spec: §12.4 — the per-tenant effective ceiling binds across all
 // of a tenant's users even when each user stays under the per-user cap.
 func TestControllerEvaluateTenantCeiling_spec_12_4(t *testing.T) {
 	clk := &fakeClock{t: time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)}
@@ -144,7 +144,7 @@ func TestControllerEvaluateNoTenantLimitAdmits(t *testing.T) {
 	}
 }
 
-// spec: §12.4 line 222 — Exit resets the per-user backstop counters.
+// spec: §12.4 — Exit resets the per-user backstop counters.
 func TestControllerExitResetsBackstop_spec_12_4(t *testing.T) {
 	clk := &fakeClock{t: time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC)}
 	c := newTestController(clk, nil, 0.25, 0)

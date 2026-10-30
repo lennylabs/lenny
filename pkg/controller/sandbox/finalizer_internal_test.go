@@ -67,7 +67,7 @@ func TestHasAndRemoveFinalizer(t *testing.T) {
 	}
 }
 
-// spec: §6.2 lines 305-313 — the lenny.dev/state pod label carries only
+// spec: §6.2 — the lenny.dev/state pod label carries only
 // the coarse operational set (idle, active, draining). A freshly-created
 // Sandbox (unset phase, treated as warming) has no coarse operational
 // value, so the label is omitted; once idle, the coarse value is "idle". A

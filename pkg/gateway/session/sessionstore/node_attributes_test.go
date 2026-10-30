@@ -9,7 +9,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// spec: §8.9 line 1010 — ProjectNodeAttributes surfaces the
+// spec: §8.9 — ProjectNodeAttributes surfaces the
 // row-persisted per-node tracking attributes (generation, pod, lease)
 // onto the tree node. F-8.9.1.
 func TestProjectNodeAttributesSurfacesIdentityAndLease_spec_8_9_1010(t *testing.T) {
@@ -35,7 +35,7 @@ func TestProjectNodeAttributesSurfacesIdentityAndLease_spec_8_9_1010(t *testing.
 	}
 }
 
-// spec: §8.9 line 1010 — a clean node (no retry, no failure) projects no
+// spec: §8.9 — a clean node (no retry, no failure) projects no
 // FailureHistory object, so the wire response stays minimal. F-8.9.1.
 func TestProjectNodeAttributesOmitsCleanFailureHistory_spec_8_9_1010(t *testing.T) {
 	t.Parallel()
@@ -45,7 +45,7 @@ func TestProjectNodeAttributesOmitsCleanFailureHistory_spec_8_9_1010(t *testing.
 	}
 }
 
-// spec: §8.9 line 1010 — a node that retried or failed carries its
+// spec: §8.9 — a node that retried or failed carries its
 // failure history (retry count plus the §7.1 terminal cause). F-8.9.1.
 func TestProjectNodeAttributesCarriesFailureHistory_spec_8_9_1010(t *testing.T) {
 	t.Parallel()
@@ -70,7 +70,7 @@ func TestProjectNodeAttributesCarriesFailureHistory_spec_8_9_1010(t *testing.T) 
 	}
 }
 
-// spec: §8.9 line 1010 — a node that retried but has not failed still
+// spec: §8.9 — a node that retried but has not failed still
 // carries a failure history with the retry counter, so a recovering
 // node's reattach history is visible before any terminal failure.
 // F-8.9.1.

@@ -19,10 +19,10 @@ import (
 
 // reconcileForError runs one occupancy reconcile against the given client and
 // returns the error, so the error-path tests can assert on it.
-func reconcileForError(c client.Client) error {
+func reconcileForError(ns string, c client.Client) error {
 	r := &warmpool.OccupancyReconciler{Client: c}
 	_, err := r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: client.ObjectKey{Namespace: testNS, Name: "pod-err"},
+		NamespacedName: client.ObjectKey{Namespace: ns, Name: "pod-err"},
 	})
 	return err
 }
@@ -34,10 +34,11 @@ func reconcileForError(c client.Client) error {
 //
 // spec: 4.6.1 (occupancy projection), 4.6.3 (ownership decomposition).
 func TestOccupancyReconcileSwallowsSandboxNotFound(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
 	// Empty client: the Sandbox does not exist, so Get returns NotFound.
 	c := ctrlfake.NewClientBuilder().WithScheme(s).Build()
-	if err := reconcileForError(c); err != nil {
+	if err := reconcileForError(ns, c); err != nil {
 		t.Fatalf("reconcile of a missing Sandbox should be a no-op, got %v", err)
 	}
 }
@@ -49,13 +50,14 @@ func TestOccupancyReconcileSwallowsSandboxNotFound(t *testing.T) {
 //
 // spec: 4.6.1 (occupancy projection), 6.2 (teardown is the teardown writer's).
 func TestOccupancyReconcileSkipsDeletingSandbox(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
 	now := metav1.Now()
-	sb := occupiedSandbox("pod-err", "claimed")
+	sb := occupiedSandbox(ns, "pod-err", "claimed")
 	sb.DeletionTimestamp = &now
 	sb.Finalizers = []string{"lenny.dev/test-hold"} // a deletion timestamp requires a finalizer
 	c := ctrlfake.NewClientBuilder().WithScheme(s).WithObjects(sb).Build()
-	if err := reconcileForError(c); err != nil {
+	if err := reconcileForError(ns, c); err != nil {
 		t.Fatalf("reconcile of a deleting Sandbox should be a no-op, got %v", err)
 	}
 	// The phase is left as-is; the projection wrote nothing.
@@ -72,8 +74,9 @@ func TestOccupancyReconcileSkipsDeletingSandbox(t *testing.T) {
 //
 // spec: 4.6.1 (occupancy projection reads the per-pod claim).
 func TestOccupancyReconcilePropagatesClaimGetError(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	sb := occupiedSandbox("pod-err", "claimed")
+	sb := occupiedSandbox(ns, "pod-err", "claimed")
 	boom := errors.New("apiserver unavailable")
 	c := ctrlfake.NewClientBuilder().WithScheme(s).WithObjects(sb).
 		WithInterceptorFuncs(interceptor.Funcs{
@@ -84,7 +87,7 @@ func TestOccupancyReconcilePropagatesClaimGetError(t *testing.T) {
 				return cl.Get(ctx, key, obj, opts...)
 			},
 		}).Build()
-	err := reconcileForError(c)
+	err := reconcileForError(ns, c)
 	if err == nil {
 		t.Fatal("a transient claim-Get error must propagate, got nil")
 	}
@@ -100,12 +103,13 @@ func TestOccupancyReconcilePropagatesClaimGetError(t *testing.T) {
 //
 // spec: 4.6.1 (occupancy projection), 4.6.3 (WPC SSA-patches Sandbox.status).
 func TestOccupancyReconcilePropagatesPatchError(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
 	// A bound claim on a claimed pod projects claimed; seed an idle pod so the
 	// projection differs from the current phase and patchPhase is reached.
-	sb := occupiedSandbox("pod-err", "idle")
+	sb := occupiedSandbox(ns, "pod-err", "idle")
 	claim := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "claim-pod-err", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-pod-err", Namespace: ns},
 		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "pod-err", TenantID: "acme"},
 		Status:     lennyv1.SandboxClaimStatus{Phase: "bound"},
 	}
@@ -120,7 +124,7 @@ func TestOccupancyReconcilePropagatesPatchError(t *testing.T) {
 				return cl.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
 			},
 		}).Build()
-	err := reconcileForError(c)
+	err := reconcileForError(ns, c)
 	if err == nil {
 		t.Fatal("a non-conflict status patch failure must propagate, got nil")
 	}

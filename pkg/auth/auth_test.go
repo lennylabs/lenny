@@ -184,7 +184,7 @@ func TestSessionEvalWritePermission_spec_10_7_line_936(t *testing.T) {
 	grant := []Role{RolePlatformAdmin, RoleTenantAdmin, RoleUser}
 	for _, r := range grant {
 		if !RolesGrant([]Role{r}, PermSessionEvalWrite) {
-			t.Errorf("role %q must grant session:eval:write per §10.7 line 936", r)
+			t.Errorf("role %q must grant session:eval:write per §10.7", r)
 		}
 	}
 	deny := []Role{RoleTenantViewer, RoleBillingViewer}

@@ -57,7 +57,7 @@ func TestDiagnoseSessionBuildsCauseChain(t *testing.T) {
 // TestDiagnoseSessionAppendsSessionStateCause — a pod crash that the
 // session also classifies as a budget failure yields a two-level cause
 // chain: the proximate pod exit (level 0) followed by the session-state
-// terminal reason (level 1). spec: §25.6 line 2890. F-25.6.6.
+// terminal reason (level 1). spec: §25.6. F-25.6.6.
 func TestDiagnoseSessionAppendsSessionStateCause_spec_25_6_2890(t *testing.T) {
 	svc := diagnostics.NewService(fakeSource{session: diagnostics.SessionRecord{
 		SessionID: "sess-1", State: "failed",
@@ -82,7 +82,7 @@ func TestDiagnoseSessionAppendsSessionStateCause_spec_25_6_2890(t *testing.T) {
 
 // TestDiagnoseSessionCredentialFailureWithoutPod — a session that failed
 // for a credential reason with no pod signal yields a single
-// session-state cause level. spec: §25.6 line 2890. F-25.6.6.
+// session-state cause level. spec: §25.6. F-25.6.6.
 func TestDiagnoseSessionCredentialFailureWithoutPod_spec_25_6_2890(t *testing.T) {
 	svc := diagnostics.NewService(fakeSource{session: diagnostics.SessionRecord{
 		SessionID: "sess-1", State: "failed",
@@ -100,7 +100,7 @@ func TestDiagnoseSessionCredentialFailureWithoutPod_spec_25_6_2890(t *testing.T)
 
 // TestDiagnoseSessionCopiesDegradation — a degradation envelope on the
 // record flows onto the diagnosis so the handler can return 207. spec:
-// §25.6 lines 2908-2920. F-25.6.1.
+// §25.6. F-25.6.1.
 func TestDiagnoseSessionCopiesDegradation_spec_25_6_2908(t *testing.T) {
 	deg := &conventions.Degradation{Level: conventions.DegradationDegraded, ActualSource: "postgres"}
 	svc := diagnostics.NewService(fakeSource{session: diagnostics.SessionRecord{
@@ -116,8 +116,7 @@ func TestDiagnoseSessionCopiesDegradation_spec_25_6_2908(t *testing.T) {
 }
 
 // TestSessionStateCause covers the §25.6 session-state cause mapping for
-// budget and credential failures and the no-match case. spec: §25.6 line
-// 2890. F-25.6.6.
+// budget and credential failures and the no-match case. spec: §25.6. F-25.6.6.
 func TestSessionStateCause_spec_25_6_2890(t *testing.T) {
 	cases := []struct {
 		class, reason string
@@ -187,7 +186,7 @@ func TestDiagnosePoolHealthyHasNoBottleneck(t *testing.T) {
 	}
 }
 
-// TestDiagnosePoolClassifiesCRDSyncLag covers §25.6 line 2865 —
+// TestDiagnosePoolClassifiesCRDSyncLag covers §25.6 —
 // DiagnosePool derives the CRD_SYNC_LAG bottleneck from a
 // PoolRecord whose CRDSynced flag is false, without the DataSource
 // having to set the PoolSignals.CRDSyncLag field directly.
@@ -222,7 +221,7 @@ func TestDiagnosePoolNotFound(t *testing.T) {
 	}
 }
 
-// TestDiagnosePoolDemandSuggestsScale covers §25.17 lines 5199-5216 — a
+// TestDiagnosePoolDemandSuggestsScale covers §25.17 — a
 // DEMAND_EXCEEDS_SUPPLY bottleneck populates bottleneck.details with the
 // two compared rates and a SCALE_WARM_POOL suggestedAction pointing at the
 // warm-count sub-route with minWarm = current + 10.
@@ -296,7 +295,7 @@ func TestDiagnosePoolFailureBottleneckHasNoScaleAction_spec_25_6(t *testing.T) {
 	if details["imagePullFailures"] != float64(3) {
 		t.Errorf("details = %v, want imagePullFailures=3", details)
 	}
-	// §25.17 line 5195 — config carries maxPods and image alongside minWarm.
+	// §25.17 — config carries maxPods and image alongside minWarm.
 	if diag.Config.MaxPods != 50 || diag.Config.Image != "ghcr.io/acme/agent:1" {
 		t.Errorf("config = %+v, want maxPods=50 image set", diag.Config)
 	}

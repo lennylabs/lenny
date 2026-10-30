@@ -10,8 +10,7 @@ import (
 	"testing"
 )
 
-// spec: §24.11 lines 135-136 — admin sessions CLI group. §24.15 lines
-// 181, 192, 193 — operations, logs, mcp-management CLI groups.
+// spec: §24.11 — admin sessions CLI group. §24.15 — operations, logs, mcp-management CLI groups.
 // F-24.11.1, F-24.15.2, F-24.15.8, F-24.15.9.
 
 // --- F-24.11.1: admin sessions get / force-terminate ------------------
@@ -68,11 +67,11 @@ func TestAdminSessionsUnknownSubcommand(t *testing.T) {
 // --- F-24.15.2 / F-PE-2: operations list / get -------------------------
 
 // TestOperationsListTargetsOps_spec_15_1_909 pins the operations
-// inventory to lenny-ops: §15.1 line 909 assigns /v1/admin/operations to
+// inventory to lenny-ops: §15.1 assigns /v1/admin/operations to
 // lenny-ops, so the CLI must resolve the ops endpoint (here via
 // --ops-server, which runAgainstOps supplies) rather than the gateway.
 // The gateway no longer serves the route, so a CLI that targeted it would
-// hit a 404. spec: §24.15 line 181; §15.1 line 909.
+// hit a 404. spec: §24.15; §15.1.
 func TestOperationsListTargetsOps_spec_15_1_909(t *testing.T) {
 	code, got := runAgainstOps(t, http.StatusOK, `{"operations":[]}`,
 		"operations", "list", "--status", "in_progress", "--limit", "10")
@@ -100,8 +99,7 @@ func TestOperationsGetTargetsOps_spec_15_1_909(t *testing.T) {
 }
 
 // TestOperationsListReturnsOpsHostedOperation_spec_15_1_909 is the F-PE-2
-// regression. The operations inventory is hosted by lenny-ops (§15.1
-// line 909); the gateway no longer serves /v1/admin/operations and was
+// regression. The operations inventory is hosted by lenny-ops (§15.1); the gateway no longer serves /v1/admin/operations and was
 // previously wired with an empty inventory, so a list that targeted the
 // gateway returned an empty page even while lenny-ops held an in-flight
 // operation. This test drives `operations list` through the full §24.16
@@ -109,7 +107,7 @@ func TestOperationsGetTargetsOps_spec_15_1_909(t *testing.T) {
 // URL, lenny-ops returns one in-flight operation, and the CLI surfaces
 // that operation rather than the empty page. Against the pre-fix code the
 // list hit the gateway's empty inventory and would not contain op-1.
-// spec: §24.15 line 181; §15.1 line 909; §24.16 line 201.
+// spec: §24.15; §15.1; §24.16.
 func TestOperationsListReturnsOpsHostedOperation_spec_15_1_909(t *testing.T) {
 	ops := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/admin/operations" {
@@ -179,11 +177,11 @@ func TestMCPManagementCallRequiresTool(t *testing.T) {
 // through the full §24.16 auto-discovery path (no --ops-server): the
 // gateway advertises the ops URL in its GET /v1/admin/platform/version
 // response, and lenny-ctl routes the JSON-RPC call to /mcp/management on
-// that ops server. §24.15 line 4866 lists mcp-management among the
+// that ops server. §24.15 lists mcp-management among the
 // command groups that resolve to lenny-ops via this auto-discovery rule.
-// spec: §24.15 line 4866 ("mcp-management | lenny-ops | --ops-server
+// spec: §24.15 ("mcp-management | lenny-ops | --ops-server
 // flag, or auto-discovered via GET /v1/admin/platform/version (gateway
-// response includes opsServiceURL)"); §24.16 line 201 rule 2.
+// response includes opsServiceURL)"); §24.16 rule 2.
 func TestMCPManagementAutoDiscoversOpsURL(t *testing.T) {
 	opsGot := &capturedRequest{}
 	ops := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +217,7 @@ func TestMCPManagementAutoDiscoversOpsURL(t *testing.T) {
 // rule-3 fallback for the mcp-management group specifically: when the
 // gateway's version response carries no opsServiceURL and --ops-server is
 // not passed, lenny-ctl falls back to the gateway host rather than
-// aborting, and surfaces a warning. spec: §24.16 line 201 rule 3 ("If
+// aborting, and surfaces a warning. spec: §24.16 rule 3 ("If
 // auto-discovery fails (gateway unreachable, opsServiceURL absent because
 // the cluster is mid-upgrade), lenny-ctl falls back to the gateway host
 // under the assumption that gateway-hosted operability endpoints ...
@@ -255,8 +253,7 @@ func TestMCPManagementFallsBackToGatewayWhenOpsURLAbsent(t *testing.T) {
 // TestMCPManagementCallAcceptsArgsFlag covers the §25.14 command table's
 // documented flag name for `mcp-management tools call`: the tool
 // arguments are passed via --args, not --params.
-// spec: §25.14 line 4984 ("lenny-ctl mcp-management tools call <name>
-// --args <json>").
+// spec: §25.14.
 func TestMCPManagementCallAcceptsArgsFlag(t *testing.T) {
 	code, got := runAgainstOps(t, http.StatusOK, `{"jsonrpc":"2.0","id":1,"result":{}}`,
 		"mcp-management", "call", "lenny_get_pool", "--args", `{"name":"pool-a"}`)

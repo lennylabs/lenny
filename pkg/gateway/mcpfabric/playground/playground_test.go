@@ -15,6 +15,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // fakeTenants is an in-test TenantRegistry. registered names the
@@ -39,8 +40,8 @@ type fakeOIDC struct {
 	lastVerif   string
 }
 
-func (f *fakeOIDC) AuthorizationURL(state, challenge, redirectURI string) string {
-	return "https://provider.example/authorize?state=" + state + "&code_challenge=" + challenge
+func (f *fakeOIDC) AuthorizationURL(_ context.Context, state, challenge, _ string) (string, error) {
+	return "https://provider.example/authorize?state=" + state + "&code_challenge=" + challenge, nil
 }
 
 func (f *fakeOIDC) Exchange(_ context.Context, code, verifier, _ string) (OIDCSubject, error) {
@@ -76,26 +77,44 @@ func decodeJWTPayload(t *testing.T, token string) map[string]any {
 }
 
 func TestConfigValidateRejectsBadAuthMode(t *testing.T) {
-	cfg := Config{AuthMode: "saml", BearerTTL: 900 * time.Second, MaxIdleTimeSeconds: 300}
+	cfg := Config{AuthMode: "saml", CapabilityTokenTTL: 900 * time.Second, MaxIdleTimeSeconds: 300}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("Validate accepted an unknown auth mode")
 	}
 }
 
-func TestConfigValidateRejectsBearerTTLOutOfBound(t *testing.T) {
-	cfg := Config{AuthMode: AuthModeOIDC, BearerTTL: 10 * time.Second, MaxIdleTimeSeconds: 300}
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate accepted a bearer TTL below the 60s lower bound")
-	}
-	cfg.BearerTTL = 2 * time.Hour
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate accepted a bearer TTL above the 3600s upper bound")
+// spec: 10.2 (Authentication), 27.2 (Placement and Gating)
+//
+// TestConfigValidateCapabilityTokenTTLBound rejects a capability token
+// lifetime outside the auth.capabilityTokenTtlSeconds bound 120s..3600s and
+// accepts both edges. 119s was accepted under the former 60s floor.
+func TestConfigValidateCapabilityTokenTTLBound(t *testing.T) {
+	for _, tc := range []struct {
+		ttl time.Duration
+		ok  bool
+	}{
+		{119 * time.Second, false},
+		{120 * time.Second, true},
+		{3600 * time.Second, true},
+		{3601 * time.Second, false},
+	} {
+		cfg := Config{AuthMode: AuthModeOIDC, CapabilityTokenTTL: tc.ttl, MaxIdleTimeSeconds: 300}
+		err := cfg.Validate()
+		if (err == nil) != tc.ok {
+			t.Errorf("Validate(CapabilityTokenTTL=%s) = %v, want ok=%v", tc.ttl, err, tc.ok)
+			continue
+		}
+		if err != nil && (!strings.Contains(err.Error(), "LENNY_PLAYGROUND_CONFIG_INVALID") ||
+			!strings.Contains(err.Error(), "auth.capabilityTokenTtlSeconds") ||
+			!strings.Contains(err.Error(), "120s..3600s")) {
+			t.Errorf("Validate(CapabilityTokenTTL=%s) error %q does not name LENNY_PLAYGROUND_CONFIG_INVALID, auth.capabilityTokenTtlSeconds, and 120s..3600s", tc.ttl, err)
+		}
 	}
 }
 
 func TestConfigValidateDevTenantRules(t *testing.T) {
 	// dev mode with an empty devTenantId is rejected.
-	cfg := Config{AuthMode: AuthModeDev, DevTenantID: "", BearerTTL: 900 * time.Second, MaxIdleTimeSeconds: 300}
+	cfg := Config{AuthMode: AuthModeDev, DevTenantID: "", CapabilityTokenTTL: 900 * time.Second, MaxIdleTimeSeconds: 300}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "LENNY_PLAYGROUND_DEV_TENANT_REQUIRED") {
 		t.Fatalf("empty devTenantId: want LENNY_PLAYGROUND_DEV_TENANT_REQUIRED, got %v", err)
 	}
@@ -117,7 +136,7 @@ func TestConfigValidateDevTenantRules(t *testing.T) {
 	}
 }
 
-// TestEffectiveLabelsDefaultsToOrigin exercises the §27.2 line 41
+// TestEffectiveLabelsDefaultsToOrigin exercises the §27.2
 // default: an unset playground.sessionLabels yields the
 // load-bearing {origin: "playground"} label. F-27.2.1.
 func TestEffectiveLabelsDefaultsToOrigin_spec_27_2_41(t *testing.T) {
@@ -191,8 +210,9 @@ func TestEffectiveIdleAndDurationCaps(t *testing.T) {
 func TestDevModeMintStampsOriginClaim(t *testing.T) {
 	signer := devSigner()
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
-		Signer:  signer,
-		Tenants: fakeTenants{registered: map[string]bool{"acme": true}},
+		Signer:   jwtsign.HMAC(signer),
+		Verifier: signer,
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 	})
 	srv := httptest.NewServer(h.TokenRoutes())
 	defer srv.Close()
@@ -227,8 +247,9 @@ func TestDevModeMintStampsOriginClaim(t *testing.T) {
 func TestDevModeReadyGateRejectsUnseededTenant(t *testing.T) {
 	signer := devSigner()
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
-		Signer:  signer,
-		Tenants: fakeTenants{registered: map[string]bool{}}, // acme not seeded
+		Signer:   jwtsign.HMAC(signer),
+		Verifier: signer,
+		Tenants:  fakeTenants{registered: map[string]bool{}}, // acme not seeded
 	})
 	srv := httptest.NewServer(h.TokenRoutes())
 	defer srv.Close()
@@ -268,7 +289,7 @@ func TestAPIKeyModeRejectsNonUserBearer(t *testing.T) {
 		t.Fatalf("sign cap token: %v", err)
 	}
 	audit := NewMemoryAuditEmitter()
-	h := New(Config{Enabled: true, AuthMode: AuthModeAPIKey}, Options{Signer: signer}).WithAuditEmitter(audit)
+	h := New(Config{Enabled: true, AuthMode: AuthModeAPIKey}, Options{Signer: jwtsign.HMAC(signer), Verifier: signer}).WithAuditEmitter(audit)
 	srv := httptest.NewServer(h.TokenRoutes())
 	defer srv.Close()
 
@@ -288,7 +309,7 @@ func TestAPIKeyModeRejectsNonUserBearer(t *testing.T) {
 	if env.Error.Code != "LENNY_PLAYGROUND_BEARER_TYPE_REJECTED" {
 		t.Fatalf("error code = %q, want LENNY_PLAYGROUND_BEARER_TYPE_REJECTED", env.Error.Code)
 	}
-	// spec: §10.2 line 243 — every rejected mint emits the
+	// spec: §10.2 — every rejected mint emits the
 	// playground.bearer_mint_rejected audit event with the canonical
 	// payload (tenant_id, subject_jti, subject_typ, invariant_violated,
 	// ingress_path).
@@ -317,7 +338,7 @@ func TestAPIKeyModeRejectsNonUserBearer(t *testing.T) {
 	}
 }
 
-// spec: §10.2 line 243 — the multi-tenant tenant-claim rejection paths
+// spec: §10.2 — the multi-tenant tenant-claim rejection paths
 // (claim missing, malformed, unknown) all emit the canonical
 // playground.bearer_mint_rejected audit event with the invariant id as
 // the metric reason label.
@@ -364,8 +385,9 @@ func TestAPIKeyModeTenantClaimRejectionsEmitMintRejected(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			audit := NewMemoryAuditEmitter()
 			h := New(Config{Enabled: true, AuthMode: AuthModeAPIKey, MultiTenant: true}, Options{
-				Signer:  signer,
-				Tenants: tc.tenants,
+				Signer:   jwtsign.HMAC(signer),
+				Verifier: signer,
+				Tenants:  tc.tenants,
 			}).WithAuditEmitter(audit)
 			srv := httptest.NewServer(h.TokenRoutes())
 			defer srv.Close()
@@ -409,7 +431,7 @@ func TestAPIKeyModeScopeIsNarrowedToIntersection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sign subject token: %v", err)
 	}
-	h := New(Config{Enabled: true, AuthMode: AuthModeAPIKey}, Options{Signer: signer})
+	h := New(Config{Enabled: true, AuthMode: AuthModeAPIKey}, Options{Signer: jwtsign.HMAC(signer), Verifier: signer})
 	srv := httptest.NewServer(h.TokenRoutes())
 	defer srv.Close()
 
@@ -517,9 +539,9 @@ func TestMintResponseEffectiveScopeMirrorsJWTScope_spec_27_3_1(t *testing.T) {
 			var authHeader string
 			if tc.devMode {
 				h = New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"},
-					Options{Signer: signer})
+					Options{Signer: jwtsign.HMAC(signer), Verifier: signer})
 			} else {
-				h = New(Config{Enabled: true, AuthMode: AuthModeAPIKey}, Options{Signer: signer})
+				h = New(Config{Enabled: true, AuthMode: AuthModeAPIKey}, Options{Signer: jwtsign.HMAC(signer), Verifier: signer})
 				authHeader = "Bearer " + mint(jwt.Claims{
 					Subject:  "bob",
 					TenantID: "acme",
@@ -568,7 +590,8 @@ func TestMintResponseEffectiveScopeMirrorsJWTScope_spec_27_3_1(t *testing.T) {
 
 func TestOIDCModeRejectsBearerOnTokenEndpoint(t *testing.T) {
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC}, Options{
-		Signer:   devSigner(),
+		Signer:   jwtsign.HMAC(devSigner()),
+		Verifier: devSigner(),
 		Sessions: NewMemorySessionStore(),
 	})
 	srv := httptest.NewServer(h.TokenRoutes())
@@ -597,8 +620,9 @@ func TestOIDCModeRejectsBearerOnTokenEndpoint(t *testing.T) {
 
 func TestSecurityHeadersAndCSP(t *testing.T) {
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme", GatewayHost: "gw.example.com"}, Options{
-		Signer:  devSigner(),
-		Tenants: fakeTenants{registered: map[string]bool{"acme": true}},
+		Signer:   jwtsign.HMAC(devSigner()),
+		Verifier: devSigner(),
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 	})
 	srv := httptest.NewServer(h.PlaygroundRoutes())
 	defer srv.Close()
@@ -630,8 +654,9 @@ func TestSecurityHeadersAndCSP(t *testing.T) {
 
 func TestStaticAssetCacheHeaders(t *testing.T) {
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
-		Signer:  devSigner(),
-		Tenants: fakeTenants{registered: map[string]bool{"acme": true}},
+		Signer:   jwtsign.HMAC(devSigner()),
+		Verifier: devSigner(),
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 	})
 	srv := httptest.NewServer(h.PlaygroundRoutes())
 	defer srv.Close()
@@ -658,8 +683,9 @@ func TestStaticAssetCacheHeaders(t *testing.T) {
 // spec: §27.4 item 2 (workspace plan upload / drag-drop tarball).
 func TestAppJSWorkspaceUploadWiring_spec_27_4_2(t *testing.T) {
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
-		Signer:  devSigner(),
-		Tenants: fakeTenants{registered: map[string]bool{"acme": true}},
+		Signer:   jwtsign.HMAC(devSigner()),
+		Verifier: devSigner(),
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 	})
 	srv := httptest.NewServer(h.PlaygroundRoutes())
 	defer srv.Close()
@@ -702,8 +728,9 @@ func TestAppJSWorkspaceUploadWiring_spec_27_4_2(t *testing.T) {
 
 func TestConfigJSONCarriesDevBanner(t *testing.T) {
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
-		Signer:  devSigner(),
-		Tenants: fakeTenants{registered: map[string]bool{"acme": true}},
+		Signer:   jwtsign.HMAC(devSigner()),
+		Verifier: devSigner(),
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
 	})
 	srv := httptest.NewServer(h.PlaygroundRoutes())
 	defer srv.Close()
@@ -725,7 +752,8 @@ func TestConfigJSONCarriesDevBanner(t *testing.T) {
 func TestOIDCLoginRedirectsAndSetsStateCookie(t *testing.T) {
 	oidc := &fakeOIDC{}
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC}, Options{
-		Signer:   devSigner(),
+		Signer:   jwtsign.HMAC(devSigner()),
+		Verifier: devSigner(),
 		Sessions: NewMemorySessionStore(),
 		OIDC:     oidc,
 	})

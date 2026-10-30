@@ -1,4 +1,4 @@
--- §4.4 lines 234 / 236: the partial-checkpoint manifest is the
+-- §4.4: the partial-checkpoint manifest is the
 -- recovery-aid row the gateway writes when an eviction checkpoint
 -- exceeds the preStop tiered cap and the workspace upload is
 -- incomplete. It is NOT a valid checkpoint — full checkpoints are
@@ -21,7 +21,7 @@
 -- the v1 schema does not advertise capabilities the rest of the code
 -- path cannot yet honor.
 --
--- spec: §4.4 lines 234, 236.
+-- spec: §4.4.
 
 CREATE TABLE session_partial_checkpoint_manifest (
     tenant_id                 TEXT        NOT NULL REFERENCES tenants(id),
@@ -46,7 +46,7 @@ CREATE TABLE session_partial_checkpoint_manifest (
     -- suffix.
     chunk_encoding            TEXT        NOT NULL DEFAULT 'tar',
     created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
-    -- deleted_at is the §4.4 line 236 soft-delete tombstone. The
+    -- deleted_at is the §4.4 soft-delete tombstone. The
     -- cleanup path issues
     -- `UPDATE ... SET deleted_at = now() ... WHERE ... AND deleted_at IS NULL`
     -- so stale-leader retries / GC-backstop races converge to a

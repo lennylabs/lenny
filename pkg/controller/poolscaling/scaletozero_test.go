@@ -9,7 +9,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
-// spec: §4.6.1 line 400 — scaleToZero sets minWarm:0 while the cron
+// spec: §4.6.1 — scaleToZero sets minWarm:0 while the cron
 // window between schedule and resumeAt is open; both expressions are
 // UTC by default with an optional IANA timezone override.
 func TestScaleToZeroActive(t *testing.T) {

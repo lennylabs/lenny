@@ -134,11 +134,11 @@ The Phase 5.6 `credential-review.md` Finding 2 recorded user-credential secrets 
 
 **Severity:** Low
 
-**Affected:** spec §13.5 and §22.3; `pkg/gateway/delegationpolicystore`; `pkg/gateway/interceptor/export.go` (`RunPreExportMaterialization`).
+**Affected:** spec §13.5 and TESTING.md §22.3; `pkg/gateway/delegationpolicystore`; `pkg/gateway/interceptor/export.go` (`RunPreExportMaterialization`).
 
-§13.5 describes the delegation prompt-injection surface and a layered set of mitigations: input size limits, a `PreDelegation` content-scanning hook, inter-session message scanning, opt-in exported-file scanning at `PreExportMaterialization`, messaging rate limits, messaging scope, and budget and depth limits. The structural controls (size limits, rate limits, scope, depth and budget) are platform-enforced. The content-semantics controls are advisory: `contentPolicy.interceptorRef` and `contentPolicy.scanExportedFiles` invoke a deployer-supplied classifier, and `scanExportedFiles` defaults to `false`. §22.3 records this as an explicit non-decision: Lenny ships no built-in guardrail classifier. `RunPreExportMaterialization` runs the interceptor chain when the deployer has wired one. The residual risk is documented in §13.5: a deployer that leaves `scanExportedFiles: false` must treat delegation-exported files as untrusted input and apply runtime-layer hardening. The advisory framing is a deliberate design boundary and the structural controls remain enforced regardless.
+§13.5 describes the delegation prompt-injection surface and a layered set of mitigations: input size limits, a `PreDelegation` content-scanning hook, inter-session message scanning, opt-in exported-file scanning at `PreExportMaterialization`, messaging rate limits, messaging scope, and budget and depth limits. The structural controls (size limits, rate limits, scope, depth and budget) are platform-enforced. The content-semantics controls are advisory: `contentPolicy.interceptorRef` and `contentPolicy.scanExportedFiles` invoke a deployer-supplied classifier, and `scanExportedFiles` defaults to `false`. TESTING.md §22.3 records this as an explicit non-decision: Lenny ships no built-in guardrail classifier. `RunPreExportMaterialization` runs the interceptor chain when the deployer has wired one. The residual risk is documented in §13.5: a deployer that leaves `scanExportedFiles: false` must treat delegation-exported files as untrusted input and apply runtime-layer hardening. The advisory framing is a deliberate design boundary and the structural controls remain enforced regardless.
 
-**Remediation:** Resolved as a documented design acceptance. §13.5 enumerates the layered mitigations and §22.3 records the platform-classifier-free decision. The interceptor hooks are implemented; wiring a classifier is a deployer action.
+**Remediation:** Resolved as a documented design acceptance. §13.5 enumerates the layered mitigations and TESTING.md §22.3 records the platform-classifier-free decision. The interceptor hooks are implemented; wiring a classifier is a deployer action.
 
 ### Finding 10 — SPIFFE identity parsing and validation enforce the §10.3 URI shapes
 
@@ -186,7 +186,7 @@ The Phase 5.6 `credential-review.md` Finding 2 recorded user-credential secrets 
 
 **Affected:** `pkg/audit/chain.go` (`ChainSet`, `Chain.Verify` tenant check).
 
-§12.9.1 requires tenant isolation across stores, including the audit chain. `audit.ChainSet` gives each tenant an independent `Chain`, so one tenant's GDPR redaction cannot break another tenant's chain, and `Chain.Verify` fails closed if a row carrying a foreign `tenant_id` appears in a tenant's chain. The Postgres-backed audit store partitions rows per tenant and the cross-tenant audit-query rejection is exercised by `tests/tier9_security/tenant_isolation_test.go`. The control matches §12.9.1.
+TESTING.md §12.9.1 requires tenant isolation across stores, including the audit chain. `audit.ChainSet` gives each tenant an independent `Chain`, so one tenant's GDPR redaction cannot break another tenant's chain, and `Chain.Verify` fails closed if a row carrying a foreign `tenant_id` appears in a tenant's chain. The Postgres-backed audit store partitions rows per tenant and the cross-tenant audit-query rejection is exercised by `tests/tier9_security/tenant_isolation_test.go`. The control matches TESTING.md §12.9.1.
 
 **Remediation:** Resolved. Per-tenant chain isolation is part of the `pkg/audit` hash-chain work (`eb66584`); the live cross-store isolation check runs in `tests/tier9_security/tenant_isolation_test.go`.
 

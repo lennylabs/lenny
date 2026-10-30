@@ -3,8 +3,9 @@
 // Command {{.Name}} is a Full-level coding-agent runtime built on the
 // TypeScript runtime-author SDK. It follows the shared coding-agent
 // pattern: the session workspace is the repository root at
-// /workspace/current, and artifacts that must survive teardown are
-// written to /workspace/output.
+// /workspace/slots/{sessionId}/current, derived per session from the
+// session identifier the message carries, and artifacts that must
+// survive teardown are written to /workspace/output.
 //
 // The runtime is started with level "full", so the SDK opens the
 // lifecycle channel and completes the lifecycle_capabilities /
@@ -14,8 +15,8 @@
 // rebinds rotated credentials.
 //
 // The message handler is an echo placeholder. Replace onMessage with
-// the agent loop: read the workspace under WORKSPACE_CURRENT, run the
-// model and tools, and write artifacts under WORKSPACE_OUTPUT.
+// the agent loop: read the workspace under workspaceRoot(msg.sessionId),
+// run the model and tools, and write artifacts under WORKSPACE_OUTPUT.
 //
 // Exit codes: 0 success, 1 runtime error, 2 protocol error.
 
@@ -26,12 +27,18 @@ const EXIT_OK = 0;
 const EXIT_RUNTIME_ERROR = 1;
 const EXIT_PROTOCOL_ERROR = 2;
 
-// Workspace paths for the shared coding-agent pattern. The gateway
-// materializes the session workspace under WORKSPACE_CURRENT before the
-// first message; the agent writes durable artifacts under
-// WORKSPACE_OUTPUT.
-const WORKSPACE_CURRENT = "/workspace/current";
+// WORKSPACE_OUTPUT is the durable artifact directory of the shared
+// coding-agent pattern.
 const WORKSPACE_OUTPUT = "/workspace/output";
+
+// workspaceRoot returns the working directory of the session named by
+// sessionId. Every session has its own workspace tree and there is no
+// pod-global workspace path, so the agent loop derives its root from the
+// session identifier the SDK delivers on each message.
+// spec: §6.4 — /workspace/slots/{sessionId}/current is the session cwd
+function workspaceRoot(sessionId: string): string {
+  return `/workspace/slots/${sessionId}/current`;
+}
 
 // Handler is a Full-level coding-agent handler. The message path is an
 // echo placeholder; the coding behavior belongs in onMessage.
@@ -43,7 +50,7 @@ class RuntimeHandler implements Handler {
   onCreate(): void {}
 
   // onMessage echoes the inbound parts. Replace this body with the
-  // agent loop over the workspace at WORKSPACE_CURRENT.
+  // agent loop over the workspace at workspaceRoot(msg.sessionId).
   onMessage(msg: Message): Reply {
     this.seq += 1;
     const input = msg.envelope.input ?? [];
@@ -81,6 +88,6 @@ run(new RuntimeHandler(), {
   },
 );
 
-// WORKSPACE_CURRENT and WORKSPACE_OUTPUT are exported so adjacent
-// modules in the agent loop can import the canonical paths.
-export { WORKSPACE_CURRENT, WORKSPACE_OUTPUT };
+// workspaceRoot and WORKSPACE_OUTPUT are exported so adjacent modules
+// in the agent loop can import the canonical paths.
+export { workspaceRoot, WORKSPACE_OUTPUT };

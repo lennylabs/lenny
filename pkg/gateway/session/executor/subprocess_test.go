@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
+
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 )
 
@@ -19,7 +21,9 @@ import (
 var echoBinary string
 
 func TestMain(m *testing.M) {
-	tmp, err := os.MkdirTemp("", "executor-echo-*")
+	// The fixture binary lives under the harness temp root rather than
+	// /tmp, which a host cleanup can empty mid-run (TEST-GAPS T-4.7.23).
+	tmp, err := testtmp.MkdirTemp("executor-echo-*")
 	if err != nil {
 		panic("executor TestMain: mkdtemp: " + err.Error())
 	}
@@ -28,6 +32,7 @@ func TestMain(m *testing.M) {
 	echoBinary = filepath.Join(tmp, "echo")
 	cmd := exec.Command("go", "build", "-o", echoBinary, "./cmd/runtimes/echo")
 	cmd.Dir = repoRoot()
+	cmd.Env = append(os.Environ(), testtmp.Env(filepath.Dir(tmp))...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		panic("executor TestMain: build echo: " + err.Error())
@@ -262,4 +267,77 @@ func TestSubprocessExecutorOutputClosesWhenRuntimeExits(t *testing.T) {
 			t.Fatal("the Output channel did not close after the runtime exited")
 		}
 	}
+}
+
+// TestSubprocessExecutorServesNextSession_spec_5_2 pins that the subprocess
+// executor reports itself able to serve the pod's next session: it spawns a
+// fresh runtime process per session, so the adapter's whole-pod scrub report
+// carries runtime_live true and the gateway does not retire the pod with
+// runtime_not_live.
+// spec: 5.2 (Pod retirement policy), 4.7 (ReportPodScrub)
+func TestSubprocessExecutorServesNextSession_spec_5_2(t *testing.T) {
+	e := executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: "/bin/true"})
+	if !e.ServesNextSession() {
+		t.Error("ServesNextSession() = false, want true for a per-session subprocess")
+	}
+}
+
+// spec: 28.5.3 (CH-MSGSOCK Outbound: session_started), 17.4 (Local Development Mode)
+// The subprocess transport's Output fans the child's stdout out to every
+// live subscriber. A start's session_started wait subscribes beside the
+// Attach stream, reads the acknowledgement, and cancels; the cancelled
+// subscription consumes nothing afterwards, so the first response the child
+// writes after the wait reaches the Attach subscription. Before the
+// fan-out, each Output scanned the shared stdout itself, and the cancelled
+// wait's reader went on consuming frames meant for Attach.
+func TestSubprocessExecutorOutputFansOutPastACancelledWait_spec_28_5_3(t *testing.T) {
+	cat, err := exec.LookPath("cat")
+	if err != nil {
+		t.Skipf("blocked: cat not on PATH: %v", err)
+	}
+	e := executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: cat})
+	defer e.Close(context.Background(), "sess_fan")
+	if err := e.Start(context.Background(), "sess_fan"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	attach, err := e.Output(context.Background(), "sess_fan")
+	if err != nil {
+		t.Fatalf("Attach Output: %v", err)
+	}
+	waitCtx, cancelWait := context.WithCancel(context.Background())
+	wait, err := e.Output(waitCtx, "sess_fan")
+	if err != nil {
+		t.Fatalf("wait Output: %v", err)
+	}
+	if err := e.WriteEnvelope("sess_fan", []byte(`{"type":"session_started"}`)); err != nil {
+		t.Fatalf("write acknowledgement: %v", err)
+	}
+	if got := recvFrame(t, wait); !strings.Contains(got, "session_started") {
+		t.Fatalf("wait read %q, want the acknowledgement", got)
+	}
+	cancelWait()
+	if err := e.WriteEnvelope("sess_fan", []byte(`{"type":"response"}`)); err != nil {
+		t.Fatalf("write response: %v", err)
+	}
+	if got := recvFrame(t, attach); !strings.Contains(got, "session_started") {
+		t.Fatalf("Attach read %q first, want the acknowledgement", got)
+	}
+	if got := recvFrame(t, attach); !strings.Contains(got, `"response"`) {
+		t.Fatalf("Attach read %q, want the response written after the wait", got)
+	}
+}
+
+// recvFrame receives one frame or fails the test after five seconds.
+func recvFrame(t *testing.T, ch <-chan []byte) string {
+	t.Helper()
+	select {
+	case b, ok := <-ch:
+		if !ok {
+			t.Fatal("the subscription closed before the frame")
+		}
+		return string(b)
+	case <-time.After(5 * time.Second):
+		t.Fatal("no frame within 5s")
+	}
+	return ""
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package runtimecapoverride is the §5.1 line 49 per-tenant runtime
+// Package runtimecapoverride is the §5.1 per-tenant runtime
 // capability customization store and the tenant-aware runtime resolver
 // that overlays a tenant's override onto the platform-default runtime.
 //
@@ -12,7 +12,7 @@
 // derived runtime against its base) and then applies the tenant's
 // override on top.
 //
-// spec: §5.1 line 49 — F-5.1.20.
+// spec: §5.1 — F-5.1.20.
 package runtimecapoverride
 
 import (
@@ -31,7 +31,7 @@ import (
 // backing stores with errors.Is(err, ErrOverrideStore): a match is the
 // override-store read, anything else is the runtime-registry read. The
 // §5.1 injection gate uses this distinction to label its fail-closed
-// metric. spec: §5.1 line 49 — F-5.1.20.
+// metric. spec: §5.1 — F-5.1.20.
 var ErrOverrideStore = errors.New("runtimecapoverride: override-store read failed")
 
 // Store persists per-tenant runtime capability overrides keyed by
@@ -135,7 +135,7 @@ func (m *Memory) List(_ context.Context, tenantID string) (map[string]runtimesto
 // ErrOverrideStore so the gate can attribute its fail-closed metric to the
 // override store; the runtime-registry error propagates unwrapped.
 //
-// spec: §5.1 line 49 — F-5.1.20 tenant injection-disable enforced
+// spec: §5.1 — F-5.1.20 tenant injection-disable enforced
 // fail-closed.
 func ResolveForTenant(ctx context.Context, runtimes runtimestore.Store, overrides Store, tenantID, name string) (runtimestore.Runtime, error) {
 	rt, err := runtimestore.Resolve(ctx, runtimes, name)

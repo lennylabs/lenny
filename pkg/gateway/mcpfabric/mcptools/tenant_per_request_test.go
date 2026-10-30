@@ -37,7 +37,7 @@ func callWithPrincipal(t *testing.T, h http.Handler, p authmw.Principal, tool, a
 }
 
 // TestCreateSessionStampsPrincipalTenant_spec_15_2_1335 pins
-// §9.2 / §16.1 / §15.2 line 1335 end-to-end: a multi-tenant deployment
+// §9.2 / §16.1 / §15.2 end-to-end: a multi-tenant deployment
 // calling lenny/create_session via the authenticated MCP transport
 // stamps the principal's tenant on the persisted session row — not
 // the Register-time fallback. F-9.2.13 / F-15.2.15.
@@ -45,10 +45,11 @@ func TestCreateSessionStampsPrincipalTenant_spec_15_2_1335(t *testing.T) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Executor: executor.NewEchoExecutor(),
-		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:   func() string { return "sess_x" },
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_x" },
 		// Register-time fallback is "fallback" — the unique sentinel
 		// proves the production handler does NOT use it when an
 		// authenticated principal is on the request context.
@@ -83,11 +84,12 @@ func TestCreateSessionFallsBackWhenNoPrincipal_spec_15_2_1335(t *testing.T) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Executor: executor.NewEchoExecutor(),
-		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:   func() string { return "sess_x" },
-		TenantID: "fallback",
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:            func() string { return "sess_x" },
+		TenantID:          "fallback",
 	})
 
 	// No principal context — same path tests and the dev-headers
@@ -111,9 +113,10 @@ func TestTenantsAreIsolatedBetweenPrincipals_spec_15_2_1335(t *testing.T) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Executor: executor.NewEchoExecutor(),
-		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		// Unique ids per call so the two sessions do not collide on the
 		// store layer.
 		IDFunc:   newSequentialIDFunc("sess", 1),

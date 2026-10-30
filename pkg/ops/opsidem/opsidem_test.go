@@ -53,7 +53,7 @@ func do(h http.Handler, method, path, key, caller, body string) *httptest.Respon
 	return rec
 }
 
-// spec: §25.4 lines 2031-2035 — required-key endpoints reject a missing
+// spec: §25.4 — required-key endpoints reject a missing
 // key with 400 IDEMPOTENCY_KEY_REQUIRED at Tier 2/3.
 func TestRequiredKeyMissingReturns400_spec_25_4(t *testing.T) {
 	inner := &countingHandler{}
@@ -98,7 +98,7 @@ func TestBackupFullRequiresKey_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2013-2014 — a completed key replays the stored
+// spec: §25.4 — a completed key replays the stored
 // response without re-executing.
 func TestReplayDoesNotReExecute_spec_25_4(t *testing.T) {
 	inner := &countingHandler{}
@@ -122,7 +122,7 @@ func TestReplayDoesNotReExecute_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2015 — a different caller with the same key gets
+// spec: §25.4 — a different caller with the same key gets
 // independent behavior (the PK is (key, caller_id)).
 func TestCallerScopingIsIndependent_spec_25_4(t *testing.T) {
 	inner := &countingHandler{}
@@ -138,7 +138,7 @@ func TestCallerScopingIsIndependent_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2013 (status='in_progress') — a concurrent in-flight
+// spec: §25.4 — a concurrent in-flight
 // claim returns 409 OPERATION_IN_PROGRESS with an elapsed detail.
 func TestInProgressReturns409_spec_25_4(t *testing.T) {
 	store := opsidem.NewMemoryStore()
@@ -167,7 +167,7 @@ func (outageStore) Claim(context.Context, string, string, string, time.Duration,
 	return opsidem.Record{}, 0, opsidem.ErrStoreUnavailable
 }
 
-// spec: §25.4 lines 2042-2058 — required endpoints return 503
+// spec: §25.4 — required endpoints return 503
 // IDEMPOTENCY_STORE_UNAVAILABLE during a store outage.
 func TestStoreOutageRequiredFailsClosed_spec_25_4(t *testing.T) {
 	inner := &countingHandler{}
@@ -184,7 +184,7 @@ func TestStoreOutageRequiredFailsClosed_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2057 — optional endpoints proceed during an
+// spec: §25.4 — optional endpoints proceed during an
 // outage but the response carries a degradation warning.
 func TestStoreOutageOptionalProceedsWithDegradation_spec_25_4(t *testing.T) {
 	inner := &countingHandler{}

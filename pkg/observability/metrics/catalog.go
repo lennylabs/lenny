@@ -65,7 +65,8 @@ var metricCatalog = []MetricSpec{
 	// lenny_warmpool_reserved_pods is the §16.1 gauge of pods whose
 	// occupancy claim is in the `reserved` hold window: scrubbed, SDK-warm
 	// on preConnect pools, held for the pinned tenant until the claim-hold
-	// TTL expires, and excluded from idle inventory. spec: §16.1 — reserved
+	// TTL expires or an acquisition ends the hold, and excluded from idle
+	// inventory. spec: §16.1 — reserved
 	// pods.
 	{"lenny_warmpool_reserved_pods", TypeGauge, "Pods whose occupancy claim is in the reserved hold window"},
 	{"lenny_warmpool_stale_pods", TypeGauge, "Warm pods idle beyond the pool maxIdleSeconds threshold"},
@@ -91,6 +92,15 @@ var metricCatalog = []MetricSpec{
 	// §16.1 recording rule. spec: §16.1 — controller-owned uptime_limit drain.
 	{"lenny_controller_pod_retirement_total", TypeCounter, "Controller-initiated session-pool pod retirements (level-triggered maxPodUptimeSeconds drain)"},
 	{"lenny_slot_failure_total", TypeCounter, "Concurrent-workspace slot failure count"},
+	// lenny_slot_compensation_superseded_total counts compensating Shutdowns
+	// the adapter answered superseded: it held an entry for the session that
+	// the compensation's bind attempt token did not own, so the reclaim
+	// released nothing. spec: §16.1, §4.7.1.
+	{"lenny_slot_compensation_superseded_total", TypeCounter, "Slot compensations answered superseded (the reclaim released nothing)"},
+	// lenny_adapter_leaked_slots is the gateway-emitted per-pod count of slots
+	// in the leaked sub-state, counted until the pod terminates.
+	// spec: §16.1, §6.2.
+	{"lenny_adapter_leaked_slots", TypeGauge, "Leaked session slots per pod awaiting pod termination"},
 	{"lenny_slot_pod_replacement_total", TypeCounter, "Concurrent-workspace slot pod replacement count"},
 	{"lenny_session_startup_duration_seconds", TypeHistogram, "End-to-end session startup duration"},
 	{"lenny_session_time_to_first_token_seconds", TypeHistogram, "End-to-end time to first token"},
@@ -105,9 +115,11 @@ var metricCatalog = []MetricSpec{
 	{"lenny_session_resume_attempts_total", TypeCounter, "Session resume attempts by outcome"},
 	// lenny_session_expiry_total counts sessions terminated by a platform
 	// expiry clock, labeled by reason (max_session_age | max_idle_time).
-	// The max_idle_time series is the idle-termination counter keyed to the
-	// maxClientIdleSeconds bound. spec: §16.1 — session expiries; §16.1.1
-	// retirement/expiry reason vocabulary.
+	// The max_idle_time series counts both idle expiries: the
+	// maxClientIdleSeconds expiry of a session that cannot be idle-suspended
+	// and the suspended-session lifetime (maxSuspendedSessionSeconds).
+	// spec: §16.1 — session expiries; §16.1.1 retirement/expiry reason
+	// vocabulary.
 	{"lenny_session_expiry_total", TypeCounter, "Sessions terminated by a platform expiry clock, by reason (max_session_age | max_idle_time)"},
 	{"lenny_inbox_drain_failure_total", TypeCounter, "Atomic inbox-to-DLQ drain failures"},
 	{"lenny_inbox_duplicate_suppressed_total", TypeCounter, "Inbox duplicate redeliveries suppressed"},
@@ -161,9 +173,9 @@ var metricCatalog = []MetricSpec{
 	{"lenny_delegation_tree_memory_rejection_total", TypeCounter, "delegate_task calls rejected on the memory budget"},
 	{"lenny_redis_lua_script_duration_seconds", TypeHistogram, "Redis Lua execution latency for delegation budget scripts"},
 	{"lenny_delegation_parallel_children_high_watermark", TypeHistogram, "Max simultaneous in-flight children per delegation tree"},
-	{"lenny_delegation_deadlock_detected_total", TypeCounter, "Delegation deadlock detections"},
-	{"lenny_delegation_deadlock_resolution_total", TypeCounter, "Delegation deadlock resolutions by resolution"},
-	{"lenny_delegation_deadlock_duration_seconds", TypeHistogram, "Time from deadlock detection to resolution"},
+	{"lenny_delegation_deadlock_detected_total", TypeCounter, "Delegation deadlock detections by pool"},
+	{"lenny_delegation_deadlock_resolution_total", TypeCounter, "Delegation deadlock resolutions by pool and resolution"},
+	{"lenny_delegation_deadlock_duration_seconds", TypeHistogram, "Time from deadlock detection to resolution by pool"},
 	{"lenny_delegation_budget_return_usage_lag_total", TypeCounter, "Budget returns unable to read the parent usage counter"},
 	{"lenny_delegation_budget_keys_expired_total", TypeCounter, "Delegation budget keys expired during an active tree"},
 	{"lenny_delegation_would_have_blocked_total", TypeCounter, "Self-recursion would-have-blocked counter by layer"},
@@ -211,11 +223,11 @@ var metricCatalog = []MetricSpec{
 	{"lenny_llm_proxy_p99_ttfb_seconds", TypeGauge, "Pre-computed P99 upstream time-to-first-byte for LLM Proxy"},
 	{"lenny_warmpool_pod_startup_duration_seconds", TypeHistogram, "Time from pod creation to the idle state"},
 	{"lenny_warmpool_replenishment_rate", TypeGauge, "Pods per minute entering the idle state by pool"},
-	{"lenny_warmpool_warmup_failure_total", TypeCounter, "Warm-up failures by error type"},
+	{"lenny_warmpool_warmup_failure_total", TypeCounter, "Warm-up and setup failures by pool, runtime class, and error type"},
 	{"lenny_warmpool_cold_start_total", TypeCounter, "Cold-start sessions served"},
 	{"lenny_warmpool_fill_duration_seconds", TypeHistogram, "Time from pool creation to reaching minWarm ready pods"},
 	{"lenny_warmpool_claims_total", TypeCounter, "Warm pod claims (idle to claimed transitions)"},
-	{"lenny_warmpool_sdk_demotions_total", TypeCounter, "SDK-warm pods demoted to pod-warm before session assignment"},
+	{"lenny_warmpool_sdk_demotions_total", TypeCounter, "SDK-warm pods demoted to pod-warm"},
 	{"lenny_pod_session_reuse_count", TypeHistogram, "Sessions served by a single pod under recycle.enabled"},
 	{"lenny_pool_config_reconciliation_lag_seconds", TypeGauge, "Time since the last successful CRD reconciliation"},
 	{"lenny_pool_bootstrap_mode", TypeGauge, "Pool bootstrap mode flag (1 active, 0 converged)"},
@@ -239,7 +251,7 @@ var metricCatalog = []MetricSpec{
 	{"lenny_orphan_tasks_terminated", TypeCounter, "Orphan tasks terminated by the cleanup job"},
 	{"lenny_orphan_tasks_active", TypeGauge, "Currently active orphan tasks awaiting cleanup"},
 	{"lenny_orphan_tasks_active_per_tenant", TypeGauge, "Per-tenant active orphan task count"},
-	// spec: §8.10 line 1103, §16.5 OrphanTasksPerTenantHigh alert. Reflects the
+	// spec: §8.10, §16.5 OrphanTasksPerTenantHigh alert. Reflects the
 	// configured maxOrphanTasksPerTenant ceiling so the alert's
 	// `scalar(lenny_max_orphan_tasks_per_tenant)` threshold resolves to a single
 	// series. F-8.10.13.
@@ -349,7 +361,8 @@ var metricCatalog = []MetricSpec{
 	{"lenny_restore_test_artifact_success_rate", TypeGauge, "Test-restore sampled-HEAD success rate against replication"},
 	{"lenny_restore_test_artifact_missing_total", TypeCounter, "Test-restore sampled objects absent at the replication target"},
 	{"lenny_artifact_upload_error_total", TypeCounter, "ArtifactStore PUT failures after the retry budget by error type"},
-	{"lenny_gateway_kms_signing_errors_total", TypeCounter, "KMS signing errors observed by the gateway JWTSigner"},
+	{"lenny_gateway_kms_signing_errors_total", TypeCounter, "KMS signing errors observed by the gateway and Token Service JWTSigners, throttling excluded"},
+	{"lenny_jwt_sign_requests_total", TypeCounter, "JWT sign requests by signer component and outcome"},
 	{"lenny_t4_kms_probe_last_success_timestamp", TypeGauge, "Unix time of the last successful T4 KMS probe"},
 	{"lenny_t4_kms_probe_result_total", TypeCounter, "T4 KMS probe results by outcome"},
 	{"lenny_warmpool_sdk_connect_timeout_total", TypeCounter, "SDK-warm handshake watchdog timeouts"},
@@ -360,9 +373,9 @@ var metricCatalog = []MetricSpec{
 	{"lenny_billing_redis_stream_oldest_entry_age_seconds", TypeGauge, "Age of the oldest unacknowledged billing Redis entry"},
 	{"lenny_otlp_export_tls_handshake_total", TypeCounter, "OTLP exporter TLS handshake outcomes by result"},
 	{"lenny_ops_admin_api_tls_handshake_total", TypeCounter, "lenny-ops to gateway admin-API TLS handshake outcomes"},
-	// §25.6 line 2926 — diagnostic endpoint latency.
+	// §25.6 — diagnostic endpoint latency.
 	{"lenny_diagnostics_request_duration_seconds", TypeHistogram, "Per-diagnostic-endpoint latency for §25.6 diagnostic endpoints"},
-	// §25.13 lines 4833–4835 / F-25.13.3 — bundled-rules visibility,
+	// §25.13 / F-25.13.3 — bundled-rules visibility,
 	// override-count visibility, and per-rule in-process evaluator
 	// latency for the §16.5 alert catalog. The first two are stamped
 	// at gateway boot from the rendered chart inputs; the histogram is
@@ -376,7 +389,7 @@ var metricCatalog = []MetricSpec{
 // reference but that are not rows in the §16.1 canonical metric table.
 // They fall into a few categories: config-mirror gauges that publish a
 // Helm-tunable threshold so an alert can read it via `scalar(...)`
-// (§25.13 line 4737), suppression/state gauges that gate an alert,
+// (§25.13), suppression/state gauges that gate an alert,
 // infrastructure-liveness series scraped from a dependency (Postgres,
 // etcd, PgBouncer, cert-manager), and recording-rule outputs the
 // rendered PrometheusRule defines from underlying histograms or
@@ -385,7 +398,7 @@ var metricCatalog = []MetricSpec{
 // alert-expression cross-check resolve every referenced series.
 // F-16.5.2.
 var alertSupportCatalog = []MetricSpec{
-	// --- Helm-tunable threshold gauges (§25.13 line 4737). The chart
+	// --- Helm-tunable threshold gauges (§25.13). The chart
 	// emits the configured value into the gauge at startup; the alert
 	// reads it via scalar(...) so a tier preset tightening the value
 	// flows through without re-rendering the rule expression. F-25.13.2.
@@ -396,7 +409,6 @@ var alertSupportCatalog = []MetricSpec{
 	{"lenny_billing_correction_rate_threshold", TypeGauge, "Configured BillingCorrectionRateHigh rate ceiling"},
 	{"lenny_event_bus_drop_alert_threshold", TypeGauge, "Configured EventBusPublishDropped per-minute drop ceiling, read by the alert via scalar(...)"},
 	{"lenny_controller_workqueue_max_depth", TypeGauge, "Configured controller work-queue max depth, read by ControllerWorkQueueDepthHigh"},
-	{"lenny_erasure_job_deadline_seconds", TypeGauge, "Configured erasure-job deadline, read by ErasureJobOverdue"},
 	{"lenny_tenant_deletion_sla_seconds", TypeGauge, "Configured tenant-deletion SLA, read by TenantDeletionOverdue"},
 	{"lenny_warmpool_idle_cost_threshold", TypeGauge, "Configured WarmPoolIdleCostHigh idle pod-minute ceiling"},
 	{"lenny_audit_siem_max_delivery_lag_seconds", TypeGauge, "Configured audit.siem.maxDeliveryLagSeconds, read by AuditSIEMDeliveryLag"},
@@ -405,6 +417,7 @@ var alertSupportCatalog = []MetricSpec{
 	{"lenny_agent_dns_min_replicas", TypeGauge, "Configured dedicated-DNS minimum replica count, read by DedicatedDNSDegraded"},
 	{"lenny_gateway_min_replicas", TypeGauge, "Configured tier-minimum gateway replica count, read by GatewayNoHealthyReplicas"},
 	{"lenny_gateway_stream_ceiling", TypeGauge, "Configured per-replica streaming-connection ceiling, read by GatewayActiveStreamsHigh"},
+	{"lenny_kms_sign_quota_per_second", TypeGauge, "Configured kms.signQuotaPerSecond provider Sign quota, read by KMSSignQuotaApproaching"},
 	{"lenny_pool_min_warm", TypeGauge, "Configured pool minWarm target, read by WarmPoolLow / PodClaimQueueSaturated"},
 	{"lenny_warmpool_min_warm", TypeGauge, "Configured warm-pool minWarm target mirror"},
 	{"lenny_pool_bootstrap_min_warm_override", TypeGauge, "Configured bootstrap minWarm override, read by PoolBootstrapUnderprovisioned"},
@@ -415,7 +428,7 @@ var alertSupportCatalog = []MetricSpec{
 	// alert reads these to gate or suppress firing on a configuration or
 	// lifecycle posture.
 	{"lenny_audit_siem_configured", TypeGauge, "1 when audit.siem.endpoint is configured; suppresses AuditSIEMNotConfigured / AuditRetentionLow"},
-	{"lenny_env_production", TypeGauge, "1 when the deployment runs in production mode (LENNY_ENV)"},
+	{"lenny_env_production", TypeGauge, "1 when the deployment runs in production mode (--environment=prod, §17.9.1), 0 otherwise; gates the production-only audit alerts (§16.5)."},
 	{"lenny_warmpool_fill_grace_active", TypeGauge, "1 while a pool is inside its initial-fill grace period; suppresses WarmPoolExhausted"},
 	{"lenny_pool_warming_up", TypeGauge, "1 while a pool is in bootstrap warm-up, read by WarmPoolBootstrapping"},
 	{"lenny_rate_limit_failopen_active", TypeGauge, "1 when a replica is in quota fail-open mode, read by RateLimitDegraded"},
@@ -447,7 +460,7 @@ var alertSupportCatalog = []MetricSpec{
 	// lenny_gateway_request_duration_seconds), so those two underlying
 	// series must be catalogued. SessionAvailability reads the
 	// gateway-emitted lenny_session_unavailability_ratio gauge. The
-	// fast/slow multipliers are the §16.5 line 640 operator-tunable
+	// fast/slow multipliers are the §16.5 operator-tunable
 	// thresholds every burn-rate alert compares against via scalar(...).
 	// CheckpointDuration reads the §16.1 lenny_checkpoint_duration_seconds
 	// histogram (in MetricCatalog), so no support series is needed there.
@@ -481,7 +494,8 @@ var alertSupportCatalog = []MetricSpec{
 	{"lenny_gdpr_legal_hold_overridden_total", TypeCounter, "Legal-hold override uses, read by LegalHoldOverrideUsed"},
 	{"lenny_gdpr_legal_hold_overridden_tenant_total", TypeCounter, "Per-tenant legal-hold override uses, read by LegalHoldOverrideUsedTenant"},
 	{"lenny_credential_proactive_renewal_exhausted_total", TypeCounter, "Proactive credential-renewal exhaustions, read by CredentialProactiveRenewalExhausted"},
-	{"lenny_erasure_job_age_seconds", TypeGauge, "Age of the oldest in-flight erasure job, read by ErasureJobOverdue"},
+	{"lenny_erasure_job_age_seconds", TypeGauge, "Age of each in-progress erasure job, by tenant and job"},
+	{"lenny_erasure_job_overdue_seconds", TypeGauge, "Seconds each in-progress erasure job is past its own deadline, read by ErasureJobOverdue"},
 }
 
 // MetricCatalog returns the §16.1 metrics catalog. The slice is fresh

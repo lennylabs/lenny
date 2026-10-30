@@ -44,12 +44,11 @@ type CredentialPoolPayload struct {
 	// ETag is the §15.1 optimistic-concurrency entity tag — the quoted
 	// decimal version. List and GET responses carry it so a client can
 	// supply it as the If-Match header on a later PUT.
-	// spec: §15.1 lines 1207-1209.
+	// spec: §15.1.
 	ETag string `json:"etag,omitempty"`
 }
 
-// CachePolicyPayload is the §4.9 semantic-cache configuration on a pool
-// (spec lines 1542-1547). It is absent when the pool declares no
+// CachePolicyPayload is the §4.9 semantic-cache configuration on a pool. It is absent when the pool declares no
 // cachePolicy; §4.9 caching is disabled by default and opt-in per pool.
 type CachePolicyPayload struct {
 	Enabled             bool    `json:"enabled"`
@@ -81,7 +80,7 @@ type CredentialEntryPayload struct {
 	// credential-lease store); a minimal gateway omits them. Health is
 	// "revoked" for a revoked credential and "healthy" otherwise;
 	// LeaseCount is the credential's active lease count read from the
-	// lease store. spec: §24.5 line 87.
+	// lease store. spec: §24.5.
 	Health     string `json:"health,omitempty"`
 	LeaseCount *int   `json:"leaseCount,omitempty"`
 }
@@ -118,7 +117,7 @@ var crossUserCacheRegulatedProfiles = map[string]bool{
 // the scope is outside the enum, or when `cacheScope: tenant` is set on
 // a tenant carrying a regulated complianceProfile.
 //
-// spec: §4.9 lines 1554-1556 — `cacheScope: tenant` on a pool whose
+// spec: §4.9 — `cacheScope: tenant` on a pool whose
 // tenant has a regulated complianceProfile (hipaa, fedramp) is rejected
 // with 400 COMPLIANCE_CROSS_USER_CACHE_PROHIBITED. The rejection also
 // mitigates a cross-user timing side-channel.
@@ -150,7 +149,7 @@ func (r *Router) validateCacheScope(w http.ResponseWriter, req *http.Request, te
 	return true
 }
 
-// validatePoolProxyDialect enforces the §4.9 line 1476 proxy-dialect
+// validatePoolProxyDialect enforces the §4.9 proxy-dialect
 // admission boundary at pool registration/update. A credential pool
 // carries no static runtime binding, so "the Runtime's
 // credentialCapabilities.proxyDialect set" is resolved as the set of
@@ -207,7 +206,7 @@ func (r *Router) validatePoolProxyDialect(w http.ResponseWriter, req *http.Reque
 // (the real API key never leaves the gateway) requires the lease token
 // to travel encrypted, so a plaintext `http://` endpoint is rejected.
 //
-// spec: §4.9 line 1513 — the controller rejects an http:// proxyEndpoint
+// spec: §4.9 — the controller rejects an http:// proxyEndpoint
 // (InvalidProxyEndpointScheme).
 func writeProxyEndpointError(w http.ResponseWriter, err error) bool {
 	if !errors.Is(err, credentialpoolstore.ErrInvalidProxyEndpointScheme) {
@@ -238,7 +237,7 @@ func fromCredentialPool(p credentialpoolstore.CredentialPool) CredentialPoolPayl
 		CreatedAt:                  rfc3339Nano(p.CreatedAt),
 		UpdatedAt:                  rfc3339Nano(p.UpdatedAt),
 		DeletedAt:                  rfc3339Nano(p.DeletedAt),
-		// spec: §15.1 line 1207 — the ETag is the quoted decimal version,
+		// spec: §15.1 — the ETag is the quoted decimal version,
 		// carried per-item on list responses and in the GET header.
 		ETag: formatETag(p.Version),
 	}
@@ -308,7 +307,7 @@ func (r *Router) WithCredentialPools(s credentialpoolstore.Store) *Router {
 }
 
 // SecretProbeVerdict is the §4.9 admin-time RBAC live-probe outcome for
-// a single secretRef. spec: §4.9 line 1212.
+// a single secretRef. spec: §4.9.
 type SecretProbeVerdict int
 
 const (
@@ -329,7 +328,7 @@ const (
 // mTLS failure, Kubernetes API timeout) that the handler maps to
 // 503 CREDENTIAL_PROBE_UNAVAILABLE and never fails open.
 //
-// spec: §4.9 line 1212.
+// spec: §4.9.
 type SecretAccessProber interface {
 	ProbeSecretAccess(ctx context.Context, secretRef string) (SecretProbeVerdict, error)
 }
@@ -345,7 +344,7 @@ type SecretAccessProber interface {
 // is configured (`--token-service-grpc-addr` empty); the probe is
 // Token-Service-owned and has no meaning without that link.
 //
-// spec: §4.9 line 1212.
+// spec: §4.9.
 func (r *Router) WithSecretAccessProber(p SecretAccessProber) *Router {
 	r.secretProber = p
 	return r
@@ -360,7 +359,7 @@ func (r *Router) WithSecretAccessProber(p SecretAccessProber) *Router {
 // returns false — the handler MUST NOT fail open by persisting a write
 // whose probe could not be evaluated.
 //
-// spec: §4.9 line 1212.
+// spec: §4.9.
 func (r *Router) probeSecretRefs(w http.ResponseWriter, req *http.Request, refs []string) bool {
 	if r.secretProber == nil {
 		return true
@@ -434,7 +433,7 @@ func newSecretRefs(have []credentialpoolstore.Credential, want []CredentialEntry
 // tokenServiceRBACPatch builds the kubectl patch command that adds the
 // missing Secret names to the Token Service's secret-reader Role
 // resourceNames list — the remediation `lenny-ctl admin credential-pools
-// add-credential` emits. spec: §4.9 line 1212.
+// add-credential` emits. spec: §4.9.
 func tokenServiceRBACPatch(missing []string) string {
 	ops := make([]string, 0, len(missing))
 	for _, s := range missing {
@@ -453,7 +452,7 @@ func tokenServiceRBACPatch(missing []string) string {
 // Service read access before the pool is persisted, so a missing RBAC
 // grant fails admission with 422 CREDENTIAL_SECRET_RBAC_MISSING rather
 // than surfacing later as an opaque CREDENTIAL_POOL_EXHAUSTED. spec:
-// §4.9 line 1212.
+// §4.9.
 func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Request) {
 	var body CredentialPoolPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -474,7 +473,7 @@ func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Req
 	if !r.validateCacheScope(w, req, tenant, body.CacheScope) {
 		return
 	}
-	// spec: §4.9 line 1476 — reject a proxy-mode pool whose proxyDialect
+	// spec: §4.9 — reject a proxy-mode pool whose proxyDialect
 	// no agent runtime serving its provider can speak.
 	if !r.validatePoolProxyDialect(w, req, body.Provider, body.ProxyDialect) {
 		return
@@ -503,7 +502,7 @@ func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Req
 		CreatedAt:                  r.clock(),
 	}
 	pool.UpdatedAt = pool.CreatedAt
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// spec: §15.1 — ?dryRun=true validates without persisting or auditing.
 	if req.URL.Query().Get("dryRun") == "true" {
 		if verr := credentialpoolstore.Validate(pool); verr != nil {
 			if writeProxyEndpointError(w, verr) {
@@ -517,7 +516,7 @@ func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Req
 	}
 	if err := r.credentialPools.Create(req.Context(), pool); err != nil {
 		if errors.Is(err, credentialpoolstore.ErrAlreadyExists) {
-			// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+			// spec: §15.1 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
 			writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS",
 				"credential pool with this name already exists in tenant", nil)
 			return
@@ -557,7 +556,7 @@ func (r *Router) handleListCredentialPools(w http.ResponseWriter, req *http.Requ
 	for _, p := range rows {
 		out = append(out, fromCredentialPool(p))
 	}
-	// spec: §15.1 lines 1228-1253 — canonical cursor-paginated envelope. F-15.1.6.
+	// spec: §15.1 — canonical cursor-paginated envelope. F-15.1.6.
 	writePaginatedList(w, req, r.clock(), out, adminTimestampSortFields, adminListDefaultSort,
 		func(x CredentialPoolPayload, s pagination.Sort) (string, string) {
 			switch s.Field {
@@ -588,7 +587,7 @@ func (r *Router) handleGetCredentialPool(w http.ResponseWriter, req *http.Reques
 	}
 	payload := fromCredentialPool(row)
 	r.enrichCredentialHealth(&payload, row)
-	// spec: §15.1 line 1209 — GET responses for an admin resource carry the
+	// spec: §15.1 — GET responses for an admin resource carry the
 	// ETag header so the client can use it as the next PUT's If-Match.
 	w.Header().Set("ETag", formatETag(row.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -601,7 +600,7 @@ func (r *Router) handleGetCredentialPool(w http.ResponseWriter, req *http.Reques
 // revocation state); lease counts come from the wired
 // PoolCredentialHealthReader (the credential-lease store). With no
 // reader wired only the status-derived health is set, since the admin
-// store carries no runtime lease state. spec: §24.5 line 87.
+// store carries no runtime lease state. spec: §24.5.
 func (r *Router) enrichCredentialHealth(payload *CredentialPoolPayload, row credentialpoolstore.CredentialPool) {
 	var counts map[string]int
 	if r.poolCredHealth != nil {
@@ -670,7 +669,7 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 	if !r.validateCacheScope(w, req, tenant, body.CacheScope) {
 		return
 	}
-	// spec: §4.9 line 1476 — PUT is a full replace, so the body carries
+	// spec: §4.9 — PUT is a full replace, so the body carries
 	// the effective provider/proxyDialect; reject when the updated
 	// proxy-mode pool declares a dialect no agent runtime serving its
 	// provider can speak.
@@ -690,7 +689,7 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
 		return
 	}
-	// spec: §15.1 lines 1207-1211 — every admin PUT requires If-Match. Enforce
+	// spec: §15.1 — every admin PUT requires If-Match. Enforce
 	// the optimistic-concurrency precondition before the probe / dry-run
 	// branches so dryRun=true combined with a missing/stale If-Match fails here.
 	if !enforceIfMatch(w, req, current.Version) {
@@ -705,7 +704,7 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 			return
 		}
 	}
-	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
+	// spec: §15.1 — ?dryRun=true validates without persisting or auditing.
 	if req.URL.Query().Get("dryRun") == "true" {
 		preview := current
 		applyCredentialPoolUpdate(&preview, body)
@@ -738,7 +737,7 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 	principal, _ := authmw.FromContext(req.Context())
 	r.emit(req.Context(), principal, "admin.credential_pool.updated", name,
 		map[string]any{"tenantId": tenant})
-	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag so the
+	// spec: §15.1 — a successful PUT carries the bumped ETag so the
 	// client can chain a subsequent write without a refresh GET.
 	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
@@ -763,7 +762,7 @@ func (r *Router) handleDeleteCredentialPool(w http.ResponseWriter, req *http.Req
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1213 — DELETE honours If-Match only when present: a
+	// spec: §15.1 — DELETE honours If-Match only when present: a
 	// stale tag returns 412 ETAG_MISMATCH, an absent header proceeds.
 	if !enforceIfMatchIfPresent(w, req, current.Version) {
 		return
@@ -795,8 +794,7 @@ var errCredentialExists = errors.New("credential id already exists in pool")
 // admission with 422 CREDENTIAL_SECRET_RBAC_MISSING rather than later as
 // an opaque CREDENTIAL_POOL_EXHAUSTED.
 //
-// spec: §15.1 line 876 (POST .../credentials); §24.5 row 3; §4.9 line
-// 1212 (admin-time RBAC live-probe — same probe paths as pool create).
+// spec: §15.1; §24.5 row 3; §4.9.
 func (r *Router) handleAddCredential(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	var body CredentialEntryPayload
@@ -850,8 +848,7 @@ func (r *Router) handleAddCredential(w http.ResponseWriter, req *http.Request) {
 // When the secretRef changes, the §4.9 admin-time RBAC live-probe runs
 // over the new value.
 //
-// spec: §15.1 line 877 (PUT .../credentials/{credId}, RBAC probe on
-// secretRef change); §24.5 row 4; §4.9 line 1212.
+// spec: §15.1; §24.5 row 4; §4.9.
 func (r *Router) handleUpdateCredentialEntry(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	credID := req.PathValue("credId")
@@ -866,7 +863,7 @@ func (r *Router) handleUpdateCredentialEntry(w http.ResponseWriter, req *http.Re
 		return
 	}
 	// §4.9 admin-time RBAC live-probe runs only when the update changes
-	// secretRef (§15.1 line 877). Resolve the current entry first so an
+	// secretRef (§15.1). Resolve the current entry first so an
 	// unchanged secretRef takes no probe and a missing credential 404s
 	// before any probe.
 	if r.secretProber != nil && body.SecretRef != "" {
@@ -917,14 +914,14 @@ func (r *Router) handleUpdateCredentialEntry(w http.ResponseWriter, req *http.Re
 // handleRemoveCredential implements DELETE
 // /v1/admin/credential-pools/{name}/credentials/{credId} — the §24.5
 // row-5 remove-credential operation. The credential is dropped from the
-// pool, so no new lease selects it. Per §15.1 line 878 the active
+// pool, so no new lease selects it. Per §15.1 the active
 // leases backed by it are rotated via the standard §4.9 fallback path
 // (the renewal path can no longer resolve the removed credential and
 // re-acquires from the remaining pool credentials); removal does not add
 // the credential to the deny list, which is reserved for emergency
 // revocation (CREDENTIAL_REVOKED hard-reject).
 //
-// spec: §15.1 line 878 (DELETE .../credentials/{credId}); §24.5 row 5.
+// spec: §15.1; §24.5 row 5.
 func (r *Router) handleRemoveCredential(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	credID := req.PathValue("credId")
@@ -964,7 +961,7 @@ func (r *Router) handleRemoveCredential(w http.ResponseWriter, req *http.Request
 // seeds the revoked credential onto a replica's deny list at the next
 // restart, so the credential is still rejected on the upstream path.
 //
-// spec: §4.9 lines 1640-1652 — mark the credential revoked, look up all
+// spec: §4.9 — mark the credential revoked, look up all
 // active leases backed by it, terminate them, and add the credential to
 // the in-memory deny list propagated across replicas.
 type PoolCredentialRevoker interface {
@@ -993,7 +990,7 @@ func (r *Router) WithPoolCredentialRevocation(rev PoolCredentialRevoker) *Router
 // returned map is keyed by credential id; a credential absent from the
 // map has no active lease on this replica.
 //
-// spec: §24.5 line 87 — `get --pool <name>` shows per-credential health
+// spec: §24.5 — `get --pool <name>` shows per-credential health
 // scores and lease counts.
 type PoolCredentialHealthReader interface {
 	PoolCredentialLeaseCounts(poolName string, credentialIDs []string) map[string]int
@@ -1064,7 +1061,7 @@ func preserveRevocations(existing, incoming []credentialpoolstore.Credential) []
 // handleRevokeCredential implements the §4.9 single-credential emergency
 // revocation: POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke.
 //
-// spec: §4.9 lines 1626-1652 — mark the credential revoked in the store,
+// spec: §4.9 — mark the credential revoked in the store,
 // terminate its active leases via the deny list, emit credential.revoked,
 // and return a 200 summary.
 func (r *Router) handleRevokeCredential(w http.ResponseWriter, req *http.Request) {
@@ -1117,7 +1114,7 @@ func (r *Router) handleRevokeCredential(w http.ResponseWriter, req *http.Request
 // POST /v1/admin/credential-pools/{name}/revoke. It revokes every
 // credential in the pool simultaneously.
 //
-// spec: §4.9 lines 1654-1659 — revoke all credentials in the pool; all
+// spec: §4.9 — revoke all credentials in the pool; all
 // active sessions are rotated to their fallback chain, or terminated
 // with CREDENTIAL_POOL_EXHAUSTED if no fallback is available.
 func (r *Router) handleRevokePool(w http.ResponseWriter, req *http.Request) {
@@ -1185,8 +1182,7 @@ func (r *Router) handleRevokePool(w http.ResponseWriter, req *http.Request) {
 // expiry, so an operator re-enabling a credential on a long-running
 // fleet should roll the gateway replicas to clear the live entries.
 //
-// spec: §4.9 line 1743 (credential.re_enabled), lines 1675-1677 (runbook
-// step 6 — rotate the underlying secret before re-enabling).
+// spec: §4.9.
 func (r *Router) handleReEnableCredential(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	credID := req.PathValue("credId")
@@ -1270,7 +1266,7 @@ func (r *Router) writeCredentialMutateError(w http.ResponseWriter, err error) {
 	case errors.Is(err, errCredentialNotFound):
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential not found in pool", nil)
 	case errors.Is(err, errCredentialExists):
-		// spec: §15.1 line 983 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
+		// spec: §15.1 — duplicate identifier is RESOURCE_ALREADY_EXISTS.
 		writeError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS", "credential id already exists in pool", nil)
 	default:
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)

@@ -44,8 +44,7 @@ func opsDevHeaders(req *http.Request) {
 // returns this context in one call" and the documented `GET
 // /v1/admin/me` response envelope carrying `authorization.tenantScope`,
 // `authorization.scope` ("tools:*" absent a narrower claim),
-// `platform.version`, and `links`, spec/25_agent-operability.md lines
-// 1571-1631).
+// `platform.version`, and `links`, §25.4).
 // diagnosis: a failure here means the deployed lenny-ops's
 // /v1/admin/me either does not answer at all, or answers without the
 // documented envelope sections (authorization, platform, links) that
@@ -109,7 +108,7 @@ func TestCloudOpsAdminMe(t *testing.T) {
 		t.Errorf("/v1/admin/me authorization.tenantScope is empty, want a non-empty value (\"*\" absent a resolved tenant)")
 	}
 	if body.Authorization.Scope != "tools:*" {
-		t.Errorf("/v1/admin/me authorization.scope = %q, want %q (§25.4 line 1592: an absent scope claim echoes as tools:*)", body.Authorization.Scope, "tools:*")
+		t.Errorf("/v1/admin/me authorization.scope = %q, want %q (§25.4: an absent scope claim echoes as tools:*)", body.Authorization.Scope, "tools:*")
 	}
 	if body.Platform.Version == "" {
 		t.Errorf("/v1/admin/me platform.version is empty, want the running lenny-ops version")
@@ -208,7 +207,7 @@ func TestCloudOpsRemediationLockAcquireRelease(t *testing.T) {
 
 // spec: 25.4 ("`lenny-ops` is only reachable from outside the cluster
 // via Ingress. No internal cluster workload ... can reach the
-// operational control plane.", spec/25_agent-operability.md line 50) and
+// operational control plane.", §25.1) and
 // 17.5 (cloud portability: provider-native ingress and TLS, the same
 // operator-supplied-Ingress model TestManagedIngress already pins for
 // the gateway).

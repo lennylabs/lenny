@@ -12,8 +12,7 @@ import (
 )
 
 // cmdValues dispatches the `lenny-ctl values` subcommands. The group runs
-// offline; it issues no gateway calls. spec: §24.20 line 303, §17.6 line
-// 666.
+// offline; it issues no gateway calls. spec: §24.20, §17.6.
 func cmdValues(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl values: expected a subcommand (validate)")
@@ -33,9 +32,7 @@ func cmdValues(args []string, stdout, stderr io.Writer) int {
 // validation report on failure (exit 1). The schema is generated from the
 // same pkg/chart/values source of truth the committed
 // charts/lenny/values.schema.json is built from, so the CLI needs no
-// chart checkout to run. spec: §17.6 line 666 ("recommended check for CI
-// pipelines that render values but do not run helm install"), §24.20 line
-// 303.
+// chart checkout to run. spec: §17.6, §24.20.
 func cmdValuesValidate(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("values validate", flag.ContinueOnError)
 	fs.SetOutput(stderr)

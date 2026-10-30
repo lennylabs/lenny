@@ -15,7 +15,7 @@ func assignable(id string) PoolDescriptor {
 	return PoolDescriptor{PoolID: id, Healthy: true, HasCapacity: true}
 }
 
-// spec: §4.9 line 1218 — a pool is assignable only when healthy, with
+// spec: §4.9 — a pool is assignable only when healthy, with
 // capacity, and not cooling down.
 func TestPoolDescriptorAssignable(t *testing.T) {
 	if !assignable("p").Assignable() {
@@ -33,7 +33,7 @@ func TestPoolDescriptorAssignable(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1328-1336 — pool source resolves to the first
+// spec: §4.9 — pool source resolves to the first
 // assignable pool in fallback order.
 func TestResolvePoolSource(t *testing.T) {
 	r := NewDefault()
@@ -50,7 +50,7 @@ func TestResolvePoolSource(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1314-1319 — fallback chain skips a cooling/exhausted
+// spec: §4.9 — fallback chain skips a cooling/exhausted
 // primary and selects the next assignable pool in order.
 func TestResolvePoolFallbackOrder(t *testing.T) {
 	r := NewDefault()
@@ -71,7 +71,7 @@ func TestResolvePoolFallbackOrder(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1218 — no assignable pool returns
+// spec: §4.9 — no assignable pool returns
 // ErrNoCredentialAvailable (CREDENTIAL_POOL_EXHAUSTED).
 func TestResolvePoolExhausted(t *testing.T) {
 	r := NewDefault()
@@ -85,7 +85,7 @@ func TestResolvePoolExhausted(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1336 — user-only mode resolves to the user source
+// spec: §4.9 — user-only mode resolves to the user source
 // when a user credential is available.
 func TestResolveUserSource(t *testing.T) {
 	r := NewDefault()
@@ -102,7 +102,7 @@ func TestResolveUserSource(t *testing.T) {
 	}
 }
 
-// spec: §4.9 lines 1364, 1370 — user-only mode with no user credential
+// spec: §4.9 — user-only mode with no user credential
 // is terminal: ErrUserCredentialNotFound.
 func TestResolveUserOnlyMissTerminal(t *testing.T) {
 	r := NewDefault()
@@ -117,7 +117,7 @@ func TestResolveUserOnlyMissTerminal(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1362 — prefer-user-then-pool falls through to pool
+// spec: §4.9 — prefer-user-then-pool falls through to pool
 // when no user credential is registered.
 func TestResolvePreferUserThenPoolFallsThrough(t *testing.T) {
 	r := NewDefault()
@@ -135,7 +135,7 @@ func TestResolvePreferUserThenPoolFallsThrough(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1336 — prefer-user-then-pool prefers the user source
+// spec: §4.9 — prefer-user-then-pool prefers the user source
 // when it is available, even with pools present.
 func TestResolvePreferUserThenPoolPrefersUser(t *testing.T) {
 	r := NewDefault()
@@ -149,7 +149,7 @@ func TestResolvePreferUserThenPoolPrefersUser(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1336 — prefer-pool-then-user tries the pool first and
+// spec: §4.9 — prefer-pool-then-user tries the pool first and
 // only falls through to the user source when no pool is assignable.
 func TestResolvePreferPoolThenUser(t *testing.T) {
 	r := NewDefault()
@@ -173,7 +173,7 @@ func TestResolvePreferPoolThenUser(t *testing.T) {
 	}
 }
 
-// spec: §4.9 line 1326 — the intersection is providers in both
+// spec: §4.9 — the intersection is providers in both
 // supportedProviders and the policy's providerPools keys, sorted.
 func TestIntersection(t *testing.T) {
 	policy := credential.CredentialPolicy{ProviderPools: map[string]credential.ProviderPool{

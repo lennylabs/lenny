@@ -172,7 +172,7 @@ func (s *Stack) PostgresDSN() string {
 }
 
 // PgBouncerDSN returns a connection string that points at the
-// PgBouncer connection-pooler in session pooling mode. The §12.2.2
+// PgBouncer connection-pooler in session pooling mode. The TESTING.md §12.2.2
 // connection-reuse leak test reaches Postgres through this endpoint
 // so a returned connection retains its SET LOCAL state, exposing any
 // gateway-side failure to reset the tenant context before reuse.

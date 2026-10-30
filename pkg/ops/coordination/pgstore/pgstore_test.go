@@ -65,7 +65,7 @@ func mustAcquire(t *testing.T, s *pgstore.Store, ctx context.Context, scope, by 
 	return lock
 }
 
-// spec: §25.4 lines 2170, 2187, 2193 — Tier 1 acquire uses UNIQUE(scope)
+// spec: §25.4 — Tier 1 acquire uses UNIQUE(scope)
 // as the CAS; a non-expired lock yields REMEDIATION_LOCK_CONFLICT;
 // release frees the scope.
 func TestPgAcquireConflictRelease_spec_25_4(t *testing.T) {
@@ -88,7 +88,7 @@ func TestPgAcquireConflictRelease_spec_25_4(t *testing.T) {
 	mustAcquire(t, s, ctx, "pool:p", "bob", 300)
 }
 
-// spec: §25.4 lines 2193, 2303 — an expired row does not block a fresh
+// spec: §25.4 — an expired row does not block a fresh
 // acquire (lazy cleanup), and the periodic Reap removes expired rows.
 func TestPgExpiryAndReap_spec_25_4(t *testing.T) {
 	s, pool, ctx := setup(t)
@@ -113,7 +113,7 @@ func TestPgExpiryAndReap_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2303-2306, 2282-2295 — identity-based Extend and the
+// spec: §25.4 — identity-based Extend and the
 // audited Steal recording the prior holder.
 func TestPgExtendSteal_spec_25_4(t *testing.T) {
 	s, _, ctx := setup(t)
@@ -134,7 +134,7 @@ func TestPgExtendSteal_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2218-2222, 2230 — the outage epoch counter: default 0,
+// spec: §25.4 — the outage epoch counter: default 0,
 // increment advances it, SetEpoch applies the MAX (never backward).
 func TestPgEpoch_spec_25_4(t *testing.T) {
 	s, _, ctx := setup(t)
@@ -155,7 +155,7 @@ func TestPgEpoch_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2255-2267 — the deterministic split-brain resolution:
+// spec: §25.4 — the deterministic split-brain resolution:
 // both active → pre-outage (Postgres) wins; a Redis-only scope is copied
 // in; the conflict is recorded in ops_lock_conflicts.
 func TestPgReconcileSplitBrainPreOutageWins_spec_25_4(t *testing.T) {
@@ -214,7 +214,7 @@ func TestPgReconcileSplitBrainPreOutageWins_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2267, line 2271 — after a both-active resolution the
+// spec: §25.4 — after a both-active resolution the
 // losing (post-outage Redis) holder is notified with the split-brain 409 on
 // its next heartbeat/release/get: Get, Extend, and Release on the losing
 // lock id return REMEDIATION_LOCK_CONFLICT with splitBrain:true,
@@ -260,7 +260,7 @@ func TestPgSplitBrainLoserNotifiedOnNextCall_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2259-2260 — when the pre-outage Postgres lock is
+// spec: §25.4 — when the pre-outage Postgres lock is
 // expired by clock, the Redis lock wins and replaces the Postgres row.
 func TestPgReconcileSplitBrainRedisWins_spec_25_4(t *testing.T) {
 	s, pool, ctx := setup(t)
@@ -289,7 +289,7 @@ func TestPgReconcileSplitBrainRedisWins_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2266 — when the pre-outage Postgres lock is not
+// spec: §25.4 — when the pre-outage Postgres lock is not
 // expired and the post-outage Redis lock has expired by clock, Postgres
 // wins: the Redis lock is discarded and the Postgres lock is retained
 // with its pre-outage epoch. The conflict is logged with a non-active
@@ -344,7 +344,7 @@ func TestPgReconcileSplitBrainPostgresWinsRedisExpired_spec_25_4(t *testing.T) {
 // small window of the local wall clock; the assertion proves the read
 // returns a live UTC server time rather than a zero value.
 //
-// spec: §25.4 line 2280 (Postgres-Redis skew monitoring); the Tier 1
+// spec: §25.4; the Tier 1
 // clock is Postgres now() at time zone 'UTC'.
 func TestPgServerTime_spec_25_4(t *testing.T) {
 	s, _, ctx := setup(t)
@@ -374,8 +374,7 @@ func TestPgServerTime_spec_25_4(t *testing.T) {
 // reporting a spurious skew. It needs no Postgres bundle because the
 // connection never succeeds.
 //
-// spec: §25.4 line 2280 (Postgres-Redis skew monitoring; a Postgres
-// outage surfaces as ErrStoreUnavailable so the sampler skips the sample).
+// spec: §25.4.
 func TestPgServerTimeStoreUnavailable_spec_25_4(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

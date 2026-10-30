@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// spec: §12.9 line 1050 — global.devMode exempts the volume-encryption
+// spec: §12.9 — global.devMode exempts the volume-encryption
 // check entirely, regardless of attestation or prober.
 func TestVolumeEncryptionCheckDevModeExempt_spec_12_9_1050(t *testing.T) {
 	d := VolumeEncryptionCheck{DevMode: true}.Decide(context.Background())
@@ -21,7 +21,7 @@ func TestVolumeEncryptionCheckDevModeExempt_spec_12_9_1050(t *testing.T) {
 	}
 }
 
-// spec: §12.9 line 1050 — with no prober the check cannot be performed; the
+// spec: §12.9 — with no prober the check cannot be performed; the
 // posture is non-blocking. An unattested install passes with a WARNING that
 // records the attestation obligation; an attested install passes cleanly.
 func TestVolumeEncryptionCheckAttestationGate_spec_12_9_1050(t *testing.T) {
@@ -45,7 +45,7 @@ func TestVolumeEncryptionCheckAttestationGate_spec_12_9_1050(t *testing.T) {
 	}
 }
 
-// spec: §12.9 line 1050 — a prober that reports every volume encrypted
+// spec: §12.9 — a prober that reports every volume encrypted
 // passes; an unencrypted volume fails closed even when attested (the
 // attestation only covers the "cannot be performed" case).
 func TestVolumeEncryptionCheckProbed_spec_12_9_1050(t *testing.T) {
@@ -75,7 +75,7 @@ func TestVolumeEncryptionCheckProbed_spec_12_9_1050(t *testing.T) {
 	}
 }
 
-// spec: §12.9 line 1050 — a prober error or an empty result set routes
+// spec: §12.9 — a prober error or an empty result set routes
 // through the attestation gate (cannot be performed).
 func TestVolumeEncryptionCheckProbeError_spec_12_9_1050(t *testing.T) {
 	failing := VolumeEncryptionProbeFunc(func(context.Context) ([]VolumeEncryptionResult, error) {

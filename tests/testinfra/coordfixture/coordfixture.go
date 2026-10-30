@@ -21,6 +21,7 @@ package coordfixture
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"testing"
@@ -60,6 +61,21 @@ func (fakeRuntime) Output(context.Context, string) (<-chan []byte, error) {
 	return ch, nil
 }
 
+// stubTransport satisfies the adapter's checkpoint transport so a
+// barrier-window Checkpoint stream driven against the pod reaches the point
+// where it links the named session's barrier gate. No chunk is uploaded: a
+// coordination test drives the stream only far enough to link and terminate
+// the gate.
+type stubTransport struct{}
+
+func (stubTransport) PutChunk(context.Context, string, map[string]string, int64, io.Reader) (int, string, error) {
+	return 200, "", nil
+}
+
+func (stubTransport) GetChunk(context.Context, string, map[string]string) (io.ReadCloser, error) {
+	return nil, io.EOF
+}
+
 // Pod is a real in-process adapter modeling a still-running pod, with a dialed
 // client the harness uses to drive the §10.1 CoordinatorFence and to probe the
 // generation fence with a session-mutating RPC.
@@ -76,9 +92,10 @@ type Pod struct {
 func StartPod(t testing.TB, sessionID string) *Pod {
 	t.Helper()
 	srv := adapter.New("coordfixture")
-	srv.WorkspaceRoot = t.TempDir()
+	srv.WorkspaceBase = t.TempDir()
 	srv.ManifestDir = t.TempDir()
 	srv.Runtime = fakeRuntime{}
+	srv.CheckpointTransport = stubTransport{}
 
 	lis := bufconn.Listen(1 << 20)
 	gs := adapter.NewGRPCServer(srv)
@@ -95,50 +112,99 @@ func StartPod(t testing.TB, sessionID string) *Pod {
 	}
 	t.Cleanup(func() { _ = cl.Close() })
 
-	if err := cl.StartSession(context.Background(), adapterclient.StartSessionParams{
-		SessionID: sessionID, Runtime: "claude-code",
-	}); err != nil {
-		t.Fatalf("coordfixture: StartSession: %v", err)
-	}
-	return &Pod{Server: srv, Client: cl, SessionID: sessionID}
+	pod := &Pod{Server: srv, Client: cl, SessionID: sessionID}
+	pod.StartSession(t, sessionID)
+	return pod
 }
 
-// Fence drives a real CoordinatorFence to gen and reports whether the pod
-// accepted it. The first fence on a pod is always accepted; a later fence
-// whose generation is not strictly greater is rejected with FailedPrecondition.
-func (p *Pod) Fence(ctx context.Context, gen int64) (bool, error) {
-	res, err := p.Client.CoordinatorFence(ctx, p.SessionID, gen)
+// StartSession starts a further session on the already-running pod over the
+// pod's dialed client, so a test can model two co-tenant sessions bound to one
+// pod. Each bound session carries its own fenced coordination generation and
+// its own barrier gate, so a co-tenant pair is what distinguishes a per-session
+// gate from a pod-wide one.
+//
+// spec: §10.1.2 (the pod holds a fenced generation per bound session), §5.2
+// (concurrent sessions on one pod).
+func (p *Pod) StartSession(t testing.TB, sessionID string) {
+	t.Helper()
+	if err := p.Client.StartSession(context.Background(), adapterclient.StartSessionParams{
+		SessionID: sessionID, Runtime: "claude-code",
+	}); err != nil {
+		t.Fatalf("coordfixture: StartSession %s: %v", sessionID, err)
+	}
+}
+
+// Fence drives a real CoordinatorFence for the session to gen and reports
+// whether the pod accepted it. The first fence for a bound session on that pod
+// is always accepted; a later fence for the same session whose generation is
+// not strictly greater is rejected with FailedPrecondition. A co-tenant
+// session's own fence is recorded and compared against that session's value
+// alone.
+func (p *Pod) Fence(ctx context.Context, sessionID string, gen int64) (bool, error) {
+	res, err := p.Client.CoordinatorFence(ctx, sessionID, gen)
 	return res.Accepted, err
 }
 
-// LastFenced returns the generation the pod is currently fenced to.
-func (p *Pod) LastFenced() int64 { return p.Server.LastFencedGeneration() }
+// LastFenced returns the generation the pod is currently fenced to for the
+// session, or zero when no coordinator has fenced that session on this pod.
+func (p *Pod) LastFenced(sessionID string) int64 {
+	return p.Server.LastFencedGeneration(sessionID)
+}
+
+// WaitBarrierWaiting spins until an in-flight CheckpointBarrier for the
+// session has opened that session's quiesce-and-hold gate, so a Checkpoint
+// stream driven afterwards links into it the way the gateway's concurrently
+// started stream does. spec: §10.1.8.
+func (p *Pod) WaitBarrierWaiting(t testing.TB, sessionID string) {
+	t.Helper()
+	for i := 0; i < 2000; i++ {
+		if p.Server.BarrierWaiting(sessionID) {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("coordfixture: CheckpointBarrier for %s never opened its quiesce-and-hold gate", sessionID)
+}
 
 // StaleRPCRejected reports whether a session-mutating RPC (CheckpointBarrier)
-// carrying gen is rejected by the pod's §10.1 generation fence. It is the
-// split-brain probe: after a handoff advances the coordination generation, the
-// previous coordinator's RPC at the pre-handoff generation must be rejected.
+// for the session carrying gen is rejected by the pod's §10.1 generation
+// fence. It is the split-brain probe: after a handoff advances that session's
+// coordination generation, the previous coordinator's RPC at the pre-handoff
+// generation must be rejected.
 // spec: §10.1 (generation fence; a stale coordinator's RPC is rejected).
-func (p *Pod) StaleRPCRejected(ctx context.Context, gen int64) bool {
-	_, err := p.Client.CheckpointBarrier(ctx, p.SessionID, gen, "coordfixture-split-brain-probe")
+func (p *Pod) StaleRPCRejected(ctx context.Context, sessionID string, gen int64) bool {
+	_, err := p.Client.CheckpointBarrier(ctx, sessionID, gen, "coordfixture-split-brain-probe")
 	return status.Code(err) == codes.FailedPrecondition
 }
 
 // Bindings is a concurrency-safe coordination.BindingRegistry standing in for a
 // replica's per-replica podsession registry. A takeover publish flips the
-// session bound (modeling the production podRegistry.Put that holds the
-// re-established connection open); KillConn models a dead held gateway-to-pod
-// channel so a test can exercise the dead-connection eviction path.
+// session bound and stamps the binding with the generation it was published at
+// (modeling the production podRegistry.Put that holds the re-established
+// connection open); KillConn models a dead held gateway-to-pod channel so a
+// test can exercise the dead-connection eviction path.
 type Bindings struct {
 	mu      sync.Mutex
 	bound   map[string]bool
 	dead    map[string]bool
+	gen     map[string]int64
 	evicted map[string]int
 }
 
 // NewBindings returns an empty binding registry.
 func NewBindings() *Bindings {
-	return &Bindings{bound: map[string]bool{}, dead: map[string]bool{}, evicted: map[string]int{}}
+	return &Bindings{bound: map[string]bool{}, dead: map[string]bool{}, gen: map[string]int64{}, evicted: map[string]int{}}
+}
+
+// BindingGeneration returns the generation stamped on the session's binding,
+// or 0 when the session is unbound. spec: §10.1.5 (Stale Replica Behavior).
+func (b *Bindings) BindingGeneration(id string) int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.bound[id] {
+		return 0
+	}
+	return b.gen[id]
 }
 
 // Bound reports whether this replica holds a live binding for the session.
@@ -164,16 +230,19 @@ func (b *Bindings) EvictBinding(id string) {
 	defer b.mu.Unlock()
 	delete(b.bound, id)
 	delete(b.dead, id)
+	delete(b.gen, id)
 	b.evicted[id]++
 }
 
-// Publish marks the session bound with a live channel, modeling the
-// post-fence podRegistry.Put.
-func (b *Bindings) Publish(id string) {
+// Publish marks the session bound with a live channel and stamps the binding
+// at generation, modeling the post-fence podRegistry.Put of a binding stamped
+// with the generation this replica holds the lease at.
+func (b *Bindings) Publish(id string, generation int64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.bound[id] = true
 	b.dead[id] = false
+	b.gen[id] = generation
 }
 
 // KillConn marks the held channel of a bound session dead.
@@ -212,10 +281,11 @@ type FenceReadopter struct {
 	calls    int
 	gens     []int64
 	sessions []string
+	results  map[string]adapterclient.CoordinatorFenceResult
 }
 
-// ReadoptAndFence fences the pod to the post-handoff generation and returns a
-// publish callback the Sweeper invokes only after the fence acknowledges. On a
+// ReadoptAndFence fences the session it is adopting to the post-handoff
+// generation on the pod and returns a publish callback the Sweeper invokes only after the fence acknowledges. On a
 // Fail session it relinquishes the lease and returns an error.
 func (r *FenceReadopter) ReadoptAndFence(ctx context.Context, tenantID, sessionID string, generation int64) (func(), error) {
 	r.mu.Lock()
@@ -228,7 +298,14 @@ func (r *FenceReadopter) ReadoptAndFence(ctx context.Context, tenantID, sessionI
 		_ = r.Leases.Release(ctx, tenantID, sessionID, r.ReplicaID)
 		return nil, fmt.Errorf("coordfixture: fence relinquished for session %s", sessionID)
 	}
-	accepted, err := r.Pod.Fence(ctx, generation)
+	res, err := r.Pod.Client.CoordinatorFence(ctx, sessionID, generation)
+	r.mu.Lock()
+	if r.results == nil {
+		r.results = map[string]adapterclient.CoordinatorFenceResult{}
+	}
+	r.results[sessionID] = res
+	r.mu.Unlock()
+	accepted := res.Accepted
 	if err != nil {
 		_ = r.Leases.Release(ctx, tenantID, sessionID, r.ReplicaID)
 		return nil, fmt.Errorf("coordfixture: fence session %s to generation %d: %w", sessionID, generation, err)
@@ -237,7 +314,20 @@ func (r *FenceReadopter) ReadoptAndFence(ctx context.Context, tenantID, sessionI
 		_ = r.Leases.Release(ctx, tenantID, sessionID, r.ReplicaID)
 		return nil, fmt.Errorf("coordfixture: pod rejected fence for session %s at generation %d", sessionID, generation)
 	}
-	return func() { r.Bindings.Publish(sessionID) }, nil
+	return func() { r.Bindings.Publish(sessionID, generation) }, nil
+}
+
+// FenceResult returns the CoordinatorFenceResponse the pod returned for the
+// session's most recent readopt fence, and whether one was recorded. It lets a
+// test assert what the pod made of a co-tenant session's own fence — accepted,
+// and reporting no gap on that session's first fence within its binding — rather
+// than inferring it from the lease that survived.
+// spec: §10.1.2 (the fence is recorded and compared per bound session).
+func (r *FenceReadopter) FenceResult(sessionID string) (adapterclient.CoordinatorFenceResult, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	res, ok := r.results[sessionID]
+	return res, ok
 }
 
 // Calls reports how many times ReadoptAndFence ran.
@@ -296,13 +386,19 @@ type Replica struct {
 // session store, lease store, and pod. The sessions named in bind are published
 // on the replica's binding registry so a coordinating replica holds the binding
 // the §4.6.1 co-location invariant requires, and its sweep renews (rather than
-// adopts) those leases. ttl is the lease lifetime; a short ttl on a coordinating
-// replica lets a test inject a crash as a genuine Redis lease lapse once the
-// replica stops sweeping.
+// adopts) those leases. Each bound session's binding is stamped with the
+// session row's current coordination_generation, as an at-bind publish stamps
+// it; a session with no row is stamped 0. ttl is the lease lifetime; a short
+// ttl on a coordinating replica lets a test inject a crash as a genuine Redis
+// lease lapse once the replica stops sweeping.
 func NewReplica(id, tenantID string, pod *Pod, sessions sessionstore.Store, leases leasestore.LeaseStore, ttl time.Duration, bind ...string) *Replica {
 	bindings := NewBindings()
 	for _, s := range bind {
-		bindings.Publish(s)
+		var generation int64
+		if row, err := sessions.Get(context.Background(), tenantID, s); err == nil {
+			generation = row.CoordinationGeneration
+		}
+		bindings.Publish(s, generation)
 	}
 	readopter := &FenceReadopter{Pod: pod, Bindings: bindings, Leases: leases, ReplicaID: id, TenantID: tenantID}
 	sw := coordination.NewSweeper(Tenants{tenantID}, sessions, leases, coordination.Options{

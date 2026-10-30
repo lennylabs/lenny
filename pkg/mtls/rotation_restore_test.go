@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// spec: §10.3 line 347 — a durable rotation resumes from the recorded
+// spec: §10.3 — a durable rotation resumes from the recorded
 // stage. RestoreCARotation rebuilds the linear state machine and lets
 // the operator continue the procedure across a gateway restart.
 func TestRestoreCARotation_resumesAndContinues(t *testing.T) {

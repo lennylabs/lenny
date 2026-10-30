@@ -14,7 +14,7 @@ import (
 // store (the TIME command), both authored as the single per-tier clock
 // the §25.4 lease-expiry computation assumes.
 //
-// spec: §25.4 line 2280 (Postgres-Redis skew monitoring).
+// spec: §25.4.
 type ClockReader interface {
 	ServerTime(ctx context.Context) (time.Time, error)
 }
@@ -24,7 +24,7 @@ type ClockReader interface {
 // which publishes lenny_ops_clock_skew_seconds{pair}. Defined at the
 // consumer so a unit test can substitute a recorder.
 //
-// spec: §25.4 line 2336 (lenny_ops_clock_skew_seconds gauge).
+// spec: §25.4.
 type SkewSetter interface {
 	SetClockSkew(pair string, seconds float64)
 }
@@ -42,7 +42,7 @@ type SkewSetter interface {
 // authoritative skew oracle, it is a monitoring estimate of the same
 // clock divergence the lease-expiry path is exposed to.
 //
-// spec: §25.4 line 2280 (Postgres-Redis skew monitoring and >10s alert).
+// spec: §25.4.
 type ClockSkewSampler struct {
 	postgres ClockReader
 	redis    ClockReader
@@ -71,8 +71,7 @@ func NewClockSkewSampler(postgres, redis ClockReader, metrics SkewSetter) *Clock
 // read failure returns the error wrapped with the failing tier and does
 // not update the gauge, leaving the last good sample in place.
 //
-// spec: §25.4 line 2280 (server computes expiresAt from a single clock;
-// monitor Postgres-Redis skew). The skew is abs(redis - postgres) so the
+// spec: §25.4. The skew is abs(redis - postgres) so the
 // gauge is direction-agnostic, matching the alert expression's `> 10`.
 func (s *ClockSkewSampler) Sample(ctx context.Context) (float64, error) {
 	if s == nil || s.postgres == nil || s.redis == nil || s.metrics == nil {

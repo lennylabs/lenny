@@ -171,7 +171,7 @@ func TestAgentPeerVerifierAcceptsWhenNotRevoked_spec_10_3_352(t *testing.T) {
 
 func TestAgentPeerVerifierEnforcesPoolAndPodExpectation_spec_10_3_321(t *testing.T) {
 	cert := certWithURIs(t, "spiffe://"+testTrustDomain+"/agent/pool-a/pod-1")
-	// Expect a different pool: the §10.3 line 321 {pool}/{pod} narrowing
+	// Expect a different pool: the §10.3 {pool}/{pod} narrowing
 	// must reject a certificate whose pool segment disagrees.
 	v := spiffe.AgentPeerVerifier{
 		TrustDomain: testTrustDomain,

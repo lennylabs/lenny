@@ -88,19 +88,34 @@ func TestEtcdEncryption(t *testing.T) {
 		t.Fatalf("write kind cluster config: %v", err)
 	}
 
+	// Every kind command against the dedicated cluster names a private
+	// kubeconfig. Without it, kind merges the dedicated cluster into the
+	// file $KUBECONFIG names, makes it the current-context, and clears
+	// that current-context again on delete, so a run with KUBECONFIG at
+	// the shared cluster's kubeconfig left that file with no
+	// current-context (T-17.4.30).
+	kubeconfig := filepath.Join(t.TempDir(), "kubeconfig")
+	kindCmd := func(args ...string) *exec.Cmd {
+		full, err := kind.DedicatedClusterArgs(kubeconfig, args...)
+		if err != nil {
+			t.Fatalf("dedicated kind command: %v", err)
+		}
+		return exec.Command("kind", full...)
+	}
+
 	// Bring up the dedicated cluster. Always register teardown first so
 	// a failure mid-bring-up still cleans the partial cluster up.
 	t.Cleanup(func() {
-		out, err := exec.Command("kind", "delete", "cluster", "--name", etcEncClusterName).CombinedOutput()
+		out, err := kindCmd("delete", "cluster", "--name", etcEncClusterName).CombinedOutput()
 		if err != nil {
 			t.Logf("kind delete cluster %s: %v\n%s", etcEncClusterName, err, out)
 		}
 	})
 	// Delete any stale cluster of the same name from a prior aborted run.
-	_ = exec.Command("kind", "delete", "cluster", "--name", etcEncClusterName).Run()
+	_ = kindCmd("delete", "cluster", "--name", etcEncClusterName).Run()
 
-	create := exec.Command(
-		"kind", "create", "cluster",
+	create := kindCmd(
+		"create", "cluster",
 		"--name", etcEncClusterName,
 		"--image", etcEncNodeImage,
 		"--config", kindCfgPath,
@@ -112,7 +127,8 @@ func TestEtcdEncryption(t *testing.T) {
 		t.Fatalf("kind create cluster %s with encryption-provider-config failed: %v", etcEncClusterName, err)
 	}
 
-	kubeconfig := writeKubeconfig(t, etcEncClusterName)
+	// kind create wrote the dedicated cluster's context into the private
+	// kubeconfig and made it that file's current-context.
 
 	// Confirm the apiserver actually loaded the encryption flag. If the
 	// flag did not take, the rest of the test would still write a
@@ -289,21 +305,6 @@ nodes:
 		etcEncConfigNodePath,
 		etcEncConfigNodePath,
 	)
-}
-
-// writeKubeconfig fetches the dedicated cluster's kubeconfig and writes
-// it to a temp file, returning the path.
-func writeKubeconfig(t *testing.T, name string) string {
-	t.Helper()
-	out, err := exec.Command("kind", "get", "kubeconfig", "--name", name).Output()
-	if err != nil {
-		t.Fatalf("kind get kubeconfig --name %s: %v", name, err)
-	}
-	path := filepath.Join(t.TempDir(), "kubeconfig")
-	if err := os.WriteFile(path, out, 0o600); err != nil {
-		t.Fatalf("write kubeconfig: %v", err)
-	}
-	return path
 }
 
 // assertAPIServerEncryptionFlag confirms the control-plane apiserver

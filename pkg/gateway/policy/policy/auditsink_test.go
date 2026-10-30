@@ -29,7 +29,7 @@ func (a *captureAppender) Append(_ context.Context, tenantID, eventType string, 
 	return audit.Row{}, nil
 }
 
-// spec: §4.8 line 981 — the audit row records the interceptor that
+// spec: §4.8 — the audit row records the interceptor that
 // actually rejected (Result.RejectedBy), not a fixed built-in.
 func TestRecordRejectionUsesRejectedBy(t *testing.T) {
 	app := &captureAppender{}
@@ -73,7 +73,7 @@ func TestRecordRejectionFallsBackToQuotaEvaluator(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1032 — a fail-closed timeout row carries timeout_ms.
+// spec: §4.8 — a fail-closed timeout row carries timeout_ms.
 func TestRecordRejectionTimeoutCarriesTimeoutMs(t *testing.T) {
 	app := &captureAppender{}
 	sink := policy.NewAuditSink(app, nil)

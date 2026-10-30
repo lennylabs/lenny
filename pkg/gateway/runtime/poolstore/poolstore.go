@@ -61,7 +61,7 @@ type Pool struct {
 	// deployment-wide checkpointGrantWindow: the number of chunk-upload
 	// capabilities the gateway keeps outstanding while draining this pool's
 	// workspace checkpoints. Nil leaves the checkpoint driver on the
-	// deployment-wide default. spec: §10.1 line 131 chunk-grant window;
+	// deployment-wide default. spec: §10.1.7 chunk-grant window;
 	// §17.8.1 checkpointGrantWindow default 4; §5.2 (per-pool override).
 	CheckpointGrantWindow *int
 
@@ -161,7 +161,7 @@ type Pool struct {
 	// on every admin-API write and stamped onto the pool's CRD pair as
 	// the lenny.dev/config-generation annotation so the §4.6.2
 	// PoolConfigDrift alert can compare Postgres-side and CRD-side
-	// generations. spec: spec/04_system-components.md lines 558-560.
+	// generations. spec: §4.6.2.
 	Generation int64
 
 	// ReconciliationResumeEpoch is the §4.6.2 item 3 condition (c)
@@ -176,38 +176,38 @@ type Pool struct {
 	// item 3 condition (c).
 	ReconciliationResumeEpoch int64
 
-	// DrainingSince records when the pool entered the §15.1 line 797
+	// DrainingSince records when the pool entered the §15.1
 	// `draining` phase. A zero value means the pool is `active`. While
 	// it is set the gateway stops admitting new sessions to the pool
 	// (POST /v1/admin/pools/{name}/drain → GET reports `phase: draining`),
 	// and session creation that would select the pool is rejected with
-	// 503 POOL_DRAINING. spec: §15.1 line 797.
+	// 503 POOL_DRAINING. spec: §15.1.
 	DrainingSince time.Time
 
-	// ElicitationDepthPolicy is the §9.2 line 90-98 per-pool
+	// ElicitationDepthPolicy is the §9.2 per-pool
 	// `elicitationDepthPolicy` that governs whether agent-initiated
 	// elicitations raised by a session in this pool are suppressed by
 	// delegation depth (`allow_all`, `suppress_at_depth`, `block_all`).
-	// Empty defaults to the §9.2 line 92 platform default
+	// Empty defaults to the §9.2 platform default
 	// (`suppress_at_depth` at depth 3) when the dispatcher resolves it.
-	// spec: §9.2 lines 90-98.
+	// spec: §9.2.
 	ElicitationDepthPolicy elicitation.DepthPolicy
 
-	// ElicitationSuppressAtDepth is the §9.2 line 92 threshold N for the
+	// ElicitationSuppressAtDepth is the §9.2 threshold N for the
 	// `suppress_at_depth` policy; ignored for the other policies. Zero
 	// with a `suppress_at_depth` policy resolves to the platform default
 	// (DefaultSuppressAtDepth=3) at the dispatcher.
 	ElicitationSuppressAtDepth int
 
-	// URLModeElicitation is the §9.2 line 86 per-pool agent-initiated
+	// URLModeElicitation is the §9.2 per-pool agent-initiated
 	// url-mode elicitation allowlist. The zero value (Enabled:false)
 	// blocks every agent-initiated url-mode elicitation, the §9.2
 	// default. Enabled:true with an empty DomainAllowlist is rejected at
 	// store admission with URL_MODE_ELICITATION_DOMAIN_REQUIRED.
-	// spec: §9.2 line 86.
+	// spec: §9.2.
 	URLModeElicitation elicitation.URLModeAllowlist
 
-	// SDKWarmCircuitBreakerOverride is the §6.1 line 63 operator override
+	// SDKWarmCircuitBreakerOverride is the §6.1 operator override
 	// of the SDK-warm circuit breaker. The empty value leaves the breaker
 	// under automatic control (equivalent to `auto`). `enabled` clears a
 	// tripped breaker ahead of its grace window and evaluates SDK-warm on
@@ -215,28 +215,28 @@ type Pool struct {
 	// the rate; `auto` restores automatic control. The PoolScalingController
 	// reads it via the PoolStoreSource and applies it in its breaker
 	// decision. The admin API mutates it via
-	// PUT /v1/admin/pools/{name}/circuit-breaker. spec: §6.1 lines 63-65,
-	// §15.1 line 801.
+	// PUT /v1/admin/pools/{name}/circuit-breaker. spec: §6.1,
+	// §15.1.
 	SDKWarmCircuitBreakerOverride SDKWarmCircuitBreakerOverride
 
-	// AcknowledgeHighDemotionRate is the §6.1 line 48
+	// AcknowledgeHighDemotionRate is the §6.1
 	// `sdkWarm.acknowledgeHighDemotionRate` flag. When true the
 	// PoolScalingController suppresses the SDKWarmDemotionRateHigh warning
 	// event for this pool: the operator has accepted that the rolling
 	// 1-hour demotion rate exceeds demotionRateThreshold (60%). It does not
-	// affect the hardcoded 90% circuit-breaker trip. spec: §6.1 line 48.
+	// affect the hardcoded 90% circuit-breaker trip. spec: §6.1.
 	AcknowledgeHighDemotionRate bool
 
-	// DemotionRateThreshold is the §6.1 line 48 `sdkWarm.demotionRateThreshold`:
+	// DemotionRateThreshold is the §6.1:
 	// the rolling 1-hour SDK-warm demotion-rate fraction above which the
 	// PoolScalingController emits the SDKWarmDemotionRateHigh warning event.
 	// A nil value inherits the platform default (0.60); a set value must be
 	// in the open-closed interval (0, 1]. It does not affect the hardcoded
-	// 90% circuit-breaker trip. spec: §6.1 line 48.
+	// 90% circuit-breaker trip. spec: §6.1.
 	DemotionRateThreshold *float64
 }
 
-// SDKWarmCircuitBreakerOverride is the §6.1 line 63 closed enum of
+// SDKWarmCircuitBreakerOverride is the §6.1 closed enum of
 // operator overrides for the SDK-warm circuit breaker.
 type SDKWarmCircuitBreakerOverride string
 
@@ -250,18 +250,18 @@ const (
 	// bypasses the breaker's minOpenUntil grace window and evaluates the
 	// live demotion rate, so a tripped breaker clears immediately and only
 	// re-trips if the rate is still at or above the 90% safety threshold.
-	// spec: §6.1 lines 63-65, §15.1 line 801.
+	// spec: §6.1, §15.1.
 	SDKWarmOverrideEnabled SDKWarmCircuitBreakerOverride = "enabled"
 	// SDKWarmOverrideDisabled forces SDK-warm off regardless of the
 	// demotion rate (the PoolScalingController writes spec.sdkWarmDisabled
-	// with an operator_manual reason). spec: §15.1 line 801.
+	// with an operator_manual reason). spec: §15.1.
 	SDKWarmOverrideDisabled SDKWarmCircuitBreakerOverride = "disabled"
 	// SDKWarmOverrideAuto clears any override and restores automatic
-	// circuit-breaker control. spec: §15.1 line 801.
+	// circuit-breaker control. spec: §15.1.
 	SDKWarmOverrideAuto SDKWarmCircuitBreakerOverride = "auto"
 )
 
-// AllSDKWarmCircuitBreakerOverrides returns the closed §15.1 line 801
+// AllSDKWarmCircuitBreakerOverrides returns the closed §15.1
 // override vocabulary the admin endpoint accepts (the unset value is not
 // an accepted request value; it is the stored default).
 func AllSDKWarmCircuitBreakerOverrides() []SDKWarmCircuitBreakerOverride {
@@ -288,7 +288,7 @@ func (o SDKWarmCircuitBreakerOverride) IsValid() bool {
 // IsActive reports whether the pool has not been soft-deleted.
 func (p Pool) IsActive() bool { return p.DeletedAt.IsZero() }
 
-// Phase reports the §15.1 line 797 pool lifecycle phase the admin GET
+// Phase reports the §15.1 pool lifecycle phase the admin GET
 // surfaces: "draining" once DrainingSince is set, "active" otherwise.
 // Soft-deleted pools still report their drain phase; IsActive gates
 // deletion separately.
@@ -299,11 +299,11 @@ func (p Pool) Phase() string {
 	return PhaseActive
 }
 
-// IsDraining reports whether the pool has entered the §15.1 line 797
+// IsDraining reports whether the pool has entered the §15.1
 // draining phase and is therefore closed to new session admission.
 func (p Pool) IsDraining() bool { return !p.DrainingSince.IsZero() }
 
-// EstimatedDrainSeconds returns the §15.1 line 797 drain-completion
+// EstimatedDrainSeconds returns the §15.1 drain-completion
 // estimate for a draining pool given the longest active session age in
 // the pool (in seconds). The spec derives the estimate from the longest
 // active session age, capped at the pool's maxSessionAgeSeconds because
@@ -311,7 +311,7 @@ func (p Pool) IsDraining() bool { return !p.DrainingSince.IsZero() }
 // (maxSessionAgeSeconds == 0) returns the uncapped age. The value feeds
 // the Retry-After header on a POOL_DRAINING rejection; ages are whole
 // seconds so the ceil() the spec names is already satisfied. spec:
-// §15.1 line 797.
+// §15.1.
 func EstimatedDrainSeconds(p Pool, longestAgeSeconds int) int {
 	if longestAgeSeconds < 0 {
 		longestAgeSeconds = 0
@@ -322,8 +322,7 @@ func EstimatedDrainSeconds(p Pool, longestAgeSeconds int) int {
 	return longestAgeSeconds
 }
 
-// Pool lifecycle phases surfaced on the §15.1 admin GET. spec: §15.1
-// line 797.
+// Pool lifecycle phases surfaced on the §15.1 admin GET. spec: §15.1.
 const (
 	PhaseActive   = "active"
 	PhaseDraining = "draining"
@@ -445,7 +444,7 @@ func ValidateServiceConfig(p Pool) error {
 	return nil
 }
 
-// ErrURLModeDomainRequired is the §9.2 line 86 admission rejection
+// ErrURLModeDomainRequired is the §9.2 admission rejection
 // returned when a pool sets urlModeElicitation.enabled:true with an
 // empty or absent domainAllowlist. The admin handler maps it to the
 // 400 URL_MODE_ELICITATION_DOMAIN_REQUIRED error code.
@@ -457,17 +456,16 @@ var ErrURLModeDomainRequired = errors.New("poolstore: urlModeElicitation.enabled
 // at the §17.6 bootstrap seed rather than at the first elicitation:
 //
 //   - urlModeElicitation.enabled:true requires a non-empty
-//     domainAllowlist (§9.2 line 86). A pool that enables agent-
+//     domainAllowlist (§9.2). A pool that enables agent-
 //     initiated url-mode elicitation without naming the permitted
 //     domains is rejected with ErrURLModeDomainRequired, which the
 //     admin handler surfaces as 400 URL_MODE_ELICITATION_DOMAIN_REQUIRED.
 //
-//   - elicitationDepthPolicy, when set, must be one of the §9.2 line
-//     94-96 enum values (`allow_all`, `suppress_at_depth`, `block_all`).
-//     An empty value is permitted and resolves to the §9.2 line 92
+//   - elicitationDepthPolicy, when set, must be one of the §9.2 enum values (`allow_all`, `suppress_at_depth`, `block_all`).
+//     An empty value is permitted and resolves to the §9.2
 //     platform default at the dispatcher.
 //
-// spec: §9.2 lines 86, 90-98.
+// spec: §9.2.
 func ValidateElicitationPolicy(p Pool) error {
 	if err := p.URLModeElicitation.Validate(); err != nil {
 		return ErrURLModeDomainRequired
@@ -479,10 +477,10 @@ func ValidateElicitationPolicy(p Pool) error {
 }
 
 // ValidateSDKWarmConfig rejects a pool whose §6.1 SDK-warm
-// circuit-breaker override is outside the closed §15.1 line 801
+// circuit-breaker override is outside the closed §15.1
 // vocabulary, or whose `sdkWarm.demotionRateThreshold` is outside the
 // open-closed interval (0, 1]. The unset values pass (they are the stored
-// defaults). spec: §6.1 lines 48, 63-65, §15.1 line 801.
+// defaults). spec: §6.1, §15.1.
 func ValidateSDKWarmConfig(p Pool) error {
 	if !p.SDKWarmCircuitBreakerOverride.IsValid() {
 		return errors.New("poolstore: sdkWarm.circuitBreakerOverride is not a recognised §15.1 value (enabled, disabled, auto)")
@@ -525,6 +523,18 @@ func ValidateSDKWarmConfig(p Pool) error {
 //   - recycle.enabled requires acknowledgeBestEffortScrub: true and
 //     maxSessionsPerPod >= 1 (§5.2 deployer acknowledgment).
 //
+//   - recycle.runtimeProcess (keep or restart) is required with no default
+//     on a reusing recycling pool (recycle.enabled with maxSessionsPerPod > 1
+//     and a scrubProfile other than vm-restart) and rejected on every other
+//     pool (§5.2 Runtime-process lifetime). `restart` is refused on every
+//     pool for the interim stated at refuseRestartUntilPerGenerationMCP.
+//
+//   - A reusing recycling pool under recycle.runtimeProcess: keep requires
+//     acknowledgeProcessLevelIsolation: the `keep` pod keeps one runtime
+//     process across the sessions it serves, and the whole-pod scrub does
+//     not reach it (§5.2 runtime-process acknowledgment). A sequential pool
+//     under `restart` does not require it.
+//
 //   - recycle.allowCrossTenantReuse is permitted only with microvm
 //     isolation and only on the sequential-reuse path
 //     (maxConcurrentSessions == 1) (§5.2). The further §5.2 T4 prohibition
@@ -538,7 +548,8 @@ func ValidateSDKWarmConfig(p Pool) error {
 //   - recycle.scrubProfile `in-place` requires
 //     acknowledgeMicrovmResidualState: true (§5.2 Kata scrub variant).
 //
-//   - The scrubProfile, onScrubFailure, and onPoolExhausted enums, if set,
+//   - The scrubProfile, onScrubFailure, runtimeProcess, and onPoolExhausted
+//     enums, if set,
 //     must be on the §5.2 closed enums, and numeric fields are
 //     non-negative. When maxConcurrentSessions > 1 a set cleanupTimeoutSeconds
 //     must satisfy cleanupTimeoutSeconds >= maxConcurrentSessions * 5.
@@ -556,6 +567,9 @@ func ValidateSessionPolicy(p Pool) error {
 	if sp.CleanupTimeoutSeconds < 0 || sp.MaxSessionAgeSeconds < 0 ||
 		sp.MaxClientIdleSeconds < 0 || sp.MaxQueueWaitSeconds < 0 {
 		return errors.New("poolstore: sessionPolicy numeric fields must be >= 0 (§5.2)")
+	}
+	if sp.SlotRetries != nil && *sp.SlotRetries < 0 {
+		return errors.New("poolstore: sessionPolicy.slotRetries must be >= 0; 0 disables slot retries (§5.2)")
 	}
 	if sp.OnPoolExhausted != "" && !sp.OnPoolExhausted.IsValid() {
 		return errors.New("poolstore: sessionPolicy.onPoolExhausted is not a recognised §5.2 disposition (reject, queue)")
@@ -588,8 +602,15 @@ func ValidateSessionPolicy(p Pool) error {
 // best-effort-scrub acknowledgment, the required session-count limit, the
 // microvm-only cross-tenant gate, the cross-tenant scrub-profile floor
 // (standard is insufficient; vm-restart or in-place is required), and the
-// in-place residual-state acknowledgment. spec: §5.2 (recycle lifecycle,
-// Kata scrub variant).
+// in-place residual-state acknowledgment, the runtime-process lifetime
+// (recycle.runtimeProcess: a known value, required on a reusing recycling
+// pool and rejected on every other pool), the interim refusal of `restart`,
+// and last the runtime-process acknowledgment that a reusing recycling pool
+// under `keep` requires, because a `keep` pod keeps one runtime process
+// across the sessions it serves and the whole-pod scrub does not reach that
+// process. spec: §5.2 (recycle lifecycle, Kata scrub variant,
+// Runtime-process lifetime, Deployer acknowledgment (runtime process kept
+// across sessions)).
 func validateRecyclePolicy(p Pool, r *runtimestore.RecyclePolicy) error {
 	if r.Enabled {
 		if !r.AcknowledgeBestEffortScrub {
@@ -629,13 +650,155 @@ func validateRecyclePolicy(p Pool, r *runtimestore.RecyclePolicy) error {
 	if r.OnScrubFailure != "" && !r.OnScrubFailure.IsValid() {
 		return errors.New("poolstore: recycle.onScrubFailure is not a recognised §5.2 disposition (warn, fail)")
 	}
+	if r.RuntimeProcess != "" && !r.RuntimeProcess.IsValid() {
+		return errors.New("poolstore: recycle.runtimeProcess is not a recognised §5.2 lifetime (keep, restart)")
+	}
 	if r.MaxScrubFailures < 0 || r.MaxPodUptimeSeconds < 0 {
 		return errors.New("poolstore: recycle numeric fields must be >= 0 (§5.2)")
+	}
+	if err := validateRuntimeProcessPresence(r); err != nil {
+		return err
+	}
+	if err := refuseRestartUntilPerGenerationMCP(r); err != nil {
+		return err
+	}
+	// spec: §5.2 (Deployer acknowledgment (runtime process kept across
+	// sessions)) — the clause runs last so every earlier rejection keeps its
+	// message. ValidateSessionPolicy has already rejected an unacknowledged
+	// maxConcurrentSessions > 1 pool, so this binds sequential pools under
+	// `keep`.
+	if RequiresProcessAcknowledgment(p.SessionPolicy) && !p.SessionPolicy.AcknowledgeProcessLevelIsolation {
+		return processAcknowledgmentError(r)
 	}
 	return nil
 }
 
-// ValidateCrossTenantReuseTier enforces the §5.2 line 396 T4 cross-tenant
+// validateRuntimeProcessPresence enforces the presence rule of
+// recycle.runtimeProcess: required with no default on a reusing recycling
+// pool (isReusingRecycle), and rejected on every other pool.
+// spec: §5.2 (Runtime-process lifetime).
+func validateRuntimeProcessPresence(r *runtimestore.RecyclePolicy) error {
+	reusing := isReusingRecycle(r)
+	switch {
+	case reusing && r.RuntimeProcess == "":
+		return errors.New("poolstore: recycle.runtimeProcess (keep or restart) is required with no default on a pool " +
+			"with recycle.enabled, recycle.maxSessionsPerPod > 1, and a recycle.scrubProfile other than vm-restart (§5.2)")
+	case !reusing && r.RuntimeProcess != "":
+		return errors.New("poolstore: recycle.runtimeProcess is permitted only on a pool with recycle.enabled, " +
+			"recycle.maxSessionsPerPod > 1, and a recycle.scrubProfile other than vm-restart (§5.2)")
+	}
+	return nil
+}
+
+// errRestartRefusedInterim is the interim refusal of
+// recycle.runtimeProcess: restart.
+var errRestartRefusedInterim = errors.New(`poolstore: recycle.runtimeProcess "restart" is refused until the ` +
+	`intra-pod MCP servers rebind per runtime generation (proposal 0084); use "keep"`)
+
+// refuseRestartUntilPerGenerationMCP refuses recycle.runtimeProcess:
+// restart on every pool.
+//
+// INTERIM GATE. No specification text states this refusal; the
+// specification states only the end-state admission rule, under which a
+// `restart` pool on a restartable runtime is admitted. The reason for the
+// gate is the intra-pod MCP nonce rule: an intra-pod MCP server validates
+// the nonce bound at its start, and a later manifest write does not re-arm
+// it, so a runtime process launched after the first on a `restart` pod has
+// no specified way to authenticate its platform MCP calls. Proposal 0084
+// rebinds the intra-pod MCP servers per runtime generation. When proposal
+// 0084 lands, delete this function, errRestartRefusedInterim, its call in
+// validateRecyclePolicy, these comments, and its test
+// (TestValidateRecyclePolicyRefusesRestartInterim), together with the
+// interim sentences in docs/operator-guide/troubleshooting.md and
+// docs/reference/execution-modes.md that state this refusal and the tier-11
+// pin that requires them (requireRestartAdmissionRefusalStated).
+//
+// The gateway admission path runs ValidateRuntimeProcessRestartable before
+// the store reaches this check, so a `restart` pool on a runtime that is not
+// restartable still receives the end-state error.
+func refuseRestartUntilPerGenerationMCP(r *runtimestore.RecyclePolicy) error {
+	if r.RuntimeProcess == runtimestore.RuntimeProcessRestart {
+		return errRestartRefusedInterim
+	}
+	return nil
+}
+
+// processAcknowledgmentError builds the runtime-process acknowledgment
+// rejection for a pool whose configuration requires
+// acknowledgeProcessLevelIsolation and lacks it. The clause stating that
+// the pod keeps one runtime process across the sessions it serves appears
+// only where the process is kept, which is a recycle block under `keep`; a
+// pool under `restart` is told only of the requirement.
+// spec: §5.2 (Deployer acknowledgment (runtime process kept across
+// sessions)).
+func processAcknowledgmentError(r *runtimestore.RecyclePolicy) error {
+	msg := "poolstore: recycle.enabled with recycle.maxSessionsPerPod > 1 requires " +
+		"sessionPolicy.acknowledgeProcessLevelIsolation=true unless recycle.scrubProfile is vm-restart " +
+		"or recycle.runtimeProcess is restart"
+	if r != nil && r.RuntimeProcess == runtimestore.RuntimeProcessKeep {
+		msg += "; the pod keeps one runtime process across the sessions it serves, and the whole-pod scrub " +
+			"does not reach that process"
+	}
+	return errors.New(msg + " (§5.2)")
+}
+
+// RequiresProcessAcknowledgment reports whether a pool with session policy
+// sp requires sessionPolicy.acknowledgeProcessLevelIsolation because a
+// runtime process can serve two of its sessions: true when
+// maxConcurrentSessions is above 1, whose overlapping sessions share a
+// process under either lifetime, or when the pool is a reusing recycling
+// pool under recycle.runtimeProcess: keep. A nil policy requires none. An
+// acquisition admits a `keep` pod that has served an earlier session only
+// while the resolved configuration requires the acknowledgment. spec: §5.2
+// (Deployer acknowledgment (runtime process kept across sessions)).
+func RequiresProcessAcknowledgment(sp *runtimestore.SessionPolicy) bool {
+	if sp == nil {
+		return false
+	}
+	return sp.MaxConcurrentSessions > 1 ||
+		(isReusingRecycle(sp.Recycle) && sp.Recycle.RuntimeProcess == runtimestore.RuntimeProcessKeep)
+}
+
+// ReusesPods reports whether a pool with session policy sp reuses pods, so
+// the gateway may admit a session to a pod that has served an earlier
+// session: true when maxConcurrentSessions is above 1, or when the pool is a
+// reusing recycling pool. It does not depend on recycle.runtimeProcess. A
+// nil policy reuses none. spec: §5.2 (Deployer acknowledgment (runtime
+// process kept across sessions)), §4.6.1 (Reserved hold).
+func ReusesPods(sp *runtimestore.SessionPolicy) bool {
+	if sp == nil {
+		return false
+	}
+	return sp.MaxConcurrentSessions > 1 || isReusingRecycle(sp.Recycle)
+}
+
+// isReusingRecycle reports whether a recycle block makes its pool a reusing
+// recycling pool: recycling is enabled, maxSessionsPerPod is above 1, and
+// the scrub profile is not vm-restart, which retires the pod at every
+// occupancy-zero recycle boundary. A nil block reuses none. spec: §5.2
+// (Runtime-process lifetime; Pod retirement policy).
+func isReusingRecycle(r *runtimestore.RecyclePolicy) bool {
+	return r != nil && r.Enabled && r.MaxSessionsPerPod > 1 &&
+		r.ScrubProfile != runtimestore.MicrovmScrubVMRestart
+}
+
+// ValidateRuntimeProcessRestartable rejects recycle.runtimeProcess: restart
+// on a pool whose runtime is not restartable (§5.1 `command`). restartable
+// is the resolved runtime's registry flag; the caller passes false for a
+// runtime it could not resolve, so an unresolved runtime reads as not
+// restartable. The gateway pool admission paths (create, PUT, their dry
+// runs, and the bootstrap seed) call it beside
+// ValidatePreConnectExecutionMode. spec: §5.2 (Runtime-process lifetime).
+func ValidateRuntimeProcessRestartable(restartable bool, p Pool) error {
+	if restartable || p.SessionPolicy == nil || p.SessionPolicy.Recycle == nil ||
+		p.SessionPolicy.Recycle.RuntimeProcess != runtimestore.RuntimeProcessRestart {
+		return nil
+	}
+	return errors.New(`poolstore: recycle.runtimeProcess "restart" requires a restartable runtime: one that ` +
+		"declares command, runs executionMode session, and does not declare capabilities.preConnect (§5.1, §5.2)")
+}
+
+// ValidateCrossTenantReuseTier enforces the §5.2 T4 cross-tenant
 // reuse prohibition: a pool whose associated Runtime is configured with
 // workspaceTier: T4 may not set allowCrossTenantReuse, because T4
 // workloads require dedicated node pools for per-tenant key isolation
@@ -645,10 +808,9 @@ func validateRecyclePolicy(p Pool, r *runtimestore.RecyclePolicy) error {
 // runtimeTier is the resolved workspace tier of the pool's runtime; the
 // caller looks it up (the pure poolstore record carries no runtime).
 // The check is a no-op when the pool does not request cross-tenant reuse
-// or the runtime is not T4. The error string is verbatim from §5.2 line
-// 396 so operators see the exact spec language.
+// or the runtime is not T4. The error string is verbatim from §5.2 so operators see the exact spec language.
 //
-// spec: §5.2 line 396 — "The pool controller additionally rejects
+// spec: §5.2 — "The pool controller additionally rejects
 // allowCrossTenantReuse: true on any pool whose associated Runtime is
 // configured with workspaceTier: T4".
 func ValidateCrossTenantReuseTier(p Pool, runtimeTier runtimestore.WorkspaceTier) error {
@@ -678,8 +840,8 @@ func (p Pool) RequestsCrossTenantReuse() bool {
 // runtime. The check runs at pool admission with the effective post-update
 // executionMode and sessionPolicy; preConnect reports the referenced
 // runtime's resolved capabilities.preConnect. A nil sessionPolicy resolves
-// to the §5.2 default maxConcurrentSessions of 1. spec: §5.2 line 430,
-// §6.1 lines 77-78.
+// to the §5.2 default maxConcurrentSessions of 1. spec: §5.2,
+// §6.1.
 func ValidatePreConnectExecutionMode(preConnect bool, mode runtimestore.ExecutionMode, sp *runtimestore.SessionPolicy) error {
 	if !preConnect {
 		return nil

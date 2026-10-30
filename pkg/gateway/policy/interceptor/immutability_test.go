@@ -22,7 +22,7 @@ func modifyTo(name string, priority int32, content []byte) *fakeInterceptor {
 	}
 }
 
-// TestChainModifyImmutableFieldViolation covers spec §4.8 line 1060: a
+// TestChainModifyImmutableFieldViolation covers spec §4.8: a
 // MODIFY that alters a per-phase immutable field is rejected with
 // INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION, the chain short-circuits, and the
 // original payload is preserved.
@@ -183,7 +183,7 @@ func TestChainModifyImmutableViolationCarriesViolatedFields(t *testing.T) {
 
 // TestChainModifyViolationShortCircuits confirms a downstream interceptor
 // never observes a payload an upstream MODIFY illegally rewrote (spec:
-// §4.8 line 1060: no subsequent interceptor sees the illegal modification).
+// §4.8: no subsequent interceptor sees the illegal modification).
 func TestChainModifyViolationShortCircuits(t *testing.T) {
 	c := interceptor.NewChain()
 	var calls []string
@@ -222,7 +222,7 @@ func TestChainModifyMalformedRejected(t *testing.T) {
 	}
 }
 
-// TestPhaseDefaultTimeoutApplied covers spec §4.8 lines 1075, 1077: the
+// TestPhaseDefaultTimeoutApplied covers spec §4.8: the
 // LLM phases default to 100ms and the connector phases to 200ms, while
 // other phases keep the 500ms default, observed via the per-call deadline
 // each interceptor sees.
@@ -262,8 +262,7 @@ func TestPhaseDefaultTimeoutApplied(t *testing.T) {
 }
 
 // TestExplicitTimeoutOverridesPhaseDefault confirms an interceptor's own
-// positive Timeout() takes precedence over the phase default (spec: §4.8
-// line 1075 "Deployers may override this via the timeout field").
+// positive Timeout() takes precedence over the phase default (spec: §4.8).
 func TestExplicitTimeoutOverridesPhaseDefault(t *testing.T) {
 	c := interceptor.NewChain()
 	var observed time.Duration

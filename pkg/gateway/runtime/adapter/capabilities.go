@@ -33,6 +33,6 @@ type Capabilities struct {
 	SupportsElicitation bool `json:"supportsElicitation"`
 
 	// SupportsInterrupt reports that the adapter can surface interrupt
-	// signals from the lifecycle channel to the client.
+	// signals from the CH-RUNTIMEOPS to the client.
 	SupportsInterrupt bool `json:"supportsInterrupt"`
 }

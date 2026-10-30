@@ -3,6 +3,7 @@
 package workspace_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -147,7 +148,7 @@ func TestMaterializeRejectsInvalidMode(t *testing.T) {
 	}
 }
 
-// spec: §14 line 334 — an unknown source.type is skipped with a
+// spec: §14 — an unknown source.type is skipped with a
 // workspace_plan_unknown_source_type warning, not rejected. A newer
 // gateway can inject a source type this adapter predates during a
 // rolling upgrade; aborting the whole materialization would crash the
@@ -175,7 +176,7 @@ func TestMaterializeSkipsUnknownSourceType_spec_14_334(t *testing.T) {
 	}
 }
 
-// spec: §14 line 334 — a known source preceding an unknown one is still
+// spec: §14 — a known source preceding an unknown one is still
 // materialized; only the unknown entry is skipped. This guards against a
 // regression where an unknown type short-circuits the source loop.
 // F-14.1.2.
@@ -307,5 +308,106 @@ func TestStagingPath(t *testing.T) {
 	}
 	if a == b {
 		t.Error("StagingPath mapped distinct refs to the same path")
+	}
+}
+
+// writeSeed returns a seed that writes files into the build tree and
+// records the entries it found there when it ran.
+func writeSeed(files map[string]string, sawEntries *[]string) workspace.Seed {
+	return func(buildDir string) error {
+		entries, err := os.ReadDir(buildDir)
+		if err != nil {
+			return err
+		}
+		for _, e := range entries {
+			*sawEntries = append(*sawEntries, e.Name())
+		}
+		for name, body := range files {
+			if err := os.WriteFile(filepath.Join(buildDir, name), []byte(body), 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+// The seed runs on the cleared build tree, so a stale build tree left by an
+// earlier failed attempt never survives into the seeded tree, and the plan's
+// sources then apply over the seeded files with no collision warning.
+//
+// spec: §7.1 (Derive restore semantics); §5.1; §14.1
+func TestMaterializeSeedRunsOnClearedBuildTreeBeforeSources_spec_7_1(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "current")
+	staging := filepath.Join(parent, "uploads")
+	stale := filepath.Join(parent, "staging")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, "stale.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var saw []string
+	warnings, err := workspace.MaterializeWithPolicy(root, staging, []*adapterv1.WorkspaceSource{
+		source("inlineFile", "a.txt", "from source", "644"),
+	}, workspace.ArchivePolicy{}, writeSeed(map[string]string{
+		"a.txt":    "from snapshot",
+		"keep.txt": "kept",
+	}, &saw))
+	if err != nil {
+		t.Fatalf("MaterializeWithPolicy: %v", err)
+	}
+	if len(saw) != 0 {
+		t.Errorf("seed saw build tree entries %v, want an empty build tree", saw)
+	}
+	for name, want := range map[string]string{"a.txt": "from source", "keep.txt": "kept"} {
+		got, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil || string(got) != want {
+			t.Errorf("%s = %q, %v; want %q", name, got, err, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "stale.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("stale build-tree file reached the workspace root: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("warnings = %+v, want none for a source overwriting a seeded path", warnings)
+	}
+}
+
+// A seed error discards the build tree, leaves the workspace root as it was,
+// and is returned wrapped so the caller can classify it.
+//
+// spec: §7.1 (Derive restore semantics)
+func TestMaterializeSeedFailureLeavesRootUntouched_spec_7_1(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "current")
+	if _, err := workspace.Materialize(root, "", []*adapterv1.WorkspaceSource{
+		source("inlineFile", "prior.txt", "prior", "644"),
+	}); err != nil {
+		t.Fatalf("prior Materialize: %v", err)
+	}
+
+	errSeed := errors.New("seed failed")
+	_, err := workspace.MaterializeWithPolicy(root, "", []*adapterv1.WorkspaceSource{
+		source("inlineFile", "new.txt", "new", "644"),
+	}, workspace.ArchivePolicy{}, func(buildDir string) error {
+		if err := os.WriteFile(filepath.Join(buildDir, "partial.txt"), []byte("x"), 0o644); err != nil {
+			return err
+		}
+		return errSeed
+	})
+	if !errors.Is(err, errSeed) {
+		t.Fatalf("err = %v, want the seed error wrapped", err)
+	}
+	if _, err := os.Stat(filepath.Join(parent, "staging")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("build tree survived the seed failure: %v", err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "prior.txt" {
+		t.Errorf("root entries = %v, want only prior.txt", entries)
 	}
 }

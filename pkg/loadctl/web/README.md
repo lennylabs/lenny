@@ -2,7 +2,7 @@
 
 HTMX + Plotly UI served by `cmd/lenny-loadctl`. Wave 6 minimum: the index page surfaces the run catalogue and links to the per-run HTML report uploaded to object storage; the live-metrics page that uses the WebSocket telemetry channel is a Wave 6 follow-up.
 
-The UI is intentionally small. Every dynamic surface either round-trips through the REST API in §12.12 or opens a WebSocket against `/api/v1/runs/{id}/metrics:stream`. There is no build pipeline.
+The UI is intentionally small. Every dynamic surface either round-trips through the REST API in TESTING.md §12.12 or opens a WebSocket against `/api/v1/runs/{id}/metrics:stream`. There is no build pipeline.
 
 ## Layout
 

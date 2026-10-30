@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// spec: §5.1 line 49 — per-tenant runtime capability override CRUD.
+// spec: §5.1 — per-tenant runtime capability override CRUD.
 
 func newCapOverrideAdmin(t *testing.T) (*admin.Router, runtimecapoverride.Store, *recordingAudit) {
 	t.Helper()
@@ -144,7 +144,7 @@ func TestCapOverridePutRejectsUnknownRuntime_spec_5_1_49(t *testing.T) {
 	}
 }
 
-// spec: §5.1 line 49 — a tenant-admin may only manage their own tenant's
+// spec: §5.1 — a tenant-admin may only manage their own tenant's
 // overrides; a cross-tenant write is rejected.
 func TestCapOverrideTenantScoping_spec_5_1_49(t *testing.T) {
 	router, _, _ := newCapOverrideAdmin(t)

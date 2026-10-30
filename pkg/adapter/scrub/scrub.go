@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
 
 // Package scrub implements the §5.2 Lenny scrub procedure a recycling pod
-// runs at the §6.2 occupancy-zero recycle boundary (spec/05_runtime-
-// registry-and-pool-model.md lines 415-465). The procedure has two phases:
+// runs at the §6.2 occupancy-zero recycle boundary. The procedure has two phases:
 // a pre-cleanup credential purge (step 0) executed before any deployer
 // code, and a post-cleanup scrub sequence (steps 1-6) executed after the
 // deployer-defined cleanupCommands finish. The whole-pod scrub runs once
 // occupancy reaches zero on a recycle-enabled pod; its ordering is:
 //
 //	occupancy reaches zero (claim patched bound → recycling)
-//	  → step 0: remove /run/lenny/credentials.json
+//	  → step 0: remove every per-slot credential file under /run/lenny/slots/
 //	  → cleanupCommands (deployer code, with LENNY_PREV_* env, no cred file)
-//	  → steps 1-6: kill user procs, ipcrm shm, rm -rf workspace, env reset,
-//	    clear /tmp + /dev/shm + scratch, truncate log buffers, stat-verify
+//	  → steps 1-6: kill user procs, ipcrm shm, rm -rf every per-slot
+//	    workspace tree under /workspace/slots/, env reset, clear /tmp +
+//	    /dev/shm + scratch, truncate log buffers, stat-verify
 //
 // Steps 0-6 run uniformly for every profile. §5.2 step 7 (the vm-restart
 // profile's fresh-guest reprovision) is not an in-guest operation: an
@@ -63,6 +63,36 @@ const (
 	Failed
 )
 
+// ErrNotLive marks a step error whose outcome is the adapter's not-live state
+// rather than a failed scrub: an end, sweep, or listener rebind that failed,
+// and a CH-SUPERVISE link failure during any supervisor request. A step error
+// that wraps it is recorded and does not fail the scrub; the runtime reports
+// itself as unable to serve the next session instead.
+// spec: §5.2 (Supervised scrub sequence); §4.7.10 (Runtime supervisor,
+// Liveness).
+var ErrNotLive = errors.New("runtime not live")
+
+// CleanupRequest is one cleanupCommands run through a CleanupRunner.
+type CleanupRequest struct {
+	// Commands are the pool's cleanupCommands.
+	Commands []string
+	// Timeout is the cleanupTimeoutSeconds deadline.
+	Timeout time.Duration
+	// PrevProvider and PrevLeaseID are the step-0 cleanup metadata.
+	PrevProvider string
+	PrevLeaseID  string
+}
+
+// CleanupRunner runs cleanupCommands somewhere other than the adapter's own
+// container. On a pod that runs the runtime supervisor it is the supervised
+// runtime, which runs them at the agent UID in the runtime container. An
+// error that wraps ErrNotLive is a link failure; any other error is a cleanup
+// failure, which fails the scrub. spec: §4.7.10 (Runtime supervisor,
+// Cleanup).
+type CleanupRunner interface {
+	RunCleanup(ctx context.Context, req CleanupRequest) error
+}
+
 // DefaultCleanupTimeout is the §5.2 sessionPolicy.cleanupTimeoutSeconds
 // default applied when Config.CleanupTimeout is unset. The example pool in
 // spec §5.2 uses 30s.
@@ -73,8 +103,12 @@ const DefaultCleanupTimeout = 30 * time.Second
 // commands inside the agent pod.
 type Ops interface {
 	// KillUserProcesses runs scrub step 1: kill all remaining user
-	// processes (kill -9 -1 as the sandbox user). It terminates the
-	// runtime's SDK process along with every other task process.
+	// processes (kill -9 -1 as the sandbox user). It signals only processes
+	// in the container that runs the scrub and spares that container's
+	// first process. In the sidecar model it never reaches the runtime
+	// container, and in the embedded model it ends only the processes the
+	// runtime started, so the runtime process is kept in both models.
+	// spec: §5.2 ("What the scrub reaches").
 	KillUserProcesses(ctx context.Context) error
 
 	// PurgeIPCShm runs scrub step 1b: purge all shmget-allocated IPC
@@ -103,11 +137,21 @@ type Ops interface {
 // Config carries everything one scrub cycle needs. The zero value runs no
 // cleanup commands and verifies no paths; callers populate it per pool.
 type Config struct {
-	// CredentialFile is the platform-managed credential path purged in
-	// step 0 before any deployer code runs and re-verified absent in step
-	// 6 (spec lines 424, 431). Empty skips the step 0 purge; step 6 still
-	// fails the scrub if a non-empty CredentialFile path is left present.
-	CredentialFile string
+	// CredentialFiles are the platform-managed per-session credential
+	// files purged in step 0 before any deployer code runs and re-verified
+	// absent in step 6. The set is enumerated from the pod's on-disk slot
+	// trees rather than from the live registry, because the residue the
+	// scrub must reach belongs to a leaked slot whose registry entry is
+	// already gone. An empty set skips the step 0 purge; step 6 fails the
+	// scrub if any member is left present. spec: §5.2; §6.1.
+	CredentialFiles []string
+
+	// CredentialEnumErr is the failure to enumerate CredentialFiles, when
+	// the adapter could not read the per-slot credentials container. It is
+	// a step-0 error: the adapter cannot confirm every credential file is
+	// purged, so the cleanupCommands row is skipped and the scrub fails, on
+	// every pod. spec: §5.2 (Supervised scrub sequence, Step 0).
+	CredentialEnumErr error
 
 	// PrevProvider and PrevLeaseID are the sanitized metadata for the task
 	// whose credentials were just purged. They seed the
@@ -131,10 +175,21 @@ type Config struct {
 	// directly so shell metacharacters are inert (mirrors §7.5 setup).
 	ShellMode bool
 
-	// WorkspaceDir is the task workspace removed in step 2 and verified
-	// absent in step 6 (spec step 2 — rm -rf $WORKSPACE_DIR). Empty skips
-	// the removal and the verification.
-	WorkspaceDir string
+	// WorkspaceDirs are the per-session workspace trees removed in step 2
+	// and verified absent in step 6 (spec step 2 — rm -rf
+	// $WORKSPACE_DIR), enumerated from the pod's on-disk slot trees on the
+	// same terms as CredentialFiles. An empty set skips the removal and
+	// the verification. spec: §5.2; §6.4.
+	WorkspaceDirs []string
+
+	// CleanupDir is the single directory the deployer's cleanupCommands
+	// execute in and the value they observe as PWD. It is the workspace
+	// base, the one workspace path a pod always carries and the parent of
+	// every per-slot tree, rather than a directory an ended session owned:
+	// every ending session's teardown removes its own tree ahead of the
+	// pod scrub in the same handler, so no released session's tree
+	// survives to this phase. spec: §5.2; §6.4.
+	CleanupDir string
 
 	// ScratchDirs are the adapter-managed scratch directories cleared in
 	// step 4 alongside /tmp and /dev/shm, and verified empty in step 6.
@@ -149,6 +204,23 @@ type Config struct {
 	// records the step as skipped; a non-nil callback that errors fails the
 	// scrub.
 	TruncateLogs func() error
+
+	// CleanupRunner, when set, runs cleanupCommands instead of the adapter's
+	// own workspace.RunSetup. spec: §4.7.10 (Runtime supervisor, Cleanup).
+	CleanupRunner CleanupRunner
+
+	// EndRuntime, set on a restart pod, is the first end and sweep of the
+	// runtime process, between step 0 and cleanupCommands. Nil skips it.
+	// spec: §5.2 (Supervised scrub sequence).
+	EndRuntime func(ctx context.Context) error
+
+	// EndRuntimeAgain, set on a restart pod, is the second end and sweep,
+	// between cleanupCommands and the listener rebind. Nil skips it.
+	EndRuntimeAgain func(ctx context.Context) error
+
+	// RebindListeners, set on a restart pod, closes and rebinds the runtime
+	// listeners before steps 1 to 6. Nil skips it.
+	RebindListeners func() error
 }
 
 // StepName labels one scrub step in a Report for observability and tests.
@@ -156,7 +228,10 @@ type StepName string
 
 const (
 	StepCredentialPurge StepName = "credential_purge" // step 0
+	StepEndRuntime      StepName = "end_runtime"
 	StepCleanupCommands StepName = "cleanup_commands"
+	StepEndRuntimeAgain StepName = "end_runtime_again"
+	StepRebindListeners StepName = "rebind_listeners"
 	StepKillProcesses   StepName = "kill_processes"   // step 1
 	StepPurgeIPCShm     StepName = "purge_ipc_shm"    // step 1b
 	StepRemoveWorkspace StepName = "remove_workspace" // step 2
@@ -196,10 +271,13 @@ type Report struct {
 	VerifyDirty []string
 }
 
-// failed reports whether any non-skipped step recorded an error.
+// failed reports whether any non-skipped step recorded an error that fails
+// the scrub. An error that wraps ErrNotLive affects the runtime's liveness
+// and leaves the scrub's outcome alone. spec: §5.2 (Supervised scrub
+// sequence).
 func (r *Report) failed() bool {
 	for _, s := range r.Steps {
-		if !s.Skipped && s.Err != nil {
+		if !s.Skipped && s.Err != nil && !errors.Is(s.Err, ErrNotLive) {
 			return true
 		}
 	}
@@ -218,7 +296,7 @@ func (r *Report) failed() bool {
 // in the Report, not as a returned error, because the §6.2 disposition
 // (warn vs fail) is decided downstream.
 //
-// spec: §5.2 lines 422-437 — scrub procedure; line 438 — best-effort.
+// spec: §5.2 — the Lenny scrub procedure and its best-effort framing.
 func Run(ctx context.Context, ops Ops, cfg Config) (*Report, error) {
 	if ops == nil {
 		return nil, errors.New("scrub: nil Ops")
@@ -227,25 +305,40 @@ func Run(ctx context.Context, ops Ops, cfg Config) (*Report, error) {
 	rep := &Report{Result: Succeeded}
 
 	// Step 0 (pre-cleanup): purge the credential file before any deployer
-	// code runs. spec line 424.
-	if cfg.CredentialFile != "" {
-		rep.record(StepCredentialPurge, false, ops.RemoveAll(cfg.CredentialFile))
+	// code runs.
+	step0Err := purgeCredentials(ops, cfg)
+	rep.record(StepCredentialPurge, len(cfg.CredentialFiles) == 0 && step0Err == nil, step0Err)
+
+	// spec: §5.2 (Supervised scrub sequence) — on a restart pod the first
+	// end and sweep run between step 0 and cleanupCommands.
+	rep.runContextStep(ctx, StepEndRuntime, cfg.EndRuntime)
+
+	// cleanupCommands: deployer code, after the credential purge. A step-0
+	// error skips them on every pod, so no deployer code runs while a
+	// credential file may still be on disk. The aggregate cap is
+	// cleanupTimeoutSeconds; a cap-exceed under the warn sentinel is still a
+	// cleanup failure for scrub purposes. spec: §5.2 (Supervised scrub
+	// sequence, Step 0).
+	if step0Err != nil {
+		rep.record(StepCleanupCommands, true, nil)
 	} else {
-		rep.record(StepCredentialPurge, true, nil)
+		rep.runCleanup(ctx, cfg)
 	}
 
-	// cleanupCommands: deployer code, after the credential purge. spec line
-	// 415. The aggregate cap is cleanupTimeoutSeconds; a cap-exceed under
-	// the warn sentinel is still a cleanup failure for scrub purposes.
-	rep.runCleanup(ctx, cfg)
+	// spec: §5.2 (Supervised scrub sequence) — the second end and sweep run
+	// whether or not cleanupCommands failed, and the listener rebind follows.
+	rep.runContextStep(ctx, StepEndRuntimeAgain, cfg.EndRuntimeAgain)
+	if cfg.RebindListeners != nil {
+		rep.record(StepRebindListeners, false, cfg.RebindListeners())
+	}
 
 	// Steps 1-6 run regardless of a cleanup failure so the workspace is
 	// scrubbed even when deployer code misbehaves.
 	rep.record(StepKillProcesses, false, ops.KillUserProcesses(ctx))
 	rep.record(StepPurgeIPCShm, false, ops.PurgeIPCShm(ctx))
 
-	if cfg.WorkspaceDir != "" {
-		rep.record(StepRemoveWorkspace, false, ops.RemoveAll(cfg.WorkspaceDir))
+	if len(cfg.WorkspaceDirs) > 0 {
+		rep.record(StepRemoveWorkspace, false, removeAll(ops, cfg.WorkspaceDirs))
 	} else {
 		rep.record(StepRemoveWorkspace, true, nil)
 	}
@@ -265,6 +358,18 @@ func Run(ctx context.Context, ops Ops, cfg Config) (*Report, error) {
 	return rep, nil
 }
 
+// purgeCredentials runs step 0 and returns its error: the enumeration
+// failure, if any, joined with the removal failure of the files that were
+// enumerated. A non-nil result gates the cleanupCommands row in Run.
+// spec: §5.2 (Supervised scrub sequence, Step 0).
+func purgeCredentials(ops Ops, cfg Config) error {
+	var removeErr error
+	if len(cfg.CredentialFiles) > 0 {
+		removeErr = removeAll(ops, cfg.CredentialFiles)
+	}
+	return errors.Join(cfg.CredentialEnumErr, removeErr)
+}
+
 // record appends a StepRecord. A nil err on a non-skipped step is success.
 func (r *Report) record(step StepName, skipped bool, err error) {
 	r.Steps = append(r.Steps, StepRecord{Step: step, Skipped: skipped, Err: err})
@@ -280,6 +385,15 @@ func (r *Report) runCallback(step StepName, fn func() error) {
 	r.record(step, false, fn())
 }
 
+// runContextStep runs a supervised step. A step that is not configured (an
+// unsupervised pod, or a keep pod) is not part of the pod's sequence and is
+// not recorded.
+func (r *Report) runContextStep(ctx context.Context, step StepName, fn func(context.Context) error) {
+	if fn != nil {
+		r.record(step, false, fn(ctx))
+	}
+}
+
 // runCleanup runs the deployer cleanupCommands with the §5.2 cleanup env
 // (the baseline setup env plus LENNY_PREV_CREDENTIAL_PROVIDER /
 // LENNY_PREV_LEASE_ID). It reuses the §7.5 bounded-execution machinery so
@@ -293,11 +407,18 @@ func (r *Report) runCleanup(ctx context.Context, cfg Config) {
 	if timeout <= 0 {
 		timeout = DefaultCleanupTimeout
 	}
+	if cfg.CleanupRunner != nil {
+		r.record(StepCleanupCommands, false, cfg.CleanupRunner.RunCleanup(ctx, CleanupRequest{
+			Commands: cfg.CleanupCommands, Timeout: timeout,
+			PrevProvider: cfg.PrevProvider, PrevLeaseID: cfg.PrevLeaseID,
+		}))
+		return
+	}
 	cmds := make([]*adapterv1.SetupCommand, 0, len(cfg.CleanupCommands))
 	for _, c := range cfg.CleanupCommands {
 		cmds = append(cmds, &adapterv1.SetupCommand{Cmd: c})
 	}
-	outputs, err := workspace.RunSetup(ctx, cfg.WorkspaceDir, cmds, workspace.SetupOptions{
+	outputs, err := workspace.RunSetup(ctx, cfg.CleanupDir, cmds, workspace.SetupOptions{
 		AggregateTimeout: timeout,
 		// The §5.2 onCleanupFailure disposition is decided downstream from
 		// Result, so the cleanup phase always runs to its cap and reports a
@@ -305,7 +426,7 @@ func (r *Report) runCleanup(ctx context.Context, cfg Config) {
 		// path (FailOnAggregateTimeout: false) and treat any returned error
 		// as a cleanup failure for scrub purposes.
 		FailOnAggregateTimeout: false,
-		Env:                    CleanupEnv(cfg.WorkspaceDir, cfg.PrevProvider, cfg.PrevLeaseID),
+		Env:                    CleanupEnv(cfg.CleanupDir, cfg.PrevProvider, cfg.PrevLeaseID),
 		Shell:                  cfg.ShellMode,
 	})
 	r.CleanupOutputs = outputs
@@ -361,23 +482,27 @@ func (r *Report) verify(ops Ops, cfg Config) {
 		}
 	}
 
-	checkEmpty(cfg.WorkspaceDir)
+	for _, d := range cfg.WorkspaceDirs {
+		checkEmpty(d)
+	}
 	for _, d := range scratchTargets(cfg) {
 		checkEmpty(d)
 	}
 
-	// The credential file must be absent, not merely empty: step 0 removes
-	// it and step 6 confirms removal. spec line 436 — "if
-	// /run/lenny/credentials.json still exists despite step 0, the scrub is
-	// marked failed".
-	if cfg.CredentialFile != "" {
-		exists, _, err := ops.PathState(cfg.CredentialFile)
+	// A per-slot credential file must be absent rather than merely empty:
+	// step 0 removes each one and step 6 confirms the removal. A file
+	// /run/lenny/slots/{sessionId}/credentials.json left present despite
+	// step 0 marks the scrub failed. spec: §5.2; §6.1.
+	for _, f := range cfg.CredentialFiles {
+		exists, _, err := ops.PathState(f)
 		if err != nil {
 			if verifyErr == nil {
-				verifyErr = fmt.Errorf("stat %s: %w", cfg.CredentialFile, err)
+				verifyErr = fmt.Errorf("stat %s: %w", f, err)
 			}
-		} else if exists {
-			r.VerifyDirty = append(r.VerifyDirty, cfg.CredentialFile)
+			continue
+		}
+		if exists {
+			r.VerifyDirty = append(r.VerifyDirty, f)
 		}
 	}
 
@@ -388,8 +513,25 @@ func (r *Report) verify(ops Ops, cfg Config) {
 	r.record(StepVerify, false, verifyErr)
 }
 
+// removeAll removes every path in the set and reports every failure. It
+// never short-circuits: the credential purge runs before the deployer's
+// cleanupCommands precisely so no session's credential file is on disk
+// while third-party code runs as the pod user, and returning on the first
+// unremovable member would leave the rest of the set in place for that
+// window. Each member is attempted and the joined error fails the step.
+// spec: §5.2 (the credential purge precedes cleanupCommands).
+func removeAll(ops Ops, paths []string) error {
+	var errs []error
+	for _, p := range paths {
+		if err := ops.RemoveAll(p); err != nil {
+			errs = append(errs, fmt.Errorf("remove %s: %w", p, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // CleanupEnv returns the env a cleanupCommand runs with: the §7.5 minimal
-// setup whitelist plus the §5.2 line 424 LENNY_PREV_CREDENTIAL_PROVIDER and
+// setup whitelist plus the §5.2 LENNY_PREV_CREDENTIAL_PROVIDER and
 // LENNY_PREV_LEASE_ID sanitized metadata. The credential file itself is
 // already purged (step 0), so cleanup code that needs provider/lease
 // context for custom audit logging reads it from these variables rather

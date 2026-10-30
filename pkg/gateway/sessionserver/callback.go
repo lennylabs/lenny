@@ -14,8 +14,7 @@ import (
 // webhookEventDTO is one undelivered §14 callback event in the
 // GET /v1/sessions/{id}/webhook-events response. The CloudEvents body is
 // rendered inline as JSON rather than the base64 []byte form so a client
-// can read the event it can re-deliver. spec: §14 line 150; §15.1 line
-// 678. F-14.1.11.
+// can read the event it can re-deliver. spec: §14; §15.1. F-14.1.11.
 type webhookEventDTO struct {
 	EventID     string          `json:"eventId"`
 	EventType   string          `json:"eventType"`
@@ -36,8 +35,8 @@ type webhookEventsResponse struct {
 }
 
 // handleWebhookEvents implements GET /v1/sessions/{id}/webhook-events:
-// the §15.1 line 678 list of §14 callback events that exhausted their
-// delivery retry budget. spec: §15.1 line 678; §14 line 150. F-14.1.11.
+// the §15.1 list of §14 callback events that exhausted their
+// delivery retry budget. spec: §15.1; §14. F-14.1.11.
 func (s *Server) handleWebhookEvents(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")

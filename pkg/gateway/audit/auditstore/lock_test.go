@@ -12,7 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// spec: §11.7 item 3 line 368 — acquireTimeoutMs/maxRetries/retryBaseMs
+// spec: §11.7 item 3 — acquireTimeoutMs/maxRetries/retryBaseMs
 // defaults; a zero or negative field inherits the spec default.
 func TestLockConfigWithDefaults_spec_11_7(t *testing.T) {
 	d := DefaultLockConfig()
@@ -32,7 +32,7 @@ func TestLockConfigWithDefaults_spec_11_7(t *testing.T) {
 	}
 }
 
-// spec: §11.7 item 3 line 368 — a statement_timeout firing on the
+// spec: §11.7 item 3 — a statement_timeout firing on the
 // advisory lock (57014) or a backend termination (57P01) or a context
 // deadline is the AUDIT_CONCURRENCY_TIMEOUT signal; nothing else is.
 func TestIsLockTimeout_spec_11_7(t *testing.T) {
@@ -58,7 +58,7 @@ func TestIsLockTimeout_spec_11_7(t *testing.T) {
 	}
 }
 
-// spec: §11.7 item 3 line 368 — the typed error codes the gateway
+// spec: §11.7 item 3 — the typed error codes the gateway
 // surfaces: AUDIT_CONCURRENCY_TIMEOUT to the caller, then 503
 // audit_unavailable after the retry budget is spent.
 func TestAuditLockErrorCodes_spec_11_7(t *testing.T) {
@@ -80,7 +80,7 @@ func TestAuditLockErrorCodes_spec_11_7(t *testing.T) {
 	}
 }
 
-// spec: §11.7 item 3 line 368 — the retry backoff must abandon promptly
+// spec: §11.7 item 3 — the retry backoff must abandon promptly
 // when the request context is cancelled (gateway shutdown), rather than
 // blocking on the audit retry loop.
 func TestSleepBackoffHonorsContextCancel_spec_11_7(t *testing.T) {

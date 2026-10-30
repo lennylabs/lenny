@@ -2,7 +2,7 @@
 # (SLODefinitions) in pkg/alerting/rules. DO NOT EDIT. Run
 # `make generate` to refresh.
 #
-# spec: §16.10 lines 732-736 — the §16.5 latency and availability SLOs
+# spec: §16.10 — the §16.5 latency and availability SLOs
 # rendered as OpenSLO v1 SLO/SLI/AlertPolicy documents. The chart's
 # openslo-configmap.yaml template splices this fragment into a
 # ConfigMap when monitoring.openslo.enabled is set, substituting

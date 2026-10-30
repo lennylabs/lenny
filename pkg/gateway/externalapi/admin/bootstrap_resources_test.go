@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// spec: §17.6 lines 403-411, 429, 438 — bootstrap seed of pools,
+// spec: §17.6 — bootstrap seed of pools,
 // delegationPolicies, and environments (F-17.6.2 / F-24.1.4).
 
 type bootstrapStores struct {
@@ -52,7 +52,7 @@ func newFullBootstrapRouter(t *testing.T, siemConfigured bool) bootstrapStores {
 }
 
 // TestBootstrapSeedsPoolForRegisteredRuntime_spec_17_6_408 covers the
-// §17.6 line 429 "sessions require warm pods" requirement: a pool naming
+// §17.6 requirement: a pool naming
 // a seeded runtime is created in the same bootstrap run.
 func TestBootstrapSeedsPoolForRegisteredRuntime_spec_17_6_408(t *testing.T) {
 	s := newFullBootstrapRouter(t, false)
@@ -369,7 +369,7 @@ func TestBootstrapDelegationPolicyScanRequiresInterceptor_spec_8_3(t *testing.T)
 	}
 }
 
-// TestBootstrapSeedsEnvironment_spec_17_6_438 covers the §17.6 line 438
+// TestBootstrapSeedsEnvironment_spec_17_6_438 covers the §17.6
 // Option B access path: an environment with members is seeded.
 func TestBootstrapSeedsEnvironment_spec_17_6_438(t *testing.T) {
 	s := newFullBootstrapRouter(t, false)
@@ -397,7 +397,7 @@ func TestBootstrapSeedsEnvironment_spec_17_6_438(t *testing.T) {
 }
 
 // TestBootstrapEnvironmentRejectedForRegulatedTenantWithoutSIEM_spec_11_7_449
-// covers the §11.7 line 449 gate: an environment under a regulated tenant
+// covers the §11.7 gate: an environment under a regulated tenant
 // is rejected when no SIEM endpoint is configured.
 func TestBootstrapEnvironmentRejectedForRegulatedTenantWithoutSIEM_spec_11_7_449(t *testing.T) {
 	s := newFullBootstrapRouter(t, false) // SIEM not configured

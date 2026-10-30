@@ -1,0 +1,15 @@
+{{- /*
+KMS render guard (§10.2, §17.8.2).
+
+On a cloud KMS provider the gateway and the Token Service sign every
+Lenny-issued JWT through the provider's asymmetric Sign operation, whose
+quota varies by account and region. kms.signQuotaPerSecond therefore has
+no default and is required whenever kms.provider is not local: this
+render-time guard refuses `helm install` / `helm upgrade` when it is unset.
+The schema bounds a set value to at least 1. The template emits no
+Kubernetes object; it exists solely to evaluate the guard at template time.
+*/ -}}
+{{- $kms := .Values.kms | default dict -}}
+{{- if and (ne ($kms.provider | default "local") "local") (not $kms.signQuotaPerSecond) }}
+{{- fail (printf "kms.signQuotaPerSecond is required when kms.provider is %q: set it to the provider's asymmetric Sign quota per second for the account and region (§17.8.2)" $kms.provider) }}
+{{- end }}

@@ -8,7 +8,7 @@ import "encoding/json"
 // durability layer (pkg/gateway/sqlitestore) snapshot and restore the
 // in-memory user store across a process restart.
 //
-// spec: §17.4 line 199 — embedded SQLite for session and metadata storage.
+// spec: §17.4 — embedded SQLite for session and metadata storage.
 func (m *Memory) ExportState() ([]byte, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

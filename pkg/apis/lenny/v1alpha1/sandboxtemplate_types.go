@@ -46,12 +46,13 @@ type SessionPolicy struct {
 // poolstore. spec: §5.2 (recycle lifecycle, Kata scrub variant).
 type RecyclePolicy struct {
 	// ScrubProfile selects the whole-pod scrub variant: `standard` (the
-	// default) runs the in-guest scrub steps; `vm-restart` boots a fresh
-	// guest VM between tenants on a microvm cross-tenant-reuse pool;
-	// `in-place` reuses the running guest and leaves guest-kernel residual
-	// state. The pool controller rejects `standard` on a pool with
-	// `recycle.allowCrossTenantReuse: true`. spec: §5.2 (Kata/microvm
-	// scrub variant).
+	// default) runs the in-guest scrub steps; `vm-restart` retires the pod
+	// at every recycle boundary and reprovisions a fresh guest VM;
+	// `in-place` keeps the running guest across the pinned tenant's later
+	// sessions and leaves guest-kernel residual state. No recycled pod is
+	// reused across tenants under any profile. The pool controller rejects
+	// `standard` on a pool with `recycle.allowCrossTenantReuse: true`.
+	// spec: §5.2 (Kata/microvm scrub variant).
 	// +kubebuilder:validation:Enum=standard;vm-restart;in-place
 	// +optional
 	ScrubProfile string `json:"scrubProfile,omitempty"`
@@ -59,11 +60,26 @@ type RecyclePolicy struct {
 	// AcknowledgeMicrovmResidualState records the deployer's
 	// acknowledgment that guest-kernel residual state (DNS cache, TCP
 	// TIME_WAIT, page cache, inotify/fanotify registrations) persists
-	// across tenants. The pool controller requires it when ScrubProfile is
-	// `in-place` and rejects the pool otherwise. spec: §5.2 (Kata/microvm
-	// scrub variant).
+	// across the pinned tenant's sessions in the continuing `in-place`
+	// guest. No recycled pod is reused across tenants, so the state never
+	// reaches another tenant. The pool controller requires it when
+	// ScrubProfile is `in-place` and rejects the pool otherwise. spec: §5.2
+	// (Kata/microvm scrub variant).
 	// +optional
 	AcknowledgeMicrovmResidualState bool `json:"acknowledgeMicrovmResidualState,omitempty"`
+
+	// RuntimeProcess is the runtime-process lifetime of the pods the pool
+	// creates: a `keep` pod keeps its runtime process across the recycle
+	// boundary, and a `restart` pod ends it in each whole-pod scrub and
+	// launches a new process for the next session. The WarmPoolController
+	// reads it when it creates a pod and records it in the immutable pod
+	// label `lenny.dev/runtime-process`; an absent value creates a `keep`
+	// pod. Gateway pool admission requires it on a reusing recycling pool
+	// and rejects it on every other pool. spec: §5.2 (Runtime-process
+	// lifetime).
+	// +kubebuilder:validation:Enum=keep;restart
+	// +optional
+	RuntimeProcess string `json:"runtimeProcess,omitempty"`
 }
 
 // SandboxTemplateSpec is the desired state of a SandboxTemplate — the
@@ -83,11 +99,11 @@ type SandboxTemplateSpec struct {
 
 	// WorkspaceTier is the §12.9 data-classification tier of the runtime
 	// this pool serves. The pool-config webhook reads it to enforce the
-	// §12.9 line 1043 cross-tenant-reuse prohibition: a `T4` (Restricted)
+	// §12.9 cross-tenant-reuse prohibition: a `T4` (Restricted)
 	// pool may not set `sessionPolicy.recycle.allowCrossTenantReuse: true`, because
 	// T4 workspace state must never be reused across tenants regardless of
 	// isolation profile. Empty leaves the tier unclassified at the pool
-	// level (the cross-tenant rule does not fire). spec: §12.9 line 1043.
+	// level (the cross-tenant rule does not fire). spec: §12.9.
 	// +kubebuilder:validation:Enum=T1;T2;T3;T4
 	// +optional
 	WorkspaceTier string `json:"workspaceTier,omitempty"`
@@ -109,7 +125,7 @@ type SandboxTemplateSpec struct {
 	// `dnsPolicy: None` plus a `dnsConfig` targeting the dedicated Service.
 	// Opting out is permitted only for `standard` (runc) pools and removes
 	// the dedicated instance's query logging, rate limiting, and response
-	// filtering for that pool. spec: §13.2 lines 470-490.
+	// filtering for that pool. spec: §13.2.
 	// +kubebuilder:validation:Enum=cluster-default
 	// +optional
 	DNSPolicy string `json:"dnsPolicy,omitempty"`
@@ -135,7 +151,7 @@ type SandboxTemplateSpec struct {
 	// chunk-upload capabilities the gateway keeps outstanding at once
 	// while draining this pool's workspace checkpoints. When unset the
 	// gateway falls back to its deployment-wide checkpointGrantWindow
-	// default. spec: §10.1 line 131 chunk-grant window; §17.8.1
+	// default. spec: §10.1.7 chunk-grant window; §17.8.1
 	// checkpointGrantWindow default 4.
 	// +kubebuilder:validation:Minimum=1
 	// +optional
@@ -192,15 +208,13 @@ type SandboxTemplateSpec struct {
 	// +optional
 	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
 
-	// WorkspaceSizeLimitBytes is the §4.4 line 254 / §10.1 line 122 per-pod
+	// WorkspaceSizeLimitBytes is the §4.4 / §10.1 per-pod
 	// workspace-size hard limit. The pool-config webhook resolves it to the
 	// matching §10.1 tiered-checkpoint-cap (30s for ≤100 MB, 60s for
 	// ≤300 MB, 90s for ≤512 MB) when computing the
 	// `terminationGracePeriodSeconds` floor; a service-mode pool fans this
 	// cap across maxConcurrent slots while a session-mode pool uses a
-	// multiplier of 1 (spec/05_runtime-registry-and-pool-model.md §5.2
-	// line 516). Unset defaults to the 90s conservative tier per §10.1
-	// line 108.
+	// multiplier of 1 (spec/05_runtime-registry-and-pool-model.md §5.2). Unset defaults to the 90s conservative tier per §10.1.
 	// +optional
 	WorkspaceSizeLimitBytes *int64 `json:"workspaceSizeLimitBytes,omitempty"`
 
@@ -260,6 +274,14 @@ type SandboxTemplateStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// The lenny.dev/schema-version annotation is read at controller startup and
+// by lenny-preflight, and a mismatch with preflight.CurrentCRDSchemaVersion
+// is fatal, so a stale CRD never silently strips new fields. Bump the value
+// here and in that constant together. The top-level spec and status fields
+// carry +kubebuilder:pruning:PreserveUnknownFields for the same reason: a CRD
+// older than the controller does not prune fields a newer controller writes.
+// spec: §10.5 (Upgrade and Rollback Strategy). F-15.5.12.
+// +kubebuilder:metadata:annotations="lenny.dev/schema-version=1"
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=sbxt
 // +kubebuilder:printcolumn:name="Runtime",type=string,JSONPath=`.spec.runtimeRef`
@@ -273,7 +295,9 @@ type SandboxTemplate struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   SandboxTemplateSpec   `json:"spec,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Spec SandboxTemplateSpec `json:"spec,omitempty"`
+	// +kubebuilder:pruning:PreserveUnknownFields
 	Status SandboxTemplateStatus `json:"status,omitempty"`
 }
 

@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/helm"
 )
 
-// TestCoreDeploymentInventory is the §17.2 line 84 core-Deployment
+// TestCoreDeploymentInventory is the §17.2 core-Deployment
 // inventory suite: it renders the chart with stock values and fail-closes
 // when any item of the §17.8.5 mandatory lenny-ops inventory is absent.
 // The spec names it tests/integration/core_deployment_inventory_test.go;
@@ -22,7 +22,7 @@ import (
 // must render unconditionally. A chart-author omission of any of these
 // fails this test rather than shipping silently.
 //
-// spec: §17.2 line 84 (core_deployment_inventory_test.go); §17.8.5
+// spec: §17.2; §17.8.5
 // (mandatory lenny-ops deployment inventory); §17.1 rows 15-21.
 func TestCoreDeploymentInventory(t *testing.T) {
 	helm.SkipUnlessAvailable(t)

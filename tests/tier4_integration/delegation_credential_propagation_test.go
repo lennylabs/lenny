@@ -76,6 +76,7 @@ import (
 // was credentialed from the deny runtime's supportedProviders instead of
 // being rejected with CREDENTIAL_POOL_EXHAUSTED.
 func TestDenyChildReceivesNoCredentialAtFinalize(t *testing.T) {
+	t.Parallel()
 	envtest.SkipUnlessAvailable(t)
 	ctx := context.Background()
 
@@ -131,6 +132,7 @@ func TestDenyChildReceivesNoCredentialAtFinalize(t *testing.T) {
 
 	ids := childIDCounter()
 	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  ids,
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
@@ -310,6 +312,7 @@ func newDenyOriginFixture(t *testing.T) (*mcp.Server, sessionstore.Store) {
 	}
 
 	credChecker := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader: true,
 		Tenants:         tenants,
 		Runtimes:        runtimes,
 		CredentialPools: credPools,
@@ -317,9 +320,10 @@ func newDenyOriginFixture(t *testing.T) (*mcp.Server, sessionstore.Store) {
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Store:    store,
-		Executor: executor.NewEchoExecutor(),
-		Runtimes: runtimes,
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          executor.NewEchoExecutor(),
+		Runtimes:          runtimes,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc:   childIDCounter(),
 			Runtimes: runtimes,

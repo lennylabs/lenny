@@ -16,6 +16,7 @@ import (
 	"context"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter/scrub"
@@ -37,7 +38,7 @@ const podNameEnvVar = "POD_NAME"
 
 // RuntimeKind selects which §5.1 runtime type the adapter drives. It
 // picks the adapter→runtime path: a type: agent runtime is driven over
-// the §15.4.1 JSONL stdin/stdout protocol; a type: mcp runtime's agent
+// the §28.5.3 JSONL stdin/stdout protocol; a type: mcp runtime's agent
 // is itself an MCP server, driven by the adapter as an MCP client
 // (§9.1). The Server's Runtime field is the RuntimeProcess for the
 // selected kind in both cases — only the implementation differs.
@@ -70,24 +71,22 @@ type Server struct {
 	// Version is the adapter build version, surfaced for observability.
 	Version string
 
-	// WorkspaceRoot is the directory StartSession materializes the
-	// session workspace into — the pod's /workspace/current.
-	WorkspaceRoot string
-	// WorkspaceBase is the §6.4 base the per-slot `slots/{slotId}` trees
-	// nest under (production /workspace), the parent of the single
-	// WorkspaceRoot. A slotId-bearing frame routes to the per-slot path,
-	// so cmd/lenny-adapter sets this unconditionally. Empty disables
-	// per-slot workspace materialization.
+	// WorkspaceBase is the §6.4 base every session's per-slot
+	// `slots/{sessionId}/{current,staging}` tree nests under (production
+	// /workspace). The per-slot tree is the only workspace layout, so
+	// every root a handler resolves comes from slotlayout.Resolve against
+	// this base and the session identifier; the pod carries no pod-global
+	// `current` directory. Empty disables workspace materialization.
 	WorkspaceBase string
-	// ArtifactsRoot is the §6.4 base the per-slot `/artifacts/{slotId}`
+	// ArtifactsRoot is the §6.4 base the per-slot `/artifacts/{sessionId}`
 	// trees nest under (production /artifacts). Empty omits the per-slot
 	// artifacts directory.
 	ArtifactsRoot string
-	// SessionsRoot is the §6.4 line 380 /sessions tmpfs the runtime
+	// SessionsRoot is the §6.4 /sessions tmpfs the runtime
 	// writes its session file into (conversation logs, native SDK
 	// session state). When set, Checkpoint bundles it into the workspace
 	// archive and Resume restores it to its expected path, satisfying the
-	// §7.3 line 409 step (f) "restore session file to expected path".
+	// §7.3 step (f) "restore session file to expected path".
 	// Empty (dev mode, an in-process executor with no /sessions mount)
 	// leaves the session file out of the checkpoint and the resume a
 	// workspace-only restore.
@@ -103,9 +102,9 @@ type Server struct {
 	// container mounts it read-only. Empty skips the populate step (the
 	// volume is still mounted read-only and empty by the pod spec).
 	SharedAssetsDir string
-	// SharedAssets is the §6.4 line 409 inline shared-asset set
+	// SharedAssets is the §6.4 inline shared-asset set
 	// EnsureWarmWorkspaceLayout writes into SharedAssetsDir. Nil or empty
-	// leaves /workspace/shared empty. spec: §6.4 line 409 — F-6.4.3.
+	// leaves /workspace/shared empty. spec: §6.4 — F-6.4.3.
 	SharedAssets []sharedassets.FileSpec
 	// CredentialsDir is the directory the credential RPCs materialize
 	// the §4.7 credential file into — the pod's /run/lenny.
@@ -129,18 +128,16 @@ type Server struct {
 	// MCP server. A manifest directory must also be configured, since
 	// the runtime reads the authenticating nonce from the manifest.
 	MCPSocket string
-	// RuntimeUID is the Unix UID the agent runtime process runs as.
-	// When non-zero the platform MCP server applies the §4.7 / §13
-	// SO_PEERCRED peer-credential check, rejecting any connection from
-	// a process running as a different UID. Zero disables the check.
-	RuntimeUID uint32
-	// NonceOnlyMode reports that SO_PEERCRED is disabled
-	// (--require-so-peercred=false), so the manifest nonce alone is the
-	// intra-pod MCP authentication boundary. When set, the platform MCP
-	// server supplements the static nonce with the §4.7 per-connection
-	// challenge-response (lines 879-883), keeping forward security on each
-	// new connection.
-	NonceOnlyMode bool
+	// PeerAuth is the SO_PEERCRED posture of the intra-pod platform and
+	// connector MCP listeners, the same decision the CH-MSGSOCK listener
+	// takes. Outside nonce-only mode each listener admits only
+	// PeerAuth.ExpectedUID; the zero value admits only UID 0, so a caller
+	// that configures an MCP socket must name the agent UID. In nonce-only
+	// mode (--require-so-peercred=false) the listeners apply no peer check
+	// and the MCP servers add the §4.7 per-connection challenge-response to
+	// the static nonce. spec: §4.7.11 (Separate UIDs and connection
+	// authentication, Nonce-only fallback).
+	PeerAuth SocketPeerAuth
 	// PlatformForwarder forwards the §9.1 platform tool calls a type:agent
 	// runtime makes against the intra-pod platform MCP server to the
 	// gateway over GatewayControl. When set, startPlatformMCP wires it as
@@ -148,7 +145,7 @@ type Server struct {
 	// gateway's platform tool catalog on tools/list and dispatches every
 	// tools/call to the gateway. Nil leaves the platform MCP server
 	// serving an empty catalog (the dev path with no gateway link).
-	// *gatewaycontrol.Client satisfies it. spec: §9.1 lines 14-31. F-9.1.1.
+	// *gatewaycontrol.Client satisfies it. spec: §9.1. F-9.1.1.
 	PlatformForwarder PlatformToolForwarder
 	// ConnectorForwarder forwards the §9.3 per-connector tool calls a
 	// type:agent runtime makes against the intra-pod @lenny-connector-<id>
@@ -158,7 +155,7 @@ type Server struct {
 	// server per connector whose tools/list and tools/call forward to the
 	// gateway. Nil leaves the manifest connectorServers array empty (the dev
 	// path with no gateway link). *gatewaycontrol.Client satisfies it.
-	// spec: §9.3 lines 142-164. F-9.1.2.
+	// spec: §9.3. F-9.1.2.
 	ConnectorForwarder ConnectorToolForwarder
 	// PodScrubReporter emits the §5.2 whole-pod scrub outcome to the gateway
 	// on the recycle boundary via ReportPodScrub. ConnectGateway wires it to
@@ -169,7 +166,8 @@ type Server struct {
 	// spec: §4.7 (ReportPodScrub); §5.2. F-5.2.15.
 	PodScrubReporter PodScrubReporter
 	// SessionScrubReporter emits the §5.2 per-slot cleanup outcome to the
-	// gateway on every session release via ReportSessionScrub, so the gateway
+	// gateway via ReportSessionScrub for the cleanups §5.2 states the adapter
+	// reports, which are those of a slot that reached §6.2's running, so the gateway
 	// advances sessions_served (feeding the maxSessionsPerPod retirement) and
 	// feeds a leaked outcome into the unhealthy-threshold ledger. ConnectGateway
 	// wires it to the dialed *gatewaycontrol.Client alongside PodScrubReporter.
@@ -188,9 +186,9 @@ type Server struct {
 	ScrubOps scrub.Ops
 	// podID is the adapter's own pod name, read once from the Downward API
 	// POD_NAME env at construction (New) and cached immutably for the process
-	// lifetime. The session- and pod-scrub report paths key on it: ShutdownSlot
-	// carries no pod_id and the base recycle Shutdown carries pod_id only inside
-	// RecycleScrub, so the adapter takes its pod identity from this env. An
+	// lifetime. The session- and pod-scrub report paths key on it: a session
+	// Shutdown carries no pod_id and the recycle Shutdown carries pod_id only
+	// inside RecycleScrub, so the adapter takes its pod identity from this env. An
 	// absent or misnamed env leaves it empty, which the gateway rejects
 	// InvalidArgument, so the whole scrub-report chain is disabled fail-closed
 	// rather than reporting under an empty key. Set once before any RPC handler
@@ -202,9 +200,16 @@ type Server struct {
 	// deterministically without a sleep. Nil in production. spec: §5.2 (async
 	// scrub report).
 	scrubDone func()
+	// removeSlotTreeFn is a test-only seam that replaces the per-slot tree
+	// removal at the release sites whose reclaim-hold release reads the
+	// removal's result. os.RemoveAll cannot be made to fail portably from a
+	// unit test, so the retained-hold arm of each release is driven through
+	// this field. Nil in production, where removeSlotTreeVia takes
+	// removeSlotTree. spec: §5.2 (slot-identifier reclaim hold).
+	removeSlotTreeFn func(*slotState) error
 	// RuntimeKind selects the §5.1 runtime type the adapter drives. The
 	// zero value is RuntimeKindAgent: the adapter drives an agent binary
-	// over the §15.4.1 JSONL stdin/stdout protocol. RuntimeKindMCP
+	// over the §28.5.3 JSONL stdin/stdout protocol. RuntimeKindMCP
 	// selects the type: mcp path, where the agent is an MCP server the
 	// adapter drives as an MCP client; wire Runtime with an *MCPRuntime.
 	RuntimeKind RuntimeKind
@@ -226,45 +231,55 @@ type Server struct {
 	// WorkspaceSizeLimitBytes is the §4.4 hard workspace size limit. When
 	// greater than zero, a checkpoint whose probed workspace exceeds it
 	// terminates the Checkpoint stream with FailedPrecondition before any
-	// grant is minted (§4.4 line 255). Zero disables the limit — the
+	// grant is minted (§4.4). Zero disables the limit — the
 	// kubelet emptyDir guard is the backstop.
 	WorkspaceSizeLimitBytes int64
 	// Usage reports the session's token and wall-clock accounting the
 	// ReportUsage RPC returns. Nil leaves ReportUsage Unimplemented.
 	Usage UsageMeter
-	// Lifecycle is the §15.4.6 runtime lifecycle channel. When set, the
+	// Lifecycle is the §15.4.6 runtime CH-RUNTIMEOPS. When set, the
 	// adapter advertises its Unix socket in the session manifest so a
 	// Full-level runtime can connect for checkpoint, interrupt,
 	// credential-rotation, and deadline signals. Nil leaves the adapter
-	// Basic-level, with no lifecycle channel.
-	Lifecycle *LifecycleChannel
+	// Basic-level, with no CH-RUNTIMEOPS.
+	Lifecycle *RuntimeOps
 
 	// RuntimeName is the §5.1 runtime name stamped onto the
 	// `lenny_credential_rotation_timeout_total` metric's runtime label.
 	// Empty leaves the label empty.
 	RuntimeName string
-	// RotationInflightCeiling overrides the §4.7 line 822 fault/revocation
+	// RotationInflightCeiling overrides the §4.7 fault/revocation
 	// in-flight gate ceiling (default 300s). The renewal trigger ignores
 	// it and waits unbounded. Zero selects the spec default. Operator
 	// override is for test and latency tuning; production keeps the spec
 	// value.
 	RotationInflightCeiling time.Duration
-	// CredentialsAckTimeout overrides the §4.7 line 824 60s
+	// CredentialsAckTimeout overrides the §4.7 60s
 	// credentials_acknowledged timeout. Zero selects the spec default.
 	CredentialsAckTimeout time.Duration
-	// RotationAudit emits the §4.7 line 822 / §4.9.2
+	// SessionStartAckTimeout bounds a start's wait for the runtime's
+	// session_started answer to its session_start, which the wait also
+	// ends at the starting request's deadline when that is earlier. It also
+	// bounds a session-scoped CH-RUNTIMEOPS sender's wait for the gate when
+	// the sender has no bound of its own. The specification bounds the wait
+	// without fixing a value, so the value is operator-tunable through
+	// lenny-adapter --session-start-ack-timeout. Zero selects
+	// runtimekit.DefaultSessionStartAckTimeout. spec: §28.5.3 (CH-MSGSOCK,
+	// Outbound: session_started).
+	SessionStartAckTimeout time.Duration
+	// RotationAudit emits the §4.7 / §4.9.2
 	// credential.rotation_ceiling_hit audit event when the in-flight gate
 	// hits the ceiling. Nil makes the emission a no-op (the dev-mode
 	// adapter has no EventStore path).
 	RotationAudit RotationAuditEmitter
 
-	// ExpiryAfterFunc and ExpiryNow are the §4.9 line 1149 expiry-timer
+	// ExpiryAfterFunc and ExpiryNow are the §4.9 expiry-timer
 	// test seams. Nil selects time.AfterFunc and time.Now; tests inject
 	// fakes to fire a lease expiry deterministically.
-	ExpiryAfterFunc func(time.Duration, func()) expiryTimerHandle
+	ExpiryAfterFunc func(time.Duration, func()) TimerHandle
 	ExpiryNow       func() time.Time
 
-	// CoordinatorHoldTimeout overrides the §10.1 line 50
+	// CoordinatorHoldTimeout overrides the §10.1.4
 	// coordinatorHoldTimeoutSeconds default (120s): the window the adapter
 	// holds a session after losing its coordinator before it
 	// self-terminates. Zero selects the spec default.
@@ -272,8 +287,8 @@ type Server struct {
 	// HoldAfterFunc is the §10.1 hold-timer test seam. Nil selects
 	// time.AfterFunc; tests inject a fake to fire the hold timeout
 	// deterministically.
-	HoldAfterFunc func(time.Duration, func()) expiryTimerHandle
-	// PostMortemDir is the pod-local directory the §10.1 line 50 hold
+	HoldAfterFunc func(time.Duration, func()) TimerHandle
+	// PostMortemDir is the pod-local directory the §10.1.4 hold
 	// timeout writes a coordinator_lost post-mortem record into when no
 	// new coordinator returns and the gateway control stream is gone.
 	// Empty skips the disk write (the dev path); the AdapterTerminating
@@ -281,50 +296,52 @@ type Server struct {
 	// primary terminal-notification surfaces.
 	PostMortemDir string
 
-	// HeartbeatInterval is the §15.4.1 line 1442 cadence at which the
+	// HeartbeatInterval is the §28.5.3 cadence at which the
 	// Attach loop sends a `{type:heartbeat,ts}` liveness ping to the
 	// runtime. Zero (the default) disables heartbeats — the in-process
 	// dev executor and tests that construct a bare Server send none.
 	// cmd/lenny-adapter sets it for the production sidecar so a hung
 	// runtime is detected by liveness probe, not only by stream close.
-	// spec: §15.4.1 lines 1442, 1826, 2061.
+	// spec: §28.5.3.
 	HeartbeatInterval time.Duration
-	// HeartbeatAckTimeout is the §15.4.1 line 1826 window the runtime has
+	// HeartbeatAckTimeout is the §28.5.3 window the runtime has
 	// to answer a heartbeat with `heartbeat_ack`. When the window elapses
-	// with no ack the adapter considers the process hung and sends SIGTERM
-	// (RuntimeProcess.Interrupt with hard=false). Zero selects the spec
+	// with no ack the adapter considers the runtime hung, ends the
+	// session's stream, and calls RuntimeProcess.Interrupt with hard=false,
+	// which signals a process only on the developer-loop executor and ends
+	// nothing on the sidecar transport (§4.7.10). Zero selects the spec
 	// default (10s) whenever HeartbeatInterval > 0.
 	HeartbeatAckTimeout time.Duration
 
+	// clock is the time source of the session activity clock that
+	// SealSession compares (§4.7.1 **Session seal.**). Nil selects
+	// time.Now; tests set it.
+	clock func() time.Time
+	// activityTapped records that installActivityTap installed the
+	// activity tap on the runtime's output, so the adapter reads every
+	// runtime frame whether or not an Attach stream is open. SealSession
+	// refuses every session while it is false, because the adapter then
+	// observes no runtime frame. Set once, before the gRPC server serves.
+	// spec: §4.7.1 (Role and Gateway RPC Contract).
+	activityTapped bool
+
 	// ops serializes the Checkpoint and Interrupt RPCs per §4.7.
 	ops opLock
-
-	// coord holds the §10.1 coordinator generation gate the
-	// CoordinatorFence RPC installs and the CheckpointBarrier RPC
-	// validates. See pkg/adapter/coordination.go.
-	coord coordinationState
 
 	// hold tracks the §10.1 coordinator-loss hold state the adapter
 	// enters when the gateway control stream drops while a session is
 	// live. See pkg/adapter/holdstate.go.
 	hold holdState
 
-	// barrier coordinates the §10.1 quiesce-and-hold CheckpointBarrier RPC
-	// with the gateway-driven Checkpoint stream: the barrier holds
-	// quiescence and blocks until the stream the gateway drives against
-	// the held pod terminates, echoing that stream's checkpoint_id. See
-	// pkg/adapter/coordination.go.
-	barrier barrierGate
-
 	// controlMu guards controlSink.
 	controlMu sync.Mutex
 	// controlSink is the queue feeding the active §4.7 adapter→gateway
-	// LifecycleChannel stream. Non-nil only while a gateway stream is
+	// AdapterEvents stream. Non-nil only while a gateway stream is
 	// attached; emitControlEvent drops events when it is nil.
 	controlSink chan controlEvent
 
-	// mu guards sessionID, mcpCancel, sdkConnected, and the credential
-	// fields.
+	// mu guards the slot registry, the pod-level runtime-generation
+	// state, mcpCancel, sdkConnected, and the credential fields.
 	mu sync.Mutex
 	// sdkConnected records that the §6.1 SDK-warm pre-connect has
 	// completed for a preConnect runtime. It is set by PreConnect at warm
@@ -335,37 +352,103 @@ type Server struct {
 	// nonce-authenticated initialize handshake against the platform MCP
 	// server during the current session. The §5.1 observed-integration
 	// -level probe reads it: a runtime that connected to MCP is at least
-	// Standard. Cleared by releaseSession. F-5.1.11.
+	// Standard. Cleared when a release leaves the pod's shared runtime
+	// process serving no session. F-5.1.11.
 	mcpHandshakeSeen bool
-	// sessionID is the session currently assigned to the pod, empty
-	// when the pod is idle. Per §6.1 a session-mode pod is
-	// one-session-only.
-	sessionID string
-	// mcpCancel stops the platform MCP server started for the current
-	// session. Nil when no platform MCP server is running.
+	// mcpCancel stops the pod's platform MCP server. Nil when no platform
+	// MCP server is running. The server binds the single socket the
+	// controller renders for the whole pod, so it is started at most once
+	// per pod rather than once per session.
 	mcpCancel context.CancelFunc
-	// connectorCancels stops the §9.3 per-connector MCP servers started
-	// for the current session, one cancel per connector socket. Reset to
-	// nil by releaseSession after every server is stopped. F-9.1.2.
+	// mcpSession names the session whose claim took the once-per-pod MCP
+	// start, empty when the surface is unarmed. The claim records it
+	// inside its own critical section so two concurrent starts cannot both
+	// bind the one socket, and the pod-surface cancellation reads it so a
+	// departing session cannot cancel a surface the pod's current claimant
+	// still needs. Cleared by that cancellation. spec: §15.4.3.
+	mcpSession string
+	// mcpArmedNonce is the §15.4.3 nonce the pod's running intra-pod MCP
+	// servers authenticate, empty when no server is bound. It is written
+	// by the start that armed them and cleared with their cancels, so it
+	// names the arming that is live rather than the last one written to
+	// the pod's one manifest file. spec: §15.4.3.
+	mcpArmedNonce string
+	// mcpWarmUpArmed records that the warm-up launch's preparation bound
+	// the pod's platform MCP server and no session claim has taken it yet.
+	// The first claim takes that binding as the pod's one platform start
+	// instead of restarting the server. spec: §4.7.6 (mcpNonce row);
+	// §15.4.3.
+	mcpWarmUpArmed bool
+	// connectorCancels stops the §9.3 per-connector MCP servers, one
+	// cancel per connector socket. Reset to nil after every server is
+	// stopped. F-9.1.2.
 	connectorCancels []context.CancelFunc
-	// credSessionID is the session the current credential leases were
-	// assigned for, empty when none are assigned.
-	credSessionID string
-	// credLeases is the credential lease set materialized into the
-	// credential file, keyed by provider.
-	credLeases map[string]*adapterv1.CredentialLease
-	// expiryTimers holds the §4.9 line 1149 direct-mode lease-expiry
-	// timers, keyed by provider. Each fires at its lease's expiresAt to
-	// delete the provider's credential-file entry and report
-	// AUTH_EXPIRED unless a replacement lease arrived first.
-	expiryTimers map[string]*expiryTimer
-
+	// runtimeLive is the set of sessions the adapter has started on the
+	// pod's one shared runtime process and not yet finished closing.
+	// spec: §15.4.3.
+	runtimeLive map[string]struct{}
+	// runtimeCohort counts the sessions handed to the current runtime
+	// generation's process. It resets only when the runtime's generation
+	// changes, at a supervised launch (§4.7.10, Runtime supervisor,
+	// Generation); a runtime without generations has one process for the
+	// pod's life. soleSession reports a session only while it is one and
+	// that session is still live.
+	runtimeCohort int
+	// cohortSession is the identifier of the first session the process
+	// was given.
+	cohortSession string
+	// cohortGen is the runtime generation the cohort counts. A start that
+	// finds the runtime at another generation resets the cohort, because
+	// each launch starts a new process. spec: §4.7.10 (Runtime supervisor,
+	// Generation).
+	cohortGen uint64
 	// slots holds the §6.4 concurrent-workspace per-slot state, keyed by
-	// slotId. Populated when a slot bind assigns a slot. Each slot owns its
-	// own workspace tree, state, and credential lease set; one pod-global
-	// runtime serves every slot, multiplexed on slotId over the single
-	// runtime connection. Guarded by mu. spec: §6.4 lines 385-409.
+	// the slot identifier, which for a session-mode slot is the session's
+	// own identifier. Populated on the adapter's first reference to a slot
+	// the gateway minted at claim time, which a slot bind carries. Each
+	// slot owns its own workspace tree, state, and credential lease set;
+	// one pod-global runtime serves every slot, multiplexed on the frame's
+	// sessionId over the single runtime connection. Guarded by mu.
+	// spec: §6.4; §28.5.3.
 	slots map[string]*slotState
+	// reclaiming is the §5.2 slot-identifier reclaim hold: the identifiers
+	// whose registry entry a release has deregistered and whose cleanup has
+	// not yet completed. reclaimSlotLocked opens a hold in the same critical
+	// section as the deregistration and its release function ends it, and
+	// ensureSlotStateLocked refuses every admission onto a held identifier.
+	// No entry can stand under a held identifier, so the set carries no
+	// value. Guarded by mu. spec: §5.2; §4.7.1 (role and gateway RPC
+	// contract), the registry critical section.
+	reclaiming map[string]struct{}
+	// slotGuards holds each slot identifier's per-slot guard: a
+	// capacity-one channel used as a semaphore that serializes every section
+	// creating, writing or destroying the slot's tree outside mu. An entry is
+	// created on the first reference to an identifier and never removed for
+	// the life of the pod, because deleting it while a holder keeps the old
+	// channel would let the next acquirer mint a second channel and enter
+	// beside that holder. The map is guarded by mu; the channels are not, and
+	// mu is never held while a channel is acquired. spec: §5.2 (slot-identifier
+	// reclaim hold); §4.7.1 (role and gateway RPC contract).
+	slotGuards map[string]chan struct{}
+	// shutdownInFlight counts, per session identifier, the Shutdown calls
+	// that removed the session's entry and have not yet answered. Guarded by
+	// mu. spec: §4.7.1 (role and gateway RPC contract), rule 11.
+	shutdownInFlight map[string]int
+	// shutdownUnclean holds the session identifiers whose last removing
+	// Shutdown answered an unclean exit. It is kept for the life of the pod,
+	// as the reclaim hold after an incomplete cleanup is. Guarded by mu.
+	// spec: §4.7.1 (role and gateway RPC contract), rule 11; §5.2
+	// (Slot-identifier reclaim hold).
+	shutdownUnclean map[string]struct{}
+	// startIDs mints the startId of each session_start this Server writes.
+	// The counter is per Server, which is per pod, and only increases, so
+	// every session_start written on the pod carries a value distinct from
+	// every other written there, and a session_started answering an earlier
+	// start of the same session is never read as a later start's. It is
+	// atomic because concurrent open sequences for different slots hold
+	// different per-slot guards and no common lock. spec: §28.5.3
+	// (CH-MSGSOCK, Inbound: session_start).
+	startIDs atomic.Uint64
 }
 
 // New returns a Server advertising the given build version and the v1
@@ -391,10 +474,11 @@ func (s *Server) NegotiateVersion(_ context.Context, req *adapterv1.NegotiateVer
 	resp := &adapterv1.NegotiateVersionResponse{
 		Capabilities:   s.advertisedCapabilities(),
 		AdapterVersion: s.Version,
-		// spec: §7.3 line 408 — surface the absolute cwd path the adapter
-		// mounts the workspace into so the gateway can persist it for the
-		// "same absolute cwd path" assertion on Resume. F-7.3.15.
-		WorkspaceRoot: s.WorkspaceRoot,
+		// spec: §6.4, §7.3 — surface the base every session's per-slot
+		// tree nests under, so the gateway derives a session's cwd as
+		// <base>/slots/{sessionId}/current and persists it for the "same
+		// absolute cwd path" assertion on Resume. F-7.3.15.
+		WorkspaceBase: s.WorkspaceBase,
 	}
 	selected := highestCommonVersion(req.GetAcceptedProtocolVersions(), s.ProtocolVersions)
 	if selected == "" {

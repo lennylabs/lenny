@@ -1,0 +1,1 @@
+The runtime completes its first `lifecycle_capabilities` / `lifecycle_support` exchange ([§4.7](04_system-components.md#47-runtime-adapter)), and the gateway compares the declared level against the observed level.

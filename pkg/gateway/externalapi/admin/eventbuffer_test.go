@@ -121,7 +121,7 @@ func TestEventBufferSurfacesCircuitBreakerEvent(t *testing.T) {
 	}
 }
 
-// spec: §15.1 lines 937-938 — operation_id and agent_name from the
+// spec: §15.1 — operation_id and agent_name from the
 // correlation context are propagated to operational events as
 // CloudEvents extension attributes. Opening a circuit breaker under a
 // correlated request emits an event carrying both. F-15.1.10.
@@ -167,7 +167,7 @@ func TestOpsEventCarriesCorrelationExtensions_spec_15_1_937(t *testing.T) {
 }
 
 func TestEventBufferEndpointCSVFilter_spec_25_3_15(t *testing.T) {
-	// spec: §25.2 lines 210-211 — ?severity= and ?eventType= accept the
+	// spec: §25.2 — ?severity= and ?eventType= accept the
 	// canonical CSV form; the endpoint returns the union of the tokens
 	// rather than the empty page the literal-match path produced.
 	buf := eventbuffer.NewEventBuffer(0)

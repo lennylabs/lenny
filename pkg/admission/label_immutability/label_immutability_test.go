@@ -60,7 +60,7 @@ func TestDecideRejectsEgressProfileMutation(t *testing.T) {
 	}
 }
 
-// spec: §13.2 line 180 — adding lenny.dev/dns-policy to a pod that was not
+// spec: §13.2.2 — adding lenny.dev/dns-policy to a pod that was not
 // opted out would grant it a kube-system DNS egress path, bypassing the
 // dedicated CoreDNS instance's query logging, rate limiting, and response
 // filtering. The label is immutable on existing pods. F-13.2.4.
@@ -125,7 +125,7 @@ func TestDecideRejectsTenantInitialAssignmentByOtherSA(t *testing.T) {
 	}
 }
 
-// Pool return: tenant_id → unassigned allowed only for WarmPoolController.
+// Tenant reset: tenant_id → unassigned allowed only for WarmPoolController.
 func TestDecideAllowsTenantResetByWarmPoolController(t *testing.T) {
 	d, err := Decide(Request{
 		OldLabels:        map[string]string{LabelTenantID: "acme"},

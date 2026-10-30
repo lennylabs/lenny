@@ -15,7 +15,7 @@ func TestTreeVisibilityIsValid_spec_8_5_540(t *testing.T) {
 	}
 	for _, v := range valid {
 		if !v.IsValid() {
-			t.Errorf("%q should be valid (§8.5 line 540)", v)
+			t.Errorf("%q should be valid (§8.5)", v)
 		}
 	}
 	for _, v := range []session.TreeVisibility{"", "FULL", "tree", "parent"} {

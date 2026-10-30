@@ -11,11 +11,12 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore/tenantstoretest"
 )
 
 // spec: §12.5/§12.8 tenant registry; §10.2 IsRegistered consumer.
 
-// spec: §10.6 line 665 — the §10.6 RBACConfig sub-objects (tokenPolicy,
+// spec: §10.6 — the §10.6 RBACConfig sub-objects (tokenPolicy,
 // capabilities, mcpAnnotationMapping) must deep-copy so a stored row and
 // a returned copy never share backing memory. A Get-mutate-Get round
 // trip must not leak the mutation back into the registry. F-10.6.6.
@@ -167,23 +168,37 @@ func TestSoftDeleteMissingReturnsNotFound(t *testing.T) {
 	}
 }
 
+// TestIsRegisteredImplementsAuthRegistry pins the registered reading of
+// a tenant row over every §12.8 TenantState, for Memory.IsRegistered
+// and Tenant.Registered: only `deleting` and `deleted` are refused, so a
+// tenant's bearers are refused with TENANT_NOT_FOUND from Phase 3. The
+// `deleting` row keeps a zero DeletedAt, so it is the case that
+// discriminates the State half of the reading from a DeletedAt-only
+// check.
+// spec: 10.2 (Authentication: `tenant_id` extraction), 12.8 (Compliance Interfaces: Tenant deletion lifecycle)
 func TestIsRegisteredImplementsAuthRegistry(t *testing.T) {
 	s := tenantstore.NewMemory()
 	var _ auth.TenantRegistry = s
-
-	_ = s.Create(context.Background(), tenantstore.Tenant{ID: "acme"})
-	ok, err := s.IsRegistered("acme")
-	if err != nil || !ok {
-		t.Errorf("IsRegistered(active): got %v, %v", ok, err)
+	for _, c := range tenantstoretest.RegistrationCases() {
+		t.Run(c.Name, func(t *testing.T) {
+			row, err := c.Seed(context.Background(), s, "acme-"+c.Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := row.Registered(); got != c.Registered {
+				t.Errorf("Registered() = %v, want %v (state %q, deletedAt %v)", got, c.Registered, row.State, row.DeletedAt)
+			}
+			got, err := s.IsRegistered(row.ID)
+			if err != nil {
+				t.Fatalf("IsRegistered: %v", err)
+			}
+			if got != c.Registered {
+				t.Errorf("Memory.IsRegistered = %v, want %v", got, c.Registered)
+			}
+		})
 	}
-	ok, _ = s.IsRegistered("missing")
-	if ok {
-		t.Errorf("IsRegistered(missing) should return false")
-	}
-	_ = s.SoftDelete(context.Background(), "acme", time.Now())
-	ok, _ = s.IsRegistered("acme")
-	if ok {
-		t.Errorf("IsRegistered(deleted) should return false")
+	if ok, err := s.IsRegistered("missing"); err != nil || ok {
+		t.Errorf("IsRegistered(missing) = %v, %v; want false, nil", ok, err)
 	}
 }
 

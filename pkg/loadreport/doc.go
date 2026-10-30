@@ -9,5 +9,5 @@
 // runs/<run-id>/report.html. It opens directly from object storage
 // with no server.
 //
-// TESTING.md §12.12 and §24.1 (Wave 6 report generator).
+// spec: §24.1 (Wave 6 report generator).
 package loadreport

@@ -162,14 +162,13 @@ func TestGetRecommendationsWarmPoolIncrease(t *testing.T) {
 
 // TestGetRecommendationsStampsCompiledInDefaults_spec_25_13_4848
 // asserts the gateway always stamps thresholdSource=compiled-in-defaults
-// on its in-process /v1/admin/recommendations response per §25.13 line
-// 4848. lenny-ops layers operator-customized on top when it serves
+// on its in-process /v1/admin/recommendations response per §25.13. lenny-ops layers operator-customized on top when it serves
 // from the Prometheus rule set. F-25.13.5.
 func TestGetRecommendationsStampsCompiledInDefaults_spec_25_13_4848(t *testing.T) {
 	// A below-threshold sample makes at least one rule report DataAvailable,
 	// so the envelope stays healthy and this test isolates the
 	// thresholdSource=compiled-in-defaults assertion from the empty-window
-	// degraded path (spec: §25.13 line 4848, §25.2 canonical envelope).
+	// degraded path (spec: §25.13, §25.2 canonical envelope).
 	store := recommendations.NewWindowStore(time.Hour)
 	store.Record("lenny_credential_pool_utilization", nil, 0.40)
 	svc := recommendations.NewCapacityService(store)

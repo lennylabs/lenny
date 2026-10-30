@@ -41,7 +41,7 @@ func newHWMServer(reader DelegationHighWatermarkReader, obs DelegationHighWaterm
 	return &Server{hwmReader: reader, hwmObserver: obs}
 }
 
-// spec: §8.3 line 379 — when a tree root settles, the gateway reads the
+// spec: §8.3 — when a tree root settles, the gateway reads the
 // per-tree parallel-children high-watermark and observes it onto the
 // §16.1 histogram with the root's pool and tenant labels. F-8.9.6.
 func TestObserveTreeHighWatermarkAtRootSettle_spec_8_3_379(t *testing.T) {
@@ -62,7 +62,7 @@ func TestObserveTreeHighWatermarkAtRootSettle_spec_8_3_379(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 379 — a delegated child (one with a parent) settling
+// spec: §8.3 — a delegated child (one with a parent) settling
 // is not the tree apex, so its terminal transition does not sample the
 // histogram. The observation fires once per tree at the root, not per
 // settling child. F-8.9.6.
@@ -78,7 +78,7 @@ func TestObserveTreeHighWatermarkSkipsNonRoot_spec_8_3_379(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 379 — a tree that admitted no delegation has no
+// spec: §8.3 — a tree that admitted no delegation has no
 // recorded watermark; ObserveHighWatermark returns found=false and the
 // histogram is not sampled. F-8.9.6.
 func TestObserveTreeHighWatermarkSkipsWhenAbsent_spec_8_3_379(t *testing.T) {
@@ -91,7 +91,7 @@ func TestObserveTreeHighWatermarkSkipsWhenAbsent_spec_8_3_379(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 379 — a read error is swallowed (best-effort) and
+// spec: §8.3 — a read error is swallowed (best-effort) and
 // never samples the histogram, so a Redis outage cannot corrupt the
 // metric or fail the terminal transition. F-8.9.6.
 func TestObserveTreeHighWatermarkSwallowsReadError_spec_8_3_379(t *testing.T) {
@@ -104,7 +104,7 @@ func TestObserveTreeHighWatermarkSwallowsReadError_spec_8_3_379(t *testing.T) {
 	}
 }
 
-// spec: §8.3 line 379 — with no reader/observer wired (developer mode
+// spec: §8.3 — with no reader/observer wired (developer mode
 // without Redis) the path is a no-op. F-8.9.6.
 func TestObserveTreeHighWatermarkNoopWithoutDeps_spec_8_3_379(t *testing.T) {
 	newHWMServer(nil, nil).observeTreeHighWatermark(context.Background(), sessionstore.Session{ID: "root1"})

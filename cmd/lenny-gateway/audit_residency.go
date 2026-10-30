@@ -17,7 +17,7 @@ import (
 // resolves to "" so the write falls back to the global platform-Postgres
 // (residency rule 2). The store returns soft-deleted rows, so a
 // tombstoned tenant's dataResidencyRegion snapshot is still honored while
-// the row remains queryable. spec: §11.7 lines 431-432. F-11.7.9.
+// the row remains queryable. spec: §11.7. F-11.7.9.
 type tenantResidencyLookup struct {
 	tenants tenantstore.Store
 }

@@ -9,7 +9,7 @@
 # in-cluster; supply the Redis and MinIO TLS Secrets, the Redis AUTH
 # password, and the MinIO root credentials (the REPLACE- placeholders) in
 # an overrides file, and point postgres.dsn at the rendered
-# lenny-postgres-rw Service.
+# lenny-pgbouncer Service on port 5432.
 #
 # Leaves open: capacity tier, TLS Secrets, AUTH credentials.
 
@@ -22,9 +22,12 @@ postgres:
   # __unset__ sentinel for RLS checkout safety (§12.3).
   connectionPooler: pgbouncer
   # §17.9.5 — render the Postgres workload as a CloudNativePG Cluster with
-  # §17.3 RPO=0 synchronous replication. Point the gateway dsn at the
-  # operator-minted lenny-postgres-rw Service in an overrides file using
-  # the lenny-postgres-app secret CloudNativePG generates.
+  # §17.3 RPO=0 synchronous replication. Point postgres.dsn at the
+  # in-cluster PgBouncer in an overrides file, as
+  # postgres://lenny:<password>@lenny-pgbouncer:5432/lenny with the
+  # password from the lenny-postgres-app secret CloudNativePG generates.
+  # §13.2 admits every Lenny client to PgBouncer on 5432, and PgBouncer
+  # reaches the lenny-postgres-rw Service with that secret's credentials.
   deploy: true
 pgbouncer:
   # §17.9.5 — render the in-cluster PgBouncer Deployment (2+ replicas, PDB).

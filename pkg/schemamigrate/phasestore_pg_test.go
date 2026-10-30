@@ -17,7 +17,7 @@ import (
 // setupPhaseDB brings up an embedded Postgres, applies migration 0134
 // (the schema_migration_phase table), and returns a connected *sql.DB
 // plus the migration DSN. It downloads the PostgreSQL bundle, so it is
-// skipped under -short. spec: §24.13 line 150.
+// skipped under -short. spec: §24.13.
 func setupPhaseDB(t *testing.T) (*sql.DB, string, context.Context) {
 	t.Helper()
 	if testing.Short() {
@@ -58,7 +58,7 @@ func setupPhaseDB(t *testing.T) (*sql.DB, string, context.Context) {
 // TestPhaseStoreUpsertAndList exercises the recordPhase UPSERT and the
 // listPhases read against a real Postgres: a re-recorded version updates
 // the phase, gate, and Job name while preserving the original applied_at.
-// spec: §24.13 line 150.
+// spec: §24.13.
 func TestPhaseStoreUpsertAndList_spec_24_13_150(t *testing.T) {
 	db, _, ctx := setupPhaseDB(t)
 
@@ -113,7 +113,7 @@ func TestPhaseStoreUpsertAndList_spec_24_13_150(t *testing.T) {
 
 // TestRecordRunStampsAdvancedVersions verifies RecordRun UPSERTs a row for
 // every version in (previous, current] and leaves earlier versions and
-// pending versions untouched. spec: §24.13 line 150.
+// pending versions untouched. spec: §24.13.
 func TestRecordRunStampsAdvancedVersions_spec_24_13_150(t *testing.T) {
 	db, dsn, ctx := setupPhaseDB(t)
 
@@ -154,7 +154,7 @@ func TestRecordRunStampsAdvancedVersions_spec_24_13_150(t *testing.T) {
 // TestListPhasesToleratesMissingTable verifies that a database migrated to
 // a version below 0134 (no schema_migration_phase table) yields an empty
 // map rather than an error, so the status surface still reports the
-// synthesized projection. spec: §24.13 line 150.
+// synthesized projection. spec: §24.13.
 func TestListPhasesToleratesMissingTable_spec_24_13_150(t *testing.T) {
 	db, _, ctx := setupPhaseDB(t)
 

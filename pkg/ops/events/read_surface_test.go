@@ -18,7 +18,7 @@ import (
 
 func ts() time.Time { return time.Date(2026, 5, 23, 0, 0, 0, 0, time.UTC) }
 
-// spec: §25.5 lines 2666-2675 — the opaque cursor encodes the source
+// spec: §25.5 — the opaque cursor encodes the source
 // kind and the canonical eventKey and round-trips losslessly.
 func TestCursor_RoundTrip_spec_25_5_2666(t *testing.T) {
 	cases := []struct {
@@ -46,7 +46,7 @@ func TestCursor_RoundTrip_spec_25_5_2666(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2795 — an empty cursor is the start-of-stream;
+// spec: §25.5 — an empty cursor is the start-of-stream;
 // a malformed cursor is rejected so HandlePoll returns
 // INVALID_EVENT_FILTER.
 func TestCursor_EmptyAndMalformed_spec_25_5_2795(t *testing.T) {
@@ -63,7 +63,7 @@ func TestCursor_EmptyAndMalformed_spec_25_5_2795(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2693 / §25.2 line 340 — ?resourceType= and
+// spec: §25.5 / §25.2 — ?resourceType= and
 // ?resourceId= filter the polling page against the CloudEvents subject.
 func TestPoll_ResourceFilter_spec_25_5_2693(t *testing.T) {
 	s := New(Options{Capacity: 16, Now: ts})
@@ -86,7 +86,7 @@ func TestPoll_ResourceFilter_spec_25_5_2693(t *testing.T) {
 	}
 }
 
-// spec: §25.2 line 344 — ?since= filters by RFC 3339 timestamp.
+// spec: §25.2 — ?since= filters by RFC 3339 timestamp.
 func TestPoll_SinceTimestampFilter_spec_25_2_344(t *testing.T) {
 	s := New(Options{Capacity: 16, Now: ts})
 	early := ts().Add(-time.Hour)
@@ -103,7 +103,7 @@ func TestPoll_SinceTimestampFilter_spec_25_2_344(t *testing.T) {
 	}
 }
 
-// spec: §25.2 line 243 — ?sortOrder=desc reverses the page order.
+// spec: §25.2 — ?sortOrder=desc reverses the page order.
 func TestPoll_SortOrderDesc_spec_25_2_243(t *testing.T) {
 	s := New(Options{Capacity: 16, Now: ts})
 	s.Publish(context.Background(), gwevents.OperationalEvent{Type: "alert_fired", Subject: "a/1"})
@@ -119,7 +119,7 @@ func TestPoll_SortOrderDesc_spec_25_2_243(t *testing.T) {
 	}
 }
 
-// spec: §25.2 line 240 — ?limit= defaults to 100 and caps at 1000.
+// spec: §25.2 — ?limit= defaults to 100 and caps at 1000.
 func TestPoll_LimitBounds_spec_25_2_240(t *testing.T) {
 	if got := parseLimit(url.Values{}); got != DefaultPollLimit {
 		t.Errorf("default limit = %d, want %d", got, DefaultPollLimit)
@@ -132,7 +132,7 @@ func TestPoll_LimitBounds_spec_25_2_240(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2795 — an unrecognized event type or severity, a
+// spec: §25.5 — an unrecognized event type or severity, a
 // malformed cursor, a bad sortOrder, or a malformed since returns
 // INVALID_EVENT_FILTER (400).
 func TestPoll_InvalidFilter_spec_25_5_2795(t *testing.T) {
@@ -163,7 +163,7 @@ func TestPoll_InvalidFilter_spec_25_5_2795(t *testing.T) {
 	}
 }
 
-// spec: §25.5 lines 2666-2675, §25.2 lines 262-275 — a cursor whose
+// spec: §25.5, §25.2 — a cursor whose
 // event has been evicted reports gapDetected and oldestAvailableCursor.
 func TestPoll_GapOnEvictedCursor_spec_25_5_2672(t *testing.T) {
 	s := New(Options{Capacity: 4, Now: ts})
@@ -184,7 +184,7 @@ func TestPoll_GapOnEvictedCursor_spec_25_5_2672(t *testing.T) {
 	}
 }
 
-// spec: §25.5 lines 2666-2675 — a cursor produced by a foreign source
+// spec: §25.5 — a cursor produced by a foreign source
 // (redis) is translated by eventKey and the page reports cursorKind
 // "mixed".
 func TestPoll_MixedCursorKind_spec_25_5_2674(t *testing.T) {
@@ -204,7 +204,7 @@ func TestPoll_MixedCursorKind_spec_25_5_2674(t *testing.T) {
 	}
 }
 
-// spec: §25.2 lines 261-271 — "Agents MUST NOT parse cursors. A cursor
+// spec: §25.2 — "Agents MUST NOT parse cursors. A cursor
 // produced by one `actualSource` may be invalid at a different source
 // — agents treat cursor incompatibility as a gap (see below) and
 // reset." and "When the provided cursor cannot be honored (evicted
@@ -255,7 +255,7 @@ func TestPoll_GapDetectedAcrossSourceTransitionDuringRedisOutage_spec_25_2_261(t
 	}
 }
 
-// spec: §25.5 lines 2679-2680 — the SSE id: line carries the
+// spec: §25.5 — the SSE id: line carries the
 // CloudEvents id (eventKey), not the internal buffer sequence.
 func TestStream_IDLineIsEventKey_spec_25_5_2679(t *testing.T) {
 	s := New(Options{Capacity: 16, Now: ts})
@@ -271,7 +271,7 @@ func TestStream_IDLineIsEventKey_spec_25_5_2679(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2684 — when the SSE resume point has been evicted,
+// spec: §25.5 — when the SSE resume point has been evicted,
 // the handler emits a :gap comment line before the backlog.
 func TestStream_GapCommentOnEvictedResume_spec_25_5_2684(t *testing.T) {
 	s := New(Options{Capacity: 16, Now: ts})
@@ -283,7 +283,7 @@ func TestStream_GapCommentOnEvictedResume_spec_25_5_2684(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2685 — the SSE stream applies the canonical filter
+// spec: §25.5 — the SSE stream applies the canonical filter
 // set (resourceType/resourceId) to the backlog.
 func TestStream_ResourceFilter_spec_25_5_2685(t *testing.T) {
 	s := New(Options{Capacity: 16, Now: ts})
@@ -296,7 +296,7 @@ func TestStream_ResourceFilter_spec_25_5_2685(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2795 — a malformed filter on the SSE endpoint is
+// spec: §25.5 — a malformed filter on the SSE endpoint is
 // rejected with INVALID_EVENT_FILTER before the stream opens.
 func TestStream_InvalidFilter_spec_25_5_2795(t *testing.T) {
 	s := New(Options{Capacity: 16, Now: ts})

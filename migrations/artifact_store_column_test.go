@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// spec: §12.5 line 309 — the artifact_store Postgres table stores
-// `artifact_size_bytes` for every artifact; the §12.4 line 210 / §11.2
+// spec: §12.5 — the artifact_store Postgres table stores
+// `artifact_size_bytes` for every artifact; the §12.4 / §11.2
 // storage-quota rehydration query sums that column across live rows on
 // Redis restart. The column name must match the spec exactly so the
 // rehydration query and the catalog SQL agree.
@@ -19,7 +19,7 @@ func TestArtifactStoreSizeColumnMatchesSpec_spec_12_5_309(t *testing.T) {
 	}
 	sql := string(b)
 	if !strings.Contains(sql, "artifact_size_bytes") {
-		t.Error("migration 0049 must declare the §12.5 line 309 column artifact_size_bytes")
+		t.Error("migration 0049 must declare the §12.5 column artifact_size_bytes")
 	}
 	// The bare `size_bytes` column name diverges from the spec and breaks
 	// the rehydration query; guard against a regression to it. The check is

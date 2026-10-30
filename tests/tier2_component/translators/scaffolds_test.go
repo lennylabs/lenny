@@ -2,7 +2,7 @@
 
 //go:build component
 
-// Tier-2 component scaffolds for §12.2.5 Translators. The LLM Proxy
+// Tier-2 component scaffolds for TESTING.md §12.2.5 Translators. The LLM Proxy
 // native translator is exercised against canonical request/response
 // pairs from the OpenAI and Anthropic SDKs.
 //

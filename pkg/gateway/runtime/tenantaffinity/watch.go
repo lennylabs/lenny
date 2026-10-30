@@ -9,7 +9,7 @@ import (
 
 // DefaultEndpointPollInterval is the cadence the gateway re-lists a
 // stateless pool's EndpointSlices to refresh the router's pod-IP and
-// readiness snapshot. The §5.2 line 500 model discovers pod IPs behind
+// readiness snapshot. The §5.2 model discovers pod IPs behind
 // the pool Service "using Kubernetes EndpointSlice watches"; a short
 // poll bounds the staleness of the readiness flag (a pod that flips to
 // slot-capacity readiness=false is removed from the route-target set
@@ -17,7 +17,7 @@ import (
 // returns ErrNoAvailablePod for a transiently-stale full pod and the
 // caller retries or scales.
 //
-// spec: §5.2 line 500.
+// spec: §5.2.
 const DefaultEndpointPollInterval = 5 * time.Second
 
 // EndpointLister returns the current pod endpoints behind a stateless
@@ -25,7 +25,7 @@ const DefaultEndpointPollInterval = 5 * time.Second
 // discovery.k8s.io/v1 EndpointSlice objects. The production
 // implementation queries the API server; tests inject a fake.
 //
-// spec: §5.2 line 500.
+// spec: §5.2.
 type EndpointLister interface {
 	ListEndpoints(ctx context.Context) ([]Endpoint, error)
 }
@@ -33,10 +33,10 @@ type EndpointLister interface {
 // EndpointPoller drives a periodic EndpointSlice re-list for one
 // stateless pool, feeding each snapshot into Router.UpdateEndpoints so
 // the router routes against the live pod-IP/readiness set. It is the
-// §5.2 line 500 EndpointSlice-watch half of the concurrent-stateless
+// §5.2 EndpointSlice-watch half of the concurrent-stateless
 // data plane; Router is the decision half.
 //
-// spec: §5.2 line 500.
+// spec: §5.2.
 type EndpointPoller struct {
 	// Lister enumerates the pool Service's endpoints. Required.
 	Lister EndpointLister

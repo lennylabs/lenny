@@ -15,7 +15,7 @@ import (
 // catalogued series. A nil *PromMetrics is a valid no-op for every
 // method, so callers without a registry pass nil.
 //
-// spec: §12.6 line 709 (EventBus observability surface); §16.1 metric
+// spec: §12.6; §16.1 metric
 // catalog entries lenny_event_bus_publish_total /
 // _publish_duration_seconds / _publish_dropped_total /
 // _handler_duration_seconds / _handler_error_total /
@@ -43,14 +43,14 @@ var (
 func NewPromMetrics(reg prometheus.Registerer) (*PromMetrics, error) {
 	publishTotal, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_event_bus_publish_total",
-		Help: "EventBus publishes per topic (§12.6 line 709).",
+		Help: "EventBus publishes per topic (§12.6).",
 	}, []string{"topic"})
 	if err != nil {
 		return nil, err
 	}
 	publishDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name:    "lenny_event_bus_publish_duration_seconds",
-		Help:    "EventBus publish duration per topic in seconds (§12.6 line 709).",
+		Help:    "EventBus publish duration per topic in seconds (§12.6).",
 		Buckets: []float64{0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
 	}, []string{"topic"})
 	if err != nil {
@@ -58,14 +58,14 @@ func NewPromMetrics(reg prometheus.Registerer) (*PromMetrics, error) {
 	}
 	publishDropped, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_event_bus_publish_dropped_total",
-		Help: "EventBus publishes dropped after the durable commit, by topic and error_type (§12.6 line 683).",
+		Help: "EventBus publishes dropped after the durable commit, by topic and error_type (§12.6).",
 	}, []string{"topic", "error_type"})
 	if err != nil {
 		return nil, err
 	}
 	handlerDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name:    "lenny_event_bus_handler_duration_seconds",
-		Help:    "EventBus caller-supplied handler duration per topic in seconds (§12.6 line 709).",
+		Help:    "EventBus caller-supplied handler duration per topic in seconds (§12.6).",
 		Buckets: []float64{0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
 	}, []string{"topic"})
 	if err != nil {
@@ -73,17 +73,17 @@ func NewPromMetrics(reg prometheus.Registerer) (*PromMetrics, error) {
 	}
 	handlerError, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_event_bus_handler_error_total",
-		Help: "EventBus caller-supplied handler errors per topic (§12.6 line 709).",
+		Help: "EventBus caller-supplied handler errors per topic (§12.6).",
 	}, []string{"topic"})
 	if err != nil {
 		return nil, err
 	}
-	// spec: §12.6 line 688-689 — labeled by outcome (success | failure)
+	// spec: §12.6 — labeled by outcome (success | failure)
 	// and, for a failure, the error_type. The §16.5
 	// EventBusPublishFinalFailure alert reads outcome="failure".
 	retranscribeAttempt, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_event_bus_retranscribe_attempts_total",
-		Help: "EventBus retranscribe attempts by outcome and error_type (§12.6 line 688-689).",
+		Help: "EventBus retranscribe attempts by outcome and error_type (§12.6).",
 	}, []string{"outcome", "error_type"})
 	if err != nil {
 		return nil, err

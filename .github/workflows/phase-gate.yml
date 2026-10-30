@@ -36,6 +36,26 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # Every phase plan opens with the static tier, whose proto
+      # no-drift check needs the generator's binaries. Restore-only:
+      # the static job in pr.yml is the sole writer of this key.
+      - name: Restore tool cache (~/go/bin)
+        id: tools-cache
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/go/bin
+          key: lenny-go-bin-v3-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            lenny-go-bin-v3-${{ runner.os }}-
+      - name: Install proto producer tools
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        run: |
+          go install github.com/bufbuild/buf/cmd/buf@v1.69.0
+          go install golang.org/x/tools/cmd/goimports@v0.45.0
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+      - name: Add tool bin to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Run phase gate

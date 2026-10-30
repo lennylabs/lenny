@@ -89,9 +89,10 @@ func (n *noopRecycleBoundary) OnRecycling(podID string) { n.armed = append(n.arm
 // cleanup and ReportPodScrub cannot cancel the missing-report timeout keyed
 // on the pod name.
 func TestRecycleScrubConfigFoldsEndToEnd_spec_5_2(t *testing.T) {
+	t.Parallel()
 	rt := &podBindRuntime{}
 	adapterSrv := adapter.New("adapter-test")
-	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = rt
 
 	// A recycling microvm pool carrying the §5.2 deployer cleanup commands and
@@ -136,6 +137,7 @@ func TestRecycleScrubConfigFoldsEndToEnd_spec_5_2(t *testing.T) {
 	registry := podsession.NewRegistry()
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-recycle" },
 		DefaultIsolationProfile: isolation.ProfileMicrovm,
 		PodBinder:               binder,

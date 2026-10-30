@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// spec: §7.1 line 67 — Rotator drives KeyRing.Rotate on its configured
+// spec: §7.1 — Rotator drives KeyRing.Rotate on its configured
 // cadence (default 24h) and pushes the just-displaced key into the
 // overlap window before the §7.1 5-min sweep drops it. RotateOnce
 // validates one tick in isolation.
@@ -36,7 +36,7 @@ func TestRotatorRotateOnceInstallsNewActiveKey_spec_7_1_13(t *testing.T) {
 	}
 }
 
-// spec: §7.1 line 67 — keys inside the overlap window verify
+// spec: §7.1 — keys inside the overlap window verify
 // uploadTokens minted before rotation. Verify hits the overlap key
 // when it carries the matching signature.
 func TestRotatorPreservesOverlapVerification_spec_7_1_13(t *testing.T) {
@@ -60,15 +60,14 @@ func TestRotatorPreservesOverlapVerification_spec_7_1_13(t *testing.T) {
 		t.Fatalf("rotate: %v", err)
 	}
 	// Token minted under the boot key must still verify under the
-	// post-rotation ring: §7.1 line 67 "the gateway keeps the previous
-	// key valid during a short overlap window".
+	// post-rotation ring: §7.1.
 	v := NewVerifier(ring, nil, clock)
 	if _, err := v.Verify(tok, "sess_x"); err != nil {
 		t.Errorf("token minted before rotation does not verify after rotation: %v", err)
 	}
 }
 
-// spec: §7.1 line 67 — the overlap-window sweep drops keys whose
+// spec: §7.1 — the overlap-window sweep drops keys whose
 // deadline has elapsed. SweepOnce removes them from the ring and from
 // the pending queue; subsequent Verify against the old key returns
 // ErrInvalid (no key in the ring accepts the signature).

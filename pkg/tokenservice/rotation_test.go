@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"testing"
 	"time"
 
@@ -13,15 +14,21 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
 // fakeRotationStore satisfies IssuedTokenRotationStore so the handler's
-// §13.3 line 597 self-rotation branch can be exercised without Postgres.
+// §13.3 self-rotation branch can be exercised without Postgres.
 // prevRevoked / prevSub control what the atomic rotation transaction
-// reports back about the previous token.
+// reports back about the previous token. revoked lists the source jtis
+// the step (1a) re-read reports as already revoked; a listed source in
+// it fails the call with a *SourceRevokedError and records nothing, as
+// the Postgres store does.
 type fakeRotationStore struct {
 	prevRevoked bool
 	prevSub     string
+	revoked     map[string]time.Time
+	sources     []issuedtokenstore.SourceToken
 
 	minted        []issuedtokenstore.IssuedToken
 	exchangeRows  []recordedAudit
@@ -36,9 +43,13 @@ func (f *fakeRotationStore) Record(_ context.Context, tok issuedtokenstore.Issue
 }
 
 func (f *fakeRotationStore) RecordWithAudit(_ context.Context, tok issuedtokenstore.IssuedToken,
-	eventType string, payload json.RawMessage, at time.Time,
+	sources []issuedtokenstore.SourceToken, eventType string, payload json.RawMessage, at time.Time,
 ) (audit.Row, error) {
 	f.recordWithAud++
+	f.sources = append([]issuedtokenstore.SourceToken(nil), sources...)
+	if err := fakeRecheck(sources, f.revoked, nil); err != nil {
+		return audit.Row{}, err
+	}
 	f.minted = append(f.minted, tok)
 	f.exchangeRows = append(f.exchangeRows, recordedAudit{
 		TenantID:  tok.TenantID,
@@ -48,14 +59,18 @@ func (f *fakeRotationStore) RecordWithAudit(_ context.Context, tok issuedtokenst
 }
 
 func (f *fakeRotationStore) RecordWithRotationAudit(_ context.Context, tok issuedtokenstore.IssuedToken,
-	prevJTI, revokedReason, eventType string, payload json.RawMessage, at time.Time,
+	sources []issuedtokenstore.SourceToken, prevJTI, revokedReason, eventType string, payload json.RawMessage, at time.Time,
 ) (string, bool, error) {
+	f.gotPrevJTI = prevJTI
+	f.sources = append([]issuedtokenstore.SourceToken(nil), sources...)
+	if err := fakeRecheck(sources, f.revoked, nil); err != nil {
+		return "", false, err
+	}
 	f.minted = append(f.minted, tok)
 	f.exchangeRows = append(f.exchangeRows, recordedAudit{
 		TenantID:  tok.TenantID,
 		EventType: eventType, Payload: append(json.RawMessage(nil), payload...), At: at,
 	})
-	f.gotPrevJTI = prevJTI
 	f.gotReason = revokedReason
 	return f.prevSub, f.prevRevoked, nil
 }
@@ -63,8 +78,10 @@ func (f *fakeRotationStore) RecordWithRotationAudit(_ context.Context, tok issue
 func rotationServer(t *testing.T, store IssuedTokenStore, auditor Auditor, prop func(context.Context, string, string) error) (*Server, *jwt.HMACSigner) {
 	t.Helper()
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
-	return NewServer(Options{
-		Signer:               signer,
+	return mustNewServer(t, Options{
+		CapabilityTokenTTL:   15 * time.Minute,
+		Signer:               jwtsign.HMAC(signer),
+		Verifier:             signer,
 		Issuer:               "https://lenny.dev.test/token",
 		IssuedTokens:         store,
 		Auditor:              auditor,
@@ -72,7 +89,7 @@ func rotationServer(t *testing.T, store IssuedTokenStore, auditor Auditor, prop 
 	}), signer
 }
 
-// spec: §13.3 line 597 / §16.7 line 666 — a self-rotation (caller
+// spec: §13.3 / §16.7 — a self-rotation (caller
 // presents its own current token, requests a privilege-equivalent
 // replacement) revokes the previous token atomically with the mint and
 // emits one token.revoked row with revocation_reason=rotation_replaced,
@@ -128,7 +145,7 @@ func TestHandlerRotationRevokesPreviousToken_spec_16_7_5(t *testing.T) {
 	}
 }
 
-// spec: §16.7 line 666 — a successful cluster propagation publish sets
+// spec: §16.7 — a successful cluster propagation publish sets
 // propagation_mode=eventbus on the rotation token.revoked row.
 func TestHandlerRotationEventBusMode_spec_16_7_5(t *testing.T) {
 	store := &fakeRotationStore{prevRevoked: true, prevSub: "alice@acme.com"}
@@ -153,7 +170,7 @@ func TestHandlerRotationEventBusMode_spec_16_7_5(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 597 — a self-exchange that narrows scope is a
+// spec: §13.3 — a self-exchange that narrows scope is a
 // scope_narrow, NOT a rotation: the previous token stays live and no
 // token.revoked is emitted.
 func TestHandlerScopeNarrowSelfExchangeIsNotRotation_spec_16_7_5(t *testing.T) {
@@ -184,7 +201,7 @@ func TestHandlerScopeNarrowSelfExchangeIsNotRotation_spec_16_7_5(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 597 — a self-exchange that drops an audience is a
+// spec: §13.3 — a self-exchange that drops an audience is a
 // dialect derivation, NOT a rotation: the previous token stays live.
 func TestHandlerCrossAudienceSelfExchangeIsNotRotation_spec_16_7_5(t *testing.T) {
 	store := &fakeRotationStore{prevRevoked: true, prevSub: "alice@acme.com"}
@@ -211,7 +228,7 @@ func TestHandlerCrossAudienceSelfExchangeIsNotRotation_spec_16_7_5(t *testing.T)
 	}
 }
 
-// spec: §13.3 line 597 — a delegation child mint (actor_token present)
+// spec: §13.3 — a delegation child mint (actor_token present)
 // is never a rotation even when the actor is the caller's own token.
 func TestHandlerDelegationMintIsNotRotation_spec_16_7_5(t *testing.T) {
 	store := &fakeRotationStore{prevRevoked: true, prevSub: "alice@acme.com"}
@@ -238,10 +255,10 @@ func TestHandlerDelegationMintIsNotRotation_spec_16_7_5(t *testing.T) {
 	}
 }
 
-// spec: §13.3 line 597 — when the previous token is absent or already
-// revoked the store reports revoked=false; the replacement still mints
-// but no token.revoked row is emitted (idempotent re-rotation).
-func TestHandlerRotationPreviousAlreadyGoneEmitsNoRevoked_spec_16_7_5(t *testing.T) {
+// spec: 13.3 (Credential Flow) — when the previous token has no
+// issued_tokens row the store reports revoked=false; the replacement
+// still mints but no token.revoked row is emitted.
+func TestHandlerRotationPreviousAbsentEmitsNoRevoked_spec_16_7_5(t *testing.T) {
 	store := &fakeRotationStore{prevRevoked: false}
 	auditor := &recordingAuditor{}
 	srv, signer := rotationServer(t, store, auditor, nil)
@@ -261,12 +278,46 @@ func TestHandlerRotationPreviousAlreadyGoneEmitsNoRevoked_spec_16_7_5(t *testing
 	if store.gotPrevJTI != "tok-1" {
 		t.Errorf("rotation path should still run; gotPrevJTI=%q", store.gotPrevJTI)
 	}
+	want := []issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: "tok-1"}}
+	if !reflect.DeepEqual(store.sources, want) {
+		t.Errorf("rotation re-read sources = %+v, want %+v", store.sources, want)
+	}
 	if rows := revokedPayloads(t, auditor.snapshot()); len(rows) != 0 {
-		t.Errorf("token.revoked rows = %d, want 0 when previous token was already gone", len(rows))
+		t.Errorf("token.revoked rows = %d, want 0 when previous token had no row", len(rows))
 	}
 }
 
-// spec: §13.3 line 597 — when the issued-token store has no atomic
+// spec: 13.3 (Credential Flow) — a retried
+// rotation presents a subject token the first rotation already revoked.
+// The in-lock step (1a) re-read finds it revoked, so the exchange fails
+// with 400 invalid_grant subject_token_revoked, no second token is minted,
+// no token.revoked row is emitted, and one rejection token.exchanged row
+// records rejected:subject_token_revoked.
+func TestHandlerRetriedRotationRejectedSubjectTokenRevoked_spec_13_3(t *testing.T) {
+	store := &fakeRotationStore{revoked: map[string]time.Time{"tok-1": time.Unix(1_700_000_000, 0)}}
+	auditor := &recordingAuditor{}
+	srv, signer := rotationServer(t, store, auditor, nil)
+
+	tok := mintToken(t, signer, jwt.Claims{
+		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
+		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+	})
+
+	resp := doExchange(t, srv, tok, Request{
+		GrantType: grantTypeExchange, SubjectToken: tok,
+		Scope: "sessions:read", Audience: "lenny-gateway",
+	})
+	assertOAuthRejection(t, resp, http.StatusBadRequest, "invalid_grant", "subject_token_revoked")
+	if len(store.minted) != 0 {
+		t.Errorf("minted records = %d, want 0 (the signed token is discarded)", len(store.minted))
+	}
+	if rows := revokedPayloads(t, auditor.snapshot()); len(rows) != 0 {
+		t.Errorf("token.revoked rows = %d, want 0 for a refused rotation", len(rows))
+	}
+	assertSingleRejectionAudit(t, auditor.snapshot(), "rejected:subject_token_revoked")
+}
+
+// spec: §13.3 — when the issued-token store has no atomic
 // rotation surface (the in-memory dev path), a self-rotation still mints
 // the replacement; there is no durable previous-token row to revoke, so
 // no token.revoked is emitted.

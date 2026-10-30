@@ -95,11 +95,11 @@ func (s *Store) Used(ctx context.Context, tenantID string) (int64, error) {
 }
 
 // Set implements storagequota.Counter. It overwrites the tenant's
-// byte key with value (clamped at zero) — the §11 line 37 rehydration
+// byte key with value (clamped at zero) — the §11 rehydration
 // write that reconstructs the counter from the durable artifact_store
 // sum after a Redis restart.
 //
-// spec: §11 line 37.
+// spec: §11.
 func (s *Store) Set(ctx context.Context, tenantID string, value int64) error {
 	if value < 0 {
 		value = 0

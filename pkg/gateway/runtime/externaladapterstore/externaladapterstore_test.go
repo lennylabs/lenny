@@ -19,7 +19,7 @@ func sampleAdapter() ExternalAdapter {
 	}
 }
 
-// spec: §15 line 1414 — a newly registered adapter starts in
+// spec: §15 — a newly registered adapter starts in
 // pending_validation regardless of any status supplied.
 func TestCreateForcesPendingValidation(t *testing.T) {
 	m := NewMemory()
@@ -156,7 +156,7 @@ func TestStatusIsValid(t *testing.T) {
 	}
 }
 
-// spec: §15 line 1414 — only an adapter that passed the
+// spec: §15 — only an adapter that passed the
 // RegisterAdapterUnderTest suite (active) routes; pending_validation and
 // validation_failed are excluded from all traffic routing.
 func TestStatusRoutable(t *testing.T) {

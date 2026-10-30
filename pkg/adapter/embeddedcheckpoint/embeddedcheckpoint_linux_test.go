@@ -85,7 +85,7 @@ func newHelper(t *testing.T, stub *stubProcess) (*Helper, *StuckFlag) {
 	return h, flag
 }
 
-// spec: §4.4 lines 242, 244, 246 — embedded SIGSTOP pause/resume path.
+// spec: §4.4 — embedded SIGSTOP pause/resume path.
 func TestPauseTransitionsToStopped(t *testing.T) {
 	stub := newStub()
 	h, flag := newHelper(t, stub)
@@ -100,7 +100,7 @@ func TestPauseTransitionsToStopped(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 250 — Pause sets checkpointStuck when /proc reports
+// spec: §4.4 — Pause sets checkpointStuck when /proc reports
 // the process never reaches the stopped state.
 func TestPauseSetsStuckWhenProcessNeverStops(t *testing.T) {
 	stub := newStub()
@@ -115,7 +115,7 @@ func TestPauseSetsStuckWhenProcessNeverStops(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 246 — Resume confirms via /proc/{pid}/stat that the
+// spec: §4.4 — Resume confirms via /proc/{pid}/stat that the
 // process has left the stopped state.
 func TestResumeConfirmsTransitionFromStopped(t *testing.T) {
 	stub := newStub()
@@ -132,7 +132,7 @@ func TestResumeConfirmsTransitionFromStopped(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 246, 250 — when SIGCONT confirmation exhausts the 5
+// spec: §4.4 — when SIGCONT confirmation exhausts the 5
 // retries, the helper raises checkpointStuck immediately rather than
 // waiting for the 60-second watchdog.
 func TestResumeRaisesStuckWhenProcessRemainsStopped(t *testing.T) {
@@ -150,7 +150,7 @@ func TestResumeRaisesStuckWhenProcessRemainsStopped(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 244 — watchdog timer fires SIGCONT unconditionally
+// spec: §4.4 — watchdog timer fires SIGCONT unconditionally
 // when the snapshot stalls; the helper raises checkpointStuck.
 func TestCheckpointWatchdogFiresOnStuckSnapshot(t *testing.T) {
 	stub := newStub()
@@ -172,7 +172,7 @@ func TestCheckpointWatchdogFiresOnStuckSnapshot(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 248 — SIGCONT is sent on every exit path, including
+// spec: §4.4 — SIGCONT is sent on every exit path, including
 // a snapshot error.
 func TestCheckpointSendsSIGCONTOnWorkError(t *testing.T) {
 	stub := newStub()
@@ -195,7 +195,7 @@ func TestCheckpointSendsSIGCONTOnWorkError(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 248 — a recover() inside the checkpoint goroutine
+// spec: §4.4 — a recover() inside the checkpoint goroutine
 // must set checkpointStuck rather than silently swallowing the panic.
 func TestCheckpointRecoversFromWorkPanicAndRaisesStuck(t *testing.T) {
 	stub := newStub()
@@ -215,7 +215,7 @@ func TestCheckpointRecoversFromWorkPanicAndRaisesStuck(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 242 — happy-path Checkpoint quiesces, runs the
+// spec: §4.4 — happy-path Checkpoint quiesces, runs the
 // snapshot, and resumes the runtime.
 func TestCheckpointHappyPath(t *testing.T) {
 	stub := newStub()
@@ -242,7 +242,7 @@ func TestCheckpointHappyPath(t *testing.T) {
 	}
 }
 
-// spec: §4.4 line 242 — Checkpoint with nil work still drives the
+// spec: §4.4 — Checkpoint with nil work still drives the
 // pause/resume sequence; useful in tests that exercise the signal path.
 func TestCheckpointWithNilWorkStillDrivesPauseResume(t *testing.T) {
 	stub := newStub()

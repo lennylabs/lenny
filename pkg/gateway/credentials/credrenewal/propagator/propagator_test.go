@@ -272,8 +272,7 @@ func (noopRenewer) Renew(context.Context, credrenewal.Lease) (credrenewal.Lease,
 	return credrenewal.Lease{}, nil
 }
 
-// TestRevokeHookFiresOnLocalRevoke confirms WithRevokeHook runs the §4.9
-// line 1649 per-replica side effect on a local Revoke, with the credential
+// TestRevokeHookFiresOnLocalRevoke confirms WithRevokeHook runs the §4.9 per-replica side effect on a local Revoke, with the credential
 // key the revocation carried.
 func TestRevokeHookFiresOnLocalRevoke(t *testing.T) {
 	var got []credential.CredentialKey

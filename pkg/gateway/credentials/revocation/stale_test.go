@@ -30,7 +30,7 @@ func (s staleSource) ListRevoked(context.Context, string) ([]issuedtokenstore.Is
 	return nil, nil
 }
 
-// spec: §13.3 line 601 — a replica that cannot reach Postgres refuses to
+// spec: §13.3 — a replica that cannot reach Postgres refuses to
 // validate tokens, keyed on the freshness of the in-memory revocation
 // set. F-13.3.4.
 func TestStale_F1334(t *testing.T) {

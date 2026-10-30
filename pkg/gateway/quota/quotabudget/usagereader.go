@@ -18,7 +18,7 @@ import (
 // tenant usage (base + local consumption) instead of the Redis counter.
 //
 // Only the tenant scope carries a value. The per-user and platform-global
-// scopes report zero because the §12.4 line 268 in-memory budget mode is
+// scopes report zero because the §12.4 in-memory budget mode is
 // defined over the per-tenant token budget; QuotaEvaluator therefore gates
 // solely on the tenant budget when this reader is wired.
 type UsageReader struct {
@@ -46,7 +46,7 @@ func (r *UsageReader) UsageHierarchical(ctx context.Context, tenantID, userID st
 // budget mode is defined over the fixed-interval windows (the durable
 // token_usage_checkpoint has no single restorable rolling-window total),
 // so a rolling-period tenant reports zero usage and is not enforced
-// through this path. spec: §11.2 (rolling window); §12.4 line 268.
+// through this path. spec: §11.2 (rolling window); §12.4.
 func (r *UsageReader) SlidingUsageHierarchical(ctx context.Context, tenantID, userID string, window, resolution time.Duration, at time.Time) (quotastore.Scoped, error) {
 	return quotastore.Scoped{}, nil
 }

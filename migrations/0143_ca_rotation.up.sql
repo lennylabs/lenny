@@ -6,7 +6,7 @@
 -- than restarting. The rotation is platform-global (one cluster CA), so
 -- this is a single-row table pinned by a constant id; the version column
 -- serializes concurrent stage transitions across gateway replicas.
--- See spec/10_gateway-internals.md §10.3 lines 344-350.
+-- See spec/10_gateway-internals.md §10.3.
 CREATE TABLE IF NOT EXISTS ca_rotation (
     id                  TEXT        PRIMARY KEY DEFAULT 'singleton'
                             CHECK (id = 'singleton'),

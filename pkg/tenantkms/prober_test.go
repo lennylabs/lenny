@@ -164,7 +164,7 @@ func (failingSource) T4Tenants(_ context.Context) ([]string, error) {
 
 // newRateLimitedProber builds a Prober over a LocalManager whose key
 // for every tenant is pre-provisioned, with a configurable RateLimit so
-// the §12.5 line 307 token-bucket path is exercised.
+// the §12.5 token-bucket path is exercised.
 func newRateLimitedProber(t *testing.T, tenants []string, rate float64) *tenantkms.Prober {
 	t.Helper()
 	seed := bytes.Repeat([]byte{0x55}, kms.DEKSize)
@@ -192,7 +192,7 @@ func newRateLimitedProber(t *testing.T, tenants []string, rate float64) *tenantk
 	}
 }
 
-// spec: §12.5 line 307 — the continuous probe rate-limits enumeration
+// spec: §12.5 — the continuous probe rate-limits enumeration
 // via a token bucket so a large T4 fleet does not burst the KMS backend.
 
 func TestProberRateLimitProbesAllTenants_spec_12_5_307(t *testing.T) {
@@ -240,7 +240,7 @@ func TestProberRateLimitContextCancelStopsSweep_spec_12_5_307(t *testing.T) {
 }
 
 func TestProberMinIntervalConstant_spec_12_5_307(t *testing.T) {
-	// §12.5 line 307 pins the cadence floor at 60s and the default rate
+	// §12.5 pins the cadence floor at 60s and the default rate
 	// ceiling at 10 probes/sec.
 	if tenantkms.MinProbeInterval != 60*time.Second {
 		t.Errorf("MinProbeInterval = %s, want 60s", tenantkms.MinProbeInterval)

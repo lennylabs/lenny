@@ -25,7 +25,7 @@ const runtimeUpgradeProbeTimeout = 5 * time.Second
 // active (non-terminal) §10.5 RuntimeUpgrade record. A query failure
 // returns an error so the deletion guard fails closed.
 //
-// spec: §10.5 line 508.
+// spec: §10.5.
 type RuntimeUpgradeProbe interface {
 	ActiveForPool(ctx context.Context, pool string) (active bool, err error)
 }
@@ -82,7 +82,7 @@ func (p HTTPRuntimeUpgradeProbe) ActiveForPool(ctx context.Context, pool string)
 
 // SandboxTemplateDeletionGuard returns the Decider for the
 // lenny-sandboxtemplate-deletion-guard ValidatingAdmissionWebhook
-// (§10.5 line 508, the "key safety invariant"). It is installed on
+// (§10.5, the "key safety invariant"). It is installed on
 // SandboxTemplate DELETE in agent namespaces and blocks deletion of an
 // old runtime template while a RuntimeUpgrade referencing its pool is
 // still active, so no operator command outside the upgrade state machine
@@ -110,7 +110,7 @@ func SandboxTemplateDeletionGuard(reader client.Reader, probe RuntimeUpgradeProb
 		pools, err := poolsReferencingTemplate(ctx, reader, req.Namespace, template)
 		if err != nil {
 			return Deny(http.StatusServiceUnavailable, fmt.Sprintf(
-				"SandboxTemplate %q deletion blocked: cannot list referencing SandboxWarmPools to verify no active RuntimeUpgrade (§10.5 line 508): %v",
+				"SandboxTemplate %q deletion blocked: cannot list referencing SandboxWarmPools to verify no active RuntimeUpgrade (§10.5): %v",
 				template, err,
 			))
 		}
@@ -118,13 +118,13 @@ func SandboxTemplateDeletionGuard(reader client.Reader, probe RuntimeUpgradeProb
 			active, err := probe.ActiveForPool(ctx, pool)
 			if err != nil {
 				return Deny(http.StatusServiceUnavailable, fmt.Sprintf(
-					"SandboxTemplate %q deletion blocked: cannot reach the gateway to check the RuntimeUpgrade state of pool %q (§10.5 line 508): %v",
+					"SandboxTemplate %q deletion blocked: cannot reach the gateway to check the RuntimeUpgrade state of pool %q (§10.5): %v",
 					template, pool, err,
 				))
 			}
 			if active {
 				return Deny(http.StatusConflict, fmt.Sprintf(
-					"SandboxTemplate %q deletion blocked: SandboxWarmPool %q has an active RuntimeUpgrade. The old SandboxTemplate is preserved until the upgrade reaches Complete (§10.5 line 508); roll back or complete the upgrade before deleting the template.",
+					"SandboxTemplate %q deletion blocked: SandboxWarmPool %q has an active RuntimeUpgrade. The old SandboxTemplate is preserved until the upgrade reaches Complete (§10.5); roll back or complete the upgrade before deleting the template.",
 					template, pool,
 				))
 			}

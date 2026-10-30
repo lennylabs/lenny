@@ -22,7 +22,7 @@ import (
 func newInteractionServer(t *testing.T) (*sessionserver.Server, *interactionstore.Memory) {
 	t.Helper()
 	store := interactionstore.NewMemory()
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Interactions: store})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Interactions: store})
 	return srv, store
 }
 
@@ -182,7 +182,7 @@ func TestKindMismatchReturns404(t *testing.T) {
 }
 
 func TestInteractionsUnavailableWhenUnwired(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_1/approve", nil))
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
@@ -208,7 +208,7 @@ func (c *captureInteractionAudit) EmitInteractionResolution(_ context.Context, e
 // reason. The audit row is the post-incident link from a state change
 // back to the user who authorized it; §11.7 mandates a row per
 // state-changing user decision.
-// spec: §7.2 table lines 124-127; §11.7; §16.7. F-7.2.8.
+// spec: §7.2 table; §11.7; §16.7. F-7.2.8.
 func TestInteractionResolutionAudit_spec_7_2_8(t *testing.T) {
 	cases := []struct {
 		name           string
@@ -262,6 +262,7 @@ func TestInteractionResolutionAudit_spec_7_2_8(t *testing.T) {
 			interStore := interactionstore.NewMemory()
 			sink := &captureInteractionAudit{}
 			srv := sessionserver.New(memstore.New(), sessionserver.Options{
+				DevTenantHeader:      true,
 				Interactions:         interStore,
 				InteractionAuditSink: sink,
 			})
@@ -327,6 +328,7 @@ func TestInteractionResolutionAuditNotEmittedOnFailure(t *testing.T) {
 	interStore := interactionstore.NewMemory()
 	sink := &captureInteractionAudit{}
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:      true,
 		Interactions:         interStore,
 		InteractionAuditSink: sink,
 	})
@@ -347,7 +349,7 @@ func TestInteractionResolutionAuditNotEmittedOnFailure(t *testing.T) {
 // best-effort per the §11.7 sink contract. F-7.2.8.
 func TestInteractionResolutionAuditNilSinkIsSafe(t *testing.T) {
 	interStore := interactionstore.NewMemory()
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{Interactions: interStore})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Interactions: interStore})
 	if err := interStore.Put(context.Background(), interactionstore.Interaction{
 		ID: "tc_1", Kind: interactionstore.KindToolUse,
 		SessionID: "sess_a", TenantID: "acme", UserID: "alice",

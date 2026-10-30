@@ -24,7 +24,7 @@ import (
 // is picked up without reconstructing the client. RequireTransportSecurity
 // is true so the bearer token is only ever sent over the mTLS link, never
 // in plaintext.
-// spec: §10.3 line 334 (Projected SA token).
+// spec: §10.3.
 type SATokenCredentials struct {
 	// TokenPath is the projected SA token file (the pod mounts it at
 	// /var/run/secrets/lenny.dev/serviceaccount/token).

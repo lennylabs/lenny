@@ -23,7 +23,7 @@ func stubMetricsHandler(body string) http.Handler {
 	})
 }
 
-// spec: §16.8 / §16.9 line 720 — lenny-ops serves the Prometheus scrape
+// spec: §16.8 / §16.9 — lenny-ops serves the Prometheus scrape
 // surface at GET /metrics, the mandatory §16.9 scrape target. The handler
 // supplied via Options.Metrics is mounted there.
 func TestMetricsRouteServesSuppliedHandler_spec_16_9(t *testing.T) {

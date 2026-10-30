@@ -6,6 +6,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,10 +17,21 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// defaultMinIOImage is the MinIO image used by tests. MinIO publishes
-// date-stamped RELEASE tags rather than semver; tests may override it
-// via MinIOOptions.Image to pin a specific release.
-const defaultMinIOImage = "minio/minio:latest"
+// defaultMinIOImage is the S3 server image used by tests: pgsty/silo, the
+// maintained fork of the MinIO server, pinned by release tag and by the
+// digest of its multi-arch index. The community minio/minio images are no
+// longer distributed. Silo keeps the MinIO environment variables, the
+// built-in single-key KMS, and the /minio/health endpoints, and its
+// entrypoint maps the `server` argument onto the silo binary. The compose
+// stacks run the same reference. A caller pins another image with
+// MinIOOptions.Image, and the MinIOImageEnv environment variable replaces
+// the default for every caller.
+const defaultMinIOImage = "pgsty/silo:RELEASE.2026-10-26T00-00-00Z@sha256:7bb2aff6b89efe1cb1303c10fc21d579447434ed06649ac9ec05a5e2dbf30ad7"
+
+// MinIOImageEnv names the environment variable that replaces
+// defaultMinIOImage, for example with a copy of the image in a reachable
+// registry.
+const MinIOImageEnv = "LENNY_MINIO_IMAGE"
 
 // minioTestCredentials are the root credentials the test container
 // runs with. They are test-only and never used outside the container.
@@ -83,7 +96,11 @@ type MinIO struct {
 func StartMinIO(t testing.TB, opts MinIOOptions) *MinIO {
 	t.Helper()
 	if opts.Image == "" {
-		opts.Image = defaultMinIOImage
+		if v := strings.TrimSpace(os.Getenv(MinIOImageEnv)); v != "" {
+			opts.Image = v
+		} else {
+			opts.Image = defaultMinIOImage
+		}
 	}
 	if opts.Bucket == "" {
 		opts.Bucket = "lenny-artifacts"

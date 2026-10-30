@@ -42,7 +42,7 @@ func TestCreateEscalationTier3IncludesDurabilityWarning(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202", rec.Code)
 	}
-	// §25.4 lines 2388-2394: the Tier 3 response carries a durability
+	// §25.4: the Tier 3 response carries a durability
 	// warning in the body alongside the escalation fields.
 	warning, _ := body["warning"].(string)
 	if warning == "" {
@@ -102,7 +102,7 @@ func TestListEscalationsFiltersByStatus(t *testing.T) {
 // reflects whether more records exist"), so a limit smaller than the total
 // must not report the page as terminal.
 //
-// spec: §25.4 lines 2427-2429 (Storage Tiers, Query Path); §25.4 Pagination
+// spec: §25.4; §25.4 Pagination
 // envelope (hasMore reflects whether more records exist).
 // diagnosis: a failure means the escalation list envelope hardcodes
 // hasMore=false and never advertises additional pages, so an agent paging
@@ -129,7 +129,7 @@ func TestListEscalationsPaginationReportsMore_spec_25_4(t *testing.T) {
 		t.Errorf("hasMore = %v, want true (3 escalations exist, page limit is 2)", pg["hasMore"])
 	}
 	// The in-memory Tier 3 buffer is the "none" query-path cursorKind
-	// (§25.4 line 2428: limit-only, no continuation cursor).
+	// (§25.4: limit-only, no continuation cursor).
 	if kind, _ := pg["cursorKind"].(string); kind != "none" {
 		t.Errorf("cursorKind = %q, want \"none\" for the in-memory buffer path", kind)
 	}

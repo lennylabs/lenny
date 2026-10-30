@@ -13,26 +13,27 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
-// spec: §5.2 lines 631-636 — the WarmPoolController (which owns
+// spec: §5.2 — the WarmPoolController (which owns
 // Sandbox.spec) copies the pool's SandboxTemplate topology spread
 // constraints onto every Sandbox it creates, so the Sandbox-to-Pod
 // reconciler can stamp them onto the agent pod.
 func TestCreateSandboxCopiesTopologyConstraints_spec_5_2_631(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
 
-	tmpl := template()
+	tmpl := template(ns)
 	tmpl.Spec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{{
 		MaxSkew:           1,
 		TopologyKey:       "topology.kubernetes.io/zone",
 		WhenUnsatisfiable: corev1.ScheduleAnyway,
 		LabelSelector:     &metav1.LabelSelector{MatchLabels: map[string]string{"lenny.dev/pool": testPool}},
 	}}
-	c := newClient(t, s, tmpl, pool(1, 10))
+	c := newClient(t, s, tmpl, pool(ns, 1, 10))
 
 	reconcile(t, c, s)
 
 	var sandboxes lennyv1.SandboxList
-	if err := c.List(context.Background(), &sandboxes, client.InNamespace(testNS)); err != nil {
+	if err := c.List(context.Background(), &sandboxes, client.InNamespace(ns)); err != nil {
 		t.Fatalf("list sandboxes: %v", err)
 	}
 	if len(sandboxes.Items) == 0 {
@@ -53,13 +54,14 @@ func TestCreateSandboxCopiesTopologyConstraints_spec_5_2_631(t *testing.T) {
 // the controller copies what the template carries without inventing
 // defaults (defaulting is the PoolScalingController's job per §5.2).
 func TestCreateSandboxWithoutTopologyConstraints_spec_5_2_631(t *testing.T) {
+	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(), pool(1, 10))
+	c := newClient(t, s, template(ns), pool(ns, 1, 10))
 
 	reconcile(t, c, s)
 
 	var sandboxes lennyv1.SandboxList
-	if err := c.List(context.Background(), &sandboxes, client.InNamespace(testNS)); err != nil {
+	if err := c.List(context.Background(), &sandboxes, client.InNamespace(ns)); err != nil {
 		t.Fatalf("list sandboxes: %v", err)
 	}
 	if len(sandboxes.Items) == 0 {

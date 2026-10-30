@@ -10,8 +10,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// TestValidatePreConnectExecutionMode_spec_5_2_6_1 covers the §5.2 line 430
-// / §6.1 lines 77-78 preConnect/execution-mode compatibility matrix: an
+// TestValidatePreConnectExecutionMode_spec_5_2_6_1 covers the §5.2
+// / §6.1 preConnect/execution-mode compatibility matrix: an
 // SDK-warm runtime (capabilities.preConnect: true) is rejected on a
 // service-mode pool and on a session-mode pool with maxConcurrentSessions
 // > 1, while the one-session-per-pod default and every non-preConnect

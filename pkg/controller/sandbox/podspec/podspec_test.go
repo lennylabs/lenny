@@ -98,7 +98,7 @@ func TestBuildAppliesPodSecurityPosture(t *testing.T) {
 
 // TestBuildDeclaresCredReadersSupplementalGroups_spec_13_1 asserts the
 // agent pod declares the lenny-cred-readers GID in the pod-level
-// supplementalGroups list — the §13.1 line 25 explicit membership the
+// supplementalGroups list — the §13.1 explicit membership the
 // cross-UID credential-delivery path requires, rather than relying on
 // the kubelet's implicit fsGroup-to-supplementary-group propagation
 // (F-13.1.11).
@@ -118,12 +118,11 @@ func TestBuildDeclaresCredReadersSupplementalGroups_spec_13_1(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("pod supplementalGroups = %v, want it to include the lenny-cred-readers GID %d (§13.1 line 25)", sc.SupplementalGroups, podspec.CredReadersGID)
+		t.Errorf("pod supplementalGroups = %v, want it to include the lenny-cred-readers GID %d (§13.1)", sc.SupplementalGroups, podspec.CredReadersGID)
 	}
 }
 
-// TestBuildDisablesDefaultSATokenAutomount_spec_13_1 asserts §13.1 line
-// 12 ("No standing credentials"): the agent pod disables the kubelet's
+// TestBuildDisablesDefaultSATokenAutomount_spec_13_1 asserts §13.1: the agent pod disables the kubelet's
 // default ServiceAccount-token automount so the long-lived
 // cluster-audience token is not mounted; the only token present is the
 // §10.3 audience-bound projected token (F-13.1.9).
@@ -483,7 +482,10 @@ func TestBuildIgnoresCeilingAboveDefault_spec_4_6_1(t *testing.T) {
 // TestBuildAddsPreStopDrainHook_spec_4_6_1 confirms every agent
 // container carries the §4.6.1 preStop checkpoint-drain hook with a
 // timeout below the grace period (so the kubelet does not cut the drain
-// short).
+// short), and that the hook execs the binary at the path the image
+// installs it to.
+//
+// spec: 4.6.1 (Warm Pool Controller (Pod Lifecycle)), 4.7.10 (Deployment Model)
 func TestBuildAddsPreStopDrainHook_spec_4_6_1(t *testing.T) {
 	cases := []struct {
 		model     string
@@ -504,8 +506,17 @@ func TestBuildAddsPreStopDrainHook_spec_4_6_1(t *testing.T) {
 			t.Fatalf("model %q: %s container has no preStop exec hook", tc.model, tc.container)
 		}
 		cmd := c.Lifecycle.PreStop.Exec.Command
-		if len(cmd) < 2 || cmd[0] != "lenny-adapter" || cmd[1] != "prestop" {
-			t.Fatalf("model %q: preStop command = %v, want lenny-adapter prestop", tc.model, cmd)
+		// The images are distroless with the binary installed only at
+		// /usr/local/bin/lenny, so token 0 must be that absolute path. A
+		// bare `lenny-adapter` names no executable in the image and fails
+		// the hook at every termination (F-4.6.37). The literal pins the
+		// constant; tests/tier0_static pins the constant to the Dockerfile.
+		const wantBinary = "/usr/local/bin/lenny"
+		if podspec.PlatformBinaryPath != wantBinary {
+			t.Fatalf("PlatformBinaryPath = %q, want %q", podspec.PlatformBinaryPath, wantBinary)
+		}
+		if len(cmd) < 2 || cmd[0] != wantBinary || cmd[1] != "prestop" {
+			t.Fatalf("model %q: preStop command = %v, want %s prestop", tc.model, cmd, wantBinary)
 		}
 		var sawTimeout bool
 		for _, arg := range cmd {
@@ -525,7 +536,7 @@ func TestBuildAddsPreStopDrainHook_spec_4_6_1(t *testing.T) {
 
 // TestBuildAppliesTerminationGraceBaseOverride_spec_5_2 confirms the
 // deployer-set TerminationGraceSeconds replaces the 120s default base
-// (§5.2 line 516) and that the ceiling still clamps the override down.
+// (§5.2) and that the ceiling still clamps the override down.
 func TestBuildAppliesTerminationGraceBaseOverride_spec_5_2(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -555,8 +566,7 @@ func TestBuildAppliesTerminationGraceBaseOverride_spec_5_2(t *testing.T) {
 	}
 }
 
-// TestBuildPreConnectFloorsTerminationGrace_spec_6_1_67 confirms the §6.1
-// line 67 SDK-warm grace floor: a preConnect pod's
+// TestBuildPreConnectFloorsTerminationGrace_spec_6_1_67 confirms the §6.1 SDK-warm grace floor: a preConnect pod's
 // terminationGracePeriodSeconds is at least LENNY_DEMOTE_TIMEOUT_SECONDS
 // (default 5s) + 5s = 10s so the adapter can run its bounded DemoteSDK
 // teardown on SIGTERM. The floor takes precedence over a lower §5.2 base or
@@ -594,8 +604,7 @@ func TestBuildPreConnectFloorsTerminationGrace_spec_6_1_67(t *testing.T) {
 	}
 }
 
-// TestBuildCapsDevShm_spec_6_4 confirms the §6.4 line 420 "/dev/shm is
-// limited to 64MB" invariant: a memory-backed emptyDir with an explicit
+// TestBuildCapsDevShm_spec_6_4 confirms the §6.4 invariant: a memory-backed emptyDir with an explicit
 // 64Mi SizeLimit, mounted at /dev/shm in every agent container.
 func TestBuildCapsDevShm_spec_6_4(t *testing.T) {
 	for _, model := range []string{"", "embedded"} {
@@ -657,8 +666,7 @@ func mountsPath(c corev1.Container, name, path string) bool {
 	return false
 }
 
-// TestBuildMountsSessionsAndArtifacts_spec_6_4 confirms the §6.4 lines
-// 380-381 / §13.1 line 10 filesystem layout: /sessions is a memory-backed
+// TestBuildMountsSessionsAndArtifacts_spec_6_4 confirms the §6.4 / §13.1 filesystem layout: /sessions is a memory-backed
 // (tmpfs) volume, /artifacts is disk-backed, and every agent container
 // mounts both so a runtime write does not land on the read-only root
 // filesystem (EROFS).
@@ -671,12 +679,12 @@ func TestBuildMountsSessionsAndArtifacts_spec_6_4(t *testing.T) {
 			t.Fatalf("Build(%q): %v", model, err)
 		}
 
-		// spec: §6.4 line 380 — /sessions is tmpfs (Memory medium).
+		// spec: §6.4 — /sessions is tmpfs (Memory medium).
 		sessions := findVolume(t, pod, "sessions").VolumeSource.EmptyDir
 		if sessions == nil || sessions.Medium != corev1.StorageMediumMemory {
 			t.Errorf("model %q: sessions volume must be a memory-backed emptyDir, got %+v", model, sessions)
 		}
-		// spec: §6.4 line 414 — /artifacts is disk-backed (no Memory medium).
+		// spec: §6.4 — /artifacts is disk-backed (no Memory medium).
 		artifacts := findVolume(t, pod, "artifacts").VolumeSource.EmptyDir
 		if artifacts == nil || artifacts.Medium != "" {
 			t.Errorf("model %q: artifacts volume must be a disk-backed emptyDir, got %+v", model, artifacts)
@@ -693,7 +701,7 @@ func TestBuildMountsSessionsAndArtifacts_spec_6_4(t *testing.T) {
 	}
 }
 
-// TestBuildCapsTmpfs_spec_6_4 confirms the §6.4 line 413 recommended
+// TestBuildCapsTmpfs_spec_6_4 confirms the §6.4 recommended
 // tmpfs size caps: /sessions and /tmp carry a 256Mi SizeLimit so tmpfs
 // growth has a predictable OOM boundary. The disk-backed /workspace and
 // /artifacts volumes carry no Memory medium.
@@ -723,8 +731,7 @@ func TestBuildCapsTmpfs_spec_6_4(t *testing.T) {
 	}
 }
 
-// TestBuildMasksProc_spec_6_4 confirms the §6.4 line 420 "procfs and
-// sysfs are masked/read-only" invariant: each agent container sets the
+// TestBuildMasksProc_spec_6_4 confirms the §6.4 invariant: each agent container sets the
 // default masked /proc mount explicitly.
 func TestBuildMasksProc_spec_6_4(t *testing.T) {
 	pod, err := podspec.Build(inputs())
@@ -760,7 +767,7 @@ func TestBuildCredentialsVolumeIsTmpfs_spec_6_4(t *testing.T) {
 	}
 }
 
-// TestBuildMountsTheWorkspaceVolume_spec_6_4 confirms the §6.4 line 377
+// TestBuildMountsTheWorkspaceVolume_spec_6_4 confirms the §6.4
 // "/workspace" mount: a disk-backed emptyDir mounted at /workspace on
 // every agent container, so the §7.4 staging→current promotion and the
 // FinalizeWorkspace handoff are within one volume.
@@ -780,7 +787,7 @@ func TestBuildMountsTheWorkspaceVolume_spec_6_4(t *testing.T) {
 	}
 }
 
-// TestBuildMountsSharedReadOnly_spec_6_4 confirms the §6.4 line 409
+// TestBuildMountsSharedReadOnly_spec_6_4 confirms the §6.4
 // /workspace/shared layout: a separate disk-backed emptyDir is always
 // present, mounted read-only on the runtime container (the EROFS write
 // boundary) and read-write on the adapter container (the populator). The
@@ -791,12 +798,12 @@ func TestBuildMountsSharedReadOnly_spec_6_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	// spec: §6.4 line 409 — a separate disk-backed emptyDir backs the mount.
+	// spec: §6.4 — a separate disk-backed emptyDir backs the mount.
 	shared := findVolume(t, pod, "shared").VolumeSource.EmptyDir
 	if shared == nil || shared.Medium != "" {
 		t.Errorf("shared volume must be a disk-backed emptyDir, got %+v", shared)
 	}
-	// spec: §6.4 line 409 — read-only on the runtime container (EROFS).
+	// spec: §6.4 — read-only on the runtime container (EROFS).
 	if !mountsPathReadOnly(container(t, pod, "runtime"), "shared", "/workspace/shared", true) {
 		t.Error("runtime container must mount shared at /workspace/shared read-only")
 	}
@@ -825,7 +832,7 @@ func TestBuildEmbeddedMountsShared_spec_6_4(t *testing.T) {
 	}
 }
 
-// TestBuildWiresSharedAssetsArgs_spec_6_4 confirms the §6.4 line 409
+// TestBuildWiresSharedAssetsArgs_spec_6_4 confirms the §6.4
 // adapter wiring: --shared-assets-dir is always passed, and the inline
 // asset set rides --shared-assets only when the Runtime declares any.
 func TestBuildWiresSharedAssetsArgs_spec_6_4(t *testing.T) {
@@ -894,7 +901,7 @@ func hasArgPrefix(args []string, prefix string) bool {
 	return false
 }
 
-// TestBuildInjectsT4NodeIsolation_spec_6_4 confirms the §6.4 lines 416-419
+// TestBuildInjectsT4NodeIsolation_spec_6_4 confirms the §6.4
 // dedicated-node injection: a Runtime declared at `workspaceTier: T4`
 // produces a pod carrying the `lenny.dev/workspace-tier: t4` label, the T4
 // nodeSelector, and the T4 NoSchedule toleration so the
@@ -996,7 +1003,7 @@ func TestBuildT4InjectionPreservesDeployerNodeSelector_spec_6_4(t *testing.T) {
 }
 
 // TestBuildInjectsKataNodeIsolation_spec_17_2 confirms a microvm (Kata)
-// pod carries the §17.2 lines 99-101 control 2 (required node affinity on
+// pod carries the §17.2 control 2 (required node affinity on
 // lenny.dev/node-pool=kata) and control 3 (NoSchedule toleration for the
 // lenny.dev/isolation=kata taint) in both deployment models.
 func TestBuildInjectsKataNodeIsolation_spec_17_2(t *testing.T) {
@@ -1114,4 +1121,134 @@ func requiredNodeAffinity(t *testing.T, pod *corev1.Pod) *corev1.NodeSelector {
 		t.Fatalf("pod has no required node affinity: %+v", pod.Spec.Affinity)
 	}
 	return pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+}
+
+// TestBuildRendersTheWorkspaceBaseOnBothAdapterArgvs_spec_6_4 pins what the
+// operator renders onto the adapter's command line. Under the uniform
+// per-slot layout every session's cwd is
+// `/workspace/slots/{sessionId}/current`, created at slot assignment, and
+// the pod-global `/workspace/current` exists on no pod. The builder
+// therefore renders the workspace base and never the retired leaf, on the
+// sidecar-adapter argv and the embedded-adapter argv alike. Rendering the
+// leaf would run every adapter against a directory the platform never
+// creates, and no other case would notice: the documentation sweep's
+// predicate does not reach this package.
+// spec: 6.4 (per-slot workspace layout), 4.7 (adapter argv)
+func TestBuildRendersTheWorkspaceBaseOnBothAdapterArgvs_spec_6_4(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		model     string
+		container string
+	}{
+		{name: "sidecar", model: "", container: "adapter"},
+		{name: "embedded", model: "embedded", container: "runtime"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := inputs()
+			in.DeploymentModel = tc.model
+			pod, err := podspec.Build(in)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			args := container(t, pod, tc.container).Args
+			joined := strings.Join(args, " ")
+			if strings.Contains(joined, "/workspace/current") {
+				t.Errorf("%s argv names the retired pod-global /workspace/current: %v", tc.container, args)
+			}
+			if strings.Contains(joined, "--workspace-root") {
+				t.Errorf("%s argv still declares --workspace-root: %v", tc.container, args)
+			}
+			var found bool
+			for _, a := range args {
+				if a == "--workspace-base=/workspace" {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("%s argv = %v, want --workspace-base=/workspace", tc.container, args)
+			}
+		})
+	}
+}
+
+// TestBuildContainerIdentity_spec_13_1 pins the §13.1 Container identity
+// rule at the producer. For the sidecar, embedded, and egress-capture
+// builds, at the default and at overridden UIDs, every container the
+// builder renders sets a nonzero container-level runAsUser and runAsGroup
+// with the primary GID equal to the UID, only the runtime container runs
+// at the agent UID, and only the adapter container runs at the adapter UID.
+// The pod sets no pod-level runAsUser or runAsGroup, because a pod-level
+// value does not satisfy the container-level rule. Before the builder set
+// runAsGroup, every container left the primary GID to the image; before
+// the egress-capture container moved to its own UID, it ran at the agent
+// UID. Either defect fails this test.
+//
+// spec: 13.1 (Pod Security)
+func TestBuildContainerIdentity_spec_13_1(t *testing.T) {
+	capture := &podspec.EgressCapture{
+		Image:    "ghcr.io/lennylabs/lenny-egress-capture:e2e",
+		Upstream: "api.openai.com:443",
+	}
+	type uids struct{ adapter, agent, gid int64 }
+	overrides := map[string]uids{
+		"default":    {},
+		"overridden": {adapter: 61000, agent: 61001, gid: 61002},
+	}
+	builds := map[string]func(*podspec.Inputs){
+		"sidecar":                func(*podspec.Inputs) {},
+		"embedded":               func(in *podspec.Inputs) { in.DeploymentModel = string(podspec.DeploymentEmbedded) },
+		"sidecar egress-capture": func(in *podspec.Inputs) { in.EgressCapture = capture },
+		"embedded egress-capture": func(in *podspec.Inputs) {
+			in.DeploymentModel = string(podspec.DeploymentEmbedded)
+			in.EgressCapture = capture
+		},
+	}
+	for oname, o := range overrides {
+		for bname, mutate := range builds {
+			t.Run(oname+"/"+bname, func(t *testing.T) {
+				in := inputs()
+				in.AdapterUID, in.AgentUID, in.CredReadersGID = o.adapter, o.agent, o.gid
+				mutate(&in)
+				pod, err := podspec.Build(in)
+				if err != nil {
+					t.Fatalf("Build: %v", err)
+				}
+				adapterUID, agentUID := podspec.AdapterUID, podspec.AgentUID
+				if o.adapter != 0 {
+					adapterUID, agentUID = o.adapter, o.agent
+				}
+				assertContainerIdentity(t, pod, adapterUID, agentUID)
+			})
+		}
+	}
+}
+
+// assertContainerIdentity checks the §13.1 Container identity rule over
+// every init and regular container of pod.
+func assertContainerIdentity(t *testing.T, pod *corev1.Pod, adapterUID, agentUID int64) {
+	t.Helper()
+	if psc := pod.Spec.SecurityContext; psc != nil && (psc.RunAsUser != nil || psc.RunAsGroup != nil) {
+		t.Errorf("pod-level runAsUser=%v runAsGroup=%v, want both unset", psc.RunAsUser, psc.RunAsGroup)
+	}
+	all := append(append([]corev1.Container{}, pod.Spec.InitContainers...), pod.Spec.Containers...)
+	for _, c := range all {
+		sc := c.SecurityContext
+		if sc == nil || sc.RunAsUser == nil || sc.RunAsGroup == nil {
+			t.Errorf("%s: runAsUser and runAsGroup must both be set at container level", c.Name)
+			continue
+		}
+		uid, gid := *sc.RunAsUser, *sc.RunAsGroup
+		if uid == 0 || gid == 0 {
+			t.Errorf("%s: runAsUser=%d runAsGroup=%d, want both nonzero", c.Name, uid, gid)
+		}
+		if gid != uid {
+			t.Errorf("%s: runAsGroup=%d, want it equal to runAsUser %d", c.Name, gid, uid)
+		}
+		if uid == agentUID && c.Name != "runtime" {
+			t.Errorf("%s: runs at the agent UID %d, which only the runtime container may hold", c.Name, uid)
+		}
+		if uid == adapterUID && c.Name != "adapter" {
+			t.Errorf("%s: runs at the adapter UID %d, which only the adapter container may hold", c.Name, uid)
+		}
+	}
 }

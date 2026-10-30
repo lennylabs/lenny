@@ -1,4 +1,4 @@
--- §4.4 lines 236, 281 mandate soft-delete (UPDATE ... SET deleted_at =
+-- §4.4 mandate soft-delete (UPDATE ... SET deleted_at =
 -- now() ... WHERE deleted_at IS NULL) for the eviction-state row's
 -- terminal-state cleanup so idempotent re-runs (stale-leader retries,
 -- §12.5 GC backstop racing the primary cleanup) converge on a single
@@ -15,7 +15,7 @@
 -- deleted_at is older than the tombstone retention window and issues
 -- the hard DELETE.
 --
--- spec: §4.4 lines 236, 281.
+-- spec: §4.4.
 
 ALTER TABLE session_eviction_state
     ADD COLUMN deleted_at TIMESTAMPTZ;

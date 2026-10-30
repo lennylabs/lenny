@@ -39,12 +39,15 @@ func userEraser(name string, n int) erasure.Eraser {
 	}
 }
 
-func newErasureAdmin(t *testing.T, orch *erasure.Orchestrator) (*admin.Router, userstore.Store, erasurejob.Store, *recordingAudit) {
+// newErasureAdmin builds the admin router over an erasure runner whose job
+// store writes the processing_restricted flag on the returned user store,
+// as the memory posture of the gateway wires it.
+func newErasureAdmin(t *testing.T, orch *erasure.Orchestrator) (*admin.Router, *userstore.Memory, *erasurejob.Memory, *recordingAudit) {
 	t.Helper()
 	users := userstore.NewMemory()
-	jobs := erasurejob.NewMemory()
+	jobs := erasurejob.NewMemory(erasurejob.WithRestrictionWriter(users))
 	audit := &recordingAudit{}
-	runner := erasurejob.NewRunner(jobs, orch, erasureClock)
+	runner := newFixtureRunner(t, jobs, orch, audit)
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: erasureClock,
 		Audit: audit,
@@ -52,13 +55,16 @@ func newErasureAdmin(t *testing.T, orch *erasure.Orchestrator) (*admin.Router, u
 	return router, users, jobs, audit
 }
 
-// awaitTerminal polls the job store until the job reaches a terminal
-// phase — the erase handler runs the job in a background goroutine.
+// awaitTerminal drives the test's runners and polls the job store until
+// the job reaches a terminal phase. The erase handler only records the
+// job; the gateway leader's sweep runs it, which driveRunners stands in
+// for.
 func awaitTerminal(t *testing.T, jobs erasurejob.Store, jobID string) erasurejob.Job {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		job, err := jobs.Get(context.Background(), jobID)
+		driveRunners(t)
+		job, err := jobs.Get(context.Background(), erasurejob.AllTenants, jobID)
 		if err != nil {
 			t.Fatalf("Get job %q: %v", jobID, err)
 		}
@@ -117,11 +123,12 @@ func TestEraseUserInitiatesJob(t *testing.T) {
 	}
 }
 
-// awaitAuditEvent polls the recording audit sink until an event of the
-// given type appears, then returns it. The erasure receipt is emitted
-// from a background goroutine once the job completes.
+// awaitAuditEvent drives the test's runners and polls the recording audit
+// sink until an event of the given type appears, then returns it. The
+// erasure receipt is written by the runner when the job completes.
 func awaitAuditEvent(t *testing.T, audit *recordingAudit, eventType string) admin.AuditEvent {
 	t.Helper()
+	driveRunners(t)
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		for _, ev := range audit.snapshot() {
@@ -162,7 +169,7 @@ func TestEraseUserEmitsCompletionReceipt(t *testing.T) {
 func newBillingErasureAdmin(t *testing.T, billingPolicy string) (*admin.Router, userstore.Store, *billingstore.Memory, *recordingAudit) {
 	t.Helper()
 	users := userstore.NewMemory()
-	jobs := erasurejob.NewMemory()
+	jobs := erasurejob.NewMemory(erasurejob.WithRestrictionWriter(users))
 	tenants := tenantstore.NewMemory()
 	if err := tenants.Create(context.Background(), tenantstore.Tenant{
 		ID: "acme", BillingErasurePolicy: billingPolicy,
@@ -171,7 +178,7 @@ func newBillingErasureAdmin(t *testing.T, billingPolicy string) (*admin.Router, 
 	}
 	billing := billingstore.NewMemory()
 	audit := &recordingAudit{}
-	runner := erasurejob.NewRunner(jobs, erasure.New(erasure.Config{}), erasureClock).
+	runner := newFixtureRunner(t, jobs, erasure.New(erasure.Config{}), audit).
 		WithBilling(erasurejob.NewBillingEraser(billing, tenants))
 	router := admin.NewRouter(tenants, admin.Options{Clock: erasureClock, Audit: audit}).
 		WithUsers(users).WithErasure(runner, jobs)
@@ -208,12 +215,12 @@ func TestEraseUserReceiptRecordsBillingPseudonymization(t *testing.T) {
 	if be["verified"] != true {
 		t.Errorf("billingErasure.verified = %v, want true", be["verified"])
 	}
-	// spec: §12.8 line 851 — the salt-removal verification outcome is
+	// spec: §12.8 — the salt-removal verification outcome is
 	// recorded explicitly in the receipt.
 	if receipt.Detail["verificationOutcome"] != "verified" {
 		t.Errorf("verificationOutcome = %v, want verified", receipt.Detail["verificationOutcome"])
 	}
-	// spec: §12.8 line 762 — the receipt carries the per-phase timeline,
+	// spec: §12.8 — the receipt carries the per-phase timeline,
 	// ending in the completed transition.
 	assertReceiptPhaseLogCompleted(t, receipt)
 	if cnt, _ := billing.CountUser(context.Background(), "acme", "alice@acme.com"); cnt != 0 {
@@ -262,7 +269,7 @@ func TestEraseUserReceiptRecordsBillingExempt(t *testing.T) {
 	if be["disposition"] != "exempt" {
 		t.Errorf("billingErasure.disposition = %v, want exempt", be["disposition"])
 	}
-	// spec: §12.8 line 851 — an exempt tenant runs no salt verification.
+	// spec: §12.8 — an exempt tenant runs no salt verification.
 	if receipt.Detail["verificationOutcome"] != "exempt" {
 		t.Errorf("verificationOutcome = %v, want exempt", receipt.Detail["verificationOutcome"])
 	}
@@ -272,7 +279,7 @@ func TestEraseUserReceiptRecordsBillingExempt(t *testing.T) {
 	}
 }
 
-// spec: §12.8 lines 762, 851 — when no BillingEraser is wired the
+// spec: §12.8 — when no BillingEraser is wired the
 // completion receipt still carries the per-phase timeline and records a
 // not_applicable verification outcome (no salt was destroyed).
 func TestEraseUserReceiptRecordsPhaseLogWithoutBilling(t *testing.T) {
@@ -425,10 +432,10 @@ func TestGetErasureJobNotFound(t *testing.T) {
 func newErasureAdminWithSessions(t *testing.T, orch *erasure.Orchestrator) (*admin.Router, userstore.Store, sessionstore.Store, *recordingAudit) {
 	t.Helper()
 	users := userstore.NewMemory()
-	jobs := erasurejob.NewMemory()
+	jobs := erasurejob.NewMemory(erasurejob.WithRestrictionWriter(users))
 	sessions := memstore.New()
 	audit := &recordingAudit{}
-	runner := erasurejob.NewRunner(jobs, orch, erasureClock)
+	runner := newFixtureRunner(t, jobs, orch, audit)
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: erasureClock,
 		Audit: audit,
@@ -469,17 +476,17 @@ func TestEraseUserBlockedByLegalHold(t *testing.T) {
 	}
 }
 
-// spec: §12.8 line 794(b) — an artifact-level hold on an artifact owned
+// spec: §12.8(b) — an artifact-level hold on an artifact owned
 // by one of the user's sessions blocks the erasure even when the session
 // itself is not held.
 func TestEraseUserBlockedByArtifactLegalHold(t *testing.T) {
 	users := userstore.NewMemory()
-	jobs := erasurejob.NewMemory()
+	jobs := erasurejob.NewMemory(erasurejob.WithRestrictionWriter(users))
 	sessions := memstore.New()
 	audit := &recordingAudit{}
 	holder := newFakeArtifactHolder()
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{userEraser("sessions", 1)}})
-	runner := erasurejob.NewRunner(jobs, orch, erasureClock)
+	runner := newFixtureRunner(t, jobs, orch, audit)
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{Clock: erasureClock, Audit: audit}).
 		WithUsers(users).WithErasure(runner, jobs).WithSessions(sessions).WithArtifactLegalHold(holder)
 
@@ -508,7 +515,7 @@ func TestEraseUserBlockedByArtifactLegalHold(t *testing.T) {
 	if !ok {
 		t.Fatal("a hold-blocked erasure must emit gdpr.erasure_blocked_by_hold")
 	}
-	// spec: §12.8 line 794 — the blocked event carries the resource tuples.
+	// spec: §12.8 — the blocked event carries the resource tuples.
 	tuples, ok := blocked.Detail["holds"].([]map[string]any)
 	if !ok || len(tuples) != 1 || tuples[0]["resourceType"] != "artifact" {
 		t.Errorf("blocked event holds = %v, want one artifact tuple", blocked.Detail["holds"])
@@ -547,7 +554,7 @@ func TestEraseUserHoldOverrideProceeds(t *testing.T) {
 	}
 	// §12.8: the override is recorded synchronously as gdpr.legal_hold_overridden.
 	override := awaitAuditEvent(t, audit, "gdpr.legal_hold_overridden")
-	// spec: §12.8 line 796 — the event carries the same fields as the
+	// spec: §12.8 — the event carries the same fields as the
 	// receipt (legal_hold_override, override_by, override_justification,
 	// override_at, overridden_holds) plus jobId.
 	if override.Detail["overrideJustification"] != "court order lifted, ticket-9" {
@@ -557,7 +564,7 @@ func TestEraseUserHoldOverrideProceeds(t *testing.T) {
 		t.Errorf("override event should carry legalHoldOverride=true: %+v", override.Detail)
 	}
 	if at, ok := override.Detail["overrideAt"].(string); !ok || at == "" {
-		t.Errorf("override event overrideAt = %v (want non-empty RFC3339 string per §12.8 line 796)", override.Detail["overrideAt"])
+		t.Errorf("override event overrideAt = %v (want non-empty RFC3339 string per §12.8)", override.Detail["overrideAt"])
 	}
 	if override.Detail["overriddenHolds"] == nil {
 		t.Errorf("override event should carry the overriddenHolds list: %+v", override.Detail)
@@ -566,7 +573,7 @@ func TestEraseUserHoldOverrideProceeds(t *testing.T) {
 	// override decision without triangulating on userId alone.
 	jobID, ok := override.Detail["jobId"].(string)
 	if !ok || jobID == "" {
-		t.Errorf("override event jobId = %v (want non-empty string per §12.8 line 796)", override.Detail["jobId"])
+		t.Errorf("override event jobId = %v (want non-empty string per §12.8)", override.Detail["jobId"])
 	}
 	// The completion receipt records that an override was exercised, with
 	// the same override_at the event carried.
@@ -622,6 +629,7 @@ func awaitUnrestricted(t *testing.T, users userstore.Store, tenant, subject stri
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
+		driveRunners(t)
 		u, err := users.Get(context.Background(), tenant, subject)
 		if err != nil {
 			t.Fatalf("Get user: %v", err)

@@ -3,14 +3,19 @@
 package adapter
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"sync"
+
+	"github.com/lennylabs/lenny/pkg/adapter/linefanout"
 )
 
-// RuntimeLoop is the §15.4.1 JSONL processing loop a first-party runtime
+// maxEmbeddedFrameBytes is the largest JSONL frame the embedded transport's
+// output reader admits.
+const maxEmbeddedFrameBytes = 16 * 1024 * 1024
+
+// RuntimeLoop is the §28.5.3 JSONL processing loop a first-party runtime
 // implements for the §4.7 embedded deployment model. It is the same
 // stdin/stdout contract a sidecar runtime implements, expressed as a
 // function: in carries inbound frames (adapter → runtime), out carries
@@ -24,7 +29,7 @@ import (
 type RuntimeLoop func(ctx context.Context, in io.Reader, out io.Writer) error
 
 // InProcessRuntime is the §4.7 embedded-model RuntimeProcess: the
-// runtime logic runs in the adapter's own process, and the §15.4.1
+// runtime logic runs in the adapter's own process, and the §28.5.3
 // JSONL frames travel over an in-memory pipe instead of a socket or the
 // runtime's stdin/stdout. It is the third transport behind the
 // RuntimeProcess contract, beside the stdin/stdout SubprocessExecutor
@@ -48,11 +53,31 @@ type InProcessRuntime struct {
 	// outReader is the adapter's read end: Output streams frames the
 	// runtime loop wrote.
 	outReader *io.PipeReader
-	loopDone  chan struct{}
+	// hub broadcasts the loop's output to every Output subscriber. Each
+	// Start creates one. Its single reader starts at the first Output, so
+	// the loop's output stays in the pipe until a consumer subscribes,
+	// unless an activity tap is recorded, in which case the reader starts
+	// where the hub is created so the tap reads every frame whether or not
+	// Output is ever called.
+	hub      *linefanout.Hub
+	loopDone chan struct{}
+	// tap is the adapter's activity tap, recorded by TapOutput and set on
+	// each hub Start creates. Guarded by mu. spec: §4.7.1.
+	tap func(line []byte)
+}
+
+// TapOutput records fn as the activity tap of every hub Start creates.
+// The hub's reader calls fn with each frame the loop writes, before the
+// broadcast and whether or not a subscriber is registered.
+// spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.3 (CH-MSGSOCK)
+func (r *InProcessRuntime) TapOutput(fn func(line []byte)) {
+	r.mu.Lock()
+	r.tap = fn
+	r.mu.Unlock()
 }
 
 // NewInProcessRuntime returns an embedded-model RuntimeProcess that runs
-// loop in-process. loop is the runtime's §15.4.1 JSONL handler.
+// loop in-process. loop is the runtime's §28.5.3 JSONL handler.
 func NewInProcessRuntime(loop RuntimeLoop) *InProcessRuntime {
 	return &InProcessRuntime{loop: loop}
 }
@@ -74,6 +99,11 @@ func (r *InProcessRuntime) Start(ctx context.Context, sessionID string) error {
 	r.session = sessionID
 	r.inWriter = inWriter
 	r.outReader = outReader
+	r.hub = linefanout.New()
+	if r.tap != nil {
+		r.hub.Tap(r.tap)
+		r.hub.Serve(outReader, maxEmbeddedFrameBytes, nil)
+	}
 	r.loopDone = make(chan struct{})
 	done := r.loopDone
 
@@ -88,7 +118,7 @@ func (r *InProcessRuntime) Start(ctx context.Context, sessionID string) error {
 	return nil
 }
 
-// WriteEnvelope forwards a pre-encoded §15.4.1 message envelope to the
+// WriteEnvelope forwards a pre-encoded §28.5.3 message envelope to the
 // runtime loop over the in-memory pipe, terminated by a newline.
 func (r *InProcessRuntime) WriteEnvelope(sessionID string, envelope []byte) error {
 	r.mu.Lock()
@@ -107,12 +137,18 @@ func (r *InProcessRuntime) WriteEnvelope(sessionID string, envelope []byte) erro
 	return nil
 }
 
-// Output streams every §15.4.1 JSONL frame the runtime loop writes. The
-// channel closes when the loop returns; ctx cancellation stops the
-// reader so a stalled consumer does not leak the goroutine.
+// Output subscribes to every §28.5.3 JSONL frame the runtime loop writes.
+// One reader per loop, started at the first Output or, for a tapped
+// runtime, at Start, broadcasts each frame to
+// the live subscribers, as SocketRuntimeProcess does: the Attach stream and a
+// start's session_started wait each subscribe, and a subscriber whose ctx
+// ends is removed and consumes nothing afterwards. The channel closes when
+// the loop's output ends or ctx ends.
+// spec: §28.5.3 (CH-MSGSOCK; Outbound: session_started).
 func (r *InProcessRuntime) Output(ctx context.Context, sessionID string) (<-chan []byte, error) {
 	r.mu.Lock()
 	reader := r.outReader
+	hub := r.hub
 	bound := r.session
 	r.mu.Unlock()
 	if bound != sessionID {
@@ -121,21 +157,12 @@ func (r *InProcessRuntime) Output(ctx context.Context, sessionID string) (<-chan
 	if reader == nil {
 		return nil, fmt.Errorf("adapter: embedded runtime for session %s is not started", sessionID)
 	}
-	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	ch := make(chan []byte)
-	go func() {
-		defer close(ch)
-		for scanner.Scan() {
-			line := append([]byte(nil), scanner.Bytes()...)
-			select {
-			case ch <- line:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return ch, nil
+	out, err := hub.Subscribe(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("adapter: embedded runtime output for session %s: %w", sessionID, err)
+	}
+	hub.Serve(reader, maxEmbeddedFrameBytes, nil)
+	return out, nil
 }
 
 // Interrupt stops the runtime loop. The embedded runtime shares the
@@ -161,16 +188,17 @@ func (r *InProcessRuntime) Interrupt(_ context.Context, sessionID string, _ bool
 // Unlike Close it does not block on the loop's completion: it closes both
 // pipe ends (unblocking a loop stalled on a read or a write) and drops the
 // session binding immediately, leaving the loop goroutine to exit on its
-// own as the process terminates. It backs the §6.1 line 67 force-terminate
+// own as the process terminates. It backs the §6.1 force-terminate
 // step the adapter runs when a bounded DemoteSDK overruns its timeout; a
 // real subprocess SDK substitutes a SIGKILL of the SDK process here.
-// spec: §6.1 line 67.
+// spec: §6.1.
 func (r *InProcessRuntime) ForceClose() {
 	r.mu.Lock()
 	w := r.inWriter
 	or := r.outReader
 	r.inWriter = nil
 	r.outReader = nil
+	r.hub = nil
 	r.loopDone = nil
 	r.session = ""
 	r.mu.Unlock()
@@ -191,6 +219,7 @@ func (r *InProcessRuntime) Close(_ context.Context, sessionID string) error {
 	done := r.loopDone
 	r.inWriter = nil
 	r.outReader = nil
+	r.hub = nil
 	r.loopDone = nil
 	r.session = ""
 	r.mu.Unlock()
@@ -201,6 +230,19 @@ func (r *InProcessRuntime) Close(_ context.Context, sessionID string) error {
 		<-done
 	}
 	return nil
+}
+
+// ServesNextSession reports whether the embedded runtime can serve the pod's
+// next session. The runtime loop runs in the adapter's own process, which
+// lives as long as the pod, so the loop serves a later session once the
+// previous session's Close has unbound it. It reports false while a session
+// is still bound. SDKWarmInProcessRuntime inherits it.
+// spec: §5.2 (Pod retirement policy, Runtime not live); §4.7.10 (Runtime
+// process lifetime).
+func (r *InProcessRuntime) ServesNextSession() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.session == ""
 }
 
 // compile-time assertion that InProcessRuntime satisfies the

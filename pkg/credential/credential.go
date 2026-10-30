@@ -26,12 +26,12 @@ const (
 	ProviderAzureOpenAI     Provider = "azure_openai"
 	ProviderGitHub          Provider = "github"
 	ProviderVaultTransit    Provider = "vault_transit"
-	// ProviderCursorDirect: §26.6 line 296 reference-runtime provider for
+	// ProviderCursorDirect: §26.6 reference-runtime provider for
 	// the cursor-cli runtime. Cursor's CLI accepts only its own API key, so
 	// §26.6 declares `supportedProviders: [cursor_direct]`. The provider is
 	// a first-party built-in by §26's definition and belongs in the closed
 	// enum alongside the other vendor-direct providers.
-	// spec: §26.6 line 296.
+	// spec: §26.6.
 	ProviderCursorDirect Provider = "cursor_direct"
 )
 

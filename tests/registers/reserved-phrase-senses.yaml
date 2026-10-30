@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: MIT
+#
+# Reserved-phrase sense register.
+#
+# One entry per site the name pass finds, keyed by file and by the 1-based
+# position of the site among the sites that file carries in source order.
+# The pass reads it per occurrence and fails closed on a site with no
+# entry, so an entry stands for every site the whole write domain carries.
+# Each entry names the canonical identifiers of the mechanism the prose
+# denotes, and an entry naming more than one records the replacement text
+# those identifiers sit in.
+#
+# The list is empty because the name pass has run over the whole write
+# domain: a search for each reserved bare noun phrase across that domain
+# returns no occurrence outside a markdown anchor identifier, which is the
+# population the naming lint reads, so no site is left for an entry to
+# resolve. The residual register for the class,
+# residual-reserved-phrases.yaml, is what records a member the class's
+# broad predicate still matches.
+kind: reserved-phrase-senses
+version: 1
+entries: []

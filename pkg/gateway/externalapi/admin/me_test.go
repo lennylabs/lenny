@@ -156,7 +156,7 @@ func TestAuthorizedToolsIncludeTenantAccess_spec_24_3(t *testing.T) {
 // credential-pool operations are discoverable in the authorized-tools
 // catalog so a §25.14 agent finds the credential-management surface. The
 // manage operations are tenant-admin-visible (the manage_credential_pools
-// permission); re-enable is platform-admin per §15.1 line 811. F-24.5.5.
+// permission); re-enable is platform-admin per §15.1. F-24.5.5.
 func TestAuthorizedToolsIncludeCredentialPools_spec_24_5(t *testing.T) {
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{})
 
@@ -187,7 +187,7 @@ func TestAuthorizedToolsIncludeCredentialPools_spec_24_5(t *testing.T) {
 	}
 	// re-enable is platform-admin only.
 	if taGot["admin.re_enable_pool_credential"] {
-		t.Error("tenant-admin should not see admin.re_enable_pool_credential (platform-admin per §15.1:811)")
+		t.Error("tenant-admin should not see admin.re_enable_pool_credential (platform-admin per §15.1)")
 	}
 
 	paReq := withAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/me/authorized-tools", nil))

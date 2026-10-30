@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// spec: §7.1 lines 75, 77 (retention, isolation), §7.2 lines 137, 141
+// spec: §7.1, §7.2
 // (status_change, session_complete), §11.7 / §16.6 (lifecycle audit).
 
 // captureLifecycleAudit records every §7.1/§16.6 session lifecycle
@@ -47,7 +47,7 @@ type capturedTerminalMetric struct {
 	seconds                          float64
 }
 
-// spec: §10.7 lines 1120-1132 / §16.1 lines 161-163 — every terminal
+// spec: §10.7 / §16.1 — every terminal
 // transition records the variant-labelled session metric family. The
 // variant comes from the §10.7 experiment context, session_type from the
 // §5.2 ExecutionMode, the error flag from the failed state, and the
@@ -88,7 +88,8 @@ func TestEmitTerminalLifecycleRecordsVariantMetrics_spec_10_7_1124(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			var got []capturedTerminalMetric
 			srv := New(memstore.New(), Options{
-				Clock: func() time.Time { return terminal },
+				DevTenantHeader: true,
+				Clock:           func() time.Time { return terminal },
 				RecordSessionTerminal: func(tenantID, sessionType, variantID string, isError bool, seconds float64) {
 					got = append(got, capturedTerminalMetric{tenantID, sessionType, variantID, isError, seconds})
 				},
@@ -111,6 +112,7 @@ func TestEmitTerminalLifecycleRecordsVariantMetrics_spec_10_7_1124(t *testing.T)
 func TestEmitTerminalLifecycleSkipsNonTerminalMetric_spec_10_7_1124(t *testing.T) {
 	called := false
 	srv := New(memstore.New(), Options{
+		DevTenantHeader:       true,
 		Clock:                 func() time.Time { return time.Unix(0, 0) },
 		RecordSessionTerminal: func(string, string, string, bool, float64) { called = true },
 	})
@@ -124,7 +126,7 @@ func TestEmitTerminalLifecycleSkipsNonTerminalMetric_spec_10_7_1124(t *testing.T
 
 // A nil hook must be a no-op (the metric subsystem is optional wiring).
 func TestRecordTerminalSessionMetricsNilHookIsSafe_spec_10_7_1124(t *testing.T) {
-	srv := New(memstore.New(), Options{Clock: func() time.Time { return time.Unix(0, 0) }})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Clock: func() time.Time { return time.Unix(0, 0) }})
 	srv.recordTerminalSessionMetrics(sessionstore.Session{ID: "s", TenantID: "acme", State: session.StateFailed})
 }
 
@@ -134,6 +136,7 @@ func TestRecordSessionCreatedEmitsAuditEvent_spec_7_1_10(t *testing.T) {
 	sink := &captureLifecycleAudit{}
 	at := time.Date(2026, 5, 26, 9, 0, 0, 0, time.UTC)
 	srv := New(memstore.New(), Options{
+		DevTenantHeader:    true,
 		LifecycleAuditSink: sink,
 		Clock:              func() time.Time { return at },
 	})
@@ -173,7 +176,7 @@ func TestRecordSessionCompletedEmitsTerminalAuditEvent_spec_7_1_10(t *testing.T)
 	}
 	for _, tc := range cases {
 		sink := &captureLifecycleAudit{}
-		srv := New(memstore.New(), Options{LifecycleAuditSink: sink})
+		srv := New(memstore.New(), Options{DevTenantHeader: true, LifecycleAuditSink: sink})
 		row := sessionstore.Session{ID: "s", TenantID: "acme", RuntimeRef: "echo", State: tc.state}
 		if tc.state == session.StateFailed {
 			row.FailureClass = session.FailureClass("runtime_failure")
@@ -197,7 +200,7 @@ func TestRecordSessionCompletedEmitsTerminalAuditEvent_spec_7_1_10(t *testing.T)
 
 func TestRecordSessionCompletedNonTerminalNoAudit_spec_7_1_10(t *testing.T) {
 	sink := &captureLifecycleAudit{}
-	srv := New(memstore.New(), Options{LifecycleAuditSink: sink})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, LifecycleAuditSink: sink})
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 		ID: "s", TenantID: "acme", State: session.StateRunning,
 	})
@@ -207,7 +210,7 @@ func TestRecordSessionCompletedNonTerminalNoAudit_spec_7_1_10(t *testing.T) {
 }
 
 func TestLifecycleAuditNilSinkIsSafe_spec_7_1_10(t *testing.T) {
-	srv := New(memstore.New(), Options{})
+	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	// Neither path may panic with a nil sink.
 	srv.recordSessionCreated(context.Background(), sessionstore.Session{ID: "s", TenantID: "acme", State: session.StateCreated})
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{ID: "s", TenantID: "acme", State: session.StateFailed})
@@ -220,7 +223,7 @@ func TestTerminalTransitionEmitsStatusChangeAndComplete_spec_7_2_2(t *testing.T)
 		session.StateCompleted, session.StateFailed, session.StateCancelled, session.StateExpired,
 	} {
 		bus := sessionevents.NewBus(64)
-		srv := New(memstore.New(), Options{Events: bus})
+		srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 		srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 			ID: "s", TenantID: "acme", State: st,
 		})
@@ -248,7 +251,7 @@ func TestTerminalTransitionEmitsStatusChangeAndComplete_spec_7_2_2(t *testing.T)
 
 func TestSessionCompleteCarriesTaskResult_spec_7_2_2(t *testing.T) {
 	bus := sessionevents.NewBus(64)
-	srv := New(memstore.New(), Options{Events: bus})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 		ID: "s", TenantID: "acme", State: session.StateFailed,
 		FailureReason: "RUNTIME_CRASH",
@@ -277,7 +280,7 @@ func TestSessionCompleteCarriesTaskResult_spec_7_2_2(t *testing.T) {
 
 func TestNonTerminalRecordCompletedNoSSE_spec_7_2_2(t *testing.T) {
 	bus := sessionevents.NewBus(64)
-	srv := New(memstore.New(), Options{Events: bus})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus})
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
 		ID: "s", TenantID: "acme", State: session.StateRunning,
 	})
@@ -287,19 +290,23 @@ func TestNonTerminalRecordCompletedNoSSE_spec_7_2_2(t *testing.T) {
 }
 
 func TestFailSessionEmitsTerminalLifecycle_spec_7_2_2(t *testing.T) {
-	// spec: §7.2 — the start-path failure (failSession) is a terminal
-	// transition and emits the same SSE + audit signals as any terminal.
+	// spec: §7.2, §8.10 — tree recovery's failSession over a resume_pending
+	// node is a terminal transition and emits the same SSE + audit signals
+	// as any terminal.
 	store := memstore.New()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
+		ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	bus := sessionevents.NewBus(64)
 	sink := &captureLifecycleAudit{}
-	srv := New(store, Options{Events: bus, LifecycleAuditSink: sink})
+	srv := New(store, Options{DevTenantHeader: true, Events: bus, LifecycleAuditSink: sink})
 
 	srv.failSession(context.Background(), "acme", "s")
+	if err := srv.WaitTerminalWork(context.Background()); err != nil {
+		t.Fatalf("WaitTerminalWork: %v", err)
+	}
 
 	if got := sseEventsOfType(bus, "s", "status_change"); len(got) != 1 {
 		t.Errorf("failSession status_change count = %d, want 1", len(got))
@@ -313,7 +320,7 @@ func TestFailSessionEmitsTerminalLifecycle_spec_7_2_2(t *testing.T) {
 }
 
 func TestEmitStatusChangeNoBusIsSafe_spec_7_2_2(t *testing.T) {
-	srv := New(memstore.New(), Options{})
+	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	srv.emitStatusChange("acme", "s", session.StateSuspended) // nil bus must not panic
 	srv.emitSessionComplete(context.Background(), sessionstore.Session{ID: "s", State: session.StateCompleted})
 }
@@ -328,7 +335,7 @@ func TestRollRetentionOnTerminalFromZero_spec_7_1_16(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	srv := New(store, Options{Clock: func() time.Time { return now }})
+	srv := New(store, Options{DevTenantHeader: true, Clock: func() time.Time { return now }})
 
 	srv.rollRetentionOnTerminal(context.Background(), sessionstore.Session{ID: "s", TenantID: "acme", State: session.StateCompleted})
 
@@ -354,7 +361,7 @@ func TestRollRetentionRollsCreateDefaultForward_spec_7_1_16(t *testing.T) {
 	if err := store.Create(context.Background(), seeded); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	srv := New(store, Options{Clock: func() time.Time { return terminal }})
+	srv := New(store, Options{DevTenantHeader: true, Clock: func() time.Time { return terminal }})
 
 	srv.rollRetentionOnTerminal(context.Background(), seeded)
 
@@ -377,7 +384,7 @@ func TestRollRetentionPreservesLongerExtension_spec_7_1_16(t *testing.T) {
 	if err := store.Create(context.Background(), seeded); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	srv := New(store, Options{Clock: func() time.Time { return terminal }})
+	srv := New(store, Options{DevTenantHeader: true, Clock: func() time.Time { return terminal }})
 
 	srv.rollRetentionOnTerminal(context.Background(), seeded)
 
@@ -387,7 +394,7 @@ func TestRollRetentionPreservesLongerExtension_spec_7_1_16(t *testing.T) {
 	}
 }
 
-// retentionForTier resolves the §12.9 line 1043 tier-keyed retention
+// retentionForTier resolves the §12.9 tier-keyed retention
 // default: T4 24h, T2 90d, and the deployer-configured window for T3 / the
 // empty default, with a stricter environment override tightening the
 // tenant tier so a T3 tenant's session in a T4 environment retains for 24h.
@@ -410,7 +417,7 @@ func TestRetentionForTier_spec_12_9_1043(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed env: %v", err)
 	}
-	srv := New(memstore.New(), Options{Tenants: tenants, Environments: envs})
+	srv := New(memstore.New(), Options{DevTenantHeader: true, Tenants: tenants, Environments: envs})
 
 	cases := []struct {
 		name   string
@@ -437,11 +444,11 @@ func TestRetentionForTier_spec_12_9_1043(t *testing.T) {
 func TestDefaultRetentionOptionOverride(t *testing.T) {
 	// A non-positive DefaultRetention falls through to the 7-day default;
 	// an explicit override is honoured.
-	srv := New(memstore.New(), Options{})
+	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	if srv.defaultRetention != DefaultArtifactRetention {
 		t.Errorf("default = %v, want %v", srv.defaultRetention, DefaultArtifactRetention)
 	}
-	custom := New(memstore.New(), Options{DefaultRetention: 48 * time.Hour})
+	custom := New(memstore.New(), Options{DevTenantHeader: true, DefaultRetention: 48 * time.Hour})
 	if custom.defaultRetention != 48*time.Hour {
 		t.Errorf("override = %v, want 48h", custom.defaultRetention)
 	}

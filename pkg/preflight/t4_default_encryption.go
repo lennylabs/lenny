@@ -22,7 +22,7 @@ import "strings"
 // to them; a deployment serving no T4 tenant has no per-tenant default to
 // verify.
 //
-// spec: §12.5 line 315 (fail-closed T4); §17.9.7 (object-store
+// spec: §12.5; §17.9.7 (object-store
 // backend-invariant requirements); §17.6 (Checks performed).
 type T4DefaultEncryptionCheck struct {
 	// Provider is the objectStorage.provider value (minio | s3 | gcs |
@@ -62,7 +62,7 @@ func (c T4DefaultEncryptionCheck) Decide() Decision {
 				"objectStorage.provider=gcs serves a workspaceTier T4 tenant but declares no " +
 				"per-tenant bucket-default CMEK; set objectStorage.gcs.bucketDefaultCmek — the GCS " +
 				"V4 signed URL cannot carry a per-request CMEK, so the T4 checkpoint PUT inherits " +
-				"the bucket default and the install fails closed without it (§12.5 line 315, §17.6)"}
+				"the bucket default and the install fails closed without it (§12.5, §17.6)"}
 		}
 	case "azure":
 		if strings.TrimSpace(c.AzureDefaultEncryptionScope) == "" {
@@ -70,14 +70,14 @@ func (c T4DefaultEncryptionCheck) Decide() Decision {
 				"objectStorage.provider=azure serves a workspaceTier T4 tenant but declares no " +
 				"container default encryption scope; set objectStorage.azure.defaultEncryptionScope — " +
 				"the Azure SAS carries no encryption scope, so the T4 chunk PUT lands under the " +
-				"container default and the install fails closed without it (§12.5 line 315, §17.6)"}
+				"container default and the install fails closed without it (§12.5, §17.6)"}
 		}
 		if !c.AzureDenyEncryptionScopeOverride {
 			return Decision{Passed: false, Reason: "CHECKPOINT_T4_DEFAULT_ENCRYPTION_MISSING: " +
 				"objectStorage.provider=azure serves a workspaceTier T4 tenant with a container " +
 				"default encryption scope but no override prevention; set " +
 				"objectStorage.azure.denyEncryptionScopeOverride=true so a chunk PUT cannot land " +
-				"under any other scope (§12.5 line 315, §17.6)"}
+				"under any other scope (§12.5, §17.6)"}
 		}
 	}
 	return Decision{Passed: true}

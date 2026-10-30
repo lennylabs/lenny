@@ -2,7 +2,7 @@
 
 // Command echo-embedded is the Basic-level reference runtime for the
 // §4.7 embedded deployment model. It is the embedded counterpart of
-// cmd/runtimes/echo: the same §15.4.1 echo loop (pkg/runtimekit/echocore),
+// cmd/runtimes/echo: the same §28.5.3 echo loop (pkg/runtimekit/echocore),
 // the same observable behaviour, packaged as a single binary that links
 // the §4.7 adapter as a library and serves the adapter gRPC contract to
 // the gateway itself.
@@ -11,7 +11,7 @@
 //
 //   - sidecar (cmd/runtimes/echo): the adapter runs as a separate
 //     container and bridges the runtime over an abstract Unix socket.
-//     The runtime author implements only the §15.4.1 JSONL protocol.
+//     The runtime author implements only the §28.5.3 JSONL protocol.
 //   - embedded (this binary): a first-party runtime image links the
 //     adapter and serves the gRPC contract directly. One process, one
 //     container, no adapter↔runtime socket and no SO_PEERCRED or
@@ -20,7 +20,7 @@
 //
 // echo-embedded shows the wiring a first-party Go runtime uses for the
 // embedded model: build an adapter.Server, attach an
-// adapter.InProcessRuntime whose loop is the runtime's §15.4.1 handler,
+// adapter.InProcessRuntime whose loop is the runtime's §28.5.3 handler,
 // and serve adapter.NewGRPCServer. The gateway speaks the identical
 // adapter gRPC contract to this binary as it does to a sidecar adapter.
 //
@@ -50,6 +50,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/adapter/prestop"
 	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/runtimekit/echocore"
@@ -60,22 +61,31 @@ import (
 var version = "0.1.0"
 
 func main() {
-	// spec: §16.4 lines 370-372 — structured JSON logs; routes the stdlib
+	// spec: §16.4 — structured JSON logs; routes the stdlib
 	// log package through the §16.4 handler (component=echo-embedded).
 	// F-16.4.1.
 	logging.Setup(os.Stderr, "echo-embedded")
+
+	// spec: §4.6.1, §4.7 — in the embedded model the pod builder attaches
+	// the preStop drain hook to this container, so the binary dispatches
+	// the `prestop` subcommand before parsing its server flags, exactly as
+	// lenny-adapter does.
+	if len(os.Args) > 1 && os.Args[1] == prestop.Verb {
+		os.Exit(prestop.Run(os.Args[2:], log.Printf))
+	}
 
 	addr := flag.String("addr", ":50051", "address the embedded runtime gRPC server binds to")
 	certFile := flag.String("tls-cert-file", "", "path to the server certificate")
 	keyFile := flag.String("tls-key-file", "", "path to the server private key")
 	clientCAFile := flag.String("tls-client-ca-file", "",
 		"path to the CA bundle that verifies gateway client certificates")
-	// spec: §6.4 line 407 — session-mode pods (maxConcurrentSessions=1)
-	// use the single `/workspace/current` cwd; the concurrent-workspace per-slot
-	// tree (F-6.4.2) is unbuilt in v1, so the default here is correct
-	// across the v1 surface.
-	workspaceRoot := flag.String("workspace-root", "/workspace/current",
-		"directory the session workspace is materialized into")
+	// spec: §6.4 — every session on every pod owns a per-slot tree under
+	// the workspace base, `<base>/slots/{sessionId}/current/` for its cwd
+	// and `<base>/slots/{sessionId}/staging/` for its uploads. The
+	// embedded runtime is the adapter, so it parses the same base the
+	// controller renders onto the runtime container's argv.
+	workspaceBase := flag.String("workspace-base", "/workspace",
+		"§6.4 workspace base the per-session `slots/{sessionId}` trees nest under")
 	stagingDir := flag.String("staging-dir", "/workspace/.staging",
 		"directory PrepareWorkspace streams uploaded files into before "+
 			"FinalizeWorkspace materializes them")
@@ -96,6 +106,15 @@ func main() {
 		"§9.1/§4.7 abstract Unix socket the platform MCP server binds for a type:agent runtime; empty disables it")
 	gatewayGRPCAddr := flag.String("gateway-grpc-addr", "",
 		"§9.1/§8.6 gateway GatewayControl address the embedded runtime dials to forward platform tool calls; empty serves an empty catalog")
+	// spec: §4.4/§13.2 — the reconciler renders the checkpoint-probe flags
+	// onto the pod's gateway-facing container, which in the embedded model
+	// is the runtime. They are accepted and ignored: this fixture never
+	// checkpoints, so it needs no size probe and dials no object store.
+	// Without them flag.Parse exits 2 and the pool crash-loops.
+	_ = flag.Int64("workspace-size-limit-bytes", 0,
+		"§4.4 per-pod workspace-size limit for the pre-checkpoint size probe; accepted and ignored by this fixture")
+	_ = flag.String("objectstore-ca-bundle", "",
+		"§13.2 mounted object-store CA trust bundle; accepted and ignored by this fixture")
 	flag.Parse()
 
 	tlsOpt, err := adapter.TLSServerOption(*certFile, *keyFile, *clientCAFile)
@@ -108,11 +127,11 @@ func main() {
 	}
 
 	adapterSrv := adapter.New(version)
-	adapterSrv.WorkspaceRoot = *workspaceRoot
+	adapterSrv.WorkspaceBase = *workspaceBase
 	adapterSrv.StagingDir = *stagingDir
 	adapterSrv.CredentialsDir = *credentialsDir
 	adapterSrv.ManifestDir = *credentialsDir
-	// §6.4 line 409: the embedded runtime is the adapter, so it populates
+	// §6.4: the embedded runtime is the adapter, so it populates
 	// /workspace/shared itself from the inline shared-asset set the
 	// controller renders onto --shared-assets.
 	adapterSrv.SharedAssetsDir = *sharedAssetsDir
@@ -121,7 +140,7 @@ func main() {
 		log.Fatalf("echo-embedded: %v", err)
 	}
 	adapterSrv.SharedAssets = parsedShared
-	// §6.1 / §6.4: create /workspace/current, the staging area, and the
+	// §6.1 / §6.4: create /workspace/slots, the staging area, and the
 	// read-only /workspace/shared tree before the pod is claimed.
 	if err := adapterSrv.EnsureWarmWorkspaceLayout(); err != nil {
 		log.Fatalf("echo-embedded: %v", err)
@@ -129,9 +148,13 @@ func main() {
 	// §9.1/§4.7: bind the platform MCP socket and, when a gateway address is
 	// configured, dial the gateway's GatewayControl service. ManifestDir is
 	// set above, since the platform MCP server reads the authenticating nonce
-	// from the manifest. In the embedded model the runtime and MCP server are
-	// one process and UID, so RuntimeUID stays zero (the SO_PEERCRED self-check
-	// is disabled, which is correct per §4.7).
+	// from the manifest. The embedded model is a single trusted process with
+	// no adapter-agent socket boundary, so the MCP listener applies no
+	// SO_PEERCRED peer check and the manifest nonce authenticates the
+	// connection. EmbeddedPeerAuth states that posture explicitly, because
+	// the zero-value posture fails closed.
+	// spec: §4.7.11 (Separate UIDs and connection authentication).
+	adapterSrv.PeerAuth = adapter.EmbeddedPeerAuth()
 	gwCloser, err := adapterSrv.ConnectGateway(*mcpSocket, *gatewayGRPCAddr, *certFile, *keyFile, *clientCAFile)
 	if err != nil {
 		log.Fatalf("echo-embedded: %v", err)
@@ -139,7 +162,7 @@ func main() {
 	defer func() { _ = gwCloser.Close() }()
 	// §4.7 embedded model: the runtime logic runs in this process. The
 	// adapter drives it through an in-process pipe instead of a socket
-	// or a child process's stdin/stdout — the §15.4.1 framing is the
+	// or a child process's stdin/stdout — the §28.5.3 framing is the
 	// same, only the transport differs.
 	adapterSrv.Runtime = adapter.NewInProcessRuntime(echoLoop)
 
@@ -154,7 +177,7 @@ func main() {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 		<-stop
-		srv.GracefulStop()
+		adapterSrv.ExitOnSignal(adapter.DemoteTimeoutFromEnv(), srv)
 	}()
 
 	log.Printf("echo-embedded: serving the §4.7 embedded runtime on %s (tls=%t)", *addr, tlsOpt != nil)
@@ -163,7 +186,7 @@ func main() {
 	}
 }
 
-// echoLoop is the §15.4.1 echo handler the adapter drives in-process.
+// echoLoop is the §28.5.3 echo handler the adapter drives in-process.
 // It is the same echocore loop cmd/runtimes/echo runs over a socket or
 // stdin/stdout; here it runs over the adapter's in-memory pipe.
 func echoLoop(ctx context.Context, in io.Reader, out io.Writer) error {

@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/blobstore/prefixlisttest"
 )
 
 // fakeS3 mirrors the S3 PutObject / GetObject / HeadObject /
@@ -24,6 +25,9 @@ import (
 // scope; the fake stores one body + one tag set per key.
 type fakeS3 struct {
 	objects map[string]*fakeObject
+	// listing controls the prefix-listing pagination and fault injection
+	// the ListByPrefix tests drive (prefixlist_test.go).
+	listing prefixlisttest.FakeListing
 }
 
 type fakeObject struct {
@@ -102,17 +106,28 @@ func (f *fakeS3) DeleteObject(_ context.Context, in *s3.DeleteObjectInput, _ ...
 }
 
 func (f *fakeS3) ListObjectsV2(_ context.Context, in *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
-	prefix := awssdk.ToString(in.Prefix)
-	out := &s3.ListObjectsV2Output{}
-	t := false
+	keys := make([]string, 0, len(f.objects))
 	for k := range f.objects {
-		if !strings.HasPrefix(k, prefix) {
-			continue
-		}
-		key := k
-		out.Contents = append(out.Contents, types.Object{Key: &key})
+		keys = append(keys, k)
 	}
-	out.IsTruncated = &t
+	page, next, err := f.listing.Page(keys, awssdk.ToString(in.Prefix), awssdk.ToString(in.ContinuationToken), int(awssdk.ToInt32(in.MaxKeys)))
+	if err != nil {
+		return nil, err
+	}
+	out := &s3.ListObjectsV2Output{IsTruncated: awssdk.Bool(next != "")}
+	if next != "" && !f.listing.DropToken {
+		out.NextContinuationToken = awssdk.String(next)
+	}
+	for _, k := range page {
+		obj := f.objects[k]
+		key := k
+		lm := obj.lastModified
+		out.Contents = append(out.Contents, types.Object{
+			Key:          &key,
+			Size:         awssdk.Int64(int64(len(obj.body))),
+			LastModified: &lm,
+		})
+	}
 	return out, nil
 }
 
@@ -288,7 +303,7 @@ func TestPutAppliesSSEKMSResolver(t *testing.T) {
 	}
 }
 
-// TestPutFailsClosedWhenT4ResolverErrors asserts the §12.5 line 303
+// TestPutFailsClosedWhenT4ResolverErrors asserts the §12.5
 // fail-closed contract: a resolver that returns (requireKey=true, err)
 // for a T4 tenant rejects the write with
 // blobstore.ErrClassificationControlViolation, persists nothing, and
@@ -296,7 +311,7 @@ func TestPutAppliesSSEKMSResolver(t *testing.T) {
 // lenny_checkpoint_storage_failure_total{reason="kms_unavailable"}
 // advances.
 //
-// spec: §12.5 line 303; §12.9 line 1046.
+// spec: §12.5; §12.9.
 func TestPutFailsClosedWhenT4ResolverErrors(t *testing.T) {
 	f := newFakeS3()
 	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
@@ -320,7 +335,7 @@ func TestPutFailsClosedWhenT4ResolverErrors(t *testing.T) {
 // whose resolver returns (requireKey=true) but an empty key id fails
 // closed rather than falling through to the bucket default.
 //
-// spec: §12.5 line 303.
+// spec: §12.5.
 func TestPutFailsClosedWhenT4ResolverEmptyKey(t *testing.T) {
 	f := newFakeS3()
 	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
@@ -336,7 +351,7 @@ func TestPutFailsClosedWhenT4ResolverEmptyKey(t *testing.T) {
 // returns (requireKey=false) with an empty key admits the write under
 // the bucket default with no per-object SSE-KMS key set.
 //
-// spec: §12.5 line 303; §12.9 line 1046 (T3 row).
+// spec: §12.5; §12.9.
 func TestPutT3EmptyKeyFallsThrough(t *testing.T) {
 	f := newFakeS3()
 	store := newWithClient(f, "lenny-test", func(u blobstore.URI) (string, bool, error) {
@@ -352,9 +367,9 @@ func TestPutT3EmptyKeyFallsThrough(t *testing.T) {
 }
 
 // TestCopyFailsClosedWhenT4ResolverEmptyKey asserts the §4.5 derive
-// Copy path honors the same §12.5 line 303 fail-closed contract as Put.
+// Copy path honors the same §12.5 fail-closed contract as Put.
 //
-// spec: §12.5 line 303; §4.5 ll. 311.
+// spec: §12.5; §4.5 ll. 311.
 func TestCopyFailsClosedWhenT4ResolverEmptyKey(t *testing.T) {
 	f := newFakeS3()
 	// Seed a live source object written with no resolver, then attach a

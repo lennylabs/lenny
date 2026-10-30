@@ -104,7 +104,7 @@ endpoint.
 | `finalize` | `POST /v1/sessions/{id}/finalize` | `created` to `ready`. |
 | `start` | `POST /v1/sessions/{id}/start` | `ready` to `running`. |
 | `interrupt` | `POST /v1/sessions/{id}/interrupt` | `running` to `suspended`. |
-| `resume` | `POST /v1/sessions/{id}/resume` | A session awaiting client action back to `running`. |
+| `resume` | `POST /v1/sessions/{id}/resume` | Moves a session in `awaiting_client_action`, or a `suspended` session whose pod was released, to `resume_pending`, and a `suspended` session whose pod is held to `running`. |
 | `terminate` | `POST /v1/sessions/{id}/terminate` | A non-terminal session to `completed`. |
 | `delete_session` | `DELETE /v1/sessions/{id}` | A non-terminal session to `cancelled`. |
 
@@ -200,7 +200,11 @@ connection refusal or a DNS failure, raises a `TransportError`.
 The client retries a retryable error on its own, following the retry policy.
 `DEFAULT_RETRY_POLICY` retries up to three times with exponential backoff,
 jitter, a 0.2-second base delay, and a 5-second cap. A transport failure is
-retried the same way. Override the policy with the `retry_policy` argument:
+retried the same way. `start` sends its request once and is not retried,
+because a start can fail after the session has left `ready`; the caller reads
+the session and creates a new session when it is `failed`, as
+[State Machines](../../reference/state-machines.md) describes. Override the policy with the
+`retry_policy` argument:
 
 ```python fragment
 from lenny import Client, BearerToken, RetryPolicy

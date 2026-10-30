@@ -17,15 +17,18 @@
 //     KEK. An unresolvable region aborts fail-closed.
 //  3. Migrate the re-encrypted payloads to the region-scoped legal-hold
 //     escrow bucket with a retain-until-hold-release object lock.
-//  4. Record each migration in the legal-hold ledger and mark the source
-//     record so Phase 4's DeleteByTenant skips it.
+//  4. Record each migration in the legal-hold ledger and persist the
+//     durable escrow record. Phase 4's DeleteByTenant then deletes the
+//     originals; the escrow copy and its record are the retained
+//     evidence, and the record is the pointer the escrow-GC release reads
+//     to delete the escrow object once the hold clears.
 //
 // The escrow KEK is platform-managed, single, long-lived, and per-region
 // — it outlives every tenant KEK so held evidence stays readable after
 // the tenant record is tombstoned, while decrypt capability stays inside
 // the originating tenant's jurisdiction.
 //
-// spec: spec/12_storage-architecture.md lines 872, 878-889.
+// spec: §12.8.
 package legalholdescrow
 
 import (
@@ -35,7 +38,7 @@ import (
 
 // Sentinel errors.
 var (
-	// ErrRegionUnresolvable is the §12.8 line 883
+	// ErrRegionUnresolvable is the §12.8
 	// LEGAL_HOLD_ESCROW_REGION_UNRESOLVABLE fail-closed condition: the
 	// resolved target escrow region has no matching
 	// storage.regions.<region>.legalHoldEscrow entry (and no single-region
@@ -104,7 +107,7 @@ func (c Config) Configured() bool {
 // cross-border transfer §12.8 forbids. An unscoped tenant
 // (residencyRegion == "") resolves to the single-region Default.
 //
-// spec: §12.8 sub-step 2, line 883.
+// spec: §12.8 sub-step 2.
 func (c Config) Resolve(residencyRegion string) (region string, esc RegionEscrow, err error) {
 	if residencyRegion != "" {
 		r, ok := c.Regions[residencyRegion]

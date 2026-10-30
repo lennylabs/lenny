@@ -19,7 +19,7 @@ import (
 // context-aware slog handler and projects them as top-level structured log
 // fields (operation_id, agent_name, trace_id, etc.).
 //
-// spec: §25.4 lines 2499-2509 / lines 2512-2526 — every lenny-ops log line
+// spec: §25.4 — every lenny-ops log line
 // MUST carry the correlation fields when present on the originating
 // request. Component is stamped as "lenny-ops" (the §16.4 binary label).
 func withCorrelation(next http.Handler) http.Handler {
@@ -39,7 +39,7 @@ func withCorrelation(next http.Handler) http.Handler {
 // lenny-ops container logs for an operation_id surfaces the full request
 // trail.
 //
-// spec: §25.4 lines 2499-2509 — operators index logs by operation_id /
+// spec: §25.4 — operators index logs by operation_id /
 // agent_name to correlate a restore failure across request, worker, and
 // audit trail.
 func withAccessLog(next http.Handler) http.Handler {
@@ -90,7 +90,7 @@ func (s *statusRecorder) WriteHeader(status int) {
 // SSE handler (GET /v1/admin/events/stream) can stream frames through
 // the access-logging middleware. Without this passthrough the SSE
 // handler's http.Flusher type assertion fails and the stream aborts with
-// "streaming unsupported". spec: §25.5 lines 2677-2685.
+// "streaming unsupported". spec: §25.5.
 func (s *statusRecorder) Flush() {
 	if f, ok := s.ResponseWriter.(http.Flusher); ok {
 		f.Flush()

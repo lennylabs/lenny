@@ -12,12 +12,12 @@ import (
 	"time"
 )
 
-// CheckpointAutoResumeTimeout is the §4.4 line 244 runtime-side
+// CheckpointAutoResumeTimeout is the §4.4 runtime-side
 // timeout: after sending `checkpoint_ready`, a Full-level runtime MUST
 // autonomously resume normal operation if it has not received
 // `checkpoint_complete` within 60 seconds.
 //
-// spec: §4.4 line 244 — "if the runtime sends checkpoint_ready but
+// spec: §4.4 — "if the runtime sends checkpoint_ready but
 // does not receive checkpoint_complete within 60 seconds, it MUST
 // autonomously resume normal operation and log a `checkpoint_timeout`
 // warning".
@@ -42,7 +42,7 @@ const CheckpointTimeoutLogPrefix = "lifecycle: checkpoint_timeout"
 // non-responsive between `checkpoint_request` and `checkpoint_ready`.
 type CheckpointHandler func(ctx context.Context, deadlineMs int32) error
 
-// LifecycleClient is the runtime side of the §4.7 lifecycle channel.
+// LifecycleClient is the runtime side of the §4.7 CH-RUNTIMEOPS.
 // It writes `checkpoint_ready` after the runtime quiesces and starts a
 // 60-second autonomous-resume timer; if `checkpoint_complete` does not
 // arrive in that window the helper emits a `checkpoint_timeout`
@@ -76,7 +76,7 @@ type LifecycleClientOptions struct {
 	// Writer is the adapter→runtime output stream. Required.
 	Writer io.Writer
 
-	// Stderr receives the §4.4 line 244 `checkpoint_timeout` warning.
+	// Stderr receives the §4.4 warning.
 	// Defaults to io.Discard when nil.
 	Stderr io.Writer
 
@@ -128,7 +128,8 @@ func NewLifecycleClient(opts LifecycleClientOptions) *LifecycleClient {
 }
 
 // HandleCheckpointRequest acknowledges a `checkpoint_request` frame
-// from the adapter. The flow is:
+// from the adapter for sessionID, the session the frame names. The flow
+// is:
 //
 //  1. Invoke `handler` to drive the runtime's quiesce path.
 //  2. On handler success, write `checkpoint_ready` and start the
@@ -140,9 +141,14 @@ func NewLifecycleClient(opts LifecycleClientOptions) *LifecycleClient {
 // JSONL dispatch loop may want to run it in a separate goroutine if
 // other lifecycle frames arrive concurrently.
 //
-// spec: §4.4 line 244 — runtime-side `checkpoint_ready` plus the
-// autonomous-resume contract.
-func (c *LifecycleClient) HandleCheckpointRequest(ctx context.Context, checkpointID string, deadlineMs int32, handler CheckpointHandler) error {
+// spec: §4.4 — runtime-side `checkpoint_ready` plus the
+// autonomous-resume contract; §28.5.3 (CH-RUNTIMEOPS, Messages) — the
+// frame is session-scoped, so the failure frame names the session and
+// `checkpoint_ready` stays correlated by checkpointId.
+func (c *LifecycleClient) HandleCheckpointRequest(ctx context.Context, sessionID, checkpointID string, deadlineMs int32, handler CheckpointHandler) error {
+	if sessionID == "" {
+		return errors.New("runtimekit: checkpoint_request missing sessionId")
+	}
 	if checkpointID == "" {
 		return errors.New("runtimekit: checkpoint_request missing checkpointId")
 	}
@@ -153,6 +159,7 @@ func (c *LifecycleClient) HandleCheckpointRequest(ctx context.Context, checkpoin
 			// timer because there is no `checkpoint_ready` outstanding.
 			return c.writeFrame(map[string]any{
 				"type":         "checkpoint_complete",
+				"sessionId":    sessionID,
 				"checkpointId": checkpointID,
 				"status":       "failed",
 				"reason":       err.Error(),

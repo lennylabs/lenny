@@ -96,7 +96,7 @@ func (splitBrainLocks) Extend(_ context.Context, lockID string, _ int) (*coordin
 	}
 }
 
-// TestExtendSplitBrainConflictCarriesDetails asserts the §25.4 line 2267
+// TestExtendSplitBrainConflictCarriesDetails asserts the §25.4
 // split-brain 409: a losing holder's heartbeat returns
 // REMEDIATION_LOCK_CONFLICT whose details carry splitBrain:true,
 // winner:"pre_outage", and winnerHolder set to the pre-outage acquiredBy.

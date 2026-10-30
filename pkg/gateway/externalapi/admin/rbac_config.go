@@ -21,7 +21,7 @@ const allowAllWarning = `noEnvironmentPolicy: allow-all grants unrestricted ` +
 	`runtime access to all authenticated users with no environment membership ` +
 	`in this tenant. Verify this matches the intended security posture.`
 
-// IdentityProviderPayload is the §10.6 line 661 OIDC identity-provider
+// IdentityProviderPayload is the §10.6 OIDC identity-provider
 // wire shape.
 type IdentityProviderPayload struct {
 	Type                         string `json:"type,omitempty"`
@@ -33,7 +33,7 @@ type IdentityProviderPayload struct {
 }
 
 // RBACConfigPayload is the §10.6 / §15.1 tenant RBAC-config admin
-// payload: the noEnvironmentPolicy field plus the §10.6 line 665
+// payload: the noEnvironmentPolicy field plus the §10.6
 // identityProvider, tokenPolicy, capabilities taxonomy, and
 // mcpAnnotationMapping overrides. PUT replaces the full configuration —
 // an omitted field is cleared, mirroring the noEnvironmentPolicy
@@ -92,13 +92,13 @@ func rbacConfigPayload(t tenantstore.Tenant) RBACConfigPayload {
 // identityProvider, tokenPolicy, capabilities, and mcpAnnotationMapping
 // fields. It returns a non-empty message on the first violation.
 func validateRBACConfigExtras(p RBACConfigPayload) string {
-	// spec: §10.6 line 661 — the identity model is OIDC. Accept the
+	// spec: §10.6 — the identity model is OIDC. Accept the
 	// empty type (inherit the platform provider) or the literal "oidc";
 	// reject anything else so a typo fails loudly.
 	if t := p.IdentityProvider.Type; t != "" && t != "oidc" {
 		return fmt.Sprintf("identityProvider.type %q is not supported (use \"oidc\")", t)
 	}
-	// spec: §10.6 line 661 — introspectionEnabled drives an RFC 7662
+	// spec: §10.6 — introspectionEnabled drives an RFC 7662
 	// real-time group check. The check needs an endpoint to call; reject
 	// an enabled config that names none so the toggle never fails closed
 	// silently at request time. The endpoint must be TLS — the gateway
@@ -119,7 +119,7 @@ func validateRBACConfigExtras(p RBACConfigPayload) string {
 	if s := p.IdentityProvider.IntrospectionCacheTTLSeconds; s < 0 {
 		return "identityProvider.introspectionCacheTtlSeconds must not be negative"
 	}
-	// §10.6 line 665 — tokenPolicy is an opaque object. Reject a non-object
+	// §10.6 — tokenPolicy is an opaque object. Reject a non-object
 	// (array/scalar) so the stored value is always a JSON object the GET
 	// round-trips unchanged.
 	if len(p.TokenPolicy) > 0 {
@@ -128,7 +128,7 @@ func validateRBACConfigExtras(p RBACConfigPayload) string {
 			return "tokenPolicy must be a JSON object"
 		}
 	}
-	// §10.6 line 665 — the capability taxonomy is extensible per tenant;
+	// §10.6 — the capability taxonomy is extensible per tenant;
 	// validate the names loosely (non-empty, no duplicates).
 	seen := map[string]bool{}
 	for i, c := range p.Capabilities {
@@ -140,7 +140,7 @@ func validateRBACConfigExtras(p RBACConfigPayload) string {
 		}
 		seen[c] = true
 	}
-	// §5.1 line 325 — mcpAnnotationMapping overrides the capability
+	// §5.1 — mcpAnnotationMapping overrides the capability
 	// inference, so each mapped value must be a closed §5.3 tool
 	// capability. Reuse the §5.1 toolCapabilityOverrides validator.
 	overrides := make(map[string][]capabilityinference.Capability, len(p.MCPAnnotationMapping))
@@ -185,7 +185,7 @@ func (r *Router) handleGetRBACConfig(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §15.1 line 1209 — the rbac-config sub-resource's ETag is the
+	// spec: §15.1 — the rbac-config sub-resource's ETag is the
 	// tenant row's version, since the configuration is stored on the
 	// tenant. GET carries it so the next PUT can supply If-Match.
 	w.Header().Set("ETag", formatETag(row.Version))
@@ -221,14 +221,14 @@ func (r *Router) handlePutRBACConfig(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "noEnvironmentPolicy"})
 		return
 	}
-	// spec: §10.6 line 665 — validate the identityProvider, tokenPolicy,
+	// spec: §10.6 — validate the identityProvider, tokenPolicy,
 	// capabilities, and mcpAnnotationMapping fields before persisting.
 	// F-10.6.6.
 	if msg := validateRBACConfigExtras(body); msg != "" {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", msg, nil)
 		return
 	}
-	// spec: §15.1 lines 1207-1211 — the rbac-config PUT enforces If-Match
+	// spec: §15.1 — the rbac-config PUT enforces If-Match
 	// against the tenant row's version (the sub-resource's entity tag). A
 	// missing tenant 404s ahead of the precondition.
 	current, gerr := r.tenants.Get(req.Context(), tenant)
@@ -272,7 +272,7 @@ func (r *Router) handlePutRBACConfig(w http.ResponseWriter, req *http.Request) {
 			r.metrics.RecordNoEnvironmentPolicyAllowAll(tenant)
 		}
 	}
-	// spec: §15.1 line 1210 — a successful PUT carries the bumped ETag.
+	// spec: §15.1 — a successful PUT carries the bumped ETag.
 	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(rbacConfigPayload(updated))

@@ -5,7 +5,7 @@ release:
 templates:
   - mtls-trust-bundle.yaml
 tests:
-  # spec: §10.3 lines 344-349 — the previous-CA ConfigMap exists only
+  # spec: §10.3 — the previous-CA ConfigMap exists only
   # while a rotation is in flight (mtls.previousCA set). A steady-state
   # install renders nothing.
   - it: renders nothing in the steady state (no rotation in flight)

@@ -4,7 +4,7 @@ package sdkwarm
 
 import "testing"
 
-// spec: §5.1 line 24 / §6.1 line 34 — the sdkWarmBlockingPaths glob
+// spec: §5.1 / §6.1 — the sdkWarmBlockingPaths glob
 // dialect (per-segment path.Match plus cross-segment `**`).
 func TestMatch_spec_6_1(t *testing.T) {
 	cases := []struct {
@@ -31,7 +31,7 @@ func TestMatch_spec_6_1(t *testing.T) {
 		{"file?.txt", "file12.txt", false},
 		{"[abc].md", "a.md", true},
 		{"[abc].md", "d.md", false},
-		// Case sensitivity (§5.1 line 105 "case-sensitive").
+		// Case sensitivity (§5.1).
 		{"CLAUDE.md", "claude.md", false},
 	}
 	for _, c := range cases {
@@ -41,7 +41,7 @@ func TestMatch_spec_6_1(t *testing.T) {
 	}
 }
 
-// spec: §6.1 lines 34-40 — the gateway demotes when any workspace file
+// spec: §6.1 — the gateway demotes when any workspace file
 // matches any blocking pattern; an empty pattern list never demotes.
 func TestRequiresDemotion_spec_6_1(t *testing.T) {
 	t.Run("blocking file present triggers demotion", func(t *testing.T) {
@@ -72,7 +72,7 @@ func TestRequiresDemotion_spec_6_1(t *testing.T) {
 	})
 
 	t.Run("empty pattern list disables checking", func(t *testing.T) {
-		// §6.1 line 38 — sdkWarmBlockingPaths: [] keeps every pod SDK-warm.
+		// §6.1 — sdkWarmBlockingPaths: [] keeps every pod SDK-warm.
 		_, _, req := RequiresDemotion([]string{"CLAUDE.md", ".claude/x"}, nil)
 		if req {
 			t.Fatalf("empty pattern list must never demote")

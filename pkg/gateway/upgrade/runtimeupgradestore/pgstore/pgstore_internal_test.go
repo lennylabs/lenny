@@ -48,7 +48,7 @@ func (f fakeScanner) Scan(dest ...any) error {
 	return nil
 }
 
-// spec: §10.5 lines 466-540 — scanRecord maps a runtime_upgrade row onto
+// spec: §10.5 — scanRecord maps a runtime_upgrade row onto
 // a Record: the canary/draining INTEGER columns narrow to int, the
 // nullable paused_at normalizes to UTC, and previous_pool_spec survives.
 func TestScanRecord_mapping_spec_10_5(t *testing.T) {

@@ -2,23 +2,28 @@
 
 //go:build e2e_kind
 
-// Tier-5 e2e Kind test for the §13.28 audit pipeline. The gateway
+// Tier-5 e2e Kind test for the TESTING.md §13.28 audit pipeline. The gateway
 // writes §11.7 audit events to the live in-cluster Postgres audit_log
 // table: every admin-API mutation emits an event onto the calling
 // tenant's per-tenant hash chain, and each row carries a prev_hash
 // linking it to its predecessor.
 //
-// This is the tier-5 end-to-end view of the §13.28 audit pipeline:
+// This is the tier-5 end-to-end view of the TESTING.md §13.28 audit pipeline:
 // events flow from a gateway admin-API call, through the gateway's
 // audit writer, into the durable Postgres ledger. The test drives a
 // sequence of admin-API mutations as platform-admin against a synthetic
-// tenant, then asserts (a) the §11.7 verifier reports the resulting
-// chain "verified" and grown by the event count, (b) the rows are
+// tenant, then asserts (a) the §25.9 audit-events list reports the
+// resulting chain grown by the event count with every appended row
+// "verified" and no row broken, (b) the rows are
 // present in audit_log read straight from Postgres, and (c) the
 // Postgres hash chain links each row to its predecessor with the first
 // row carrying the genesis prev_hash. Every synthetic-tenant row is
 // removed in a t.Cleanup so the shared cluster's audit_log is left
 // clean.
+//
+// §25.9 defines no separate verify route. The audit-events list carries
+// the §11.7 verifier verdict in its chainIntegrityReport and in each OCSF
+// record's unmapped.lenny_chain.integrity, computed over the full chain.
 
 package tier5_e2e_kind_test
 
@@ -27,6 +32,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/tests/testinfra/auditquery"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
@@ -35,12 +41,13 @@ import (
 // (64 hex zeros when read from the bytea column).
 const auditGenesisHash = "0000000000000000000000000000000000000000000000000000000000000000"
 
-// spec: 13.28
-// diagnosis: the §13.28 audit pipeline did not carry events end to end.
+// spec: 13.28, 11.7 (Audit Logging), 25.9 (Audit Log Query API), 15.1 (REST API)
+// diagnosis: the TESTING.md §13.28 audit pipeline did not carry events end to end.
 // The gateway writes §11.7 audit events to the live Postgres audit_log;
 // each admin-API mutation emits one event onto the caller's hash chain.
 // The test issues N bootstrap upserts as platform-admin, then asserts
-// the §11.7 verifier reports the chain "verified" and grown by N, the
+// the §25.9 audit-events list reports the chain grown by N with every
+// appended row "verified" and none broken, the
 // rows are present in audit_log read from Postgres, and the Postgres
 // hash chain links each row to its predecessor. A non-verified chain, a
 // missing row, or a broken prev_hash link means audit events were
@@ -68,7 +75,6 @@ func TestAuditPipeline(t *testing.T) {
 	// not a foreign key, so the synthetic tenant row and the events it
 	// emits both land cleanly.
 	tenant := "t5-audit-tenant"
-	verifyPath := "/v1/admin/audit-events/verify?tenantId=" + tenant
 
 	// Register cleanup before generating state: delete the synthetic
 	// tenant via the admin API and remove its audit_log rows directly
@@ -78,26 +84,22 @@ func TestAuditPipeline(t *testing.T) {
 		deleteAuditRows(t, c, pgIP, tenant)
 	})
 
-	// Precondition: the §11.7 verifier is reachable and the synthetic
-	// tenant's baseline chain (empty, or whatever a prior run left)
-	// verifies.
-	base := t5GatewayRequestRetry(t, c, probe, gatewayIP, "GET", verifyPath, admin, "")
-	if base.curlExit != 0 || base.statusCode != 200 {
-		t.Skipf("precondition not met: GET /v1/admin/audit-events/verify is not reachable "+
-			"(curl exit %d, status %d, body %q); the §11.7 verifier endpoint is unavailable",
-			base.curlExit, base.statusCode, base.body)
+	// Baseline: the §25.9 list answers for the synthetic tenant, and the
+	// chain it reports (empty, or whatever a prior run left) holds no
+	// broken row.
+	base, err := readAuditChainT5(t, c, probe, gatewayIP, tenant)
+	if err != nil {
+		t.Fatalf("the §25.9 audit-events list for tenant %s could not be read at baseline: %v", tenant, err)
 	}
-	baseVerify := parseAuditVerifyT5(t, base.body)
-	if baseVerify.Integrity != "verified" {
-		t.Fatalf("§13.28: the §11.7 verifier reports integrity %q for the synthetic tenant's baseline "+
-			"chain, expected \"verified\" (rowCount %d)", baseVerify.Integrity, baseVerify.RowCount)
+	if base.Report.Broken != 0 {
+		t.Fatalf("TESTING.md §13.28: the §25.9 chainIntegrityReport counts %d broken rows in the synthetic "+
+			"tenant's baseline chain (report %+v)", base.Report.Broken, base.Report)
 	}
-	t.Logf("baseline: synthetic-tenant chain integrity %q, rowCount %d",
-		baseVerify.Integrity, baseVerify.RowCount)
+	t.Logf("baseline: synthetic-tenant chain has %d rows, report %+v", len(base.Events), base.Report)
 
 	// --- Drive gateway admin-API activity that produces audit events.
 	// Each POST /v1/admin/bootstrap upsert of the synthetic tenant emits
-	// one admin.bootstrap.applied audit event onto the *caller's* tenant
+	// one platform.bootstrap_applied audit event onto the *caller's* tenant
 	// chain. The caller's dev-header tenant is the synthetic tenant, so
 	// every event extends that tenant's chain. Bootstrap is idempotent
 	// (upsert by id), so the run does not depend on the synthetic tenant
@@ -116,47 +118,68 @@ func TestAuditPipeline(t *testing.T) {
 	}
 	t.Logf("drove %d admin-API mutations against tenant %s (bootstrap upserts)", wantEvents, tenant)
 
-	// --- Assertion 1: the §11.7 verifier reports the chain still
-	// verified and grown by at least wantEvents rows. A "verified"
-	// result over the grown chain proves the new rows extended it
-	// without breaking the hash linkage.
-	after := t5GatewayRequestRetry(t, c, probe, gatewayIP, "GET", verifyPath, admin, "")
-	if after.curlExit != 0 || after.statusCode != 200 {
-		t.Fatalf("the verify endpoint returned curl exit %d / status %d after the audit activity (body %q)",
-			after.curlExit, after.statusCode, after.body)
+	// --- Assertion 1: the §25.9 list reports no broken row, the chain
+	// grew by at least wantEvents rows, and every appended row verifies.
+	// "verified" on each new row proves it extended the chain without
+	// breaking the hash linkage.
+	after, err := readAuditChainT5(t, c, probe, gatewayIP, tenant)
+	if err != nil {
+		t.Fatalf("the §25.9 audit-events list for tenant %s could not be read after the audit activity: %v", tenant, err)
 	}
-	afterVerify := parseAuditVerifyT5(t, after.body)
-	if afterVerify.Integrity != "verified" {
-		t.Errorf("§13.28 violation: the §11.7 verifier reports integrity %q after %d audit events were "+
-			"appended, expected \"verified\"; the hash chain lost continuity (detail %q)",
-			afterVerify.Integrity, wantEvents, afterVerify.Detail)
+	if after.Report.Broken != 0 {
+		t.Errorf("TESTING.md §13.28 violation: the §25.9 chainIntegrityReport counts %d broken rows after %d audit "+
+			"events were appended; the hash chain lost continuity (report %+v)", after.Report.Broken, wantEvents, after.Report)
 	}
-	grew := afterVerify.RowCount - baseVerify.RowCount
-	if grew < wantEvents {
-		t.Errorf("§13.28 violation: the synthetic tenant's chain grew by %d rows after %d admin-API "+
+	added := after.After(base.MaxSeq())
+	if len(added) < wantEvents {
+		t.Errorf("TESTING.md §13.28 violation: the synthetic tenant's chain grew by %d rows after %d admin-API "+
 			"mutations; expected at least %d — audit events were dropped before reaching the ledger",
-			grew, wantEvents, wantEvents)
-	} else {
-		t.Logf("§13.28: §11.7 verifier reports the chain grew %d -> %d rows, integrity still %q",
-			baseVerify.RowCount, afterVerify.RowCount, afterVerify.Integrity)
+			len(added), wantEvents, wantEvents)
 	}
+	for _, ev := range added {
+		if ev.Integrity != "verified" {
+			t.Errorf("TESTING.md §13.28 violation: appended row seq %d reports chain integrity %q, expected "+
+				"\"verified\"", ev.Seq, ev.Integrity)
+		}
+	}
+	t.Logf("TESTING.md §13.28: the §25.9 list reports the chain grew %d -> %d rows (report %+v)",
+		len(base.Events), len(after.Events), after.Report)
 
 	// --- Assertion 2: the events are durable in Postgres. Read the
 	// audit_log rows for the tenant straight from the database and
-	// confirm at least wantEvents rows landed, carrying the documented
-	// bootstrap event type.
+	// confirm at least wantEvents rows past the baseline landed, carrying
+	// the documented bootstrap event type.
+	//
+	// Rows at or below the baseline are a prior run's remnant and are not
+	// this run's events. The known remnant is the §12.8 Phase 6
+	// gdpr.tenant_erased receipt: the cleanup's DELETE of the synthetic
+	// tenant starts the asynchronous tenant deletion lifecycle, whose
+	// receipt is appended to the tenant's chain after deleteAuditRows has
+	// run and is retained and exempt from erasure by design. A receipt
+	// that lands after the baseline read is tolerated for the same reason.
 	rows := readAuditRows(t, c, pgIP, tenant)
-	if len(rows) < wantEvents {
-		t.Fatalf("§13.28 violation: audit_log holds %d rows for tenant %s after %d admin-API mutations; "+
-			"expected at least %d — events did not reach the durable Postgres ledger",
-			len(rows), tenant, wantEvents, wantEvents)
-	}
+	baseSeq := base.MaxSeq()
+	bootstrapRows := 0
 	for i, row := range rows {
-		if row.eventType != "admin.bootstrap.applied" {
-			t.Errorf("§13.28: audit_log row %d for tenant %s carries event_type %q, expected "+
-				"\"admin.bootstrap.applied\" — the bootstrap upserts emit that event type",
-				i, tenant, row.eventType)
+		if row.seq <= baseSeq {
+			continue
 		}
+		switch row.eventType {
+		case "platform.bootstrap_applied":
+			bootstrapRows++
+		case "gdpr.tenant_erased":
+			t.Logf("audit_log row %d (seq %d) for tenant %s is a prior run's §12.8 erasure receipt; not counted",
+				i, row.seq, tenant)
+		default:
+			t.Errorf("TESTING.md §13.28: audit_log row %d (seq %d) for tenant %s carries event_type %q, expected "+
+				"\"platform.bootstrap_applied\" — the bootstrap upserts emit that event type",
+				i, row.seq, tenant, row.eventType)
+		}
+	}
+	if bootstrapRows < wantEvents {
+		t.Fatalf("TESTING.md §13.28 violation: audit_log holds %d platform.bootstrap_applied rows past baseline seq %d "+
+			"for tenant %s after %d admin-API mutations; expected at least %d — events did not reach the durable "+
+			"Postgres ledger", bootstrapRows, baseSeq, tenant, wantEvents, wantEvents)
 	}
 
 	// --- Assertion 3: the Postgres hash chain is intact. The chain's
@@ -166,41 +189,38 @@ func TestAuditPipeline(t *testing.T) {
 	// tenant's audit_log is cleaned in the t.Cleanup, so on a clean run
 	// the first row read here is the chain's genesis row.
 	if rows[0].prevHash != auditGenesisHash {
-		t.Errorf("§13.28: the first audit_log row read for tenant %s carries prev_hash %q rather than "+
+		t.Errorf("TESTING.md §13.28: the first audit_log row read for tenant %s carries prev_hash %q rather than "+
 			"the §11.7 genesis hash; a prior run's rows were not cleaned before this run", tenant, rows[0].prevHash)
 	}
 	for i := 1; i < len(rows); i++ {
 		if rows[i].seq <= rows[i-1].seq {
-			t.Fatalf("§13.28 violation: audit_log sequence_number is not strictly increasing for tenant "+
+			t.Fatalf("TESTING.md §13.28 violation: audit_log sequence_number is not strictly increasing for tenant "+
 				"%s — row %d carries seq %d, preceded by seq %d; the §11.7 chain forked or duplicated",
 				tenant, i, rows[i].seq, rows[i-1].seq)
 		}
 		if rows[i].prevHash == auditGenesisHash {
-			t.Errorf("§13.28 violation: audit_log row %d (seq %d) for tenant %s carries the genesis "+
+			t.Errorf("TESTING.md §13.28 violation: audit_log row %d (seq %d) for tenant %s carries the genesis "+
 				"prev_hash; only the chain's first row may — the §11.7 hash chain is broken",
 				i, rows[i].seq, tenant)
 		}
 	}
-	t.Logf("§13.28 audit pipeline verified end to end: %d admin-API mutations produced %d durable "+
+	t.Logf("TESTING.md §13.28 audit pipeline verified end to end: %d admin-API mutations produced %d durable "+
 		"audit_log rows for tenant %s, hash chain intact (genesis row + %d linked rows, seq %d..%d)",
 		wantEvents, len(rows), tenant, len(rows)-1, rows[0].seq, rows[len(rows)-1].seq)
 }
 
-// auditVerifyDocT5 is the parsed §11.7 verify-endpoint response.
-type auditVerifyDocT5 struct {
-	Integrity string `json:"integrity"`
-	Detail    string `json:"detail"`
-	RowCount  int    `json:"rowCount"`
-}
-
-// parseAuditVerifyT5 decodes a §11.7 verify response body. An
-// undecodable body fails the test, since every caller depends on the
-// integrity field.
-func parseAuditVerifyT5(t *testing.T, body string) auditVerifyDocT5 {
+// readAuditChainT5 reads the tenant's §11.7 chain verdict through the
+// §25.9 audit-events list as platform-admin, over every page of the
+// default look-back window.
+func readAuditChainT5(t *testing.T, c *kind.Cluster, probe, gatewayIP, tenant string) (auditquery.Chain, error) {
 	t.Helper()
-	var doc auditVerifyDocT5
-	t5DecodeJSON(t, body, &doc)
-	return doc
+	return auditquery.ReadChain(tenant, "", "", func(path string) (int, []byte, error) {
+		res := t5GatewayRequestRetry(t, c, probe, gatewayIP, "GET", path, t5PlatformAdmin(), "")
+		if res.curlExit != 0 {
+			return 0, nil, fmt.Errorf("curl exit %d (body %q)", res.curlExit, res.body)
+		}
+		return res.statusCode, []byte(res.body), nil
+	})
 }
 
 // auditRow is one audit_log row read directly from Postgres.

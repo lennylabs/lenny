@@ -39,12 +39,11 @@ import (
 // PlatformScope is the §25.8 upgrade scope identifier for a
 // platform-wide upgrade. It is the `pool` value the pkg/upgrade phase
 // machine stamps onto every upgrade_progressed event and the scope of
-// the `upgrade:platform` remediation lock (§25.4 line 2120).
+// the `upgrade:platform` remediation lock (§25.4).
 const PlatformScope = "platform"
 
 // Error codes for the §25.8 upgrade-orchestration envelope. The
-// opsserver handler maps each to an HTTP status. The canonical §25.8
-// error-code table (spec line 3629) is declared in full in codes.go;
+// opsserver handler maps each to an HTTP status. The canonical §25.8 error-code table is declared in full in codes.go;
 // the constants below are the subset the orchestrator state machine
 // returns, named to match the spec table verbatim.
 const (
@@ -87,7 +86,7 @@ var (
 	ErrNotVerifiable = errors.New("upgradeservice: upgrade is not at the Verification phase")
 	// ErrNotOpsRoll is returned by AdvanceOpsRoll outside the OpsRoll phase:
 	// the new-pod self-advance is defined only when the upgrade is at OpsRoll
-	// (§25.8 line 3508).
+	// (§25.8).
 	ErrNotOpsRoll = errors.New("upgradeservice: upgrade is not at the OpsRoll phase")
 )
 
@@ -131,9 +130,7 @@ type State struct {
 	// reads previousImages/target_images to roll back to the prior ref.
 	TargetImages map[string]string `json:"targetImages,omitempty"`
 	// PreviousImages records the per-component image references in force
-	// before this upgrade started, so the §25.8 OpsRoll watchdog can
-	// re-patch a Deployment back to its previous reference on timeout
-	// (spec line 3509, metadata.previousImages).
+	// before this upgrade started, so the §25.8 OpsRoll watchdog can re-patch a Deployment back to its previous reference on timeout.
 	PreviousImages map[string]string `json:"previousImages,omitempty"`
 	// OpsHeartbeat is the §25.8 metadata.opsRollHeartbeat: the time the new
 	// lenny-ops pod last wrote an ops_healthy heartbeat during OpsRoll
@@ -190,19 +187,17 @@ func (s State) Progress() map[string]any {
 // FullProgress returns the §25.2 canonical progress envelope for the
 // upgrade, including the fields Progress leaves out: percent, etaSeconds,
 // etaMethod, lastProgressAt, and stalledForSeconds. It is the envelope
-// GET /v1/admin/platform/upgrade/status serves (§25.8 line 3496).
+// GET /v1/admin/platform/upgrade/status serves (§25.8).
 //
-// percent is always derived from the step count (§25.2 line 387). The
+// percent is always derived from the step count (§25.2). The
 // ETA and stall fields are computed only while the upgrade is active
 // (not paused, not terminal): a paused upgrade is awaiting an explicit
 // operator proceed by design and a terminal one has finished, so neither
-// has a meaningful remaining-time estimate or stall signal (§25.2 line
-// 391; compare the §25.8 line 1733 paused example, which reports
+// has a meaningful remaining-time estimate or stall signal (§25.2; compare the §25.8 paused example, which reports
 // etaMethod "none" and stalledForSeconds null despite a populated
 // lastProgressAt). While active, the ETA prefers historical_p50 (once
 // ops_operation_baselines has samples for platform_upgrade) and
-// otherwise falls back to fixed_phase_durations — the two methods §25.8
-// line 3496 names for this endpoint. The step-count percent is deliberately
+// otherwise falls back to fixed_phase_durations — the two methods §25.8 names for this endpoint. The step-count percent is deliberately
 // kept out of the operations.Compute() ETA-selection inputs: Compute's
 // generic fallback chain prefers linear_extrapolation over
 // fixed_phase_durations whenever a percent and a start time are both
@@ -210,7 +205,7 @@ func (s State) Progress() map[string]any {
 // serves (backup, restore) but not for platform_upgrade, whose spec'd
 // method chain is historical_p50 then fixed_phase_durations only.
 //
-// spec: §25.2 (progress envelope, lines 357-401), §25.8 line 3496
+// spec: §25.2, §25.8
 // (platform-upgrade progress).
 func (s *Service) FullProgress(ctx context.Context, st State) conventions.Progress {
 	step, detail := st.stepAndDetail()
@@ -365,7 +360,7 @@ type Service struct {
 	newID   func() string
 	// baselines folds a completed upgrade's wall-clock duration into the
 	// §25.2 ops_operation_baselines table; nil skips the record. spec:
-	// §25.2 line 393.
+	// §25.2.
 	baselines BaselineRecorder
 	// baselineReader looks up the current platform_upgrade baseline for
 	// the FullProgress historical_p50 ETA selection; nil leaves the ETA
@@ -380,8 +375,7 @@ type Service struct {
 // the kind receive a historical_p50 ETA. The upgrade service records the
 // platform_upgrade kind on each Complete transition.
 //
-// spec: §25.2 line 393 ("ops_operation_baselines ... is updated on each
-// operation completion").
+// spec: §25.2.
 type BaselineRecorder interface {
 	RecordCompletion(ctx context.Context, kind string, dur time.Duration) error
 }
@@ -393,8 +387,7 @@ type BaselineRecorder interface {
 // false when no completion of the kind has been recorded yet, in which
 // case the caller falls through to fixed_phase_durations.
 //
-// spec: §25.2 line 394 ("a kind with sample_size >= 3 receive[s]
-// etaMethod historical_p50").
+// spec: §25.2.
 type BaselineReader interface {
 	Lookup(ctx context.Context, kind string) (p50 time.Duration, sampleSize int, found bool, err error)
 }
@@ -409,8 +402,8 @@ type Options struct {
 	// Audit receives §16.7 platform-upgrade audit events. A nil sink drops.
 	Audit AuditSink
 	// DriftManager promotes the §25.10 target snapshot into live at
-	// Verification completion (§25.8 line 3789) and deletes it on rollback
-	// (§25.8 line 3551). A nil manager skips both.
+	// Verification completion (§25.8) and deletes it on rollback
+	// (§25.8). A nil manager skips both.
 	DriftManager DriftManager
 	// Now supplies the current time; nil defaults to time.Now.
 	Now func() time.Time
@@ -452,7 +445,7 @@ type StartRequest struct {
 	// ImageDigest is the target image digest for the upgrade_progressed
 	// payload. Optional (resolved by digest only when requireDigest).
 	ImageDigest string `json:"imageDigest,omitempty"`
-	// Images is the §25.8 air-gap skip-channel image set (spec line 3422):
+	// Images is the §25.8 air-gap skip-channel image set:
 	// when the release channel is disabled (platform.upgradeChannel: "")
 	// the operator passes the explicit per-component image references here
 	// rather than having them resolved from a channel manifest. Keyed by
@@ -542,7 +535,7 @@ func (s *Service) Proceed(ctx context.Context) (State, error) {
 		if err != nil {
 			return err
 		}
-		// §25.10 line 3789: the Verification→Complete proceed promotes the
+		// §25.10: the Verification→Complete proceed promotes the
 		// in-flight target snapshot into the live snapshot atomically, so
 		// from Complete onward GET /v1/admin/drift compares against the new
 		// desired state by default. The promote runs before the phase is
@@ -572,7 +565,7 @@ func (s *Service) Proceed(ctx context.Context) (State, error) {
 	})
 }
 
-// AdvanceOpsRoll is the §25.8 line 3508 new-pod self-advance: when the new
+// AdvanceOpsRoll is the §25.8 new-pod self-advance: when the new
 // lenny-ops pod becomes Ready during OpsRoll, it advances the upgrade from
 // OpsRoll to CRDUpdate itself, without an operator proceed. Unlike Proceed,
 // which advances whatever phase is active, AdvanceOpsRoll advances only
@@ -582,8 +575,7 @@ func (s *Service) Proceed(ctx context.Context) (State, error) {
 // the operator path emits when leaving OpsRoll, and pauses at CRDUpdate
 // awaiting the operator's next proceed.
 //
-// spec: §25.8 line 3508 (new pod self-advances OpsRoll→CRDUpdate on
-// startup).
+// spec: §25.8.
 func (s *Service) AdvanceOpsRoll(ctx context.Context) (State, error) {
 	return s.transition(ctx, func(st *State) error {
 		if st.Phase != upgrade.OpsRoll {
@@ -669,7 +661,7 @@ func (s *Service) Rollback(ctx context.Context, reason string) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
-	// §25.8 line 3551: a completed rollback deletes the §25.10 target
+	// §25.8: a completed rollback deletes the §25.10 target
 	// snapshot for this upgrade. A rollback during Preflight (no target
 	// written) deletes zero rows; a cleanup failure is non-fatal — the
 	// rollback itself succeeded and the drift reconciler re-checks later.
@@ -717,7 +709,7 @@ func (s *Service) Status(ctx context.Context) (State, bool, error) {
 // no upgrade is active or the phase is not OpsRoll, so a stale heartbeat
 // write after a completed upgrade does not mutate terminal state.
 //
-// spec: §25.8 line 3511 (metadata.opsRollHeartbeat).
+// spec: §25.8.
 func (s *Service) RecordOpsHeartbeat(ctx context.Context) (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -742,8 +734,7 @@ func (s *Service) RecordOpsHeartbeat(ctx context.Context) (State, error) {
 	return st, nil
 }
 
-// RollbackOnTimeout is the §25.8 OpsRoll watchdog rollback (spec line
-// 3509): it transitions a rollbackable upgrade to RolledBack, stamps the
+// RollbackOnTimeout is the §25.8 OpsRoll watchdog rollback: it transitions a rollbackable upgrade to RolledBack, stamps the
 // failure code (OPS_ROLL_TIMEOUT) into State.Error, emits
 // platform.upgrade_rolled_back, and runs the §25.10 target-snapshot
 // cleanup. It returns ErrNotRollbackable when the upgrade has passed the
@@ -751,7 +742,7 @@ func (s *Service) RecordOpsHeartbeat(ctx context.Context) (State, error) {
 // is left for the operator (the spec keeps post-migration rollback a
 // restore-from-backup decision).
 //
-// spec: §25.8 line 3509 (OpsRoll timeout auto-rollback), line 3551.
+// spec: §25.8.
 func (s *Service) RollbackOnTimeout(ctx context.Context, code, detail string) (State, error) {
 	st, err := s.transition(ctx, func(st *State) error {
 		if upgrade.IsTerminal(st.Phase) {
@@ -860,7 +851,7 @@ func (s *Service) transition(ctx context.Context, mutate func(*State) error) (St
 	if err := s.store.Save(ctx, st); err != nil {
 		return State{}, err
 	}
-	// §25.2 line 393: fold the completed upgrade's wall-clock duration into
+	// §25.2: fold the completed upgrade's wall-clock duration into
 	// the historical baseline table on the Complete transition. The state
 	// machine rejects any further transition once terminal, so this fires
 	// exactly once per upgrade. A rollback is not a successful completion

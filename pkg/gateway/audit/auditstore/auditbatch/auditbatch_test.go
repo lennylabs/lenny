@@ -65,7 +65,7 @@ func (m *countingMetrics) FlushFailed(n int) {
 	m.failureCalls++
 }
 
-// spec: §12.3 line 81 — Flush drains the buffered items into one batch.
+// spec: §12.3 — Flush drains the buffered items into one batch.
 func TestBuffer_FlushDrains_spec_12_3(t *testing.T) {
 	rf := &recordingFlush{}
 	b := New(rf.flush, Config{}, nil)
@@ -86,7 +86,7 @@ func TestBuffer_FlushDrains_spec_12_3(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 81 — an empty buffer never invokes the flush
+// spec: §12.3 — an empty buffer never invokes the flush
 // callback.
 func TestBuffer_EmptyFlushNoCall_spec_12_3(t *testing.T) {
 	rf := &recordingFlush{}
@@ -99,7 +99,7 @@ func TestBuffer_EmptyFlushNoCall_spec_12_3(t *testing.T) {
 	}
 }
 
-// spec: §12.3 lines 81-83 — a flush failure drops the batch (accepted
+// spec: §12.3 — a flush failure drops the batch (accepted
 // T2 data loss) and reports the loss through Metrics.
 func TestBuffer_FlushErrorDropsAndReports_spec_12_3(t *testing.T) {
 	rf := &recordingFlush{err: errors.New("postgres down")}
@@ -126,7 +126,7 @@ func TestBuffer_FlushErrorDropsAndReports_spec_12_3(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 81 — Run flushes as soon as the buffer reaches
+// spec: §12.3 — Run flushes as soon as the buffer reaches
 // BatchSize without waiting for the interval.
 func TestBuffer_RunFlushesOnSize_spec_12_3(t *testing.T) {
 	rf := &recordingFlush{ch: make(chan int, 4)}
@@ -149,7 +149,7 @@ func TestBuffer_RunFlushesOnSize_spec_12_3(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 81 — Run flushes on the interval even when the
+// spec: §12.3 — Run flushes on the interval even when the
 // buffer never reaches BatchSize.
 func TestBuffer_RunFlushesOnInterval_spec_12_3(t *testing.T) {
 	rf := &recordingFlush{ch: make(chan int, 4)}
@@ -169,7 +169,7 @@ func TestBuffer_RunFlushesOnInterval_spec_12_3(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 81 — on ctx cancellation Run flushes the remaining
+// spec: §12.3 — on ctx cancellation Run flushes the remaining
 // buffer once so a graceful shutdown does not drop already-buffered T2
 // events.
 func TestBuffer_RunFinalFlushOnShutdown_spec_12_3(t *testing.T) {
@@ -191,7 +191,7 @@ func TestBuffer_RunFinalFlushOnShutdown_spec_12_3(t *testing.T) {
 	}
 }
 
-// spec: §12.3 line 81 — zero config fills the documented defaults.
+// spec: §12.3 — zero config fills the documented defaults.
 func TestBuffer_DefaultConfig_spec_12_3(t *testing.T) {
 	b := New(func(context.Context, []Item) error { return nil }, Config{}, nil)
 	if b.cfg.FlushInterval != DefaultConfig().FlushInterval {

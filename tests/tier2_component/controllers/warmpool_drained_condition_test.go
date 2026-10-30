@@ -8,7 +8,6 @@ import (
 	"context"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -21,10 +20,9 @@ import (
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
-// spec: 25.6 line 2956 (warmPoolStuckReplenish keys its dwell off the
+// spec: 25.6 (Diagnostic Endpoints: warmPoolStuckReplenish keys its dwell off the
 // zero-in-flight state), 5.2 (SandboxTemplate.status conditions owned by the
 // WarmPoolController).
 //
@@ -43,7 +41,7 @@ import (
 // SandboxTemplate. The False→True transition semantics are pinned by the
 // in-package unit test TestPoolDrainedTracksEntryTransition.
 func TestWarmPoolDrainedConditionWritten(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -55,10 +53,9 @@ func TestWarmPoolDrainedConditionWritten(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	const ns = "lenny-agents"
 	const poolName = "echo-worker"
 
-	mustCreate(t, ctx, c, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
+	ns := testNamespaces.Create(t, c)
 	mustCreate(t, ctx, c, &lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
 		Spec: lennyv1.SandboxTemplateSpec{
@@ -95,7 +92,7 @@ func TestWarmPoolDrainedConditionWritten(t *testing.T) {
 	}
 }
 
-// spec: 25.6 line 2956 (warmPoolStuckReplenish re-drive: "triggers controller
+// spec: 25.6 (Diagnostic Endpoints: warmPoolStuckReplenish re-drive: "triggers controller
 // to re-drive").
 //
 // diagnosis: the warmPoolStuckReplenish remediation's re-drive write does not
@@ -111,7 +108,7 @@ func TestWarmPoolDrainedConditionWritten(t *testing.T) {
 // the re-drive annotation write the remediation performs advances
 // resourceVersion, while a client-set .metadata.generation write does not.
 func TestWarmPoolReDriveWriteIsHonored(t *testing.T) {
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -126,9 +123,8 @@ func TestWarmPoolReDriveWriteIsHonored(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	const ns = "lenny-agents"
 	const poolName = "redrive-pool"
-	mustCreate(t, ctx, c, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
+	ns := testNamespaces.Create(t, c)
 	mustCreate(t, ctx, c, &lennyv1.SandboxWarmPool{
 		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
 		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: poolName, MinWarm: 1, MaxWarm: 2},

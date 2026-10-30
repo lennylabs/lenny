@@ -20,8 +20,8 @@ import (
 // Sandbox-to-Pod reconciler routes the Sandbox through the SDK-warm path
 // (sdk_connecting with the §6.1 watchdog) rather than straight to
 // pod-warm idle.
-func preConnectRuntimeCR() *lennyv1.Runtime {
-	rt := runtimeCR()
+func preConnectRuntimeCR(t *testing.T) *lennyv1.Runtime {
+	rt := runtimeCR(t)
 	rt.Spec.Capabilities = &lennyv1.RuntimeCapabilitiesCRD{PreConnect: true}
 	return rt
 }
@@ -29,9 +29,9 @@ func preConnectRuntimeCR() *lennyv1.Runtime {
 // sdkWarmPoolCR is the §6.1 pool whose ScalePolicy sets the
 // sdkConnectTimeoutSeconds watchdog budget the Sandbox references through
 // PoolRef. The Sandbox-to-Pod reconciler resolves the budget from it.
-func sdkWarmPoolCR(timeoutSeconds int64) *lennyv1.SandboxWarmPool {
+func sdkWarmPoolCR(t *testing.T, timeoutSeconds int64) *lennyv1.SandboxWarmPool {
 	return &lennyv1.SandboxWarmPool{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNamespace(t)},
 		Spec: lennyv1.SandboxWarmPoolSpec{
 			TemplateRef: "claude-template",
 			MinWarm:     1,
@@ -51,7 +51,7 @@ func seedRecyclingClaim(t *testing.T, c client.Client, rewarmStartedAt time.Time
 	t.Helper()
 	ctx := context.Background()
 	cl := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + testName, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + testName, Namespace: testNamespace(t)},
 		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: testName, TenantID: "acme"},
 	}
 	if err := c.Create(ctx, cl); err != nil && !apierrors.IsAlreadyExists(err) {
@@ -65,7 +65,7 @@ func seedRecyclingClaim(t *testing.T, c client.Client, rewarmStartedAt time.Time
 	}
 }
 
-// TestReconcileRecycleRewarmReadyPodLeavesSDKConnecting is the §6.1/§3.3
+// TestReconcileRecycleRewarmReadyPodLeavesSDKConnecting is the §6.1
 // reserved-terminus component case: on the recycle re-warm edge the
 // success terminus is reserved, written by the claim projection
 // (OccupancyReconciler) when the gateway patches the claim recycling →
@@ -73,7 +73,7 @@ func seedRecyclingClaim(t *testing.T, c client.Client, rewarmStartedAt time.Time
 // idle on a ready pod; it makes a clean no-action exit so the two arms do
 // not fight over the phase.
 //
-// spec: §6.1 (reserved terminus), §6.2 (recycle edges), §3.3
+// spec: §6.1 (reserved terminus), §6.2 (recycle edges)
 //
 // diagnosis: the SDK-warm arm raced the claim projection on the recycle
 // re-warm edge and wrote idle on a ready pod, breaking the reserved hold
@@ -83,10 +83,10 @@ func TestReconcileRecycleRewarmReadyPodLeavesSDKConnecting(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(
 		t, s,
-		sandboxCR("sdk_connecting"),
-		preConnectRuntimeCR(),
-		sdkWarmPoolCR(60),
-		podCR(corev1.PodRunning, true),
+		sandboxCR(t, "sdk_connecting"),
+		preConnectRuntimeCR(t),
+		sdkWarmPoolCR(t, 60),
+		podCR(t, corev1.PodRunning, true),
 	)
 	// Re-warm started 5s ago, well within the 60s budget.
 	seedRecyclingClaim(t, c, time.Now().Add(-5*time.Second))
@@ -99,30 +99,30 @@ func TestReconcileRecycleRewarmReadyPodLeavesSDKConnecting(t *testing.T) {
 	}
 }
 
-// TestReconcileRecycleRewarmAnchorsClockAtRewarmStamp is the §6.1/§3.3
+// TestReconcileRecycleRewarmAnchorsClockAtRewarmStamp is the §6.1
 // re-warm-start anchor component case: a pod that has been running far
 // longer than the watchdog budget must not time out on the recycle
 // re-warm edge when the rewarmStartedAt stamp is within budget, because
 // neither the prior occupancy episode nor the whole-pod scrub counts
 // against the re-warm budget. The clock is measured from the stamp.
 //
-// spec: §6.1 (re-warm-start anchor), §3.3
+// spec: §6.1 (re-warm-start anchor)
 //
 // diagnosis: the watchdog anchored at pod start on the recycle re-warm
 // edge and counted the prior occupancy episode and the whole-pod scrub
 // against the re-warm budget, retiring a healthy re-warming pod to failed.
 func TestReconcileRecycleRewarmAnchorsClockAtRewarmStamp(t *testing.T) {
 	s := newScheme(t)
-	pod := podCR(corev1.PodRunning, false) // running but not ready: re-warm in progress
+	pod := podCR(t, corev1.PodRunning, false) // running but not ready: re-warm in progress
 	// The pod has been running for 10 minutes (far over the 60s budget),
 	// modeling a long prior occupancy episode plus the scrub.
 	started := metav1.NewTime(time.Now().Add(-10 * time.Minute))
 	pod.Status.StartTime = &started
 	c := newClient(
 		t, s,
-		sandboxCR("sdk_connecting"),
-		preConnectRuntimeCR(),
-		sdkWarmPoolCR(60),
+		sandboxCR(t, "sdk_connecting"),
+		preConnectRuntimeCR(t),
+		sdkWarmPoolCR(t, 60),
 		pod,
 	)
 	// Re-warm started 5s ago: within the 60s budget despite the old pod.
@@ -136,12 +136,12 @@ func TestReconcileRecycleRewarmAnchorsClockAtRewarmStamp(t *testing.T) {
 	}
 }
 
-// TestReconcileRecycleRewarmWatchdogRetiresOverBudget is the §6.1/§3.3
+// TestReconcileRecycleRewarmWatchdogRetiresOverBudget is the §6.1
 // re-warm watchdog component case: a re-warm that exceeds
 // sdkConnectTimeoutSeconds measured from rewarmStartedAt retires the pod
 // to failed via the sdk_connecting → failed edge.
 //
-// spec: §6.1 (re-warm watchdog), §6.2 (sdk_connecting → failed), §3.3
+// spec: §6.1 (re-warm watchdog), §6.2 (sdk_connecting → failed)
 //
 // diagnosis: the recycle re-warm watchdog did not fire on an over-budget
 // re-warm, leaving a pod hung in sdk_connecting holding a warm-pool slot.
@@ -149,10 +149,10 @@ func TestReconcileRecycleRewarmWatchdogRetiresOverBudget(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(
 		t, s,
-		sandboxCR("sdk_connecting"),
-		preConnectRuntimeCR(),
-		sdkWarmPoolCR(60),
-		podCR(corev1.PodRunning, false), // running but not ready: SDK still connecting
+		sandboxCR(t, "sdk_connecting"),
+		preConnectRuntimeCR(t),
+		sdkWarmPoolCR(t, 60),
+		podCR(t, corev1.PodRunning, false), // running but not ready: SDK still connecting
 	)
 	// Re-warm started 90s ago: past the 60s budget.
 	seedRecyclingClaim(t, c, time.Now().Add(-90*time.Second))
@@ -180,10 +180,10 @@ func TestReconcileWarmFillReadyPodReachesIdle(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(
 		t, s,
-		sandboxCR("sdk_connecting"),
-		preConnectRuntimeCR(),
-		sdkWarmPoolCR(60),
-		podCR(corev1.PodRunning, true),
+		sandboxCR(t, "sdk_connecting"),
+		preConnectRuntimeCR(t),
+		sdkWarmPoolCR(t, 60),
+		podCR(t, corev1.PodRunning, true),
 	)
 	// No SandboxClaim: this is the warm-fill edge, not a recycle re-warm.
 

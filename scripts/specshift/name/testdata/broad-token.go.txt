@@ -1,0 +1,7 @@
+package carrier
+
+// Client dials the pod.
+//
+// The lifecyclechannel path is a single token, which the naming table
+// retires as an identifier spelling rather than as a bare noun phrase.
+type Client struct{}

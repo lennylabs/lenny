@@ -11,7 +11,7 @@
 // the approve / deny verdict onto that channel.
 //
 // The registry mirrors pkg/gateway/inputwait: it is the unblock half of
-// the approval loop. spec: §7.2 lines 124-125, 134. F-7.2.9, F-7.2.18.
+// the approval loop. spec: §7.2. F-7.2.9, F-7.2.18.
 package toolapproval
 
 import (
@@ -33,7 +33,7 @@ var (
 
 // Decision is the verdict the §15.1 approve / deny endpoint delivers to
 // the blocked executor read. Approved is true for an approve call and
-// false for a deny; Reason carries the optional §7.2 line 125 deny
+// false for a deny; Reason carries the optional §7.2 deny
 // reason.
 type Decision struct {
 	Approved bool

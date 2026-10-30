@@ -28,8 +28,7 @@ import (
 // error (a constraint violation, for example) is left intact so the caller
 // surfaces it.
 //
-// spec: §25.4 lines 2170-2178 (Storage Tiers; "attempts storage tiers in
-// order, falling back on failure"; Tier 2 Redis "when Postgres unreachable").
+// spec: §25.4.
 func TestClassifyErr_OperatorIntervention_spec_25_4(t *testing.T) {
 	cases := []struct {
 		name          string

@@ -78,7 +78,7 @@ func (s *recordingSeam) count() int {
 	return s.calls
 }
 
-// spec: §11.2 line 44, §8.6 line 629 — with no extension seam wired a
+// spec: §11.2, §8.6 — with no extension seam wired a
 // session whose cumulative proxy consumption reaches its token budget is
 // denied and terminated immediately, and a later request is rejected by
 // the pre-flight gate.
@@ -117,8 +117,7 @@ func TestRecordTerminatesOnBudgetExhaustion_spec_11_2(t *testing.T) {
 	}
 }
 
-// Exhaustion fires at the boundary (consumed == budget), matching §8.10
-// line 1108 "token budget is exhausted".
+// Exhaustion fires at the boundary (consumed == budget), matching §8.10.
 func TestRecordExhaustsAtExactBoundary_spec_8_10(t *testing.T) {
 	term := &recordingTerminator{}
 	e := New(term, nil, nil)
@@ -215,7 +214,7 @@ func TestForgetEvictsAccounting_spec_11_2(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 629 — a Granted extension at the exhaustion boundary
+// spec: §8.6 — a Granted extension at the exhaustion boundary
 // continues the session: no termination, no deny flag, the session stays
 // admitted (the transparent path). The pre-fix code terminated
 // unconditionally, so this fails against it.
@@ -246,7 +245,7 @@ func TestRecordGrantedSeamContinues_spec_8_6(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 629 — a Pending extension (the in-path deadline elapsed
+// spec: §8.6 — a Pending extension (the in-path deadline elapsed
 // with an elicitation still unresolved) leaves the session ALIVE but
 // denying per request: it sets the deny flag so Allow rejects, and it does
 // NOT call TerminateSession. The out-of-band episode later reclaims it.
@@ -278,7 +277,7 @@ func TestRecordPendingSeamDeniesButDoesNotTerminate_spec_8_6(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 629, line 719 — after a Pending detach the out-of-band
+// spec: §8.6 — after a Pending detach the out-of-band
 // episode fan-out resolves the session. RaiseBudget (a grant) raises the
 // budget and clears the deny flag so Allow passes again; a subsequent
 // Record against the raised budget does not re-exhaust and does not
@@ -321,7 +320,7 @@ func TestRaiseBudgetClearsDenyAndSurvivesNextRecord_spec_8_6(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 719 — TerminateSession is the SessionReclaimer terminal
+// spec: §8.6 — TerminateSession is the SessionReclaimer terminal
 // path the episode fan-out takes for a joined session whose deferred
 // outcome is terminal. It denies the session and delegates to the wired
 // Terminator with ReasonBudgetExhausted.
@@ -341,7 +340,7 @@ func TestTerminateSessionReclaimerPath_spec_8_6(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 629 — both context parameters reach the seam (reqCtx
+// spec: §8.6 — both context parameters reach the seam (reqCtx
 // and waitCtx), and a reqCtx cancellation is observable at the seam. This
 // pins the two-context threading that matches leasecontrol.ExtendForBudget.
 func TestRecordThreadsBothContextsToSeam_spec_8_6(t *testing.T) {
@@ -378,7 +377,7 @@ func TestRecordThreadsBothContextsToSeam_spec_8_6(t *testing.T) {
 // present with the reclaimer signatures. This compiles the assignment to
 // a local interface identical to leasecontrol.SessionReclaimer so a
 // signature drift breaks the build here rather than in cmd/lenny-gateway.
-// spec: §8.6 line 719; proposal 0023 S6.
+// spec: §8.6; proposal 0023 S6.
 func TestEnforcerSatisfiesSessionReclaimer_spec_8_6(t *testing.T) {
 	type sessionReclaimer interface {
 		RaiseBudget(sessionID string, delta int64)
@@ -387,7 +386,7 @@ func TestEnforcerSatisfiesSessionReclaimer_spec_8_6(t *testing.T) {
 	var _ sessionReclaimer = New(&recordingTerminator{}, nil, nil)
 }
 
-// spec: §8.6 line 629 — Outcome.String renders each tri-state and the
+// spec: §8.6 — Outcome.String renders each tri-state and the
 // unknown fallback. The enforcer logs and audits the outcome by name, so
 // a wrong or empty rendering mislabels the extension result in operator
 // tooling.
@@ -408,9 +407,9 @@ func TestOutcomeString_spec_8_6(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 629; proposal 0023 S6 — SetExtendOnExhaustion wires the
+// spec: §8.6; proposal 0023 S6 — SetExtendOnExhaustion wires the
 // extension seam after construction. An enforcer built with a nil seam is
-// on the §11.2 line 44 terminate-immediately path; after the setter wires
+// on the §11.2 terminate-immediately path; after the setter wires
 // a Granted seam, a fresh exhaustion resolves through it and the session
 // CONTINUES instead of terminating. This asserts the corrected wired
 // behavior: it fails against a setter that does not install the seam
@@ -443,7 +442,7 @@ func TestSetExtendOnExhaustionWiresSeam_spec_8_6(t *testing.T) {
 	}
 }
 
-// spec: §8.6 line 629; proposal 0023 S6 — SetExtendOnExhaustion(nil)
+// spec: §8.6; proposal 0023 S6 — SetExtendOnExhaustion(nil)
 // returns the enforcer to the terminate-immediately path. A session that
 // exhausts its budget after the seam is cleared is denied and terminated,
 // with no extension attempt.
@@ -464,7 +463,7 @@ func TestSetExtendOnExhaustionNilRestoresTerminateImmediately_spec_8_6(t *testin
 		t.Fatalf("session admitted after exhaustion on the nil-seam path: the enforcer failed open")
 	}
 	if got := term.snapshot(); len(got) != 1 {
-		t.Fatalf("nil-seam exhaustion terminated %d times, want exactly 1 (§11.2 line 44)", len(got))
+		t.Fatalf("nil-seam exhaustion terminated %d times, want exactly 1 (§11.2)", len(got))
 	}
 }
 
@@ -497,4 +496,81 @@ func TestConcurrentAccess_spec_11_2(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+// spec: §8.6, §11.2 — a RaiseBudget that lands after TerminateSession (a
+// deferred grant fanned out to a session the episode is terminating) leaves
+// the deny flag set. Before the terminating flag, RaiseBudget cleared deny
+// unconditionally and Allow admitted a session that was ending.
+func TestRaiseBudgetAfterTerminateSessionKeepsDeny_spec_8_6(t *testing.T) {
+	e := New(&recordingTerminator{}, nil, nil)
+	req, wait := bg()
+	e.Record(req, wait, "acme", "s1", 0, 100)
+	e.TerminateSession("s1")
+	e.RaiseBudget("s1", 1000)
+	if e.Allow("s1") {
+		t.Fatalf("RaiseBudget after TerminateSession cleared deny; Allow must stay false")
+	}
+}
+
+// spec: §8.6, §11.2 — Record's terminal branch (a Terminal outcome from the
+// extension seam) marks the session terminating, so a RaiseBudget that lands
+// once the terminator has run leaves Allow false and keeps the exhausted
+// flag, so a later Record does not re-dispatch the extension.
+func TestRaiseBudgetAfterRecordTerminalKeepsDeny_spec_11_2(t *testing.T) {
+	term := &recordingTerminator{}
+	seam := &recordingSeam{outcome: Terminal}
+	e := New(term, seam.fn, nil)
+	req, wait := bg()
+	if exhausted, out := e.Record(req, wait, "acme", "s1", 100, 100); !exhausted || out != Terminal {
+		t.Fatalf("Record = (%v, %v), want (true, TERMINAL)", exhausted, out)
+	}
+	e.RaiseBudget("s1", 1000)
+	if e.Allow("s1") {
+		t.Fatalf("RaiseBudget after Record's terminal branch cleared deny; Allow must stay false")
+	}
+	e.Record(req, wait, "acme", "s1", 100, 10)
+	if seam.count() != 1 {
+		t.Fatalf("extension seam calls = %d, want 1: a raise during a terminate must not re-arm the exhaustion", seam.count())
+	}
+	if got := term.snapshot(); len(got) != 1 {
+		t.Fatalf("TerminateSession calls = %v, want exactly one", got)
+	}
+}
+
+// spec: §8.6 — a Pending outcome denies without marking the session
+// terminating, so the deferred grant's RaiseBudget still clears deny.
+func TestRaiseBudgetAfterPendingClearsDeny_spec_8_6(t *testing.T) {
+	seam := &recordingSeam{outcome: Pending}
+	e := New(&recordingTerminator{}, seam.fn, nil)
+	req, wait := bg()
+	e.Record(req, wait, "acme", "s1", 100, 100)
+	if e.Allow("s1") {
+		t.Fatalf("Pending must deny the next request")
+	}
+	e.RaiseBudget("s1", 1000)
+	if !e.Allow("s1") {
+		t.Fatalf("RaiseBudget after Pending must clear deny")
+	}
+}
+
+// spec: §8.6, §11.2 — the terminating flag lives on the counter, so Forget
+// (the post-terminal hook's forget step) drops it with the entry, and
+// TerminateSession on an unknown session creates no entry.
+func TestTerminatingFlagDroppedByForget_spec_11_2(t *testing.T) {
+	e := New(nil, nil, nil)
+	e.TerminateSession("ghost")
+	if !e.Allow("ghost") {
+		t.Fatalf("TerminateSession on an unknown session must create no denying entry")
+	}
+	req, wait := bg()
+	e.Record(req, wait, "acme", "s1", 0, 1)
+	e.TerminateSession("s1")
+	e.Forget("s1")
+	e.mu.Lock()
+	_, present := e.sessions["s1"]
+	e.mu.Unlock()
+	if present {
+		t.Fatalf("Forget must drop the terminating counter")
+	}
 }

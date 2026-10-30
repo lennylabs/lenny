@@ -64,7 +64,7 @@ func TestPreflight_AllPass_spec_25_8(t *testing.T) {
 	}
 }
 
-// spec: §25.8 line 3499 — a current version below minUpgradeFrom fails the
+// spec: §25.8 — a current version below minUpgradeFrom fails the
 // version gate.
 func TestPreflight_VersionPrerequisiteFails_spec_25_8(t *testing.T) {
 	pf := upgradeservice.NewPreflighter(upgradeservice.PreflighterOptions{Store: upgradeservice.NewMemoryStore()})
@@ -76,7 +76,7 @@ func TestPreflight_VersionPrerequisiteFails_spec_25_8(t *testing.T) {
 	}
 }
 
-// spec: §25.8 line 3500 — an unpullable image fails the image gate and
+// spec: §25.8 — an unpullable image fails the image gate and
 // OnlyImageGateFailed routes the handler to UPGRADE_IMAGE_NOT_PULLABLE.
 func TestPreflight_ImageNotPullable_spec_25_8(t *testing.T) {
 	pf := upgradeservice.NewPreflighter(upgradeservice.PreflighterOptions{
@@ -94,7 +94,7 @@ func TestPreflight_ImageNotPullable_spec_25_8(t *testing.T) {
 	}
 }
 
-// spec: §25.8 line 3498 — an upgrade already in progress fails the gate.
+// spec: §25.8 — an upgrade already in progress fails the gate.
 func TestPreflight_UpgradeInProgress_spec_25_8(t *testing.T) {
 	store := upgradeservice.NewMemoryStore()
 	svc := upgradeservice.New(upgradeservice.Options{Store: store})
@@ -108,7 +108,7 @@ func TestPreflight_UpgradeInProgress_spec_25_8(t *testing.T) {
 	}
 }
 
-// spec: §25.8 lines 3497, 3501 — health and connection gates fail when
+// spec: §25.8 — health and connection gates fail when
 // their seams report unhealthy / no free connections.
 func TestPreflight_HealthAndConnsFail_spec_25_8(t *testing.T) {
 	pf := upgradeservice.NewPreflighter(upgradeservice.PreflighterOptions{

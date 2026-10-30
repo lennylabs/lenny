@@ -218,20 +218,20 @@ func TestPlatformUpgradeStatusNoUpgrade(t *testing.T) {
 
 // TestPlatformUpgradeStartRequiresIdempotencyKey confirms the §25.4
 // idempotency-key requirement on the non-convergent POST /upgrade/start:
-// at the Tier 2/3 (production) posture a start with no Idempotency-Key
+// at the Tier 2/3 required-key posture a start with no Idempotency-Key
 // header is rejected 400 IDEMPOTENCY_KEY_REQUIRED in the canonical
 // envelope, and a start carrying the header is accepted.
 //
 // spec: 25.4 (required-key endpoints reject a missing Idempotency-Key at
 // Tier 2/3; upgrade start is a required-key endpoint)
 // diagnosis: The §25.8 start endpoint accepted a mutating start without
-// an idempotency key at production tier, or rejected one that carried a
+// an idempotency key at Tier 2/3, or rejected one that carried a
 // key. Without the key gate a retried start can launch a second upgrade.
 func TestPlatformUpgradeStartRequiresIdempotencyKey(t *testing.T) {
 	srv := opsserver.New(opsserver.Options{
-		Upgrade:     upgradeservice.New(upgradeservice.Options{Store: upgradeservice.NewMemoryStore()}),
-		Idempotency: opsidem.NewMemoryStore(),
-		Production:  true,
+		Upgrade:                upgradeservice.New(upgradeservice.Options{Store: upgradeservice.NewMemoryStore()}),
+		Idempotency:            opsidem.NewMemoryStore(),
+		IdempotencyKeyRequired: true,
 	})
 
 	// No Idempotency-Key header → 400 IDEMPOTENCY_KEY_REQUIRED.
@@ -260,8 +260,7 @@ func TestPlatformUpgradeStartRequiresIdempotencyKey(t *testing.T) {
 // response's progress object is the full §25.2 canonical envelope, not
 // only the descriptive phase/step fields. The upgrade orchestrator is
 // operator-paced (§25.8): a freshly started upgrade is immediately
-// "awaiting the first proceed", the same paused-steady-state the §25.8
-// line 1733 canonical example depicts (a GatewayRoll upgrade with
+// "awaiting the first proceed", the same paused-steady-state the §25.8 canonical example depicts (a GatewayRoll upgrade with
 // currentStepDetail "Waiting for operator to call /upgrade/proceed").
 // In that state the envelope reports a numeric percent derived from the
 // step count and a lastProgressAt timestamp, while etaSeconds,

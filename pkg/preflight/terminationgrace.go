@@ -15,7 +15,7 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
-// nodeDrainTimeoutWarnSeconds is the §5.2 line 516 commonly-configured
+// nodeDrainTimeoutWarnSeconds is the §5.2 commonly-configured
 // node drain timeout (600s). A pool whose terminationGracePeriodSeconds
 // exceeds it risks the kubelet SIGKILLing the pod before checkpoints
 // complete, so the preflight emits a warning.
@@ -33,13 +33,12 @@ type PoolGracePeriod struct {
 
 // CheckTerminationGracePeriods emits an advisory warning for every pool
 // whose terminationGracePeriodSeconds exceeds the commonly-configured
-// node drain timeout (600s). The check never fails the install: §5.2
-// line 516 specifies a preflight warning, not a rejection, mirroring the
+// node drain timeout (600s). The check never fails the install: §5.2 specifies a preflight warning, not a rejection, mirroring the
 // warning-only treatment of the SandboxWarmPool CRD validation webhook
 // for the same condition. A fresh install carries no pools and the check
 // passes cleanly; on upgrade, existing pools are evaluated.
 //
-// spec: §5.2 line 516 — "The lenny-preflight Job also checks for this
+// spec: §5.2 — "The lenny-preflight Job also checks for this
 // condition and emits a preflight warning."
 func CheckTerminationGracePeriods(pools []PoolGracePeriod) Decision {
 	var warnings []string

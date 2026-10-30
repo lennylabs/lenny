@@ -2,7 +2,7 @@
 
 //go:build component
 
-// Tier-2 component scaffolds for §12.2.4 Controllers. Each controller
+// Tier-2 component scaffolds for TESTING.md §12.2.4 Controllers. Each controller
 // suite reconciles against a fake client-go lister first, then
 // against envtest for the higher-fidelity scenarios.
 
@@ -30,7 +30,7 @@ package controllers_test
 // round-trip per upstream call.
 //
 // The scaffold's original mention of "multi-replica leader election"
-// is deliberately not exercised: per §4.3 line 209 the Token Service
+// is deliberately not exercised: per §4.3 the Token Service
 // is fully stateless and "any replica can handle any request with no
 // affinity requirements", so AssignCredentials / RotateCredentials /
 // RevokeCredentials need no leader-election coordination at the v1

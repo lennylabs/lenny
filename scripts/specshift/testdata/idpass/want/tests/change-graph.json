@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "globs": {
+    "pkg/adapter/runtimeops.go": {
+      "unit": ["pkg/adapter/..."]
+    },
+    "pkg/adapter/runtimeops*_test.go": {
+      "unit": ["pkg/adapter/..."]
+    }
+  }
+}

@@ -12,7 +12,7 @@ import (
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
 )
 
-// ReplicaPollInterval is the §25.4 line 2208 cadence at which the
+// ReplicaPollInterval is the §25.4 cadence at which the
 // single-replica-only lock policy re-checks the lenny-ops replica count.
 const ReplicaPollInterval = 30 * time.Second
 
@@ -22,7 +22,7 @@ const ReplicaPollInterval = 30 * time.Second
 // single-replica-only policy can reject in-memory (Tier-3) lock
 // acquisitions in a multi-replica deployment.
 //
-// spec: §25.4 line 2208 — "detected via K8s Endpoints lookup at startup
+// spec: §25.4 — "detected via K8s Endpoints lookup at startup
 // and re-checked every 30s".
 type EndpointsReplicaCounter struct {
 	endpoints corev1client.EndpointsGetter

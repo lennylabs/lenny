@@ -61,7 +61,7 @@ type envBody struct {
 	DefaultDelegationPolicy string                              `json:"defaultDelegationPolicy,omitempty"`
 	CrossEnvOutbound        []environmentstore.CrossEnvRule     `json:"crossEnvOutbound,omitempty"`
 	CrossEnvInbound         []environmentstore.CrossEnvRule     `json:"crossEnvInbound,omitempty"`
-	// WorkspaceTier carries the §12.9 line 1033 environment-level tier
+	// WorkspaceTier carries the §12.9 environment-level tier
 	// override. It is a non-key scalar, so it rides in the body jsonb
 	// alongside DefaultDelegationPolicy rather than in a typed column.
 	WorkspaceTier string `json:"workspaceTier,omitempty"`
@@ -113,7 +113,7 @@ func (s *Store) Create(ctx context.Context, e environmentstore.Environment) erro
 	if e.UpdatedAt.IsZero() {
 		e.UpdatedAt = e.CreatedAt
 	}
-	// spec: §15.1 line 1207 — a new resource is born at version 1.
+	// spec: §15.1 — a new resource is born at version 1.
 	if e.Version == 0 {
 		e.Version = 1
 	}
@@ -188,7 +188,7 @@ func (s *Store) Update(ctx context.Context, tenantID, name string, mutate func(*
 			return err
 		}
 		e.UpdatedAt = pgtenant.MonotonicNext(prev, time.Now())
-		// spec: §15.1 line 1207 — bump the entity-tag version on every write.
+		// spec: §15.1 — bump the entity-tag version on every write.
 		e.Version++
 		body, err := marshalBody(e)
 		if err != nil {

@@ -3,10 +3,10 @@
 //go:build security
 
 // Tier-9 security test for cross-tenant isolation through the §25.12 MCP
-// Management Server, one row of the §12.9.1 cross-store tenant-isolation
+// Management Server, one row of the TESTING.md §12.9.1 cross-store tenant-isolation
 // matrix.
 //
-// §12.9.1 (TESTING.md) names the MCP management server among the code
+// TESTING.md §12.9.1 (TESTING.md) names the MCP management server among the code
 // paths that must fail every cross-tenant read and write with the
 // documented isolation error: "for each store and each operation,
 // attempt cross-tenant reads and writes through every code path (REST,
@@ -42,7 +42,7 @@
 // which the real opsserver plus the real event-subscription handler
 // exercise faithfully without a live Postgres.
 //
-// spec: §12.9.1 (cross-tenant isolation through the MCP management
+// spec: TESTING.md §12.9.1 (cross-tenant isolation through the MCP management
 // server), §25.12 (REST-layer RBAC — the MCP replay passes through the
 // OIDC/role authorization check), §25.5 (tenant-admin cross-tenant
 // subscription create returns 403 SUBSCRIPTION_TENANT_FORBIDDEN).
@@ -176,7 +176,7 @@ func toolResultIsError(t *testing.T, resp map[string]any) (bool, string) {
 // write with 403 SUBSCRIPTION_TENANT_FORBIDDEN. A tool result with
 // isError:false — or an error code other than SUBSCRIPTION_TENANT_
 // FORBIDDEN — means the MCP management path let a tenant-admin write a
-// resource scoped to another tenant, the §12.9.1 "MCP management server"
+// resource scoped to another tenant, the TESTING.md §12.9.1 "MCP management server"
 // isolation row the matrix requires. The own-tenant positive control
 // proves the tool path itself works for the caller, so the cross-tenant
 // rejection is the tenancy layer and not an unrelated failure.

@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 )
 
-// spec: §12.9 line 1048 — the gateway policy engine validates tenant
+// spec: §12.9 — the gateway policy engine validates tenant
 // classification at session creation. A recognized tier (including the
 // empty default) is admitted.
 func TestValidateTenantClassificationValid(t *testing.T) {

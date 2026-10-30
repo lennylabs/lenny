@@ -17,7 +17,7 @@ import (
 
 // newCredentialPoolAdminWithRuntimes builds a pool admin router wired
 // with both a credential-pool store and a runtime registry seeded with
-// the given runtimes, so the §4.9 line 1476 proxy-dialect admission
+// the given runtimes, so the §4.9 proxy-dialect admission
 // boundary has runtimes to resolve against.
 func newCredentialPoolAdminWithRuntimes(t *testing.T, rts ...runtimestore.Runtime) (*admin.Router, *credentialpoolstore.Memory) {
 	t.Helper()
@@ -54,7 +54,7 @@ func adminErrorCode(t *testing.T, body []byte) string {
 	return env.Error.Code
 }
 
-// spec: §4.9 line 1476 — a proxy-mode pool whose proxyDialect no agent
+// spec: §4.9 — a proxy-mode pool whose proxyDialect no agent
 // runtime serving its provider declares is rejected at registration with
 // 422 INVALID_POOL_PROXY_DIALECT.
 func TestCreateCredentialPoolRejectsUnspeakableProxyDialect_spec_4_9_1476(t *testing.T) {
@@ -71,7 +71,7 @@ func TestCreateCredentialPoolRejectsUnspeakableProxyDialect_spec_4_9_1476(t *tes
 	}
 }
 
-// spec: §4.9 line 1476 — a proxy-mode pool whose proxyDialect at least one
+// spec: §4.9 — a proxy-mode pool whose proxyDialect at least one
 // agent runtime serving its provider declares is accepted.
 func TestCreateCredentialPoolAcceptsDeclaredProxyDialect_spec_4_9_1476(t *testing.T) {
 	router, _ := newCredentialPoolAdminWithRuntimes(t, anthropicRuntime("claude-code", "anthropic", "openai"))
@@ -84,7 +84,7 @@ func TestCreateCredentialPoolAcceptsDeclaredProxyDialect_spec_4_9_1476(t *testin
 	}
 }
 
-// spec: §4.9 line 1476 — when no agent runtime references the pool's
+// spec: §4.9 — when no agent runtime references the pool's
 // provider, the admission check defers to the session-creation join and
 // the pool is accepted.
 func TestCreateCredentialPoolDefersWhenNoRuntimeSupportsProvider_spec_4_9_1476(t *testing.T) {
@@ -106,7 +106,7 @@ func TestCreateCredentialPoolDefersWhenNoRuntimeSupportsProvider_spec_4_9_1476(t
 	}
 }
 
-// spec: §4.9 line 1476 — a direct-mode pool declares no proxyDialect, so
+// spec: §4.9 — a direct-mode pool declares no proxyDialect, so
 // the dialect boundary does not apply at registration.
 func TestCreateCredentialPoolDirectModeSkipsProxyDialect_spec_4_9_1476(t *testing.T) {
 	router, _ := newCredentialPoolAdminWithRuntimes(t, anthropicRuntime("claude-code", "anthropic"))
@@ -118,7 +118,7 @@ func TestCreateCredentialPoolDirectModeSkipsProxyDialect_spec_4_9_1476(t *testin
 	}
 }
 
-// spec: §4.9 line 1476 — a PUT that changes a pool's proxyDialect to a
+// spec: §4.9 — a PUT that changes a pool's proxyDialect to a
 // value no agent runtime serving its provider declares is rejected.
 func TestUpdateCredentialPoolRejectsUnspeakableProxyDialect_spec_4_9_1476(t *testing.T) {
 	router, _ := newCredentialPoolAdminWithRuntimes(t, anthropicRuntime("claude-code", "anthropic"))

@@ -3,10 +3,20 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
+
+	"github.com/lennylabs/lenny/cmd/lenny-test/changegraph"
+	"github.com/lennylabs/lenny/cmd/lenny-test/skipreason"
+	"github.com/lennylabs/lenny/scripts/specshift/identifier"
+	"github.com/lennylabs/lenny/scripts/specshift/pass"
+	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
 // specMapTestFilesFixture builds a temp repo root with the given test
@@ -60,7 +70,7 @@ func specMapTestFilesFixture(t *testing.T, sections map[string][]string, present
 // is probed, a directory or package reference is not required to be a
 // file, and the pending-path channel suppresses a missing-file report.
 //
-// spec: TESTING.md §5 ("tests/spec-map.json maps every spec section to
+// tests/spec-map.json maps every spec section to
 // the tests ... that encode it"; tests/spec-map-exceptions.yaml records
 // sections "explicitly exempt from the 'every section has at least one
 // test' rule"). The exceptions file waives only the has-a-test
@@ -172,7 +182,7 @@ func specMapTestFuncsFixture(t *testing.T, sections map[string][]string, files m
 // that motivated the check renamed a tier-4 interactive-iteration test
 // and left both section 7.1 and 7.2 pointing at the gone symbol.
 //
-// spec: TESTING.md §5 ("tests/spec-map.json maps every spec section to
+// tests/spec-map.json maps every spec section to
 // the tests ... that encode it"). A reference that names a nonexistent
 // function misdirects a maintainer reading the map exactly as a
 // reference to a nonexistent file does.
@@ -282,6 +292,32 @@ func TestHasNotImplementedSkipAfter(t *testing.T) {
 	}
 }
 
+// TestScaffoldMarkerReaderAcceptsEveryPublishedSkipCategory holds the
+// scaffold-marker reader to the category enumeration in
+// cmd/lenny-test/skipreason, which the tier-0 skip-reason classifier
+// reads as well. A category widened or renamed in one reader alone
+// would let the classifier and this reader disagree about which skip
+// reasons §17.9 allows.
+func TestScaffoldMarkerReaderAcceptsEveryPublishedSkipCategory(t *testing.T) {
+	for _, category := range skipreason.Categories {
+		for _, body := range []string{
+			`t.Skip("` + category + ` the reason continues here")`,
+			`t.Skipf("` + category + ` %v", err)`,
+		} {
+			lines := []string{"func TestX(t *testing.T) {", body, "}"}
+			if !hasNotImplementedSkipAfter(lines, 0) {
+				t.Errorf("the reader rejects the published category %q\nbody: %s", category, body)
+			}
+		}
+	}
+	// A reason opening with no published category is not a scaffold
+	// marker, so the reader does not exempt it from the annotations.
+	lines := []string{"func TestX(t *testing.T) {", `t.Skip("docker is not running")`, "}"}
+	if hasNotImplementedSkipAfter(lines, 0) {
+		t.Errorf("the reader accepts a reason that opens with no published category")
+	}
+}
+
 // TestHasAnnotationBefore pins the §17.9 annotation-scan boundary: the
 // validate-diagnosis subcommand scans the function's own contiguous leading
 // doc-comment block (comment lines plus the blank lines that separate
@@ -350,6 +386,991 @@ func TestHasAnnotationBefore(t *testing.T) {
 		got := hasAnnotationBefore(c.lines, idx, c.marker)
 		if got != c.want {
 			t.Errorf("%s: hasAnnotationBefore(%q) = %v; want %v", c.name, c.marker, got, c.want)
+		}
+	}
+}
+
+// writeChangeGraphSource writes a source file under the root, creating
+// its parent directories. It leaves the file untracked; the caller
+// decides whether git tracks it.
+func writeChangeGraphSource(t *testing.T, root, rel string) {
+	t.Helper()
+	full := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", full, err)
+	}
+	if err := os.WriteFile(full, []byte("package p\n"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", full, err)
+	}
+}
+
+// trackChangeGraphSources adds the given repo-relative paths to the
+// root's git index, which is where the completeness check reads the
+// tracked source domain from.
+func trackChangeGraphSources(t *testing.T, root string, paths ...string) {
+	t.Helper()
+	if len(paths) == 0 {
+		return
+	}
+	cmd := exec.Command("git", append([]string{"add", "--"}, paths...)...)
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add %v: %v: %s", paths, err, out)
+	}
+}
+
+// changeGraphCompletenessFillers is one tracked source path per tree in
+// the check's source domain, with the glob key that covers it. The check
+// requires every tree to contribute at least one tracked source path, so
+// a fixture that means to exercise the coverage predicate rather than
+// the per-tree guard carries these alongside its own sources.
+var (
+	changeGraphCompletenessFillers = []string{
+		"cmd/filler/main.go", "pkg/filler/filler.go",
+		"scripts/filler.sh", "tests/filler/filler.go",
+	}
+	changeGraphCompletenessFillerGlobs = []string{
+		"cmd/filler", "pkg/filler", "scripts/filler.sh", "tests/filler",
+	}
+)
+
+// changeGraphCompletenessRoot builds a bare root that additionally
+// carries a tracked, glob-covered source path in every tree of the
+// check's domain, so the per-tree selection guard is satisfied and the
+// fixture's own sources are what the run turns on.
+func changeGraphCompletenessRoot(t *testing.T, sources, globs, prefixes []string) string {
+	t.Helper()
+	return changeGraphCompletenessBareRoot(t,
+		append(append([]string{}, sources...), changeGraphCompletenessFillers...),
+		append(append([]string{}, globs...), changeGraphCompletenessFillerGlobs...),
+		prefixes)
+}
+
+// changeGraphCompletenessBareRoot builds a temp git repo root holding the
+// given tracked source files (each written under its path and added to
+// the index), every source tree the check requires, a change-graph whose
+// globs block carries the given keys, and a coverage baseline carrying
+// the given prefixes. It returns the root so a caller can re-read the
+// baseline after a run rewrote it. Nothing is added beyond what the
+// caller names, so a tree can be left contributing no tracked path.
+func changeGraphCompletenessBareRoot(t *testing.T, sources, globs, prefixes []string) string {
+	t.Helper()
+	root := t.TempDir()
+	initCmd := exec.Command("git", "init", "-q")
+	initCmd.Dir = root
+	if out, err := initCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	for _, tree := range changegraph.SourceTrees() {
+		if err := os.MkdirAll(filepath.Join(root, tree), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", tree, err)
+		}
+	}
+	for _, p := range sources {
+		writeChangeGraphSource(t, root, p)
+	}
+	trackChangeGraphSources(t, root, sources...)
+	globMap := map[string]any{}
+	for _, g := range globs {
+		globMap[g] = map[string]any{"unit": []string{"pkg/..."}}
+	}
+	raw, err := json.Marshal(map[string]any{"version": 1, "globs": globMap})
+	if err != nil {
+		t.Fatalf("marshal change graph: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "tests", "registers"), 0o755); err != nil {
+		t.Fatalf("mkdir registers: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tests", "change-graph.json"), raw, 0o644); err != nil {
+		t.Fatalf("write change graph: %v", err)
+	}
+	if err := writeChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline), prefixes); err != nil {
+		t.Fatalf("write baseline: %v", err)
+	}
+	return root
+}
+
+// runChangeGraphCompleteness runs the check over a root built by
+// changeGraphCompletenessRoot.
+func runChangeGraphCompleteness(root string) checkResult {
+	return validateChangeGraphCompleteness(
+		filepath.Join(root, "tests", "change-graph.json"),
+		filepath.Join(root, changeGraphCoverageBaseline),
+		root,
+	)
+}
+
+// changeGraphCompletenessFixture builds a root and runs the check on it.
+func changeGraphCompletenessFixture(t *testing.T, sources, globs, prefixes []string) checkResult {
+	t.Helper()
+	return runChangeGraphCompleteness(changeGraphCompletenessRoot(t, sources, globs, prefixes))
+}
+
+// TestValidateChangeGraphCompleteness pins the completeness predicate on
+// tests/change-graph.json: a tracked source path covered by no glob key
+// and no coverage-baseline prefix fails the validate-maps check and is
+// named. It is the reverse of validateChangeGraphFileExistence, which
+// fails a glob key that resolves to nothing; nothing before this check
+// failed a source path the graph does not know about, so a change to
+// such a path selected no tests under `--changed` and passed unnoticed.
+func TestValidateChangeGraphCompleteness(t *testing.T) {
+	// A tracked source path covered by neither a glob key nor a baseline
+	// prefix fails, and the detail names the path.
+	r := changeGraphCompletenessFixture(t,
+		[]string{"pkg/adapter/adapter.go"}, nil, nil)
+	expectFail(t, r, "pkg/adapter/adapter.go")
+
+	// A path covered by a baseline prefix passes.
+	r = changeGraphCompletenessFixture(t,
+		[]string{"pkg/adapter/adapter.go"}, nil, []string{"pkg/adapter/"})
+	expectPass(t, r)
+
+	// A path covered by a change-graph glob key passes, whether the key
+	// names the file's directory, an ancestor of it, the file itself, or
+	// the directory with a trailing separator.
+	for _, key := range []string{"pkg/adapter", "pkg/adapter/", "pkg", "pkg/adapter/adapter.go"} {
+		r = changeGraphCompletenessFixture(t,
+			[]string{"pkg/adapter/adapter.go"}, []string{key}, nil)
+		expectPass(t, r)
+	}
+
+	// A fully mapped tree passes with no baseline at all.
+	r = changeGraphCompletenessFixture(t,
+		[]string{"pkg/adapter/adapter.go", "cmd/lenny-ctl/main.go", "scripts/lint.sh"},
+		[]string{"pkg/adapter", "cmd/lenny-ctl", "scripts/lint.sh"}, nil)
+	expectPass(t, r)
+
+	// A test file, and a file outside the source extensions, are outside
+	// the tracked source domain and need no key.
+	r = changeGraphCompletenessFixture(t,
+		[]string{
+			"pkg/adapter/adapter.go", "pkg/adapter/adapter_test.go",
+			"tests/registers/notes.yaml", "pkg/adapter/data.json",
+		},
+		[]string{"pkg/adapter"}, nil)
+	expectPass(t, r)
+
+	// A tree outside the domain needs no key either.
+	r = changeGraphCompletenessFixture(t,
+		[]string{"pkg/adapter/adapter.go", "sdks/go/client.go", "migrations/0001_init.go"},
+		[]string{"pkg/adapter"}, nil)
+	expectPass(t, r)
+}
+
+// TestValidateChangeGraphCompletenessNewPathNeedsAGlob pins the case
+// that puts the obligation on every later change: a source file created
+// in a tree the change graph does not key, with no baseline prefix
+// covering it, fails. The baseline carries the population that was
+// already unmapped when the check landed and is never grown, so a new
+// path is mapped in tests/change-graph.json or it fails the run.
+func TestValidateChangeGraphCompletenessNewPathNeedsAGlob(t *testing.T) {
+	root := changeGraphCompletenessRoot(t,
+		[]string{"pkg/adapter/adapter.go"}, nil, []string{"pkg/adapter/"})
+	expectPass(t, runChangeGraphCompleteness(root))
+
+	// The later change creates a source tree of its own and tracks it.
+	writeChangeGraphSource(t, root, "scripts/specshift/run.go")
+	trackChangeGraphSources(t, root, "scripts/specshift/run.go")
+	r := runChangeGraphCompleteness(root)
+	expectFail(t, r, "scripts/specshift/run.go")
+
+	// The baseline is not grown to accommodate it: the prefix set on
+	// disk is unchanged by the failing run.
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) != 1 || prefixes[0] != "pkg/adapter/" {
+		t.Fatalf("baseline grew or changed on a failing run: %v", prefixes)
+	}
+}
+
+// TestValidateChangeGraphCompletenessBaselineStopsAtItsDirectory pins
+// the reach of a baseline entry: it covers the files directly inside
+// the directory it names and nothing deeper. Reading an entry as its
+// whole subtree would extend the seeded exemption to directories that
+// did not exist when the baseline was measured, so a source tree
+// created later under a baselined directory would land with no glob key
+// and a change under it would select no tiers under `--changed`.
+func TestValidateChangeGraphCompletenessBaselineStopsAtItsDirectory(t *testing.T) {
+	root := changeGraphCompletenessRoot(t,
+		[]string{"scripts/lint.sh"}, nil, []string{"scripts/"})
+	expectPass(t, runChangeGraphCompleteness(root))
+
+	// A later change creates a source tree beneath the baselined
+	// directory. The entry above it does not cover it.
+	writeChangeGraphSource(t, root, "scripts/specshift/run.go")
+	trackChangeGraphSources(t, root, "scripts/specshift/run.go")
+	expectFail(t, runChangeGraphCompleteness(root), "scripts/specshift/run.go")
+
+	// A glob key of its own is the route to green, and the directly
+	// covered path keeps its baseline entry.
+	raw, err := json.Marshal(map[string]any{"version": 1, "globs": map[string]any{
+		"scripts/specshift/...": map[string]any{"unit": []string{"pkg/..."}},
+		"cmd/filler":            map[string]any{"unit": []string{"pkg/..."}},
+		"pkg/filler":            map[string]any{"unit": []string{"pkg/..."}},
+		"scripts/filler.sh":     map[string]any{"unit": []string{"pkg/..."}},
+		"tests/filler":          map[string]any{"unit": []string{"pkg/..."}},
+	}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tests", "change-graph.json"), raw, 0o644); err != nil {
+		t.Fatalf("write change graph: %v", err)
+	}
+	expectPass(t, runChangeGraphCompleteness(root))
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) != 1 || prefixes[0] != "scripts/" {
+		t.Fatalf("expected the directly covered entry to survive, got %v", prefixes)
+	}
+}
+
+// TestChangeGraphCoverageBaselineDoesNotCoverNewSubtrees pins the same
+// reach against the seeded baseline and change graph in tree: a source
+// file in a directory that does not exist yet is covered by neither, so
+// the change that creates it has to add a glob key in
+// tests/change-graph.json rather than inherit an ancestor's exemption.
+func TestChangeGraphCoverageBaselineDoesNotCoverNewSubtrees(t *testing.T) {
+	root := repoRoot()
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	globs, err := readChangeGraphGlobKeys(filepath.Join(root, "tests", "change-graph.json"))
+	if err != nil {
+		t.Fatalf("read change graph: %v", err)
+	}
+	for _, p := range []string{
+		"scripts/specshift/run.go",
+		"scripts/specshift/internal/parse.go",
+		"tests/registers/newtool/main.go",
+	} {
+		if coveredByChangeGraphGlob(p, globs) {
+			continue
+		}
+		if prefix, ok := matchingCoveragePrefix(p, prefixes); ok {
+			t.Errorf("baseline entry %q covers %s, which no change has created yet", prefix, p)
+		}
+	}
+}
+
+// TestValidateChangeGraphCompletenessRatchetsDownward pins the rewrite
+// rule: a path that gains a glob key loses its baseline prefix in the
+// same run, so coverage once given cannot be handed back by a later
+// change that drops the key.
+func TestValidateChangeGraphCompletenessRatchetsDownward(t *testing.T) {
+	root := changeGraphCompletenessRoot(t,
+		[]string{"pkg/adapter/adapter.go", "pkg/preflight/preflight.go"},
+		[]string{"pkg/adapter"},
+		[]string{"pkg/adapter/", "pkg/preflight/"})
+
+	r := runChangeGraphCompleteness(root)
+	expectPass(t, r)
+	if !strings.Contains(r.detail, "1 baseline prefix(es) retired") {
+		t.Errorf("expected the mapped prefix to be retired: %s", r.detail)
+	}
+
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) != 1 || prefixes[0] != "pkg/preflight/" {
+		t.Fatalf("expected only the still-unmapped prefix to survive, got %v", prefixes)
+	}
+
+	// Re-running over the rewritten baseline is stable and retires nothing.
+	r = runChangeGraphCompleteness(root)
+	expectPass(t, r)
+	if strings.Contains(r.detail, "retired") {
+		t.Errorf("second run retired a prefix again: %s", r.detail)
+	}
+
+	// Dropping the glob key again does not restore the exemption.
+	remainingGlobs := map[string]any{}
+	for _, g := range changeGraphCompletenessFillerGlobs {
+		remainingGlobs[g] = map[string]any{"unit": []string{"pkg/..."}}
+	}
+	raw, err := json.Marshal(map[string]any{"version": 1, "globs": remainingGlobs})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tests", "change-graph.json"), raw, 0o644); err != nil {
+		t.Fatalf("write change graph: %v", err)
+	}
+	expectFail(t, runChangeGraphCompleteness(root), "pkg/adapter/adapter.go")
+}
+
+// TestValidateChangeGraphCompletenessUnreadableInputs pins the
+// fail-closed cases: the check reports a failure rather than certifying
+// the tree when an input it depends on is missing or malformed, and when
+// its walk selects no tracked source path at all.
+func TestValidateChangeGraphCompletenessUnreadableInputs(t *testing.T) {
+	// A missing coverage baseline fails.
+	root := changeGraphCompletenessRoot(t, []string{"pkg/adapter/adapter.go"},
+		[]string{"pkg/adapter"}, nil)
+	if err := os.Remove(filepath.Join(root, changeGraphCoverageBaseline)); err != nil {
+		t.Fatalf("remove baseline: %v", err)
+	}
+	expectFail(t, runChangeGraphCompleteness(root), "coverage baseline")
+
+	// A malformed coverage baseline fails.
+	for _, body := range []string{
+		"kind: change-graph-coverage-baseline\nversion: 1\nprefixes: [\n",
+		"kind: change-graph-coverage-baseline\nversion: 1\n",
+		"kind: change-graph-coverage-baseline\nversion: 2\nprefixes: []\n",
+		"version: 1\nprefixes: []\n",
+		"kind: change-graph-coverage-baseline\nversion: 1\nprefixes:\n  - \"\"\n",
+	} {
+		root = changeGraphCompletenessRoot(t, []string{"pkg/adapter/adapter.go"},
+			[]string{"pkg/adapter"}, nil)
+		if err := os.WriteFile(filepath.Join(root, changeGraphCoverageBaseline), []byte(body), 0o644); err != nil {
+			t.Fatalf("write baseline: %v", err)
+		}
+		expectFail(t, runChangeGraphCompleteness(root), "coverage baseline")
+	}
+
+	// A missing change graph fails.
+	root = changeGraphCompletenessRoot(t, []string{"pkg/adapter/adapter.go"},
+		[]string{"pkg/adapter"}, nil)
+	if err := os.Remove(filepath.Join(root, "tests", "change-graph.json")); err != nil {
+		t.Fatalf("remove change graph: %v", err)
+	}
+	expectFail(t, runChangeGraphCompleteness(root), "change graph")
+
+	// A malformed change graph, and one carrying no globs block, fail
+	// rather than treating every source path as unmapped or as covered.
+	for _, body := range []string{"{\n", "{\"version\": 1}\n"} {
+		root = changeGraphCompletenessRoot(t, []string{"pkg/adapter/adapter.go"},
+			[]string{"pkg/adapter"}, nil)
+		if err := os.WriteFile(filepath.Join(root, "tests", "change-graph.json"), []byte(body), 0o644); err != nil {
+			t.Fatalf("write change graph: %v", err)
+		}
+		expectFail(t, runChangeGraphCompleteness(root), "change graph")
+	}
+
+	// An enumeration that selects no tracked source path fails and names
+	// the check, rather than reporting a fully covered tree.
+	root = changeGraphCompletenessBareRoot(t, nil, []string{"pkg/adapter"}, nil)
+	expectFail(t, runChangeGraphCompleteness(root), "change-graph completeness", "no tracked source path")
+}
+
+// TestChangeGraphCoverageBaselineCarriesLicenseHeader pins the rewritten
+// baseline to the SPDX header every tracked YAML file under tests/ needs.
+// The check rewrites the file in place whenever a prefix retires, so a
+// preamble without the header would turn the license gate red on the
+// next run that retires anything.
+func TestChangeGraphCoverageBaselineCarriesLicenseHeader(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "baseline.yaml")
+	for _, prefixes := range [][]string{nil, {"pkg/adapter/"}} {
+		if err := writeChangeGraphCoverageBaseline(path, prefixes); err != nil {
+			t.Fatalf("write baseline: %v", err)
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read baseline: %v", err)
+		}
+		if !strings.HasPrefix(string(body), "# SPDX-License-Identifier: MIT\n") {
+			t.Fatalf("rewritten baseline lost its SPDX header: %q", string(body))
+		}
+		if _, err := readChangeGraphCoverageBaseline(path); err != nil {
+			t.Fatalf("rewritten baseline no longer parses: %v", err)
+		}
+	}
+}
+
+// TestValidateChangeGraphCompletenessDomainIsGitTracked pins the source
+// domain to what git tracks. A source file that exists on disk but is
+// not in the index (a scratch script, an ignored generated tree) is
+// outside the gate, because the only remedy the gate names is a glob key
+// in tests/change-graph.json and that remedy is wrong for a file git
+// does not track. The same file fails once it is tracked.
+func TestValidateChangeGraphCompletenessDomainIsGitTracked(t *testing.T) {
+	root := changeGraphCompletenessRoot(t,
+		[]string{"pkg/adapter/adapter.go"}, []string{"pkg/adapter"}, nil)
+
+	// An untracked source file, and one an ignore rule covers, leave the
+	// check green.
+	writeChangeGraphSource(t, root, "scripts/scratch.sh")
+	writeChangeGraphSource(t, root, "pkg/preflight/tmp/gen.go")
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("tmp/\n"), 0o644); err != nil {
+		t.Fatalf("write gitignore: %v", err)
+	}
+	expectPass(t, runChangeGraphCompleteness(root))
+
+	// Tracking one of them brings it into the domain, and it fails until
+	// the change graph gains a key for it.
+	trackChangeGraphSources(t, root, "scripts/scratch.sh")
+	expectFail(t, runChangeGraphCompleteness(root), "scripts/scratch.sh")
+}
+
+// TestValidateChangeGraphCompletenessMissingSourceTreeFails pins the
+// per-tree inspection rule: a source tree that is absent or unreadable
+// fails the check and names the tree. A run that inspected less than the
+// tree must not reach the downward rewrite, which would otherwise retire
+// every baseline prefix under the tree it never looked at, irreversibly.
+func TestValidateChangeGraphCompletenessMissingSourceTreeFails(t *testing.T) {
+	root := changeGraphCompletenessRoot(t,
+		[]string{"pkg/adapter/adapter.go", "cmd/lenny-ctl/main.go"},
+		nil,
+		[]string{"pkg/adapter/", "cmd/lenny-ctl/"})
+
+	if err := os.RemoveAll(filepath.Join(root, "cmd")); err != nil {
+		t.Fatalf("remove tree: %v", err)
+	}
+	expectFail(t, runChangeGraphCompleteness(root), "cmd/", "absent or unreadable")
+
+	// The baseline still carries both prefixes: the failing run wrote
+	// nothing, so the prefixes under the missing tree survive.
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) != 2 {
+		t.Fatalf("a run over a partial tree rewrote the baseline: %v", prefixes)
+	}
+}
+
+// TestValidateChangeGraphCompletenessAcceptsRecursiveGlobKey pins the
+// coverage predicate to the one key contract the tree states elsewhere:
+// validateChangeGraphFileExistence probes a key with its trailing `/...`
+// or `/` stripped, and tests/change-graph-pending.txt tells authors to
+// write the key in either spelling. A key ending in `/...` therefore
+// covers the directory it names, and the completeness check fails a
+// tracked source path no key covers rather than failing a key spelling.
+func TestValidateChangeGraphCompletenessAcceptsRecursiveGlobKey(t *testing.T) {
+	// A recursive key covers the directory it names and the paths beneath
+	// it, so the run passes with no baseline prefix.
+	r := changeGraphCompletenessFixture(t,
+		[]string{"pkg/adapter/adapter.go", "pkg/adapter/inner/inner.go"},
+		[]string{"pkg/adapter/..."}, nil)
+	expectPass(t, r)
+
+	// A recursive key elsewhere in the graph does not disturb a run whose
+	// own paths are covered by a plain key.
+	r = changeGraphCompletenessFixture(t,
+		[]string{"pkg/adapter/adapter.go"},
+		[]string{"pkg/adapter", "cmd/lenny-ctl/..."}, nil)
+	expectPass(t, r)
+
+	// The key form still covers only what it names: a sibling directory
+	// outside it is uncovered and fails.
+	r = changeGraphCompletenessFixture(t,
+		[]string{"pkg/adapter/adapter.go", "pkg/preflight/preflight.go"},
+		[]string{"pkg/adapter/..."}, nil)
+	expectFail(t, r, "pkg/preflight/preflight.go")
+}
+
+// TestValidateChangeGraphCompletenessUntrackedSourceTreeFails pins the
+// per-tree selection guard against the variant the directory probe
+// misses. The source domain comes from the git index, so a tree that
+// exists on disk but has nothing tracked under it (an export, a
+// partially added clone, a wholly ignored tree) passes an existence
+// probe while contributing nothing. Without the guard the run reaches
+// the downward rewrite and drops every baseline prefix beneath that
+// tree, irreversibly, while reporting full coverage.
+func TestValidateChangeGraphCompletenessUntrackedSourceTreeFails(t *testing.T) {
+	root := changeGraphCompletenessBareRoot(t,
+		[]string{"cmd/lenny-ctl/main.go", "pkg/adapter/adapter.go", "scripts/lint.sh"},
+		nil,
+		[]string{"cmd/lenny-ctl/", "pkg/adapter/", "scripts/", "tests/harness/"})
+
+	// tests/ exists and carries files, but none of them is a tracked
+	// source path.
+	writeChangeGraphSource(t, root, "tests/harness/harness.go")
+
+	expectFail(t, runChangeGraphCompleteness(root), "tests/", "no tracked source path")
+
+	// The failing run wrote nothing, so the prefixes under the tree it
+	// never inspected survive.
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) != 4 {
+		t.Fatalf("a run over a tree that contributed nothing rewrote the baseline: %v", prefixes)
+	}
+
+	// Tracking a source path under the tree brings it into the domain and
+	// the run proceeds.
+	trackChangeGraphSources(t, root, "tests/harness/harness.go")
+	expectPass(t, runChangeGraphCompleteness(root))
+}
+
+// renameChangeGraphSource moves a tracked source path within the root
+// and stages the move, which is what an identifier pass does to a file
+// it renames.
+func renameChangeGraphSource(t *testing.T, root, from, to string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(root, to)), 0o755); err != nil {
+		t.Fatalf("mkdir for %s: %v", to, err)
+	}
+	cmd := exec.Command("git", "mv", from, to)
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git mv %s %s: %v: %s", from, to, err, out)
+	}
+}
+
+// TestValidateChangeGraphCompletenessSurvivesRename pins the coverage
+// baseline to directory prefixes rather than file paths. A pass that
+// renames a source file inside a baselined directory leaves the check
+// green: the file has no glob key to re-key (that is why it is in the
+// baseline at all), and the baseline is rewritten downward only, so a
+// file-keyed entry would leave the renamed path covered by nothing with
+// no route back to green.
+func TestValidateChangeGraphCompletenessSurvivesRename(t *testing.T) {
+	root := changeGraphCompletenessRoot(t,
+		[]string{"pkg/adapter/lifecyclechannel.go"}, nil, []string{"pkg/adapter/"})
+	expectPass(t, runChangeGraphCompleteness(root))
+
+	renameChangeGraphSource(t, root,
+		"pkg/adapter/lifecyclechannel.go", "pkg/adapter/lifecycle_channel.go")
+	expectPass(t, runChangeGraphCompleteness(root))
+
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) != 1 || prefixes[0] != "pkg/adapter/" {
+		t.Fatalf("the rename disturbed the baseline: %v", prefixes)
+	}
+
+	// A file-keyed entry does not survive the same move, which is why the
+	// baseline is seeded by directory.
+	root = changeGraphCompletenessRoot(t,
+		[]string{"pkg/adapter/lifecyclechannel.go"}, nil,
+		[]string{"pkg/adapter/lifecyclechannel.go"})
+	expectPass(t, runChangeGraphCompleteness(root))
+	renameChangeGraphSource(t, root,
+		"pkg/adapter/lifecyclechannel.go", "pkg/adapter/lifecycle_channel.go")
+	expectFail(t, runChangeGraphCompleteness(root), "pkg/adapter/lifecycle_channel.go")
+}
+
+// TestValidateChangeGraphCompletenessKeepsNestedPrefixes pins the
+// attribution rule when a baselined directory sits inside another one:
+// each path counts against the longest prefix that covers it, so the
+// nested prefix keeps matching and survives the run. Attributing the
+// nested path to its ancestor would retire the nested prefix on the
+// first run, and the rewrite is one-way, so the surviving exemption
+// would silently widen to the whole ancestor directory.
+func TestValidateChangeGraphCompletenessKeepsNestedPrefixes(t *testing.T) {
+	root := changeGraphCompletenessRoot(t,
+		[]string{"cmd/lenny-ctl/main.go", "cmd/lenny-ctl/runtimescaffold/probe.go"},
+		nil,
+		[]string{"cmd/lenny-ctl/", "cmd/lenny-ctl/runtimescaffold/"})
+
+	r := runChangeGraphCompleteness(root)
+	expectPass(t, r)
+	if strings.Contains(r.detail, "retired") {
+		t.Errorf("a run over an unchanged tree retired a prefix: %s", r.detail)
+	}
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) != 2 {
+		t.Fatalf("expected both prefixes to survive, got %v", prefixes)
+	}
+}
+
+// TestChangeGraphCoverageBaselineEntriesAreDirectories pins the seeded
+// baseline in tree to directory prefixes. A file-keyed entry covers one
+// path and nothing else, so any rename of that file fails the check with
+// no route to green, because the entry names no glob key to rewrite and
+// the baseline is never grown.
+func TestChangeGraphCoverageBaselineEntriesAreDirectories(t *testing.T) {
+	prefixes, err := readChangeGraphCoverageBaseline(
+		filepath.Join(repoRoot(), changeGraphCoverageBaseline),
+	)
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) == 0 {
+		t.Fatal("the seeded baseline carries no prefixes")
+	}
+	for _, p := range prefixes {
+		if !strings.HasSuffix(p, "/") {
+			t.Errorf("baseline entry %q is not a directory prefix", p)
+		}
+	}
+}
+
+// identifierPassNamingTable is the naming table the specshift identifier
+// pass reads its spellings out of. The fixture carries the one row this
+// case needs, which retires the file-name stem of the source it moves.
+const identifierPassNamingTable = `# 28. Communication Channels
+
+## 28.3 Registers
+
+| Channel | Carrier | Retired spelling | Canonical spelling |
+|:--|:--|:--|:--|
+| ` + "`CH-RUNTIMEOPS`" + ` | path | ` + "`lifecyclechannel`" + ` | ` + "`runtimeops`" + ` |
+`
+
+// identifierPassSenseRegister resolves the one file-name site the
+// fixture carries, which is what the pass moves.
+const identifierPassSenseRegister = `kind: identifier-senses
+version: 1
+entries:
+  - file: pkg/adapter/lifecyclechannel.go
+    path: true
+    channel: CH-RUNTIMEOPS
+`
+
+// TestValidateChangeGraphCompletenessSurvivesAnIdentifierPassRename pins
+// the interaction between the completeness check and the pass that moves
+// a source file. The pass rewrites the glob key of every file it moves
+// in the same run, so the renamed path is covered by the moved key and
+// the coverage baseline is not grown to absorb it. Without the rekey the
+// renamed path arrives as a source no glob covers, and the only way back
+// to green would be a new baseline prefix, which the downward-only
+// rewrite refuses.
+func TestValidateChangeGraphCompletenessSurvivesAnIdentifierPassRename(t *testing.T) {
+	const (
+		from = "pkg/adapter/lifecyclechannel.go"
+		to   = "pkg/adapter/runtimeops.go"
+	)
+	root := changeGraphCompletenessRoot(t, []string{from}, []string{from}, nil)
+	writeIdentifierPassInputs(t, root)
+	expectPass(t, runChangeGraphCompleteness(root))
+
+	runIdentifierPass(t, root)
+	trackIdentifierPassRename(t, root)
+	expectPass(t, runChangeGraphCompleteness(root))
+
+	globs, err := readChangeGraphGlobKeys(filepath.Join(root, "tests", "change-graph.json"))
+	if err != nil {
+		t.Fatalf("read change graph: %v", err)
+	}
+	if !globs[to] || globs[from] {
+		t.Fatalf("the change-graph glob key did not move with the file: %v", globs)
+	}
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) != 0 {
+		t.Fatalf("the coverage baseline grew to cover the renamed path: %v", prefixes)
+	}
+}
+
+// writeIdentifierPassInputs adds the tree content the identifier pass
+// reads: the naming table it takes its spellings from and the two
+// citation baselines its key channel rekeys. Everything is tracked,
+// because the pass reads the tree from the git index.
+func writeIdentifierPassInputs(t *testing.T, root string) {
+	t.Helper()
+	files := map[string]string{
+		"spec/28_communication-channels.md":             identifierPassNamingTable,
+		"tests/registers/line-citations.yaml":           "kind: line-citation-count-baseline\nversion: 1\nfiles: []\n",
+		"tests/registers/line-citation-resolution.yaml": "kind: line-citation-resolution-baseline\nversion: 1\nfiles: []\n",
+	}
+	var paths []string
+	for rel, content := range files {
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", full, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+		paths = append(paths, rel)
+	}
+	sort.Strings(paths)
+	trackChangeGraphSources(t, root, append(paths,
+		"tests/change-graph.json", changeGraphCoverageBaseline)...)
+}
+
+// runIdentifierPass applies the specshift identifier pass over the
+// fixture root, driven by a register resolving its one file-name site.
+func runIdentifierPass(t *testing.T, root string) {
+	t.Helper()
+	register := filepath.Join(t.TempDir(), "identifier-senses.yaml")
+	if err := os.WriteFile(register, []byte(identifierPassSenseRegister), 0o644); err != nil {
+		t.Fatalf("write the sense register: %v", err)
+	}
+	r := identifier.New(scope.GitLister(root), scope.DirReader(root))
+	if err := r.LoadRegister(register); err != nil {
+		t.Fatalf("load the sense register: %v", err)
+	}
+	if _, err := pass.NewHarness(root).Apply(context.Background(), r); err != nil {
+		t.Fatalf("apply the identifier pass: %v", err)
+	}
+}
+
+// trackIdentifierPassRename records the move in the git index, which is
+// where the completeness check reads the tracked source domain from.
+func trackIdentifierPassRename(t *testing.T, root string) {
+	t.Helper()
+	cmd := exec.Command("git", "add", "-A")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add -A: %v: %s", err, out)
+	}
+}
+
+// Both tier-0 predicates over component-and-above test files range over
+// the tracked tree rather than over a fixture, so a test file added
+// without a spec-map entry or without its annotations turns the static
+// tier red for every later change. This case drives both predicates over
+// that same tree in process, so the omission surfaces from a package-
+// scoped unit run rather than only from a composed tier-0 run.
+//
+// ("tests/spec-map.json maps every spec section to
+// the tests ... that encode it"), which requires the
+// spec and diagnosis annotations on every component-and-above test.
+func TestTrackedComponentAndAboveTestFilesAreMappedAndAnnotated(t *testing.T) {
+	root := repoRoot()
+	expectPass(t, validateTestFilesMapped(filepath.Join(root, "tests", "spec-map.json"), root))
+
+	var missing []string
+	for _, dir := range componentAndAboveTierDirs() {
+		base := filepath.Join(root, dir)
+		if _, err := os.Stat(base); err != nil {
+			continue
+		}
+		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, "_test.go") {
+				return err
+			}
+			_, miss := scanDiagnosis(path)
+			missing = append(missing, miss...)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", dir, err)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("%d test function(s) carry no spec or diagnosis annotation: %s",
+			len(missing), strings.Join(missing, "; "))
+	}
+}
+
+// changeGraphFileExistenceFixture builds a temp repo root holding a
+// change graph whose globs block carries the given key → tier → target
+// mapping, creates every path named in present (a path ending in `/`
+// becomes a directory, any other becomes a file), writes the given
+// lines as tests/change-graph-pending.txt, and runs the existence
+// check over the root.
+func changeGraphFileExistenceFixture(t *testing.T, globs map[string]map[string][]string, present, pending []string) checkResult {
+	t.Helper()
+	root := t.TempDir()
+	for _, p := range present {
+		full := filepath.Join(root, p)
+		if strings.HasSuffix(p, "/") {
+			if err := os.MkdirAll(full, 0o755); err != nil {
+				t.Fatalf("mkdir %s: %v", p, err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir for %s: %v", p, err)
+		}
+		if err := os.WriteFile(full, []byte("package p\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(root, "tests"), 0o755); err != nil {
+		t.Fatalf("mkdir tests: %v", err)
+	}
+	if len(pending) > 0 {
+		body := strings.Join(pending, "\n") + "\n"
+		if err := os.WriteFile(filepath.Join(root, "tests", "change-graph-pending.txt"), []byte(body), 0o644); err != nil {
+			t.Fatalf("write pending: %v", err)
+		}
+	}
+	raw, err := json.Marshal(map[string]any{"version": 1, "globs": globs})
+	if err != nil {
+		t.Fatalf("marshal change graph: %v", err)
+	}
+	graphPath := filepath.Join(root, "tests", "change-graph.json")
+	if err := os.WriteFile(graphPath, raw, 0o644); err != nil {
+		t.Fatalf("write change graph: %v", err)
+	}
+	return validateChangeGraphFileExistence(graphPath, root)
+}
+
+// TestValidateChangeGraphFileExistenceProbesPerTierTargets pins the
+// existence check to both sides of a change-graph entry. A per-tier
+// target that resolves to nothing makes `--changed` run that tier over
+// a package pattern matching nothing, so the graph claims coverage the
+// run never executes. The check probes the targets as well as the keys,
+// and the failure detail names the key, the tier, and the target so the
+// dangling edge is identifiable without re-reading the graph.
+//
+// tests/change-graph.json maps source packages,
+// schemas, migrations, and chart templates to the tests that exercise
+// them)
+func TestValidateChangeGraphFileExistenceProbesPerTierTargets(t *testing.T) {
+	// Every key and every target resolves.
+	r := changeGraphFileExistenceFixture(t,
+		map[string]map[string][]string{
+			"scripts/specshift": {
+				"static": {"tests/tier0_static/..."},
+				"unit":   {"scripts/specshift/..."},
+			},
+		},
+		[]string{"scripts/specshift/", "tests/tier0_static/"}, nil)
+	expectPass(t, r)
+	if !strings.Contains(r.detail, "2 target(s)") {
+		t.Errorf("the detail does not report the probed targets: %s", r.detail)
+	}
+
+	// A target naming a package that exists nowhere in the tree fails,
+	// even though its key resolves.
+	r = changeGraphFileExistenceFixture(t,
+		map[string]map[string][]string{
+			"scripts/specshift": {
+				"unit":     {"scripts/specshift/..."},
+				"contract": {"tests/tier3_contract/residual/..."},
+			},
+		},
+		[]string{"scripts/specshift/"}, nil)
+	expectFail(t, r, "scripts/specshift", "contract", "tests/tier3_contract/residual/...")
+
+	// A dangling target is exempt while it is listed as pending, spelled
+	// as the graph spells it.
+	r = changeGraphFileExistenceFixture(t,
+		map[string]map[string][]string{
+			"scripts/specshift": {
+				"contract": {"tests/tier3_contract/residual/..."},
+			},
+		},
+		[]string{"scripts/specshift/"},
+		[]string{"tests/tier3_contract/residual/..."})
+	expectPass(t, r)
+
+	// The key side still fails on its own.
+	r = changeGraphFileExistenceFixture(t,
+		map[string]map[string][]string{
+			"pkg/gone": {"unit": {"pkg/adapter/..."}},
+		},
+		[]string{"pkg/adapter/"}, nil)
+	expectFail(t, r, "pkg/gone")
+}
+
+// TestChangeGraphSpecshiftKeysSelectOnlyLandedTiers pins the tiers the
+// specification migration tooling selects. The tooling's gates are a
+// tier-0 static battery and tier-1 unit tests, and the shared
+// reserved-phrase predicate under scripts/specshift/scope also carries a
+// tier-11 case that ties it to the communication channel section's
+// domain, so scripts/specshift adds the docs tier. A change under
+// tests/registers/ selects the static and unit tiers alone. Neither key
+// selects a tier whose suite the tooling does not carry.
+//
+// spec: 28.1 (channel naming law); tests/change-graph.json
+// (tests/change-graph.json maps source packages, schemas, migrations,
+// and chart templates to the tests that exercise them)
+func TestChangeGraphSpecshiftKeysSelectOnlyLandedTiers(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRoot(), "tests", "change-graph.json"))
+	if err != nil {
+		t.Fatalf("read change graph: %v", err)
+	}
+	var doc struct {
+		Globs map[string]map[string][]string `json:"globs"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse change graph: %v", err)
+	}
+	want := map[string]string{
+		"scripts/specshift": "docs,static,unit",
+		"tests/registers":   "static,unit",
+	}
+	for _, key := range []string{"scripts/specshift", "tests/registers"} {
+		tiers, ok := doc.Globs[key]
+		if !ok {
+			t.Fatalf("the change graph has no entry for %s", key)
+		}
+		names := make([]string, 0, len(tiers))
+		for tier := range tiers {
+			names = append(names, tier)
+		}
+		sort.Strings(names)
+		if got := strings.Join(names, ","); got != want[key] {
+			t.Errorf("%s selects %v; the tiers it carries are %s", key, names, want[key])
+		}
+	}
+}
+
+// TestChangeGraphChannelGuardDocumentKeysSelectOnlyTheDocsTier pins the
+// tiers the documents the tier-11 guards over the communication channel
+// section read select. The guards hold the record of who creates that
+// section to one proposal and to the durable record of what an apply run
+// left open, and a guard fires under `--changed` only when the file it
+// reads resolves to a key naming the docs tier. Neither document carries
+// code, so the docs tier is the whole set either one selects.
+//
+// spec: 28.1 (channel naming law); tests/change-graph.json
+// (tests/change-graph.json maps source packages, schemas, migrations,
+// and chart templates to the tests that exercise them)
+func TestChangeGraphChannelGuardDocumentKeysSelectOnlyTheDocsTier(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRoot(), "tests", "change-graph.json"))
+	if err != nil {
+		t.Fatalf("read change graph: %v", err)
+	}
+	var doc struct {
+		Globs map[string]map[string][]string `json:"globs"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse change graph: %v", err)
+	}
+	for _, key := range []string{"proposals/", "PROPOSAL-QUEUE.md"} {
+		tiers, ok := doc.Globs[key]
+		if !ok {
+			t.Fatalf("the change graph has no entry for %s, so a guard reading it fires under no changed run", key)
+		}
+		names := make([]string, 0, len(tiers))
+		for tier := range tiers {
+			names = append(names, tier)
+		}
+		sort.Strings(names)
+		if got := strings.Join(names, ","); got != "docs" {
+			t.Errorf("%s selects %v; the tier it carries is docs", key, names)
+		}
+	}
+}
+
+// TestRuntimeSupervisorChangeGraphKeysSelectTheBinaryCheckAndHarness pins
+// the change-graph keys of the runtime supervisor's C sources and image:
+// the path validator accepts both, and the committed graph routes an edit
+// under supervisor/ to the tier-0 binary check and the tier-1 C harness
+// driver, and an edit to Dockerfile.supervisor to the binary check. A
+// validator that rejected the keys would force their removal, and a C
+// change would then select no test under --changed.
+//
+// spec: 4.7.11 (Adapter-Agent Security Boundary), 4.7.10 (Deployment Model)
+func TestRuntimeSupervisorChangeGraphKeysSelectTheBinaryCheckAndHarness(t *testing.T) {
+	for _, key := range []string{"supervisor/", "Dockerfile.supervisor"} {
+		if res := validateChangeGraphPathsOverKey(t, key); !res.ok {
+			t.Errorf("a change graph keyed on %s fails the path validator: %s", key, res.detail)
+		}
+	}
+	globs := mustReadChangeGraphGlobs(t)
+	want := map[string]map[string]string{
+		"supervisor/": {
+			"static": "tests/tier0_static/supervisor_binary_test.go",
+			"unit":   "tests/tier1_unit/supervisor/...",
+		},
+		"Dockerfile.supervisor": {
+			"static": "tests/tier0_static/supervisor_binary_test.go",
+		},
+	}
+	for key, tiers := range want {
+		for tier, target := range tiers {
+			found := false
+			for _, got := range globs[key][tier] {
+				if got == target {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("the change graph's %s key does not select %s at tier %s: %v", key, target, tier, globs[key])
+			}
 		}
 	}
 }

@@ -59,7 +59,7 @@ type RestartOptions struct {
 // fresh ReplicaSet without changing its desired spec. The other components
 // (k3s, the runtime pods) are cycled through `lenny down`/`lenny up`.
 //
-// spec: §24.19 line 264.
+// spec: §24.19.
 func RunRestart(ctx context.Context, opts RestartOptions) error {
 	out := orDiscard(opts.Out)
 	root, err := resolveRoot(opts.Root)
@@ -101,7 +101,7 @@ func RunRestart(ctx context.Context, opts RestartOptions) error {
 // `kubectl rollout restart` makes, so the Deployment rolls a new ReplicaSet
 // without altering its desired spec. The patch is idempotent in effect: each
 // call sets a fresh timestamp, so a re-run rolls again rather than failing.
-// spec: §24.19 line 264 (the restart is a Deployment rollout-restart).
+// spec: §24.19.
 func rolloutRestartDeployment(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
 	patch := fmt.Sprintf(
 		`{"spec":{"template":{"metadata":{"annotations":{%q:%q}}}}}`,

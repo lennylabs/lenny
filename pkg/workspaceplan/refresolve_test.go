@@ -222,7 +222,7 @@ func TestPinCommitSHAsNilResolverNonSHARefErrors(t *testing.T) {
 	}
 }
 
-// spec: §14 line 102 — the ls-remote that pins a private repo's ref uses
+// spec: §14 — the ls-remote that pins a private repo's ref uses
 // the same credential the clone will. PinCommitSHAs hands the credential
 // materialized by the VCSCredentialFunc to the resolver.
 func TestPinCommitSHAsThreadsCredentialToResolver(t *testing.T) {
@@ -247,7 +247,7 @@ func TestPinCommitSHAsThreadsCredentialToResolver(t *testing.T) {
 	}
 }
 
-// spec: §14 line 102 — a credential-materialization failure must fail
+// spec: §14 — a credential-materialization failure must fail
 // session creation as a non-retryable GIT_CLONE_REF_UNRESOLVABLE
 // (auth_failed), not surface later at clone time.
 func TestPinCommitSHAsCredentialErrorIsAuthFailed(t *testing.T) {

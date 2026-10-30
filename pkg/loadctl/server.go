@@ -65,7 +65,7 @@ type Config struct {
 }
 
 // Server is the HTTP control plane. It exposes the API described in
-// TESTING.md §12.12.
+// this package.
 type Server struct {
 	config    Config
 	store     Store
@@ -1004,9 +1004,9 @@ func (s *Server) handleBaselines(w http.ResponseWriter, r *http.Request) {
 func defaultScenarios() []Scenario {
 	return []Scenario{
 		{Name: "default", Description: "Default tier-12 catalogue."},
-		{Name: "session_throughput", Description: "TESTING.md §12.7.b session_throughput."},
-		{Name: "streaming_reconnect_under_load", Description: "TESTING.md §12.7.b streaming_reconnect."},
-		{Name: "delegation_fanout", Description: "TESTING.md §12.7.b delegation_fanout."},
+		{Name: "session_throughput", Description: "§12.7.b session_throughput."},
+		{Name: "streaming_reconnect_under_load", Description: "§12.7.b streaming_reconnect."},
+		{Name: "delegation_fanout", Description: "§12.7.b delegation_fanout."},
 	}
 }
 
@@ -1046,7 +1046,7 @@ const indexHTML = `<!doctype html>
 </head>
 <body>
 <h1>Lenny load-test control plane</h1>
-<p>The tier-12 control plane API surface. See <code>TESTING.md §12.12</code> for the documented endpoints.</p>
+<p>The tier-12 control plane API surface. See the endpoints listed below.</p>
 <ul>
   <li><a href="/api/v1/runs">/api/v1/runs</a> — list runs</li>
   <li><a href="/api/v1/runners">/api/v1/runners</a> — registered runners</li>

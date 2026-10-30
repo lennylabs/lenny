@@ -65,11 +65,11 @@ func gatherVersionDriftGauge(t *testing.T, reg *prometheus.Registry) float64 {
 	return 0
 }
 
-// spec: §25.8 Version Aggregation (line 3374) — "When any component's
+// spec: §25.8 Version Aggregation — "When any component's
 // current version does not match the compiled-in required version, the
-// response includes \"versionDrift\": true"; §25.8 Metrics (line 3618)
+// response includes \"versionDrift\": true"; §25.8 Metrics
 // — "lenny_platform_version_drift | Gauge | | 1 if any component
-// version drift, 0 otherwise"; §25.8 Alerting Rules (line 3627) —
+// version drift, 0 otherwise"; §25.8 Alerting Rules —
 // "PlatformVersionDrift | lenny_platform_version_drift == 1 for > 5m |
 // Warning".
 //

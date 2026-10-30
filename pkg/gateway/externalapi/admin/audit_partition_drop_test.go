@@ -38,7 +38,7 @@ func newForceDropRouter(d admin.AuditPartitionDropper) *admin.Router {
 	}).WithAuditLog(&fakeTranslationLog{}).WithAuditPruner(d)
 }
 
-// spec: §16.4 line 378 / §16.7 line 687 — a force-drop with the
+// spec: §16.4 / §16.7 — a force-drop with the
 // data-loss acknowledgement deletes the partition and returns the
 // §16.7 payload, passing the requester subject through to the pruner.
 func TestForceDropAuditPartition_acknowledged(t *testing.T) {
@@ -72,7 +72,7 @@ func TestForceDropAuditPartition_acknowledged(t *testing.T) {
 	}
 }
 
-// spec: §16.4 line 378 — the force-drop is rejected without an explicit
+// spec: §16.4 — the force-drop is rejected without an explicit
 // data-loss acknowledgement, so a SIEM-undelivered row is never dropped
 // by accident.
 func TestForceDropAuditPartition_requiresAcknowledgement(t *testing.T) {
@@ -91,7 +91,7 @@ func TestForceDropAuditPartition_requiresAcknowledgement(t *testing.T) {
 	}
 }
 
-// spec: §25.9 line 3664 — the destructive drop requires the ?force=true
+// spec: §25.9 — the destructive drop requires the ?force=true
 // query parameter; without it the request is rejected before the pruner
 // is touched.
 func TestForceDropAuditPartition_requiresForceQueryParam(t *testing.T) {
@@ -110,7 +110,7 @@ func TestForceDropAuditPartition_requiresForceQueryParam(t *testing.T) {
 	}
 }
 
-// spec: §25.9 line 3664 — the body partition is an anti-footgun
+// spec: §25.9 — the body partition is an anti-footgun
 // cross-check; a body partition that does not match the path is rejected
 // so a copy-paste error cannot drop the wrong partition.
 func TestForceDropAuditPartition_partitionMismatch(t *testing.T) {
@@ -129,7 +129,7 @@ func TestForceDropAuditPartition_partitionMismatch(t *testing.T) {
 	}
 }
 
-// spec: §25.9 line 3664 — a token carrying a scope claim that lacks
+// spec: §25.9 — a token carrying a scope claim that lacks
 // audit:partition:drop is rejected with 403 before the pruner runs.
 func TestForceDropAuditPartition_forbiddenWithoutScope(t *testing.T) {
 	d := &fakeDropper{}

@@ -75,6 +75,7 @@ func leaseTestServer(t *testing.T, leases leasestore.LeaseStore, replicaID strin
 	store := memstore.New()
 	registry := podsession.NewRegistry()
 	srv := New(store, Options{
+		DevTenantHeader:        true,
 		PodRegistry:            registry,
 		CoordinationLeaseStore: leases,
 		ReplicaID:              replicaID,

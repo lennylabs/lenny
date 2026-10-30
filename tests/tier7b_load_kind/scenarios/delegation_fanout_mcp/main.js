@@ -11,7 +11,7 @@
 // surface — under a rate-bounded executor. The companion REST scenario
 // (delegation_fanout) drives POST /v1/sessions/start directly; this one
 // drives JSON-RPC POST /mcp tools/call so the MCP delegation hot path
-// is exercised at the §9.5 phase gate.
+// is exercised at the §9 phase gate.
 //
 // Each iteration creates a parent session, then fans out FANOUT child
 // `lenny/delegate_task` calls. The per-call duration is the MCP

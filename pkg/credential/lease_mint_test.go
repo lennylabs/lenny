@@ -71,7 +71,7 @@ func TestMintLeaseProxyLease(t *testing.T) {
 	if err := lease.Validate(); err != nil {
 		t.Errorf("minted lease fails Validate: %v", err)
 	}
-	// spec: §4.9 line 1145 — expiresAt = issuedAt + min(leaseTTLSeconds, providerMaxTTL).
+	// spec: §4.9 — expiresAt = issuedAt + min(leaseTTLSeconds, providerMaxTTL).
 	if !lease.IssuedAt.Equal(now) {
 		t.Errorf("IssuedAt = %v, want %v", lease.IssuedAt, now)
 	}
@@ -204,7 +204,7 @@ func TestMintLeaseHonorsRenewBeforeOverride(t *testing.T) {
 }
 
 func TestMintLeaseDirectModeRequiresMaterializedConfig(t *testing.T) {
-	// spec: §4.9 line 1298 — a direct-mode mint with a missing required
+	// spec: §4.9 — a direct-mode mint with a missing required
 	// materializedConfig field fails with a *MaterializationError, not a
 	// structural *LeaseError.
 	_, err := MintLease(MintRequest{
@@ -226,7 +226,7 @@ func TestMintLeaseDirectModeRequiresMaterializedConfig(t *testing.T) {
 }
 
 func TestMintLeaseClampsExpiryToVaultTokenExpiry(t *testing.T) {
-	// spec: §4.9 line 1154 — when materializing a vault_transit lease the
+	// spec: §4.9 — when materializing a vault_transit lease the
 	// Token Service sets expiresAt = min(issuedAt + leaseTTLSeconds,
 	// vaultTokenExpiryTime). A Vault token expiring before the TTL window
 	// clamps the lease and renewBefore is recomputed from the clamp.

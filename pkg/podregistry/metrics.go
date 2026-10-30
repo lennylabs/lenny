@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 )
 
-// Operation label values for the §12.6 line 478 registry metrics. The set
+// Operation label values for the §12.6 registry metrics. The set
 // is closed; one value per PodRegistry method.
 const (
 	opGet         = "get"
@@ -22,7 +22,7 @@ const (
 	opWatch       = "watch"
 )
 
-// Implementation label values for the §12.6 line 484
+// Implementation label values for the §12.6
 // lenny_pod_registry_watch_lag_seconds gauge. The label distinguishes
 // the v1 CRD-backed registry from a Tier-4 Postgres-backed one so an
 // operator can compare watch propagation latency across backends.
@@ -31,10 +31,10 @@ const (
 	implPostgres = "postgres"
 )
 
-// Metrics emits the §12.6 line 478 PodRegistry observability contract:
+// Metrics emits the §12.6 PodRegistry observability contract:
 // lenny_pod_registry_operation_duration_seconds{operation, pool}
 // (histogram) and lenny_pod_registry_error_total{operation, pool}
-// (counter), plus the §12.6 line 484 watch-lag gauge
+// (counter), plus the §12.6 watch-lag gauge
 // lenny_pod_registry_watch_lag_seconds{pool, implementation}. Every
 // PodRegistry implementation MUST emit the first two; an implementation
 // whose WatchPods supports change notification MUST also emit the watch
@@ -45,26 +45,26 @@ type Metrics struct {
 	watchLag *prometheus.GaugeVec
 }
 
-// NewMetrics builds and registers the §12.6 line 478 / line 484
+// NewMetrics builds and registers the §12.6
 // collectors against reg. A nil reg uses the default registerer.
 func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 	dur, err := metrics.NewHistogram(prometheus.HistogramOpts{
 		Name: "lenny_pod_registry_operation_duration_seconds",
-		Help: "PodRegistry storage-operation duration by operation and pool (§12.6 line 478).",
+		Help: "PodRegistry storage-operation duration by operation and pool (§12.6).",
 	}, []string{"operation", "pool"})
 	if err != nil {
 		return nil, err
 	}
 	errs, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_pod_registry_error_total",
-		Help: "PodRegistry storage-operation errors by operation and pool (§12.6 line 478).",
+		Help: "PodRegistry storage-operation errors by operation and pool (§12.6).",
 	}, []string{"operation", "pool"})
 	if err != nil {
 		return nil, err
 	}
 	lag, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_pod_registry_watch_lag_seconds",
-		Help: "PodRegistry watch event delivery lag by pool and implementation (§12.6 line 484).",
+		Help: "PodRegistry watch event delivery lag by pool and implementation (§12.6).",
 	}, []string{"pool", "implementation"})
 	if err != nil {
 		return nil, err
@@ -83,7 +83,7 @@ func (m *Metrics) incError(operation, pool string) {
 	m.errors.WithLabelValues(operation, pool).Inc()
 }
 
-// observeWatchLag records the §12.6 line 484 delay between a row's
+// observeWatchLag records the §12.6 delay between a row's
 // updated_at and the moment its event reached the watch channel, for the
 // given pool and implementation. A negative sample (clock skew) is
 // clamped to 0.

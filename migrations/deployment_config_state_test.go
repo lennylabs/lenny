@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// spec: §16.7 lines 672, 676, 677, 682 — migration 0163 creates the
+// spec: §16.7 — migration 0163 creates the
 // single-row deployment_config_state baseline the deployment-transition
 // audit emitter diffs each Helm render against. The scope CHECK enforces
 // the singleton invariant, and lenny_app holds the read + upsert DML the

@@ -19,7 +19,7 @@ import (
 // MCPRuntime drives a §5.1 type: mcp runtime: a runtime whose agent
 // process IS an MCP server. The adapter starts that process and reaches
 // it as an MCP client (§9.1 "Direct MCP server access"), rather than
-// driving an agent binary over the §15.4.1 JSONL stdin/stdout protocol
+// driving an agent binary over the §28.5.3 JSONL stdin/stdout protocol
 // used for a type: agent runtime.
 //
 // MCPRuntime implements the RuntimeProcess interface so the §4.7
@@ -31,13 +31,13 @@ import (
 //
 //   - Start: spawn the agent's MCP-server process and perform the MCP
 //     `initialize` handshake over its stdio.
-//   - message: an MCP `tools/call`. The §15.4.1 message envelope names
+//   - message: an MCP `tools/call`. The §28.5.3 message envelope names
 //     the tool (`tool` field) and carries its arguments (`arguments`
 //     field); the adapter issues the call and surfaces the MCP result
-//     as a §15.4.1 `response` frame on the Output channel.
+//     as a §28.5.3 `response` frame on the Output channel.
 //   - Interrupt: close the MCP connection and signal the process
 //     (SIGTERM for a clean interrupt, SIGKILL for a hard one). A type:
-//     mcp runtime has no §15.4.3 lifecycle channel, so there is no
+//     mcp runtime has no §15.4.3 CH-RUNTIMEOPS, so there is no
 //     in-band interrupt.
 //   - Close: close the MCP connection and terminate the process.
 //
@@ -52,7 +52,8 @@ type MCPRuntime struct {
 	// Args are the arguments passed to Command.
 	Args []string
 	// Dir is the process working directory — the materialized workspace
-	// (/workspace/current). Empty inherits the adapter's directory.
+	// (the session's /workspace/slots/{sessionId}/current). Empty inherits
+	// the adapter's directory.
 	Dir string
 	// Env is the process environment. Nil inherits the adapter's
 	// environment.
@@ -78,6 +79,18 @@ type MCPRuntime struct {
 	// initResult records the agent server's negotiated protocol version
 	// and identity from the initialize handshake.
 	initResult mcp.InitializeResult
+	// tap is the adapter's activity tap, recorded by TapOutput. Guarded by
+	// mu. spec: §4.7.1.
+	tap func(line []byte)
+}
+
+// TapOutput records fn as the activity tap: WriteEnvelope calls it with each
+// response frame it delivers to the output channel, whether or not Output
+// was called. spec: §4.7.1 (Role and Gateway RPC Contract)
+func (r *MCPRuntime) TapOutput(fn func(line []byte)) {
+	r.mu.Lock()
+	r.tap = fn
+	r.mu.Unlock()
 }
 
 const (
@@ -166,7 +179,7 @@ func (r *MCPRuntime) Start(ctx context.Context, _ string) error {
 	return nil
 }
 
-// mcpInboundMessage is the subset of a §15.4.1 `message` envelope the
+// mcpInboundMessage is the subset of a §28.5.3 `message` envelope the
 // type: mcp adapter path reads to build an MCP `tools/call`. The agent
 // of a type: mcp runtime is an MCP server, so the unit of work is a
 // tool call: the envelope names the tool and carries its arguments.
@@ -177,9 +190,9 @@ type mcpInboundMessage struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 
-// WriteEnvelope maps a §15.4.1 inbound message onto an MCP `tools/call`
+// WriteEnvelope maps a §28.5.3 inbound message onto an MCP `tools/call`
 // against the agent's MCP server and pushes the call's result onto the
-// Output channel as a §15.4.1 `response` frame. A non-`message`
+// Output channel as a §28.5.3 `response` frame. A non-`message`
 // envelope (a lifecycle frame) is ignored: a type: mcp runtime has no
 // JSONL lifecycle protocol.
 func (r *MCPRuntime) WriteEnvelope(_ string, envelope []byte) error {
@@ -187,6 +200,7 @@ func (r *MCPRuntime) WriteEnvelope(_ string, envelope []byte) error {
 	client := r.client
 	out := r.out
 	closed := r.closed
+	tap := r.tap
 	r.mu.Unlock()
 	if closed || client == nil {
 		return errors.New("adapter: MCP runtime is not running")
@@ -213,6 +227,9 @@ func (r *MCPRuntime) WriteEnvelope(_ string, envelope []byte) error {
 	}
 	select {
 	case out <- frame:
+		if tap != nil {
+			tap(frame)
+		}
 		return nil
 	default:
 		// The Output buffer is full. Block-free delivery would drop the
@@ -221,7 +238,7 @@ func (r *MCPRuntime) WriteEnvelope(_ string, envelope []byte) error {
 	}
 }
 
-// Output streams the §15.4.1 `response` frames WriteEnvelope produces
+// Output streams the §28.5.3 `response` frames WriteEnvelope produces
 // from MCP tool-call results. The channel is closed by Close.
 func (r *MCPRuntime) Output(_ context.Context, _ string) (<-chan []byte, error) {
 	r.mu.Lock()
@@ -233,10 +250,9 @@ func (r *MCPRuntime) Output(_ context.Context, _ string) (<-chan []byte, error) 
 }
 
 // Interrupt signals the agent's MCP-server process. A type: mcp runtime
-// has no §15.4.3 lifecycle channel, so a clean interrupt is a SIGTERM
-// and a hard interrupt is a SIGKILL — the same signal path the §4.7
-// Interrupt RPC falls back to for any runtime without a lifecycle
-// channel.
+// has no §15.4.3 CH-RUNTIMEOPS, so a clean interrupt is a SIGTERM
+// and a hard interrupt is a SIGKILL. A type: agent runtime without a
+// CH-RUNTIMEOPS receives no signal on the §4.7 Interrupt RPC (§15.4.3).
 func (r *MCPRuntime) Interrupt(_ context.Context, _ string, hard bool) error {
 	r.mu.Lock()
 	cmd := r.cmd
@@ -262,7 +278,7 @@ func (r *MCPRuntime) Interrupt(_ context.Context, _ string, hard bool) error {
 // the caller plumbed into ctx (the gateway's §11.4 step-3 10s window).
 // A context with no deadline falls back to ShutdownGrace, then to
 // defaultMCPShutdownGrace, preserving the historical defaults for
-// callers that do not pin a deadline. spec: §11.4 line 258.
+// callers that do not pin a deadline. spec: §11.4.
 func (r *MCPRuntime) Close(ctx context.Context, _ string) error {
 	r.mu.Lock()
 	if r.closed {
@@ -308,8 +324,7 @@ func (r *MCPRuntime) Close(ctx context.Context, _ string) error {
 // resolveShutdownGrace picks the SIGTERM-to-SIGKILL pivot interval. It
 // prefers the deadline plumbed into ctx by Server.Shutdown (the §4.7
 // ShutdownRequest.deadline_ms the gateway pinned), falling back to the
-// runtime-configured grace, then to the package default. spec: §11.4
-// line 258.
+// runtime-configured grace, then to the package default. spec: §11.4.
 func resolveShutdownGrace(ctx context.Context, configured, fallback time.Duration) time.Duration {
 	if ctx != nil {
 		if dl, ok := ctx.Deadline(); ok {
@@ -333,7 +348,7 @@ func (r *MCPRuntime) InitializeResult() mcp.InitializeResult {
 	return r.initResult
 }
 
-// mcpResponseFrame builds the §15.4.1 `response` frame for an MCP
+// mcpResponseFrame builds the §28.5.3 `response` frame for an MCP
 // tools/call outcome. A failed call yields a response carrying an
 // `error` object; a successful call yields a single structured
 // MessagePart wrapping the MCP result, plus the MCP `content` blocks
@@ -363,7 +378,7 @@ func mcpResponseFrame(msgID, tool string, result json.RawMessage, callErr error)
 	return json.Marshal(frame)
 }
 
-// mcpResultParts converts an MCP tools/call result into a §15.4.1
+// mcpResultParts converts an MCP tools/call result into a §28.5.3
 // MessagePart array. An MCP tool result is `{content: [...], isError}`;
 // each text content block becomes a `text` MessagePart. A result that
 // does not follow that shape is wrapped verbatim in a single structured
@@ -376,7 +391,7 @@ func mcpResponseFrame(msgID, tool string, result json.RawMessage, callErr error)
 // consumer reading the persisted §8.8 TaskRecord still sees a value.
 // This honours the §15.5 item 7 forward-read contract: the producer's
 // declared revision crosses the MCP boundary without being silently
-// downgraded mid-flight. spec: §15.5 item 7; §15.4.1 line 1524. F-15.5.13.
+// downgraded mid-flight. spec: §15.5 item 7; §28.5.3. F-15.5.13.
 func mcpResultParts(result json.RawMessage) []map[string]any {
 	if len(result) == 0 {
 		return []map[string]any{}

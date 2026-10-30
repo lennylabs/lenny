@@ -71,8 +71,8 @@ func TestResolveEffectiveRejectsInvalidMode(t *testing.T) {
 
 // TestResolveEffectiveWithDefaults proves the §9.2 default-applying
 // resolver the §16.5 weakened-mode gauge and the admin GET both read.
-// An unset/invalid floor falls to off (§9.2 line 64); an unset/invalid
-// stored value falls to the enforce tenant default (§9.2 line 60); the
+// An unset/invalid floor falls to off (§9.2); an unset/invalid
+// stored value falls to the enforce tenant default (§9.2); the
 // effective mode is max(floor, stored). F-9.2.5.
 func TestResolveEffectiveWithDefaults(t *testing.T) {
 	cases := []struct {

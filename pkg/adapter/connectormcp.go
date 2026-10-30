@@ -28,7 +28,7 @@ type sessionConnector struct {
 // failure yields no connectors so a session still starts. The gateway
 // filters the list by the session's policy, so the adapter opens a
 // per-connector server only for connectors the runtime may use.
-// spec: §9.3 line 142. F-9.1.2.
+// spec: §9.3. F-9.1.2.
 func (s *Server) sessionConnectors(ctx context.Context, sessionID string) []sessionConnector {
 	if s.ConnectorForwarder == nil || s.MCPSocket == "" || s.RuntimeKind == RuntimeKindMCP {
 		return nil
@@ -54,8 +54,8 @@ func (s *Server) sessionConnectors(ctx context.Context, sessionID string) []sess
 // forwarding tools/list and tools/call to the gateway over
 // GatewayControl, scoped to the session and that one connector. It is
 // best-effort: a per-connector listen failure is logged and skipped so
-// the remaining connectors still serve. releaseSession stops every
-// server started here. spec: §9.3 lines 142-164. F-9.1.2.
+// the remaining connectors still serve. The session's slot release stops
+// every server started here. spec: §9.3. F-9.1.2.
 func (s *Server) startConnectorMCPServers(sessionID, nonce string, conns []sessionConnector) {
 	if nonce == "" || s.ConnectorForwarder == nil {
 		return
@@ -78,37 +78,35 @@ func (s *Server) startConnectorMCP(sessionID, nonce string, c sessionConnector) 
 		return err
 	}
 	srv := mcp.NewServer()
-	// §4.7 lines 879-883: mirror the platform server's per-connection
+	// §4.7: mirror the platform server's per-connection
 	// challenge when SO_PEERCRED is disabled so the static nonce is not
 	// replayable on the connector sockets either.
-	srv.RequireChallenge = s.NonceOnlyMode
-	srv.Provider = &connectorToolProvider{forwarder: s.ConnectorForwarder, sessionID: sessionID, connectorID: c.ID}
+	srv.RequireChallenge = s.PeerAuth.NonceOnly
+	srv.Provider = &connectorToolProvider{forwarder: s.ConnectorForwarder, server: s, connectorID: c.ID}
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { _ = srv.Serve(ctx, serveLis, nonce) }()
+	stop := serveUntilCancelled(cancel, func() { _ = srv.Serve(ctx, serveLis, nonce) })
 	s.mu.Lock()
-	s.connectorCancels = append(s.connectorCancels, cancel)
+	s.connectorCancels = append(s.connectorCancels, stop)
 	s.mu.Unlock()
 	return nil
 }
 
-// listenIntraPodMCP binds an intra-pod MCP Unix socket, applying the §4.7
-// / §13 SO_PEERCRED peer-credential check when a runtime UID is
-// configured so a process not running as the agent UID cannot connect. It
-// is the shared listener path for the platform and per-connector MCP
-// servers. F-9.1.2.
+// listenIntraPodMCP binds an intra-pod MCP Unix socket and applies the
+// adapter's SO_PEERCRED posture to it: outside nonce-only mode only a
+// process running as PeerAuth.ExpectedUID is admitted, and a refused
+// connection is logged and closed. It is the shared listener path for the
+// platform and per-connector MCP servers. spec: §4.7.11 (Separate UIDs and
+// connection authentication). F-9.1.2, F-4.7.28.
 func (s *Server) listenIntraPodMCP(socket string) (net.Listener, error) {
 	lis, err := net.Listen("unix", socket)
 	if err != nil {
 		return nil, fmt.Errorf("listen on MCP socket %s: %w", socket, err)
 	}
-	if s.RuntimeUID != 0 {
-		uid := s.RuntimeUID
-		return &peerCheckedListener{
-			Listener: lis,
-			check:    func(c net.Conn) error { return checkPeerUID(c, uid) },
-		}, nil
+	auth := s.PeerAuth
+	onReject := func(err error) {
+		logPeerRefusal(nil, "mcp_peer_refused", socket, auth.ExpectedUID, err)
 	}
-	return lis, nil
+	return auth.wrap(lis, auth.check, onReject), nil
 }
 
 // connectorSocketName derives the intra-pod Unix socket a §9.3
@@ -117,7 +115,7 @@ func (s *Server) listenIntraPodMCP(socket string) (net.Listener, error) {
 // per-connector socket; a filesystem base (the dev / test form) yields a
 // sibling `.sock` file. The id is sanitised so a registry id carrying
 // path-unsafe characters cannot escape the socket namespace.
-// spec: §9.3 line 142. F-9.1.2.
+// spec: §9.3. F-9.1.2.
 func connectorSocketName(base, id string) string {
 	safe := sanitizeConnectorID(id)
 	if strings.HasPrefix(base, "@") {

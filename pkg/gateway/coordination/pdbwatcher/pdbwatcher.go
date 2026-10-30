@@ -17,7 +17,7 @@
 // PDBBlockedEvictions alert is designed to surface: voluntary
 // evictions arriving while the PDB is in this state would be rejected.
 //
-// spec: §16.1 (`lenny_pdb_blocked_evictions_total`), §10.4 line 385,
+// spec: §16.1 (`lenny_pdb_blocked_evictions_total`), §10.4,
 // §16.5 PDBBlockedEvictions. F-10.4.4.
 package pdbwatcher
 

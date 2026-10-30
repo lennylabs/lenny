@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// spec: §25.5 lines 2735-2745 ops.webhooks.{allowHTTP,domainAllowlist} —
+// spec: §25.5 ops.webhooks.{allowHTTP,domainAllowlist} —
 // F-25.4.9. buildWebhookSSRF translates the Helm values into the
 // validator the subscription service and delivery transport enforce. The
 // assertions key on the pre-DNS gates (scheme, IP-literal, allowlist) so
@@ -49,7 +49,7 @@ func TestBuildWebhookSSRF_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: §25.5 line 2743 — F-25.4.9. A malformed blockedCIDRs entry is
+// spec: §25.5 — F-25.4.9. A malformed blockedCIDRs entry is
 // skipped rather than aborting policy construction, so one typo does not
 // disable the whole SSRF posture.
 func TestBuildWebhookSSRFSkipsMalformedCIDR_spec_25_5(t *testing.T) {
