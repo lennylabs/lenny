@@ -13,7 +13,7 @@ import (
 )
 
 // The gateway rewrites a symlink-bearing archive entry into a `symlink`
-// source (§7.4 — the pod never decompresses). These tests cover
+// source (§7.4: the pod never extracts a client-uploaded archive). These tests cover
 // the adapter's materialization of that source, and the fail-closed
 // rejection of the uploadArchive / gitClone sources the gateway is
 // supposed to have already extracted. F-7.4.1, F-13.4.1.
@@ -78,8 +78,8 @@ func TestMaterializeSymlinkEscapeRolledBack_spec_13_4_665(t *testing.T) {
 	}
 }
 
-// spec: §7.4; §13.4 — the adapter must never decompress
-// an archive. A uploadArchive source reaching the adapter (a trust-
+// spec: §7.4; §13.4 — the adapter must never extract a
+// client-uploaded archive. A uploadArchive source reaching the adapter (a trust-
 // boundary violation) fails closed. F-7.4.1, F-13.4.1.
 func TestMaterializeUploadArchiveSourceRejected_spec_7_4_448(t *testing.T) {
 	root := t.TempDir()

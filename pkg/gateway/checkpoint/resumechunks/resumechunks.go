@@ -2,7 +2,8 @@
 
 // Package resumechunks resolves the §10.1.7 reassembly-on-resume
 // chunk set for a checkpoint the gateway is restoring onto a replacement
-// pod. Given a checkpoint's manifest row, it lists the committed chunk
+// pod, and the starting snapshot's chunk set for a derived or replayed
+// session's first bind. Given a checkpoint's manifest row, it lists the committed chunk
 // objects under the row's chunk_object_key_prefix, verifies contiguity of
 // the prefix [0, chunk_count), and mints one presigned single-key GET
 // capability per index in [0, chunk_count). The adapter fetches the
@@ -11,8 +12,11 @@
 //
 // The gateway is the sole authority that resolves, lists, validates, and
 // signs the keys; the pod holds no object-store credential, no LIST, and
-// no DELETE. A GET capability names one key the pod's own session
-// authored, so it grants no read the pod did not already have.
+// no DELETE. A GET capability names one key under the session's own
+// prefix in its own tenant: on resume, a key the pod's own session
+// authored; on a derived or replayed session's first bind, a chunk key the
+// derive copy wrote, so it grants read of the snapshot the session starts
+// from and of no other key.
 //
 // spec: §10.1, §13.2 (capability model).
 package resumechunks
@@ -35,10 +39,11 @@ import (
 // sequence: a gap (a missing intermediate index) or an out-of-order index
 // below chunk_count. Splicing non-adjacent regions would corrupt both the
 // gzip deflate stream and the tar framing, so reassembly fails atomically
-// before any chunk body is fetched. The caller falls back to the last
-// successful full checkpoint.
+// before any chunk body is fetched. The resume caller falls back to the
+// last successful full checkpoint; a derived or replayed session's restore
+// has no fallback, and its bind fails.
 //
-// spec: §10.1.7 — a gap or an out-of-order index below chunk_count
+// spec: §7.1 (Derive restore semantics); §10.1.7 — a gap or an out-of-order index below chunk_count
 // fails reassembly atomically before any chunk body is fetched.
 var ErrReassemblyContiguity = errors.New("resumechunks: chunk set is not a contiguous [0, chunk_count) sequence")
 

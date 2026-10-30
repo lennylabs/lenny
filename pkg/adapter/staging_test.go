@@ -113,7 +113,7 @@ func TestFinalizeWorkspaceRejectsEscapingPath(t *testing.T) {
 // FinalizeWorkspaceRequest.archive_policy.allow_symlinks toggle lifts
 // the §7.4 default-deny on symlink sources. The gateway extracts
 // uploadArchive sources and rewrites their symlink entries into `symlink`
-// sources (§7.4 — the pod never decompresses); the adapter
+// sources (§7.4: the pod never extracts a client-uploaded archive); the adapter
 // honors the same per-Runtime policy when it materializes them. With the
 // gateway-supplied policy set to AllowSymlinks=true and a target inside
 // the workspace the link is created; without it the same source is

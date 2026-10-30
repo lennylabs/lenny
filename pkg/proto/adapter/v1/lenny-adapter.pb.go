@@ -1675,7 +1675,7 @@ type WorkspaceSource struct {
 	// link_target is the symlink target for a gateway-produced `symlink`
 	// source. The gateway extracts §14 uploadArchive sources in its own
 	// §4.1 Upload Handler subsystem (§7.4; §13.4 — the
-	// pod never decompresses), validates each symlink target with
+	// pod never extracts a client-uploaded archive), validates each symlink target with
 	// pkg/upload.ValidateSymlinkTarget against the workspace root, and
 	// rewrites a symlink-bearing archive entry into a `symlink` source so
 	// the adapter recreates the link without canonicalizing untrusted
