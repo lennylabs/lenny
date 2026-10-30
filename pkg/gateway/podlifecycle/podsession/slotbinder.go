@@ -405,7 +405,7 @@ func (b *Binder) materializeSlotStages(ctx context.Context, req SlotBindRequest,
 		b.recordSlotFailure(slotFailureSetup, req.Pool, sandboxName)
 		return nil, nil, b.slotBindError(sandboxName, slotID, slotFailureSetup,
 			&SetupCommandFailure{
-				Pod: sandboxName, Pool: req.Pool, RuntimeClass: runtimeClassOf(req.IsolationProfile),
+				Pod: sandboxName, Pool: req.Pool, RuntimeClass: b.runtimeClassLabel(req.IsolationProfile),
 				Cause: err, Outputs: setupOutputs,
 			})
 	}

@@ -3486,6 +3486,16 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   including the create response's `uploadToken` and the owner's action responses that 0110's not-found rule
   hides. The proposal binds the record to the authenticated subject and states what a second principal
   receives, on REST and on the MCP per-tool path. It does not depend on 0110's implementation.
+- [ ] **Warm-time shared-asset fill (F-6.4.19 Medium, F-6.4.20 Medium)** (new proposal, queued 2026-10-30 after
+  0111 and after the idempotent-replay proposal above, which is a security item): a Runtime's `type: artifact`
+  `sharedAssets` entries never reach `/workspace/shared/`, and inline entries ride the adapter's
+  `--shared-assets` command-line argument, which caps them near 90 KiB in total. The proposal reuses 0111's
+  warm-time fill path: the adapter fills the read-only `/workspace/shared/` store before READY, streaming each
+  asset from the gateway or from a presigned GET, under size bounds and a fill deadline, with metrics, and a
+  fill that fails keeps the pod out of READY. It states one `sharedAssets` schema across the admin API and the
+  `Runtime` CRD and how the registry value reaches the pod builder, moves inline content off the command line,
+  and states a size limit and the `/workspace/shared/` volume sizing. It follows 0111 because it reuses 0111's
+  fill path and store. The block "Filed 2026-10-30 (shared assets)" below lists both findings.
 
 - [ ] **P2b** (section P2 above): after 0085.
 
@@ -4206,9 +4216,21 @@ D2), which stays with the upload route proposal.
     and `runtime_class`. Closed 2026-10-30 by direct fix on `fix/derive-claim-and-setup-labels`:
     `SetupCommandFailure` carries both from the exclusive and the slot bind, and the gateway counter and hook
     take `(pool, runtimeClass, errorType)`. Filed from the fix: F-16.1.10.
-  - [ ] **F-16.1.10** (Low, filed from F-16.1.9): the gateway maps `runtime_class` with the default profile
+  - [x] **F-16.1.10** (Low, filed from F-16.1.9): the gateway maps `runtime_class` with the default profile
     mapping, while the controller reads the pod's overridden `runtimeClassName`, so the two halves disagree
-    under an `isolation.runtimeClassNames` override.
+    under an `isolation.runtimeClassNames` override. Closed 2026-10-30 by direct fix on
+    `fix/derive-replay-validation`: the gateway takes the controller's override flags from the same chart
+    helper, builds its map with the shared `isolation.RuntimeClassOverrides`, and labels every
+    `runtime_class` series through it. Filed from the fix: F-17.5.11.
+  - [x] **F-17.5.11** (Low, filed from F-16.1.10): the chart names a profile's RuntimeClass in two values keys,
+    `isolation.runtimeClassNames` (controller, gateway) and `runtimeClasses.profiles.*.name` (webhook, Kyverno,
+    preflight), so a partial override splits them. Closed 2026-10-30 by direct fix on `fix/f-17-5-11`:
+    `runtimeClasses.profiles.*.name` is the only key, `lenny.runtimeClassNameArgs` renders the controller and
+    gateway flags from it, and a render guard refuses a set `isolation` key and names the replacement.
+    Filed from the fix: F-15.1.68.
+  - [x] **F-15.1.68** (Low, filed from F-17.5.11): `tests/tier5_e2e_kind/gateway_probe_headers_test.go` has no
+    `tests/spec-map.json` entry, so the static tier's validate-maps check fails on every branch cut from `main`.
+    Map it under §15.1.
   - [x] **F-15.2.29** (Low): per-session MCP tool schemas are hand-written against §15.2.1 item 4.
     `mcpschemagen` gained a parameter rename and optional-query option, and the nine per-session tools now
     advertise generated schemas (2026-10-30, `91254f71b`).
@@ -4345,10 +4367,18 @@ than filing a duplicate. F-10.1.45 was already closed and needed no record.
   - [ ] **F-5.2.64** (Medium, filed from F-7.1.36): a slot reserved at create is bound once at `/start`, so a
     transient slot failure runs no §5.2 slot retry. Confirm the §5.2 reading first; a spec exception goes to
     the proposal pipeline with F-5.2.62.
-  - [ ] **F-15.1.65** (Low, filed from F-7.1.36): derive and replay skip `requirePoolSelectable` on
-    `targetPool`, so a wrong pool answers a retryable 503 and the pool grant is not checked.
-  - [ ] **F-15.1.66** (Medium, filed from F-7.1.36): replay compares no `executionMode` and never answers
-    `400 INCOMPATIBLE_RUNTIME`.
+  - [x] **F-15.1.65** (Low, filed from F-7.1.36): derive and replay skip `requirePoolSelectable` on
+    `targetPool`, so a wrong pool answers a retryable 503 and the pool grant is not checked. Closed 2026-10-30
+    by direct fix on `fix/derive-replay-validation`: both handlers run the create path's selection check on
+    `targetPool` before the copy, answering `400 VALIDATION_ERROR` or `403 FORBIDDEN`. Filed from the fix:
+    F-15.1.67.
+  - [x] **F-15.1.66** (Medium, filed from F-7.1.36): replay compares no `executionMode` and never answers
+    `400 INCOMPATIBLE_RUNTIME`. Closed 2026-10-30 by direct fix on `fix/derive-replay-validation`: replay
+    resolves `targetRuntime` and answers `400 INCOMPATIBLE_RUNTIME` with both modes on a mismatch, and
+    `400 VALIDATION_ERROR` for an unregistered runtime.
+  - [x] **F-15.1.67** (Low, filed from F-15.1.65): the served `Error` schema closes `error.category` over a
+    vocabulary the gateway never writes, so no 4xx body validates. Closed 2026-10-30 by direct fix on
+    `fix/derive-replay-validation`: the enum is the §15.1 categories, pinned to `errorclassify`.
   - [x] **F-15.1.63** (Medium): derive and replay mint no `uploadToken`, although the §15.1 replay response is
     identical to `POST /v1/sessions`. Closed 2026-10-30 by direct fix on `fix/derive-claim-and-setup-labels`:
     both handlers mint through the create path's `mintUploadToken` before the insert, store the digest and
@@ -4651,6 +4681,19 @@ that left a recycle-pool pod claimed under `TestPodLifecycle` (T-17.4.42). Four 
 - [x] **T-17.4.45** (Low): the tier-8 and tier-9 `kubectl run --attach` psql helpers can read an empty result
   when kubectl loses the pod's output. Fixed on `fix/f-25-9-21`: the end-marker retry now lives in
   `tests/testinfra/kind/psql.go`, and the tier-5, tier-8, and tier-9 helpers delegate to it.
+
+**Filed 2026-10-30 (shared assets).** A check of the §6.4 `/workspace/shared/` population against the tree at
+`34c66d26d` found that F-6.4.3 built the volume, the CRD field, and the inline path only. Both findings route to
+the warm-time shared-asset fill proposal in "Queue after P4b" above, queued after 0111.
+
+- [ ] **F-6.4.19** (Medium): `type: artifact` shared assets are never materialized. The admin API validates and
+  stores them in the migration 0075 `shared_assets` column, but nothing carries the registry value to the pod
+  builder, which reads the `Runtime` CRD, and the CRD schema has no `type`, `ref`, or `destPath` property. An
+  artifact entry registered through the admin API is dropped silently and warm-up succeeds; on the CRD it is
+  rejected for the missing `path`, or written as an empty file when a `path` is added.
+- [ ] **F-6.4.20** (Medium): inline shared assets travel base64-encoded in one adapter command-line argument, so
+  `MAX_ARG_STRLEN` caps a Runtime's inline set near 90 KiB in total and a larger set fails at container start
+  with `E2BIG`. §6.4 and §5.1 state no size limit, transport, or volume size.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 

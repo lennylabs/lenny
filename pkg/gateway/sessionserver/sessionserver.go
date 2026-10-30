@@ -321,6 +321,10 @@ type Server struct {
 	// experiments evaluate. F-10.7.3.
 	externalProviders ExternalProviderResolver
 	runtimes          runtimestore.Store
+	// runtimeClassOverrides is the §17.5 per-profile RuntimeClass name
+	// override map the runtime_class labels resolve through. Nil keeps the
+	// default names.
+	runtimeClassOverrides map[isolation.Profile]string
 	// capOverrides applies the §5.1 per-tenant capability override
 	// on top of a resolved runtime at every capability consumer. Optional;
 	// nil falls back to the platform-default capabilities. F-5.1.20.
@@ -1400,6 +1404,16 @@ type Options struct {
 	// §9.1 GET /v1/runtimes discovery endpoint returns an empty list.
 	Runtimes runtimestore.Store
 
+	// RuntimeClassNameOverrides is the §17.5 per-profile RuntimeClass name
+	// override map, built by isolation.RuntimeClassOverrides from the chart's
+	// `runtimeClasses.profiles.<profile>.name` values the controller also reads. The
+	// runtime_class label of the §6.3 startup histograms and of
+	// lenny_session_time_to_first_token_seconds resolves through it, so the
+	// gateway names the RuntimeClass the controller stamped on the pod.
+	// Optional; nil keeps every profile on its default name.
+	// spec: §17.5, §5.3 (Isolation Profiles), §16.1 (Metrics).
+	RuntimeClassNameOverrides map[isolation.Profile]string
+
 	// CapabilityOverrides is the §5.1 per-tenant runtime
 	// capability override store. Optional — when set, the gateway overlays
 	// a tenant's override onto the resolved runtime at every §5.1
@@ -1764,6 +1778,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		hwmObserver:                opts.HighWatermarkObserver,
 		maxOrphanTasks:             opts.MaxOrphanTasksPerTenant,
 		runtimes:                   opts.Runtimes,
+		runtimeClassOverrides:      opts.RuntimeClassNameOverrides,
 		capOverrides:               opts.CapabilityOverrides,
 		environments:               opts.Environments,
 		tenantAccess:               opts.TenantAccess,

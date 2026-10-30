@@ -72,7 +72,7 @@ func (c readerRuntimeClassChecker) RuntimeClassExists(ctx context.Context, name 
 // for a pool whose isolation profile maps to an uninstalled
 // RuntimeClass. The phrasing matches the spec verbatim for the chart
 // defaults (runc, gvisor, kata) and substitutes the operator-supplied
-// override (§17.5) when the chart's `isolation.runtimeClassNames`
+// override (§17.5) when the chart's `runtimeClasses.profiles.<profile>.name`
 // values remap the profile to a non-default name.
 //
 // spec: §5.3; §17.5.

@@ -269,6 +269,9 @@ type sessionCountRetirer struct {
 	runtimes  runtimeReader
 	metrics   RetirementMetricsSink
 	now       func() time.Time
+	// runtimeClassOverrides is the §17.5 override map the runtime_class
+	// label resolves through.
+	runtimeClassOverrides map[isolation.Profile]string
 }
 
 // SessionCountRetirerOptions configures a per-release session-count retirer.
@@ -292,6 +295,13 @@ type SessionCountRetirerOptions struct {
 	// Now overrides the clock for the drain-request stamp instant and the
 	// uptime-suppression check; nil uses wall time.
 	Now func() time.Time
+
+	// RuntimeClassNameOverrides is the §17.5 per-profile RuntimeClass name
+	// override map, built by isolation.RuntimeClassOverrides from the chart's
+	// `runtimeClasses.profiles.<profile>.name` values the controller also reads, so the
+	// §16.1 runtime_class label names the RuntimeClass the controller stamped
+	// on the pod. Optional; nil keeps every profile on its default name.
+	RuntimeClassNameOverrides map[isolation.Profile]string
 }
 
 // NewSessionCountRetirer builds the §5.2 per-release maxSessionsPerPod
@@ -314,12 +324,13 @@ func NewSessionCountRetirer(opts SessionCountRetirerOptions) (leasecontrol.Sessi
 		now = time.Now
 	}
 	return &sessionCountRetirer{
-		cl:        opts.Client,
-		namespace: opts.Namespace,
-		pools:     opts.Pools,
-		runtimes:  opts.Runtimes,
-		metrics:   opts.Metrics,
-		now:       now,
+		cl:                    opts.Client,
+		namespace:             opts.Namespace,
+		pools:                 opts.Pools,
+		runtimes:              opts.Runtimes,
+		metrics:               opts.Metrics,
+		now:                   now,
+		runtimeClassOverrides: opts.RuntimeClassNameOverrides,
 	}, nil
 }
 
@@ -441,7 +452,7 @@ func (r *sessionCountRetirer) resolve(ctx context.Context, podID string) (perRel
 		maxPodUptimeSeconds:   int64(recycle.MaxPodUptimeSeconds),
 		createdAt:             pod.CreationTimestamp.Time,
 		pool:                  poolName,
-		runtimeClass:          runtimeClass(effectiveProfile(pool, runtimeProfile)),
+		runtimeClass:          runtimeClass(effectiveProfile(pool, runtimeProfile), r.runtimeClassOverrides),
 	}, true, nil
 }
 
@@ -511,6 +522,9 @@ type podInspector struct {
 	pools     poolReader
 	runtimes  runtimeReader
 	now       func() time.Time
+	// runtimeClassOverrides is the §17.5 override map the runtime_class
+	// label resolves through.
+	runtimeClassOverrides map[isolation.Profile]string
 }
 
 // PodInspectorOptions configures a pod inspector.
@@ -529,6 +543,13 @@ type PodInspectorOptions struct {
 	// Now overrides the clock for the uptime computation; nil uses wall
 	// time.
 	Now func() time.Time
+
+	// RuntimeClassNameOverrides is the §17.5 per-profile RuntimeClass name
+	// override map, built by isolation.RuntimeClassOverrides from the chart's
+	// `runtimeClasses.profiles.<profile>.name` values the controller also reads, so the
+	// §16.1 runtime_class label names the RuntimeClass the controller stamped
+	// on the pod. Optional; nil keeps every profile on its default name.
+	RuntimeClassNameOverrides map[isolation.Profile]string
 }
 
 // NewPodInspector builds the `spec/06_warm-pod-model.md` §6.2 / §5.2 recycle pod inspector. Client,
@@ -551,11 +572,12 @@ func NewPodInspector(opts PodInspectorOptions) (leasecontrol.PodInspector, error
 		now = time.Now
 	}
 	return &podInspector{
-		cl:        opts.Client,
-		namespace: opts.Namespace,
-		pools:     opts.Pools,
-		runtimes:  opts.Runtimes,
-		now:       now,
+		cl:                    opts.Client,
+		namespace:             opts.Namespace,
+		pools:                 opts.Pools,
+		runtimes:              opts.Runtimes,
+		now:                   now,
+		runtimeClassOverrides: opts.RuntimeClassNameOverrides,
 	}, nil
 }
 
@@ -649,7 +671,7 @@ func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (lea
 		HostSchedulable:       hostSchedulable(pod.Labels),
 		PodUptimeSeconds:      podUptimeSeconds(pod.CreationTimestamp.Time, i.now()),
 		Pool:                  poolName,
-		RuntimeClass:          runtimeClass(effectiveProfile(pool, runtimeProfile)),
+		RuntimeClass:          runtimeClass(effectiveProfile(pool, runtimeProfile), i.runtimeClassOverrides),
 	}, true, nil
 }
 
@@ -711,10 +733,13 @@ func effectiveProfile(p poolstore.Pool, runtimeDefault isolation.Profile) isolat
 }
 
 // runtimeClass maps the §5.3 isolation profile to the Kubernetes
-// RuntimeClass label the §16.1 recycle metrics carry. An unrecognized
-// profile yields an empty label rather than a guess. spec: §5.3, §16.1.
-func runtimeClass(p isolation.Profile) string {
-	name, _ := isolation.RuntimeClassName(p)
+// RuntimeClass label the §16.1 recycle metrics carry, honoring the §17.5
+// operator override the controller applies to the pod's runtimeClassName so
+// both processes name one RuntimeClass per profile (F-16.1.10). An
+// unrecognized profile yields an empty label rather than a guess.
+// spec: §5.3, §17.5, §16.1.
+func runtimeClass(p isolation.Profile, overrides map[isolation.Profile]string) string {
+	name, _ := isolation.ResolveRuntimeClassName(p, overrides)
 	return name
 }
 

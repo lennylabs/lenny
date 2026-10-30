@@ -262,7 +262,7 @@ func t5AllowSessionsWithNoEnvironment(t *testing.T, c *kind.Cluster, pod, gatewa
 	}
 	etag := get.headers["etag"]
 	if etag == "" {
-		t.Fatalf("GET %s returned no ETag; the conditional write cannot be built", path)
+		t.Fatalf("GET %s returned no ETag; the conditional write cannot be built (headers=%v, body=%q)", path, get.headers, get.body)
 	}
 	var config map[string]any
 	t5DecodeJSON(t, get.body, &config)
@@ -285,13 +285,26 @@ func t5AllowSessionsWithNoEnvironment(t *testing.T, c *kind.Cluster, pod, gatewa
 // from the response body, returning the headers keyed by lowercased
 // name. Text carrying no header block is returned unchanged as the
 // body.
+//
+// The text is kubectl exec's combined stdout and stderr, so a line
+// kubectl writes to stderr (a stream or connection warning) can precede
+// curl's status line. The header block therefore starts at the first
+// line beginning with "HTTP/" rather than at the first line, and the
+// lines before it are dropped.
 func splitT5Headers(out string) (map[string]string, string) {
 	headers := map[string]string{}
 	lines := strings.Split(out, "\n")
-	if len(lines) == 0 || !strings.HasPrefix(lines[0], "HTTP/") {
+	start := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "HTTP/") {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
 		return headers, out
 	}
-	for i := 1; i < len(lines); i++ {
+	for i := start + 1; i < len(lines); i++ {
 		line := strings.TrimRight(lines[i], "\r")
 		if line == "" {
 			return headers, strings.Join(lines[i+1:], "\n")

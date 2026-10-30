@@ -93,7 +93,6 @@ type Root struct {
 	Adapter                    Object     `json:"adapter,omitempty"`
 	Sandbox                    Object     `json:"sandbox,omitempty"`
 	RuntimeClasses             Object     `json:"runtimeClasses,omitempty"`
-	Isolation                  Object     `json:"isolation,omitempty"`
 	Gateway                    Object     `json:"gateway,omitempty"`
 	Delegation                 Object     `json:"delegation,omitempty"`
 	Autoscaling                Object     `json:"autoscaling,omitempty"`
@@ -113,6 +112,15 @@ type Root struct {
 	Storage                    Object     `json:"storage,omitempty"`
 	Backups                    Object     `json:"backups,omitempty"`
 	Bootstrap                  Object     `json:"bootstrap,omitempty"`
+
+	// Isolation is the removed isolation block, whose runtimeClassNames
+	// map was a second values key for the RuntimeClass name of a profile.
+	// runtimeClasses.profiles.<profile>.name is now the only key
+	// (F-17.5.11). The schema admits the key only so the
+	// runtimeclass-name-guard template, rather than a bare
+	// additionalProperties error, refuses a set value and names the
+	// replacement key. spec: §17.5.
+	Isolation Object `json:"isolation,omitempty" desc:"Removed. Set the RuntimeClass name of a profile with runtimeClasses.profiles.<profile>.name; the chart refuses to render when any isolation key is set. §17.5."`
 }
 
 // Global models the platform-wide chart values. The section is fully

@@ -416,8 +416,9 @@ func TestDeriveIsolationDowngradeWithAdminEmitsAuditAndSucceeds(t *testing.T) {
 	rr := deriveRequest(
 		t, srv.Handler(),
 		sessionserver.DeriveRequest{
+			// No targetPool: this server runs without a pool resolver, which
+			// refuses any pin (TestDeriveAndReplayTargetPoolSelection_spec_15_1).
 			TargetIsolationProfile:  isolation.ProfileSandboxed,
-			TargetPool:              "low-iso-pool",
 			AllowIsolationDowngrade: true,
 			TicketID:                "JIRA-123",
 		},
@@ -441,7 +442,7 @@ func TestDeriveIsolationDowngradeWithAdminEmitsAuditAndSucceeds(t *testing.T) {
 		ev.TargetIsolationProfile != isolation.ProfileSandboxed ||
 		ev.AuthorizingUserSubject != "ops@acme.com" ||
 		ev.TicketID != "JIRA-123" ||
-		ev.TargetPool != "low-iso-pool" ||
+		ev.TargetPool != "" ||
 		ev.TenantID != "acme" {
 		t.Errorf("audit event mismatch: %+v", ev)
 	}

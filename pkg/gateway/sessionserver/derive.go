@@ -281,6 +281,27 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve the derived session's runtime. Inherit the source's value
+	// when the request omits it, the same default as
+	// `replayMode: prompt_history`.
+	runtimeRef := req.RuntimeRef
+	if runtimeRef == "" {
+		runtimeRef = source.RuntimeRef
+	}
+	// spec: §7.1 (Derive session semantics) derive rule 2, §14.1
+	// (CreateSessionRequest.pool), §4 (pool_tenant_access) — the derived row
+	// starts in the initial state of a fresh CreateSession and its claim is
+	// pinned to targetPool, so a named targetPool passes the same selection
+	// check as a create-body pool: 400 VALIDATION_ERROR for a pool that does
+	// not exist, is not backed by the runtime, or does not satisfy the target
+	// profile, and 403 FORBIDDEN for a pool the tenant holds no grant on. The
+	// check runs before the downgrade audit event, the reservation, and the
+	// copy, so a rejected pin leaves no trace. A derive that omits targetPool
+	// inherits the source's pool and is not re-validated.
+	if !s.requirePoolSelectable(w, r, tenantID, runtimeRef, string(target), req.TargetPool, "targetPool") {
+		return
+	}
+
 	principal, _ := authmw.FromContext(r.Context())
 	if !isolation.AtLeastAsRestrictive(target, source.IsolationProfile) {
 		// Downgrade requested. Only platform-admin may override.
@@ -316,13 +337,8 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resolve the derived session's runtime / userId. Inherit the
-	// source's values when the request omits them — same default
-	// shape as `replayMode: prompt_history`.
-	runtimeRef := req.RuntimeRef
-	if runtimeRef == "" {
-		runtimeRef = source.RuntimeRef
-	}
+	// Resolve the derived session's userId, inheriting the source's value
+	// when the request omits it.
 	userID := req.UserID
 	if userID == "" {
 		userID = source.UserID

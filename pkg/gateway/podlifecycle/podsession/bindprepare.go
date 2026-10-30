@@ -183,7 +183,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 		return nil, &SetupCommandFailure{
 			Pod:          sandboxName,
 			Pool:         req.Pool,
-			RuntimeClass: runtimeClassOf(sb.Spec.IsolationProfile),
+			RuntimeClass: b.runtimeClassLabel(sb.Spec.IsolationProfile),
 			Cause:        err,
 			Outputs:      setupOutputs,
 		}

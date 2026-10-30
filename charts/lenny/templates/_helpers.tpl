@@ -591,6 +591,33 @@ rotation", §17.4.
 {{- end -}}
 
 {{/*
+lenny.runtimeClassNameArgs renders the §17.5 per-profile RuntimeClass name
+flags from runtimeClasses.profiles.<profile>.name, one flag per profile with a
+non-empty name. runtimeClasses.profiles is the single values source for the
+RuntimeClass name of a profile: the same key names the RuntimeClass objects
+runtimeclasses.yaml renders, the lenny-pod-security webhook's
+--gvisor-runtime-class and --kata-runtime-class flags, the Kyverno
+RuntimeClass policy, and the preflight's --required-runtime-classes. The
+controller and the gateway both include this helper, so the controller stamps
+each pod's runtimeClassName, the gateway labels runtime_class, and the
+admission layer recognizes the class from one set of values (F-16.1.10,
+F-17.5.11). The name renders whether or not the profile is enabled, because
+enabled only selects which RuntimeClass objects the chart renders. Include it
+with nindent at the args list indentation.
+spec: §17.5, §5.3, §16.1, §17.2.
+*/}}
+{{- define "lenny.runtimeClassNameArgs" -}}
+{{- $profiles := (.Values.runtimeClasses | default dict).profiles | default dict -}}
+{{- $args := list -}}
+{{- range $profile := list "standard" "sandboxed" "microvm" -}}
+{{-   with (get $profiles $profile | default dict).name -}}
+{{-     $args = append $args (printf "- --%s-runtime-class=%s" $profile .) -}}
+{{-   end -}}
+{{- end -}}
+{{- join "\n" $args -}}
+{{- end -}}
+
+{{/*
 lenny.kmsEgressRule renders the KMS endpoint egress rule (TCP 443 to
 kms.endpointCIDR) that allow-gateway-egress and lenny-ops-egress carry
 whenever kms.provider is not local, and nothing under the local provider,

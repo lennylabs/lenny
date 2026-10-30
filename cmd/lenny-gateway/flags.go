@@ -198,6 +198,9 @@ type gatewayFlags struct {
 	clusterQPS                                    *float64
 	clusterBurst                                  *int
 	defaultIsolationProfile                       *string
+	standardRuntimeClass                          *string
+	sandboxedRuntimeClass                         *string
+	microvmRuntimeClass                           *string
 	messagingDefaultScope                         *string
 	messagingMaxScope                             *string
 	messagingMaxPerMinute                         *int
@@ -875,6 +878,17 @@ func (f *gatewayFlags) registerPolicyFlags() {
 		"client-go burst (token-bucket size) for the cluster client. Pairs with --cluster-qps. Override via LENNY_CLUSTER_BURST.")
 	f.defaultIsolationProfile = flag.String("default-isolation-profile", os.Getenv("LENNY_DEFAULT_ISOLATION_PROFILE"),
 		"§5.3 isolation profile applied to a session that omits isolationProfile on the create body. Defaults to the chart's compiled-in fallback (`sandboxed`); the e2e overlay sets `standard` so every k6 scenario lands on the warm pool the agent-workload defines.")
+	// spec: §17.5, §16.1 — the per-profile RuntimeClass name overrides. The
+	// chart renders these from the same `runtimeClasses.profiles.<profile>.name` values,
+	// with the same flag names, that it renders for the controller, so the
+	// gateway's runtime_class labels name the RuntimeClass the controller
+	// stamps on each pod (F-16.1.10).
+	f.standardRuntimeClass = flag.String("standard-runtime-class", os.Getenv("LENNY_STANDARD_RUNTIME_CLASS"),
+		"§17.5 RuntimeClass name override for the §5.3 standard profile, matching the controller's flag of the same name. The gateway labels runtime_class on its warm-pool, startup, time-to-first-token, and recycle series through it. Empty uses the default 'runc'. Override via LENNY_STANDARD_RUNTIME_CLASS.")
+	f.sandboxedRuntimeClass = flag.String("sandboxed-runtime-class", os.Getenv("LENNY_SANDBOXED_RUNTIME_CLASS"),
+		"§17.5 RuntimeClass name override for the §5.3 sandboxed profile, matching the controller's flag of the same name. Empty uses the default 'gvisor'. Override via LENNY_SANDBOXED_RUNTIME_CLASS.")
+	f.microvmRuntimeClass = flag.String("microvm-runtime-class", os.Getenv("LENNY_MICROVM_RUNTIME_CLASS"),
+		"§17.5 RuntimeClass name override for the §5.3 microvm profile, matching the controller's flag of the same name. Empty uses the default 'kata'. Override via LENNY_MICROVM_RUNTIME_CLASS.")
 }
 
 // registerSessionFlags registers the session-lifecycle, messaging, adapter, token-service, lease, and LLM-proxy flags.
