@@ -2407,6 +2407,8 @@ optional, and it does not make the frozen content correct.
 Status as of 2026-10-03, verified against the working tree. Check an item off in the same change that lands
 it, and name the commit or merge.
 
+**Integration branch (2026-10-30).** This track ran on `proposal-b/gateway-runtime-comms-remediation` until 2026-10-30, when it merged into `impl/v1-initial` (`5b2a067b4`) and then into `main` (`019b200ee`), and both branches were deleted. Commit and merge hashes named in this plan before that date are reachable from `main`. Every branch for the remaining work is cut from `main` and merges back into `main`.
+
 ### 10.1 Remediation steps
 
 **Re-derivation after 0101 (2026-10-28).** Proposal 0101 (merge `9c69b8398`) landed R18, R19, and R21.

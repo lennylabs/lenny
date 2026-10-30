@@ -8,6 +8,7 @@ Integration history is explicit and branches are short-lived. Every feature bran
 
 ## Merge with a merge commit, not a fast-forward
 
+- `main` is the integration branch. Cut every proposal, draft, fix, and records branch from `main`, and merge it back into `main`. Merges are direct until a first version ships; pull requests replace them after that.
 - Integrate a feature branch into a long-lived branch (parent branch unless the user asks for something else) with `git merge --no-ff`, so the integration is a single merge commit that names the branch and groups its commits. Do not fast-forward a feature branch into a long-lived branch, even when the long-lived branch has not advanced.
 - The merge commit message names the proposal, finding, or feature the branch implemented, so the integration point is greppable from the first-parent history.
 - A merge that conflicts is resolved on the feature branch (rebase or merge the target in, resolve, re-run the reached test tiers), then integrated with `--no-ff`. Do not resolve conflicts directly in the merge into a long-lived branch.
@@ -16,7 +17,7 @@ Integration history is explicit and branches are short-lived. Every feature bran
 
 - Delete a feature branch immediately after it merges, both the local branch (`git branch -d`, which refuses an unmerged branch) and its remote counterpart (`git push origin --delete <branch>`) when it was pushed.
 - Use the safe `-d` form rather than `-D`; a branch that `-d` refuses is not fully merged and must not be force-deleted without establishing where its unique commits went.
-- A long-lived integration branch (`main`, the current `impl/v1-initial`) is never deleted by this rule; it names the branches it protects.
+- A long-lived integration branch (`main`) is never deleted by this rule; it names the branches it protects.
 
 ## Where these rules apply
 
