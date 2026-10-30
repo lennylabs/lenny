@@ -3480,6 +3480,16 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   including the create response's `uploadToken` and the owner's action responses that 0110's not-found rule
   hides. The proposal binds the record to the authenticated subject and states what a second principal
   receives, on REST and on the MCP per-tool path. It does not depend on 0110's implementation.
+- [ ] **Warm-time shared-asset fill (F-6.4.19 Medium, F-6.4.20 Medium)** (new proposal, queued 2026-10-30 after
+  0111 and after the idempotent-replay proposal above, which is a security item): a Runtime's `type: artifact`
+  `sharedAssets` entries never reach `/workspace/shared/`, and inline entries ride the adapter's
+  `--shared-assets` command-line argument, which caps them near 90 KiB in total. The proposal reuses 0111's
+  warm-time fill path: the adapter fills the read-only `/workspace/shared/` store before READY, streaming each
+  asset from the gateway or from a presigned GET, under size bounds and a fill deadline, with metrics, and a
+  fill that fails keeps the pod out of READY. It states one `sharedAssets` schema across the admin API and the
+  `Runtime` CRD and how the registry value reaches the pod builder, moves inline content off the command line,
+  and states a size limit and the `/workspace/shared/` volume sizing. It follows 0111 because it reuses 0111's
+  fill path and store. The block "Filed 2026-10-30 (shared assets)" below lists both findings.
 
 - [ ] **P2b** (section P2 above): after 0085.
 
@@ -4663,6 +4673,19 @@ that left a recycle-pool pod claimed under `TestPodLifecycle` (T-17.4.42). Four 
 - [x] **T-17.4.45** (Low): the tier-8 and tier-9 `kubectl run --attach` psql helpers can read an empty result
   when kubectl loses the pod's output. Fixed on `fix/f-25-9-21`: the end-marker retry now lives in
   `tests/testinfra/kind/psql.go`, and the tier-5, tier-8, and tier-9 helpers delegate to it.
+
+**Filed 2026-10-30 (shared assets).** A check of the §6.4 `/workspace/shared/` population against the tree at
+`34c66d26d` found that F-6.4.3 built the volume, the CRD field, and the inline path only. Both findings route to
+the warm-time shared-asset fill proposal in "Queue after P4b" above, queued after 0111.
+
+- [ ] **F-6.4.19** (Medium): `type: artifact` shared assets are never materialized. The admin API validates and
+  stores them in the migration 0075 `shared_assets` column, but nothing carries the registry value to the pod
+  builder, which reads the `Runtime` CRD, and the CRD schema has no `type`, `ref`, or `destPath` property. An
+  artifact entry registered through the admin API is dropped silently and warm-up succeeds; on the CRD it is
+  rejected for the missing `path`, or written as an empty file when a `path` is added.
+- [ ] **F-6.4.20** (Medium): inline shared assets travel base64-encoded in one adapter command-line argument, so
+  `MAX_ARG_STRLEN` caps a Runtime's inline set near 90 KiB in total and a larger set fails at container start
+  with `E2BIG`. §6.4 and §5.1 state no size limit, transport, or volume size.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
