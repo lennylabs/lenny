@@ -2261,6 +2261,8 @@
       "title": "Session Lifecycle \u2014 Normal Flow",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "pkg/gateway/sessionserver/snapshot_restore_test.go",
+        "pkg/gateway/sessionserver/bind_request_test.go",
         "pkg/gateway/podlifecycle/podsession/restore_bind_test.go",
         "pkg/gateway/sessionserver/bind_rollback_test.go::TestRollbackBindingDetachesFromCancelledCaller_spec_7_1",
         "pkg/gateway/sessionserver/bind_rollback_test.go::TestRollbackClaimDetachesFromCancelledCaller_spec_7_1",
@@ -5024,6 +5026,7 @@
       "title": "Pod Security",
       "spec_file": "spec/13_security-model.md",
       "tests": [
+        "pkg/gateway/sessionserver/snapshot_restore_test.go::TestWorkspaceRestoreConfinedToDerivedPrefix_spec_13_1",
         "pkg/podsecurity/podsecurity_test.go::TestValidateAcceptsWellFormedAgentPod",
         "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsHostSharing",
         "pkg/podsecurity/podsecurity_test.go::TestValidateRejectsMissingFSGroup",
