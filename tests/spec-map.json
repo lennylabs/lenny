@@ -2268,6 +2268,7 @@
       "title": "Session Lifecycle \u2014 Normal Flow",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "pkg/adapter/capability_redaction_test.go",
         "tests/tier3_contract/rest_sessions/derive_replay_snapshot_contract_test.go::TestDeriveAndReplaySnapshotCopyErrorContract_spec_7_1",
         "tests/tier3_contract/rest_sessions/openapi_document_test.go::TestServedDocumentDeriveAndReplayDeclareSnapshotUnavailable",
         "pkg/gateway/sessionserver/snapshot_copy_test.go::TestSnapshotCopyFailsClosed_spec_7_1",
@@ -5175,6 +5176,8 @@
       "title": "Checkpoint Capability Model",
       "spec_file": "spec/13_security-model.md",
       "tests": [
+        "pkg/adapter/capability_redaction_test.go",
+        "tests/tier9_security/restore_grant_scope_test.go::TestFailedRestoreFetchLeaksNoCapability_spec_7_1",
         "tests/tier9_security/ops_agent_pod_boundary_test.go::TestAgentPodReachesObjectStoreButNoOtherLennySystemPort_spec_13_2",
         "tests/tier9_security/ops_agent_pod_boundary_test.go::TestAgentPodTrustsObjectStoreCA_spec_13_2",
         "tests/tier6_e2e_cloud/agent_objectstore_egress_test.go::TestAgentPodObjectStoreEgressIsPortScoped_spec_13_2"
@@ -6250,6 +6253,7 @@
       "title": "Distributed Tracing",
       "spec_file": "spec/16_observability.md",
       "tests": [
+        "pkg/adapter/capability_redaction_test.go::TestFinalizeWorkspaceRestoreFetchFailureCarriesNoCapability_spec_7_1",
         "pkg/adapter/bindattempt_test.go",
         "pkg/observability/correlation/correlation_test.go::TestFromHTTPHeaderRoundTrip",
         "pkg/observability/correlation/correlation_test.go::TestFromGRPCMetadataLowerCaseKeys",

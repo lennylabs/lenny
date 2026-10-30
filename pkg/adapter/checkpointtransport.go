@@ -7,9 +7,11 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 )
@@ -37,6 +39,10 @@ type CheckpointTransport interface {
 	// GetChunk fetches url, replaying every headers entry verbatim, and
 	// returns the response body for the caller to read and close. A
 	// non-2xx response returns a non-nil err.
+	//
+	// Neither method's error carries url: the presigned URL is a bearer
+	// capability, and an error string reaches a gRPC status, a span, and
+	// the gateway's error chain.
 	GetChunk(ctx context.Context, url string, headers map[string]string) (io.ReadCloser, error)
 }
 
@@ -76,7 +82,7 @@ func NewHTTPCheckpointTransport(caBundlePath string) (*httpCheckpointTransport, 
 func (t *httpCheckpointTransport) PutChunk(ctx context.Context, url string, headers map[string]string, contentLength int64, body io.Reader) (int, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, body)
 	if err != nil {
-		return 0, "", fmt.Errorf("build checkpoint PUT: %w", err)
+		return 0, "", withoutCapability("build checkpoint PUT", err)
 	}
 	// ContentLength must be exact: the gateway signed it into the
 	// capability and the object store rejects any other length.
@@ -86,7 +92,7 @@ func (t *httpCheckpointTransport) PutChunk(ctx context.Context, url string, head
 	}
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return 0, "", fmt.Errorf("checkpoint PUT: %w", err)
+		return 0, "", withoutCapability("checkpoint PUT", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -99,21 +105,38 @@ func (t *httpCheckpointTransport) PutChunk(ctx context.Context, url string, head
 func (t *httpCheckpointTransport) GetChunk(ctx context.Context, url string, headers map[string]string) (io.ReadCloser, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("build checkpoint GET: %w", err)
+		return nil, withoutCapability("build checkpoint GET", err)
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("checkpoint GET: %w", err)
+		return nil, withoutCapability("checkpoint GET", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		code := parseObjectStoreErrorCode(resp.Body)
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("checkpoint GET %s: http %d code %q", url, resp.StatusCode, code)
+		return nil, fmt.Errorf("checkpoint GET: http %d code %q", resp.StatusCode, code)
 	}
 	return resp.Body, nil
+}
+
+// withoutCapability wraps a request error under op with the presigned URL
+// removed. net/http reports a request failure as a *url.Error whose text
+// repeats the whole URL, signature query included, so the wrap keeps the
+// failed operation and the underlying cause and drops the URL. The cause
+// stays wrapped, so errors.Is still finds a context cancellation.
+//
+// spec: §13.2.3 (Checkpoint Capability Model) — the presigned URL is the
+// only authorization the pod holds for the object, so whoever reads it can
+// use it until it expires.
+func withoutCapability(op string, err error) error {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return fmt.Errorf("%s: %s: %w", op, ue.Op, ue.Err)
 }
 
 // parseObjectStoreErrorCode extracts the <Code> element from an S3-style

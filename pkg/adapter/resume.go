@@ -5,6 +5,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sort"
 
@@ -245,7 +246,9 @@ func (s *Server) chunkStream(ctx context.Context, chunks []*adapterv1.ChunkGrant
 		for _, ch := range ordered {
 			rc, err := s.CheckpointTransport.GetChunk(ctx, ch.GetUrl(), ch.GetHeaders())
 			if err != nil {
-				_ = pw.CloseWithError(err)
+				// The chunk is named by its index: the URL is a bearer
+				// capability (§13.2.3) and stays out of the error.
+				_ = pw.CloseWithError(fmt.Errorf("fetch chunk %d: %w", ch.GetIndex(), err))
 				return
 			}
 			_, cerr := io.Copy(pw, rc)

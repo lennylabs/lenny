@@ -33,12 +33,17 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -58,11 +63,14 @@ const restoreScopeEncoding = partialmanifeststore.ChunkEncodingTarGz
 const restoreScopeChunks = 3
 
 // recordingObjectTransport is the pod adapter's object-store transport with a
-// record of every capability URL the adapter fetched.
+// record of every capability URL the adapter fetched. A non-nil fault rewrites
+// each recorded URL before the fetch, so a case can make the store deny or
+// fail to answer a capability the gateway minted.
 type recordingObjectTransport struct {
 	inner adapter.CheckpointTransport
 	mu    sync.Mutex
 	urls  []string
+	fault func(string) string
 }
 
 func (r *recordingObjectTransport) PutChunk(ctx context.Context, u string, headers map[string]string, n int64, body io.Reader) (int, string, error) {
@@ -72,7 +80,11 @@ func (r *recordingObjectTransport) PutChunk(ctx context.Context, u string, heade
 func (r *recordingObjectTransport) GetChunk(ctx context.Context, u string, headers map[string]string) (io.ReadCloser, error) {
 	r.mu.Lock()
 	r.urls = append(r.urls, u)
+	fault := r.fault
 	r.mu.Unlock()
+	if fault != nil {
+		u = fault(u)
+	}
 	return r.inner.GetChunk(ctx, u, headers)
 }
 
@@ -91,6 +103,9 @@ type restoreScopeFixture struct {
 	mstore    *partialmanifeststore.MemoryStore
 	transport *recordingObjectTransport
 	logs      *lockedBuffer
+	// spans records every span the gateway and the in-process adapter end,
+	// so the bearer check covers each error a span status or event carries.
+	spans *tracetest.SpanRecorder
 	// bodies collects every gateway answer the cases read, so the bearer
 	// check covers each error string the gateway returned.
 	bodies []string
@@ -133,6 +148,10 @@ func newRestoreScopeFixture(t *testing.T) *restoreScopeFixture {
 	prev := log.Writer()
 	log.SetOutput(io.MultiWriter(prev, logs))
 	t.Cleanup(func() { log.SetOutput(prev) })
+	spans := tracetest.NewSpanRecorder()
+	prevTP := otel.GetTracerProvider()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans)))
+	t.Cleanup(func() { otel.SetTracerProvider(prevTP) })
 	// Every failed bind costs the pod two slot failures (the first attempt
 	// and the §5.2 retry); the slot bound keeps the whole-pod replacement
 	// threshold above the failures the cases cause.
@@ -146,7 +165,7 @@ func newRestoreScopeFixture(t *testing.T) *restoreScopeFixture {
 			},
 		},
 	})
-	return &restoreScopeFixture{h: h, r: h.Replicas[0], store: store, mstore: mstore, transport: transport, logs: logs}
+	return &restoreScopeFixture{h: h, r: h.Replicas[0], store: store, mstore: mstore, transport: transport, logs: logs, spans: spans}
 }
 
 // seedCheckpoint writes a gzip-compressed tar bundle as chunk objects of
@@ -313,23 +332,40 @@ func redactAll(urls []string) []string {
 	return out
 }
 
+// spanText is every ended span's status description and event attribute
+// values, one per line.
+func (f *restoreScopeFixture) spanText() string {
+	var b strings.Builder
+	for _, s := range f.spans.Ended() {
+		b.WriteString(s.Status().Description + "\n")
+		for _, ev := range s.Events() {
+			for _, kv := range ev.Attributes {
+				b.WriteString(kv.Value.Emit() + "\n")
+			}
+		}
+	}
+	return b.String()
+}
+
 // requireNoBearerLeak asserts no capability URL and no signature reached a
-// gateway log line or a gateway answer.
+// log line, a gateway answer, or a span the gateway or the adapter ended.
 func (f *restoreScopeFixture) requireNoBearerLeak(t *testing.T) {
 	t.Helper()
-	logs := f.logs.String()
-	answers := strings.Join(f.bodies, "\n")
+	sinks := []struct{ name, text string }{
+		{"log line", f.logs.String()},
+		{"gateway answer", strings.Join(f.bodies, "\n")},
+		{"span", f.spanText()},
+	}
 	for _, raw := range f.transport.fetched() {
 		u, _ := url.Parse(raw)
 		sig := u.Query().Get("X-Amz-Signature")
-		if strings.Contains(logs, raw) || (sig != "" && strings.Contains(logs, sig)) {
-			t.Errorf("a presigned GET for %s reached a log line", u.Path)
-		}
-		if strings.Contains(answers, raw) || (sig != "" && strings.Contains(answers, sig)) {
-			t.Errorf("a presigned GET for %s reached a gateway answer", u.Path)
+		for _, sink := range sinks {
+			if strings.Contains(sink.text, raw) || (sig != "" && strings.Contains(sink.text, sig)) {
+				t.Errorf("a presigned GET for %s reached a %s", u.Path, sink.name)
+			}
 		}
 	}
-	for _, sink := range []struct{ name, text string }{{"log line", logs}, {"gateway answer", answers}} {
+	for _, sink := range sinks {
 		if strings.Contains(sink.text, "X-Amz-Signature") || strings.Contains(sink.text, "X-Amz-Credential") {
 			t.Errorf("a presigned query parameter reached a %s", sink.name)
 		}
@@ -424,4 +460,65 @@ func (f *restoreScopeFixture) forgeRef(t *testing.T, id, ref string) {
 	}); err != nil {
 		t.Fatalf("forge the snapshot ref of %s: %v", id, err)
 	}
+}
+
+// setFault installs the URL rewrite the transport applies before each fetch.
+func (r *recordingObjectTransport) setFault(fault func(string) string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.fault = fault
+}
+
+// TestFailedRestoreFetchLeaksNoCapability_spec_7_1 makes the object store deny
+// a derived session's restore capabilities, by spoiling their signature, and
+// makes it unreachable. Each start fails with the session not started, and no
+// gateway answer, log line, or span carries a capability URL, its signature,
+// or a presigned query parameter, although the adapter's fetch error travels
+// into the session.finalize_workspace span and the FinalizeWorkspace status. Each
+// fault runs on its own fixture, because a failed bind spends the pod's slot
+// failure budget.
+//
+// spec: §7.1 (Derive restore semantics); §13.2.3 (Checkpoint Capability Model); §13.2.2
+// diagnosis: a restore chunk fetch that failed at the object store copied the presigned GET URL into its error, which reached a span, a gateway answer, or a log line. Check withoutCapability in pkg/adapter/checkpointtransport.go and the fetch error in chunkStream in pkg/adapter/resume.go.
+func TestFailedRestoreFetchLeaksNoCapability_spec_7_1(t *testing.T) {
+	unreachable := closedListenerHost(t)
+	for _, tc := range []struct {
+		name  string
+		fault func(string) string
+	}{
+		{name: "store denies a spoiled signature", fault: func(raw string) string {
+			return strings.Replace(raw, "X-Amz-Signature=", "X-Amz-Signature=00", 1)
+		}},
+		{name: "store unreachable", fault: func(raw string) string {
+			u, _ := url.Parse(raw)
+			u.Host = unreachable
+			return u.String()
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRestoreScopeFixture(t)
+			f.seedSource(t, "sess_leak_source", "ck_leak_source")
+			id := f.copyFrom(t, "sess_leak_source", "derive", map[string]any{})
+			f.transport.setFault(tc.fault)
+			code := f.finalizeAndStart(t, id)
+			f.requireNotStarted(t, id, code)
+			if len(f.transport.fetched()) == 0 {
+				t.Fatalf("adapter fetched no capability, so the case never reached the object store; start %d, answer %s", code, f.bodies[len(f.bodies)-1])
+			}
+			f.requireNoBearerLeak(t)
+		})
+	}
+}
+
+// closedListenerHost is the host:port of a listener that no longer accepts
+// connections.
+func closedListenerHost(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	host := ln.Addr().String()
+	_ = ln.Close()
+	return host
 }
