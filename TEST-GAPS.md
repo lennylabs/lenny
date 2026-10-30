@@ -5321,6 +5321,13 @@ Counts: 3 High, 5 Medium, 3 Low, 1 Info.
 - **Dependencies:** Requires two Postgres containers (primary and separate billing/audit) with the migrations applied (`tests/testinfra/containers`). none — buildable today.
 - **Suggested test:** Add `tests/tier4_integration/billing_audit_separate_instance_test.go` that configures `LENNY_PG_BILLING_AUDIT_DSN` to a second container, emits a billing event and an audit event plus a session write, and asserts the ledgers land on the secondary while the session row lands on the primary.
 
+### - [ ] T-12.3.13 — The `read-back failure returns the commit error` case of the lost-commit-acknowledgement component test fails intermittently under the full component tier [Medium] — OPEN
+- **Spec/Doc:** §12.3 Postgres HA Requirements (the durability-table row for a lost commit acknowledgement: a write whose read-back fails is treated as not applied although it committed).
+- **Existing tests:** `TestSessionStoreLostCommitAckClassifiedByWriteID_spec_12_3` in `tests/tier2_component/stores/sessionstore_commit_ack_test.go`; its `read-back failure returns the commit error` case arms `commitfault.CommitThenCut` and asserts the primary row carries the committed `FailureReason`.
+- **Gap:** `lenny-test --tier component --since 599349de8` (run_id `f1c8fbd27eb0025b9daf1e1f`, 2026-10-30, on `fix/derive-claim-and-setup-labels`, which touches no session-store code) failed the case at its line 172 with `primary FailureReason = "", want the committed write`, so the injected cut landed before the commit applied on the primary. The test passed 5 of 5 runs alone (`go test -tags component -count=5`), so the fault's commit-then-cut ordering is not deterministic under the parallel component tier.
+- **Dependencies:** none; buildable today.
+- **Suggested test:** Make `CommitThenCut` wait for the primary to acknowledge the commit before it cuts the connection (or assert on the write identifier the store read back rather than on timing), then run the case under `lenny-test stress` to confirm the flake no longer reproduces.
+
 ## §12.4 Redis HA and Failure Modes <a id="t-12.4"></a>
 **Spec file:** `spec/12_storage-architecture.md`
 **Reviewed:** 2026-07-06
