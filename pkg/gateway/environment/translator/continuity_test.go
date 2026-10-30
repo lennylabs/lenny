@@ -35,7 +35,7 @@ func seedTurn(t *testing.T, sessions sessionstore.Store, transcripts transcripts
 		t.Fatalf("seed session %s: %v", id, err)
 	}
 	if len(entries) > 0 {
-		if err := transcripts.Append(ctx, tenantID, id, entries...); err != nil {
+		if _, err := transcripts.Append(ctx, tenantID, id, entries...); err != nil {
 			t.Fatalf("seed transcript %s: %v", id, err)
 		}
 	}

@@ -71,7 +71,7 @@ func TestMessagesList_spec_15_1_692(t *testing.T) {
 	_ = store.Create(ctx, sessionstore.Session{
 		ID: "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0),
 	})
-	if err := transcripts.Append(
+	if _, err := transcripts.Append(
 		ctx, "acme", "s1",
 		transcriptstore.Entry{Role: "user", Content: "hi", Timestamp: time.Unix(10, 0)},
 		transcriptstore.Entry{Role: "assistant", Content: "hello", Timestamp: time.Unix(11, 0)},
@@ -127,7 +127,7 @@ func TestMessagesListPaginationAndSince_spec_15_1_692(t *testing.T) {
 	ctx := context.Background()
 	_ = store.Create(ctx, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
 	for i := 0; i < 5; i++ {
-		_ = transcripts.Append(ctx, "acme", "s1", transcriptstore.Entry{Role: "user", Content: "m"})
+		_, _ = transcripts.Append(ctx, "acme", "s1", transcriptstore.Entry{Role: "user", Content: "m"})
 	}
 
 	// limit=2 yields a cursor + hasMore.
@@ -161,7 +161,7 @@ func TestMessagesListThreadFilter_spec_15_4_1_1791(t *testing.T) {
 	h, transcripts, store := seedMessagesServer(t)
 	ctx := context.Background()
 	_ = store.Create(ctx, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
-	_ = transcripts.Append(ctx, "acme", "s1", transcriptstore.Entry{Role: "user", Content: "m"})
+	_, _ = transcripts.Append(ctx, "acme", "s1", transcriptstore.Entry{Role: "user", Content: "m"})
 
 	rr := getMessages(t, h, "/v1/sessions/s1/messages?threadId=t-other", "acme")
 	if rr.Code != http.StatusOK {
@@ -182,7 +182,7 @@ func TestMessagesListNotFound_spec_15_1_661(t *testing.T) {
 	h, transcripts, store := seedMessagesServer(t)
 	ctx := context.Background()
 	_ = store.Create(ctx, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
-	_ = transcripts.Append(ctx, "acme", "s1", transcriptstore.Entry{Role: "user", Content: "m"})
+	_, _ = transcripts.Append(ctx, "acme", "s1", transcriptstore.Entry{Role: "user", Content: "m"})
 	// A derive_failure audit row: terminal failed + failureClass.
 	_ = store.Create(ctx, sessionstore.Session{
 		ID: "df", TenantID: "acme", State: session.StateFailed,

@@ -108,7 +108,7 @@ func (s *replayRaceStores) seedSources(t *testing.T, tenant string, n int) []ses
 			t.Fatalf("seed source: %v", err)
 		}
 		for j := 0; j < replaySourceEntries; j++ {
-			if err := s.transcripts.Append(ctx, tenant, src.ID, transcriptstore.Entry{Role: "user", Content: fmt.Sprintf("m%d", j)}); err != nil {
+			if _, err := s.transcripts.Append(ctx, tenant, src.ID, transcriptstore.Entry{Role: "user", Content: fmt.Sprintf("m%d", j)}); err != nil {
 				t.Fatalf("seed transcript: %v", err)
 			}
 		}

@@ -886,7 +886,7 @@ func replayFixture(t *testing.T) (*fenceFixture, *transcriptstore.Memory, http.H
 	)
 	f.store.Store = f.mem
 	f.seedSourceWithSnapshot(t)
-	if err := transcripts.Append(context.Background(), "acme", "sess_source",
+	if _, err := transcripts.Append(context.Background(), "acme", "sess_source",
 		transcriptstore.Entry{Role: "user", Content: "original prompt"}); err != nil {
 		t.Fatalf("seed transcript: %v", err)
 	}

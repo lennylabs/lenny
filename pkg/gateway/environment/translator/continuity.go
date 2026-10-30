@@ -138,5 +138,5 @@ func (c *continuity) record(ctx context.Context, tenantID, sessionID string,
 	if len(entries) == 0 {
 		return
 	}
-	_ = c.transcripts.Append(ctx, tenantID, sessionID, entries...)
+	_, _ = c.transcripts.Append(ctx, tenantID, sessionID, entries...)
 }

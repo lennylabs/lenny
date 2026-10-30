@@ -12,12 +12,11 @@ import (
 
 func TestAppendAndGet(t *testing.T) {
 	s := transcriptstore.NewMemory()
-	err := s.Append(
+	if _, err := s.Append(
 		context.Background(), "acme", "sess_1",
 		transcriptstore.Entry{Role: "user", Content: "hello"},
 		transcriptstore.Entry{Role: "assistant", Content: "hi"},
-	)
-	if err != nil {
+	); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
 	entries, err := s.Get(context.Background(), "acme", "sess_1")
@@ -37,8 +36,8 @@ func TestAppendAndGet(t *testing.T) {
 
 func TestAppendAccumulatesSeq(t *testing.T) {
 	s := transcriptstore.NewMemory()
-	_ = s.Append(context.Background(), "acme", "sess_1", transcriptstore.Entry{Content: "a"})
-	_ = s.Append(context.Background(), "acme", "sess_1", transcriptstore.Entry{Content: "b"})
+	_, _ = s.Append(context.Background(), "acme", "sess_1", transcriptstore.Entry{Content: "a"})
+	_, _ = s.Append(context.Background(), "acme", "sess_1", transcriptstore.Entry{Content: "b"})
 	entries, _ := s.Get(context.Background(), "acme", "sess_1")
 	if len(entries) != 2 || entries[1].Seq != 2 {
 		t.Errorf("seq across appends: %+v", entries)
@@ -54,7 +53,7 @@ func TestGetMissing(t *testing.T) {
 
 func TestTenantIsolation(t *testing.T) {
 	s := transcriptstore.NewMemory()
-	_ = s.Append(context.Background(), "acme", "sess_1", transcriptstore.Entry{Content: "acme-data"})
+	_, _ = s.Append(context.Background(), "acme", "sess_1", transcriptstore.Entry{Content: "acme-data"})
 	// Different tenant, same session id — must not see acme's data.
 	if _, err := s.Get(context.Background(), "globex", "sess_1"); !errors.Is(err, transcriptstore.ErrNotFound) {
 		t.Errorf("cross-tenant Get should be ErrNotFound: %v", err)
@@ -64,7 +63,7 @@ func TestTenantIsolation(t *testing.T) {
 func TestPage(t *testing.T) {
 	s := transcriptstore.NewMemory()
 	for i := 0; i < 5; i++ {
-		_ = s.Append(context.Background(), "acme", "sess_1", transcriptstore.Entry{Content: "x"})
+		_, _ = s.Append(context.Background(), "acme", "sess_1", transcriptstore.Entry{Content: "x"})
 	}
 	page, err := s.Page(context.Background(), "acme", "sess_1", 2, 2)
 	if err != nil {
@@ -84,8 +83,8 @@ func TestPageMissing(t *testing.T) {
 
 func TestAppendEmptyIsNoOp(t *testing.T) {
 	s := transcriptstore.NewMemory()
-	if err := s.Append(context.Background(), "acme", "sess_1"); err != nil {
-		t.Errorf("empty append: %v", err)
+	if last, err := s.Append(context.Background(), "acme", "sess_1"); err != nil || last != 0 {
+		t.Errorf("empty append: last=%d err=%v, want 0 and nil", last, err)
 	}
 	if _, err := s.Get(context.Background(), "acme", "sess_1"); !errors.Is(err, transcriptstore.ErrNotFound) {
 		t.Error("empty append should not create a transcript")
@@ -97,7 +96,7 @@ func TestAppendEmptyIsNoOp(t *testing.T) {
 // user's sessions and calls DeleteBySession per session.
 func TestDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
 	s := transcriptstore.NewMemory()
-	_ = s.Append(context.Background(), "acme", "sess_1",
+	_, _ = s.Append(context.Background(), "acme", "sess_1",
 		transcriptstore.Entry{Role: "user", Content: "hi"})
 	n, err := s.DeleteByUser(context.Background(), "acme", "alice")
 	if err != nil || n != 0 {
@@ -112,9 +111,9 @@ func TestDeleteByUserIsNoOp_spec_12_1(t *testing.T) {
 // transcript belonging to the tenant; other tenants are unaffected.
 func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 	s := transcriptstore.NewMemory()
-	_ = s.Append(context.Background(), "acme", "sess_1", transcriptstore.Entry{Content: "a"})
-	_ = s.Append(context.Background(), "acme", "sess_2", transcriptstore.Entry{Content: "b"})
-	_ = s.Append(context.Background(), "globex", "sess_1", transcriptstore.Entry{Content: "c"})
+	_, _ = s.Append(context.Background(), "acme", "sess_1", transcriptstore.Entry{Content: "a"})
+	_, _ = s.Append(context.Background(), "acme", "sess_2", transcriptstore.Entry{Content: "b"})
+	_, _ = s.Append(context.Background(), "globex", "sess_1", transcriptstore.Entry{Content: "c"})
 	n, err := s.DeleteByTenant(context.Background(), "acme")
 	if err != nil {
 		t.Fatalf("DeleteByTenant: %v", err)
@@ -140,7 +139,7 @@ func TestDeleteByTenantRemovesAll_spec_12_1(t *testing.T) {
 // "starting at 1".
 func TestAppendStampsSchemaVersion_spec_15_4_1_1694(t *testing.T) {
 	s := transcriptstore.NewMemory()
-	if err := s.Append(
+	if _, err := s.Append(
 		context.Background(), "acme", "sess_sv",
 		transcriptstore.Entry{Role: "user", Content: "zero-defaulted"},
 		transcriptstore.Entry{Role: "assistant", Content: "explicit", SchemaVersion: 2},
@@ -163,5 +162,53 @@ func TestAppendStampsSchemaVersion_spec_15_4_1_1694(t *testing.T) {
 	}
 	if transcriptstore.SchemaVersion != 1 {
 		t.Errorf("SchemaVersion const = %d, want 1 per §15.5 item 7", transcriptstore.SchemaVersion)
+	}
+}
+
+// TestAppendReturnsLastSeq_spec_15 pins the end-sequence contract: each Append
+// returns the Seq it assigned to its last entry, successive appends return
+// contiguous last-seqs, the returned value equals the highest Seq a Get reads
+// back, and an empty append returns 0 without moving the sequence, including
+// on a session that already holds entries.
+//
+// spec: §15.1 (REST API), §15 (Open Responses conversation sessions)
+func TestAppendReturnsLastSeq_spec_15(t *testing.T) {
+	ctx := context.Background()
+	s := transcriptstore.NewMemory()
+	entry := func(c string) transcriptstore.Entry { return transcriptstore.Entry{Role: "user", Content: c} }
+	cases := []struct {
+		name    string
+		entries []transcriptstore.Entry
+		want    uint64
+	}{
+		{name: "empty append on an empty session", entries: nil, want: 0},
+		{name: "single entry", entries: []transcriptstore.Entry{entry("a")}, want: 1},
+		{name: "batch of three", entries: []transcriptstore.Entry{entry("b"), entry("c"), entry("d")}, want: 4},
+		{name: "empty append on a populated session", entries: nil, want: 0},
+		{name: "single entry after the empty append", entries: []transcriptstore.Entry{entry("e")}, want: 5},
+		{name: "batch of two", entries: []transcriptstore.Entry{entry("f"), entry("g")}, want: 7},
+	}
+	for _, tc := range cases {
+		got, err := s.Append(ctx, "acme", "sess_seq", tc.entries...)
+		if err != nil {
+			t.Fatalf("%s: Append: %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Fatalf("%s: lastSeq = %d, want %d", tc.name, got, tc.want)
+		}
+		if tc.want == 0 {
+			continue
+		}
+		all, err := s.Get(ctx, "acme", "sess_seq")
+		if err != nil {
+			t.Fatalf("%s: Get: %v", tc.name, err)
+		}
+		if top := all[len(all)-1].Seq; top != got {
+			t.Fatalf("%s: highest stored Seq = %d, Append returned %d", tc.name, top, got)
+		}
+	}
+	// Another session's sequence is independent of this one.
+	if got, err := s.Append(ctx, "acme", "sess_other", entry("x")); err != nil || got != 1 {
+		t.Fatalf("independent session: lastSeq=%d err=%v, want 1", got, err)
 	}
 }

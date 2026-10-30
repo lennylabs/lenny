@@ -1329,6 +1329,11 @@
       "unit": ["pkg/gateway/environment/userstore/...", "cmd/lenny-gateway/...", "cmd/lenny-ops/..."],
       "security": ["tests/tier9_security/ops_platform_role_downgrade_test.go"]
     },
+    "pkg/gateway/environment/transcriptstore": {
+      "unit": ["pkg/gateway/environment/transcriptstore/..."],
+      "component": ["tests/tier2_component/stores/transcriptstore_test.go", "tests/tier2_component/stores/sessionstore_create_with_transcript_test.go"],
+      "load_local": ["tests/tier7a_load_local/transcript_append_last_seq_race_test.go", "tests/tier7a_load_local/replay_transcript_erasure_race_test.go"]
+    },
     "pkg/gateway/environment/translator": {
       "unit": ["pkg/gateway/environment/translator/..."],
       "contract": ["tests/tier3_contract/rest_openai_chat/...", "tests/tier3_contract/rest_openai_responses/...", "tests/tier3_contract/multiprotocol_journey/..."],

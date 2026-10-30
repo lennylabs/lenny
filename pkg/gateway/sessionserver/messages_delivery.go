@@ -727,7 +727,7 @@ func (s *Server) recordDeliveredResponse(ctx context.Context, tenantID string, r
 				})
 			}
 		}
-		_ = s.transcripts.Append(ctx, tenantID, row.ID, entries...)
+		_, _ = s.transcripts.Append(ctx, tenantID, row.ID, entries...)
 	}
 
 	// Publish the §15.1 session events so SSE subscribers observe

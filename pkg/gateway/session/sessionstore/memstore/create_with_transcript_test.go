@@ -55,7 +55,7 @@ func (tf *transcriptFixture) seedSource(t *testing.T, owner string) sessionstore
 	if err := tf.sessions.Create(context.Background(), src); err != nil {
 		t.Fatalf("seed source: %v", err)
 	}
-	if err := tf.transcripts.Append(context.Background(), fenceTenant, src.ID, sourceEntries...); err != nil {
+	if _, err := tf.transcripts.Append(context.Background(), fenceTenant, src.ID, sourceEntries...); err != nil {
 		t.Fatalf("seed transcript: %v", err)
 	}
 	return src
@@ -197,10 +197,10 @@ func TestMemstoreCreateWithTranscript_spec_12_8(t *testing.T) {
 
 	t.Run("CopySession refuses a destination that holds entries", func(t *testing.T) {
 		ts := transcriptstore.NewMemory()
-		if err := ts.Append(ctx, fenceTenant, "src", sourceEntries...); err != nil {
+		if _, err := ts.Append(ctx, fenceTenant, "src", sourceEntries...); err != nil {
 			t.Fatalf("Append src: %v", err)
 		}
-		if err := ts.Append(ctx, fenceTenant, "dst", sourceEntries[0]); err != nil {
+		if _, err := ts.Append(ctx, fenceTenant, "dst", sourceEntries[0]); err != nil {
 			t.Fatalf("Append dst: %v", err)
 		}
 		if err := ts.CopySession(ctx, fenceTenant, "src", "dst"); err == nil {

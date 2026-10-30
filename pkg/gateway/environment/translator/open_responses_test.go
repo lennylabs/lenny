@@ -471,8 +471,8 @@ type appendFailTranscripts struct {
 	transcriptstore.Store
 }
 
-func (a appendFailTranscripts) Append(context.Context, string, string, ...transcriptstore.Entry) error {
-	return errors.New("transcript append failed")
+func (a appendFailTranscripts) Append(context.Context, string, string, ...transcriptstore.Entry) (uint64, error) {
+	return 0, errors.New("transcript append failed")
 }
 
 // getFailStore wraps a session store and makes Get return a non-ErrNotFound

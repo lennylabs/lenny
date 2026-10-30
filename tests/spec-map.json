@@ -5552,6 +5552,9 @@
       "title": "External API Surface",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "pkg/gateway/environment/transcriptstore/transcriptstore_test.go::TestAppendReturnsLastSeq_spec_15",
+        "tests/tier2_component/stores/transcriptstore_test.go::TestTranscriptStoreAppendReturnsLastSeq",
+        "tests/tier7a_load_local/transcript_append_last_seq_race_test.go::TestTranscriptAppendConcurrentLastSeq_spec_15",
         "tests/tier2_component/translators/openai_singleshot_disconnect_test.go::TestSingleShotDisconnectMidTurnEndsTheStreamOnlyAtRelease_spec_28_5_1",
         "pkg/api/v1/session/session_test.go::TestAllStatesCountMatchesSpec",
         "pkg/api/v1/session/session_test.go::TestIsTerminalCoversFourStates",
@@ -5637,6 +5640,9 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "pkg/gateway/environment/transcriptstore/transcriptstore_test.go::TestAppendReturnsLastSeq_spec_15",
+        "tests/tier2_component/stores/transcriptstore_test.go::TestTranscriptStoreAppendReturnsLastSeq",
+        "tests/tier7a_load_local/transcript_append_last_seq_race_test.go::TestTranscriptAppendConcurrentLastSeq_spec_15",
         "pkg/gateway/sessionserver/derive_upload_token_test.go::TestDeriveAndReplayMintAnUploadToken_spec_15_1",
         "tests/tier4_integration/checkpoint_workspace_derive_test.go::TestDerivedAndReplayedSessionsAcceptUploadsBeforeFinalize_spec_15_1",
         "tests/tier3_contract/rest_sessions/derive_replay_snapshot_contract_test.go::TestDeriveAndReplaySnapshotCopyErrorContract_spec_7_1",
