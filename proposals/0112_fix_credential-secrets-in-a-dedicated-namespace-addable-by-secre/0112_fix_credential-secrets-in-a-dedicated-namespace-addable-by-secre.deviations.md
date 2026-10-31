@@ -2,9 +2,11 @@
 
 The implementor owns this file. It stays empty until an implementation records a departure from what the proposal states.
 
-## Proposed: ProbeSecretAccess records no outcome for an InvalidArgument rejection
+## ProbeSecretAccess records no outcome for an InvalidArgument rejection
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-31 at finalization)
+
+**Verdict.** Accepted. A malformed request performs no read, and none of the four §16.1 outcomes describes it. Counting it as `unavailable` would page an operator for a caller bug. `TestProbeSecretAccess_EmptySecretName` pins the behavior.
 
 **Reported by:** step S14 (CODE-2: keyed Get-only ProbeSecretAccess, metric, redaction, and Token Service rate flags).
 
@@ -16,9 +18,11 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of Testing item 2 would expect the sum of the outcome counter to equal the number of `ProbeSecretAccess` calls. The sum equals the number of calls that passed request validation, and malformed requests are absent from the metric.
 
-## Proposed: Redaction interceptor lives in pkg/tokenservice and logs an `error` outcome
+## Redaction interceptor lives in pkg/tokenservice and logs an `error` outcome
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-31 at finalization)
+
+**Verdict.** Accepted. The tier 9 test has to import the production interceptor, so a definition in package `main` would force a second implementation. The `error` value stays in the log and span, and the §16.1 metric keeps its four outcomes.
 
 **Reported by:** step S14 (CODE-2: keyed Get-only ProbeSecretAccess, metric, redaction, and Token Service rate flags).
 
@@ -30,9 +34,11 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader following CODE-2 step 6 would look for the interceptor's definition in `cmd/lenny-token-service/surfaces.go` and find only the install call. A reader comparing the log or span `outcome` attribute with the §16.1 metric outcomes would find the extra value `error`, which exists in the log and span only.
 
-## Proposed: VCS adapter contract and INTERNAL_ERROR mapping are tested outside tier 3
+## VCS adapter contract and INTERNAL_ERROR mapping are tested outside tier 3
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-31 at finalization)
+
+**Verdict.** Accepted for the test location, because `tests/` cannot import package `main`. The `INTERNAL_ERROR` half is fixed: `TestVCSTokenUnavailableReadIsInternalError_spec_4_9` in `pkg/gateway/mcpfabric/mcptools/vcs_token_test.go` drives the tool with a wrapped gRPC `Unavailable` and observes the tool error.
 
 **Reported by:** step S18 (CODE-6: Token-Service-backed VCS reader).
 
@@ -44,9 +50,11 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of the TEST-1 tier 3 bullet would look under `tests/tier3_contract` for the adapter-to-Token-Service contract test, and that test is in `cmd/lenny-gateway`. A reader of the VCS adapter testing item would expect a test that observes the `INTERNAL_ERROR` tool error. The adapter tests assert only the error classification that selects the `vcsTokenError` branch.
 
-## Proposed: VCS reader wiring moved into buildVCSResolver and newTokenServiceVCSReader
+## VCS reader wiring moved into buildVCSResolver and newTokenServiceVCSReader
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-31 at finalization)
+
+**Verdict.** Accepted. The helper preserves the wiring the proposal describes, and it makes the nil-connection branch testable without the whole `buildAuxStores` accumulator.
 
 **Reported by:** step S18 (CODE-6: Token-Service-backed VCS reader).
 
@@ -58,9 +66,11 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader following CODE-6 step 2 would look for an inline construction of `vcsCreds` in `auxstores.go` and find a call to `buildVCSResolver`. A reader of the prober struct would assume the admin probe path uses the `tokenService` field, and only the VCS reader constructed by `newTokenServiceVCSReader` uses it.
 
-## Proposed: The tier 3 cross-tier contract is split across several tests, and the prober half sits at tier 1
+## The tier 3 cross-tier contract is split across several tests, and the prober half sits at tier 1
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-31 at finalization)
+
+**Verdict.** Accepted. Every named test file exists and the assertions of the bullet are covered. The prober half stays beside the unexported type in `cmd/lenny-gateway`.
 
 **Reported by:** step S22 (TEST-1: cross-tier tests).
 
@@ -72,9 +82,11 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of the TEST-1 tier 3 bullet would look under `tests/tier3_contract` for the prober half and find it in `cmd/lenny-gateway`.
 
-## Proposed: The tier 5 authenticated gitClone stops at the Token Service read
+## The tier 5 authenticated gitClone stops at the Token Service read
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-31 at finalization)
+
+**Verdict.** Accepted as a verification gap with an open owner. The Token Service read is verified on kind, and the authenticated clone is unverified until F-14.1.37 closes. The image change is outside this proposal.
 
 **Reported by:** step S22 (TEST-1: cross-tier tests).
 
@@ -86,9 +98,11 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of the TEST-1 tier 5 bullet would take an authenticated clone on kind as verified. It is not, and the missing `git` binary affects every `gitClone` on a deployed gateway, public repositories included.
 
-## Proposed: The tier 5 authenticated gitClone subtest skips on F-14.1.37
+## The tier 5 authenticated gitClone subtest skips on F-14.1.37
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-31 at finalization)
+
+**Verdict.** Accepted. This entry reports the same bullet as the previous one, and the same verdict applies. The subtest skip reason names F-14.1.37, so the skip ends with that finding.
 
 **Reported by:** step S22 (TEST-1: cross-tier tests). This report covers the same bullet as the earlier entry "The tier 5 authenticated gitClone stops at the Token Service read" and adds the expected error code and the finding that now tracks the defect.
 
@@ -100,9 +114,11 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of the TEST-1 tier 5 bullet would take an authenticated clone on kind as verified. The test verifies the Token Service keyed read only, and the clone itself stays unverified until F-14.1.37 closes.
 
-## Proposed: The new finding is F-4.9.45, and this step filed no unstaged-defect entries
+## The new finding is F-4.9.45, and this step filed no unstaged-defect entries
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-31 at finalization)
+
+**Verdict.** Accepted. F-4.9.42 to F-4.9.44 were taken, so F-4.9.45 is the next free id. Finalization checked the entries one by one: each of the nine summary defects has an open finding, namely F-15.1.70, F-15.1.71, F-4.9.42, F-13.2.26, F-13.2.27, F-10.2.33, F-4.9.43, F-4.9.44, and F-12.9.24.
 
 **Reported by:** step S24 (REC-1: BUILD-GAPS records).
 
@@ -114,9 +130,11 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of REC-1 would look for the new finding under F-4.9.42 and find a different finding. A reader would also take step S24 as the step that filed the unstaged-defect entries. The record that those entries were filed in merge `b3a35f1f0` comes from the step task, and step S24 did not confirm it entry by entry.
 
-## Proposed: Commit f6fe7c6f8 keeps proposal change ids in its message
+## Commit f6fe7c6f8 keeps proposal change ids in its message
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-31 at finalization)
+
+**Verdict.** Accepted. Committed history is not rewritten, and the labels appear in no code, test, doc, or spec text.
 
 **Reported by:** the design-conformance review.
 
@@ -128,9 +146,11 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of first-parent history would look for `SPEC-1` in the specification. The commit lands the §4.9 credentials namespace, `secretRef` rules, `secretData` path, and per-read Token Service resolution.
 
-## Proposed: A gateway with a Token Service and no cluster client holds a failing writer
+## A gateway with a Token Service and no cluster client holds a failing writer
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-31 at finalization)
+
+**Verdict.** Accepted. The gateway fails closed: writes answer `503 SERVICE_UNAVAILABLE`, and tenant deletion Phase 4 retries until a restart restores the client. A startup failure would add a precondition the design lacks, and a nil writer would report `TOKEN_SERVICE_NOT_CONFIGURED`, which rule 6 forbids.
 
 **Reported by:** the design-conformance review.
 
@@ -142,9 +162,11 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of rule 6 would expect tenant deletion on such a gateway to proceed for a tenant with no Lenny-written reference. That branch applies only to a gateway with no Token Service.
 
-## Proposed: The Token Service reads LENNY_CREDENTIALS_NAMESPACE
+## The Token Service reads LENNY_CREDENTIALS_NAMESPACE
 
-**Status:** proposed
+**Status:** accepted (adjudicated 2026-10-31 at finalization)
+
+**Verdict.** Accepted. The chart sets both flags from `credentials.namespace`, so a chart install is unaffected. The environment override keeps a non-chart deployment from splitting the gateway and the Token Service across two namespaces.
 
 **Reported by:** the design-conformance review.
 

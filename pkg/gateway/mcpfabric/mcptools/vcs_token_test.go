@@ -5,7 +5,11 @@ package mcptools_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -204,6 +208,21 @@ func TestVCSTokenNoUsableCredentialIsConfigError_spec_26_2_119(t *testing.T) {
 
 	if code := errorCode(t, res); code != "GIT_CLONE_AUTH_UNSUPPORTED_HOST" {
 		t.Fatalf("error code = %q, want GIT_CLONE_AUTH_UNSUPPORTED_HOST", code)
+	}
+}
+
+// spec: §4.9 (Token Service secret resolution) rule 3 — a Token Service read
+// with no verdict is neither a missing credential nor an unsupported host, so
+// the in-pod token tool answers INTERNAL_ERROR.
+func TestVCSTokenUnavailableReadIsInternalError_spec_4_9(t *testing.T) {
+	unavailable := fmt.Errorf("read VCS token Secret: %w", status.Error(codes.Unavailable, "token service down"))
+	srv := vcsTokenServer(t, &stubVCSResolver{err: unavailable}, nil)
+	res := dispatchVCS(t, srv,
+		authmw.Principal{TenantID: "acme", SessionID: "sess-1"},
+		`{"host":"github.com"}`)
+
+	if code := errorCode(t, res); code != "INTERNAL_ERROR" {
+		t.Fatalf("error code = %q, want INTERNAL_ERROR", code)
 	}
 }
 
