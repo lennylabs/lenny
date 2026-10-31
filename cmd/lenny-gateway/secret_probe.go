@@ -31,8 +31,19 @@ import (
 // spec: §4.9 (Credential Storage Topology).
 type tokenServiceSecretProber struct {
 	stub tokensv1.TokenServiceClient
-	// credNS is the --credentials-namespace value.
+	// credNS is the resolved --credentials-namespace value.
 	credNS string
+}
+
+// newTokenServiceSecretProber returns a prober over stub that parses each
+// stored ref against credNS. The composition root passes the value
+// gatewayFlags.resolvedCredentialsNamespace returns, the same value it
+// passes to the admin Router, so the ref the Router canonicalizes is the
+// ref the prober accepts.
+//
+// spec: §4.9 (Credential Storage Topology).
+func newTokenServiceSecretProber(stub tokensv1.TokenServiceClient, credNS string) *tokenServiceSecretProber {
+	return &tokenServiceSecretProber{stub: stub, credNS: credNS}
 }
 
 var _ admin.SecretAccessProber = (*tokenServiceSecretProber)(nil)

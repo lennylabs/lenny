@@ -3,13 +3,22 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"google.golang.org/grpc"
 
+	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 )
 
@@ -122,4 +131,73 @@ func TestTokenServiceSecretProber_BareRefSendsName(t *testing.T) {
 	if got != admin.SecretProbeNotFound || stub.got != "anthropic-key-2" || stub.calls != 1 {
 		t.Fatalf("verdict=%v name=%q calls=%d, want NOT_FOUND anthropic-key-2 1", got, stub.got, stub.calls)
 	}
+}
+
+// spec: §4.9 (Credential Storage Topology), §17.6 (Packaging and
+// Installation) — the composition root resolves --credentials-namespace
+// once and hands the same value to the admin Router and the Token Service
+// prober. An explicit empty flag value (envOr defaults only an empty
+// environment variable) resolves to the default namespace for both, so a
+// pool create with a bare secretRef is canonicalized by the Router, parsed
+// by the prober, probed by name, and persisted with 201. A prober that kept
+// the raw empty value would refuse the canonical ref and the create would
+// answer 503 CREDENTIAL_PROBE_UNAVAILABLE.
+func TestCredentialsNamespace_RouterAndProberAgree(t *testing.T) {
+	for _, tc := range []struct {
+		flag, wantNS string
+	}{
+		{flag: "", wantNS: credential.DefaultNamespace},
+		{flag: "acme-creds", wantNS: "acme-creds"},
+	} {
+		t.Run("flag="+tc.flag, func(t *testing.T) {
+			flagValue := tc.flag
+			f := &gatewayFlags{credentialsNamespace: &flagValue}
+			ns := f.resolvedCredentialsNamespace()
+			if ns != tc.wantNS {
+				t.Fatalf("resolvedCredentialsNamespace() = %q, want %q", ns, tc.wantNS)
+			}
+			stub := &fakeTokenServiceClient{resp: verdictResp(tokensv1.Verdict_VERDICT_ALLOWED)}
+			pools := credentialpoolstore.NewMemory()
+			router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{CredentialsNamespace: ns}).
+				WithCredentialPools(pools).
+				WithSecretAccessProber(newTokenServiceSecretProber(stub, ns))
+
+			rr := postCredentialPool(t, router.Handler(), "anthropic-key-1")
+			if rr.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want 201; body=%s", rr.Code, rr.Body.String())
+			}
+			if stub.calls != 1 || stub.got != "anthropic-key-1" {
+				t.Fatalf("probe calls=%d name=%q, want 1 anthropic-key-1", stub.calls, stub.got)
+			}
+			stored, err := pools.Get(context.Background(), "acme", "p1")
+			if err != nil {
+				t.Fatalf("pool not persisted: %v", err)
+			}
+			if got, want := stored.Credentials[0].SecretRef, tc.wantNS+"/anthropic-key-1"; got != want {
+				t.Fatalf("stored secretRef = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// postCredentialPool creates pool acme/p1 holding one credential with
+// secretRef ref, as a platform-admin.
+func postCredentialPool(t *testing.T, h http.Handler, ref string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(admin.CredentialPoolPayload{
+		TenantID: "acme", Name: "p1", Provider: "anthropic_direct",
+		AssignmentStrategy: "least-loaded", MaxConcurrentSessions: 10,
+		Credentials: []admin.CredentialEntryPayload{{ID: "key-1", SecretRef: ref}},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/credential-pools", bytes.NewReader(body))
+	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{
+		Subject: "alice@acme.com", TenantID: "platform", Roles: []pkgauth.Role{pkgauth.RolePlatformAdmin},
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
 }

@@ -301,7 +301,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		PrimaryReadTimeout: *f.sessionPrimaryReadTimeout,
 		// spec: §4.9 — the credentials namespace every credential-pool
 		// secretRef is parsed against and stored canonical in.
-		CredentialsNamespace: *f.credentialsNamespace,
+		CredentialsNamespace: f.resolvedCredentialsNamespace(),
 	})).
 		WithKMSProbe(kmsProbeLifecycle).
 		WithRuntimes(w.runtimes).

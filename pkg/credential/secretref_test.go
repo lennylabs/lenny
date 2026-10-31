@@ -205,3 +205,19 @@ func TestIsManagedMatchesReservedPrefixOnly(t *testing.T) {
 		}
 	}
 }
+
+// spec: §4.9 (Credential Storage Topology), §17.6 (Packaging and
+// Installation) — an empty configured namespace resolves to the default,
+// and a configured one passes through unchanged.
+func TestResolveNamespaceDefaultsEmpty(t *testing.T) {
+	cases := map[string]string{
+		"":               "lenny-credentials",
+		"acme-creds":     "acme-creds",
+		DefaultNamespace: DefaultNamespace,
+	}
+	for in, want := range cases {
+		if got := ResolveNamespace(in); got != want {
+			t.Errorf("ResolveNamespace(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

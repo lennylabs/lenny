@@ -407,6 +407,18 @@ func parseFlags() *gatewayFlags {
 	return f
 }
 
+// resolvedCredentialsNamespace returns the §4.9 credentials namespace the
+// --credentials-namespace flag selects. envOr defaults only an empty
+// environment variable, so an explicit empty flag value still reaches
+// here; credential.ResolveNamespace maps it to credential.DefaultNamespace.
+// The composition root passes this one value to both the admin Router and
+// the Token Service Secret prober.
+//
+// spec: §4.9 (Credential Storage Topology), §17.6 (Packaging and Installation).
+func (f *gatewayFlags) resolvedCredentialsNamespace() string {
+	return credential.ResolveNamespace(*f.credentialsNamespace)
+}
+
 // registerCoreFlags registers the core listener, auth, OIDC, dev-mode, Postgres, Redis, and scatter-gather flags.
 //
 // spec: §4.1 gateway subsystem seams.

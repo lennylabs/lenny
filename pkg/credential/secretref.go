@@ -25,6 +25,20 @@ const ManagedSecretPrefix = "lenny-cred-"
 // spec: §4.9 (Credential Storage Topology), §17.6 (Packaging and Installation)
 const DefaultNamespace = "lenny-credentials"
 
+// ResolveNamespace returns the credentials namespace a configured value
+// selects: ns itself, or DefaultNamespace when ns is empty. Every consumer
+// of the configured value resolves it through this function, so the admin
+// handlers that canonicalize a secretRef and the Token Service probe that
+// parses it agree on one namespace.
+//
+// spec: §4.9 (Credential Storage Topology), §17.6 (Packaging and Installation)
+func ResolveNamespace(ns string) string {
+	if ns == "" {
+		return DefaultNamespace
+	}
+	return ns
+}
+
 // managedHashHexLen is the number of hexadecimal SHA-256 characters a
 // Lenny-written Secret name and its tenant-hash label carry.
 const managedHashHexLen = 40

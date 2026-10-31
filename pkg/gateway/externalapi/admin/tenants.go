@@ -485,7 +485,8 @@ type Options struct {
 	// CredentialsNamespace is the §4.9 credentials namespace, sourced from
 	// the gateway --credentials-namespace flag. The credential-pool handlers
 	// and the bootstrap seed parse every submitted secretRef against it and
-	// store the canonical "<namespace>/<name>" form. Empty selects
+	// store the canonical "<namespace>/<name>" form. The value is resolved
+	// with credential.ResolveNamespace, so empty selects
 	// credential.DefaultNamespace, the flag's default.
 	// spec: §4.9 (Credential Storage Topology).
 	CredentialsNamespace string
@@ -497,10 +498,7 @@ func NewRouter(tenants tenantstore.Store, opts Options) *Router {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
-	credNS := opts.CredentialsNamespace
-	if credNS == "" {
-		credNS = credential.DefaultNamespace
-	}
+	credNS := credential.ResolveNamespace(opts.CredentialsNamespace)
 	return &Router{
 		tenants:             tenants,
 		clock:               clock,
