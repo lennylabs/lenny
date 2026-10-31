@@ -11,6 +11,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // routeTaskSpec is the §4.8 PreRoute / PostRoute content payload: the
@@ -102,6 +104,72 @@ func (s *Server) runRouteChainRange(w http.ResponseWriter, r *http.Request, phas
 	default:
 		return spec, true
 	}
+}
+
+// preRouteBeforeExperiment runs the §4.8 PreRoute interceptors with priority
+// below the ExperimentRouter over the requested runtime and returns the
+// runtime the session continues with. Both creation routes call it ahead of
+// their §7.1 isolation-level resolution and routeExperiment, so a priority
+// 101-299 MODIFY of the runtime hint decides which experiment and pool the
+// session reaches. A REJECT aborts the create after the response is written.
+// owner is the §10.2 session owner, which the chain holds immutable.
+// spec: §4.8 (the PreRoute row; the ExperimentRouter field dependencies); §10.2.
+func (s *Server) preRouteBeforeExperiment(w http.ResponseWriter, r *http.Request, tenantID, owner, runtimeRef string) (string, bool) {
+	spec, ok := s.runRouteChainRange(w, r, interceptor.PhasePreRoute, routeTaskSpec{
+		TenantID:         tenantID,
+		UserID:           owner,
+		RequestedRuntime: runtimeRef,
+	}, math.MinInt32, ExperimentRouterPriority)
+	if !ok {
+		return "", false
+	}
+	if spec.RequestedRuntime != "" {
+		return spec.RequestedRuntime, true
+	}
+	return runtimeRef, true
+}
+
+// preRouteAfterExperiment runs the §4.8 PreRoute interceptors at or above the
+// ExperimentRouter priority over the runtime experiment routing left on row.
+// A runtime-hint MODIFY here is the last word on the session's runtime, so it
+// rewrites row.RuntimeRef and re-resolves the §7.1 isolation-level fields
+// against effProf and pinnedPool. A REJECT aborts the create after the
+// response is written. spec: §4.8; §7.1.
+func (s *Server) preRouteAfterExperiment(w http.ResponseWriter, r *http.Request, row *sessionstore.Session, effProf isolation.Profile, pinnedPool string) bool {
+	spec, ok := s.runRouteChainRange(w, r, interceptor.PhasePreRoute, routeTaskSpec{
+		TenantID:         row.TenantID,
+		UserID:           row.UserID,
+		RequestedRuntime: row.RuntimeRef,
+	}, ExperimentRouterPriority, math.MaxInt32)
+	if !ok {
+		return false
+	}
+	if spec.RequestedRuntime == "" || spec.RequestedRuntime == row.RuntimeRef {
+		return true
+	}
+	row.RuntimeRef = spec.RequestedRuntime
+	// spec: §7.1 — resolve against the effective requested profile so a
+	// pinned pool's own profile still governs after a runtime-hint MODIFY.
+	// F-CS2 (0018).
+	level := s.resolveIsolationLevel(r.Context(), row.RuntimeRef, effProf, pinnedPool)
+	row.ExecutionMode = level.ExecutionMode
+	row.ScrubPolicy = level.ScrubPolicy
+	row.ConversationContinuity = level.ConversationContinuity
+	return true
+}
+
+// postRouteAfterSelection runs the §4.8 PostRoute chain with the runtime
+// routing selected for row. A REJECT aborts the create after the response is
+// written. A MODIFY may rewrite runtime-specific parameters only, because the
+// chain holds the resolved runtime and the credential assignment immutable.
+// spec: §4.8 (the PostRoute row).
+func (s *Server) postRouteAfterSelection(w http.ResponseWriter, r *http.Request, row *sessionstore.Session) bool {
+	_, ok := s.runRouteChain(w, r, interceptor.PhasePostRoute, routeTaskSpec{
+		TenantID:            row.TenantID,
+		UserID:              row.UserID,
+		ResolvedRuntimeName: row.RuntimeRef,
+	})
+	return ok
 }
 
 // auditRouteRejection writes the §16.7 `interceptor.rejected` audit row for

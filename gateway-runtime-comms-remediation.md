@@ -4223,9 +4223,16 @@ D2), which stays with the upload route proposal.
     ordering the specification does not state, it goes to a proposal. Closed 2026-10-31 by direct fix on
     `fix/finalize-policy-forward`: both create routes check `row.RuntimeRef` after routing and immediately
     before the defaults composition, the position §14.1 rule 1 states. Filed from the fix: F-4.8.25.
-  - [ ] **F-4.8.25** (Medium, filed from F-7.5.16): `POST /v1/sessions` runs no §4.8 PreRoute or PostRoute
-    chain, while create-and-start runs both around the ExperimentRouter. Direct fix after proposal 0110,
-    which edits the create path.
+  - [x] **F-4.8.25** (Medium, filed from F-7.5.16): `POST /v1/sessions` runs no §4.8 PreRoute or PostRoute
+    chain, while create-and-start runs both around the ExperimentRouter. Closed 2026-10-31 by direct fix on
+    `fix/route-chain-create`: both create routes call one set of route helpers, and the drain gate judges the
+    routed runtime. Filed from the fix: F-4.8.26, F-15.1.72, and F-12.9.25.
+  - [ ] **F-4.8.26** (Low, filed from F-4.8.25): the §14 envelope and the §27.6 caps read a runtime that
+    experiment routing or a late PreRoute MODIFY may replace. The order needs specification text, so it goes
+    to a proposal.
+  - [ ] **F-15.1.72** (Medium, filed from F-4.8.25): `POST /v1/sessions/start` has no drain gate. Direct fix.
+  - [ ] **F-12.9.25** (Medium, filed from F-4.8.25): `POST /v1/sessions` does not validate tenant
+    classification. Direct fix.
   - [x] **F-16.1.8** (Medium): `lenny_warmpool_warmup_failure_total` has no warm-up emitter and only the
     `error_type` label, so `PoolScaleoutBlockedByQuota` never fires. The Sandbox reconciler now emits
     `image_pull_error`, `resource_quota_exceeded`, and `node_pressure` with the §16.1 labels, once per
