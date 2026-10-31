@@ -4578,7 +4578,7 @@ other test in that binary.
     109.1 s in a scoped unit-tier run on 2026-10-27, the slowest of that run. Fixed on
     `fix/route-chain-create`: the package shares one control plane and each test gets its own namespace.
     The package passes in 63.6 s.
-  - [ ] **T-17.4.47** (Low): a process that exited and is not yet reaped reads as `HolderUnknown`, so
+  - [ ] **T-17.4.49** (Low): a process that exited and is not yet reaped reads as `HolderUnknown`, so
     `ports.Ready` hands back a process that lost its port. It failed
     `TestOpsHarnessRestartsOnAnOccupiedAddress` once on 2026-10-31. Direct fix.
   - [x] **T-17.4.29** (Medium): parallel implementation worktrees share the one `lenny-e2e` kind cluster,
