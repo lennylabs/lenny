@@ -369,7 +369,7 @@ credentialPools:
     provider: anthropic_direct
     credentials:
       - id: key-1
-        secretRef: lenny-system/anthropic-key
+        secretRef: anthropic-key # Secret in the credentials namespace
 ```
 
 This is the minimum configuration for a single-runtime deployment. All other fields (isolation profile, resource class, warm count, delegation, egress profile, etc.) use deployer-safe defaults. See the full Runtime schema above for customization options.
