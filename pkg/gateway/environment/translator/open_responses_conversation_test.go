@@ -301,6 +301,8 @@ type convOptions struct {
 	// replicaLag, when above one, makes the lagging replica hold back that
 	// many committed writes; it implies laggingReads.
 	replicaLag int
+	// noSessionAccess builds the handler with a nil SessionAccess.
+	noSessionAccess bool
 }
 
 func newConvFixture(t *testing.T, o convOptions) *convFixture {
@@ -322,13 +324,17 @@ func newConvFixture(t *testing.T, o convOptions) *convFixture {
 		f.ts = transcriptstore.NewMemory()
 	}
 	f.binder = &convBinder{store: served, hold: o.hold, rewriteRuntime: o.rewriteRuntime}
+	var access translator.SessionAccess = sessionserver.New(inner, sessionserver.Options{})
+	if o.noSessionAccess {
+		access = nil
+	}
 	f.h = translator.NewOpenResponsesHandler(f.store, f.exec, translator.OpenResponsesOptions{
 		DevTenantHeader:  true,
 		Clock:            func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		SingleShotBinder: f.binder,
 		Transcripts:      f.ts,
 		HolderForwarder:  f.forwarder,
-		SessionAccess:    sessionserver.New(inner, sessionserver.Options{}),
+		SessionAccess:    access,
 		Terminal:         f.terminal,
 		ReleaseTimeout:   time.Second,
 	})
