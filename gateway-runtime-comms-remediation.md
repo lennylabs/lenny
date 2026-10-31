@@ -4201,8 +4201,14 @@ refiled: the §15.1 `/upload` precondition row admitting `running` is annotated 
 D2), which stays with the upload route proposal.
 
 - Direct-fix queue, after 0086's implementation, which edits the same files.
-  - [ ] **F-7.4.21** (Medium): `handleFinalize` does not verify the `uploadToken`, while §7.4 requires every
-    finalize request to carry it. Verify it before the precondition check, as `admitUpload` does.
+  - [x] **F-7.4.21** (Medium): `handleFinalize` does not verify the `uploadToken`, while §7.4 requires every
+    finalize request to carry it. Verify it before the precondition check, as `admitUpload` does. Closed
+    2026-10-31 by direct fix on `fix/finalize-policy-forward`: the token is verified before the row is read,
+    and the SDKs, the CLI, the playground, and `lenny/finalize_workspace` send it. Filed from the fix:
+    F-15.1.69.
+  - [ ] **F-15.1.69** (Low, filed from F-7.4.21): `UPLOAD_TOKEN_INVALID` has no §15.1 catalog row, so MCP
+    classifies it as transient and retryable while REST answers it as permanent. Needs a catalog row through
+    the proposal pipeline, then the `errorclassify` entry.
   - [ ] **F-7.5.15** (Medium): `enforceSetupCommandPolicy` admits a plan on every runtime read error. Answer a
     transient read with `503 SERVICE_UNAVAILABLE`, as 0086's defaults composition does, after 0086's S14.
   - [ ] **F-7.5.16** (Medium): at creation the setup-command policy is read from the requested runtime rather

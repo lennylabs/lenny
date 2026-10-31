@@ -674,16 +674,31 @@ func (d *Driver) Interrupt(ctx context.Context, tenantID, sessionID string) (*Se
 
 // Finalize issues POST /v1/sessions/{id}/finalize, the §15.1 preparation
 // barrier that moves a created session to ready, and returns the session.
-func (d *Driver) Finalize(ctx context.Context, tenantID, sessionID string) (*Session, error) {
-	return d.sessionStep(ctx, tenantID, sessionID, "finalize")
+// uploadToken is the §7.1 token the create response returned, which every
+// finalize request carries (§7.4 Upload authorization).
+func (d *Driver) Finalize(ctx context.Context, tenantID, sessionID, uploadToken string) (*Session, error) {
+	return d.sessionStepWithHeaders(ctx, tenantID, sessionID, "finalize",
+		map[string]string{"X-Lenny-Upload-Token": uploadToken})
 }
 
 // sessionStep posts an empty body to /v1/sessions/{id}/{step} and decodes
 // the 200 session response.
 func (d *Driver) sessionStep(ctx context.Context, tenantID, sessionID, step string) (*Session, error) {
+	return d.sessionStepWithHeaders(ctx, tenantID, sessionID, step, nil)
+}
+
+// sessionStepWithHeaders is sessionStep carrying extra request headers.
+func (d *Driver) sessionStepWithHeaders(ctx context.Context, tenantID, sessionID, step string, headers map[string]string) (*Session, error) {
 	path := "/v1/sessions/" + sessionID + "/" + step
-	res, err := d.doSessionRequest(ctx, http.MethodPost, path,
-		tenantAdmin(tenantID), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.baseURL+path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%s session %q: %w", step, sessionID, err)
+	}
+	d.applySessionAuth(req, tenantAdmin(tenantID))
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	res, err := d.hc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%s session %q: %w", step, sessionID, err)
 	}

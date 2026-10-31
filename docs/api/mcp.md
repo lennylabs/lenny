@@ -332,6 +332,7 @@ Bind the session's workspace plan when creation carried none, materialize the wo
 | Parameter | Type | Required | Description |
 |:----------|:-----|:---------|:------------|
 | `sessionId` | string | Yes | Target session ID |
+| `uploadToken` | string | Yes | The `uploadToken` returned by `create_session`. The tool sends it in the `X-Lenny-Upload-Token` header of the finalize request. A call without it fails with `VALIDATION_ERROR`. |
 | `workspacePlan` | object | No | The [workspace plan](../reference/workspace-plan.md) to bind, allowed only when the session was created without one. Its `uploadFile` sources name uploads to this session by the `uploadRef` that `upload_files` returned. When the argument is absent or `null`, finalize materializes the plan bound at creation, or the empty plan. |
 
 **Output schema:**
@@ -366,6 +367,7 @@ A call rejected for its `workspacePlan` binds nothing and leaves the session in 
     "name": "finalize_workspace",
     "arguments": {
       "sessionId": "sess_01J5K9...",
+      "uploadToken": "sess_01J5K9....1712345678.a1b2c3...",
       "workspacePlan": {
         "schemaVersion": 1,
         "sources": [

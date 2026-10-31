@@ -141,7 +141,7 @@ func TestFinalizeWorkspacePostsPlan(t *testing.T) {
 
 	c, _ := New(srv.URL)
 	plan := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"uploadArchive","pathPrefix":".","uploadRef":"lenny-blob://acme/upload/sess_1/p1","format":"tar.gz"}]}`)
-	sess, err := c.FinalizeWorkspace(context.Background(), "sess_1", plan)
+	sess, err := c.FinalizeWorkspace(context.Background(), "sess_1", "tok-1", plan)
 	if err != nil {
 		t.Fatalf("FinalizeWorkspace: %v", err)
 	}
@@ -169,11 +169,65 @@ func TestFinalizeWorkspaceNilPlanIsNoBody(t *testing.T) {
 	defer srv.Close()
 
 	c, _ := New(srv.URL)
-	if _, err := c.FinalizeWorkspace(context.Background(), "sess_1", nil); err != nil {
+	if _, err := c.FinalizeWorkspace(context.Background(), "sess_1", "tok-1", nil); err != nil {
 		t.Fatalf("FinalizeWorkspace: %v", err)
 	}
 	if len(gotBody) != 0 {
 		t.Errorf("nil plan should send no body, got %q", gotBody)
+	}
+}
+
+// TestFinalizeSendsUploadToken_spec_7_4 confirms Finalize and
+// FinalizeWorkspace, with and without a plan, send the §7.1 uploadToken in
+// the X-Lenny-Upload-Token header, and refuse an empty token without
+// issuing a request.
+//
+// spec: 7.4 (Upload Safety, Upload authorization), 7.1 (Normal Flow), 15.6 (Client SDKs)
+func TestFinalizeSendsUploadToken_spec_7_4(t *testing.T) {
+	plan := json.RawMessage(`{"schemaVersion":1,"sources":[]}`)
+	cases := []struct {
+		name  string
+		token string
+		call  func(c *Client, token string) error
+	}{
+		{"Finalize", "tok-a", func(c *Client, tok string) error {
+			_, err := c.Finalize(context.Background(), "sess_1", tok)
+			return err
+		}},
+		{"FinalizeWorkspace with plan", "tok-b", func(c *Client, tok string) error {
+			_, err := c.FinalizeWorkspace(context.Background(), "sess_1", tok, plan)
+			return err
+		}},
+		{"FinalizeWorkspace without plan", "tok-c", func(c *Client, tok string) error {
+			_, err := c.FinalizeWorkspace(context.Background(), "sess_1", tok, nil)
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotToken string
+			var calls int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				gotToken = r.Header.Get("X-Lenny-Upload-Token")
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(Session{ID: "sess_1", State: "ready"})
+			}))
+			defer srv.Close()
+			c, _ := New(srv.URL)
+			if err := tc.call(c, tc.token); err != nil {
+				t.Fatalf("call: %v", err)
+			}
+			if gotToken != tc.token {
+				t.Errorf("X-Lenny-Upload-Token = %q, want %q", gotToken, tc.token)
+			}
+			if err := tc.call(c, ""); err == nil {
+				t.Errorf("empty token: err = nil, want a refusal")
+			}
+			if calls != 1 {
+				t.Errorf("requests = %d, want 1 (the empty-token call issues none)", calls)
+			}
+		})
 	}
 }
 

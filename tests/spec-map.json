@@ -2776,6 +2776,9 @@
       "title": "Upload Safety",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "pkg/gateway/sessionserver/finalize_upload_token_test.go",
+        "tests/tier3_contract/rest_mcp_consistency/finalize_upload_token_parity_test.go::TestFinalizeUploadTokenRESTMCPParity_spec_7_4",
+        "tests/tier9_security/finalize_upload_token_test.go::TestFinalizeRefusesForeignAndReplayedUploadTokens_spec_7_4",
         "pkg/adapter/bindattempt_test.go",
         "pkg/adapter/reclaim_admitted_section_test.go",
         "pkg/upload/...",
@@ -5904,6 +5907,7 @@
       "title": "REST/MCP Consistency Contract",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "pkg/gateway/mcpfabric/mcpschemagen/mcpschemagen_header_test.go",
         "tests/tier3_contract/rest_mcp_consistency/resume_interrupt_parity_test.go::TestInterruptToolAndRESTRefuseInputRequired_spec_15_2_1",
         "tests/tier3_contract/rest_mcp_consistency/finalize_workspace_schema_test.go::TestFinalizeWorkspaceAdvertisesWorkspacePlan_spec_15_2_1",
         "pkg/gateway/mcpfabric/mcptools/client_tools_test.go::TestFinalizeWorkspaceInputSchemaDeclaresWorkspacePlan_spec_15_2_1",

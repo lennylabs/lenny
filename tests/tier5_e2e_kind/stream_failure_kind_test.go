@@ -199,7 +199,7 @@ func TestStreamFailureRetiresTheExclusivePodAndRestoresOntoAnotherPod_spec_28_5_
 		t.Fatalf("create session on %s: %v", silenceEchoRuntimeRef, err)
 	}
 	t.Cleanup(func() { _ = d.Terminate(context.Background(), tenant, created.ID) })
-	if _, err := d.Finalize(ctx, tenant, created.ID); err != nil {
+	if _, err := d.Finalize(ctx, tenant, created.ID, created.UploadToken); err != nil {
 		t.Fatalf("finalize session %s: %v", created.ID, err)
 	}
 	sess, err := d.Start(ctx, tenant, created.ID)

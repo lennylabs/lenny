@@ -51,7 +51,7 @@ func compileInputSchema(t *testing.T, raw json.RawMessage) *jsonschema.Schema {
 	return sch
 }
 
-// spec: 15.2.1 (REST/MCP Consistency Contract), 15.2 (MCP API), 14.1 (WorkspacePlan Schema Versioning)
+// spec: 15.2.1 (REST/MCP Consistency Contract), 15.2 (MCP API), 14.1 (WorkspacePlan Schema Versioning), 7.4 (Upload Safety, Upload authorization)
 // diagnosis: a failure here means the `lenny/finalize_workspace` tool
 // advertised on `tools/list` no longer declares the optional
 // `workspacePlan` argument the REST finalize body accepts (§14.1 Plan
@@ -68,12 +68,16 @@ func TestFinalizeWorkspaceAdvertisesWorkspacePlan_spec_15_2_1(t *testing.T) {
 		args  string
 		valid bool
 	}{
-		{name: "session id only", args: `{"sessionId":"s1"}`, valid: true},
-		{name: "plan object", args: `{"sessionId":"s1","workspacePlan":{"schemaVersion":1,"sources":[{"type":"uploadFile","path":"a.txt","uploadRef":"opaque-ref"}]}}`, valid: true},
-		{name: "explicit null plan", args: `{"sessionId":"s1","workspacePlan":null}`, valid: true},
-		{name: "plan as string", args: `{"sessionId":"s1","workspacePlan":"not-a-plan"}`, valid: false},
-		{name: "plan as array", args: `{"sessionId":"s1","workspacePlan":[]}`, valid: false},
-		{name: "missing session id", args: `{"workspacePlan":{"schemaVersion":1}}`, valid: false},
+		{name: "session id and upload token only", args: `{"sessionId":"s1","uploadToken":"tok"}`, valid: true},
+		{name: "plan object", args: `{"sessionId":"s1","uploadToken":"tok","workspacePlan":{"schemaVersion":1,"sources":[{"type":"uploadFile","path":"a.txt","uploadRef":"opaque-ref"}]}}`, valid: true},
+		{name: "explicit null plan", args: `{"sessionId":"s1","uploadToken":"tok","workspacePlan":null}`, valid: true},
+		{name: "plan as string", args: `{"sessionId":"s1","uploadToken":"tok","workspacePlan":"not-a-plan"}`, valid: false},
+		{name: "plan as array", args: `{"sessionId":"s1","uploadToken":"tok","workspacePlan":[]}`, valid: false},
+		{name: "missing session id", args: `{"uploadToken":"tok","workspacePlan":{"schemaVersion":1}}`, valid: false},
+		// spec: §7.4 (Upload authorization) — every finalize request carries
+		// the uploadToken, which the REST operation requires as a header.
+		{name: "missing upload token", args: `{"sessionId":"s1"}`, valid: false},
+		{name: "upload token not a string", args: `{"sessionId":"s1","uploadToken":7}`, valid: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
