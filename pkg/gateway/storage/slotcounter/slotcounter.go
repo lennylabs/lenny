@@ -375,7 +375,7 @@ func (c *Counter) Reserve(ctx context.Context, podID, sessionID string, maxConcu
 	}
 	count, rehydrated, err = c.reserve(ctx, &r)
 	if err != nil && r.inserted {
-		c.dropReservation(ctx, podID, sessionID)
+		c.dropReservation(ctx, podID, sessionID, reservationCleanupTimeout)
 	}
 	return count, rehydrated, err
 }
@@ -395,7 +395,7 @@ type reservation struct {
 // still deciding.
 func (c *Counter) toGate(ctx context.Context, r *reservation, rehydrated bool) (int32, bool, error) {
 	if r.inserted {
-		c.dropReservation(ctx, r.podID, r.sessionID)
+		c.dropReservation(ctx, r.podID, r.sessionID, reservationCleanupTimeout)
 		r.inserted = false
 	}
 	return c.fallbackReserve(ctx, r.podID, r.sessionID, r.maxConcurrent, rehydrated)
@@ -652,7 +652,7 @@ func (c *Counter) Release(ctx context.Context, podID, sessionID string, leaked b
 	// thing the §12.4 gate can count when no row names the pod. The
 	// stale-slot reaper reclaims a leaked release's record.
 	if !leaked {
-		c.dropReservation(ctx, podID, sessionID)
+		c.dropReservation(ctx, podID, sessionID, reservationReleaseTimeout)
 	}
 	if err != nil {
 		if leaked {

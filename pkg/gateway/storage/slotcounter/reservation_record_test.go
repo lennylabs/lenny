@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 
@@ -182,6 +183,26 @@ func TestReleaseDeletesTheRecord_spec_12_4(t *testing.T) {
 			t.Error("record present after a release on a cancelled context")
 		}
 	})
+}
+
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
+// diagnosis: the record's deletion in a release can spend the caller's whole
+// budget on a stalled Postgres, so the occupancy-zero disposition that
+// follows the release runs on an expired context and the claim stays bound.
+func TestReleaseBoundsTheRecordDeletionBelowItsCallersBudget_spec_12_4(t *testing.T) {
+	fb := newFakeFallback()
+	c, _, _ := newCounterNoSource(t, slotcounter.WithFallbackSource(fb))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, _, err := c.Reserve(ctx, "pod-1", "s", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := c.Release(ctx, "pod-1", "s", false); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if fb.deleteBudget <= 0 || fb.deleteBudget > 2*time.Second {
+		t.Errorf("the deletion had %v, want a bound well below the caller's 5s", fb.deleteBudget)
+	}
 }
 
 // spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).

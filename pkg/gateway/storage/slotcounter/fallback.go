@@ -72,6 +72,14 @@ type FallbackSource interface {
 // record that over-counts until the stale-slot reaper reclaims it.
 const reservationCleanupTimeout = 5 * time.Second
 
+// reservationReleaseTimeout bounds the deletion of a reservation record
+// inside a slot release. It is shorter than reservationCleanupTimeout because
+// the release runs synchronously ahead of the occupancy-zero disposition, on
+// the caller's budget of about the same length: a stalled Postgres must not
+// spend that budget, and a record left behind only over-counts until the
+// stale-slot reaper reclaims it.
+const reservationReleaseTimeout = time.Second
+
 // recordReservation writes sessionID's reservation record on podID before
 // the reservation runs, and reports whether it inserted one. With no
 // fallback wired it records nothing. A failed write fails the reservation
@@ -89,15 +97,14 @@ func (c *Counter) recordReservation(ctx context.Context, podID, sessionID string
 }
 
 // dropReservation deletes sessionID's reservation record on podID, on a
-// context detached from the caller's cancellation and bounded by
-// reservationCleanupTimeout. A failure is logged and left to the stale-slot
-// reaper: the record over-counts the pod until then.
+// context detached from the caller's cancellation and bounded by timeout. A
+// failure is logged and left to the stale-slot reaper: the record over-counts the pod until then.
 // spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
-func (c *Counter) dropReservation(ctx context.Context, podID, sessionID string) {
+func (c *Counter) dropReservation(ctx context.Context, podID, sessionID string, timeout time.Duration) {
 	if c.fallback == nil {
 		return
 	}
-	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reservationCleanupTimeout)
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	defer cancel()
 	if err := c.fallback.DeleteSlotReservation(dctx, podID, sessionID); err != nil {
 		slog.WarnContext(ctx, "slotcounter: delete slot reservation record failed; the stale-slot reaper reclaims it",

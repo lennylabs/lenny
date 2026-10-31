@@ -31,8 +31,11 @@ type fakeFallback struct {
 	recordErr error // when set, RecordSlotReservation returns this error
 	// recordCalls counts RecordSlotReservation calls per session.
 	recordCalls map[string]int
-	podLockMu   sync.Mutex
-	podLocks    map[string]*sync.Mutex
+	// deleteBudget is the time the last DeleteSlotReservation's context had
+	// left, and zero when it carried no deadline.
+	deleteBudget time.Duration
+	podLockMu    sync.Mutex
+	podLocks     map[string]*sync.Mutex
 }
 
 func newFakeFallback() *fakeFallback {
@@ -65,9 +68,13 @@ func (f *fakeFallback) RecordSlotReservation(_ context.Context, podID, sessionID
 	return true, nil
 }
 
-func (f *fakeFallback) DeleteSlotReservation(_ context.Context, podID, sessionID string) error {
+func (f *fakeFallback) DeleteSlotReservation(ctx context.Context, podID, sessionID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.deleteBudget = 0
+	if d, ok := ctx.Deadline(); ok {
+		f.deleteBudget = time.Until(d)
+	}
 	delete(f.records, [2]string{podID, sessionID})
 	return nil
 }
