@@ -45,7 +45,7 @@
 - [ ] **S21 · code** — CODE-6. The capture copy and restore completion.
       Tiers 0, 1, 4. Depends on: S3, S4, S5, S20
 - [ ] **S22 · test** — TEST-1. The case list across the reached tiers.
-      Tiers 0, 1, 2, 3, 4, 5, 7a, 9. Depends on: S13, S14, S15, S16, S17, S18, S19, S20, S21
+      Tiers 0, 1, 2, 3, 4, 5, 7a, 9, 11. Depends on: S13, S14, S15, S16, S17, S18, S19, S20, S21, S24
 - [ ] **S23 · docs** — REC-1. The defect filings.
       Tiers 0. Depends on: —
 - [ ] **S24 · docs** — DOCS-1. The pages that mirror the staged spec edits.
