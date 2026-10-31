@@ -4440,6 +4440,12 @@ notes pointing at their successors.
     no consumer, because `handleRPC` answers it as an unknown method. The fix routes `elicit:` and
     `toolapprove:` replies to the existing elicitation and tool-use service calls and refuses a non-owner.
 - Not filed: none. Every listed defect is filed.
+- Direct-fix queue, filed from proposal 0110's implementation (2026-10-31), independent of it.
+  - [ ] **F-10.2.33** (Medium): the Postgres user store's `validateRoles` refuses every custom role name, so
+    `PUT /v1/admin/tenants/{id}/users/{userId}/role` with a custom role answers `500` on a Postgres
+    deployment, although §10.2 **Role assignment:** makes custom roles assignable through the platform-managed
+    mapping. The tier-9 session owner isolation test assigns its custom role through the bearer role claim
+    until the fix lands, and the fix switches it back.
 
 **Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
 `pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every

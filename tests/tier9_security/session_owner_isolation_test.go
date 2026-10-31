@@ -9,21 +9,21 @@
 // erasure_isolation_test.go, and every caller authenticates with a signed
 // bearer token through the gateway's own verifier. acme's session-reader
 // custom role is registered through the tenant RBAC admin API, and bob
-// reaches it the way production assigns a custom role: a platform-managed
-// role assignment on his user row that the bearer middleware resolves.
+// holds it through the OIDC role claim of his bearer token, one of the two
+// §10.2 role assignment sources. bob has no platform-managed assignment, so
+// the claim is authoritative. The platform-managed source is not used here
+// because the Postgres user store refuses a custom role name (F-10.2.33).
 
 package tier9_security_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"testing"
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 )
 
 const (
@@ -135,18 +135,6 @@ func registerSessionReader(t *testing.T, g *liveGateway) {
 	}
 }
 
-// assignRole records a platform-managed role assignment for sub, which the
-// gateway's bearer middleware resolves in place of the token's role claim.
-func assignRole(t *testing.T, g *liveGateway, sub string, role pkgauth.Role) {
-	t.Helper()
-	if _, err := g.users.Update(context.Background(), liveTenant, sub, func(u *userstore.User) error {
-		u.Roles, u.RoleAssigned, u.RoleAssignedBy = []pkgauth.Role{role}, true, isoCarol
-		return nil
-	}); err != nil {
-		t.Fatalf("assign %s to %s: %v", role, sub, err)
-	}
-}
-
 // assertMissingAnswer checks that each request as c answers exactly the
 // missing-session 404 body.
 func assertMissingAnswer(t *testing.T, g *liveGateway, c isoCaller, id string, missing []byte) {
@@ -201,7 +189,6 @@ func TestSessionOwnerIsolation_spec_10_2(t *testing.T) {
 		t.Error("bob/user lists alice's session")
 	}
 
-	assignRole(t, g, isoBob, isoCustomRole)
 	assertMissingAnswer(t, g, reader, id, missing)
 	if owner := sessionOwner(t, g, reader, id); owner != isoAlice {
 		t.Errorf("custom-role bob reads owner %q, want %s", owner, isoAlice)
