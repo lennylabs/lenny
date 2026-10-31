@@ -99,6 +99,24 @@ func readable(p authmw.Principal, owner string) bool {
 	return owner == p.Subject || p.Roles[0] == pkgauth.Role(sessionReader)
 }
 
+// checkDeriveOutcome holds one derive or replay response to §10.2: the
+// action is owner-only even for a role holding the tenant read bypass, so
+// a non-owner must receive the missing-session 404 and never a created
+// session. A created session from the owner is also held to the read rule,
+// so every response that returns a row is one the caller may read.
+func checkDeriveOutcome(p authmw.Principal, sourceOwner string, code int) error {
+	if p.Subject != sourceOwner {
+		if code != http.StatusNotFound {
+			return fmt.Errorf("non-owner %s acting on a session owned by %s = %d, want 404", p.Subject, sourceOwner, code)
+		}
+		return nil
+	}
+	if code == http.StatusCreated && !readable(p, sourceOwner) {
+		return fmt.Errorf("created session owned by %s is not readable by %s", sourceOwner, p.Subject)
+	}
+	return nil
+}
+
 // createdID returns the id of the session a 201 response created.
 func createdID(t *testing.T, rr *httptest.ResponseRecorder) string {
 	t.Helper()
@@ -134,13 +152,15 @@ func (w *isolationWorld) step(r *rand.Rand, ids []string) {
 			path, body = "/v1/sessions/"+target+"/replay", map[string]string{"targetRuntime": "x", "replayMode": "workspace_derive", "userId": other}
 		}
 		rr := w.do(p, http.MethodPost, path, body)
-		if rr.Code == http.StatusCreated {
+		if err := checkDeriveOutcome(p, w.want[target], rr.Code); err != nil {
+			w.t.Fatalf("%s: %v: %s", path, err, rr.Body.String())
+		}
+		switch {
+		case rr.Code == http.StatusCreated:
 			w.want[createdID(w.t, rr)] = w.want[target]
 			w.derived++
-		} else if p.Subject == w.want[target] {
+		case p.Subject == w.want[target]:
 			w.ownerRefusals = append(w.ownerRefusals, fmt.Sprintf("%s = %d %s", path, rr.Code, rr.Body.String()))
-		} else if rr.Code != http.StatusNotFound {
-			w.t.Fatalf("%s by non-owner %s = %d %s, want 404", path, p.Subject, rr.Code, rr.Body.String())
 		}
 	case 3:
 		rr := w.do(p, http.MethodGet, "/v1/sessions/"+target, nil)
@@ -215,5 +235,37 @@ func TestSessionOwnerIsolationInvariant_spec_10_2(t *testing.T) {
 	}
 	if w.derived == 0 {
 		t.Fatalf("no derive or replay succeeded; the driver did not exercise owner inheritance; owner refusals: %v", w.ownerRefusals)
+	}
+}
+
+// TestSessionOwnerIsolationDeriveOutcomeCheck_spec_10_2 pins the isolation
+// driver's derive and replay check: a non-owner's created session, including
+// one issued to the read-bypass role, is a violation the driver reports, so
+// an action bypass cannot pass the randomized run as owner inheritance.
+//
+// spec: §10.2 (Session ownership) rules 5 and 7.
+func TestSessionOwnerIsolationDeriveOutcomeCheck_spec_10_2(t *testing.T) {
+	alice, bob, dave := isolationPrincipals[0], isolationPrincipals[1], isolationPrincipals[3]
+	cases := []struct {
+		name    string
+		p       authmw.Principal
+		code    int
+		wantErr bool
+	}{
+		{"owner created", alice, http.StatusCreated, false},
+		{"owner refused", alice, http.StatusConflict, false},
+		{"non-owner missing session", bob, http.StatusNotFound, false},
+		{"non-owner created", bob, http.StatusCreated, true},
+		{"read-bypass role created", dave, http.StatusCreated, true},
+		{"read-bypass role missing session", dave, http.StatusNotFound, false},
+		{"non-owner forbidden", bob, http.StatusForbidden, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkDeriveOutcome(tc.p, alice.Subject, tc.code)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("checkDeriveOutcome(%s, %d) = %v, want error %v", tc.p.Subject, tc.code, err, tc.wantErr)
+			}
+		})
 	}
 }
