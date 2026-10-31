@@ -43,7 +43,7 @@
 - [ ] **S20 · code** — CODE-8. Lands the `lenny-ctl` unreferenced-Secret listing.
       Tiers 0, 1. Depends on: S1, S9, S13
 - [ ] **S21 · code** — CHART-1. Lands the credentials namespace templates, the egress rule, the flags, and their chart tests.
-      Tiers 0, 1, 5, 9. Depends on: S1, S4, S8, S14, S15, S16
+      Tiers 0, 1, 5, 9, 11. Depends on: S1, S4, S8, S14, S15, S16
 - [ ] **S22 · test** — TEST-1. Lands the tier 3, tier 5, and tier 9 cross-tier tests.
       Tiers 3, 5, 9. Depends on: S14, S15, S16, S17, S18, S20, S21
 - [ ] **S23 · docs** — DOCS-1. Lands the operator, API, metrics, and runbook docs.
