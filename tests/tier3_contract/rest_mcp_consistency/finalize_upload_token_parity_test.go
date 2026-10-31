@@ -19,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // newUploadTokenServers stands up a REST gateway that mints and verifies
@@ -34,7 +35,7 @@ func newUploadTokenServers(t *testing.T) (*httptest.Server, *httptest.Server, se
 		UploadTokenIssuer:   issuer,
 		UploadTokenVerifier: uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), nil),
 	})
-	tsREST := httptest.NewServer(rest.Handler())
+	tsREST := httptest.NewServer(ownerprincipal.Wrap(rest.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
@@ -45,7 +46,7 @@ func newUploadTokenServers(t *testing.T) (*httptest.Server, *httptest.Server, se
 		Clock:             func() time.Time { return time.Now().UTC() },
 		TenantID:          "acme",
 	})
-	tsMCP := httptest.NewServer(mcpSrv.Handler())
+	tsMCP := httptest.NewServer(ownerprincipal.Wrap(mcpSrv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsMCP.Close)
 	return tsREST, tsMCP, store, issuer
 }

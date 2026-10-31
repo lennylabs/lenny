@@ -48,7 +48,7 @@ func routedPolicyExperiments(t *testing.T) experimentstore.Store {
 // PreRoute MODIFY at priority.
 func routedPolicyChain(t *testing.T, priority int32) *interceptor.Chain {
 	t.Helper()
-	modified, _ := json.Marshal(routeTaskSpec{TenantID: wdTenant, UserID: "alice", RequestedRuntime: spRouted})
+	modified, _ := json.Marshal(routeTaskSpec{TenantID: wdTenant, UserID: testOwner, RequestedRuntime: spRouted})
 	chain := interceptor.NewChain()
 	if err := chain.Register(interceptor.PhasePreRoute, routeModifyInterceptor{priority: priority, out: modified}); err != nil {
 		t.Fatalf("register: %v", err)
