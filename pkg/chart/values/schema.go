@@ -61,7 +61,7 @@ func schemaForStruct(t reflect.Type) map[string]any {
 
 // schemaForType maps a Go type plus its field tags to a JSON Schema node.
 func schemaForType(t reflect.Type, tag reflect.StructTag) map[string]any {
-	for t.Kind() == reflect.Ptr {
+	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	var s map[string]any
