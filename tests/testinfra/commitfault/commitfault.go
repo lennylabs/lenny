@@ -17,9 +17,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -31,7 +33,8 @@ const (
 	// Pass forwards the COMMIT and its reply unchanged.
 	Pass Mode = iota
 	// CommitThenCut forwards the COMMIT to the server, half-closes the
-	// connection so the server processes it and commits, and fails the
+	// connection so the server processes it and commits, waits for the
+	// server to close its side so the commit has applied, and fails the
 	// client's read of the reply.
 	CommitThenCut
 	// CutBeforeCommit closes the connection without forwarding the COMMIT,
@@ -180,16 +183,23 @@ func (c *conn) Write(b []byte) (int, error) {
 	}
 	switch c.inj.take() {
 	case CommitThenCut:
+		// The cut is marked before the COMMIT goes on the wire, so no read
+		// can return its reply. pgconn starts a background reader when a
+		// write takes longer than 15ms, which on a loaded host this one
+		// does; a cut marked after the forward let that reader take the
+		// server's COMMIT reply, and the client then saw the commit
+		// succeed with the fault reported as fired.
+		c.markCut()
 		n, err := c.Conn.Write(b)
 		if err != nil {
 			return n, err
 		}
-		c.markCut()
 		// A half-close delivers the COMMIT and then EOF, so the server
 		// commits before it sees the client go away.
 		if tc, ok := c.Conn.(*net.TCPConn); ok {
 			_ = tc.CloseWrite()
 		}
+		c.awaitServerClose()
 		return n, nil
 	case CutBeforeCommit:
 		c.markCut()
@@ -200,13 +210,39 @@ func (c *conn) Write(b []byte) (int, error) {
 	}
 }
 
+// commitDrainTimeout bounds how long a CommitThenCut fault waits for the
+// server to close its side after the half-close. It is a hang guard: a
+// server that processes the COMMIT and the EOF closes within milliseconds.
+const commitDrainTimeout = 30 * time.Second
+
+// awaitServerClose reads and discards the server's reply until the server
+// closes its side of the connection. A Postgres backend processes the
+// messages it received in order, so it commits, writes the reply, reads the
+// EOF the half-close sent, and exits. Waiting for that close makes the
+// commit visible before the client sees the cut: without it the code under
+// test can return, and the test can read the primary, while the COMMIT is
+// still queued in the backend's receive buffer, and on a loaded host the
+// read observes the row as it was before the write.
+func (c *conn) awaitServerClose() {
+	_ = c.Conn.SetReadDeadline(time.Now().Add(commitDrainTimeout))
+	_, _ = io.Copy(io.Discard, c.Conn)
+}
+
 // Read fails once the connection is cut, so the client never sees the
-// COMMIT reply.
+// COMMIT reply. The cut is checked again after the underlying read returns,
+// because a read already blocked when the COMMIT went out (pgconn's
+// background reader, left running by an earlier slow write) would otherwise
+// return the reply. The client has consumed every earlier reply before it
+// sends the COMMIT, so the bytes such a read discards belong to the COMMIT.
 func (c *conn) Read(b []byte) (int, error) {
 	if c.isCut() {
 		return 0, ErrCut
 	}
-	return c.Conn.Read(b)
+	n, err := c.Conn.Read(b)
+	if c.isCut() {
+		return 0, ErrCut
+	}
+	return n, err
 }
 
 func (c *conn) markCut() {
