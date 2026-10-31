@@ -285,8 +285,8 @@ state that the READY signal is one of them.
     because the session is already connected; the gateway sends the `ConfigureWorkspace` RPC to point the
     pre-connected session at the finalized `cwd`, with a 10s timeout and idempotent semantics for the same
     path. On failure the gateway calls `DemoteSDK` with a 5s timeout and falls back to pod-warm
-    materialization, and when `DemoteSDK` also fails the pod transitions to `failed` and a replacement is
-    claimed ([§7.1](07_session-lifecycle.md#71-normal-flow),
+    materialization, and when `DemoteSDK` also fails the pod transitions to `failed`
+    ([§7.1](07_session-lifecycle.md#71-normal-flow),
     [§4.7](04_system-components.md#47-runtime-adapter)). Steps 24 through 32 are the pod-warm startup
     sequence for `type: agent` runtimes and are stated for that path
     ([§4.7](04_system-components.md#47-runtime-adapter)).
