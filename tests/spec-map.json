@@ -577,7 +577,11 @@
         "tests/tier7a_load_local/slot_release_departure_race_test.go::TestPostTerminalReseedRacesConcurrentReservations_spec_7_1",
         "pkg/gateway/sessionserver/start_starting_state_test.go::TestStartBindingRegistrationErrorRollsBackBeforeTheFailedWrite_spec_7_2",
         "pkg/gateway/sessionserver/delegated_child_materialize_test.go::TestMaterializeDelegatedChildPersistFailureReleasesCoordinationLease",
-        "pkg/gateway/sessionserver/delegated_child_materialize_test.go::TestMaterializeDelegatedChildPublishesBindingDespiteSelfRenewFault"
+        "pkg/gateway/sessionserver/delegated_child_materialize_test.go::TestMaterializeDelegatedChildPublishesBindingDespiteSelfRenewFault",
+        "pkg/gateway/session/sessionstore/memstore/reserve_slot_under_lock_test.go",
+        "tests/tier2_component/stores/reserve_slot_under_lock_test.go::TestReclaimSlotReservations",
+        "tests/tier7a_load_local/slot_reservation_interleaving_test.go",
+        "tests/tier8_chaos/slot_reservation_outage_test.go"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -1862,7 +1866,9 @@
         "pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup_test.go::TestTickInvokesTerminalHook_spec_5_2_519",
         "pkg/gateway/mcpfabric/delegationtree/orphancleanup/terminal_stamp_test.go::TestOrphanCleanupStampsEachTerminalWriteWithItsOwnClockRead_spec_5_2",
         "pkg/gateway/sessionserver/lifecycle_internal_test.go::TestEmitTerminalLifecycleRecordsVariantMetrics_spec_10_7_1124",
-        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestBindRunsEachSequentialSessionsSetupOnARecycledPod_spec_7_5"
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestBindRunsEachSequentialSessionsSetupOnARecycledPod_spec_7_5",
+        "tests/tier7a_load_local/slot_reservation_interleaving_test.go",
+        "tests/tier8_chaos/slot_reservation_outage_test.go"
       ],
       "packages": [
         "pkg/admission/label_immutability",
@@ -4661,7 +4667,10 @@
         "cmd/lenny-gateway/redis_concern_probes_test.go",
         "cmd/lenny-ops/revocation_test.go::TestRevocationSetRule2EventsApplyBeforeTheNextRead",
         "tests/tier2_component/opsrevocation/ops_revocation_bus_test.go::TestOpsRevocationSetFollowsCachePubSubRedis",
-        "tests/tier2_component/opsrevocation/ops_revocation_bus_test.go::TestOpsRevocationSetUsesBaseRedisWithoutCacheURL"
+        "tests/tier2_component/opsrevocation/ops_revocation_bus_test.go::TestOpsRevocationSetUsesBaseRedisWithoutCacheURL",
+        "tests/tier2_component/stores/reserve_slot_under_lock_test.go::TestReclaimSlotReservations",
+        "tests/tier7a_load_local/slot_reservation_interleaving_test.go",
+        "tests/tier8_chaos/slot_reservation_outage_test.go"
       ],
       "packages": [
         "pkg/store/lease",

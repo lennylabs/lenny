@@ -1198,18 +1198,48 @@ type Store interface {
 	// per-pod session-mode slot counter. It serializes the slot-admission
 	// decision for podID under a per-pod Postgres advisory lock so two
 	// concurrent admissions during a Redis outage cannot both observe the
-	// same free slot: under the lock it counts the sessions that hold podID,
-	// non-terminal or in their §7.1 post-terminal window (the same source
-	// GetActiveSlotsByPod reads), and admits
-	// only when that count is below maxConcurrent. It returns the
+	// same free slot. Under the lock it counts the pod's occupancy other
+	// than sessionID: the sessions that hold podID, non-terminal or in their
+	// §7.1 post-terminal window (the same source GetActiveSlotsByPod reads),
+	// together with the pod's slot reservations (RecordSlotReservation),
+	// each session counted once. It admits only when that count is below
+	// maxConcurrent, and an admission records sessionID's slot reservation
+	// in the same transaction, so the next gated count observes it before
+	// the session row names the pod (F-12.4.38). It returns the
 	// post-admission slot count on success (the observed count plus one) and
-	// ErrSlotsExhausted-equivalent semantics via admitted=false when the pod
-	// is already at its bound. The lock is held only for the duration of the
-	// count-and-decide; the §12.4 posture documents the fallback as a
-	// degraded Postgres-latency path bounded by slotCounterPostgresFallbackMaxSeconds.
+	// admitted=false with the observed count when the pod is at its bound.
+	// An empty podID admits nothing; a sessionID the store cannot key a
+	// reservation by is an error.
 	// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment
 	// atomicity), §7.1 (Post-terminal window).
-	ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (count int32, admitted bool, err error)
+	ReserveSlotUnderLock(ctx context.Context, podID, sessionID string, maxConcurrent int32) (count int32, admitted bool, err error)
+
+	// RecordSlotReservation records sessionID's slot reservation on podID
+	// outside the advisory lock, for the Redis fast path, which records the
+	// reservation before its reservation script runs so that a gate started
+	// by a later Redis outage counts it. It reports whether it inserted the
+	// record; a record that already existed is kept and reports false.
+	// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
+	RecordSlotReservation(ctx context.Context, podID, sessionID string) (inserted bool, err error)
+
+	// DeleteSlotReservation deletes sessionID's slot reservation on podID.
+	// The slot release runs it, as does a reservation the Redis script
+	// refused. Deleting an absent record is not an error.
+	// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
+	DeleteSlotReservation(ctx context.Context, podID, sessionID string) error
+
+	// ReclaimSlotReservations deletes, across tenants, the slot reservations
+	// recorded before cutoff whose session row is absent, or is terminal
+	// with a terminated_at before cutoff, and returns how many it deleted.
+	// The stale-slot reaper runs it with cutoff at claimOrphanTimeout ago,
+	// the age after which §4.6.1 treats a claim with no session row as
+	// orphaned and §5.2 bounds every window in which work of an ended
+	// session can still act on its slot. A record whose session row is
+	// non-terminal, or terminal for less than the cutoff, is kept, so an
+	// unreclaimed record over-counts its pod and never under-counts it.
+	// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment
+	// atomicity), §4.6.1 (Orphaned SandboxClaim detection).
+	ReclaimSlotReservations(ctx context.Context, cutoff time.Time) (int, error)
 
 	// PoolDrainStats returns the §15.1 pool-drain accounting for
 	// poolRef: the number of live (non-terminal) sessions bound to the

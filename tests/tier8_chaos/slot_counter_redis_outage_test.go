@@ -81,7 +81,7 @@ func TestSlotCounterSurvivesRedisOutageAndRecovers(t *testing.T) {
 
 	// Healthy: the first reservation seeds the counter from Postgres (zero
 	// live sessions) and admits via Redis.
-	if c, _, err := counter.Reserve(ctx, pod, "chaos-healthy", maxConcurrent); err != nil || c != 1 {
+	if c, _, err := counter.Reserve(ctx, pod, newChaosUUID(t), maxConcurrent); err != nil || c != 1 {
 		t.Fatalf("healthy Reserve = (%d, %v), want (1, nil)", c, err)
 	}
 
@@ -89,13 +89,14 @@ func TestSlotCounterSurvivesRedisOutageAndRecovers(t *testing.T) {
 	rd.Stop(t)
 
 	// Two live slots persisted in Postgres on the pod so the fallback gate
-	// reads a real occupancy; the gate admits the third (below the bound of 4).
+	// reads a real occupancy. The healthy reservation's record counts too
+	// (F-12.4.38), so the gate admits the fourth slot, at the bound of 4.
 	mustSeedChaosSlot(t, ctx, store, "acme", pod)
 	mustSeedChaosSlot(t, ctx, store, "acme", pod)
-	if c, _, err := counter.Reserve(ctx, pod, "chaos-outage", maxConcurrent); err != nil {
+	if c, _, err := counter.Reserve(ctx, pod, newChaosUUID(t), maxConcurrent); err != nil {
 		t.Fatalf("Reserve during the Redis outage must degrade to Postgres, got: %v", err)
-	} else if c != 3 {
-		t.Errorf("outage fallback count = %d, want 3 (2 live + this admission)", c)
+	} else if c != 4 {
+		t.Errorf("outage fallback count = %d, want 4 (2 live + the healthy record + this admission)", c)
 	}
 
 	// Concurrent dispatch during the outage on a pod with one free slot: the
@@ -113,12 +114,13 @@ func TestSlotCounterSurvivesRedisOutageAndRecovers(t *testing.T) {
 		for i := 0; i < racers; i++ {
 			go func(i int) {
 				defer wg.Done()
-				c, _, err := counter.Reserve(ctx, racePod, fmt.Sprintf("chaos-racer-%d", i), maxConcurrent)
+				id := newChaosUUID(t)
+				c, _, err := counter.Reserve(ctx, racePod, id, maxConcurrent)
 				if err != nil {
 					return
 				}
 				if c >= 1 {
-					mustSeedChaosSlot(t, ctx, store, "acme", racePod)
+					mustSeedChaosSlotID(t, ctx, store, "acme", racePod, id)
 					atomic.AddInt32(&admitted, 1)
 				}
 			}(i)
@@ -133,7 +135,7 @@ func TestSlotCounterSurvivesRedisOutageAndRecovers(t *testing.T) {
 	// down; the gate fails closed.
 	t.Run("fails closed after the bounded outage window", func(t *testing.T) {
 		clk.advance(61 * time.Second)
-		if _, _, err := counter.Reserve(ctx, "pod-chaos-window", "chaos-window", maxConcurrent); err == nil {
+		if _, _, err := counter.Reserve(ctx, "pod-chaos-window", newChaosUUID(t), maxConcurrent); err == nil {
 			t.Fatal("Reserve after the bounded outage window must fail closed, got nil")
 		}
 	})
@@ -152,7 +154,7 @@ func TestSlotCounterSurvivesRedisOutageAndRecovers(t *testing.T) {
 
 	const recoveredPod = "pod-recovered"
 	mustSeedChaosSlot(t, ctx, store, "acme", recoveredPod)
-	c, rehydrated, err := counter2.Reserve(ctx, recoveredPod, "chaos-recovered-1", maxConcurrent)
+	c, rehydrated, err := counter2.Reserve(ctx, recoveredPod, newChaosUUID(t), maxConcurrent)
 	if err != nil {
 		t.Fatalf("post-recovery Reserve: %v", err)
 	}
@@ -166,7 +168,7 @@ func TestSlotCounterSurvivesRedisOutageAndRecovers(t *testing.T) {
 	// rejected with ErrSlotsExhausted, confirming the Redis cap enforcement
 	// resumed.
 	mustSeedChaosSlot(t, ctx, store, "acme", recoveredPod) // now 2 live + 1 reserved.
-	if _, _, err := counter2.Reserve(ctx, recoveredPod, "chaos-recovered-2", 2); !errors.Is(err, slotcounter.ErrSlotsExhausted) {
+	if _, _, err := counter2.Reserve(ctx, recoveredPod, newChaosUUID(t), 2); !errors.Is(err, slotcounter.ErrSlotsExhausted) {
 		t.Errorf("post-recovery over-bound Reserve = %v, want ErrSlotsExhausted (Redis cap enforcement resumed)", err)
 	}
 }
@@ -185,8 +187,15 @@ func seedChaosTenant(t *testing.T, pg *containers.Postgres, id string) {
 // Postgres fallback / rehydration count observes it.
 func mustSeedChaosSlot(t *testing.T, ctx context.Context, store *sessionpg.Store, tenant, pod string) {
 	t.Helper()
+	mustSeedChaosSlotID(t, ctx, store, tenant, pod, newChaosUUID(t))
+}
+
+// mustSeedChaosSlotID persists the live session row id bound to pod: the
+// row write a create makes after its slot is admitted.
+func mustSeedChaosSlotID(t *testing.T, ctx context.Context, store *sessionpg.Store, tenant, pod, id string) {
+	t.Helper()
 	if err := store.Create(ctx, sessionstore.Session{
-		ID:            newChaosUUID(t),
+		ID:            id,
 		TenantID:      tenant,
 		State:         session.StateRunning,
 		RuntimeRef:    "echo",
@@ -488,18 +497,29 @@ func TestRedisRestartLosingTheSlotSets_spec_5_2(t *testing.T) {
 		if m := c.members(t, pod); !m[s] {
 			t.Errorf("seeded set = %v, want the sealing session", m)
 		}
-		if _, admitted, err := c.store.ReserveSlotUnderLock(ctx, pod, 1); err != nil || admitted {
+		if _, admitted, err := c.store.ReserveSlotUnderLock(ctx, pod, newChaosUUID(t), 1); err != nil || admitted {
 			t.Errorf("outage gate at the cap = (admitted %v, %v), want refused", admitted, err)
+		}
+		// The release deletes s's reservation record (F-12.4.38) before the
+		// release is recorded on the row, as Counter.Release does.
+		if err := c.store.DeleteSlotReservation(ctx, pod, s); err != nil {
+			t.Fatalf("delete the reservation record: %v", err)
 		}
 		if err := sessionstore.RecordPodRelease(ctx, c.store, "acme", s, time.Now()); err != nil {
 			t.Fatalf("record the release: %v", err)
 		}
 		c.restartLosingData(t)
-		if _, _, err := counter.Reserve(ctx, pod, newChaosUUID(t), 1); err != nil {
+		next := newChaosUUID(t)
+		if _, _, err := counter.Reserve(ctx, pod, next, 1); err != nil {
 			t.Errorf("reservation after the recorded release = %v, want admitted", err)
 		}
-		if _, admitted, err := c.store.ReserveSlotUnderLock(ctx, pod, 1); err != nil || !admitted {
-			t.Errorf("outage gate after the recorded release = (admitted %v, %v), want admitted", admitted, err)
+		// The gate counts next's reservation record (F-12.4.38), so it
+		// admits next again and refuses any other session at the cap.
+		if _, admitted, err := c.store.ReserveSlotUnderLock(ctx, pod, next, 1); err != nil || !admitted {
+			t.Errorf("outage gate for next after the recorded release = (admitted %v, %v), want admitted", admitted, err)
+		}
+		if _, admitted, err := c.store.ReserveSlotUnderLock(ctx, pod, newChaosUUID(t), 1); err != nil || admitted {
+			t.Errorf("outage gate for another session beside next = (admitted %v, %v), want refused", admitted, err)
 		}
 	})
 

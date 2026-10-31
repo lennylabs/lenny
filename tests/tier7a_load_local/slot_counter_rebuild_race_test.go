@@ -75,7 +75,15 @@ type rebuildFallback struct {
 	count int32
 }
 
-func (f *rebuildFallback) ReserveSlotUnderLock(_ context.Context, _ string, maxConcurrent int32) (int32, bool, error) {
+// RecordSlotReservation and DeleteSlotReservation keep no record: this
+// race counts the gate's admissions in count alone.
+func (f *rebuildFallback) RecordSlotReservation(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
+func (f *rebuildFallback) DeleteSlotReservation(context.Context, string, string) error { return nil }
+
+func (f *rebuildFallback) ReserveSlotUnderLock(_ context.Context, _, _ string, maxConcurrent int32) (int32, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.count >= maxConcurrent {

@@ -1246,29 +1246,39 @@ func collectStrings(ctx context.Context, tx pgx.Tx, query string, args ...any) (
 }
 
 // ReserveSlotUnderLock implements Store — the §12.4 Redis-outage
-// capacity gate. The count-and-decide runs inside one transaction holding a
-// per-pod `pg_advisory_xact_lock`, so two concurrent admissions for the same
-// pod during a Redis outage serialize: the second waits for the first to
-// commit (releasing the xact lock) before reading the count, and cannot
-// observe the same free slot. The lock key is a 64-bit hash of podID; the
-// xact-scoped form releases automatically at commit or rollback, so a
-// crashed gateway never strands the lock. The count reads the holders
-// GetActiveSlotsByPod reads (podHoldersQuery): the non-terminal arm through
-// the migration 0080 index and the §7.1 post-terminal arm through the
-// migration 0191 index, so the gate reads the same source the
-// blocking-rehydration protocol reads and a slot a terminal pipeline still
-// uses is not reissued. The
-// returned post-admission count is the observed count plus one; the caller
-// (slotcounter) does not write the Postgres row — the slot occupancy is
-// recorded when the session row's pod_assignment is persisted on bind.
+// capacity gate. The count, the decision, and the record of the admission
+// run inside one transaction holding a per-pod `pg_advisory_xact_lock`, so
+// two concurrent admissions for the same pod during a Redis outage
+// serialize: the second waits for the first to commit (releasing the xact
+// lock) and its count then includes the first one's slot reservation. The
+// lock key is a 64-bit hash of podID; the xact-scoped form releases
+// automatically at commit or rollback, so a crashed gateway never strands
+// the lock.
+//
+// The count is the pod's occupancy other than sessionID (occupancyQuery):
+// the holders GetActiveSlotsByPod reads (podHoldersQuery, the non-terminal
+// arm through the migration 0080 index and the §7.1 post-terminal arm
+// through the migration 0191 index) united with the pod's migration 0197
+// slot_reservations rows, so a session that both holds the pod and has a
+// reservation counts once. Excluding sessionID makes a retried admission of
+// the same session, or a Redis-path reservation recorded before the outage
+// sent it here, neither block its own admission nor count twice.
+//
+// Before migration 0197 the gate committed without recording the
+// admission, and the occupancy became visible only when the session row's
+// pod_assignment was persisted on bind, so admissions decided in between
+// overran maxConcurrentSessions (F-12.4.38).
 // spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity),
 // §7.1 (Post-terminal window).
-func (s *Store) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (int32, bool, error) {
+func (s *Store) ReserveSlotUnderLock(ctx context.Context, podID, sessionID string, maxConcurrent int32) (int32, bool, error) {
 	if podID == "" {
 		return 0, false, nil
 	}
 	if maxConcurrent < 1 {
 		return 0, false, fmt.Errorf("pgstore: maxConcurrent must be >= 1, got %d", maxConcurrent)
+	}
+	if err := checkReservationSession(sessionID); err != nil {
+		return 0, false, err
 	}
 	var count int32
 	var admitted bool
@@ -1282,15 +1292,18 @@ func (s *Store) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcu
 			return fmt.Errorf("pgstore: acquire per-pod advisory lock for %s: %w", podID, err)
 		}
 		var current int32
-		holders, args := s.podHoldersQuery(podID)
-		if err := tx.QueryRow(ctx,
-			`SELECT count(*) FROM (`+holders+`) holders`, args...).Scan(&current); err != nil {
+		q, args := s.occupancyQuery(podID, sessionID)
+		if err := tx.QueryRow(ctx, q, args...).Scan(&current); err != nil {
 			return fmt.Errorf("pgstore: count active slots under lock for pod %s: %w", podID, err)
 		}
 		if current >= maxConcurrent {
 			count = current
-			admitted = false
 			return nil
+		}
+		// spec: §12.4 — record the admission before the lock is released,
+		// so the next gated count for the pod observes it.
+		if _, err := tx.Exec(ctx, insertSlotReservation, podID, sessionID); err != nil {
+			return fmt.Errorf("pgstore: record slot reservation for pod %s: %w", podID, err)
 		}
 		count = current + 1
 		admitted = true
@@ -1300,6 +1313,121 @@ func (s *Store) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcu
 		return 0, false, err
 	}
 	return count, admitted, nil
+}
+
+// insertSlotReservation records a slot reservation, keeping the first
+// record's reserved_at when one exists. RETURNING reports whether a row was
+// inserted: a conflict returns no row.
+const insertSlotReservation = `INSERT INTO slot_reservations (pod_id, session_id)
+	VALUES ($1, $2::uuid)
+	ON CONFLICT (pod_id, session_id) DO NOTHING
+	RETURNING true`
+
+// occupancyQuery returns the count query of the §12.4 gate and its
+// arguments: the identifiers of the sessions that hold podID united with the
+// pod's slot reservations, excluding sessionID. UNION deduplicates a session
+// that both holds the pod and has a reservation.
+// spec: §12.4 (Redis failure behavior), §7.1 (Post-terminal window).
+func (s *Store) occupancyQuery(podID, sessionID string) (string, []any) {
+	holders, args := s.podHoldersQuery(podID)
+	args = append(args, sessionID)
+	q := fmt.Sprintf(`SELECT count(*) FROM (
+		%s
+		UNION
+		SELECT session_id FROM slot_reservations WHERE pod_id = $1
+	) occupancy WHERE id <> $%d::uuid`, holders, len(args))
+	return q, args
+}
+
+// checkReservationSession reports an error for a session identifier the
+// slot_reservations table cannot key by: sessions.id is a UUID, and so is
+// the reservation's session_id.
+func checkReservationSession(sessionID string) error {
+	if _, err := uuid.Parse(sessionID); err != nil {
+		return fmt.Errorf("pgstore: slot reservation session id %q is not a session identifier: %w", sessionID, err)
+	}
+	return nil
+}
+
+// RecordSlotReservation implements Store: the Redis fast path's durable
+// record of a reservation, written before the reservation script runs. It
+// takes no advisory lock, because the Redis script is the gate on that
+// path; the record exists so that a §12.4 gate that a later Redis outage
+// starts counts the reservation.
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
+func (s *Store) RecordSlotReservation(ctx context.Context, podID, sessionID string) (bool, error) {
+	if podID == "" {
+		return false, errors.New("pgstore: record slot reservation requires a pod")
+	}
+	if err := checkReservationSession(sessionID); err != nil {
+		return false, err
+	}
+	var inserted bool
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, insertSlotReservation, podID, sessionID).Scan(&inserted)
+		if errors.Is(err, pgx.ErrNoRows) {
+			inserted = false
+			return nil
+		}
+		return err
+	})
+	if err != nil {
+		return false, fmt.Errorf("pgstore: record slot reservation for pod %s: %w", podID, err)
+	}
+	return inserted, nil
+}
+
+// DeleteSlotReservation implements Store: the slot release's removal of a
+// session's reservation record. A session identifier that is not a UUID
+// can have no record, so it deletes nothing.
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
+func (s *Store) DeleteSlotReservation(ctx context.Context, podID, sessionID string) error {
+	if podID == "" || checkReservationSession(sessionID) != nil {
+		return nil
+	}
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`DELETE FROM slot_reservations WHERE pod_id = $1 AND session_id = $2::uuid`,
+			podID, sessionID)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("pgstore: delete slot reservation for pod %s: %w", podID, err)
+	}
+	return nil
+}
+
+// ReclaimSlotReservations implements Store: the stale-slot reaper's
+// reclamation of abandoned slot reservations. A record older than cutoff is
+// deleted when no session row has its identifier (the create that reserved
+// it ended before persisting the row) or when that row has been terminal
+// since before cutoff. The NOT EXISTS reads sessions by primary key, so each
+// candidate costs one index probe.
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity),
+// §4.6.1 (Orphaned SandboxClaim detection).
+func (s *Store) ReclaimSlotReservations(ctx context.Context, cutoff time.Time) (int, error) {
+	var deleted int
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM slot_reservations r
+			  WHERE r.reserved_at < $1
+			    AND NOT EXISTS (
+			        SELECT 1 FROM sessions s
+			         WHERE s.id = r.session_id
+			           AND (s.state NOT IN ('completed', 'failed', 'cancelled', 'expired')
+			                OR s.terminated_at IS NULL
+			                OR s.terminated_at >= $1))`,
+			cutoff)
+		if err != nil {
+			return err
+		}
+		deleted = int(tag.RowsAffected())
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("pgstore: reclaim slot reservations: %w", err)
+	}
+	return deleted, nil
 }
 
 // PoolDrainStats implements Store — the §15.1 pool-drain

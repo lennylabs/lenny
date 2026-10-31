@@ -600,14 +600,17 @@ func (w *gatewayWiring) addStaleSlotReaper(add func(name string, run func(contex
 	}
 	f := w.f
 	reaper, err := slotreaper.New(slotreaper.Config{
-		Pods:        w.sessions,
-		Members:     w.slotCounter,
-		Sessions:    w.sessions,
-		Releaser:    w.podBinder,
-		Rate:        *f.slotReaperRate,
-		Interval:    *f.slotReaperInterval,
-		TerminalAge: *f.slotReaperTerminalAge,
-		Now:         clockinject.Now,
+		Pods:     w.sessions,
+		Members:  w.slotCounter,
+		Sessions: w.sessions,
+		Releaser: w.podBinder,
+		// spec: §12.4 — the pass also reclaims the abandoned slot
+		// reservation records the slot counter writes (F-12.4.38).
+		Reservations: w.sessions,
+		Rate:         *f.slotReaperRate,
+		Interval:     *f.slotReaperInterval,
+		TerminalAge:  *f.slotReaperTerminalAge,
+		Now:          clockinject.Now,
 	})
 	if err != nil {
 		log.Fatalf("lenny-gateway: §5.2 stale-slot reaper: %v", err)
