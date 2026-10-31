@@ -292,8 +292,9 @@ func (s *Server) enforceSetupCommandPolicy(w http.ResponseWriter, r *http.Reques
 	if s.runtimes == nil || runtimeRef == "" || len(plan.SetupCommands) == 0 {
 		return true
 	}
-	rt, registered, ok := s.resolvePolicyRuntime(r.Context(), w, runtimeRef)
-	if !ok {
+	rt, registered, err := runtimestore.ResolveRegistered(r.Context(), s.runtimes, runtimeRef)
+	if err != nil {
+		s.writeSetupPolicyLookupError(w, runtimeRef, err)
 		return false
 	}
 	if !registered {
@@ -344,40 +345,15 @@ func (s *Server) enforceSetupCommandPolicy(w http.ResponseWriter, r *http.Reques
 	return true
 }
 
-// resolvePolicyRuntime reads the effective (base-then-derived merged)
-// runtime whose setupCommandPolicy a binding plan is checked against. It
-// returns registered=false when the runtime has no registry entry, and
-// ok=false, with the response written, on any other read failure: a
-// transient store error answers 503 SERVICE_UNAVAILABLE with Retry-After,
-// and a derived runtime whose base is missing answers INTERNAL_ERROR. The
-// classification matches ComposeWorkspaceDefaults, so the policy check and
-// the defaults composition refuse the same request for the same read.
-//
-// spec: §7.5 Setup Commands (Command policy); §14.1 WorkspacePlan Schema
-// Versioning (Runtime workspace defaults, rule 4).
-func (s *Server) resolvePolicyRuntime(ctx context.Context, w http.ResponseWriter, runtimeRef string) (runtimestore.Runtime, bool, bool) {
-	if _, err := s.runtimes.Get(ctx, runtimeRef); err != nil {
-		if errors.Is(err, runtimestore.ErrNotFound) {
-			return runtimestore.Runtime{}, false, true
-		}
-		s.writeSetupPolicyLookupError(w, runtimeRef, err, true)
-		return runtimestore.Runtime{}, false, false
-	}
-	rt, err := runtimestore.Resolve(ctx, s.runtimes, runtimeRef)
-	if err != nil {
-		s.writeSetupPolicyLookupError(w, runtimeRef, err, !errors.Is(err, runtimestore.ErrNotFound))
-		return runtimestore.Runtime{}, false, false
-	}
-	return rt, true, true
-}
-
 // writeSetupPolicyLookupError writes the response for a runtime read that
-// the setupCommandPolicy check could not complete. A transient failure is
-// the retryable 503 SERVICE_UNAVAILABLE with Retry-After; a definite one,
-// such as a derived runtime whose base is missing, is INTERNAL_ERROR.
-func (s *Server) writeSetupPolicyLookupError(w http.ResponseWriter, runtimeRef string, err error, transient bool) {
+// the setupCommandPolicy check could not complete. The classification is
+// ResolveRegistered's, shared with the workspaceDefaults composition, so both
+// refuse a request for the same read: a transient failure is the retryable
+// 503 SERVICE_UNAVAILABLE with Retry-After, and a definite one, a derived
+// runtime whose base is missing, is INTERNAL_ERROR.
+func (s *Server) writeSetupPolicyLookupError(w http.ResponseWriter, runtimeRef string, err error) {
 	log.Printf("sessionserver: read setupCommandPolicy of runtime %q: %v", runtimeRef, err)
-	if transient {
+	if errors.Is(err, runtimestore.ErrWorkspaceDefaultsLookup) {
 		w.Header().Set("Retry-After", strconv.Itoa(serviceUnavailableRetryAfterSeconds))
 		s.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE",
 			"the runtime setupCommandPolicy is transiently unavailable; retry", nil)

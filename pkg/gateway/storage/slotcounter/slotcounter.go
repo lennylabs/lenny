@@ -43,6 +43,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -334,6 +335,28 @@ var errEmptySessionID = errors.New("slotcounter: session identifier is required"
 // unreachable takes the §12.4 fallback; one that fails for any other reason
 // fails closed.
 //
+// With a FallbackSource wired and no outage known to this Counter, Reserve
+// first records the reservation in Postgres
+// (FallbackSource.RecordSlotReservation), then runs the Redis script, and
+// deletes the record it inserted when the reservation fails. The record
+// makes a reservation the Redis set admitted visible to a §12.4 gate that a
+// later Redis outage starts, before the session row names the pod, so the
+// two paths count the same reservations. A record that cannot be written
+// fails the reservation closed.
+//
+// A reservation bound for the §12.4 gate carries no record of its own into
+// it: the gate counts every other session's record, so records written
+// outside the lock by reservations still deciding would refuse admissions
+// the gate has room for. Reserve therefore writes no record first while an
+// outage is known, and deletes the record it inserted before it falls back
+// when Redis turns out to be unreachable; the gate records the admission
+// under its lock. Between a Redis-path record's insert and that
+// reservation's discovery of the outage, the gate counts the record, which
+// over-counts the pod and never under-counts it. A reservation the Redis
+// script admits while an outage is still being recovered records itself
+// after the script, and fails closed when it cannot. A record that the cleanup fails to delete over-counts
+// the pod until the slot release or the stale-slot reaper deletes it.
+//
 // spec: §5.2 (Slot assignment atomicity, Post-recovery rehydration
 // atomicity), §12.4 (Redis failure behavior).
 func (c *Counter) Reserve(ctx context.Context, podID, sessionID string, maxConcurrent int32) (count int32, rehydrated bool, err error) {
@@ -343,10 +366,74 @@ func (c *Counter) Reserve(ctx context.Context, podID, sessionID string, maxConcu
 	if maxConcurrent < 1 {
 		return 0, false, fmt.Errorf("slotcounter: maxConcurrent must be >= 1, got %d", maxConcurrent)
 	}
+	r := reservation{podID: podID, sessionID: sessionID, maxConcurrent: maxConcurrent}
+	if !c.outageKnown() {
+		r.recorded = true
+		if r.inserted, err = c.recordReservation(ctx, podID, sessionID); err != nil {
+			return 0, false, err
+		}
+	}
+	count, rehydrated, err = c.reserve(ctx, &r)
+	if err != nil && r.inserted {
+		c.dropReservation(ctx, podID, sessionID, reservationCleanupTimeout)
+	}
+	return count, rehydrated, err
+}
+
+// reservation is one Reserve call's arguments and the state of its
+// Postgres record: recorded when Reserve wrote the record before the
+// script, and inserted when that write created the record.
+type reservation struct {
+	podID, sessionID   string
+	maxConcurrent      int32
+	recorded, inserted bool
+}
+
+// toGate takes the §12.4 fallback for r. It first deletes the record r
+// inserted before the script, so the gate records the admission under its
+// lock and no other reservation's gate count sees a record of r while r is
+// still deciding.
+func (c *Counter) toGate(ctx context.Context, r *reservation, rehydrated bool) (int32, bool, error) {
+	if r.inserted {
+		c.dropReservation(ctx, r.podID, r.sessionID, reservationCleanupTimeout)
+		r.inserted = false
+	}
+	return c.fallbackReserve(ctx, r.podID, r.sessionID, r.maxConcurrent, rehydrated)
+}
+
+// admitted finishes a reservation the Redis script admitted: one that wrote
+// no record before the script, because an outage was known, records itself
+// now, on a context detached from the caller's cancellation. A record that
+// cannot be written fails the reservation closed as recordReservation does
+// before the script: the member is removed, because a later gate could not
+// count the admission, and the caller holds no slot to release.
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
+func (c *Counter) admitted(ctx context.Context, r *reservation) error {
+	if r.recorded {
+		return nil
+	}
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reservationCleanupTimeout)
+	defer cancel()
+	_, err := c.recordReservation(dctx, r.podID, r.sessionID)
+	if err == nil {
+		return nil
+	}
+	if _, _, _, relErr := c.release(dctx, r.podID, r.sessionID, false); relErr != nil {
+		slog.WarnContext(ctx, "slotcounter: remove a member whose record failed; the member over-counts the pod",
+			"pod", r.podID, "session_id", r.sessionID, "error", relErr)
+	}
+	return err
+}
+
+// reserve runs the recovery rebuild when one is due, then the reservation
+// script, rehydrating on the sentinel and taking the §12.4 fallback when
+// Redis is unreachable.
+func (c *Counter) reserve(ctx context.Context, r *reservation) (count int32, rehydrated bool, err error) {
+	podID, sessionID, maxConcurrent := r.podID, r.sessionID, r.maxConcurrent
 	if c.needsRebuild() {
 		if rbErr := c.rebuildAfterOutage(ctx); rbErr != nil {
 			if isRedisUnavailable(rbErr) {
-				return c.fallbackReserve(ctx, podID, sessionID, maxConcurrent, false)
+				return c.toGate(ctx, r, false)
 			}
 			return 0, false, fmt.Errorf("slotcounter: reserve %s: recovery rebuild: %w: %w", podID, ErrFailClosed, rbErr)
 		}
@@ -359,12 +446,15 @@ func (c *Counter) Reserve(ctx context.Context, podID, sessionID string, maxConcu
 				// spec: §12.4 — Redis is unreachable. Gate capacity
 				// on the Postgres fallback under a per-pod advisory lock,
 				// failing closed only after the bounded outage window.
-				return c.fallbackReserve(ctx, podID, sessionID, maxConcurrent, rehydrated)
+				return c.toGate(ctx, r, rehydrated)
 			}
 			return 0, rehydrated, fmt.Errorf("slotcounter: reserve %s: %w", podID, runErr)
 		}
 		switch {
 		case res >= 1:
+			if err := c.admitted(ctx, r); err != nil {
+				return 0, rehydrated, err
+			}
 			return int32(res), rehydrated, nil
 		case res == resultExhausted:
 			return 0, rehydrated, ErrSlotsExhausted
@@ -372,7 +462,7 @@ func (c *Counter) Reserve(ctx context.Context, podID, sessionID string, maxConcu
 			did, rErr := c.rehydrate(ctx, podID, "")
 			if rErr != nil {
 				if isRedisUnavailable(rErr) {
-					return c.fallbackReserve(ctx, podID, sessionID, maxConcurrent, rehydrated)
+					return c.toGate(ctx, r, rehydrated)
 				}
 				return 0, rehydrated, rErr
 			}
@@ -456,7 +546,7 @@ func (c *Counter) rehydrate(ctx context.Context, podID, extra string) (bool, err
 
 	ids, err := c.source.GetActiveSlotsByPod(ctx, podID)
 	if err != nil {
-		return false, fmt.Errorf("slotcounter: rehydrate %s from source: %w", podID, err)
+		return false, fmt.Errorf("slotcounter: rehydrate %s: %w: %w", podID, errSlotSourceRead, err)
 	}
 	if err := c.seed(ctx, podID, ids, extra); err != nil {
 		return false, err
@@ -549,6 +639,9 @@ func lockToken() (string, error) {
 // (§6.2). The caller runs the occupancy-zero disposition only when the
 // release is clean, removed is true, and remaining is zero.
 //
+// A clean release deletes the session's reservation record whatever the
+// Redis release reports. A leaked release keeps it.
+//
 // A release that finds the rehydrated flag absent rehydrates the set first,
 // adding its own member to the seed, and then removes it, so it reports
 // removed and rehydrated. While an outage is being recovered, Release runs
@@ -564,6 +657,15 @@ func (c *Counter) Release(ctx context.Context, podID, sessionID string, leaked b
 		return false, 0, false, fmt.Errorf("slotcounter: release %s: %w", podID, errEmptySessionID)
 	}
 	removed, remaining, rehydrated, err = c.release(ctx, podID, sessionID, leaked)
+	// spec: §12.4 — a clean release ends the reservation's Postgres record
+	// even when the Redis release failed: the session has left the slot, so
+	// only the Redis member over-counts. A leaked release keeps the record,
+	// because §6.2 keeps a leaked slot counted and the record may be the only
+	// thing the §12.4 gate can count when no row names the pod. The
+	// stale-slot reaper reclaims a leaked release's record.
+	if !leaked {
+		c.dropReservation(ctx, podID, sessionID, reservationReleaseTimeout)
+	}
 	if err != nil {
 		if leaked {
 			c.record(entryLeaked, podID, sessionID)

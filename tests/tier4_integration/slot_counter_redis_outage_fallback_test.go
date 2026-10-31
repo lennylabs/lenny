@@ -102,7 +102,7 @@ func TestSlotCounterRedisOutagePostgresFallback_spec_12_4(t *testing.T) {
 	// Fast path: Redis is healthy, so the reservation adds the session's
 	// member to the pod's Redis slot set. The rehydrated flag is absent on a fresh counter, so the first
 	// reservation seeds from Postgres (zero live sessions) and admits.
-	if count, _, err := counter.Reserve(ctx, pod, "outage-fast", maxConcurrent); err != nil {
+	if count, _, err := counter.Reserve(ctx, pod, newSessionUUID(t), maxConcurrent); err != nil {
 		t.Fatalf("Reserve on the Redis fast path: %v", err)
 	} else if count != 1 {
 		t.Fatalf("fast-path count = %d, want 1", count)
@@ -119,19 +119,27 @@ func TestSlotCounterRedisOutagePostgresFallback_spec_12_4(t *testing.T) {
 	mustSeedSlotSession(t, ctx, store, "acme", pod)
 
 	// Degraded path: the Redis-only outage must not reject all dispatch. The
-	// gate admits via Postgres (2 live + this admission = 3, below the bound).
-	count, _, err := counter.Reserve(ctx, pod, "outage-degraded", maxConcurrent)
+	// gate admits via Postgres: 2 live rows, the fast-path reservation's
+	// record (F-12.4.38: a reservation the Redis set admitted before the
+	// outage is counted although no row names the pod yet), and this
+	// admission make 4, at the bound.
+	count, _, err := counter.Reserve(ctx, pod, newSessionUUID(t), maxConcurrent)
 	if err != nil {
 		t.Fatalf("Reserve during the Redis outage must degrade to the Postgres fallback, got: %v", err)
 	}
-	if count != 3 {
-		t.Errorf("fallback count = %d, want 3 (2 live + this admission)", count)
+	if count != 4 {
+		t.Errorf("fallback count = %d, want 4 (2 live + the fast-path record + this admission)", count)
+	}
+	if _, _, err := counter.Reserve(ctx, pod, newSessionUUID(t), maxConcurrent); !errors.Is(err, slotcounter.ErrSlotsExhausted) {
+		t.Errorf("Reserve past the bound during the outage = %v, want ErrSlotsExhausted", err)
 	}
 
 	// Concurrent dispatch during the outage on a pod with one free slot left:
 	// the per-pod advisory lock must serialize the count-and-decide so at most
 	// one of the racers wins the last slot. Each winner persists its session
-	// row so the next gated count observes the committed occupancy.
+	// row after the admission, as the create path does; the gate's
+	// reservation record bounds the racers that count before that row
+	// commits.
 	t.Run("concurrent dispatch serializes under the per-pod advisory lock", func(t *testing.T) {
 		const racerPod = "pod-outage-race"
 		// Three live sessions on a bound of 4 leave exactly one free slot.
@@ -146,12 +154,13 @@ func TestSlotCounterRedisOutagePostgresFallback_spec_12_4(t *testing.T) {
 		for i := 0; i < racers; i++ {
 			go func(i int) {
 				defer wg.Done()
-				c, _, rErr := counter.Reserve(ctx, racerPod, fmt.Sprintf("outage-racer-%d", i), maxConcurrent)
+				id := newSessionUUID(t)
+				c, _, rErr := counter.Reserve(ctx, racerPod, id, maxConcurrent)
 				if rErr != nil {
 					return // ErrSlotsExhausted once the bound is reached.
 				}
 				if c >= 1 {
-					mustSeedSlotSession(t, ctx, store, "acme", racerPod)
+					mustSeedSlotSessionID(t, ctx, store, "acme", racerPod, id)
 					atomic.AddInt32(&admitted, 1)
 				}
 			}(i)
@@ -167,7 +176,7 @@ func TestSlotCounterRedisOutagePostgresFallback_spec_12_4(t *testing.T) {
 	// next reservation fails closed.
 	t.Run("fails closed after the bounded outage window", func(t *testing.T) {
 		clk.advance(61 * time.Second)
-		_, _, fErr := counter.Reserve(ctx, "pod-window", "outage-window", maxConcurrent)
+		_, _, fErr := counter.Reserve(ctx, "pod-window", newSessionUUID(t), maxConcurrent)
 		if fErr == nil {
 			t.Fatal("Reserve after the bounded outage window must fail closed, got nil")
 		}
@@ -179,8 +188,15 @@ func TestSlotCounterRedisOutagePostgresFallback_spec_12_4(t *testing.T) {
 // GetActiveSlotsByPod / ReserveSlotUnderLock matches the running state.
 func mustSeedSlotSession(t *testing.T, ctx context.Context, store *sessionpg.Store, tenant, pod string) {
 	t.Helper()
+	mustSeedSlotSessionID(t, ctx, store, tenant, pod, newSessionUUID(t))
+}
+
+// mustSeedSlotSessionID persists the live session row id bound to pod: the
+// row write a create makes after its slot is admitted.
+func mustSeedSlotSessionID(t *testing.T, ctx context.Context, store *sessionpg.Store, tenant, pod, id string) {
+	t.Helper()
 	if err := store.Create(ctx, sessionstore.Session{
-		ID:            newSessionUUID(t),
+		ID:            id,
 		TenantID:      tenant,
 		State:         session.StateRunning,
 		RuntimeRef:    "echo",

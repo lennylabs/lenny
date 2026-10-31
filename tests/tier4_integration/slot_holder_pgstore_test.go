@@ -94,7 +94,7 @@ func TestSlotHolderPredicateOnPostgres_spec_5_2(t *testing.T) {
 			t.Fatalf("GetActiveSlotsByPod(%q) = (%v, %v), want none", pod, got, err)
 		}
 	}
-	if count, admitted, err := store.ReserveSlotUnderLock(ctx, "pod-b", 1); err != nil || !admitted || count != 1 {
+	if count, admitted, err := store.ReserveSlotUnderLock(ctx, "pod-b", newSessionUUID(t), 1); err != nil || !admitted || count != 1 {
 		t.Fatalf("ReserveSlotUnderLock(pod-b) = (%d, %v, %v), want (1, true, nil): the cleared row holds no slot", count, admitted, err)
 	}
 	pods, err := store.ListPodsWithActiveSlots(ctx)

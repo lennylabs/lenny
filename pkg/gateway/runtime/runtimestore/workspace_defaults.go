@@ -109,18 +109,37 @@ func ComposeWorkspaceDefaults(ctx context.Context, s Store, runtimeRef string, p
 	if s == nil || runtimeRef == "" {
 		return plan, false, nil
 	}
-	if _, err := s.Get(ctx, runtimeRef); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return plan, false, nil
-		}
-		return plan, false, fmt.Errorf("%w: runtime %q: %w", ErrWorkspaceDefaultsLookup, runtimeRef, err)
-	}
-	rt, err := Resolve(ctx, s, runtimeRef)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return plan, false, err
-		}
-		return plan, false, fmt.Errorf("%w: runtime %q: %w", ErrWorkspaceDefaultsLookup, runtimeRef, err)
+	rt, registered, err := ResolveRegistered(ctx, s, runtimeRef)
+	if err != nil || !registered {
+		return plan, false, err
 	}
 	return rt.WorkspaceDefaults.ComposeInto(plan)
+}
+
+// ResolveRegistered reads the effective runtime registered under name (the
+// §5.1 base-then-derived merge) for a caller that admits a request naming a
+// runtime with no registry entry. It returns registered=false and a nil error
+// when name has no entry. A store error that is not a not-found answer is
+// wrapped with ErrWorkspaceDefaultsLookup, and a derived runtime whose base is
+// missing returns the resolution error unwrapped. name is read once, so a
+// runtime deleted during the call reads as unregistered.
+//
+// spec: §14.1 WorkspacePlan Schema Versioning (Runtime workspace defaults,
+// rule 4); §5.1 Derived Runtime Instantiation.
+func ResolveRegistered(ctx context.Context, s Store, name string) (Runtime, bool, error) {
+	rt, err := s.Get(ctx, name)
+	if errors.Is(err, ErrNotFound) {
+		return Runtime{}, false, nil
+	}
+	if err != nil {
+		return Runtime{}, false, fmt.Errorf("%w: runtime %q: %w", ErrWorkspaceDefaultsLookup, name, err)
+	}
+	merged, err := mergeBase(ctx, s, name, rt)
+	if errors.Is(err, ErrNotFound) {
+		return Runtime{}, false, err
+	}
+	if err != nil {
+		return Runtime{}, false, fmt.Errorf("%w: runtime %q: %w", ErrWorkspaceDefaultsLookup, name, err)
+	}
+	return merged, true, nil
 }

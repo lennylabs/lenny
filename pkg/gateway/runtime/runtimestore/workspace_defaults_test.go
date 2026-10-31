@@ -327,3 +327,39 @@ func TestComposeWorkspaceDefaultsResolve_spec_14_1(t *testing.T) {
 		})
 	}
 }
+
+// getCountingStore counts the reads of a wrapped Store.
+type getCountingStore struct {
+	runtimestore.Store
+	gets int
+}
+
+func (c *getCountingStore) Get(ctx context.Context, name string) (runtimestore.Runtime, error) {
+	c.gets++
+	return c.Store.Get(ctx, name)
+}
+
+// TestResolveRegisteredReadsEachRowOnce_spec_14_1 pins the read count of the
+// runtime read the setupCommandPolicy check and the workspaceDefaults
+// composition share: a registered runtime is read once, and an unregistered
+// one is admitted rather than refused.
+//
+// spec: 14.1 (WorkspacePlan Schema Versioning, Runtime workspace defaults
+// rule 4), 5.1 (Derived Runtime Instantiation)
+func TestResolveRegisteredReadsEachRowOnce_spec_14_1(t *testing.T) {
+	ctx := context.Background()
+	mem := runtimestore.NewMemory()
+	if err := mem.Create(ctx, runtimestore.Runtime{Name: "base", Image: "x@sha256:a"}); err != nil {
+		t.Fatal(err)
+	}
+	c := &getCountingStore{Store: mem}
+	if _, registered, err := runtimestore.ResolveRegistered(ctx, c, "base"); err != nil || !registered {
+		t.Fatalf("ResolveRegistered(base) = %v, %v", registered, err)
+	}
+	if c.gets != 1 {
+		t.Errorf("reads = %d, want 1", c.gets)
+	}
+	if _, registered, err := runtimestore.ResolveRegistered(ctx, c, "absent"); err != nil || registered {
+		t.Fatalf("ResolveRegistered(absent) = %v, %v, want false and nil", registered, err)
+	}
+}

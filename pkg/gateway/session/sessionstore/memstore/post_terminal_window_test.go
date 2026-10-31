@@ -77,7 +77,7 @@ func assertHolders(t *testing.T, s *memstore.Store, wantIDs, wantPods []string, 
 	if err != nil || !reflect.DeepEqual(pods, wantPods) {
 		t.Errorf("ListPodsWithActiveSlots = (%v, %v), want %v", pods, err, wantPods)
 	}
-	if _, admitted, err := s.ReserveSlotUnderLock(ctx, "pod-1", 1); err != nil || admitted != wantAdmit {
+	if _, admitted, err := s.ReserveSlotUnderLock(ctx, "pod-1", "probe", 1); err != nil || admitted != wantAdmit {
 		t.Errorf("ReserveSlotUnderLock at bound 1 = (admitted %v, %v), want admitted %v", admitted, err, wantAdmit)
 	}
 }

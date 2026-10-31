@@ -101,7 +101,8 @@ func (s *Server) parseMessageBatch(w http.ResponseWriter, r *http.Request, row s
 
 // messageForwardKind is the forwarding kind of a message batch: a batch in
 // which any message carries inReplyTo fails closed when its forward is not
-// delivered, and any other batch is held in the DLQ.
+// delivered, and HoldsUndelivered decides whether any other batch is held in
+// the DLQ.
 // spec: §29.3 (Interactive message send) Forwarding rule 6.
 func messageForwardKind(req MessageRequest) ForwardKind {
 	for _, m := range req.Messages {
@@ -432,10 +433,10 @@ func (d *restDelivery) rerouteUnbound(row sessionstore.Session, msgs []executor.
 // replica now holds the session's REG-COORDLEASE. This replica sent nothing
 // of the batch, so it applies the not-delivered outcome of §29.3 Forwarding
 // rule 6 itself, as rule 5 states for a replica that does not hold the
-// lease: a batch with no inReplyTo is held in the session DLQ with the TTL
-// of the §7.2 dead-letter table's recovering-state row and answered with the
-// hold's receipt (queued, dropped with dlq_overflow, TARGET_TERMINAL, or
-// error with inbox_unavailable), and a batch carrying inReplyTo answers 409
+// lease: a batch HoldsUndelivered admits is held in the session DLQ with the
+// TTL of the §7.2 dead-letter table's recovering-state row and answered with
+// the hold's receipt (queued, dropped with dlq_overflow, TARGET_TERMINAL, or
+// error with inbox_unavailable), and every other batch answers 409
 // TARGET_NOT_READY. The new coordinator delivers a held batch at its next
 // delivery point.
 // spec: §29.3 (Interactive message send) Forwarding rules 5 and 6, §7.2
