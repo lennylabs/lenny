@@ -67,6 +67,30 @@ func (c ownershipCaller) rest(t *testing.T, base, method, path string, body []by
 	return resp.StatusCode, raw
 }
 
+// listed returns the session ids c's GET /v1/sessions lists. The list must
+// answer 200, so a refused or failing list cannot pass for the §10.2 rule 6
+// owner filter leaving a row out.
+func (c ownershipCaller) listed(t *testing.T, base string) map[string]bool {
+	t.Helper()
+	code, raw := c.rest(t, base, http.MethodGet, "/v1/sessions", nil)
+	if code != http.StatusOK {
+		t.Fatalf("list as %s/%s = %d %s, want 200", c.user, c.roles, code, raw)
+	}
+	var env struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		t.Fatalf("decode list %s: %v", raw, err)
+	}
+	out := map[string]bool{}
+	for _, it := range env.Items {
+		out[it.ID] = true
+	}
+	return out
+}
+
 // attachBody is the JSON-RPC tools/call body of attach_session on id.
 func attachBody(id string) []byte {
 	return []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + mcp.AttachToolName +
@@ -145,8 +169,11 @@ func TestSessionOwnershipThroughTheGateway_spec_10_2(t *testing.T) {
 	if code, raw := ownBob.rest(t, base, http.MethodGet, "/v1/sessions/"+created.ID, nil); code != http.StatusNotFound || !bytes.Contains(raw, []byte("RESOURCE_NOT_FOUND")) {
 		t.Errorf("bob GET alice's session = %d %s, want 404 RESOURCE_NOT_FOUND", code, raw)
 	}
-	if _, raw := ownBob.rest(t, base, http.MethodGet, "/v1/sessions", nil); bytes.Contains(raw, []byte(created.ID)) {
-		t.Errorf("bob's list includes alice's session: %s", raw)
+	if !ownAlice.listed(t, base)[created.ID] {
+		t.Errorf("alice's list omits her own session %s", created.ID)
+	}
+	if ownBob.listed(t, base)[created.ID] {
+		t.Errorf("bob's list includes alice's session %s", created.ID)
 	}
 
 	code, raw = ownBob.rest(t, base, http.MethodPost, "/mcp", attachBody(created.ID))
