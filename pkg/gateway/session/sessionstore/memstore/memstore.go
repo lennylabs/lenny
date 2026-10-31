@@ -11,6 +11,7 @@ package memstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -49,6 +50,12 @@ type Store struct {
 	// Postgres backend serializes it under a per-pod advisory xact lock.
 	podLockMu sync.Mutex
 	podLocks  map[string]*sync.Mutex
+
+	// slotReservations holds the §12.4 slot reservation records, keyed by
+	// pod and then by session, with the time each was recorded. It is the
+	// in-memory analogue of the migration 0197 slot_reservations table and
+	// is guarded by mu.
+	slotReservations map[string]map[string]time.Time
 
 	// now is the clock Update stamps UpdatedAt from and accrues the §6.2
 	// active session age against. New wires the wall clock; NewWithClock
@@ -101,10 +108,11 @@ func NewWithClock(now func() time.Time, opts ...Option) *Store {
 		now = time.Now
 	}
 	s := &Store{
-		sessions:     make(map[string]sessionstore.Session),
-		reservations: make(map[string]reservation),
-		podLocks:     make(map[string]*sync.Mutex),
-		now:          now,
+		sessions:         make(map[string]sessionstore.Session),
+		reservations:     make(map[string]reservation),
+		podLocks:         make(map[string]*sync.Mutex),
+		slotReservations: make(map[string]map[string]time.Time),
+		now:              now,
 	}
 	for _, o := range opts {
 		o(s)
@@ -549,36 +557,132 @@ func (s *Store) ListAbsentSessions(_ context.Context, ids []string) ([]string, e
 }
 
 // ReserveSlotUnderLock implements Store — the §12.4 Redis-outage capacity
-// gate. It serializes the count-and-decide for podID under a per-pod mutex
-// (the in-memory analogue of the Postgres per-pod advisory xact lock) so two
-// concurrent admissions during a Redis outage cannot both observe the same
-// free slot. The count predicate matches GetActiveSlotsByPod verbatim, so a
-// session in its §7.1 post-terminal window keeps its slot.
+// gate. It serializes the count, the decision, and the record of the
+// admission for podID under a per-pod mutex (the in-memory analogue of the
+// Postgres per-pod advisory xact lock), so two concurrent admissions during a
+// Redis outage cannot both observe the same free slot. The count is the
+// pod's occupancy other than sessionID: the sessions GetActiveSlotsByPod
+// returns united with the pod's slot reservations, each session once, so a
+// session in its §7.1 post-terminal window keeps its slot and an admission
+// whose row does not yet name the pod is counted.
 // spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity),
 // §7.1 (Post-terminal window).
-func (s *Store) ReserveSlotUnderLock(_ context.Context, podID string, maxConcurrent int32) (int32, bool, error) {
+func (s *Store) ReserveSlotUnderLock(_ context.Context, podID, sessionID string, maxConcurrent int32) (int32, bool, error) {
 	if podID == "" {
 		return 0, false, nil
 	}
 	if maxConcurrent < 1 {
 		return 0, false, fmt.Errorf("memstore: maxConcurrent must be >= 1, got %d", maxConcurrent)
 	}
+	if sessionID == "" {
+		return 0, false, errors.New("memstore: slot reservation requires a session id")
+	}
 	lock := s.podLock(podID)
 	lock.Lock()
 	defer lock.Unlock()
 
-	s.mu.RLock()
-	current := int32(0)
-	for _, row := range s.sessions {
-		if row.PodAssignment == podID && s.holdsPodLocked(row) {
-			current++
-		}
-	}
-	s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current := s.occupancyLocked(podID, sessionID)
 	if current >= maxConcurrent {
 		return current, false, nil
 	}
+	s.recordSlotReservationLocked(podID, sessionID)
 	return current + 1, true, nil
+}
+
+// occupancyLocked counts the sessions that hold podID united with podID's
+// slot reservations, excluding sessionID. The caller holds mu.
+func (s *Store) occupancyLocked(podID, sessionID string) int32 {
+	seen := map[string]bool{}
+	for _, row := range s.sessions {
+		if row.PodAssignment == podID && s.holdsPodLocked(row) {
+			seen[row.ID] = true
+		}
+	}
+	for id := range s.slotReservations[podID] {
+		seen[id] = true
+	}
+	delete(seen, sessionID)
+	return int32(len(seen))
+}
+
+// recordSlotReservationLocked records sessionID's reservation on podID and
+// reports whether it inserted one. An existing record keeps its time. The
+// caller holds mu.
+func (s *Store) recordSlotReservationLocked(podID, sessionID string) bool {
+	byPod := s.slotReservations[podID]
+	if byPod == nil {
+		byPod = map[string]time.Time{}
+		s.slotReservations[podID] = byPod
+	}
+	if _, ok := byPod[sessionID]; ok {
+		return false
+	}
+	byPod[sessionID] = s.now()
+	return true
+}
+
+// RecordSlotReservation implements Store: the Redis fast path's record of a
+// reservation, written before its reservation script runs.
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
+func (s *Store) RecordSlotReservation(_ context.Context, podID, sessionID string) (bool, error) {
+	if podID == "" || sessionID == "" {
+		return false, errors.New("memstore: record slot reservation requires a pod and a session id")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.recordSlotReservationLocked(podID, sessionID), nil
+}
+
+// DeleteSlotReservation implements Store: the slot release's removal of a
+// session's reservation record. An absent record is not an error.
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
+func (s *Store) DeleteSlotReservation(_ context.Context, podID, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if byPod := s.slotReservations[podID]; byPod != nil {
+		delete(byPod, sessionID)
+		if len(byPod) == 0 {
+			delete(s.slotReservations, podID)
+		}
+	}
+	return nil
+}
+
+// ReclaimSlotReservations implements Store: it deletes the reservation
+// records older than cutoff whose session row is absent or has been
+// terminal since before cutoff, with the predicate the Postgres store uses.
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity),
+// §4.6.1 (Orphaned SandboxClaim detection).
+func (s *Store) ReclaimSlotReservations(_ context.Context, cutoff time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deleted := 0
+	for pod, byPod := range s.slotReservations {
+		for id, at := range byPod {
+			if !at.Before(cutoff) || s.reservationSessionLive(id, cutoff) {
+				continue
+			}
+			delete(byPod, id)
+			deleted++
+		}
+		if len(byPod) == 0 {
+			delete(s.slotReservations, pod)
+		}
+	}
+	return deleted, nil
+}
+
+// reservationSessionLive reports whether a reservation's session row keeps
+// the reservation: the row exists and is non-terminal, has no terminal
+// time, or became terminal at or after cutoff. The caller holds mu.
+func (s *Store) reservationSessionLive(id string, cutoff time.Time) bool {
+	row, ok := s.sessions[id]
+	if !ok {
+		return false
+	}
+	return !session.IsTerminal(row.State) || row.TerminatedAt.IsZero() || !row.TerminatedAt.Before(cutoff)
 }
 
 // podLock returns the per-pod mutex for the §12.4 fallback gate, creating

@@ -665,6 +665,12 @@ var prodMigrationSchema = []struct {
 	// locked-row write.
 	// spec: §11.3, §10.1.1.
 	{migration: "0196", table: "sessions", columns: []string{"expiry_warned_cap_seconds"}},
+	// 0197 adds slot_reservations, the §12.4 record of a concurrent-workspace
+	// slot reservation that the Redis-outage gate writes under its per-pod
+	// advisory lock and counts (F-12.4.38). Its behavior is asserted in
+	// TestReserveSlotUnderLock and TestReclaimSlotReservations.
+	// spec: §12.4, §5.2.
+	{migration: "0197", table: "slot_reservations", create: true, columns: []string{"pod_id", "session_id", "reserved_at"}},
 }
 
 // spec: 12.2, 18.5

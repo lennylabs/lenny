@@ -334,6 +334,16 @@ var errEmptySessionID = errors.New("slotcounter: session identifier is required"
 // unreachable takes the §12.4 fallback; one that fails for any other reason
 // fails closed.
 //
+// With a FallbackSource wired, Reserve first records the reservation in
+// Postgres (FallbackSource.RecordSlotReservation), then runs the Redis
+// script or the §12.4 gate, and deletes the record it inserted when the
+// reservation fails. The record makes a reservation the Redis set admitted
+// visible to a §12.4 gate that a later Redis outage starts, before the
+// session row names the pod, so the two paths count the same reservations.
+// A record that the cleanup fails to delete over-counts the pod until the
+// slot release or the stale-slot reaper deletes it. A record that cannot be
+// written fails the reservation closed.
+//
 // spec: §5.2 (Slot assignment atomicity, Post-recovery rehydration
 // atomicity), §12.4 (Redis failure behavior).
 func (c *Counter) Reserve(ctx context.Context, podID, sessionID string, maxConcurrent int32) (count int32, rehydrated bool, err error) {
@@ -343,6 +353,21 @@ func (c *Counter) Reserve(ctx context.Context, podID, sessionID string, maxConcu
 	if maxConcurrent < 1 {
 		return 0, false, fmt.Errorf("slotcounter: maxConcurrent must be >= 1, got %d", maxConcurrent)
 	}
+	inserted, err := c.recordReservation(ctx, podID, sessionID)
+	if err != nil {
+		return 0, false, err
+	}
+	count, rehydrated, err = c.reserve(ctx, podID, sessionID, maxConcurrent)
+	if err != nil && inserted {
+		c.dropReservation(ctx, podID, sessionID)
+	}
+	return count, rehydrated, err
+}
+
+// reserve runs the recovery rebuild when one is due, then the reservation
+// script, rehydrating on the sentinel and taking the §12.4 fallback when
+// Redis is unreachable.
+func (c *Counter) reserve(ctx context.Context, podID, sessionID string, maxConcurrent int32) (count int32, rehydrated bool, err error) {
 	if c.needsRebuild() {
 		if rbErr := c.rebuildAfterOutage(ctx); rbErr != nil {
 			if isRedisUnavailable(rbErr) {
@@ -564,6 +589,12 @@ func (c *Counter) Release(ctx context.Context, podID, sessionID string, leaked b
 		return false, 0, false, fmt.Errorf("slotcounter: release %s: %w", podID, errEmptySessionID)
 	}
 	removed, remaining, rehydrated, err = c.release(ctx, podID, sessionID, leaked)
+	// spec: §12.4 — the release ends the reservation's Postgres record on
+	// every outcome. A Redis release that failed leaves the Redis member
+	// counted; the §12.4 gate keeps counting the session through its row's
+	// post-terminal window, as it does for a session whose reservation
+	// predates the record.
+	c.dropReservation(ctx, podID, sessionID)
 	if err != nil {
 		if leaked {
 			c.record(entryLeaked, podID, sessionID)

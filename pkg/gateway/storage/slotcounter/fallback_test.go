@@ -21,16 +21,20 @@ import (
 // count-and-decide under a per-pod mutex, the in-test analogue of the
 // Postgres per-pod advisory lock.
 type fakeFallback struct {
-	mu        sync.Mutex
-	active    map[string]int32 // current occupancy per pod
-	calls     map[string]int
-	failWith  error // when set, every call returns this error
+	mu       sync.Mutex
+	active   map[string]int32 // current occupancy per pod
+	calls    map[string]int
+	failWith error // when set, every call returns this error
+	// records holds the reservation records the Counter writes and
+	// deletes, keyed by pod and session.
+	records   map[[2]string]bool
+	recordErr error // when set, RecordSlotReservation returns this error
 	podLockMu sync.Mutex
 	podLocks  map[string]*sync.Mutex
 }
 
 func newFakeFallback() *fakeFallback {
-	return &fakeFallback{active: map[string]int32{}, calls: map[string]int{}, podLocks: map[string]*sync.Mutex{}}
+	return &fakeFallback{active: map[string]int32{}, calls: map[string]int{}, podLocks: map[string]*sync.Mutex{}, records: map[[2]string]bool{}}
 }
 
 func (f *fakeFallback) podLock(podID string) *sync.Mutex {
@@ -44,7 +48,34 @@ func (f *fakeFallback) podLock(podID string) *sync.Mutex {
 	return l
 }
 
-func (f *fakeFallback) ReserveSlotUnderLock(_ context.Context, podID string, maxConcurrent int32) (int32, bool, error) {
+func (f *fakeFallback) RecordSlotReservation(_ context.Context, podID, sessionID string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.recordErr != nil {
+		return false, f.recordErr
+	}
+	key := [2]string{podID, sessionID}
+	if f.records[key] {
+		return false, nil
+	}
+	f.records[key] = true
+	return true, nil
+}
+
+func (f *fakeFallback) DeleteSlotReservation(_ context.Context, podID, sessionID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.records, [2]string{podID, sessionID})
+	return nil
+}
+
+func (f *fakeFallback) hasRecord(podID, sessionID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.records[[2]string{podID, sessionID}]
+}
+
+func (f *fakeFallback) ReserveSlotUnderLock(_ context.Context, podID, _ string, maxConcurrent int32) (int32, bool, error) {
 	lock := f.podLock(podID)
 	lock.Lock()
 	defer lock.Unlock()
