@@ -409,6 +409,12 @@
       "contract": ["tests/tier3_contract/rest_openai_responses/...", "tests/tier3_contract/multiprotocol_journey/..."],
       "load_local": ["tests/tier7a_load_local/open_responses_replica_lag_test.go"]
     },
+    "tests/testinfra/credsecretfake/": {
+      "unit": ["cmd/lenny-gateway/...", "pkg/gateway/externalapi/admin/..."],
+      "integration": ["tests/tier4_integration/credential_pool_tenant_erasure_pg_test.go"],
+      "chaos": ["tests/tier8_chaos/credential_tenant_erasure_chaos_test.go"],
+      "security": ["tests/tier9_security/credential_tenant_erasure_isolation_test.go"]
+    },
     "tests/testinfra/tcpfault/": {
       "unit": ["tests/testinfra/tcpfault/..."],
       "integration": ["tests/tier4_integration/jwt_keyset_cross_process_test.go"],
