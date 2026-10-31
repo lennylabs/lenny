@@ -12,7 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
-	ctrl "sigs.k8s.io/controller-runtime"
+	"k8s.io/client-go/rest"
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
@@ -131,24 +131,24 @@ func managedSecret(name string, meta admin.SecretOwner, data map[string]string) 
 }
 
 // buildCredentialSecretWriter returns the writer for the credentials
-// namespace, or nil when no cluster config resolves. The caller builds it
-// only when a Token Service is configured. A nil writer refuses every
-// admin write that needs a Secret operation with 422
-// TOKEN_SERVICE_NOT_CONFIGURED, so a gateway with no cluster access fails
-// closed rather than committing a row whose Secret was never written.
+// namespace over the cluster config getConfig resolves. The caller builds it
+// only when a Token Service is configured, so a nil writer, and with it 422
+// TOKEN_SERVICE_NOT_CONFIGURED, means exactly that no Token Service is
+// configured. A cluster config or clientset that cannot be built is
+// therefore returned as an error for the caller to stop startup on, rather
+// than degrading a gateway that has a Token Service into the no-writer
+// state.
 //
 // spec: §4.9 (Credential Storage Topology) — Credential values submitted
 // through the admin API rule 6.
-func buildCredentialSecretWriter(namespace string, timeout time.Duration, logf func(string, ...any)) admin.CredentialSecretWriter {
-	cfg, err := ctrl.GetConfig()
+func buildCredentialSecretWriter(getConfig func() (*rest.Config, error), namespace string, timeout time.Duration) (admin.CredentialSecretWriter, error) {
+	cfg, err := getConfig()
 	if err != nil {
-		logf("lenny-gateway: §4.9 no cluster config for the credential Secret writer (%v); admin writes that need a credential Secret operation are refused", err)
-		return nil
+		return nil, fmt.Errorf("resolve cluster config for the credential Secret writer: %w", err)
 	}
 	cs, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
-		logf("lenny-gateway: §4.9 build credential Secret writer clientset: %v; admin writes that need a credential Secret operation are refused", err)
-		return nil
+		return nil, fmt.Errorf("build credential Secret writer clientset: %w", err)
 	}
-	return newKubeCredentialSecretWriter(cs.CoreV1().Secrets(namespace), timeout)
+	return newKubeCredentialSecretWriter(cs.CoreV1().Secrets(namespace), timeout), nil
 }

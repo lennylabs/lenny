@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/lennylabs/lenny/pkg/credential"
@@ -255,6 +256,55 @@ func TestCredentialSecretWriterTimeoutIsNotAnOperatorFlag_spec_4_9(t *testing.T)
 	if defaultCredentialSecretTimeout <= 0 {
 		t.Fatalf("defaultCredentialSecretTimeout = %v, want a positive bound", defaultCredentialSecretTimeout)
 	}
+}
+
+// spec: §4.9 (Credential Storage Topology) — Credential values submitted
+// through the admin API rule 6: the gateway has no Secret writer only when
+// no Token Service is configured. A Token-Service gateway whose cluster
+// config or clientset cannot be built gets an error to stop startup on,
+// never a nil writer that would refuse admin writes as
+// TOKEN_SERVICE_NOT_CONFIGURED.
+func TestBuildCredentialSecretWriterFailsRatherThanReturningNil_spec_4_9(t *testing.T) {
+	cases := []struct {
+		name      string
+		getConfig func() (*rest.Config, error)
+		wantErr   string
+	}{
+		{
+			name:      "cluster config does not resolve",
+			getConfig: func() (*rest.Config, error) { return nil, errors.New("no kubeconfig") },
+			wantErr:   "no kubeconfig",
+		},
+		{
+			name: "clientset cannot be built",
+			// client-go refuses a positive QPS with no burst and no rate
+			// limiter.
+			getConfig: func() (*rest.Config, error) { return &rest.Config{Host: "https://kube.invalid", QPS: 5}, nil },
+			wantErr:   "clientset",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w, err := buildCredentialSecretWriter(tc.getConfig, writerTestNS, 0)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want an error containing %q", err, tc.wantErr)
+			}
+			if w != nil {
+				t.Fatalf("writer = %T, want nil alongside the error", w)
+			}
+		})
+	}
+	t.Run("resolvable cluster config yields a writer", func(t *testing.T) {
+		w, err := buildCredentialSecretWriter(func() (*rest.Config, error) {
+			return &rest.Config{Host: "https://kube.invalid"}, nil
+		}, writerTestNS, 0)
+		if err != nil {
+			t.Fatalf("err = %v, want nil", err)
+		}
+		if w == nil {
+			t.Fatal("writer = nil, want a writer when the cluster config resolves")
+		}
+	})
 }
 
 // diagnosis: a failure means the client-go credential Secret writer
