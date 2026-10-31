@@ -156,7 +156,7 @@ None remain. The decisions reached on 2026-10-30 and 2026-10-31 under the owner'
 - SPEC-7 — spec/16_observability.md — §16.1 git pack bytes and cache-served source metric rows.
 - SPEC-8 — spec/04_system-components.md, spec/14_workspace-plan-schema.md, spec/15_external-api-surface.md, spec/26_reference-runtime-catalog.md — §4.9 `git-https` provider rows, the **`hostPatterns`** rules, the **`git-https` credentials.** paragraph, and the `git-https` **Secret shape.** row, and the §14, §15.1, §26.2, and §26.3 pointers.
 - SPEC-9 — spec/04_system-components.md, spec/05_runtime-registry-and-pool-model.md — §4.2 `Runtimes, pools` table row and §5.2 pool-dimensions bullet.
-- SPEC-10 — spec/12_storage-architecture.md, spec/28_communication-channels.md — §12.4 restore-lineage key rows and pod-scoped-key exception, the §28.3 `REG-GITLINEAGE` row, and the §28.5.7 register sentence.
+- SPEC-10 — spec/12_storage-architecture.md, spec/28_communication-channels.md — §12.4 restore-lineage key row, pod-scoped-key exception, and failure-table row, the §28.3 `REG-GITLINEAGE` row, and the §28.5.7 register sentence.
 - SPEC-11 — spec/17_deployment-topology.md — §17.8.1 rows for the repository-store fill deadline and the gateway mirror limits.
 - CODE-1 — Dockerfile.git, Dockerfile, .github/workflows/release.yml, scripts/cloud/aws/build-images.sh, image-build targets, BUILD-GAPS.md — the images of the binaries that run git carry it, and the missing-git defect is filed.
 - CODE-2 — pkg/apis, CRD manifests, pkg/gateway/runtime/runtimestore, pkg/gateway/externalapi/admin, cmd/lenny-gateway, pkg/controller, pkg/adapter/sharedassets, pkg/gateway/externalapi/openapi, pkg/ops/mcp — `gitRepository` from the CRD to the adapter flag and the registry, with registration validation.
