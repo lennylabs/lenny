@@ -6697,7 +6697,8 @@
       "tests": [
         "tests/tier11_docs/shared_jwt_signing_docs_test.go::TestAuditLockRemedyLowersConcurrentSessionQuota_spec_17_7",
         "tests/tier11_docs/jwt_key_rotation_runbook_test.go",
-        "tests/tier11_docs/runbooks_test.go"
+        "tests/tier11_docs/runbooks_test.go",
+        "tests/tier7a_load_local/scenarios/low_resource_startup/scenario_test.go"
       ],
       "packages": [
         "docs/runbooks/"
