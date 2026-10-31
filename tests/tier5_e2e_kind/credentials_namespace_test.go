@@ -234,8 +234,8 @@ func TestSecretDataCredentialReadThroughTokenServiceAtGitCloneBinding_spec_4_9(t
 	}
 
 	t.Run("authenticated clone", func(t *testing.T) {
-		t.Skip("blocked: the distroless gateway image carries no git binary, so ls-remote cannot run; " +
-			"the kind install also has no HTTPS Git fixture the gateway trusts and may reach")
+		t.Skip("blocked: F-14.1.37: the distroless gateway image carries no git binary, so ls-remote " +
+			"cannot run; the kind install also has no HTTPS Git fixture the gateway trusts and may reach")
 	})
 }
 

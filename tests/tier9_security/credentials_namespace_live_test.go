@@ -35,6 +35,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/tokenservice"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 )
@@ -259,13 +260,77 @@ func credNSLogs(t *testing.T, c *kind.Cluster, component string) string {
 	return out
 }
 
+// credNSKeyedReadSucceeded reports whether the Token Service logs record a
+// keyed read of the Secret that returned its value. The redaction interceptor
+// writes a credential_rpc line for every keyed call whatever its outcome, so a
+// line naming the Secret does not by itself show that the value crossed the
+// read path. It returns the matching line, or the last line naming the Secret
+// when none succeeded.
+func credNSKeyedReadSucceeded(logs, secret string) (string, bool) {
+	last := ""
+	for _, line := range strings.Split(logs, "\n") {
+		if !strings.Contains(line, "credential_rpc") || !strings.Contains(line, secret) {
+			continue
+		}
+		if strings.Contains(line, tokenservice.SecretReadOutcomeSuccess) {
+			return line, true
+		}
+		last = line
+	}
+	return last, false
+}
+
+// spec: §16.4 (Credential-sensitive RPCs), §4.9 (Token Service secret
+// resolution rule 5)
+// diagnosis: the log search's precondition accepted a keyed read that never
+// returned the value. A failure here means credNSKeyedReadSucceeded treats a
+// credential_rpc line with a failed outcome, or a line for another Secret, as
+// a read that carried the value.
+func TestSecretDataLogSearchRequiresSuccessfulKeyedRead_spec_16_4(t *testing.T) {
+	const secret = "lenny-cred-abc"
+	line := func(name, outcome string) string {
+		return fmt.Sprintf(`{"msg":"credential_rpc","secret_name":%q,"outcome":%q}`, name, outcome)
+	}
+	for _, tc := range []struct {
+		name string
+		logs []string
+		want bool
+	}{
+		{name: "no line", logs: []string{`{"msg":"started"}`}},
+		{name: "unavailable", logs: []string{line(secret, tokenservice.SecretReadOutcomeUnavailable)}},
+		{name: "not found", logs: []string{line(secret, tokenservice.SecretReadOutcomeNotFound)}},
+		{name: "denied", logs: []string{line(secret, tokenservice.SecretReadOutcomeDenied)}},
+		{name: "error", logs: []string{line(secret, "error")}},
+		{name: "success for another Secret", logs: []string{line("lenny-cred-xyz", tokenservice.SecretReadOutcomeSuccess)}},
+		{name: "success", logs: []string{line(secret, tokenservice.SecretReadOutcomeSuccess)}, want: true},
+		{
+			name: "failure then success",
+			logs: []string{
+				line(secret, tokenservice.SecretReadOutcomeUnavailable),
+				line(secret, tokenservice.SecretReadOutcomeSuccess),
+			},
+			want: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := credNSKeyedReadSucceeded(strings.Join(tc.logs, "\n"), secret)
+			if ok != tc.want {
+				t.Fatalf("keyed read succeeded = %v, want %v (line %q)", ok, tc.want, got)
+			}
+		})
+	}
+}
+
 // spec: §16.4 (Credential-sensitive RPCs), §4.9 (Credential values submitted
 // through the admin API; Token Service secret resolution rule 5)
 // diagnosis: a submitted credential value reached a component log. The value
 // travels through the gateway on the admin write and through both components
 // on the keyed read, so a hit means a logging path recorded a request or a
 // response body. A missing credential_rpc line means the keyed read did not
-// run and the log search proved nothing about the Token Service.
+// run, and a credential_rpc line with an outcome other than success means the
+// read ran without returning the value; a failure then says the log search
+// proved nothing about the read path, and the printed line and create error
+// tell which case held.
 func TestSecretDataValueAbsentFromGatewayAndTokenServiceLogs_spec_16_4(t *testing.T) {
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 30 * time.Second})
 	c := d.Cluster()
@@ -294,12 +359,9 @@ func TestSecretDataValueAbsentFromGatewayAndTokenServiceLogs_spec_16_4(t *testin
 
 	secret := credential.ManagedSecretName(tenant, "vcs", "key-1")
 	tokenService := credNSLogs(t, c, "token-service")
-	readLogged := false
-	for _, line := range strings.Split(tokenService, "\n") {
-		readLogged = readLogged || (strings.Contains(line, "credential_rpc") && strings.Contains(line, secret))
-	}
-	if !readLogged {
-		t.Fatalf("no Token Service credential_rpc line for Secret %s; session create returned %v", secret, createErr)
+	if line, ok := credNSKeyedReadSucceeded(tokenService, secret); !ok {
+		t.Fatalf("no Token Service credential_rpc success line for Secret %s; last observed line %q; session create returned %v",
+			secret, line, createErr)
 	}
 	encoded := base64.StdEncoding.EncodeToString([]byte(canary))
 	for component, logs := range map[string]string{"token-service": tokenService, "gateway": credNSLogs(t, c, "gateway")} {

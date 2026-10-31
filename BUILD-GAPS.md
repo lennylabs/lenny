@@ -29383,6 +29383,13 @@ But it bites the spec's own `$schema` example (H5). The fix is to add `$schema` 
 **Gap:** The specification and the published schema disagree on whether plan intake returns the code, so a client built from §15.1 does not expect it on a create or finalize request.
 **Suggested resolution:** Through the proposal pipeline, add plan intake to the §15.1 row and to §14.1, or move intake to `WORKSPACE_PLAN_INVALID` and correct the published schema. The specification and the schema disagree, so this needs a proposal. Owner: the next proposal that edits the §15.1 workspace-plan catalog rows, after 0086's implementation, whose SPEC-3 edits the neighbouring rows.
 
+### - [ ] F-14.1.37 — The deployed gateway image has no `git` binary, so every `gitClone` plan binding fails with `network_error`, and the kind install has no HTTPS Git fixture the gateway trusts [High] — OPEN
+
+**Spec:** §14 Workspace Plan Schema (the `gitClone.ref` resolution item and the `gitClone.auth` object); §14.1 WorkspacePlan Schema Versioning (**Plan binding.**); §4.9 Credential Storage Topology.
+**Evidence:** `LsRemoteResolver.Resolve` (`pkg/gateway/provisioning/gitref/gitref.go`) runs `git ls-remote` through `exec.CommandContext`, and `pkg/gateway/provisioning/gitref/clone.go` runs `git` the same way. The final stage of `Dockerfile` is `gcr.io/distroless/static:nonroot` and copies only `/usr/local/bin/lenny` and the runbooks, so the executable is absent. `classify` returns `workspaceplan.ResolveNetworkError` for a failure with no recognized stderr marker, which is the case for an exec failure, so the create answers `503 GIT_CLONE_REF_RESOLVE_TRANSIENT`. The kind install runs no HTTPS Git server the gateway trusts, and `allow-gateway-egress` excepts private ranges. `TestSecretDataCredentialReadThroughTokenServiceAtGitCloneBinding_spec_4_9` (`tests/tier5_e2e_kind/credentials_namespace_test.go`) stops at the Token Service keyed read and skips its `authenticated clone` subtest with this finding's id. Filed from proposal 0112's implementation, 2026-10-31.
+**Gap:** A `gitClone` source cannot bind on a deployed gateway, for public and authenticated repositories alike, and the error reports a transient network failure rather than the missing executable. No test on kind exercises an authenticated clone, so tier 5 verifies the credential read and leaves the clone unverified.
+**Suggested resolution:** Ship a `git` executable and a CA bundle in the gateway image, or replace the exec with an in-process Git client, and add an HTTPS Git fixture the kind gateway trusts and may reach. Then replace the skip with the authenticated clone assertion, and replace the test's `GIT_CLONE_REF_RESOLVE_TRANSIENT` expectation with a successful create.
+
 ---
 
 ### Summary by severity
