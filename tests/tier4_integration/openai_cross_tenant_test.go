@@ -51,7 +51,8 @@ const crossTenantSubject = "alice"
 // spec: §15.1 (REST API): the Open Responses adapter serves no delete
 // operation on /v1/responses/{id}.
 // spec: §15 (Open Responses conversation sessions): GET /v1/responses/{id}
-// answers a completed response of the caller's tenant by its <session>.<n> id.
+// answers a completed response of a session the caller may read under §10.2
+// (Session ownership) by its <session>.<n> id.
 // diagnosis: a cross-tenant GET of an Open Responses resource, or a
 // cross-tenant REST read of a session created through POST
 // /v1/chat/completions, that returns anything other than the

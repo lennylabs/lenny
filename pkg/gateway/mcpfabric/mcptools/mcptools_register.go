@@ -1564,11 +1564,13 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 
 	// spec: §9.2 — respond_to_elicitation/dismiss_elicitation
 	// are MCP-callable resolution surfaces parallel to the §15.1 REST
-	// endpoints. The gateway validates the (session_id, user_id,
-	// elicitation_id) triple before routing the response down the
-	// chain; any mismatch collapses to ELICITATION_NOT_FOUND so the
-	// existence of another session's or user's elicitation never
-	// leaks. F-9.2.17.
+	// endpoints. The gateway first applies §10.2 (Session ownership),
+	// so a session the caller may not act on answers
+	// RESOURCE_NOT_FOUND. On a session the caller may act on, the
+	// gateway validates the (session_id, user_id, elicitation_id)
+	// triple before routing the response down the chain, and any
+	// mismatch collapses to ELICITATION_NOT_FOUND so the existence of
+	// another session's or user's elicitation never leaks. F-9.2.17.
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/respond_to_elicitation",
 		Description: "Respond to a pending §9.2 elicitation on the calling session.",

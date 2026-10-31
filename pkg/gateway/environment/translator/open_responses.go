@@ -788,7 +788,7 @@ func writeOpenResponsesStream(w http.ResponseWriter, id, prev string, now time.T
 }
 
 // handleGet answers GET /v1/responses/{id} with a completed response of a
-// session in the caller's tenant. The id resolves through the same step a
+// session the caller may read under §10.2 (Session ownership). The id resolves through the same step a
 // continuation's previous_response_id resolves through, so an id that names
 // no completed response the caller can read (malformed, unknown,
 // cross-tenant, past the newest ordinal, or not completed) answers the
