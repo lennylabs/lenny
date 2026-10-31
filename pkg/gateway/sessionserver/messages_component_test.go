@@ -121,10 +121,10 @@ func dialPerSlotAdapter(t *testing.T, rec *perSlotAdapter) *adapterclient.Client
 func concurrentRoutingServer(t *testing.T, reg *podsession.Registry) (*sessionserver.Server, sessionstore.Store, *sessioninbox.MemoryInbox) {
 	t.Helper()
 	cluster := podBindClient(t, &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{Name: "sbx-c", Namespace: podTestNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "sbx-c", Namespace: testNS(t)},
 		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.9"},
 	})
-	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
+	binder := &podsession.Binder{Client: cluster, Namespace: testNS(t)}
 
 	mr := miniredis.RunT(t)
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})

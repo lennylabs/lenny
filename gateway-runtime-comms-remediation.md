@@ -4223,9 +4223,16 @@ D2), which stays with the upload route proposal.
     ordering the specification does not state, it goes to a proposal. Closed 2026-10-31 by direct fix on
     `fix/finalize-policy-forward`: both create routes check `row.RuntimeRef` after routing and immediately
     before the defaults composition, the position §14.1 rule 1 states. Filed from the fix: F-4.8.25.
-  - [ ] **F-4.8.25** (Medium, filed from F-7.5.16): `POST /v1/sessions` runs no §4.8 PreRoute or PostRoute
-    chain, while create-and-start runs both around the ExperimentRouter. Direct fix after proposal 0110,
-    which edits the create path.
+  - [x] **F-4.8.25** (Medium, filed from F-7.5.16): `POST /v1/sessions` runs no §4.8 PreRoute or PostRoute
+    chain, while create-and-start runs both around the ExperimentRouter. Closed 2026-10-31 by direct fix on
+    `fix/route-chain-create`: both create routes call one set of route helpers, and the drain gate judges the
+    routed runtime. Filed from the fix: F-4.8.26, F-15.1.72, and F-12.9.25.
+  - [ ] **F-4.8.26** (Low, filed from F-4.8.25): the §14 envelope and the §27.6 caps read a runtime that
+    experiment routing or a late PreRoute MODIFY may replace. The order needs specification text, so it goes
+    to a proposal.
+  - [ ] **F-15.1.72** (Medium, filed from F-4.8.25): `POST /v1/sessions/start` has no drain gate. Direct fix.
+  - [ ] **F-12.9.25** (Medium, filed from F-4.8.25): `POST /v1/sessions` does not validate tenant
+    classification. Direct fix.
   - [x] **F-16.1.8** (Medium): `lenny_warmpool_warmup_failure_total` has no warm-up emitter and only the
     `error_type` label, so `PoolScaleoutBlockedByQuota` never fires. The Sandbox reconciler now emits
     `image_pull_error`, `resource_quota_exceeded`, and `node_pressure` with the §16.1 labels, once per
@@ -4544,8 +4551,10 @@ other test in that binary.
     package. Filed from the T-17.4.26 fix (2026-10-27). Fixed in `1edca69df`: the package shares one control
     plane and each test gets its own namespace. The package fell from 237.4 s to 19.4 s. The slowest measured
     unit-tier package is now `pkg/gateway/sessionserver` (T-17.4.27, 198.9 s).
-  - [ ] **T-17.4.27** (Medium): `pkg/gateway/sessionserver` starts a private control plane per test in
+  - [x] **T-17.4.27** (Medium): `pkg/gateway/sessionserver` starts a private control plane per test in
     parallel, and under load one start failed the unit tier with "resource quota evaluation timed out".
+    Fixed on `fix/route-chain-create`: the package shares one control plane and each test gets its own
+    namespace. The package passes in about 105 s, against 198.9 s and 164.4 s recorded at higher load.
   - [x] **T-17.4.23** (Low): `pkg/embedded/stack` starts a control plane in each of 19 tests (127.4 s).
     Fixed in `2a0c51c4a` with no product change: tests whose code takes the namespace, or whose manifest
     the test supplies, use per-test namespaces, and each object at a product-fixed namespace and name has
@@ -4565,8 +4574,13 @@ other test in that binary.
     selects them on their own changes. Survey every `tests/tier*/` directory and add a `validate-maps` check. Direct fix.
     Fixed on `fix/test-infra-gaps`: 104 of 115 tier test directories had no key and each now has one, and
     `validate-maps` fails on a tracked test directory under `tests/tier*/` that no glob key covers.
-  - [ ] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s). It took
-    109.1 s in a scoped unit-tier run on 2026-10-27, the slowest of that run.
+  - [x] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s). It took
+    109.1 s in a scoped unit-tier run on 2026-10-27, the slowest of that run. Fixed on
+    `fix/route-chain-create`: the package shares one control plane and each test gets its own namespace.
+    The package passes in 63.6 s.
+  - [ ] **T-17.4.47** (Low): a process that exited and is not yet reaped reads as `HolderUnknown`, so
+    `ports.Ready` hands back a process that lost its port. It failed
+    `TestOpsHarnessRestartsOnAnOccupiedAddress` once on 2026-10-31. Direct fix.
   - [x] **T-17.4.29** (Medium): parallel implementation worktrees share the one `lenny-e2e` kind cluster,
     and `tests/testinfra/kind/install.sh` runs the installing branch's migrations against the shared
     Postgres, so branches with different migration sets leave the database ahead of each other or dirty. On
