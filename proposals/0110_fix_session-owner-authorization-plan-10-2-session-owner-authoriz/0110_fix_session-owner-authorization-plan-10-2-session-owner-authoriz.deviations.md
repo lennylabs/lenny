@@ -2,9 +2,9 @@
 
 The implementor owns this file. It stays empty until an implementation records a departure from what the proposal states.
 
-## Proposed: send_message sender read moves ahead of the per-sender limit and the holder forward
+## Accepted: send_message sender read moves ahead of the per-sender limit and the holder forward
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S8 (CODE-3: MCP session-naming tools and SSE attach authorizer call the predicate).
 
@@ -16,9 +16,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of the proposal alone would expect a missing sender to reach the coordinator through `CH-HOLDERFORWARD` and be refused there. The refusal now happens on the serving replica, before the forward and before the per-sender limit.
 
-## Proposed: lookupCallerSession fails closed on a nil Deps.Store
+## Accepted: lookupCallerSession fails closed on a nil Deps.Store
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S8 (CODE-3: MCP session-naming tools and SSE attach authorizer call the predicate).
 
@@ -30,9 +30,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader would expect a nil store to be handled only by downstream gates, and would look for `TestDelegateTaskNilStoreStillRunsCheck_spec_8_3`, which no longer exists. A nil store now refuses every session-naming MCP tool at the ownership check with the miss answer.
 
-## Proposed: shared SessionAccess fake in ownerprincipal
+## Accepted: shared SessionAccess fake in ownerprincipal
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S8 (CODE-3: MCP session-naming tools and SSE attach authorizer call the predicate).
 
@@ -44,9 +44,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader would look for a per-package `SessionAccessible` fake in each test package. There is one, in `ownerprincipal`, and it also refuses `ServiceCall`, which the proposal's description of the fake does not mention.
 
-## Proposed: Open Responses resolve-step check also gates the cold lineage walk
+## Accepted: Open Responses resolve-step check also gates the cold lineage walk
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S11 (CODE-4: Open Responses resolve-step check and warm condition 4).
 
@@ -58,9 +58,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of the proposal alone would expect the check to apply only to the GET and the `previous_response_id` continuation. It also applies to every hop of the cold lineage walk, which stops at the first ancestor the caller may not read.
 
-## Proposed: tier-9 Open Responses isolation case lives in open_responses_warm_user_test.go
+## Accepted: tier-9 Open Responses isolation case lives in open_responses_warm_user_test.go
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S11 (CODE-4: Open Responses resolve-step check and warm condition 4).
 
@@ -72,9 +72,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader would look for the case in `session_owner_isolation_test.go` and not find it, and would expect 0108's condition-4 test to remain in `open_responses_warm_user_test.go`.
 
-## Proposed: CODE-4 fixtures use a minimal sessionserver as SessionAccess for read-bypass cases
+## Accepted: CODE-4 fixtures use a minimal sessionserver as SessionAccess for read-bypass cases
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S11 (CODE-4: Open Responses resolve-step check and warm condition 4).
 
@@ -86,9 +86,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader would expect the owner-granting fake in every fixture that lacks a server, and would not expect a `sessionserver` to be constructed in fixtures that previously had none. A reader would also expect `holder_forward_wiring_test.go` to have been rewired.
 
-## Proposed: unstaged defects were already filed, so REC-1 annotated them
+## Accepted: unstaged defects were already filed, so REC-1 annotated them
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S14 (REC-1: BUILD-GAPS and remediation-plan records).
 
@@ -100,9 +100,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader of the proposal alone would expect REC-1 to have created six new BUILD-GAPS findings on 2026-10-31. The findings date from 2026-10-29, and REC-1 added a dated note to each one and left it OPEN.
 
-## Proposed: plan §10.2 entry was already ticked, so REC-1 recorded the position
+## Accepted: plan §10.2 entry was already ticked, so REC-1 recorded the position
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** step S14 (REC-1: BUILD-GAPS and remediation-plan records).
 
@@ -114,9 +114,9 @@ The implementor owns this file. It stays empty until an implementation records a
 
 **What a later reader would otherwise get wrong.** A reader would expect the tick to mark the landing of part B. The tick dates from approval, the proposal did not land as separate parts A and B, and the landing is recorded in the "Position (2026-10-31)" paragraph.
 
-## Proposed: commit b35dfc0fc keeps proposal-internal labels in its trailer
+## Accepted: commit b35dfc0fc keeps proposal-internal labels in its trailer
 
-**Status:** proposed
+**Status:** accepted
 
 **Reported by:** design-conformance fix pass (commit-message hygiene finding).
 
