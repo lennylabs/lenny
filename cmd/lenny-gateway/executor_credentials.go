@@ -150,7 +150,7 @@ func (w *gatewayWiring) buildExecutorAndCredentials() {
 		// §4.9: the gateway is the only writer of Lenny-written credential
 		// Secrets, wired beside the prober because both serve the same
 		// Token-Service-backed credential path.
-		secretWriter = buildCredentialSecretWriter(f.resolvedCredentialsNamespace(), *f.credentialSecretTimeout, log.Printf)
+		secretWriter = buildCredentialSecretWriter(f.resolvedCredentialsNamespace(), defaultCredentialSecretTimeout, log.Printf)
 		log.Printf("lenny-gateway: §4.3 credential materialization via lenny-token-service at %s", *tokenServiceAddr)
 	} else {
 		inProcessAssign = credassign.New(llmLeases, credCache)

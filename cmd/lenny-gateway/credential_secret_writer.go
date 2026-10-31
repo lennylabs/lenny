@@ -18,8 +18,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
-// defaultCredentialSecretTimeout is the --credential-secret-timeout
-// default: the deadline on each Kubernetes call the writer makes.
+// defaultCredentialSecretTimeout is the fixed deadline on each Kubernetes
+// call the credential Secret writer makes. It is a constant rather than an
+// operator flag because §4.9 bounds each call without naming a tunable.
 const defaultCredentialSecretTimeout = 10 * time.Second
 
 // The annotation and label keys a Lenny-written Secret carries.

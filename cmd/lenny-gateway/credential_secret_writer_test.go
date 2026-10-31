@@ -5,7 +5,11 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
+	"io"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -217,6 +221,39 @@ func TestCredentialSecretWriterBoundedContext_spec_4_9(t *testing.T) {
 	}
 	if d := newKubeCredentialSecretWriter(cs.CoreV1().Secrets(writerTestNS), 0); d.timeout != defaultCredentialSecretTimeout {
 		t.Fatalf("zero timeout = %v, want the default", d.timeout)
+	}
+}
+
+// diagnosis: a failure means the gateway exposes the credential Secret
+// writer's per-call deadline as an operator flag or environment variable.
+// §4.9 bounds each writer call without naming a tunable, so the bound is the
+// fixed defaultCredentialSecretTimeout and no flag carries it.
+//
+// spec: §4.9 (Credential Storage Topology) — Credential values submitted
+// through the admin API rule 2.
+func TestCredentialSecretWriterTimeoutIsNotAnOperatorFlag_spec_4_9(t *testing.T) {
+	savedCmdLine, savedArgs := flag.CommandLine, os.Args
+	t.Cleanup(func() { flag.CommandLine, os.Args = savedCmdLine, savedArgs })
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	flag.CommandLine.SetOutput(io.Discard)
+	t.Setenv("LENNY_CREDENTIAL_SECRET_TIMEOUT", "1ns")
+	f := &gatewayFlags{}
+	f.registerCoreFlags()
+	f.registerStorageFlags()
+	f.registerPolicyFlags()
+	f.registerSessionFlags()
+	f.registerArtifactFlags()
+	f.registerOpsFlags()
+	flag.CommandLine.VisitAll(func(fl *flag.Flag) {
+		if strings.Contains(fl.Name, "secret-timeout") {
+			t.Errorf("gateway registers --%s; the credential Secret writer deadline is a fixed constant", fl.Name)
+		}
+	})
+	if err := flag.CommandLine.Parse([]string{"--credential-secret-timeout=1s"}); err == nil {
+		t.Error("--credential-secret-timeout parsed; want an undefined-flag error")
+	}
+	if defaultCredentialSecretTimeout <= 0 {
+		t.Fatalf("defaultCredentialSecretTimeout = %v, want a positive bound", defaultCredentialSecretTimeout)
 	}
 }
 
