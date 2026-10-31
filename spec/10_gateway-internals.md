@@ -301,7 +301,7 @@ Authentication alone is not sufficient for multi-tenant deployments. The platfor
 | Read other users' sessions (same tenant)       |        Yes        |       Yes        |    Yes (read-only)       |         No         | Only with explicit grant |
 | Manage runtimes                                | Yes (all tenants) | Yes (own tenant) | Read-only (own tenant)   |         No         |            No            |
 | Manage pools / scaling policies                | Yes (all tenants) | Yes (own tenant) | Read-only (own tenant)   |         No         |            No            |
-| Manage credential pools                        | Yes (all tenants) | Yes (own tenant) | Read-only (own tenant)   |         No         |            No            |
+| Manage credential pools                        | Yes (all tenants) | Yes (own tenant)¹ | Read-only (own tenant)   |         No         |            No            |
 | View usage / metering                          | Yes (all tenants) | Yes (own tenant) |    Yes (own tenant)      | Yes (own tenant)   |            No            |
 | Manage quotas                                  | Yes (all tenants) | Yes (own tenant) | Read-only (own tenant)   |         No         |            No            |
 | Manage users / role assignments                | Yes (all tenants) | Yes (own tenant) |            No            |         No         |            No            |
@@ -314,6 +314,8 @@ Authentication alone is not sufficient for multi-tenant deployments. The platfor
 | Issue billing corrections (operator-initiated) |        Yes        |        No        |            No            |         No         |            No            |
 | Manage platform-wide settings                  |        Yes        |        No        |            No            |         No         |            No            |
 | Access other tenants' data                     |        Yes        |        No        |            No            |         No         |            No            |
+
+¹ Introducing a `secretRef` into a credential pool requires `platform-admin` ([Section 4.9](04_system-components.md#49-credential-leasing-service) **Registering a Secret by reference.**).
 
 **Platform roles vs. environment-level roles:** Platform RBAC roles (`platform-admin`, `tenant-admin`, `tenant-viewer`, `billing-viewer`, `user`) govern access to platform API operations. Environment-level member roles (`viewer`, `creator`, `operator`, `admin` — see [Section 10.6](#106-environment-resource-and-rbac-model)) are orthogonal and govern which runtimes and connectors a user can access within an environment context. A `user` with environment `admin` role gains runtime/connector management within that environment but does not acquire `tenant-admin` privileges (quota management, legal holds, user management, etc.). The two role systems compose: platform RBAC gates the API operation, environment RBAC gates the resource scope within that operation.
 
