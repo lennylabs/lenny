@@ -31,6 +31,7 @@
 - The §24.5 credential-pool endpoint rows take their minimum roles from the §10.2 **Manage credential pools** row (SPEC-11).
 - A VCS read failure other than a missing or refused credential keeps an existing `TRANSIENT` §15.1 code and adds none: `INTERNAL_ERROR` on the tool and clone paths, and `GIT_CLONE_REF_RESOLVE_TRANSIENT` with reason `network_error` at plan binding, whose §15.1 row SPEC-7 (k) widens (CODE-6 step 3).
 - With no writer wired, the lifecycle fails closed (SPEC-2 **Credential values submitted through the admin API.** rule 6). Committing a row without its Secret operation would leave a Secret that no later write names, and erasing the rows would delete the only record that names it.
+- A pool DELETE on a pool that is already soft-deleted keeps today's idempotence (decided for the owner, 2026-10-31): the P4 row guard ends the request with `204`, performs no Secret operation, and leaves the row unchanged (CODE-4 step 6). A first pool DELETE commits the soft delete only after every Delete succeeded under the row lock, so a repeat finds no Lenny-written Secret to delete. A Secret that a late-applied operation recreated is the orphan of SPEC-2 rule 5, which tenant deletion removes. Re-running the deletion would change the ETag and deletion timestamp on every repeat and refuse a repeat with `422` when no Token Service is configured.
 
 **Watch out for.**
 
@@ -96,10 +97,7 @@
 
 ## Open decisions for human to make
 
-- **Pool DELETE on a pool that is already soft-deleted.**
-  - Option A (staged in CODE-4 step 6): the P4 row guard ends the request with `204`, no Secret operation, and the row unchanged. This keeps the idempotence `SoftDelete` has today, and a repeat DELETE with no writer wired succeeds.
-  - Option B: the locked operation runs the row again. It re-issues a `Delete` for each Lenny-written ref the row still carries, resets `DeletedAt`, and bumps the version, so a repeat DELETE converges a Secret that a late-applied operation recreated. Every repeat changes the ETag and the deletion timestamp, and with no writer wired it returns `422 TOKEN_SERVICE_NOT_CONFIGURED` for a pool that carries Lenny-written refs.
-  - The status file's open finding on a soft-deleted pool that keeps its Lenny-written references with no Token Service configured bears on this choice.
+None.
 
 ## Defects in the shipped tree that this proposal does not stage
 
