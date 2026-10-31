@@ -10,8 +10,10 @@
 // bearer token through the gateway's own verifier. acme's session-reader
 // custom role is registered through the tenant RBAC admin API, and bob
 // holds it through the OIDC role claim of his bearer token, one of the two
-// §10.2 role assignment sources. bob has no platform-managed assignment, so
-// the claim is authoritative. The platform-managed source is not used here
+// §10.2 role assignment sources. The bootstrap seeds bob with a
+// platform-managed assignment, which replaces the claim, so carol removes
+// that assignment through the tenant user role endpoint before bob relies
+// on the claim. The platform-managed source is not used for the custom role
 // because the Postgres user store refuses a custom role name (F-10.2.33).
 
 package tier9_security_test
@@ -135,6 +137,19 @@ func registerSessionReader(t *testing.T, g *liveGateway) {
 	}
 }
 
+// clearRoleAssignment removes sub's platform-managed role assignment through
+// the tenant user role endpoint as carol, so the role claim of sub's bearer
+// token is authoritative. Without it the bootstrap's seeded assignment
+// replaces the claim.
+func clearRoleAssignment(t *testing.T, g *liveGateway, sub string) {
+	t.Helper()
+	carol := isoCaller{sub: isoCarol, role: pkgauth.RoleTenantAdmin}
+	path := "/v1/admin/tenants/" + liveTenant + "/users/" + sub + "/role"
+	if code, raw := carol.do(t, g, http.MethodDelete, path, ""); code != http.StatusNoContent {
+		t.Fatalf("remove %s's role assignment = %d %s, want 204", sub, code, raw)
+	}
+}
+
 // assertMissingAnswer checks that each request as c answers exactly the
 // missing-session 404 body.
 func assertMissingAnswer(t *testing.T, g *liveGateway, c isoCaller, id string, missing []byte) {
@@ -162,16 +177,20 @@ func assertMissingAnswer(t *testing.T, g *liveGateway, c isoCaller, id string, m
 // session; or bob holding a custom role with the tenant read bypass
 // messaged or terminated it, which the bypass never grants, or was refused
 // the read the bypass grants; or a create body's userId chose the owner.
+// A refused read for custom-role bob first rules out the fixture: bob's
+// platform-managed assignment replaces his bearer's role claim unless
+// clearRoleAssignment removed it.
 // The ownership check is requireSessionAccess and SessionAccessible in
 // pkg/gateway/sessionserver/rbac_gate.go and the list filter in
 // session_read.go; the custom role reaches the principal through the
-// platform role resolver and the custom-role store cmd/lenny-gateway wires
-// into the session server. Every refusal must be the missing-session 404,
+// bearer role claim, and principalHolds resolves it against the
+// custom-role store cmd/lenny-gateway wires into the session server. Every refusal must be the missing-session 404,
 // so it does not reveal that the session exists.
 // spec: §10.2 (Session ownership) rules 1, 4, 5, 6, and 7
 func TestSessionOwnerIsolation_spec_10_2(t *testing.T) {
 	g := startLiveGateway(t)
 	registerSessionReader(t, g)
+	clearRoleAssignment(t, g, isoBob)
 	alice := isoCaller{sub: isoAlice, role: pkgauth.RoleUser}
 	bob := isoCaller{sub: isoBob, role: pkgauth.RoleUser}
 	reader := isoCaller{sub: isoBob, role: isoCustomRole}
