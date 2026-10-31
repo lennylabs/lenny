@@ -205,7 +205,8 @@ func (r *Reaper) Pass(ctx context.Context) PassStats {
 	stats.Reservations = r.reclaimReservations(ctx)
 	pods, err := r.cfg.Pods.ListPodsWithActiveSlots(ctx)
 	if err != nil {
-		r.cfg.Logger.Warn("stale-slot reaper: list pods failed", "error", err)
+		r.cfg.Logger.Warn("stale-slot reaper: list pods failed", "error", err,
+			"reservations_reclaimed", stats.Reservations)
 		return stats
 	}
 	stats.Pods = len(pods)
@@ -229,14 +230,19 @@ func (r *Reaper) Pass(ctx context.Context) PassStats {
 
 // reclaimReservations deletes the abandoned slot reservation records with
 // the cutoff TerminalAge before now, and returns how many it deleted. A
-// failure is logged and leaves the records for the next pass.
+// failure is logged and leaves the records for the next pass. The call is
+// bounded by Interval, because it runs at the head of the pass and a stalled
+// delete must not stop the pass's member releases.
 // spec: §12.4 (Redis failure behavior), §4.6.1 (Orphaned SandboxClaim
 // detection).
 func (r *Reaper) reclaimReservations(ctx context.Context) int {
 	if r.cfg.Reservations == nil {
 		return 0
 	}
-	n, err := r.cfg.Reservations.ReclaimSlotReservations(ctx, r.cfg.Now().Add(-r.cfg.TerminalAge))
+	cutoff := r.cfg.Now().Add(-r.cfg.TerminalAge)
+	ctx, cancel := context.WithTimeout(ctx, r.cfg.Interval)
+	defer cancel()
+	n, err := r.cfg.Reservations.ReclaimSlotReservations(ctx, cutoff)
 	if err != nil {
 		r.cfg.Logger.Warn("stale-slot reaper: reclaim slot reservations failed", "error", err)
 		return 0

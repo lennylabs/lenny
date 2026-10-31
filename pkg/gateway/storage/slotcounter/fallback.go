@@ -65,8 +65,8 @@ type FallbackSource interface {
 	DeleteSlotReservation(ctx context.Context, podID, sessionID string) error
 }
 
-// reservationCleanupTimeout bounds the deletion of a reservation record
-// after a failed reservation or a release. The deletion runs on a context
+// reservationCleanupTimeout bounds a reservation record's write, and its
+// deletion after a failed reservation. The deletion runs on a context
 // detached from the caller's cancellation, so a cancelled create still
 // removes the record it wrote; a deletion that does not finish leaves a
 // record that over-counts until the stale-slot reaper reclaims it.
@@ -82,13 +82,16 @@ const reservationReleaseTimeout = time.Second
 
 // recordReservation writes sessionID's reservation record on podID before
 // the reservation runs, and reports whether it inserted one. With no
-// fallback wired it records nothing. A failed write fails the reservation
+// fallback wired it records nothing. The write has its own deadline, because
+// a caller's context can carry none. A failed write fails the reservation
 // closed: the gate could not count a reservation whose record is missing.
 // spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
 func (c *Counter) recordReservation(ctx context.Context, podID, sessionID string) (bool, error) {
 	if c.fallback == nil {
 		return false, nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, reservationCleanupTimeout)
+	defer cancel()
 	inserted, err := c.fallback.RecordSlotReservation(ctx, podID, sessionID)
 	if err != nil {
 		return false, fmt.Errorf("slotcounter: reserve %s: record reservation: %w: %w", podID, ErrFailClosed, err)

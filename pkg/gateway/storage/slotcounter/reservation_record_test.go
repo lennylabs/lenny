@@ -57,6 +57,9 @@ func TestReserveRecordsTheReservationOnTheRedisPath_spec_12_4(t *testing.T) {
 			if fb.callCount("pod-1") != 0 {
 				t.Errorf("the gate ran %d times while Redis was reachable, want 0", fb.callCount("pod-1"))
 			}
+			if !fb.recordHadDeadline {
+				t.Error("the record write ran with no deadline")
+			}
 		})
 	}
 }

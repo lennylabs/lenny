@@ -34,8 +34,11 @@ type fakeFallback struct {
 	// deleteBudget is the time the last DeleteSlotReservation's context had
 	// left, and zero when it carried no deadline.
 	deleteBudget time.Duration
-	podLockMu    sync.Mutex
-	podLocks     map[string]*sync.Mutex
+	// recordHadDeadline reports whether the last RecordSlotReservation's
+	// context carried a deadline.
+	recordHadDeadline bool
+	podLockMu         sync.Mutex
+	podLocks          map[string]*sync.Mutex
 }
 
 func newFakeFallback() *fakeFallback {
@@ -53,10 +56,11 @@ func (f *fakeFallback) podLock(podID string) *sync.Mutex {
 	return l
 }
 
-func (f *fakeFallback) RecordSlotReservation(_ context.Context, podID, sessionID string) (bool, error) {
+func (f *fakeFallback) RecordSlotReservation(ctx context.Context, podID, sessionID string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.recordCalls[sessionID]++
+	_, f.recordHadDeadline = ctx.Deadline()
 	if f.recordErr != nil {
 		return false, f.recordErr
 	}
