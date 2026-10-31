@@ -394,7 +394,7 @@ func (w *gatewayWiring) buildMCPSurface(
 			if p, ok := authmw.FromContext(ctx); !ok || p.Subject == "" {
 				return mcp.NewToolError("UNAUTHORIZED",
 					"attach_session requires an authenticated principal subject",
-					map[string]any{"reason": "auth_required"})
+					map[string]any{"reason": "principal_subject_required"})
 			}
 			if tenantID == "" {
 				return mcp.NewToolError("UNAUTHORIZED",

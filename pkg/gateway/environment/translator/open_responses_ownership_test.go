@@ -14,7 +14,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
@@ -328,6 +330,44 @@ func TestOpenResponsesNoSubjectIsUnauthorizedWithOrWithoutPrevious_spec_10_2(t *
 				}
 				if _, err := f.inner.Get(context.Background(), "acme", "sess_2"); !errors.Is(err, sessionstore.ErrNotFound) {
 					t.Errorf("store.Get(sess_2) = %v, want ErrNotFound (no session written)", err)
+				}
+			})
+		}
+	}
+}
+
+// TestTranslatorNoSubjectPrecedesBodyValidation_spec_10_2 pins that both
+// session-creating translator routes answer a request with no principal
+// subject with the native 401 whatever its body holds. The envelope's type is
+// authentication_error, the type the translator's other 401 carries.
+//
+// spec: §10.2 (Session ownership) rule 3; §15 (Open Responses conversation
+// sessions)
+func TestTranslatorNoSubjectPrecedesBodyValidation_spec_10_2(t *testing.T) {
+	routes := []struct {
+		path string
+		h    http.Handler
+	}{
+		{"/v1/responses", newConvFixture(t, convOptions{hold: true}).h.Handler()},
+		{"/v1/chat/completions", translator.NewOpenAIChatHandler(memstore.New(), executor.NewEchoExecutor(), translator.OpenAIChatOptions{DevTenantHeader: true}).Handler()},
+	}
+	for _, rt := range routes {
+		for _, body := range []string{`{not json`, `{}`, `{"model":"echo","input":"x","messages":[{"role":"user","content":"x"}]}`} {
+			t.Run(rt.path+"/"+body, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodPost, rt.path, bytes.NewReader([]byte(body)))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("X-Lenny-Tenant-ID", "acme")
+				rr := httptest.NewRecorder()
+				rt.h.ServeHTTP(rr, req)
+				if rr.Code != http.StatusUnauthorized {
+					t.Fatalf("status = %d, want 401; body=%s", rr.Code, rr.Body.String())
+				}
+				var env translator.OpenAIError
+				if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+					t.Fatalf("401 body is not the OpenAI error envelope: %v; body=%s", err, rr.Body.String())
+				}
+				if env.Error.Code != "UNAUTHORIZED" || env.Error.Type != "authentication_error" {
+					t.Errorf("error = %+v, want code UNAUTHORIZED type authentication_error", env.Error)
 				}
 			})
 		}

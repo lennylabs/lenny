@@ -286,3 +286,31 @@ func TestElicitationResolutionOwnershipPrecedesTripleCheck_spec_9_2(t *testing.T
 		t.Errorf("bob's elicitation phase = %q, want pending", cur.Phase)
 	}
 }
+
+// TestDiscoverAgentsRefusesWhenPolicySessionCannotBeResolved_spec_8_3 pins
+// that lenny/discover_agents naming a session refuses when no session service
+// or no store is wired, rather than dropping the delegation-policy filter. A
+// delegation policy only restricts, so a missing dependency cannot widen the
+// result.
+//
+// spec: §8.3 (Delegation Policy and Lease); §10.2 (Session ownership) rule 7
+func TestDiscoverAgentsRefusesWhenPolicySessionCannotBeResolved_spec_8_3(t *testing.T) {
+	mods := map[string]struct {
+		svc mcptools.SessionService
+		mod func(*mcptools.Deps)
+	}{
+		"nil session service": {svc: nil},
+		"nil store": {svc: ownerprincipal.SessionAccess{}, mod: func(d *mcptools.Deps) {
+			d.Store = nil
+		}},
+	}
+	for name, m := range mods {
+		t.Run(name, func(t *testing.T) {
+			f := newOwnershipFixtureWith(t, func(sessionstore.Store) mcptools.SessionService { return m.svc }, m.mod)
+			te := f.dispatchAs(t, ownerprincipal.Alice, "lenny/discover_agents", `{"sessionId":"sess_alice"}`)
+			if te == nil || te.Code != "RESOURCE_NOT_FOUND" {
+				t.Fatalf("error = %v, want RESOURCE_NOT_FOUND", te)
+			}
+		})
+	}
+}

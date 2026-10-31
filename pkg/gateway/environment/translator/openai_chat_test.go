@@ -156,6 +156,7 @@ func TestOpenAIChatDefaultsRuntimeWhenModelEmpty(t *testing.T) {
 func TestOpenAIChatRejectsMalformedJSON(t *testing.T) {
 	h, _ := newOpenAIHandler(t)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte("not-json")))
+	req = req.WithContext(ownerprincipal.Context(req.Context(), ownerprincipal.Alice))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
 	h.Handler().ServeHTTP(rr, req)

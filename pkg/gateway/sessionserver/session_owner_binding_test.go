@@ -327,3 +327,31 @@ func TestReplayTakesSourceOwnerNotBody_spec_10_2(t *testing.T) {
 		t.Errorf("replayed owner = %q, want the source owner alice@acme.com", row.UserID)
 	}
 }
+
+// TestCreateNoSubjectPrecedesBodyValidation_spec_10_2 pins that every REST
+// create route refuses a request with no principal subject with 401 whatever
+// its body holds, so a malformed body does not turn the refusal into a 400.
+//
+// spec: 10.2 (Session ownership) rule 3, 15.1 (UNAUTHORIZED)
+func TestCreateNoSubjectPrecedesBodyValidation_spec_10_2(t *testing.T) {
+	for _, path := range ownerBindingCreatePaths {
+		for _, body := range []string{`{not json`, `{}`, ``} {
+			t.Run(path+"/"+body, func(t *testing.T) {
+				store := memstore.New()
+				srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
+				req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader([]byte(body)))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("X-Lenny-Tenant-ID", "acme")
+				rr := httptest.NewRecorder()
+				srv.Handler().ServeHTTP(rr, req)
+				if rr.Code != http.StatusUnauthorized {
+					t.Fatalf("status = %d, want 401; body %s", rr.Code, rr.Body.String())
+				}
+				if code, _, _ := decodeError(t, rr); code != "UNAUTHORIZED" {
+					t.Errorf("code = %s, want UNAUTHORIZED", code)
+				}
+				assertNoRows(t, store)
+			})
+		}
+	}
+}

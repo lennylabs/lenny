@@ -364,11 +364,13 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 			"gateway has no executor wired")
 		return
 	}
-	t, ok := h.parseTurn(w, r)
-	if !ok {
+	// spec: §10.2 (Session ownership) rule 3 — the no-subject 401 precedes
+	// body validation, so the answer does not depend on the body.
+	if !requireSubject(w, r) {
 		return
 	}
-	if !requireSubject(w, r) {
+	t, ok := h.parseTurn(w, r)
+	if !ok {
 		return
 	}
 	if t.req.PreviousResponseID == "" {

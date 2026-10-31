@@ -183,7 +183,7 @@ func errSessionLookup(err error) error {
 // would turn it into RESOURCE_NOT_FOUND.
 func errCallerUnauthorized() *mcp.ToolError {
 	return mcp.NewToolError("UNAUTHORIZED", "session access requires an authenticated principal subject",
-		map[string]any{"reason": "auth_required"})
+		map[string]any{"reason": "principal_subject_required"})
 }
 
 // lookupCallerSession reads the session a tool call names and applies the
@@ -1683,12 +1683,18 @@ func filterByEffectiveDelegationPolicy(ctx context.Context, deps Deps, tenant, s
 // so the result does not reveal whether that session exists. A caller with
 // no principal subject receives UNAUTHORIZED, and a store failure other
 // than a miss is returned.
+// A deployment wired with no session store or session service cannot
+// resolve the policy, so it refuses rather than dropping the filter,
+// because a delegation policy only restricts (§8.3).
 //
 // spec: §10.2 (Session ownership) rules 3 and 7; §8.3 (Delegation Policy
 // and Lease)
 func discoverySessionID(ctx context.Context, deps Deps, tenant, sessionID string) (string, error) {
 	if sessionID == "" {
 		return "", nil
+	}
+	if deps.Store == nil || deps.SessionService == nil {
+		return "", errSessionLookup(sessionstore.ErrNotFound)
 	}
 	_, err := lookupCallerSession(ctx, deps, tenant, sessionID, false, false)
 	switch {

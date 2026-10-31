@@ -119,3 +119,17 @@ func TestToolCallWithoutPrincipalAdmittedInDevMode(t *testing.T) {
 		t.Fatalf("dev-mode tools/call did not create the session under the fallback tenant: %v", err)
 	}
 }
+
+// TestUnauthorizedToolErrorNamesTheMissingSubject_spec_10_2 pins that a
+// session-naming tool's no-subject refusal carries the reason the create
+// tools carry, so one condition has one details.reason on the MCP surface.
+//
+// spec: §10.2 (Session ownership) rule 3
+func TestUnauthorizedToolErrorNamesTheMissingSubject_spec_10_2(t *testing.T) {
+	srv, _ := gateServer(true)
+	p := &authmw.Principal{TenantID: "acme"}
+	body := postToolCall(t, srv.Handler(), p, "lenny/get_task_tree", `{"sessionId":"sess_alice"}`)
+	if !strings.Contains(body, "UNAUTHORIZED") || !strings.Contains(body, "principal_subject_required") {
+		t.Fatalf("body %s, want UNAUTHORIZED with reason principal_subject_required", body)
+	}
+}

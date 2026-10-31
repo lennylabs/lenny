@@ -225,6 +225,11 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 			"gateway has no executor wired")
 		return
 	}
+	// spec: §10.2 (Session ownership) rule 3 — the no-subject 401 precedes
+	// body validation, so the answer does not depend on the body.
+	if !requireSubject(w, r) {
+		return
+	}
 	// Cap the request body at 1 MiB to mirror the JSON body cap
 	// applied to the §15.1 REST endpoints.
 	body := http.MaxBytesReader(w, r.Body, 1<<20)
@@ -511,6 +516,8 @@ func writeSingleShotError(w http.ResponseWriter, err error) {
 // error, and everything else is treated as an invalid-request error.
 func openAIErrorType(status int) string {
 	switch {
+	case status == http.StatusUnauthorized:
+		return "authentication_error"
 	case status == http.StatusTooManyRequests:
 		return "rate_limit_error"
 	case status >= http.StatusInternalServerError:

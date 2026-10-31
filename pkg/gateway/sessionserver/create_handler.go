@@ -107,6 +107,11 @@ type CreateSessionRequest struct {
 // handleCreate implements POST /v1/sessions. Returns 201 with the
 // CreateSessionResponse envelope on success.
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
+	// spec: §10.2 (Session ownership) rule 3 — the no-subject 401 precedes
+	// body validation, as it does on handleCreateAndStart.
+	if _, ok := s.requireOwner(w, r); !ok {
+		return
+	}
 	req, ok := s.decodeCreateRequest(w, r)
 	if !ok {
 		return
@@ -119,6 +124,11 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 // regular create flow with the session environment taken from the URL
 // path, overriding any environment supplied in the request body.
 func (s *Server) handleEnvironmentSessions(w http.ResponseWriter, r *http.Request) {
+	// spec: §10.2 (Session ownership) rule 3 — the no-subject 401 precedes
+	// body validation, as it does on handleCreateAndStart.
+	if _, ok := s.requireOwner(w, r); !ok {
+		return
+	}
 	req, ok := s.decodeCreateRequest(w, r)
 	if !ok {
 		return
