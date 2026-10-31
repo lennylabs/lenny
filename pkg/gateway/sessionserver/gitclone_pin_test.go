@@ -7,11 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
