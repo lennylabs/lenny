@@ -39,6 +39,9 @@ type isolationWorld struct {
 	want    map[string]string
 	nextID  int
 	derived int
+	// ownerRefusals records the owner's derives and replays that did not
+	// create a session, for the failure message.
+	ownerRefusals []string
 }
 
 // newIsolationWorld seeds one terminal source session per principal, each
@@ -134,7 +137,9 @@ func (w *isolationWorld) step(r *rand.Rand, ids []string) {
 		if rr.Code == http.StatusCreated {
 			w.want[createdID(w.t, rr)] = w.want[target]
 			w.derived++
-		} else if p.Subject != w.want[target] && rr.Code != http.StatusNotFound {
+		} else if p.Subject == w.want[target] {
+			w.ownerRefusals = append(w.ownerRefusals, fmt.Sprintf("%s = %d %s", path, rr.Code, rr.Body.String()))
+		} else if rr.Code != http.StatusNotFound {
 			w.t.Fatalf("%s by non-owner %s = %d %s, want 404", path, p.Subject, rr.Code, rr.Body.String())
 		}
 	case 3:
@@ -209,6 +214,6 @@ func TestSessionOwnerIsolationInvariant_spec_10_2(t *testing.T) {
 		ids = w.checkOwners()
 	}
 	if w.derived == 0 {
-		t.Fatal("no derive or replay succeeded; the driver did not exercise owner inheritance")
+		t.Fatalf("no derive or replay succeeded; the driver did not exercise owner inheritance; owner refusals: %v", w.ownerRefusals)
 	}
 }

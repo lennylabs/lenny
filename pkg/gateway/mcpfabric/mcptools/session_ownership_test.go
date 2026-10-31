@@ -55,6 +55,29 @@ func serverSessionService(t *testing.T) func(sessionstore.Store) mcptools.Sessio
 	}
 }
 
+// sameRefusal reports whether foreign and missing are the same tool error,
+// code, message, and details alike, once each names its own session id as
+// the same placeholder. A refusal that differs from the missing-session
+// answer in any field reveals that the foreign session exists.
+func sameRefusal(t *testing.T, foreign, missing *mcp.ToolError, foreignID, missingID string) bool {
+	t.Helper()
+	if foreign == nil || missing == nil {
+		return false
+	}
+	normalized := func(te *mcp.ToolError, id string) string {
+		raw, err := json.Marshal(struct {
+			Code    string         `json:"code"`
+			Msg     string         `json:"msg"`
+			Details map[string]any `json:"details"`
+		}{te.Code, te.Msg, te.Details})
+		if err != nil {
+			t.Fatalf("encode tool error: %v", err)
+		}
+		return strings.ReplaceAll(string(raw), id, "<session>")
+	}
+	return normalized(foreign, foreignID) == normalized(missing, missingID)
+}
+
 // codeOf returns the error code of te, or "" for success.
 func codeOf(te *mcp.ToolError) string {
 	if te == nil {
@@ -87,8 +110,8 @@ func TestSessionNamingToolsUseTheServerPredicate_spec_10_2(t *testing.T) {
 			f := newOwnershipFixtureWith(t, serverSessionService(t), nil)
 			foreign := f.dispatchPrincipal(t, reader, c.tool, onAlice)
 			missing := f.dispatchPrincipal(t, reader, c.tool, strings.Replace(c.args, "%s", missingSession, 1))
-			if foreign == nil || missing == nil || foreign.Code != missing.Code {
-				t.Fatalf("custom-role act on alice's session = %v, on a missing one = %v; want the same refusal", foreign, missing)
+			if !sameRefusal(t, foreign, missing, aliceSession, missingSession) {
+				t.Fatalf("custom-role act on alice's session = %+v, on a missing one = %+v; want the same refusal", foreign, missing)
 			}
 			if row, err := f.store.Get(context.Background(), "acme", aliceSession); err != nil || row.State != session.StateRunning {
 				t.Errorf("alice's session changed under a refused act: state %q, err %v", row.State, err)
@@ -105,7 +128,7 @@ func TestSessionNamingToolsUseTheServerPredicate_spec_10_2(t *testing.T) {
 // spec: §10.2 (Session ownership) rules 5 and 7; §8.3 (messaging rate
 // limits)
 func TestForeignSenderDoesNotChargeTheOwnersLimit_spec_10_2(t *testing.T) {
-	f := newOwnershipFixtureWith(t, func(sessionstore.Store) mcptools.SessionService { return ownerprincipal.SessionAccess{} },
+	f := newOwnershipFixtureWith(t, serverSessionService(t),
 		func(d *mcptools.Deps) {
 			d.MessagingRateLimit = mcptools.MessagingRateLimit{MaxPerMinute: 1, MaxPerSession: 1}
 		})
@@ -162,13 +185,12 @@ func TestDelegateFromForeignRestrictedParentAnswersMissing_spec_10_2(t *testing.
 	}); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
-	f := newOwnershipFixtureWith(t, func(sessionstore.Store) mcptools.SessionService { return ownerprincipal.SessionAccess{} },
-		func(d *mcptools.Deps) { d.Users = users })
+	f := newOwnershipFixtureWith(t, serverSessionService(t), func(d *mcptools.Deps) { d.Users = users })
 	args := `{"parentSessionId":"%s","target":"echo","task":{"input":[{"type":"text","inline":"x"}]}}`
 	foreign := f.dispatchAs(t, bobSubject, "lenny/delegate_task", strings.Replace(args, "%s", aliceSession, 1))
 	missing := f.dispatchAs(t, bobSubject, "lenny/delegate_task", strings.Replace(args, "%s", missingSession, 1))
-	if foreign == nil || missing == nil || foreign.Code != missing.Code {
-		t.Fatalf("bob on alice's restricted parent = %v, on a missing parent = %v; want the same refusal", foreign, missing)
+	if !sameRefusal(t, foreign, missing, aliceSession, missingSession) {
+		t.Fatalf("bob on alice's restricted parent = %+v, on a missing parent = %+v; want the same refusal", foreign, missing)
 	}
 	if own := f.dispatchAs(t, ownerprincipal.Alice, "lenny/delegate_task", strings.Replace(args, "%s", aliceSession, 1)); codeOf(own) != "ERASURE_IN_PROGRESS" {
 		t.Fatalf("alice's own delegation = %v, want ERASURE_IN_PROGRESS", own)
@@ -181,7 +203,7 @@ func TestDelegateFromForeignRestrictedParentAnswersMissing_spec_10_2(t *testing.
 //
 // spec: §10.2 (Session ownership) rule 5; §8.2 (Child identity)
 func TestInPodAgentActsOnSameOwnerChild_spec_10_2(t *testing.T) {
-	f := newOwnershipFixture(t, ownerprincipal.SessionAccess{})
+	f := newOwnershipFixtureWith(t, serverSessionService(t), nil)
 	seedRunning(t, f.store, "sess_alice_child", ownerprincipal.Alice, func(row *sessionstore.Session) {
 		row.ParentSessionID, row.RootSessionID = aliceSession, aliceSession
 	})
@@ -199,7 +221,7 @@ func TestInPodAgentActsOnSameOwnerChild_spec_10_2(t *testing.T) {
 //
 // spec: §10.2 (Session ownership) rules 5 and 7; §9.4 (memory)
 func TestMemoryWriteOnForeignSessionWritesNothing_spec_10_2(t *testing.T) {
-	f := newOwnershipFixture(t, ownerprincipal.SessionAccess{})
+	f := newOwnershipFixtureWith(t, serverSessionService(t), nil)
 	if te := f.dispatchAs(t, ownerprincipal.Alice, "lenny/memory_write", `{"sessionId":"sess_bob","content":"planted"}`); te == nil {
 		t.Fatal("alice's memory write on bob's session was admitted")
 	}

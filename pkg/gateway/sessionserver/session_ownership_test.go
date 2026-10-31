@@ -116,25 +116,31 @@ func ownedSessionRoutes(t *testing.T) []mountedRoute {
 	return out
 }
 
-// countingGetStore counts the store Get calls a request makes. The
-// ownership check issues exactly one Get on a refusal over this store, so a
-// further Get shows that a handler ran.
-type countingGetStore struct {
+// countingReadStore counts every session-row read a request makes, through
+// the replica Get and the primary GetPrimary alike. The ownership check
+// issues exactly one read on a refusal over this store, which never
+// fails, so a further read shows that a handler ran.
+type countingReadStore struct {
 	*memstore.Store
-	gets atomic.Int64
+	reads atomic.Int64
 }
 
-func (c *countingGetStore) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
-	c.gets.Add(1)
+func (c *countingReadStore) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	c.reads.Add(1)
 	return c.Store.Get(ctx, tenantID, id)
 }
 
-// ownershipMatrixServer builds a session server over the seedAccessRows
+func (c *countingReadStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	c.reads.Add(1)
+	return c.Store.GetPrimary(ctx, tenantID, id)
+}
+
+// newOwnershipMatrixServer builds a session server over the seedAccessRows
 // rows and the accessRoles custom roles, with an eval store, and returns it
 // with the counting store.
-func ownershipMatrixServer(t *testing.T, multiTenant bool) (http.Handler, *countingGetStore) {
+func newOwnershipMatrixServer(t *testing.T, multiTenant bool) (*sessionserver.Server, *countingReadStore) {
 	t.Helper()
-	store := &countingGetStore{Store: memstore.New()}
+	store := &countingReadStore{Store: memstore.New()}
 	seedAccessRows(t, store.Store)
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
@@ -143,7 +149,39 @@ func ownershipMatrixServer(t *testing.T, multiTenant bool) (http.Handler, *count
 		Evals:           evalstore.NewMemory(0, nil),
 	})
 	t.Cleanup(srv.Close)
+	return srv, store
+}
+
+// ownershipMatrixServer is newOwnershipMatrixServer's production handler.
+func ownershipMatrixServer(t *testing.T, multiTenant bool) (http.Handler, *countingReadStore) {
+	t.Helper()
+	srv, store := newOwnershipMatrixServer(t, multiTenant)
 	return srv.Handler(), store
+}
+
+// spyResult is one request served by a handler spy mounted behind a
+// route's production ownership wrapper.
+type spyResult struct {
+	rr    *httptest.ResponseRecorder
+	calls int64
+}
+
+// spyRequest serves one request as c on route with a handler spy mounted
+// behind the wrapper route_table.go binds to the route, and returns the
+// response and the number of times the spy ran.
+func spyRequest(t *testing.T, route mountedRoute, multiTenant bool, c accessCaller, sess string) spyResult {
+	t.Helper()
+	srv, _ := newOwnershipMatrixServer(t, multiTenant)
+	var calls atomic.Int64
+	h := srv.OwnedRouteSpy(route.pattern, route.wrapper, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusTeapot)
+	})
+	if h == nil {
+		t.Fatalf("%s is mounted through %q, which is no ownership wrapper", route.pattern, route.wrapper)
+	}
+	rr := matrixRequest(t, h, c, route.method(), route.path(sess), "{}")
+	return spyResult{rr: rr, calls: calls.Load()}
 }
 
 // matrixRequest sends one request as c with body, bounded so a streaming
@@ -211,7 +249,8 @@ var ownershipMatrixCallers = []struct {
 // the owner alone; a tenant-viewer on an action route keeps the permission
 // gate's 403; a request with no principal subject receives 401; and every
 // other refusal answers a body byte-identical to a missing session's
-// without reaching the handler. The discriminating row is the role-less
+// without reaching the handler, which a handler spy mounted behind the
+// route's production wrapper observes directly. The discriminating row is the role-less
 // single-tenant bob, who the permission gate admits to every permission
 // and who must still receive 404 on alice's session.
 //
@@ -228,16 +267,39 @@ func TestSessionRouteOwnershipMatrix_spec_10_2(t *testing.T) {
 			t.Run(route.pattern+"/"+mc.caller.name, func(t *testing.T) {
 				h, store := ownershipMatrixServer(t, mc.multiTenant)
 				rr := matrixRequest(t, h, mc.caller, route.method(), route.path("sess_alice"), "{}")
-				assertMatrixCell(t, rr, store.gets.Load(), want, missing)
+				assertSpyCell(t, spyRequest(t, route, mc.multiTenant, mc.caller, "sess_alice"), rr, want)
+				assertMatrixCell(t, rr, store.reads.Load(), want, missing)
 			})
 		}
 	}
 }
 
-// assertMatrixCell checks one matrix response against its outcome. gets is
-// the number of store Gets the request made: a refusal reads the row at
-// most once, in the ownership check, and never reaches the handler.
-func assertMatrixCell(t *testing.T, rr *httptest.ResponseRecorder, gets int64, want, missing string) {
+// assertSpyCell checks one matrix cell served with a handler spy behind
+// the route's ownership wrapper: a granted caller reaches the spy exactly
+// once, and every refusal answers what the production handler chain
+// answered without reaching the spy.
+func assertSpyCell(t *testing.T, spy spyResult, prod *httptest.ResponseRecorder, want string) {
+	t.Helper()
+	if want == cellGranted {
+		if spy.calls != 1 || spy.rr.Code != http.StatusTeapot {
+			t.Fatalf("granted caller: spy calls = %d, status %d %s; want the handler reached once", spy.calls, spy.rr.Code, spy.rr.Body.String())
+		}
+		return
+	}
+	if spy.calls != 0 {
+		t.Fatalf("%s refusal reached the handler spy %d times", want, spy.calls)
+	}
+	if spy.rr.Code != prod.Code || spy.rr.Body.String() != prod.Body.String() {
+		t.Fatalf("refusal behind the spy = %d %s, production = %d %s; the wrapper alone must answer it",
+			spy.rr.Code, spy.rr.Body.String(), prod.Code, prod.Body.String())
+	}
+}
+
+// assertMatrixCell checks one matrix response against its outcome. reads
+// is the number of session-row reads the request made through Get and
+// GetPrimary: a refusal reads the row at most once, in the ownership
+// check.
+func assertMatrixCell(t *testing.T, rr *httptest.ResponseRecorder, reads int64, want, missing string) {
 	t.Helper()
 	body := rr.Body.String()
 	switch want {
@@ -250,8 +312,8 @@ func assertMatrixCell(t *testing.T, rr *httptest.ResponseRecorder, gets int64, w
 		if rr.Code != http.StatusNotFound || body != missing {
 			t.Fatalf("refusal = %d %s, want the missing-session body %s", rr.Code, body, missing)
 		}
-		if gets != 1 {
-			t.Errorf("store Gets = %d, want 1 (the ownership check's read only); the handler ran on a refusal", gets)
+		if reads != 1 {
+			t.Errorf("session reads = %d, want 1 (the ownership check's read only); the handler ran on a refusal", reads)
 		}
 		return
 	case cellForbidden:
@@ -263,8 +325,8 @@ func assertMatrixCell(t *testing.T, rr *httptest.ResponseRecorder, gets int64, w
 			t.Fatalf("status = %d %s, want 401 UNAUTHORIZED", rr.Code, body)
 		}
 	}
-	if gets != 0 {
-		t.Errorf("store Gets = %d, want 0; the refusal read the session or reached the handler", gets)
+	if reads != 0 {
+		t.Errorf("session reads = %d, want 0; the refusal read the session or reached the handler", reads)
 	}
 }
 

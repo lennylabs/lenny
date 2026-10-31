@@ -35,19 +35,10 @@ func (s *Server) Handler() http.Handler {
 	read := func(next http.HandlerFunc) http.HandlerFunc {
 		return s.requireSessionPermission(auth.PermReadOwnSessions, next)
 	}
-	// spec: §10.2 (Session ownership) rules 5, 6, and 7 — every
-	// /v1/sessions/{id} route that the read or manage gate wraps checks
-	// the caller against the session's owner inside the permission gate
-	// and ahead of the handler, so the tool-use, elicitation, and memory
-	// routes answer a session the caller may not use before any
-	// route-specific lookup runs. The eval route keeps its §10.7 caller
-	// rule and the usage route keeps its view_usage gate.
-	readID := func(next http.HandlerFunc) http.HandlerFunc {
-		return s.requireSessionPermission(auth.PermReadOwnSessions, s.requireSessionAccess(false, next))
-	}
-	manageID := func(next http.HandlerFunc) http.HandlerFunc {
-		return s.requireSessionPermission(auth.PermManageOwnSessions, s.requireSessionAccess(true, next))
-	}
+	// The eval route keeps its §10.7 caller rule and the usage route
+	// keeps its view_usage gate; every other /v1/sessions/{id} route
+	// mounts through one of these two ownership wrappers.
+	readID, manageID := s.readSessionRoute, s.manageSessionRoute
 	mux.HandleFunc("POST /v1/sessions", manage(s.handleCreate))
 	mux.HandleFunc("GET /v1/runtimes", s.handleListRuntimes)
 	// §15.1 — session-facing pool discovery. Mounted bare like
@@ -119,4 +110,24 @@ func (s *Server) Handler() http.Handler {
 	// tenant resolves from its principal (or, under --dev-mode, from the
 	// dev header). F-10.2.21.
 	return s.requireTenant(mux)
+}
+
+// readSessionRoute wraps a /v1/sessions/{id} read route: the
+// read_own_sessions permission gate, then the ownership check, then next.
+//
+// spec: §10.2 (Session ownership) rules 5, 6, and 7 — the ownership check
+// runs inside the permission gate and ahead of the handler, so the
+// tool-use, elicitation, and memory routes answer a session the caller may
+// not use before any route-specific lookup runs.
+func (s *Server) readSessionRoute(next http.HandlerFunc) http.HandlerFunc {
+	return s.requireSessionPermission(auth.PermReadOwnSessions, s.requireSessionAccess(false, next))
+}
+
+// manageSessionRoute wraps a /v1/sessions/{id} action route: the
+// manage_own_sessions permission gate, then the owner-only check, then
+// next.
+//
+// spec: §10.2 (Session ownership) rules 5, 6, and 7.
+func (s *Server) manageSessionRoute(next http.HandlerFunc) http.HandlerFunc {
+	return s.requireSessionPermission(auth.PermManageOwnSessions, s.requireSessionAccess(true, next))
 }

@@ -14,13 +14,15 @@ import (
 // of the ownership rule: every /v1/sessions/{id} route Handler() mounts,
 // except eval and usage, is mounted through the read or manage ownership
 // wrapper and answers bob, a `user` who does not own alice's session, with
-// a body byte-identical to a missing session's. A route added to the table
-// outside the wrappers fails this test, because its handler reaches
-// alice's row.
+// a body byte-identical to a missing session's. A handler spy mounted
+// behind the route's wrapper is never reached by bob and is reached once by
+// alice, so a route added to the table outside the wrappers fails on its
+// wrapper name and a wrapper that let bob through fails on the spy.
 //
 // spec: §10.2 (Session ownership) rules 5, 6, and 7.
 func TestEverySessionRouteIsOwnershipWrapped_spec_10_2(t *testing.T) {
 	bob := accessCaller{"bob/user", principalOf(accessBob, pkgauth.RoleUser)}
+	alice := accessCaller{"alice/user", principalOf(accessAlice, pkgauth.RoleUser)}
 	checked := 0
 	for _, route := range handlerRoutes(t) {
 		if !route.sessionIDRoute() || route.ownershipExempt() {
@@ -30,6 +32,12 @@ func TestEverySessionRouteIsOwnershipWrapped_spec_10_2(t *testing.T) {
 		t.Run(route.pattern, func(t *testing.T) {
 			if route.wrapper != "readID" && route.wrapper != "manageID" {
 				t.Fatalf("%s is mounted through %q, want readID or manageID", route.pattern, route.wrapper)
+			}
+			if spy := spyRequest(t, route, false, bob, "sess_alice"); spy.calls != 0 {
+				t.Fatalf("bob on alice's session reached the handler spy behind %s %d times", route.wrapper, spy.calls)
+			}
+			if spy := spyRequest(t, route, false, alice, "sess_alice"); spy.calls != 1 {
+				t.Fatalf("alice on her own session reached the handler spy behind %s %d times, want 1", route.wrapper, spy.calls)
 			}
 			missing := missingSessionBody(t, route)
 			h, _ := ownershipMatrixServer(t, false)
