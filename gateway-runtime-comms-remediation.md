@@ -4460,6 +4460,41 @@ notes pointing at their successors.
     `toolapprove:` replies to the existing elicitation and tool-use service calls and refuses a non-owner.
 - Not filed: none. Every listed defect is filed.
 
+**Defects filed from proposal 0112's unstaged-defect list (2026-10-31).** Proposal 0112 (credential Secrets in a
+dedicated namespace, approved 2026-10-31, implementation pending) lists defects in the shipped tree that it does
+not stage. No existing OPEN BUILD-GAPS entry covered any of them, so each is filed as a new entry. Each was
+re-confirmed against the tree at `65a7a15e3`.
+
+- Direct-fix queue, after proposal 0112's implementation, whose CODE-3 and CODE-4 edit the credential-pool
+  admin handlers.
+  - [ ] **F-15.1.70** (Medium): `handleUpdateCredentialEntry` never calls `enforceIfMatch`, so
+    `PUT /v1/admin/credential-pools/{name}/credentials/{credId}` applies an update with a missing or stale
+    `If-Match`. Direct fix.
+  - [ ] **F-15.1.71** (Low): `handleRemoveCredential` ignores a present `If-Match` on the per-credential
+    `DELETE`. Direct fix, with F-15.1.70.
+  - [ ] **F-10.2.33** (Medium): the credential-pool `GET` routes require `manage_credential_pools`, so a
+    `tenant-viewer` cannot read its tenant's pools, which the §10.2 matrix grants read-only. Direct fix.
+- Direct-fix queue, independent of 0112's implementation.
+  - [ ] **F-4.9.42** (Medium): no preflight check rejects Helm values that grant the gateway
+    `serviceaccounts/token` or `impersonate` on the Token Service ServiceAccount, which §4.9 states one does.
+    Direct fix.
+- Proposal routing, the next proposal that edits §4.9 or §13.2, independent of 0112's implementation.
+  - [ ] **F-4.9.43** (Low): the §4.9 rotation example writes the key `api-key`, while the **Secret shape.**
+    table names `apiKey` for `anthropic_direct`. Specification text, so it needs a proposal.
+  - [ ] **F-13.2.26** (Low): the §13.2 rows name TCP 443 for kube-apiserver, while the chart renders the
+    `kubeApiServerPorts` list (443 and 6443). Specification text, so it needs a proposal.
+  - [ ] **F-13.2.27** (Low): the §13.2 Admission Webhooks row grants no kube-apiserver egress and the controller
+    row omits `kubeApiServerCIDR`, while the chart renders a `kubeApiServerCIDR` rule for both. Rides with
+    F-13.2.26 and needs a proposal.
+- Proposal routing, other, independent of 0112's implementation.
+  - [ ] **F-4.9.44** (Medium): §4.9 gives the `github` provider GitHub App credentials and a minted installation
+    token, while `vcscred` and 0112's **Secret shape.** row read a stored `token`. The proposal decides whether
+    v1 mints or stores the token.
+  - [ ] **F-12.9.24** (Medium): §12.9 requires KMS envelope encryption for T4 data and says the §4.9 credential
+    encryption meets it, while §4.9 accepts `aescbc`, `aesgcm`, and GKE default encryption for credential
+    Secrets. The proposal resolves the conflict between the two sections.
+- Not filed: none. Every listed defect is filed.
+
 **Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
 `pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every
 other test in that binary.
