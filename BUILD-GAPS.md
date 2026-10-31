@@ -3901,6 +3901,27 @@ Key file paths:
 **Gap:** An emergency revocation of one tenant's pool credential deny-lists the same pool and credential identifiers of every other tenant.
 **Suggested resolution:** Add the tenant to the pool deny-list key in the deny list and the proxy, and test a revocation against a same-named pool of a second tenant. Owner: a direct fix.
 
+### - [ ] F-4.9.42 — No preflight check rejects Helm values that grant the gateway `serviceaccounts/token` or `impersonate` on the Token Service ServiceAccount [Medium] — OPEN
+
+**Spec:** §4.9 Credential Leasing Service (**Admin-time RBAC live-probe (required).**: "the gateway's own ServiceAccount MUST NOT hold `serviceaccounts/token` or `impersonate` verbs on the Token Service SA, and the install-time RBAC bundle MUST NOT grant either (a preflight check rejects Helm values that would produce such a grant)").
+**Evidence:** No check under `pkg/preflight` or `cmd/lenny-preflight` inspects the gateway's RBAC for either verb, and no chart template or `values.schema.json` rule refuses such a grant. The only `impersonat` match in `pkg/preflight` is the pod-impersonation note in `networkpolicy_identity.go`, which concerns NetworkPolicy identity. Found by proposal 0112 review (`proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/`, its unstaged-defects list), filed 2026-10-31 and re-confirmed against the tree at `65a7a15e3`.
+**Gap:** An operator who adds `serviceaccounts/token` or `impersonate` on the Token Service ServiceAccount to the gateway's Role through Helm values installs without a refusal, so the forbidden impersonation path the live-probe design excludes is not prevented at install time.
+**Suggested resolution:** Direct fix. Add a preflight check that renders the gateway's Role and ClusterRole rules from the effective values and fails when any rule grants `create` on `serviceaccounts/token` or `impersonate` that covers the Token Service ServiceAccount, with tier-1 cases per verb and a tier-2 preflight case. Owner: unassigned (direct-fix queue).
+
+### - [ ] F-4.9.43 — The §4.9 rotation example writes the Secret key `api-key`, while the **Secret shape.** table names `apiKey` for `anthropic_direct` [Low] — OPEN
+
+**Spec:** §4.9 Credential Leasing Service (the **Secret shape.** table row for `anthropic_direct`, Secret key `apiKey`; the rotation procedure, step 1 **Update the Kubernetes Secret**, whose example runs `kubectl create secret generic anthropic-key-1 --from-literal=api-key=...`).
+**Evidence:** The two passages sit in `spec/04_system-components.md` under §4.9. Proposal 0112 SPEC-3 (d) adds only the namespace flag to the rotation example and leaves the key name. Found by proposal 0112 review (`proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/`, its unstaged-defects list), filed 2026-10-31 and re-confirmed against the tree at `65a7a15e3`.
+**Gap:** An operator who follows the rotation example writes a key the Token Service does not read for an `anthropic_direct` credential, so the rotated material is not used.
+**Suggested resolution:** Through the proposal pipeline, change the example key to `apiKey`. The defect is specification text, so it needs a proposal; it can ride with the next proposal that edits §4.9. Owner: unassigned.
+
+### - [ ] F-4.9.44 — §4.9 gives the `github` provider GitHub App credentials and a minted installation token, while the gateway VCS read and the 0112 **Secret shape.** row read a stored `token` [Medium] — OPEN
+
+**Spec:** §4.9 Credential Leasing Service (the **Credential Provider** table row for `github`, source material "GitHub App credentials" producing a "Short-lived installation access token + app/installation IDs"; the **Credential Pool** TTL table row for `github`, which bounds the lease by the installation-token maximum).
+**Evidence:** `pkg/gateway/provisioning/vcscred` (`vcscred.go`) reads a stored token from the credential's Secret and accepts a GitHub App installation token or a personal access token that the operator stored, and no code mints an installation token from App credentials. Proposal 0112's **Secret shape.** `github` row names a stored `token` key. Found by proposal 0112 review (`proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/`, its unstaged-defects list), filed 2026-10-31 and re-confirmed against the tree at `65a7a15e3`.
+**Gap:** The specification describes a minting provider and the tree implements a stored-token provider, so the TTL bound, the rotation model, and the Secret contents a `github` pool needs differ between the two.
+**Suggested resolution:** Through the proposal pipeline, decide whether v1 mints the installation token from App credentials or reads a stored token, and align the **Credential Provider** row, the TTL row, the **Secret shape.** row, and `vcscred`. The choice is a specification decision, so this needs a proposal. Owner: unassigned.
+
 ## §5.1 Runtime <a id="5.1"></a>
 ### Summary
 
@@ -15096,6 +15117,13 @@ Owner: the forwarded-call session binding proposal (not yet written).
 **Evidence:** `CreateSessionService` and `CreateAndStartService` (`pkg/gateway/sessionserver/service.go`) run `s.guardTenant(s.handleCreate)` and `s.guardTenant(s.handleCreateAndStart)` directly, so the `requireSessionPermission` gate that wraps the REST route does not run, and a `tenant-viewer` creates sessions through MCP `lenny/create_session` and the built-in adapters. The direct-store MCP session tools (`attach_session`, `send_message`, `cancel_session`, `get_task_tree`, `cancel_child`, `await_children`, the memory tools, and the elicitation tools, registered in `pkg/gateway/mcpfabric/mcptools/mcptools_register.go`) run no permission check beyond `requirePrincipalTenant` (`mcptools.go`), which checks only that the tenant is non-empty. After proposal 0110's CODE-3, a `tenant-viewer` on an act and a `billing-viewer` on any tool receive `RESOURCE_NOT_FOUND` on another user's session and are admitted on their own, and an empty-`Subject` principal receives `UNAUTHORIZED`, where §10.2 **Session ownership.** rule 7 gives the matrix refusal. Most of those tools are in-pod tools, and `platformtools.WithSessionPrincipal` gives the in-pod principal no roles, so applying the matrix as it stands refuses them in multi-tenant mode. Re-confirmed against the tree at `05ed531a5`. Filed from proposal 0110's unstaged-defects list (`proposals/0110_fix_session-owner-authorization-plan-10-2-session-owner-authoriz/`), 2026-10-29, ahead of 0110's implementation. 0110's REC-1 updates this entry rather than filing a duplicate.
 **Gap:** A caller whose role lacks a session permission performs the operation through MCP or a built-in adapter, and the outcome a caller receives for the same operation differs between REST and MCP.
 **Suggested resolution:** Through the proposal pipeline, state how the §10.2 matrix applies to the MCP tool surface and the built-in adapters, including the in-pod session principal, which carries no roles and which no matrix row covers. Then run the permission check in `CreateSessionService`, `CreateAndStartService`, and each direct-store tool ahead of the 0110 ownership check, exempting in-pod principals as the proposal states. Tests: tier 1 per tool with the 0110 caller set, and tier 9 with a `tenant-viewer` creating through MCP and through an adapter. The in-pod exemption is not stated, so this needs a proposal. Owner: the session permission-gating proposal, with F-10.2.31, after 0110's implementation, whose CODE-3 edits the same tool handlers.
+
+### - [ ] F-10.2.33 — `tenant-viewer` cannot read its tenant's credential pools, because the credential-pool `GET` routes require `manage_credential_pools` [Medium] — OPEN
+
+**Spec:** §10.2 Authentication (the **Permission matrix:** row "Manage credential pools", which gives `tenant-viewer` "Read-only (own tenant)").
+**Evidence:** `registerCredentialPoolRoutes` (`pkg/gateway/externalapi/admin/routes.go`) wraps `GET /v1/admin/credential-pools` and `GET /v1/admin/credential-pools/{name}` in `r.requirePermission(auth.PermManageCredentialPools)`, and `auth.RolePermissions` (`pkg/auth/auth.go`) gives `RoleTenantViewer` only `PermReadOwnSessions`, `PermReadTenantSessions`, and `PermViewUsage`. Found by proposal 0112 review (`proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/`, its unstaged-defects list), filed 2026-10-31 and re-confirmed against the tree at `65a7a15e3`.
+**Gap:** A `tenant-viewer` receives `403 FORBIDDEN` on the credential-pool reads that the matrix grants it.
+**Suggested resolution:** Direct fix. Gate the credential-pool `GET` routes on a read check that admits `platform-admin`, `tenant-admin`, and `tenant-viewer` in the caller's tenant, keep the write routes on `manage_credential_pools`, and add tier-1 and tier-9 cases with a `tenant-viewer` reading and refused on a write. Owner: unassigned (direct-fix queue), after proposal 0112's implementation, which edits the same handlers.
 
 ---
 
@@ -26355,6 +26383,13 @@ These cover the spec's two-row T4 expectations directly.
 **Gap:** A reader cannot tell from the specification whether a tenant-admin, or a `user` reading its own session, needs an additional grant to read a T4 transcript, and the shipped code requires none.
 **Suggested resolution:** Through the proposal pipeline, either define the T4 grant (what it is, where it is stored, and which reads check it) or restate the §12.9 T4 access-control cell in terms of the §10.2 matrix and **Session ownership.**, then implement any check the result requires. The two sections contradict each other, so this needs a proposal. Owner: its own proposal, or the next proposal that edits the §12.9 controls table, independent of 0110's implementation.
 
+### - [ ] F-12.9.24 — §12.9 requires KMS envelope encryption for T4 data and says the §4.9 credential encryption satisfies it, while §4.9 accepts `aescbc`, `aesgcm`, and GKE default encryption for credential Secrets [Medium] — OPEN
+
+**Spec:** §12.9 Data Classification (the T4 encryption control, envelope encryption via KMS, and the statement that "Credential encryption ([Section 4.3], 4.9) already satisfies T4 encryption requirements"); §4.9 Credential Leasing Service (**Encryption at rest — KMS key hierarchy.**, whose table accepts an `EncryptionConfiguration` with `aescbc`, `aesgcm`, or `kms` on self-managed clusters and the GKE default encryption).
+**Evidence:** Both passages are specification text in `spec/12_storage-architecture.md` and `spec/04_system-components.md`. Proposal 0112 SPEC-9 (b) changes only the Store cell of the §12.9 table. Found by proposal 0112 review (`proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/`, its unstaged-defects list), filed 2026-10-31 and re-confirmed against the tree at `65a7a15e3`.
+**Gap:** A deployment that follows §4.9 with a local `aescbc` key or the GKE default stores T4 credential material without KMS envelope encryption, which the §12.9 T4 control requires and which §12.9 states the §4.9 configuration already provides.
+**Suggested resolution:** Through the proposal pipeline, either require the `kms` provider for the Secrets that hold pool credentials or state in §12.9 which §4.9 configurations meet the T4 control. The two sections conflict, so this needs a proposal. Owner: unassigned.
+
 ---
 
 ### Convergence note
@@ -27494,6 +27529,20 @@ The deletion-guard remains in `implementationOnlyValidatingWebhooks` (`pkg/prefl
 **Evidence:** The `allow-token-service` NetworkPolicy (`charts/lenny/templates/system-network-policies.yaml`) renders egress to PgBouncer, Redis, the `kms.endpointCIDR` block on 443, and CoreDNS, matching the §13.2 row. Since the F-13.3.21 fix (6e0607410) the Token Service verifies an IdP caller token through `jwt.OIDCVerifier`, which fetches `auth.oidc.issuerUrl`'s discovery document and JWK Set over HTTPS. The gateway reaches the IdP through its external HTTPS rule, which the Token Service row has no counterpart for. Filed from the direct fix of F-13.3.21 (2026-10-26).
 **Gap:** In a cluster that enforces NetworkPolicy, the Token Service's IdP fetches are dropped, so it refuses every IdP caller token with reason `jwks_unavailable` and the §13.3 bootstrap path stays closed in production installs.
 **Suggested resolution:** A proposal. §13.2 has to name the Token Service's egress to the IdP: a deployer-set IdP CIDR on 443, the gateway's external HTTPS rule with its NET-057 excepts, or the gateway fetching the JWK Set on the Token Service's behalf. The chart and the preflight NetworkPolicy checks then follow the chosen row. Owner: unassigned.
+
+### - [ ] F-13.2.26 — The §13.2 egress rows name TCP 443 for kube-apiserver, while the chart renders the `kubeApiServerPorts` list, which defaults to 443 and 6443 [Low] — OPEN
+
+**Spec:** §13.2 Network Isolation (the `lenny-system` component table: the Gateway, Warm Pool Controller / PoolScalingController, and `lenny-ops` rows name "kube-apiserver (TCP 443 ...)"; the **`kubeApiServerCIDR`** note names TCP 443).
+**Evidence:** `charts/lenny/values.yaml` defines `kubeApiServerPorts` with 443 and 6443, `charts/lenny/values.schema.json` declares it, and `charts/lenny/templates/system-network-policies.yaml` ranges over it in each kube-apiserver egress rule. Proposal 0112 SPEC-6 follows the existing phrasing. Found by proposal 0112 review (`proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/`, its unstaged-defects list), filed 2026-10-31 and re-confirmed against the tree at `65a7a15e3`.
+**Gap:** The specification and the rendered NetworkPolicies disagree on the destination ports, so a reviewer checking the policy against §13.2 finds an allow on 6443 that no row names.
+**Suggested resolution:** Through the proposal pipeline, state the `kubeApiServerPorts` value and its default in the §13.2 rows and the note, or narrow the chart to 443. The defect is specification text, so it needs a proposal. Owner: unassigned, with F-13.2.27.
+
+### - [ ] F-13.2.27 — The §13.2 Admission Webhooks row grants no kube-apiserver egress and the controller row omits `kubeApiServerCIDR`, while the chart renders a `kubeApiServerCIDR` rule for both [Low] — OPEN
+
+**Spec:** §13.2 Network Isolation (the **Admission Webhooks** row, whose egress sub-rules (a) to (c) name CoreDNS and the gateway internal port only; the **Warm Pool Controller / PoolScalingController** row, which names "kube-apiserver (TCP 443)" with no CIDR).
+**Evidence:** `charts/lenny/templates/system-network-policies.yaml` renders a kube-apiserver egress rule with `cidr: {{ .Values.kubeApiServerCIDR }}` in `allow-admission-webhooks`, `allow-controller-egress`, and `allow-pool-scaling-controller-egress`. Proposal 0112 SPEC-6 leaves those rows. Found by proposal 0112 review (`proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/`, its unstaged-defects list), filed 2026-10-31 and re-confirmed against the tree at `65a7a15e3`.
+**Gap:** The chart grants webhook pods a kube-apiserver egress that §13.2 does not list, and the controller rows' CIDR scoping is unstated, so the specification under-describes the rendered allow-list.
+**Suggested resolution:** Through the proposal pipeline, add the kube-apiserver egress with `kubeApiServerCIDR` to the Admission Webhooks row and the CIDR to the controller row, or remove the webhook rule from the chart if no webhook needs it. The defect is specification text, so it needs a proposal. Owner: unassigned, with F-13.2.26.
 
 ---
 
@@ -30598,6 +30647,20 @@ in the MCP Management Server inventory.
 **Evidence:** `writeUploadTokenError` (`pkg/gateway/sessionserver/upload.go`) answers a missing, malformed, or wrongly signed token with `401 UPLOAD_TOKEN_INVALID`. The §15.1 catalog lists the expired, mismatched, and consumed codes and has no row for an invalid token, and the `errorclassify` table (`pkg/gateway/externalapi/errorclassify/errorclassify.go`) has no entry for it. REST derives the pair from the status through `ClassifyStatus` (`PERMANENT`, not retryable). The MCP tool projection classifies by code alone, so `lenny/upload_files` and `lenny/finalize_workspace` report the same refusal as `TRANSIENT` and retryable. `TestFinalizeUploadTokenRESTMCPParity_spec_7_4` exempts the code from its category-parity assertion pending this fix. Found during the F-7.4.21 direct fix, 2026-10-31.
 **Gap:** An MCP client retries a token that can never verify, and the two surfaces disagree on the classification of one refusal, which §15.2.1 item 3 forbids.
 **Suggested resolution:** Through the proposal pipeline, add a `UPLOAD_TOKEN_INVALID` row (`PERMANENT`, 401) to the §15.1 catalog, because the code is not specified text today. Then add the `errorclassify` entry and drop the exemption from the tier-3 parity test. Owner: the next proposal that edits the §15.1 error catalog.
+
+### - [ ] F-15.1.70 — `PUT /v1/admin/credential-pools/{name}/credentials/{credId}` does not enforce `If-Match` [Medium] — OPEN
+
+**Spec:** §15.1 REST API (every admin `PUT` requires `If-Match`, and a missing or stale value is refused).
+**Evidence:** `handleUpdateCredentialEntry` (`pkg/gateway/externalapi/admin/credential_pools.go`) never calls `enforceIfMatch`, while `handleUpdateCredentialPool` in the same file does. No existing finding covers the per-credential subresource; F-24.4.3 and F-24.4.9 covered the pool routes and are closed. Proposal 0112 CODE-3 adds locked-row checks that do not depend on the precondition. Found by proposal 0112 review (`proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/`, its unstaged-defects list), filed 2026-10-31 and re-confirmed against the tree at `65a7a15e3`.
+**Gap:** A credential update with no `If-Match`, or with a stale one, is applied, so two concurrent admin writers overwrite each other without the `412` §15.1 requires.
+**Suggested resolution:** Direct fix. Read the current credential version and call `enforceIfMatch` before the write, including the `dryRun=true` path, with tier-1 cases for a missing, a stale, and a matching value and a tier-3 contract case. Owner: unassigned (direct-fix queue), after proposal 0112's implementation, which edits the same handler.
+
+### - [ ] F-15.1.71 — `DELETE /v1/admin/credential-pools/{name}/credentials/{credId}` ignores a present `If-Match` [Low] — OPEN
+
+**Spec:** §15.1 REST API (a `DELETE` validates `If-Match` when the header is present).
+**Evidence:** `handleRemoveCredential` (`pkg/gateway/externalapi/admin/credential_pools.go`) never reads the header, while `handleDeleteCredentialPool` in the same file calls `enforceIfMatchIfPresent`. Proposal 0112 CODE-4 adds locked-row checks that do not depend on the precondition. Found by proposal 0112 review (`proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/`, its unstaged-defects list), filed 2026-10-31 and re-confirmed against the tree at `65a7a15e3`.
+**Gap:** A removal that carries a stale `If-Match` succeeds where §15.1 requires `412`.
+**Suggested resolution:** Direct fix. Call `enforceIfMatchIfPresent` with the current credential version before the removal, with tier-1 cases for an absent, a stale, and a matching header. Owner: unassigned (direct-fix queue), with F-15.1.70.
 
 ## §15.2 MCP API <a id="15.2"></a>
 Scope: `spec/15_external-api-surface.md` §15.2 (lines 1280–1374) and §15.2.1 (lines 1376–1414).
