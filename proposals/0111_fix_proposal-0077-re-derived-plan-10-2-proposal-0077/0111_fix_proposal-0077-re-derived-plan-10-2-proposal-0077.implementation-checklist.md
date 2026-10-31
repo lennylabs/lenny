@@ -2,6 +2,8 @@
 
 ## Implementation checklist
 
+External prerequisites: proposal 0112 lands first (summary Decision 22). Plan step R14 (agent-pod mTLS client identity) is a recorded prerequisite for private-store serving to take effect in a deployment and does not block landing 0111 (summary Decision 25). Until R14 lands, S22's Kind private rows are recorded skips naming R14, and the change that lands R14 or the first change after it lifts them.
+
 - [ ] **S1 · spec** — SPEC-1. The §5.1 example edits and the merge-table rule.
       Tiers 0, 11. Depends on: —
 - [ ] **S2 · spec** — SPEC-2. The §6.4 enumeration edit and the **Repository stores.** and **Private repository stores.** paragraphs.
@@ -38,13 +40,13 @@
       Tiers 0, 1, 4. Depends on: S3, S10, S16
 - [ ] **S18 · code** — CODE-3. The proto, the mirror, the handler, the stream interceptors, the metrics, and the chart.
       Tiers 0, 1, 3, 4, 7a, 9, 11. Depends on: S2, S3, S4, S5, S6, S7, S8, S10, S11, S12, S13, S14, S15, S16, S17
-- [ ] **S19 · code** — CODE-4. The adapter warm fill, its controller-rendered deadline, and the projected SA token on the GatewayControl dial.
+- [ ] **S19 · code** — CODE-4. The adapter warm fill, its controller-rendered deadline, and the projected SA token on a TLS GatewayControl dial; the token takes effect after plan step R14, and the Kind values stay without `global.saTokenAudience`.
       Tiers 0, 1, 3, 5. Depends on: S2, S5, S11, S14, S18
 - [ ] **S20 · code** — CODE-5. Binder routing and slot-repository construction.
       Tiers 0, 1, 3, 4. Depends on: S2, S3, S4, S5, S6, S7, S16, S18, S19
 - [ ] **S21 · code** — CODE-6. The capture copy and restore completion.
       Tiers 0, 1, 4. Depends on: S3, S4, S5, S20
-- [ ] **S22 · test** — TEST-1. The case list across the reached tiers.
+- [ ] **S22 · test** — TEST-1. The case list across the reached tiers, with the private rows at tiers 3 and 4 and the Kind private rows as recorded skips naming R14.
       Tiers 0, 1, 2, 3, 4, 5, 7a, 9, 11. Depends on: S13, S14, S15, S16, S17, S18, S19, S20, S21, S24
 - [ ] **S23 · docs** — REC-1. The defect filings.
       Tiers 0. Depends on: —
