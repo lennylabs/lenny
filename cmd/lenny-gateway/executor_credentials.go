@@ -175,6 +175,7 @@ func (w *gatewayWiring) buildExecutorAndCredentials() {
 	w.tokenServiceConn = tokenServiceConn
 	w.secretProber = secretProber
 	w.credentialSecretWriter = secretWriter
+	w.credentialsNamespace = f.resolvedCredentialsNamespace()
 	w.tokenServiceSubsystem = tokenServiceSubsystem
 }
 

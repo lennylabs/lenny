@@ -484,14 +484,17 @@ type gatewayWiringFields struct {
 	// Secrets, nil when no Token Service is configured. The admin Router
 	// and the tenant eraser read it.
 	credentialSecretWriter admin.CredentialSecretWriter
-	sessionLogs            sessionlogstore.Store
-	sessionSealer          sessionserver.Sealer
-	storeRouter            storerouter.StoreRouter
-	toolApprovalWaits      *toolapproval.Registry
-	treeBudgetReserver     delegation.TreeBudgetReserver
-	uploadIssuer           *uploadtoken.Issuer
-	uploadVerifier         *uploadtoken.Verifier
-	users                  userstore.Store
+	// credentialsNamespace is the resolved §4.9 credentials namespace. The
+	// tenant eraser parses stored refs against it when no writer is wired.
+	credentialsNamespace string
+	sessionLogs          sessionlogstore.Store
+	sessionSealer        sessionserver.Sealer
+	storeRouter          storerouter.StoreRouter
+	toolApprovalWaits    *toolapproval.Registry
+	treeBudgetReserver   delegation.TreeBudgetReserver
+	uploadIssuer         *uploadtoken.Issuer
+	uploadVerifier       *uploadtoken.Verifier
+	users                userstore.Store
 	// erasureJobs is the §12.8 erasure job store buildPersistenceStores
 	// builds for the posture: the Postgres store over the primary pool, or
 	// erasurejob.Memory writing the flag through the branch's user store.

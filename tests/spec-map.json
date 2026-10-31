@@ -1392,7 +1392,10 @@
         "tests/tier9_security/credential_secret_data_value_test.go",
         "tests/tier4_integration/credential_pool_secret_write_pg_test.go",
         "tests/tier7a_load_local/credential_pool_secret_write_interleaving_test.go",
-        "tests/tier8_chaos/credential_secret_write_residue_test.go"
+        "tests/tier8_chaos/credential_secret_write_residue_test.go",
+        "tests/tier4_integration/credential_pool_tenant_erasure_pg_test.go",
+        "tests/tier8_chaos/credential_tenant_erasure_chaos_test.go",
+        "tests/tier9_security/credential_tenant_erasure_isolation_test.go"
       ],
       "packages": [
         "pkg/credential",
@@ -4972,7 +4975,10 @@
         "pkg/gateway/environment/translator/continuity_test.go::TestContinuityRehydrateErasedTranscriptContributesNothing_spec_12_8",
         "tests/tier9_security/open_responses_isolation_erasure_test.go",
         "tests/tier7a_load_local/open_responses_conversation_invariant_test.go::TestOpenResponsesConversationInterleavingsHoldTheInvariants_spec_15",
-        "tests/tier7a_load_local/open_responses_conversation_invariant_test.go::TestOpenResponsesInvariantCheckerComparesRESTDeliveries_spec_15"
+        "tests/tier7a_load_local/open_responses_conversation_invariant_test.go::TestOpenResponsesInvariantCheckerComparesRESTDeliveries_spec_15",
+        "tests/tier4_integration/credential_pool_tenant_erasure_pg_test.go",
+        "tests/tier8_chaos/credential_tenant_erasure_chaos_test.go",
+        "tests/tier9_security/credential_tenant_erasure_isolation_test.go"
       ],
       "packages": [
         "pkg/store",

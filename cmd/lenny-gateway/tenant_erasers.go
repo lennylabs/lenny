@@ -14,6 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache"
 	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotafailopen"
@@ -225,7 +226,11 @@ func (w *gatewayWiring) tenantErasersAfterSessions(credentialPools credentialpoo
 		issued = issuedtokenstore.New(w.pgPool).DeleteByTenant
 	}
 	if credentialPools != nil {
-		pool = credentialPools.DeleteByTenant
+		// The CredentialPoolStore entry also deletes the tenant's
+		// Lenny-written credential Secrets once the rows are gone, or, with
+		// no writer wired, fails while a row still names one.
+		// spec: §12.8 (Compliance Interfaces), §4.9 (Credential Storage Topology)
+		pool = admin.TenantCredentialPoolEraser(credentialPools, w.credentialSecretWriter, w.credentialsNamespace)
 	}
 	return []namedTenantEraser{
 		// TokenStore: connector refresh tokens, then registered user
