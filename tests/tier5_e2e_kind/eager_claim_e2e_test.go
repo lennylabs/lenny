@@ -200,7 +200,7 @@ func createdSessionOn(t *testing.T, c *kind.Cluster, probe, gatewayIP string, ro
 // carries (§7.4 Upload authorization).
 func createdSessionWithToken(t *testing.T, c *kind.Cluster, probe, gatewayIP string, role t5Role, runtimeRef string) (string, string) {
 	t.Helper()
-	body := fmt.Sprintf(`{"runtimeRef":%q,"userId":%q}`, runtimeRef, role.user)
+	body := fmt.Sprintf(`{"runtimeRef":%q}`, runtimeRef)
 	res := t5GatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/sessions", role, body)
 	if res.statusCode != 201 {
 		t.Fatalf("create session: status %d (want 201), body=%s", res.statusCode, res.body)
@@ -309,7 +309,7 @@ func TestEagerClaimPoolExhaustionAtCreate(t *testing.T) {
 	}
 
 	// One more create than the pool can serve fails fast at /create.
-	body := fmt.Sprintf(`{"runtimeRef":%q,"userId":%q}`, eagerFiniteRuntime, role.user)
+	body := fmt.Sprintf(`{"runtimeRef":%q}`, eagerFiniteRuntime)
 	res := t5GatewayRequest(t, c, probe, gatewayIP, "POST", "/v1/sessions", role, body)
 	if res.statusCode != 503 {
 		t.Fatalf("create against an exhausted pool: status %d, want a retryable 503 (fail-fast at /create); body=%s", res.statusCode, res.body)
