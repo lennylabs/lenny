@@ -239,10 +239,3 @@ func (r *Router) probeSecretRefs(ctx context.Context, refs []string) error {
 		details: map[string]any{"missingSecrets": missing},
 	}
 }
-
-// entryWithID returns body with its id set to credID, the form the
-// credential update path checks against the locked row.
-func entryWithID(body CredentialEntryPayload, credID string) CredentialEntryPayload {
-	body.ID = credID
-	return body
-}

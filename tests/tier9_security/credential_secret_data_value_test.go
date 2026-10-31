@@ -190,7 +190,8 @@ func TestCredentialSecretDataValueNeverReturned(t *testing.T) {
 // adding a value to tenant globex's pool writes the Secret §4.9 names for
 // globex, owned by globex, so tenant erasure of globex reaches it and no
 // other tenant's pool can reference it, and that acme's tenant-admin
-// cannot write a value into globex's pool.
+// naming globex in the tenantId parameter writes into acme's own pool
+// under an acme-owned Secret rather than into globex's pool.
 //
 // diagnosis: a failure means a credential value written into one tenant's
 // pool lands in a Secret named or owned for another tenant (the caller's),
@@ -217,12 +218,23 @@ func TestCredentialSecretDataWrittenUnderPoolTenant(t *testing.T) {
 		t.Fatalf("Secret name = %s, want %s", rig.writer.name[0], want)
 	}
 
+	// A tenant-admin's tenantId query parameter does not select another
+	// tenant: the request resolves to the caller's own tenant, so the value
+	// lands in acme's own pool under an acme-owned Secret and never in
+	// globex's.
 	rr = rig.send(t, http.MethodPost, "/v1/admin/credential-pools/shared/credentials?tenantId=globex", body,
 		crossTenantPrincipal("acme", pkgauth.RoleTenantAdmin))
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("acme tenant-admin into globex: status = %d, want 403", rr.Code)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("acme tenant-admin naming globex: status = %d, want 201 into acme's own pool; body %s", rr.Code, rr.Body.String())
 	}
-	if len(rig.writer.puts) != 1 {
-		t.Fatalf("a refused cross-tenant write reached the writer: %+v", rig.writer.puts)
+	if len(rig.writer.puts) != 2 {
+		t.Fatalf("puts = %+v, want two", rig.writer.puts)
+	}
+	wantOwner = admin.SecretOwner{TenantID: "acme", Pool: "shared", CredentialID: "key-2"}
+	if rig.writer.puts[1] != wantOwner {
+		t.Fatalf("acme tenant-admin write owner = %+v, want %+v", rig.writer.puts[1], wantOwner)
+	}
+	if want := credential.ManagedSecretName("acme", "shared", "key-2"); rig.writer.name[1] != want {
+		t.Fatalf("acme tenant-admin Secret name = %s, want %s", rig.writer.name[1], want)
 	}
 }

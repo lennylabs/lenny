@@ -204,12 +204,6 @@ func droppedSecretNames(before []string, after []credentialpoolstore.Credential)
 	return out
 }
 
-// managedSecretRef returns the canonical ref of the Secret the gateway
-// writes for (tenant, pool, credID).
-func (r *Router) managedSecretRef(tenant, pool, credID string) string {
-	return credential.CanonicalSecretRef(r.credNS, credential.ManagedSecretName(tenant, pool, credID))
-}
-
 // planEntryPut records the rule 3 Put for an entry that carries
 // secretData and points the entry at the Lenny-written Secret. An entry
 // with no secretData plans nothing.
