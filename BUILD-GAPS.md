@@ -3922,6 +3922,13 @@ Key file paths:
 **Gap:** The specification describes a minting provider and the tree implements a stored-token provider, so the TTL bound, the rotation model, and the Secret contents a `github` pool needs differ between the two.
 **Suggested resolution:** Through the proposal pipeline, decide whether v1 mints the installation token from App credentials or reads a stored token, and align the **Credential Provider** row, the TTL row, the **Secret shape.** row, and `vcscred`. The choice is a specification decision, so this needs a proposal. Owner: unassigned.
 
+### - [x] F-4.9.45 — The chart never rendered a Token Service Secret Role or its kube-apiserver egress, so the admin-time probe refused every probed credential-pool write on a stock install [High] — CLOSED
+
+**Spec:** §4.9 Credential Leasing Service (**Credentials namespace.** and the admin-time probe), §13.2.4 (the Token Service egress row).
+**Evidence:** Before this fix, no template under `charts/lenny/templates` granted the `lenny-token-service` ServiceAccount a `secrets` verb, and the `allow-token-service` NetworkPolicy in `system-network-policies.yaml` carried no `kubeApiServerCIDR` egress rule. This follows on from closed F-4.9.3, which built the probe and its gateway wiring and left the chart grant and the egress unrendered. Filed by proposal 0112 (`proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/`), 2026-10-31.
+**Gap:** On a stock install the Token Service could neither read a credential Secret nor reach the kube-apiserver. Every probed admin credential-pool write was refused with `422 CREDENTIAL_SECRET_RBAC_MISSING`, and the returned remediation patched a Role that did not exist.
+**Resolution (proposal 0112, 2026-10-31):** `charts/lenny/templates/credentials-namespace.yaml` renders the credentials namespace, its `pods: "0"` quota, the `lenny-token-service-credentials` Role with a namespace-wide `get`, and its RoleBinding. `allow-token-service` gains the kube-apiserver egress rule. The admin handlers no longer emit the remediation. The tier-3, tier-5, and tier-9 tests landed with the proposal pin the probe wire, the kind install, the live RBAC, and the egress rule.
+
 ## §5.1 Runtime <a id="5.1"></a>
 ### Summary
 
