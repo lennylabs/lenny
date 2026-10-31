@@ -4213,9 +4213,14 @@ D2), which stays with the upload route proposal.
     transient read with `503 SERVICE_UNAVAILABLE`, as 0086's defaults composition does, after 0086's S14.
     Closed 2026-10-31 by direct fix on `fix/finalize-policy-forward`: the read classifies a failure as the
     composition does, and a plan with no setup commands reads nothing.
-  - [ ] **F-7.5.16** (Medium): at creation the setup-command policy is read from the requested runtime rather
+  - [x] **F-7.5.16** (Medium): at creation the setup-command policy is read from the requested runtime rather
     than the routed one. Run the check against the runtime the row records after routing; if that needs an
-    ordering the specification does not state, it goes to a proposal.
+    ordering the specification does not state, it goes to a proposal. Closed 2026-10-31 by direct fix on
+    `fix/finalize-policy-forward`: both create routes check `row.RuntimeRef` after routing and immediately
+    before the defaults composition, the position §14.1 rule 1 states. Filed from the fix: F-4.8.25.
+  - [ ] **F-4.8.25** (Medium, filed from F-7.5.16): `POST /v1/sessions` runs no §4.8 PreRoute or PostRoute
+    chain, while create-and-start runs both around the ExperimentRouter. Direct fix after proposal 0110,
+    which edits the create path.
   - [x] **F-16.1.8** (Medium): `lenny_warmpool_warmup_failure_total` has no warm-up emitter and only the
     `error_type` label, so `PoolScaleoutBlockedByQuota` never fires. The Sandbox reconciler now emits
     `image_pull_error`, `resource_quota_exceeded`, and `node_pressure` with the §16.1 labels, once per
