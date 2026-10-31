@@ -48,7 +48,8 @@ func TestBacklogRecheckerPass_spec_7_2(t *testing.T) {
 	since := r.now.Add(-time.Hour)
 	seed := func(tenant, id, reason string) {
 		if err := store.Create(context.Background(), sessionstore.Session{
-			ID: id, TenantID: tenant, State: session.StateSuspended, SuspendedAt: since,
+			UserID: testOwner,
+			ID:     id, TenantID: tenant, State: session.StateSuspended, SuspendedAt: since,
 			SuspendedReason: reason, CreatedAt: since, UpdatedAt: since,
 		}); err != nil {
 			t.Fatalf("seed %s: %v", id, err)

@@ -43,7 +43,7 @@ func TestDerive_ContendedLockReturns429_spec_7_1_92(t *testing.T) {
 		DeriveLock:      &fakeLock{contended: true},
 	})
 
-	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{})
+	rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{})
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, want 429; body=%s", rr.Code, rr.Body.String())
 	}
@@ -70,7 +70,7 @@ func TestDerive_LockHeldThenReleased_spec_7_1_92(t *testing.T) {
 
 	// First derive succeeds; sess_source is one-shot, so the second
 	// derive's source is the same row and the lock is reusable.
-	rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{})
+	rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("first derive status = %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
@@ -82,7 +82,7 @@ func TestDerive_LockHeldThenReleased_spec_7_1_92(t *testing.T) {
 		IDFunc:          func() string { return "sess_d2" },
 		DeriveLock:      derivelock.NewMemory(50 * time.Millisecond),
 	}))
-	rr2 := deriveRequest(t, srv2.Handler(), sessionserver.DeriveRequest{})
+	rr2 := deriveRequest(t, asOwner(srv2.Handler()), sessionserver.DeriveRequest{})
 	if rr2.Code != http.StatusCreated {
 		t.Fatalf("second derive status = %d, want 201; body=%s", rr2.Code, rr2.Body.String())
 	}
@@ -114,7 +114,7 @@ func TestDerive_MemoryLockSerializesConcurrentRequests_spec_7_1_92(t *testing.T)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{})
+			deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{})
 		}()
 	}
 	wg.Wait()

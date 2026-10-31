@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
@@ -65,7 +67,7 @@ func newBudgetDelegateMCP(t *testing.T) (string, *miniredis.Miniredis, *counting
 		{ID: budgetRootID, RootSessionID: budgetRootID},
 		{ID: budgetChildID, ParentSessionID: budgetRootID, RootSessionID: budgetRootID, DelegationDepth: 1},
 	} {
-		row.TenantID, row.UserID, row.State = "acme", "alice@acme.com", session.StateRunning
+		row.TenantID, row.UserID, row.State = "acme", ownerprincipal.Alice, session.StateRunning
 		row.RuntimeRef, row.PoolRef, row.IsolationProfile = "echo", "pool-a", isolation.ProfileSandboxed
 		row.CreatedAt, row.UpdatedAt = now, now
 		if err := store.Create(ctx, row); err != nil {
@@ -91,7 +93,9 @@ func newBudgetDelegateMCP(t *testing.T) (string, *miniredis.Miniredis, *counting
 		}),
 		Clock: func() time.Time { return now }, TenantID: "acme",
 	})
-	m := httptest.NewServer(mcpSrv.Handler())
+	// spec: §10.2 (Session ownership) — delegate_task acts on the parent,
+	// so the call runs as the seeded rows' owner.
+	m := httptest.NewServer(ownerprincipal.Wrap(mcpSrv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(m.Close)
 	return m.URL + "/mcp", mr, cleanup
 }

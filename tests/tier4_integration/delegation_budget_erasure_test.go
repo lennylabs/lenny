@@ -60,8 +60,8 @@ func TestUserErasureDeletesTheRootsDelegationBudgetRowAndKeys_spec_12_8(t *testi
 	}
 	start := func(user string) string {
 		t.Helper()
-		code, created := erasureAdminDo(t, base, http.MethodPost, "/v1/sessions/start", "", map[string]any{
-			"runtimeRef": "echo", "userId": user,
+		code, created := erasureDoAs(t, base, http.MethodPost, "/v1/sessions/start", user, "", map[string]any{
+			"runtimeRef": "echo",
 		})
 		sid, _ := created["id"].(string)
 		if code != http.StatusCreated || sid == "" {

@@ -142,6 +142,24 @@ func TestReadPrimaryIsBounded_spec_12_3(t *testing.T) {
 	})
 }
 
+// TestPrimaryReadBoundDefaultsANonPositiveTimeout pins the bound a caller
+// shares with ReadPrimary: a positive timeout is used as given, and zero or
+// a negative timeout falls back to DefaultPrimaryReadTimeout.
+//
+// spec: §12.3 (Postgres HA Requirements)
+func TestPrimaryReadBoundDefaultsANonPositiveTimeout(t *testing.T) {
+	cases := map[time.Duration]time.Duration{
+		250 * time.Millisecond: 250 * time.Millisecond,
+		0:                      sessionstore.DefaultPrimaryReadTimeout,
+		-time.Second:           sessionstore.DefaultPrimaryReadTimeout,
+	}
+	for in, want := range cases {
+		if got := sessionstore.PrimaryReadBound(in); got != want {
+			t.Errorf("PrimaryReadBound(%v) = %v, want %v", in, got, want)
+		}
+	}
+}
+
 // TestMarkTerminatedRecordsTheTerminatedFact_spec_7_2 asserts that
 // MarkTerminated stamps TerminatedAt and the state's reason once, keeps the
 // stamp on a later write, rewrites the reason on a relabel to failed, leaves a

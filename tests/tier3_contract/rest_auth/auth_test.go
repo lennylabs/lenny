@@ -72,12 +72,18 @@ func issueToken(t *testing.T, signer *jwt.HMACSigner, tenantID, subject string) 
 
 func do(t *testing.T, ts *httptest.Server, headers map[string]string, body any) (*http.Response, map[string]any) {
 	t.Helper()
+	return doPath(t, ts, "/v1/sessions", headers, body)
+}
+
+// doPath posts body to path on ts with headers and decodes the answer.
+func doPath(t *testing.T, ts *httptest.Server, path string, headers map[string]string, body any) (*http.Response, map[string]any) {
+	t.Helper()
 	var reqBody io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
 		reqBody = bytes.NewReader(b)
 	}
-	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/v1/sessions", reqBody)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+path, reqBody)
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -297,13 +303,51 @@ func TestDevHeaderTransportAccepted(t *testing.T) {
 		Registry:        &fakeRegistry{registered: map[string]bool{"acme": true}},
 		AllowDevHeaders: true,
 	})
-	resp, body := do(t, ts, map[string]string{"X-Lenny-Tenant-ID": "acme"},
+	resp, body := do(t, ts, map[string]string{"X-Lenny-Tenant-ID": "acme", "X-Lenny-User-ID": "alice@acme.com"},
 		map[string]any{"runtimeRef": "claude-code"})
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("dev-header accept: want 201, got %d (body %v)", resp.StatusCode, body)
 	}
 	if got := body["tenantId"]; got != "acme" {
 		t.Errorf("tenantId: want acme, got %v", got)
+	}
+	if got := body["userId"]; got != "alice@acme.com" {
+		t.Errorf("userId: want the X-Lenny-User-ID subject alice@acme.com, got %v", got)
+	}
+}
+
+// spec: 10.2 (Session ownership), 15.1 (UNAUTHORIZED)
+// diagnosis: A dev-header create with no X-Lenny-User-ID was admitted, or
+//
+//	a body userId set the owner. The session owner is the principal's
+//	subject in every mode, and a create whose principal has an empty
+//	subject is refused with 401 UNAUTHORIZED. Inspect ownerFromPrincipal
+//	in pkg/gateway/sessionserver/request_identity.go and its callers in
+//	the create handlers.
+func TestDevHeaderCreateWithoutSubjectReturns401(t *testing.T) {
+	ts, _ := newTestServer(t, authmw.Options{
+		MultiTenant:     true,
+		Registry:        &fakeRegistry{registered: map[string]bool{"acme": true}},
+		AllowDevHeaders: true,
+	})
+	for _, path := range []string{"/v1/sessions", "/v1/sessions/start"} {
+		resp, body := doPath(t, ts, path, map[string]string{"X-Lenny-Tenant-ID": "acme"},
+			map[string]any{"runtimeRef": "claude-code", "userId": "bob@acme.com"})
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s with no subject: want 401, got %d (body %v)", path, resp.StatusCode, body)
+		}
+		envelope, _ := body["error"].(map[string]any)
+		if envelope["code"] != "UNAUTHORIZED" {
+			t.Errorf("%s error code: want UNAUTHORIZED, got %v", path, envelope["code"])
+		}
+	}
+	resp, body := do(t, ts, map[string]string{"X-Lenny-Tenant-ID": "acme", "X-Lenny-User-ID": "alice@acme.com"},
+		map[string]any{"runtimeRef": "claude-code", "userId": "bob@acme.com"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create with a subject: want 201, got %d (body %v)", resp.StatusCode, body)
+	}
+	if got := body["userId"]; got != "alice@acme.com" {
+		t.Errorf("owner: want the principal alice@acme.com, got %v; the body userId set the owner", got)
 	}
 }
 

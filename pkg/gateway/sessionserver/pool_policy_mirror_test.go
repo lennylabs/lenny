@@ -96,7 +96,8 @@ func TestPoolPolicyMirrorReportsReuseAndAcknowledgmentPredicates_spec_5_2(t *tes
 func TestBindAndResumeRequestsCarryReuseAndAcknowledgmentPredicates_spec_5_2(t *testing.T) {
 	s := &Server{}
 	row := sessionstore.Session{
-		ID: "sess-1", TenantID: "acme", RuntimeRef: "rt",
+		UserID: testOwner,
+		ID:     "sess-1", TenantID: "acme", RuntimeRef: "rt",
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: "ckpt-1"},
 	}
 	for _, reuse := range []bool{true, false} {

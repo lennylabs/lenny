@@ -29,7 +29,7 @@ func getPools(t *testing.T, srv *sessionserver.Server, target string) poolListRe
 	req := httptest.NewRequest(http.MethodGet, target, nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}

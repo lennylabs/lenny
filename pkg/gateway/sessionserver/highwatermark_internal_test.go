@@ -49,7 +49,8 @@ func TestObserveTreeHighWatermarkAtRootSettle_spec_8_3_379(t *testing.T) {
 	obs := &fakeHWMObserver{}
 	s := newHWMServer(reader, obs)
 	s.observeTreeHighWatermark(context.Background(), sessionstore.Session{
-		ID: "root1", TenantID: "acme", PoolRef: "pool-a",
+		UserID: testOwner,
+		ID:     "root1", TenantID: "acme", PoolRef: "pool-a",
 	})
 	if len(obs.values) != 1 || obs.values[0] != 5 {
 		t.Fatalf("observed values = %v, want [5]", obs.values)
@@ -71,7 +72,8 @@ func TestObserveTreeHighWatermarkSkipsNonRoot_spec_8_3_379(t *testing.T) {
 	obs := &fakeHWMObserver{}
 	s := newHWMServer(reader, obs)
 	s.observeTreeHighWatermark(context.Background(), sessionstore.Session{
-		ID: "child1", TenantID: "acme", ParentSessionID: "root1", RootSessionID: "root1",
+		UserID: testOwner,
+		ID:     "child1", TenantID: "acme", ParentSessionID: "root1", RootSessionID: "root1",
 	})
 	if len(obs.values) != 0 || len(reader.calledWith) != 0 {
 		t.Fatalf("non-root settle observed %v / read %v, want none", obs.values, reader.calledWith)
@@ -85,7 +87,7 @@ func TestObserveTreeHighWatermarkSkipsWhenAbsent_spec_8_3_379(t *testing.T) {
 	reader := &fakeHWMReader{found: false}
 	obs := &fakeHWMObserver{}
 	s := newHWMServer(reader, obs)
-	s.observeTreeHighWatermark(context.Background(), sessionstore.Session{ID: "root1", TenantID: "acme"})
+	s.observeTreeHighWatermark(context.Background(), sessionstore.Session{UserID: testOwner, ID: "root1", TenantID: "acme"})
 	if len(obs.values) != 0 {
 		t.Fatalf("observed %v for an undelegated tree, want none", obs.values)
 	}
@@ -98,7 +100,7 @@ func TestObserveTreeHighWatermarkSwallowsReadError_spec_8_3_379(t *testing.T) {
 	reader := &fakeHWMReader{err: errors.New("redis down")}
 	obs := &fakeHWMObserver{}
 	s := newHWMServer(reader, obs)
-	s.observeTreeHighWatermark(context.Background(), sessionstore.Session{ID: "root1", TenantID: "acme"})
+	s.observeTreeHighWatermark(context.Background(), sessionstore.Session{UserID: testOwner, ID: "root1", TenantID: "acme"})
 	if len(obs.values) != 0 {
 		t.Fatalf("observed %v after a read error, want none", obs.values)
 	}
@@ -107,5 +109,5 @@ func TestObserveTreeHighWatermarkSwallowsReadError_spec_8_3_379(t *testing.T) {
 // spec: §8.3 — with no reader/observer wired (developer mode
 // without Redis) the path is a no-op. F-8.9.6.
 func TestObserveTreeHighWatermarkNoopWithoutDeps_spec_8_3_379(t *testing.T) {
-	newHWMServer(nil, nil).observeTreeHighWatermark(context.Background(), sessionstore.Session{ID: "root1"})
+	newHWMServer(nil, nil).observeTreeHighWatermark(context.Background(), sessionstore.Session{UserID: testOwner, ID: "root1"})
 }

@@ -121,6 +121,7 @@ func postRaw(t *testing.T, base, key string, body any, tenant string) *http.Resp
 	req, _ := http.NewRequest(http.MethodPost, base+"/v1/sessions", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", tenant)
+	req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 	if key != "" {
 		req.Header.Set("Idempotency-Key", key)
 	}

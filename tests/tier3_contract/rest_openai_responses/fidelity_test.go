@@ -29,6 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // repoRoot walks up from the working directory to the module root.
@@ -63,10 +64,12 @@ func newResponsesServers(t *testing.T, clock func() time.Time, ids ...string) (*
 	store := memstore.New()
 	exec := executor.NewEchoExecutor()
 
+	restHandler := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	next := 0
 	respHandler := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
 		HolderForwarder: responsesstub.LocalForwarder{},
 		Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: store},
+		SessionAccess:   restHandler,
 		DevTenantHeader: true,
 		Clock:           clock,
 		IDFunc: func() string {
@@ -75,11 +78,10 @@ func newResponsesServers(t *testing.T, clock func() time.Time, ids ...string) (*
 			return id
 		},
 	})
-	tsResp := httptest.NewServer(respHandler.Handler())
+	tsResp := httptest.NewServer(ownerprincipal.Wrap(respHandler.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsResp.Close)
 
-	restHandler := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	tsREST := httptest.NewServer(restHandler.Handler())
+	tsREST := httptest.NewServer(ownerprincipal.Wrap(restHandler.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 
 	return tsResp, tsREST, store

@@ -31,6 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // deriveVia posts a derive of source and returns the derived session's id.
@@ -94,7 +95,7 @@ func TestDerivedSessionIsOutsideTheSourceTree_spec_12_6(t *testing.T) {
 		Clock: func() time.Time { return clock },
 	})
 	base := sessionstore.Session{
-		TenantID: tenant, RuntimeRef: "claude-code", PoolRef: "default-pool",
+		TenantID: tenant, UserID: ownerprincipal.Alice, RuntimeRef: "claude-code", PoolRef: "default-pool",
 		IsolationProfile: isolation.ProfileSandboxed, CreatedAt: clock, UpdatedAt: clock,
 	}
 	seed := func(mut func(*sessionstore.Session)) {
@@ -131,7 +132,8 @@ func TestDerivedSessionIsOutsideTheSourceTree_spec_12_6(t *testing.T) {
 		t.Fatalf("end sess_old_root: %v", err)
 	}
 
-	handler := srv.Handler()
+	// spec: §10.2 (Session ownership) — the derives run as the sources' owner.
+	handler := ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 	fromDone := deriveVia(t, handler, tenant, "sess_src_done", false)
 	fromLive := deriveVia(t, handler, tenant, "sess_src_live", true)
 

@@ -118,7 +118,7 @@ async function main(): Promise<void> {
   });
 
   const created = await client.createSession(
-    { runtimeRef: 'chat', userId: 'alice@acme.com' },
+    { runtimeRef: 'chat' },
     { idempotencyKey: 'alice-session-2026-05-19-001' },
   );
   console.log(`created ${created.id} in state ${created.state}`);

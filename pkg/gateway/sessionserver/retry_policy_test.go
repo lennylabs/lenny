@@ -47,7 +47,7 @@ func TestCreateSessionEchoesRetryPolicy_F_7_3_1(t *testing.T) {
 			RetryableFailures:      []string{"pod_evicted", "node_lost"},
 		},
 	}
-	rr := createRequest(t, srv.Handler(), req)
+	rr := createRequest(t, asOwner(srv.Handler()), req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -74,7 +74,7 @@ func TestCreateSessionEchoesRetryPolicy_F_7_3_1(t *testing.T) {
 func TestCreateSessionClampsAgainstDeployerCaps_F_7_3_1(t *testing.T) {
 	caps := session.RetryPolicyCaps{MaxRetries: 2, MaxSessionAgeSeconds: 7200, MaxResumeWindowSeconds: 900}
 	srv := newCreateServerWithRetryCaps(t, caps)
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		RetryPolicy: &session.RetryPolicy{
 			MaxRetries:             10,     // above cap, clamps to 2
@@ -140,7 +140,7 @@ func TestCreateSessionRejectsInvalidRetryPolicy_F_7_3_1(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
 			rr := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rr, req)
+			asOwner(srv.Handler()).ServeHTTP(rr, req)
 			if rr.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400; body=%s", rr.Code, rr.Body.String())
 			}
@@ -154,7 +154,7 @@ func TestCreateSessionRejectsInvalidRetryPolicy_F_7_3_1(t *testing.T) {
 // Absent retryPolicy omits the field on the response per omitempty.
 func TestCreateSessionRetryPolicyOmitsWhenAbsent_F_7_3_1(t *testing.T) {
 	srv := newCreateServerWithRetryCaps(t, session.RetryPolicyCaps{MaxRetries: 2})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
 	}

@@ -41,7 +41,7 @@ func TestListRuntimesUnfiltered(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -58,7 +58,7 @@ func TestListRuntimesEmptyWhenUnwired(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -87,7 +87,7 @@ func TestListRuntimesPlaygroundAllowedRuntimesFilter_spec_27_5_190(t *testing.T)
 		Subject: "alice@acme.com", TenantID: "acme", Origin: "playground",
 	}))
 	rrPG := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rrPG, pg)
+	asOwner(srv.Handler()).ServeHTTP(rrPG, pg)
 	if rrPG.Code != http.StatusOK {
 		t.Fatalf("playground discovery status: %d, body=%s", rrPG.Code, rrPG.Body.String())
 	}
@@ -103,7 +103,7 @@ func TestListRuntimesPlaygroundAllowedRuntimesFilter_spec_27_5_190(t *testing.T)
 		Subject: "alice@acme.com", TenantID: "acme",
 	}))
 	rrPlain := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rrPlain, plain)
+	asOwner(srv.Handler()).ServeHTTP(rrPlain, plain)
 	var plainResp runtimeDiscoveryResponse
 	_ = json.Unmarshal(rrPlain.Body.Bytes(), &plainResp)
 	if len(plainResp.Runtimes) != 2 {
@@ -133,7 +133,7 @@ func TestListRuntimesSurfacesOptionsSchemaAndVersion_spec_27_4(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -174,7 +174,7 @@ func TestListModelsOpenAIFormat(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -200,7 +200,7 @@ func TestListModelsEmptyWhenUnwired(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -227,7 +227,7 @@ func TestDiscoveryEmbedsAdapterCapabilities(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("/v1/runtimes status: %d", rr.Code)
 	}
@@ -259,7 +259,7 @@ func TestListModelsAdapterCapabilitiesDefaultsToOpenAIChat_spec_9_1_35(t *testin
 	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -288,7 +288,7 @@ func TestListModelsAdapterCapabilitiesSelectsOpenResponses_spec_9_1_35(t *testin
 	req := httptest.NewRequest(http.MethodGet, "/v1/models?adapter=open-responses", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -320,7 +320,7 @@ func TestListModelsAdapterCapabilitiesUnknownDefaults_spec_9_1_35(t *testing.T) 
 	req := httptest.NewRequest(http.MethodGet, "/v1/models?adapter=does-not-exist", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -340,7 +340,7 @@ func TestDiscoveryAdapterCapabilitiesPresentWhenUnwired(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -369,7 +369,7 @@ func TestListRuntimesSurfacesAgentInterface(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -399,7 +399,7 @@ func TestListRuntimesSurfacesPublicMetadataRefs(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -432,7 +432,7 @@ func TestRuntimeMetaServesPublicEntry(t *testing.T) {
 	// §5.1: a public entry is served opaquely under its content type.
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes/carded/meta/agent-card", nil)
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("public meta: status %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -447,7 +447,7 @@ func TestRuntimeMetaServesPublicEntry(t *testing.T) {
 	_ = runtimes.SoftDelete(context.Background(), "carded", time.Now())
 	req = httptest.NewRequest(http.MethodGet, "/v1/runtimes/carded/meta/agent-card", nil)
 	rr = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("soft-deleted runtime meta: status %d, want 404", rr.Code)
 	}
@@ -472,7 +472,7 @@ func TestRuntimeMetaHidesNonPublicAndMissing(t *testing.T) {
 	} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rr := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rr, req)
+		asOwner(srv.Handler()).ServeHTTP(rr, req)
 		if rr.Code != http.StatusNotFound {
 			t.Errorf("%s: status %d, want 404", path, rr.Code)
 		}
@@ -512,7 +512,7 @@ func TestInternalRuntimeMetaServesInternalEntry(t *testing.T) {
 	pub := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/card", nil)
 	pub = pub.WithContext(authmw.WithPrincipal(pub.Context(), authmw.Principal{Subject: "alice", TenantID: "acme"}))
 	rrPub := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rrPub, pub)
+	asOwner(srv.Handler()).ServeHTTP(rrPub, pub)
 	if rrPub.Code != http.StatusNotFound {
 		t.Errorf("public entry at /internal: status %d, want 404", rrPub.Code)
 	}
@@ -535,7 +535,7 @@ func TestInternalRuntimeMetaTenantVisibility(t *testing.T) {
 	granted := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/cost", nil)
 	granted = granted.WithContext(authmw.WithPrincipal(granted.Context(), authmw.Principal{Subject: "alice", TenantID: "acme"}))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, granted)
+	asOwner(srv.Handler()).ServeHTTP(rr, granted)
 	if rr.Code != http.StatusOK || rr.Body.String() != `{"rate":10}` {
 		t.Fatalf("granted tenant meta: status %d body %q", rr.Code, rr.Body.String())
 	}
@@ -545,7 +545,7 @@ func TestInternalRuntimeMetaTenantVisibility(t *testing.T) {
 	other := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/cost", nil)
 	other = other.WithContext(authmw.WithPrincipal(other.Context(), authmw.Principal{Subject: "bob", TenantID: "globex"}))
 	rrOther := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rrOther, other)
+	asOwner(srv.Handler()).ServeHTTP(rrOther, other)
 	if rrOther.Code != http.StatusNotFound {
 		t.Errorf("ungranted tenant meta: status %d, want 404", rrOther.Code)
 	}
@@ -565,7 +565,7 @@ func TestInternalRuntimeMetaTenantFailsClosedWithoutAccessStore(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/cost", nil)
 	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{Subject: "alice", TenantID: "acme"}))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("tenant meta without access store: status %d, want 404 (fail closed)", rr.Code)
 	}
@@ -588,7 +588,7 @@ func TestListRuntimesResolvesDerivedRuntime(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -630,7 +630,7 @@ func TestRuntimeMetaResolvesDerivedRuntime(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes/derived/meta/agent-card", nil)
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("derived runtime meta: status %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -672,7 +672,7 @@ func TestListRuntimesEnvironmentFiltered(t *testing.T) {
 		Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"},
 	}))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -726,7 +726,7 @@ func TestListRuntimesEnvironmentIDStubNarrows_spec_10_6_672(t *testing.T) {
 		Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"},
 	}))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -757,7 +757,7 @@ func TestListRuntimesEnvironmentIDStubUnknownEnvIsEmpty_spec_10_6_672(t *testing
 		Subject: "bob", TenantID: "acme",
 	}))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -784,7 +784,7 @@ func TestListRuntimesEmptyEnvironmentIDStubIsNoOp_spec_10_6_672(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes?environmentId=", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -813,7 +813,7 @@ func TestListRuntimesStampsMcpEndpointForMcpTypes_spec_9_1_38(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}

@@ -5,6 +5,7 @@ package sessionserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -90,7 +91,7 @@ func errorCode(t *testing.T, rr *httptest.ResponseRecorder) string {
 //
 // spec: §10.2 (Authentication), §15.1 (UNAUTHORIZED error code).
 func TestHandlerRefusesUnresolvedTenantOutsideDevMode(t *testing.T) {
-	h := New(memstore.New(), Options{}).Handler()
+	h := asOwner(New(memstore.New(), Options{}).Handler())
 	for _, target := range []struct{ method, path string }{
 		{http.MethodGet, "/v1/sessions"},
 		{http.MethodGet, "/v1/sessions/sess-1"},
@@ -120,7 +121,7 @@ func TestHandlerRefusesUnresolvedTenantOutsideDevMode(t *testing.T) {
 //
 // spec: §5.1 (publishedMetadata visibility levels).
 func TestHandlerServesTenantlessRoutesWithoutPrincipal(t *testing.T) {
-	h := New(memstore.New(), Options{}).Handler()
+	h := asOwner(New(memstore.New(), Options{}).Handler())
 	for _, path := range []string{"/v1/runtimes/echo/meta/agent-card", "/internal/runtimes/echo/meta/agent-card"} {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, identityRequest(http.MethodGet, path, "", "", ""))
@@ -136,7 +137,7 @@ func TestHandlerServesTenantlessRoutesWithoutPrincipal(t *testing.T) {
 // spec: §17.4 (dev mode), §18 Phase 4 (the minimal gateway reads the
 // tenant from X-Lenny-Tenant-ID).
 func TestHandlerDevModeKeepsHeaderTenant(t *testing.T) {
-	h := New(memstore.New(), Options{DevTenantHeader: true}).Handler()
+	h := asOwner(New(memstore.New(), Options{DevTenantHeader: true}).Handler())
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, identityRequest(http.MethodGet, "/v1/sessions", "", "acme", ""))
 	if rr.Code != http.StatusOK {
@@ -163,7 +164,38 @@ func TestServiceEntryPointsFailClosedWithoutTenant(t *testing.T) {
 	if _, err := s.ServiceCall(ctx, "", http.MethodGet, "/v1/sessions", nil, "", nil); err == nil || err.Code != "UNAUTHORIZED" {
 		t.Fatalf("ServiceCall with no tenant: err %v, want UNAUTHORIZED", err)
 	}
-	if _, err := s.ServiceCall(ctx, "acme", http.MethodGet, "/v1/sessions", nil, "", nil); err != nil {
+	if _, err := s.ServiceCall(ownerCtx(ctx), "acme", http.MethodGet, "/v1/sessions", nil, "", nil); err != nil {
 		t.Fatalf("ServiceCall with tenant acme: err %v, want success", err)
+	}
+	// spec: §10.2 (Session ownership) rule 3 — a service tenant resolves
+	// the tenant only, so a list with no principal subject is refused.
+	if _, err := s.ServiceCall(ctx, "acme", http.MethodGet, "/v1/sessions", nil, "", nil); err == nil || err.Code != "UNAUTHORIZED" {
+		t.Fatalf("ServiceCall with tenant acme and no principal: err %v, want UNAUTHORIZED", err)
+	}
+}
+
+// TestOwnerFromPrincipal_spec_10_2 pins the owner source on the create
+// paths: the principal's Subject, and errNoPrincipalSubject for a context
+// with no principal or a principal whose Subject is empty.
+//
+// spec: 10.2 (Session ownership)
+func TestOwnerFromPrincipal_spec_10_2(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		ctx     context.Context
+		want    string
+		wantErr error
+	}{
+		{"subject", authmw.WithPrincipal(context.Background(), authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"}), "alice@acme.com", nil},
+		{"no principal", context.Background(), "", errNoPrincipalSubject},
+		{"service tenant only", contextWithServiceTenant(context.Background(), "acme"), "", errNoPrincipalSubject},
+		{"empty subject", authmw.WithPrincipal(context.Background(), authmw.Principal{TenantID: "acme"}), "", errNoPrincipalSubject},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ownerFromPrincipal(tc.ctx)
+			if got != tc.want || !errors.Is(err, tc.wantErr) {
+				t.Errorf("ownerFromPrincipal = %q, %v; want %q, %v", got, err, tc.want, tc.wantErr)
+			}
+		})
 	}
 }

@@ -33,7 +33,7 @@ func routerServerWithPools(t *testing.T, sessionID string, exps experimentstore.
 		Pools:           pools,
 		IDFunc:          func() string { return sessionID },
 	})
-	return srv.Handler(), store
+	return asOwner(srv.Handler()), store
 }
 
 // seedPool registers a warm pool at the given §5.3 isolation profile.
@@ -206,13 +206,13 @@ func TestExperimentRouterRejectionReporterReceivesEvent(t *testing.T) {
 	pools := poolstore.NewMemory()
 	seedPool(t, pools, "cc-v2-pool", isolation.ProfileSandboxed)
 	reporter := &recordingRejectionReporter{}
-	h := sessionserver.New(memstore.New(), sessionserver.Options{
+	h := asOwner(sessionserver.New(memstore.New(), sessionserver.Options{
 		DevTenantHeader:      true,
 		Experiments:          exps,
 		Pools:                pools,
 		ExperimentRejections: reporter,
 		IDFunc:               func() string { return "sess_report" },
-	}).Handler()
+	}).Handler())
 
 	rr := postSessionIso(t, h, "/v1/sessions", "claude-code", string(isolation.ProfileMicrovm))
 	if rr.Code != http.StatusUnprocessableEntity {
@@ -240,13 +240,13 @@ func TestExperimentRouterReporterSilentOnSuccessfulRouting(t *testing.T) {
 	pools := poolstore.NewMemory()
 	seedPool(t, pools, "cc-v2-pool", isolation.ProfileMicrovm)
 	reporter := &recordingRejectionReporter{}
-	h := sessionserver.New(memstore.New(), sessionserver.Options{
+	h := asOwner(sessionserver.New(memstore.New(), sessionserver.Options{
 		DevTenantHeader:      true,
 		Experiments:          exps,
 		Pools:                pools,
 		ExperimentRejections: reporter,
 		IDFunc:               func() string { return "sess_ok" },
-	}).Handler()
+	}).Handler())
 
 	rr := postSessionIso(t, h, "/v1/sessions", "claude-code", string(isolation.ProfileMicrovm))
 	if rr.Code != http.StatusCreated {

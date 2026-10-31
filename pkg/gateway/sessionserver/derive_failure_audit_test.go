@@ -90,7 +90,7 @@ func TestDeriveFailurePersistsAuditRow_spec_7_1_derive_rule_2(t *testing.T) {
 		PersistDeriveFailureRows: true,
 		IncDeriveFailureAudit:    ctr.inc,
 	}))
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	rr := deriveRequest(t, h, sessionserver.DeriveRequest{})
 	if rr.Code != http.StatusServiceUnavailable {
@@ -146,7 +146,7 @@ func TestDeriveFailureNoPersistByDefault_spec_7_1_derive_rule_2(t *testing.T) {
 		IncDeriveFailureAudit: ctr.inc,
 		// PersistDeriveFailureRows left false.
 	}))
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	rr := deriveRequest(t, h, sessionserver.DeriveRequest{})
 	if rr.Code != http.StatusServiceUnavailable {
@@ -175,7 +175,7 @@ func TestDeriveFailureCASFenceSkipsWrite_spec_7_1_derive_rule_2(t *testing.T) {
 		PersistDeriveFailureRows: true,
 		IncDeriveFailureAudit:    ctr.inc,
 	}))
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	rr := deriveRequest(t, h, sessionserver.DeriveRequest{})
 	if rr.Code != http.StatusServiceUnavailable {
@@ -228,7 +228,7 @@ func TestDeriveFailureFencedByAResumeEntry_spec_7_1(t *testing.T) {
 		PersistDeriveFailureRows: true,
 		IncDeriveFailureAudit:    ctr.inc,
 	}))
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	rr := deriveRequest(t, h, sessionserver.DeriveRequest{AllowStale: true})
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("derive status: got %d, want 503; body=%s", rr.Code, rr.Body.String())
@@ -257,7 +257,7 @@ func TestDeriveFailureAuditRowIsNoTreeNode_spec_15_1(t *testing.T) {
 		PersistDeriveFailureRows: true,
 	}))
 
-	if rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{}); rr.Code != http.StatusServiceUnavailable {
+	if rr := deriveRequest(t, asOwner(srv.Handler()), sessionserver.DeriveRequest{}); rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("derive status: got %d, want 503; body=%s", rr.Code, rr.Body.String())
 	}
 	row, err := store.Get(ctx, "acme", "sess_df")

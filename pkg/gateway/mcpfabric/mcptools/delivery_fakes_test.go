@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
@@ -151,6 +153,7 @@ func newMCPRoutingDeliveryWith(t *testing.T, exec executor.Executor, mutate func
 	}
 	del := &dlqDelivery{coord: coord}
 	deps := mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          exec,

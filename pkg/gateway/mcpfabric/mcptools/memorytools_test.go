@@ -8,6 +8,10 @@ import (
 	"testing"
 	"time"
 
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -24,6 +28,7 @@ func newMCPForMemory(t *testing.T) (*mcp.Server, sessionstore.Store, memorystore
 	mem := memorystore.NewInMemory(0, nil)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Memory:            mem,
@@ -45,7 +50,7 @@ func seedMemorySession(t *testing.T, store sessionstore.Store, id, user string) 
 
 func TestMemoryWriteAndQuery(t *testing.T) {
 	srv, store, _ := newMCPForMemory(t)
-	seedMemorySession(t, store, "sess_1", "alice")
+	seedMemorySession(t, store, "sess_1", ownerprincipal.Alice)
 
 	w := call(t, srv.Handler(), "lenny/memory_write",
 		`{"sessionId":"sess_1","content":"the deploy key lives in vault"}`)
@@ -70,8 +75,8 @@ func TestMemoryWriteAndQuery(t *testing.T) {
 func TestMemoryQueryRecallsAcrossSessions(t *testing.T) {
 	srv, store, _ := newMCPForMemory(t)
 	// Two sessions owned by the same user.
-	seedMemorySession(t, store, "sess_a", "alice")
-	seedMemorySession(t, store, "sess_b", "alice")
+	seedMemorySession(t, store, "sess_a", ownerprincipal.Alice)
+	seedMemorySession(t, store, "sess_b", ownerprincipal.Alice)
 
 	call(t, srv.Handler(), "lenny/memory_write",
 		`{"sessionId":"sess_a","content":"learned in session a"}`)
@@ -89,12 +94,12 @@ func TestMemoryQueryRecallsAcrossSessions(t *testing.T) {
 
 func TestMemoryQueryIsUserScoped(t *testing.T) {
 	srv, store, _ := newMCPForMemory(t)
-	seedMemorySession(t, store, "sess_alice", "alice")
+	seedMemorySession(t, store, "sess_alice", ownerprincipal.Alice)
 	seedMemorySession(t, store, "sess_bob", "bob")
 
 	call(t, srv.Handler(), "lenny/memory_write",
 		`{"sessionId":"sess_alice","content":"alice private note"}`)
-	q := call(t, srv.Handler(), "lenny/memory_query", `{"sessionId":"sess_bob","query":"private"}`)
+	q := callAs(t, srv.Handler(), authmw.Principal{Subject: "bob", TenantID: "acme"}, "lenny/memory_query", `{"sessionId":"sess_bob","query":"private"}`)
 	var resp struct {
 		Memories []json.RawMessage `json:"memories"`
 	}
@@ -106,7 +111,7 @@ func TestMemoryQueryIsUserScoped(t *testing.T) {
 
 func TestMemoryWriteRejectsMissingContent(t *testing.T) {
 	srv, store, _ := newMCPForMemory(t)
-	seedMemorySession(t, store, "sess_1", "alice")
+	seedMemorySession(t, store, "sess_1", ownerprincipal.Alice)
 	resp := call(t, srv.Handler(), "lenny/memory_write", `{"sessionId":"sess_1"}`)
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {

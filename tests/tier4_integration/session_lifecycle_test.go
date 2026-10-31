@@ -52,6 +52,7 @@ func TestSessionLifecycleAgainstRealGateway(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPost, base+path, reader)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 		if uploadToken != "" && strings.HasSuffix(path, "/finalize") {
 			req.Header.Set("X-Lenny-Upload-Token", uploadToken)
 		}
@@ -117,6 +118,7 @@ func TestSessionLifecycleAgainstRealGateway(t *testing.T) {
 	// GET the final state from a fresh request.
 	getReq, _ := http.NewRequest(http.MethodGet, base+"/v1/sessions/"+id, nil)
 	getReq.Header.Set("X-Lenny-Tenant-ID", "acme")
+	getReq.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 	getResp, err := client.Do(getReq)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
@@ -146,6 +148,7 @@ func TestCrossTenantLookupRejectedAgainstRealGateway(t *testing.T) {
 		bytes.NewReader(mustJSON(map[string]any{"runtimeRef": "claude-code"})))
 	req1.Header.Set("Content-Type", "application/json")
 	req1.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req1.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 	resp1, err := http.DefaultClient.Do(req1)
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -159,6 +162,7 @@ func TestCrossTenantLookupRejectedAgainstRealGateway(t *testing.T) {
 	// Read as tenant globex — must 404.
 	req2, _ := http.NewRequest(http.MethodGet, base+"/v1/sessions/"+id, nil)
 	req2.Header.Set("X-Lenny-Tenant-ID", "globex")
+	req2.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 	resp2, err := http.DefaultClient.Do(req2)
 	if err != nil {
 		t.Fatalf("read: %v", err)

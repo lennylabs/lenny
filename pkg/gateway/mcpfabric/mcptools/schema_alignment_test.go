@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -70,6 +72,7 @@ func schemaServer(t *testing.T) *mcp.Server {
 	t.Helper()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             memstore.New(),
 		InputWaits:        inputwait.NewRegistry(),
@@ -251,7 +254,7 @@ func TestSetTracingContextSchemaMatchesSpec_spec_8_3_8_5(t *testing.T) {
 func TestMemoryWriteRejectsNonStringMetadata_spec_8_5_F_8_5_14(t *testing.T) {
 	srv, store, _ := newMCPForMemory(t)
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_m", TenantID: "acme", UserID: "alice", State: session.StateRunning,
+		ID: "sess_m", TenantID: "acme", UserID: ownerprincipal.Alice, State: session.StateRunning,
 	})
 	resp := call(t, srv.Handler(), "lenny/memory_write",
 		`{"sessionId":"sess_m","content":"x","metadata":{"k":123}}`)
@@ -271,10 +274,10 @@ func TestMemoryWriteRejectsNonStringMetadata_spec_8_5_F_8_5_14(t *testing.T) {
 // spec: §8.5; F-8.5.14.
 func TestMemoryQueryDefaultsLimitToTen_spec_8_5_F_8_5_14(t *testing.T) {
 	srv, store, mem := newMCPForMemory(t)
-	seedMemorySession(t, store, "sess_q", "alice")
+	seedMemorySession(t, store, "sess_q", ownerprincipal.Alice)
 	// Seed 12 memories whose content matches the query string; the
 	// default limit must keep us at 10, not 12.
-	scope := memorystore.MemoryScope{TenantID: "acme", UserID: "alice", AgentType: "echo", SessionID: "sess_q"}
+	scope := memorystore.MemoryScope{TenantID: "acme", UserID: ownerprincipal.Alice, AgentType: "echo", SessionID: "sess_q"}
 	for i := 0; i < 12; i++ {
 		_ = mem.Write(context.Background(), scope,
 			[]memorystore.Memory{{Content: "needle entry"}})
@@ -309,6 +312,7 @@ func TestRequestInputEmitsPartsOnEventStream_spec_8_5_F_8_5_12(t *testing.T) {
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:      ownerprincipal.SessionAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
 		Events:              bus,
@@ -317,7 +321,8 @@ func TestRequestInputEmitsPartsOnEventStream_spec_8_5_F_8_5_12(t *testing.T) {
 		TenantID:            "acme",
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_i", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_i", TenantID: "acme", State: session.StateRunning,
 	})
 	h := srv.Handler()
 	done := make(chan map[string]any, 1)

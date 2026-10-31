@@ -31,6 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // openUploadBreaker returns a §4.1 per-subsystem breaker already in the
@@ -78,7 +79,7 @@ func TestOpenUploadSubsystemBreakerReturns503WhileStreamProxyServes(t *testing.T
 			Breaker: openUploadBreaker(t),
 		},
 	})
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	// Create a session so the Stream Proxy attach below targets a real
@@ -126,7 +127,7 @@ func TestOpenUploadSubsystemBreakerReturns503WhileStreamProxyServes(t *testing.T
 func createSession(t *testing.T, ts *httptest.Server) string {
 	t.Helper()
 	resp, body := doRequest(t, ts, http.MethodPost, "/v1/sessions", "application/json",
-		`{"runtimeRef":"claude-code","userId":"alice@acme.com"}`, nil)
+		`{"runtimeRef":"claude-code"}`, nil)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create session: want 201, got %d (body %v)", resp.StatusCode, body)
 	}

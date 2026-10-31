@@ -70,8 +70,8 @@ func TestInterruptRevalidatesOnTheLockedRow_spec_7_2(t *testing.T) {
 			// A child row names the session as its parent, so a re-arm has a
 			// parent to name.
 			for _, row := range []sessionstore.Session{
-				{ID: "s1", TenantID: "acme", State: tc.state, SuspendedReason: tc.reason, CreatedAt: now, UpdatedAt: now},
-				{ID: "c1", TenantID: "acme", State: session.StateRunning, ParentSessionID: "s1", RootSessionID: "s1", CreatedAt: now, UpdatedAt: now},
+				{ID: "s1", UserID: testOwner, TenantID: "acme", State: tc.state, SuspendedReason: tc.reason, CreatedAt: now, UpdatedAt: now},
+				{ID: "c1", UserID: testOwner, TenantID: "acme", State: session.StateRunning, ParentSessionID: "s1", RootSessionID: "s1", CreatedAt: now, UpdatedAt: now},
 			} {
 				if err := base.Create(context.Background(), row); err != nil {
 					t.Fatalf("seed: %v", err)
@@ -82,7 +82,7 @@ func TestInterruptRevalidatesOnTheLockedRow_spec_7_2(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/sessions/s1/interrupt", nil)
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
 			rr := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rr, req)
+			asOwner(srv.Handler()).ServeHTTP(rr, req)
 			if rr.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d; body=%s", rr.Code, tc.wantStatus, rr.Body.String())
 			}

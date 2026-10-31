@@ -46,10 +46,6 @@ type DeriveRequest struct {
 	// target pool's `sessionIsolationLevel.isolationProfile`.
 	TargetIsolationProfile isolation.Profile `json:"targetIsolationProfile,omitempty"`
 
-	// UserID overrides the derived session's user. Optional — when
-	// blank, the derived session inherits the source's userId.
-	UserID string `json:"userId,omitempty"`
-
 	// AllowStale lifts the §7.1 derive rule 1 precondition for
 	// non-terminal source sessions. Without this flag, derives from
 	// `running`, `suspended`, `resume_pending`, or
@@ -337,12 +333,9 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resolve the derived session's userId, inheriting the source's value
-	// when the request omits it.
-	userID := req.UserID
-	if userID == "" {
-		userID = source.UserID
-	}
+	// spec: §10.2 (Session ownership) rule 2 — a derived session takes its
+	// source session's owner. No request field sets it.
+	userID := source.UserID
 	pool := req.TargetPool
 	if pool == "" {
 		pool = source.PoolRef

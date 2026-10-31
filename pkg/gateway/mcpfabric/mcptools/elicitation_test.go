@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -69,6 +71,7 @@ func newMCPForChain(t *testing.T, opts chainOpts) (*mcp.Server, sessionstore.Sto
 		timeout = 5 * time.Second
 	}
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:              ownerprincipal.SessionAccess{},
 		DevTenantFallback:           true,
 		Store:                       store,
 		Interactions:                interactions,
@@ -210,9 +213,9 @@ func resolveAt(t *testing.T, store interactionstore.Store, sessionID, userID, id
 func TestElicitationForwardsUpMultipleHops(t *testing.T) {
 	srv, store, interactions := newMCPForChain(t, chainOpts{})
 	// root → mid → leaf delegation tree; the leaf raises the elicitation.
-	mkUserSession(t, store, "sess_root", "alice", "")
-	mkUserSession(t, store, "sess_mid", "alice", "sess_root")
-	mkUserSession(t, store, "sess_leaf", "alice", "sess_mid")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
+	mkUserSession(t, store, "sess_mid", ownerprincipal.Alice, "sess_root")
+	mkUserSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_mid")
 	h := srv.Handler()
 
 	got := make(chan map[string]any, 1)
@@ -223,16 +226,16 @@ func TestElicitationForwardsUpMultipleHops(t *testing.T) {
 
 	// §9.2: the elicitation forwarded up to the root — it is NOT
 	// recorded against the raising leaf or the intermediate hop.
-	waitElicitationFor(t, interactions, "sess_root", "alice", "elic_x")
-	if _, err := interactions.Get(context.Background(), "acme", "sess_leaf", "alice", "elic_x"); err == nil {
+	waitElicitationFor(t, interactions, "sess_root", ownerprincipal.Alice, "elic_x")
+	if _, err := interactions.Get(context.Background(), "acme", "sess_leaf", ownerprincipal.Alice, "elic_x"); err == nil {
 		t.Error("the elicitation was recorded against the raising leaf, not the chain terminus")
 	}
-	if _, err := interactions.Get(context.Background(), "acme", "sess_mid", "alice", "elic_x"); err == nil {
+	if _, err := interactions.Get(context.Background(), "acme", "sess_mid", ownerprincipal.Alice, "elic_x"); err == nil {
 		t.Error("the elicitation was recorded against an intermediate hop")
 	}
 
 	// The human at the root resolves it; the raising leaf unblocks.
-	resolveAt(t, interactions, "sess_root", "alice", "elic_x", "yes")
+	resolveAt(t, interactions, "sess_root", ownerprincipal.Alice, "elic_x", "yes")
 	select {
 	case resp := <-got:
 		if text := resultText(t, resp); !strings.Contains(text, "yes") {
@@ -251,9 +254,9 @@ func TestElicitationParentIntercepts(t *testing.T) {
 		// The middle session intercepts the chain.
 		intercepts: func(s sessionstore.Session) bool { return s.ID == "sess_mid" },
 	})
-	mkUserSession(t, store, "sess_root", "alice", "")
-	mkUserSession(t, store, "sess_mid", "alice", "sess_root")
-	mkUserSession(t, store, "sess_leaf", "alice", "sess_mid")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
+	mkUserSession(t, store, "sess_mid", ownerprincipal.Alice, "sess_root")
+	mkUserSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_mid")
 	h := srv.Handler()
 
 	got := make(chan map[string]any, 1)
@@ -264,13 +267,13 @@ func TestElicitationParentIntercepts(t *testing.T) {
 
 	// §9.2: the chain stopped at the intercepting parent — recorded
 	// against sess_mid, never reaching the root.
-	waitElicitationFor(t, interactions, "sess_mid", "alice", "elic_x")
-	if _, err := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x"); err == nil {
+	waitElicitationFor(t, interactions, "sess_mid", ownerprincipal.Alice, "elic_x")
+	if _, err := interactions.Get(context.Background(), "acme", "sess_root", ownerprincipal.Alice, "elic_x"); err == nil {
 		t.Error("the elicitation was forwarded past the intercepting parent to the root")
 	}
 
 	// The intercepting parent answers it.
-	resolveAt(t, interactions, "sess_mid", "alice", "elic_x", "intercepted-answer")
+	resolveAt(t, interactions, "sess_mid", ownerprincipal.Alice, "elic_x", "intercepted-answer")
 	select {
 	case resp := <-got:
 		if text := resultText(t, resp); !strings.Contains(text, "intercepted-answer") {
@@ -286,17 +289,17 @@ func TestElicitationParentIntercepts(t *testing.T) {
 // re-emission can be verified against the original {message, schema}.
 func TestElicitationContentDigestRecorded(t *testing.T) {
 	srv, store, interactions := newMCPForChain(t, chainOpts{})
-	mkUserSession(t, store, "sess_root", "alice", "")
-	mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
+	mkUserSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_root")
 	h := srv.Handler()
 
 	go func() {
 		_ = call(t, h, "lenny/request_elicitation",
 			`{"sessionId":"sess_leaf","message":"approve the deploy?","schema":{"type":"boolean"},"elicitationId":"elic_x"}`)
 	}()
-	waitElicitationFor(t, interactions, "sess_root", "alice", "elic_x")
+	waitElicitationFor(t, interactions, "sess_root", ownerprincipal.Alice, "elic_x")
 
-	in, err := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x")
+	in, err := interactions.Get(context.Background(), "acme", "sess_root", ownerprincipal.Alice, "elic_x")
 	if err != nil {
 		t.Fatalf("get elicitation: %v", err)
 	}
@@ -340,6 +343,7 @@ func newMCPForProvenance(t *testing.T) (*mcp.Server, sessionstore.Store, interac
 	bus := sessionevents.NewBus(16)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:     ownerprincipal.SessionAccess{},
 		DevTenantFallback:  true,
 		Store:              store,
 		Interactions:       interactions,
@@ -387,18 +391,18 @@ func detailInt(v any) (int, bool) {
 // spec: §9.2; §16.7. F-9.2.6.
 func TestElicitationStampsProvenanceOnInteraction_spec_9_2_F_9_2_6(t *testing.T) {
 	srv, store, interactions, _ := newMCPForProvenance(t)
-	mkUserSession(t, store, "sess_root", "alice", "")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
 	// sess_leaf is one delegation hop below the root and runs python-3.12.
-	mkRuntimeSession(t, store, "sess_leaf", "alice", "sess_root", "python-3.12")
+	mkRuntimeSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_root", "python-3.12")
 	h := srv.Handler()
 
 	go func() {
 		_ = call(t, h, "lenny/request_elicitation",
 			`{"sessionId":"sess_leaf","message":"approve the deploy?","schema":{"type":"boolean"},"elicitationId":"elic_x"}`)
 	}()
-	waitElicitationFor(t, interactions, "sess_root", "alice", "elic_x")
+	waitElicitationFor(t, interactions, "sess_root", ownerprincipal.Alice, "elic_x")
 
-	in, err := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x")
+	in, err := interactions.Get(context.Background(), "acme", "sess_root", ownerprincipal.Alice, "elic_x")
 	if err != nil {
 		t.Fatalf("get elicitation: %v", err)
 	}
@@ -415,7 +419,7 @@ func TestElicitationStampsProvenanceOnInteraction_spec_9_2_F_9_2_6(t *testing.T)
 		t.Errorf("Detail originRuntime = %q, want python-3.12", got)
 	}
 	// Unblock the request_elicitation goroutine.
-	resolveAt(t, interactions, "sess_root", "alice", "elic_x", true)
+	resolveAt(t, interactions, "sess_root", ownerprincipal.Alice, "elic_x", true)
 }
 
 // TestElicitationStampsProvenanceOnEvent proves the §9.2 provenance
@@ -426,8 +430,8 @@ func TestElicitationStampsProvenanceOnInteraction_spec_9_2_F_9_2_6(t *testing.T)
 // agent-initiated prompt. spec: §9.2. F-9.2.6.
 func TestElicitationStampsProvenanceOnEvent_spec_9_2_F_9_2_6(t *testing.T) {
 	srv, store, interactions, bus := newMCPForProvenance(t)
-	mkUserSession(t, store, "sess_root", "alice", "")
-	mkRuntimeSession(t, store, "sess_leaf", "alice", "sess_root", "python-3.12")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
+	mkRuntimeSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_root", "python-3.12")
 
 	// Subscribe to the resolver session before raising so the live
 	// elicitation_request event is delivered to this subscriber.
@@ -471,7 +475,7 @@ func TestElicitationStampsProvenanceOnEvent_spec_9_2_F_9_2_6(t *testing.T) {
 		t.Errorf("event originRuntime = %q, want python-3.12", payload.OriginRuntime)
 	}
 	// Unblock the request_elicitation goroutine.
-	resolveAt(t, interactions, "sess_root", "alice", "elic_x", true)
+	resolveAt(t, interactions, "sess_root", ownerprincipal.Alice, "elic_x", true)
 }
 
 // TestElicitationDepthSuppressed proves a §9.2 depth-suppressed
@@ -483,9 +487,9 @@ func TestElicitationDepthSuppressed(t *testing.T) {
 		suppressAt: 2,
 		timeout:    time.Second,
 	})
-	mkUserSession(t, store, "sess_root", "alice", "")
-	mkUserSession(t, store, "sess_mid", "alice", "sess_root")
-	mkUserSession(t, store, "sess_leaf", "alice", "sess_mid") // depth 2
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
+	mkUserSession(t, store, "sess_mid", ownerprincipal.Alice, "sess_root")
+	mkUserSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_mid") // depth 2
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
 		`{"sessionId":"sess_leaf","message":"ask","schema":{},"elicitationId":"elic_x"}`)
@@ -494,7 +498,7 @@ func TestElicitationDepthSuppressed(t *testing.T) {
 		t.Errorf("result = %q, want a SUPPRESSED response", text)
 	}
 	for _, sid := range []string{"sess_leaf", "sess_mid", "sess_root"} {
-		if _, err := interactions.Get(context.Background(), "acme", sid, "alice", "elic_x"); err == nil {
+		if _, err := interactions.Get(context.Background(), "acme", sid, ownerprincipal.Alice, "elic_x"); err == nil {
 			t.Errorf("a suppressed elicitation was recorded against %s", sid)
 		}
 	}
@@ -509,20 +513,20 @@ func TestElicitationLifecycleAdmitAndResolveBumpsMetrics_spec_16_1_F_9_2_14(t *t
 	srv, store, interactions := newMCPForChain(t, chainOpts{
 		lifecycle: lc,
 	})
-	mkUserSession(t, store, "sess_root", "alice", "")
-	mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
+	mkUserSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_root")
 	h := srv.Handler()
 
 	go func() {
 		_ = call(t, h, "lenny/request_elicitation",
 			`{"sessionId":"sess_leaf","message":"ok?","schema":{},"elicitationId":"elic_x"}`)
 	}()
-	waitElicitationFor(t, interactions, "sess_root", "alice", "elic_x")
+	waitElicitationFor(t, interactions, "sess_root", ownerprincipal.Alice, "elic_x")
 	// Admit → pending gauge incremented to at least 1.
 	if lc.getPendingMax() < 1 {
 		t.Errorf("pendingMax = %d, want >= 1 (admit must Inc the pending gauge)", lc.getPendingMax())
 	}
-	resolveAt(t, interactions, "sess_root", "alice", "elic_x", "yes")
+	resolveAt(t, interactions, "sess_root", ownerprincipal.Alice, "elic_x", "yes")
 	// Wait until the dispatcher records terminal — Allow time for the
 	// poll cycle.
 	deadline := time.Now().Add(2 * time.Second)
@@ -552,8 +556,8 @@ func TestElicitationLifecycleTimeoutBumpsTimeoutCounter_spec_16_1_F_9_2_14(t *te
 		lifecycle: lc,
 		timeout:   80 * time.Millisecond,
 	})
-	mkUserSession(t, store, "sess_root", "alice", "")
-	mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
+	mkUserSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_root")
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
 		`{"sessionId":"sess_leaf","message":"ok?","schema":{},"elicitationId":"elic_x"}`)
@@ -583,8 +587,8 @@ func TestElicitationLifecycleSuppressionBumpsSuppressedCounter_spec_16_1_F_9_2_1
 		suppressAt: 1,
 		lifecycle:  lc,
 	})
-	mkUserSession(t, store, "sess_root", "alice", "")
-	mkUserSession(t, store, "sess_leaf", "alice", "sess_root") // depth 1
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
+	mkUserSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_root") // depth 1
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
 		`{"sessionId":"sess_leaf","message":"ok?","schema":{},"elicitationId":"elic_x"}`)
@@ -612,8 +616,8 @@ func TestURLModeElicitationAllowedDomain(t *testing.T) {
 		},
 		drops: drops,
 	})
-	mkUserSession(t, store, "sess_root", "alice", "")
-	mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
+	mkUserSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_root")
 	h := srv.Handler()
 
 	go func() {
@@ -622,7 +626,7 @@ func TestURLModeElicitationAllowedDomain(t *testing.T) {
 	}()
 	// An allowlisted url-mode elicitation is recorded — it forwarded up
 	// the chain normally.
-	waitElicitationFor(t, interactions, "sess_root", "alice", "elic_x")
+	waitElicitationFor(t, interactions, "sess_root", ownerprincipal.Alice, "elic_x")
 	if len(drops.reasons) != 0 {
 		t.Errorf("an allowed url-mode elicitation incremented drop counter: %+v", drops.reasons)
 	}
@@ -647,8 +651,8 @@ func TestURLModeElicitationDisallowedDomain_spec_9_2_F_9_2_11(t *testing.T) {
 		},
 		drops: drops,
 	})
-	mkUserSession(t, store, "sess_root", "alice", "")
-	mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
+	mkUserSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_root")
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
 		`{"sessionId":"sess_leaf","message":"sign in","schema":{},"url":"https://phish.evil.test/login","elicitationId":"elic_x"}`)
@@ -666,7 +670,7 @@ func TestURLModeElicitationDisallowedDomain_spec_9_2_F_9_2_11(t *testing.T) {
 		t.Errorf("drop reasons = %v, want [domain_not_allowlisted]", drops.reasons)
 	}
 	// The dropped elicitation was not recorded.
-	if _, err := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x"); err == nil {
+	if _, err := interactions.Get(context.Background(), "acme", "sess_root", ownerprincipal.Alice, "elic_x"); err == nil {
 		t.Error("a dropped url-mode elicitation was recorded in the interaction store")
 	}
 }
@@ -682,7 +686,7 @@ func TestURLModeElicitationAgentBlockedByDefault(t *testing.T) {
 	// No urlMode allowlist configured — the §9.2 default blocks
 	// agent-initiated url-mode.
 	srv, store, _ := newMCPForChain(t, chainOpts{drops: drops})
-	mkUserSession(t, store, "sess_root", "alice", "")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
 		`{"sessionId":"sess_root","message":"sign in","schema":{},"url":"https://accounts.example.com/oauth","elicitationId":"elic_x"}`)
@@ -708,7 +712,7 @@ func TestURLModeElicitationAgentBlockedByDefault(t *testing.T) {
 func TestRequestElicitationDropsSelfAssertedConnector_spec_9_2(t *testing.T) {
 	drops := &recordingDropMetric{}
 	srv, store, interactions := newMCPForChain(t, chainOpts{drops: drops})
-	mkUserSession(t, store, "sess_root", "alice", "")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
 		`{"sessionId":"sess_root","message":"sign in","schema":{},"url":"https://github.com/login/oauth/authorize","initiatorType":"connector","elicitationId":"elic_x"}`)
@@ -720,7 +724,7 @@ func TestRequestElicitationDropsSelfAssertedConnector_spec_9_2(t *testing.T) {
 		t.Errorf("drop reasons = %v, want one [domain_not_allowlisted] (agent-initiated path)", drops.reasons)
 	}
 	// The dropped elicitation was never recorded against the resolver.
-	if _, err := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x"); err == nil {
+	if _, err := interactions.Get(context.Background(), "acme", "sess_root", ownerprincipal.Alice, "elic_x"); err == nil {
 		t.Error("a dropped self-asserted-connector elicitation must not be recorded")
 	}
 }
@@ -732,12 +736,12 @@ func TestResolveElicitationAuthorizedResolver(t *testing.T) {
 	ctx := context.Background()
 	if err := store.Put(ctx, interactionstore.Interaction{
 		ID: "elic_x", Kind: interactionstore.KindElicitation,
-		SessionID: "sess_root", TenantID: "acme", UserID: "alice",
+		SessionID: "sess_root", TenantID: "acme", UserID: ownerprincipal.Alice,
 		Phase: interactionstore.PhasePending,
 	}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	out, err := mcptools.ResolveElicitation(ctx, store, "acme", "sess_root", "alice", "elic_x",
+	out, err := mcptools.ResolveElicitation(ctx, store, "acme", "sess_root", ownerprincipal.Alice, "elic_x",
 		interactionstore.PhaseResponded, "yes", "")
 	if err != nil {
 		t.Fatalf("the authorized resolver must succeed: %v", err)
@@ -755,7 +759,7 @@ func TestResolveElicitationWrongUserRejected(t *testing.T) {
 	ctx := context.Background()
 	if err := store.Put(ctx, interactionstore.Interaction{
 		ID: "elic_x", Kind: interactionstore.KindElicitation,
-		SessionID: "sess_root", TenantID: "acme", UserID: "alice",
+		SessionID: "sess_root", TenantID: "acme", UserID: ownerprincipal.Alice,
 		Phase: interactionstore.PhasePending,
 	}); err != nil {
 		t.Fatalf("put: %v", err)
@@ -777,14 +781,14 @@ func TestResolveElicitationWrongSessionRejected(t *testing.T) {
 	// The elicitation was issued against the chain resolver sess_root.
 	if err := store.Put(ctx, interactionstore.Interaction{
 		ID: "elic_x", Kind: interactionstore.KindElicitation,
-		SessionID: "sess_root", TenantID: "acme", UserID: "alice",
+		SessionID: "sess_root", TenantID: "acme", UserID: ownerprincipal.Alice,
 		Phase: interactionstore.PhasePending,
 	}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 	// A resolution that names a different session — the raising leaf —
 	// must not match.
-	_, err := mcptools.ResolveElicitation(ctx, store, "acme", "sess_leaf", "alice", "elic_x",
+	_, err := mcptools.ResolveElicitation(ctx, store, "acme", "sess_leaf", ownerprincipal.Alice, "elic_x",
 		interactionstore.PhaseResponded, "yes", "")
 	if err != mcptools.ErrElicitationNotFound {
 		t.Fatalf("err = %v, want ErrElicitationNotFound for a wrong-session resolve", err)
@@ -798,12 +802,12 @@ func TestResolveElicitationWrongKindRejected(t *testing.T) {
 	ctx := context.Background()
 	if err := store.Put(ctx, interactionstore.Interaction{
 		ID: "tc_x", Kind: interactionstore.KindToolUse,
-		SessionID: "sess_root", TenantID: "acme", UserID: "alice",
+		SessionID: "sess_root", TenantID: "acme", UserID: ownerprincipal.Alice,
 		Phase: interactionstore.PhasePending,
 	}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	_, err := mcptools.ResolveElicitation(ctx, store, "acme", "sess_root", "alice", "tc_x",
+	_, err := mcptools.ResolveElicitation(ctx, store, "acme", "sess_root", ownerprincipal.Alice, "tc_x",
 		interactionstore.PhaseResponded, "yes", "")
 	if err != mcptools.ErrElicitationNotFound {
 		t.Fatalf("err = %v, want ErrElicitationNotFound for a tool-use interaction", err)
@@ -817,12 +821,12 @@ func TestResolveElicitationDismiss(t *testing.T) {
 	ctx := context.Background()
 	if err := store.Put(ctx, interactionstore.Interaction{
 		ID: "elic_x", Kind: interactionstore.KindElicitation,
-		SessionID: "sess_root", TenantID: "acme", UserID: "alice",
+		SessionID: "sess_root", TenantID: "acme", UserID: ownerprincipal.Alice,
 		Phase: interactionstore.PhasePending,
 	}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	out, err := mcptools.ResolveElicitation(ctx, store, "acme", "sess_root", "alice", "elic_x",
+	out, err := mcptools.ResolveElicitation(ctx, store, "acme", "sess_root", ownerprincipal.Alice, "elic_x",
 		interactionstore.PhaseDismissed, nil, "user_cancelled")
 	if err != nil {
 		t.Fatalf("dismiss: %v", err)
@@ -838,11 +842,11 @@ func TestResolveElicitationDismiss(t *testing.T) {
 // F-9.2.17.
 func TestMCPRespondToElicitationResolves(t *testing.T) {
 	srv, store, interactions := newMCPForChain(t, chainOpts{})
-	mkUserSession(t, store, "sess_root", "alice", "")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
 	ctx := context.Background()
 	if err := interactions.Put(ctx, interactionstore.Interaction{
 		ID: "elic_x", Kind: interactionstore.KindElicitation,
-		SessionID: "sess_root", TenantID: "acme", UserID: "alice",
+		SessionID: "sess_root", TenantID: "acme", UserID: ownerprincipal.Alice,
 		Phase: interactionstore.PhasePending,
 	}); err != nil {
 		t.Fatalf("put: %v", err)
@@ -853,7 +857,7 @@ func TestMCPRespondToElicitationResolves(t *testing.T) {
 	if !strings.Contains(text, "responded") {
 		t.Errorf("respond result = %q, want a responded phase", text)
 	}
-	cur, err := interactions.Get(ctx, "acme", "sess_root", "alice", "elic_x")
+	cur, err := interactions.Get(ctx, "acme", "sess_root", ownerprincipal.Alice, "elic_x")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -871,12 +875,12 @@ func TestMCPRespondToElicitationTripleMismatchSurfacesNotFound(t *testing.T) {
 	srv, store, interactions := newMCPForChain(t, chainOpts{})
 	// The elicitation is bound to alice's session; bob's session targets
 	// the same elicitation id and must collapse to not-found.
-	mkUserSession(t, store, "sess_root", "alice", "")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
 	mkUserSession(t, store, "sess_bob", "bob", "")
 	ctx := context.Background()
 	if err := interactions.Put(ctx, interactionstore.Interaction{
 		ID: "elic_x", Kind: interactionstore.KindElicitation,
-		SessionID: "sess_root", TenantID: "acme", UserID: "alice",
+		SessionID: "sess_root", TenantID: "acme", UserID: ownerprincipal.Alice,
 		Phase: interactionstore.PhasePending,
 	}); err != nil {
 		t.Fatalf("put: %v", err)
@@ -898,18 +902,18 @@ func TestMCPRespondToElicitationTripleMismatchSurfacesNotFound(t *testing.T) {
 // caller-supplied reason. F-9.2.17.
 func TestMCPDismissElicitation(t *testing.T) {
 	srv, store, interactions := newMCPForChain(t, chainOpts{})
-	mkUserSession(t, store, "sess_root", "alice", "")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
 	ctx := context.Background()
 	if err := interactions.Put(ctx, interactionstore.Interaction{
 		ID: "elic_x", Kind: interactionstore.KindElicitation,
-		SessionID: "sess_root", TenantID: "acme", UserID: "alice",
+		SessionID: "sess_root", TenantID: "acme", UserID: ownerprincipal.Alice,
 		Phase: interactionstore.PhasePending,
 	}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 	_ = callAs(t, srv.Handler(), ownerPrincipal, "lenny/dismiss_elicitation",
 		`{"sessionId":"sess_root","elicitationId":"elic_x","reason":"user_cancelled"}`)
-	cur, err := interactions.Get(ctx, "acme", "sess_root", "alice", "elic_x")
+	cur, err := interactions.Get(ctx, "acme", "sess_root", ownerprincipal.Alice, "elic_x")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -924,16 +928,16 @@ func TestMCPDismissElicitation(t *testing.T) {
 // envelope rather than crashing or silently overwriting. F-9.2.17.
 func TestMCPRespondToElicitationAlreadyResolvedSurfacesConflict(t *testing.T) {
 	srv, store, interactions := newMCPForChain(t, chainOpts{})
-	mkUserSession(t, store, "sess_root", "alice", "")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
 	ctx := context.Background()
 	if err := interactions.Put(ctx, interactionstore.Interaction{
 		ID: "elic_x", Kind: interactionstore.KindElicitation,
-		SessionID: "sess_root", TenantID: "acme", UserID: "alice",
+		SessionID: "sess_root", TenantID: "acme", UserID: ownerprincipal.Alice,
 		Phase: interactionstore.PhasePending,
 	}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	if _, err := interactions.Resolve(ctx, "acme", "sess_root", "alice", "elic_x",
+	if _, err := interactions.Resolve(ctx, "acme", "sess_root", ownerprincipal.Alice, "elic_x",
 		func(i *interactionstore.Interaction) error {
 			i.Phase = interactionstore.PhaseResponded
 			i.Response = "first"
@@ -1025,14 +1029,14 @@ func TestRequestElicitationTerminalCheckReadsThePrimary_spec_9_2(t *testing.T) {
 				return &splitPrimaryStore{Store: st, primaryState: session.StateCompleted}
 			},
 		})
-		mkUserSession(t, store, "sess_root", "alice", "")
-		mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
+		mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
+		mkUserSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_root")
 
 		resp := call(t, srv.Handler(), "lenny/request_elicitation", args)
 		if code := toolErrorCode(t, resp); code != "INVALID_STATE_TRANSITION" {
 			t.Fatalf("error code = %q, want INVALID_STATE_TRANSITION for a session terminal on the primary: %+v", code, resp)
 		}
-		if _, err := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x"); err == nil {
+		if _, err := interactions.Get(context.Background(), "acme", "sess_root", ownerprincipal.Alice, "elic_x"); err == nil {
 			t.Error("a refused raise recorded an elicitation")
 		}
 		if lc.getPendingMax() != 0 {
@@ -1047,14 +1051,14 @@ func TestRequestElicitationTerminalCheckReadsThePrimary_spec_9_2(t *testing.T) {
 				return &splitPrimaryStore{Store: st, primaryErr: errors.New("primary unreachable")}
 			},
 		})
-		mkUserSession(t, store, "sess_root", "alice", "")
-		mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
+		mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
+		mkUserSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_root")
 
 		resp := call(t, srv.Handler(), "lenny/request_elicitation", args)
 		if code := toolErrorCode(t, resp); code != "RESOURCE_NOT_FOUND" {
 			t.Fatalf("error code = %q, want the session lookup error RESOURCE_NOT_FOUND: %+v", code, resp)
 		}
-		if _, err := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x"); err == nil {
+		if _, err := interactions.Get(context.Background(), "acme", "sess_root", ownerprincipal.Alice, "elic_x"); err == nil {
 			t.Error("a raise whose primary read failed recorded an elicitation")
 		}
 		if lc.getPendingMax() != 0 {
@@ -1073,15 +1077,15 @@ func TestRequestElicitationTerminalCheckReadsThePrimary_spec_9_2(t *testing.T) {
 func TestRequestElicitationWaiterExitsWhenExpired_spec_9_2(t *testing.T) {
 	lc := &recordingLifecycleMetric{}
 	srv, store, interactions := newMCPForChain(t, chainOpts{lifecycle: lc, timeout: time.Minute})
-	mkUserSession(t, store, "sess_root", "alice", "")
-	mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
+	mkUserSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_root")
 
 	done := make(chan map[string]any, 1)
 	go func() {
 		done <- call(t, srv.Handler(), "lenny/request_elicitation",
 			`{"sessionId":"sess_leaf","message":"ok?","schema":{},"elicitationId":"elic_x"}`)
 	}()
-	waitElicitationFor(t, interactions, "sess_root", "alice", "elic_x")
+	waitElicitationFor(t, interactions, "sess_root", ownerprincipal.Alice, "elic_x")
 	n, err := interactions.ExpireRaisedBy(context.Background(), "acme", "sess_leaf")
 	if err != nil || n != 1 {
 		t.Fatalf("ExpireRaisedBy = %d, %v; want the raised elicitation deleted", n, err)
@@ -1116,4 +1120,4 @@ func TestRequestElicitationWaiterExitsWhenExpired_spec_9_2(t *testing.T) {
 // key the (tenant, session, user, elicitation) triple on the principal's
 // subject, as the REST resolution endpoints do.
 // spec: §9.2 (respond_to_elicitation authorization).
-var ownerPrincipal = authmw.Principal{Subject: "alice", TenantID: "acme"}
+var ownerPrincipal = authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme"}

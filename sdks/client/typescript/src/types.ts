@@ -22,9 +22,6 @@ export interface CreateSessionRequest {
   /** The runtime the session targets. Required. */
   runtimeRef: string;
 
-  /** The §10.2 user the session is created for. Optional. */
-  userId?: string;
-
   /**
    * The §14 workspace plan submitted at creation. Optional; an absent
    * plan starts the session with an empty workspace.

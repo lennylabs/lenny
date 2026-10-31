@@ -180,10 +180,6 @@ class Helper {
     const req: CreateSessionRequest = {
       runtimeRef: stringArg(args, 'runtime'),
     };
-    const userId = stringArg(args, 'user_id');
-    if (userId) {
-      req.userId = userId;
-    }
     const key = stringArg(args, 'idempotency_key');
     try {
       const res = await this.client!.createSession(

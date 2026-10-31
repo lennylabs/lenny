@@ -80,7 +80,7 @@ func TestDeriveAndReplayMintAnUploadToken_spec_15_1(t *testing.T) {
 				UploadTokenVerifier: verifier,
 				UploadTokenTTL:      300 * time.Second,
 			}))
-			h := srv.Handler()
+			h := asOwner(srv.Handler())
 
 			rr := rt.call(t, h)
 			if rr.Code != http.StatusCreated {
@@ -139,7 +139,7 @@ func TestDeriveAndReplayMintFailureLeavesNoRowAndNoCopy_spec_7_1(t *testing.T) {
 				DevTenantHeader: true,
 				IDFunc:          func() string { return badID },
 			}))
-			rr := rt.call(t, srv.Handler())
+			rr := rt.call(t, asOwner(srv.Handler()))
 			if rr.Code != http.StatusServiceUnavailable {
 				t.Fatalf("status = %d, want 503; body=%s", rr.Code, rr.Body.String())
 			}

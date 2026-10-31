@@ -97,11 +97,13 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	// spec: §7.4 Upload Safety (Upload authorization); §7.1 Normal Flow
 	// (uploadToken format and security properties). Every finalize request
 	// carries the uploadToken issued at session creation. It is verified
-	// against the path's session id before the row is read or written, so a
-	// request without a valid token (missing, malformed, signed under no
-	// ring key, expired, bound to another session, or already consumed by a
-	// prior finalize) reads no session state, binds no plan, and runs no pod
-	// work. The check and its error envelope are the ones admitUpload uses.
+	// against the path's session id before the handler reads or writes the
+	// row, so a request without a valid token (missing, malformed, signed
+	// under no ring key, expired, bound to another session, or already
+	// consumed by a prior finalize) reads no session state beyond the
+	// §10.2 ownership check that precedes this handler, binds no plan, and
+	// runs no pod work. The check and its error envelope are the ones
+	// admitUpload uses.
 	if err := s.verifyUploadToken(r, id); err != nil {
 		s.writeUploadTokenError(w, err)
 		return

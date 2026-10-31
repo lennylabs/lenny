@@ -102,7 +102,7 @@ func TestCreatePinsGitCloneShaRef(t *testing.T) {
 		IDFunc:          func() string { return "sess_pin_sha" },
 		RefResolver:     &pinStubResolver{},
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	rr := createRequest(t, h, sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitClonePlanJSON(pinSHA),
 	})
@@ -120,7 +120,7 @@ func TestCreatePinsGitCloneBranchRef(t *testing.T) {
 		IDFunc:          func() string { return "sess_pin_branch" },
 		RefResolver:     &pinStubResolver{shas: map[string]string{"main": pinSHA}},
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	rr := createRequest(t, h, sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitClonePlanJSON("main"),
 	})
@@ -144,7 +144,7 @@ func TestCreateThreadsVCSCredentialToResolver(t *testing.T) {
 		RefResolver:     stub,
 		VCSCredentials:  creds,
 	})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", "main"),
 	})
 	if rr.Code != http.StatusCreated {
@@ -173,7 +173,7 @@ func TestCreateVCSCredentialFailureIsUnresolvable(t *testing.T) {
 		RefResolver:     stub,
 		VCSCredentials:  creds,
 	})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", "main"),
 	})
 	if rr.Code != http.StatusUnprocessableEntity {
@@ -195,7 +195,7 @@ func TestCreateGitCloneTransientResolveError(t *testing.T) {
 			Reason: workspaceplan.ResolveNetworkError, Err: errors.New("connection reset"),
 		}},
 	})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitClonePlanJSON("main"),
 	})
 	if rr.Code != http.StatusServiceUnavailable {
@@ -214,7 +214,7 @@ func TestCreateGitCloneUnresolvableError(t *testing.T) {
 			Reason: workspaceplan.ResolveRefNotFound, Err: errors.New("ref not found"),
 		}},
 	})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitClonePlanJSON("no-such-ref"),
 	})
 	if rr.Code != http.StatusUnprocessableEntity {
@@ -232,7 +232,7 @@ func TestCreateGitCloneNoResolverStoresVerbatim(t *testing.T) {
 		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_noresolver" },
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	rr := createRequest(t, h, sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitClonePlanJSON("main"),
 	})
@@ -277,7 +277,7 @@ func TestCreateGitCloneAuthBindsToPool(t *testing.T) {
 		RefResolver:     &pinStubResolver{},
 		CredentialPools: vcsPoolStore(t, githubPool("github-pool", "github.com")),
 	})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", pinSHA),
 	})
 	if rr.Code != http.StatusCreated {
@@ -291,7 +291,7 @@ func TestCreateGitCloneAuthUnsupportedHost(t *testing.T) {
 		IDFunc:          func() string { return "sess_auth_unsupported" },
 		CredentialPools: vcsPoolStore(t, githubPool("github-pool", "github.com")),
 	})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("git.acme.internal", pinSHA),
 	})
 	if rr.Code != http.StatusUnprocessableEntity {
@@ -312,7 +312,7 @@ func TestCreateGitCloneAuthAmbiguousHost(t *testing.T) {
 			githubPool("gh-b", "*.com"),
 		),
 	})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", pinSHA),
 	})
 	if rr.Code != http.StatusUnprocessableEntity {
@@ -331,7 +331,7 @@ func TestCreateGitCloneAuthNoPoolStoreSkipsCheck(t *testing.T) {
 		IDFunc:          func() string { return "sess_auth_skip" },
 		RefResolver:     &pinStubResolver{},
 	})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", pinSHA),
 	})
 	if rr.Code != http.StatusCreated {
@@ -348,7 +348,7 @@ func TestCreateGitClonePublicSkipsAuthCheck(t *testing.T) {
 		RefResolver:     &pinStubResolver{},
 		CredentialPools: vcsPoolStore(t, githubPool("github-pool", "github.com")),
 	})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: gitClonePlanJSON(pinSHA),
 	})
 	if rr.Code != http.StatusCreated {
@@ -388,7 +388,7 @@ func TestFinalizePinsGitCloneBranchRef_spec_14_1(t *testing.T) {
 		IDFunc:          func() string { return id },
 		RefResolver:     &pinStubResolver{shas: map[string]string{"main": pinSHA}},
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	if rr := createPlanlessThenFinalize(t, h, id, gitClonePlanJSON("main")); rr.Code != http.StatusOK {
 		t.Fatalf("finalize: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -451,7 +451,7 @@ func TestFinalizeGitCloneRejectionBindsNothing_spec_14_1(t *testing.T) {
 			if tc.pools {
 				opts.CredentialPools = vcsPoolStore(t, githubPool("github-pool", "github.com"))
 			}
-			rr := createPlanlessThenFinalize(t, sessionserver.New(store, opts).Handler(), id, tc.plan)
+			rr := createPlanlessThenFinalize(t, asOwner(sessionserver.New(store, opts).Handler()), id, tc.plan)
 			if rr.Code != tc.wantStatus {
 				t.Fatalf("finalize: status %d, want %d; body %s", rr.Code, tc.wantStatus, rr.Body.String())
 			}

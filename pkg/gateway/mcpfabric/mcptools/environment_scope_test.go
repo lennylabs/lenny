@@ -11,14 +11,17 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
 // callEnvScoped posts a tools/call to the §10.6 explicit-environment MCP
-// surface at /mcp/environments/{name} and returns the decoded response.
+// surface at /mcp/environments/{name} as toolOwner and returns the decoded
+// response.
 func callEnvScoped(t *testing.T, srv *mcp.Server, envName, tool, args string) map[string]any {
 	t.Helper()
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + tool + `","arguments":` + args + `}}`
 	req := httptest.NewRequest(http.MethodPost, "/mcp/environments/"+envName, strings.NewReader(body))
+	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{Subject: toolOwner}))
 	rr := httptest.NewRecorder()
 	srv.EnvironmentHandler().ServeHTTP(rr, req)
 	var resp map[string]any
@@ -33,7 +36,7 @@ func callEnvScoped(t *testing.T, srv *mcp.Server, envName, tool, args string) ma
 // environment argument scopes the session to the path environment.
 func TestEnvironmentHandlerScopesCreateSession_spec_10_6_557(t *testing.T) {
 	srv, store := newMCP(t)
-	resp := callEnvScoped(t, srv, "security-team", "lenny/create_session", `{"runtimeRef":"echo","userId":"alice"}`)
+	resp := callEnvScoped(t, srv, "security-team", "lenny/create_session", `{"runtimeRef":"echo"}`)
 	if text := resultText(t, resp); !strings.Contains(text, "sess_mcp") {
 		t.Fatalf("create_session result: %q", text)
 	}
@@ -51,7 +54,7 @@ func TestEnvironmentHandlerScopesCreateSession_spec_10_6_557(t *testing.T) {
 func TestEnvironmentHandlerExplicitArgWins_spec_10_6_557(t *testing.T) {
 	srv, store := newMCP(t)
 	resp := callEnvScoped(t, srv, "from-path", "lenny/create_session",
-		`{"runtimeRef":"echo","userId":"alice","environment":"explicit-arg"}`)
+		`{"runtimeRef":"echo","environment":"explicit-arg"}`)
 	if text := resultText(t, resp); !strings.Contains(text, "sess_mcp") {
 		t.Fatalf("create_session result: %q", text)
 	}
@@ -68,7 +71,7 @@ func TestEnvironmentHandlerExplicitArgWins_spec_10_6_557(t *testing.T) {
 // /mcp surface does not inject an environment scope.
 func TestPlainMcpHandlerNoEnvironmentScope_spec_10_6_557(t *testing.T) {
 	srv, store := newMCP(t)
-	resp := call(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"echo","userId":"alice"}`)
+	resp := callAsOwner(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"echo"}`)
 	if text := resultText(t, resp); !strings.Contains(text, "sess_mcp") {
 		t.Fatalf("create_session result: %q", text)
 	}

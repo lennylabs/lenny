@@ -24,6 +24,7 @@ import (
 func seedTerminalSource(t *testing.T, store sessionstore.Store, mods ...func(*sessionstore.Session)) {
 	t.Helper()
 	row := sessionstore.Session{
+		UserID:           testOwner,
 		ID:               "sess_src",
 		TenantID:         "acme",
 		State:            session.StateCompleted,
@@ -62,7 +63,7 @@ func TestReplayWorkspaceDerive(t *testing.T) {
 		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_replay" },
 	}))
-	rr := replayReq(t, srv.Handler(), sessionserver.ReplayRequest{
+	rr := replayReq(t, asOwner(srv.Handler()), sessionserver.ReplayRequest{
 		ReplayMode:    sessionserver.ReplayWorkspaceDerive,
 		TargetRuntime: "gemini-cli",
 	})
@@ -91,7 +92,7 @@ func TestReplayPromptHistoryCopiesTranscript(t *testing.T) {
 		IDFunc:          func() string { return "sess_replay" },
 		Transcripts:     transcripts,
 	}))
-	rr := replayReq(t, srv.Handler(), sessionserver.ReplayRequest{
+	rr := replayReq(t, asOwner(srv.Handler()), sessionserver.ReplayRequest{
 		ReplayMode:    sessionserver.ReplayPromptHistory,
 		TargetRuntime: "gemini-cli",
 	})
@@ -114,7 +115,7 @@ func TestReplayRejectsLiveSession(t *testing.T) {
 		s.State = session.StateRunning
 	})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	rr := replayReq(t, srv.Handler(), sessionserver.ReplayRequest{TargetRuntime: "x"})
+	rr := replayReq(t, asOwner(srv.Handler()), sessionserver.ReplayRequest{TargetRuntime: "x"})
 	if rr.Code != http.StatusConflict {
 		t.Errorf("live session replay: got %d, want 409", rr.Code)
 	}
@@ -124,7 +125,7 @@ func TestReplayRejectsMissingTargetRuntime(t *testing.T) {
 	store := memstore.New()
 	seedTerminalSource(t, store)
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	rr := replayReq(t, srv.Handler(), sessionserver.ReplayRequest{})
+	rr := replayReq(t, asOwner(srv.Handler()), sessionserver.ReplayRequest{})
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("missing targetRuntime: got %d, want 400", rr.Code)
 	}
@@ -136,7 +137,7 @@ func TestReplayRejectsNoSnapshot(t *testing.T) {
 		s.WorkspaceSnapshot = nil
 	})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	rr := replayReq(t, srv.Handler(), sessionserver.ReplayRequest{TargetRuntime: "x"})
+	rr := replayReq(t, asOwner(srv.Handler()), sessionserver.ReplayRequest{TargetRuntime: "x"})
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("no snapshot: got %d, want 400", rr.Code)
 	}
@@ -149,7 +150,7 @@ func TestReplayIsolationMonotonicity(t *testing.T) {
 	})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	// Downgrade microvm → sandboxed without the override.
-	rr := replayReq(t, srv.Handler(), sessionserver.ReplayRequest{
+	rr := replayReq(t, asOwner(srv.Handler()), sessionserver.ReplayRequest{
 		TargetRuntime:          "x",
 		TargetIsolationProfile: isolation.ProfileSandboxed,
 	})
@@ -162,7 +163,7 @@ func TestReplayRejectsBadMode(t *testing.T) {
 	store := memstore.New()
 	seedTerminalSource(t, store)
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	rr := replayReq(t, srv.Handler(), sessionserver.ReplayRequest{
+	rr := replayReq(t, asOwner(srv.Handler()), sessionserver.ReplayRequest{
 		ReplayMode:    sessionserver.ReplayMode("teleport"),
 		TargetRuntime: "x",
 	})

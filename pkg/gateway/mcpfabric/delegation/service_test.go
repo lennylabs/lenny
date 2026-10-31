@@ -723,8 +723,9 @@ func (r *recorder) IncDelegationWouldHaveBlocked(pool, tenantID, layer, mode str
 
 // spec: §8.2 (Child identity) — the child's identity is its session row,
 // which inherits the parent's user. A userless parent must be
-// rejected at admission with ErrParentNoUser; an empty req.UserID
-// inherits-or-rejects but does NOT substitute the parent identity.
+// rejected at admission with ErrParentNoUser, because no request field
+// names a substitute owner.
+// spec: §10.2 (Session ownership) rule 2.
 func TestDelegateRejectsUserlessParent(t *testing.T) {
 	store := memstore.New()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -747,19 +748,6 @@ func TestDelegateRejectsUserlessParent(t *testing.T) {
 	})
 	if !errors.Is(err, delegation.ErrParentNoUser) {
 		t.Fatalf("Delegate userless parent: got %v, want ErrParentNoUser", err)
-	}
-
-	// A caller-supplied req.UserID must NOT bypass the gate — the
-	// spec ties the child to the authenticated parent identity.
-	_, err = svc.Delegate(context.Background(), "acme", delegation.Request{
-		ParentSessionID:  "sess_parent",
-		RuntimeRef:       "gemini",
-		PoolRef:          "pool-b",
-		IsolationProfile: isolation.ProfileSandboxed,
-		UserID:           "spoofed_caller",
-	})
-	if !errors.Is(err, delegation.ErrParentNoUser) {
-		t.Fatalf("spoofed req.UserID must not bypass ErrParentNoUser: got %v", err)
 	}
 }
 

@@ -36,7 +36,8 @@ func TestWatchdogDrivesTheResumeDriver_spec_7_3(t *testing.T) {
 	counted := 0
 	f.srv.incSessionResumeAttempt = func(string, string) { counted++ }
 	if err := f.store.Create(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

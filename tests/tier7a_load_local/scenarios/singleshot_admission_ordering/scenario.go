@@ -48,6 +48,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/loadgen"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/scenkit"
 )
 
@@ -129,7 +130,6 @@ var _ translator.SingleShotBinder = singleShotBinder{}
 func (b singleShotBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (translator.SingleShotBinding, error) {
 	resp, serr := b.srv.CreateAndStartService(ctx, spec.TenantID, sessionserver.CreateSessionRequest{
 		RuntimeRef:  spec.RuntimeRef,
-		UserID:      spec.UserID,
 		Environment: spec.Environment,
 	})
 	if serr != nil {
@@ -195,9 +195,10 @@ func (s *Scenario) Setup(ctx context.Context) error {
 func (s *Scenario) Teardown(ctx context.Context) error { return nil }
 
 func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
-	_, err := s.binder.BindSingleShot(ctx, translator.SingleShotSpec{
+	// spec: §10.2 (Session ownership) — the create-and-start service binds
+	// the owner from the principal, so the call runs as the seeded owner.
+	_, err := s.binder.BindSingleShot(ownerprincipal.Context(ctx, userID), translator.SingleShotSpec{
 		TenantID:   tenantID,
-		UserID:     userID,
 		RuntimeRef: runtimeRef,
 	})
 	if err == nil {

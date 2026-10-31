@@ -41,6 +41,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 const uploadScopeNS = "lenny-agents"
@@ -162,7 +163,7 @@ func newUploadScopeGateway(t *testing.T, pods int) *uploadScopeGateway {
 		AgentNamespace:          uploadScopeNS,
 		Blobs:                   blobs,
 	})
-	return &uploadScopeGateway{h: srv.Handler(), blobs: blobs}
+	return &uploadScopeGateway{h: ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice), blobs: blobs}
 }
 
 // post issues a request for tenant acme and returns the recorder.

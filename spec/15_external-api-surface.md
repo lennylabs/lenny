@@ -629,12 +629,13 @@ sequence number assigned to its turn's entries), the session's
 captured for its turn, and whether the turn completed. The session row also
 records the runtime its creating request asked for, and the response id its
 first turn continued from, which is empty for the first session of a
-conversation. `GET /v1/responses/{id}` returns a completed
-response of a session in the caller's tenant and echoes its
-`previous_response_id`: the response with the preceding ordinal on the same
+conversation. `GET /v1/responses/{id}` returns a completed response of a
+session the caller may read under
+[Section 10.2](10_gateway-internals.md#102-authentication) **Session ownership.**
+and echoes its `previous_response_id`: the response with the preceding ordinal on the same
 session, or, for ordinal 1, the response the session's first turn continued
-from. An id that names no completed response of a session in the caller's
-tenant returns a native `404`. The response records live on the session row and
+from. An id that names no completed response of a session the caller may
+read returns a native `404`. The response records live on the session row and
 each turn's entries live in the session's own transcript, so the
 [Section 12.8](12_storage-architecture.md#128-compliance-interfaces) erasure of
 the session covers them.
@@ -648,8 +649,8 @@ when all of the following hold on `S`'s row:
 1. `S` is `running`.
 2. `R` is `S`'s newest response and has completed.
 3. `S`'s `recovery_generation` equals the value recorded for `R`.
-4. This request asks for the user, runtime, and environment that the request
-   which created `S` asked for.
+4. This request's principal is `S`'s owner, and the request asks for the runtime and environment that the
+   request which created `S` asked for.
 
 Before it dispatches a warm turn, the gateway reserves ordinal `n+1` on `S` with
 one write that takes effect only while conditions 1 through 4 still hold, and
@@ -1196,7 +1197,7 @@ Fields: `code` (string, required) — machine-readable error code from the table
 | `MESSAGEPART_INLINE_REF_CONFLICT` | `PERMANENT` | 400      | A `MessagePart` has both `inline` and `ref` fields set, which are mutually exclusive. Set exactly one field: `inline` for direct byte embedding or `ref` for external blob storage reference. See [Section 28.5.3](28_communication-channels.md#2853-intra-pod). |
 | `INVALID_DELIVERY_VALUE`      | `PERMANENT` | 400         | A message delivery envelope contains an unrecognized `delivery` field value. Valid values are `queued` and `immediate`. See [Section 7.2](07_session-lifecycle.md#72-interactive-session-model). |
 | `SDK_DEMOTION_NOT_SUPPORTED`  | `PERMANENT` | 422         | The session failed because the pool uses SDK-warm mode (`preConnect: true`) and the adapter does not implement the `DemoteSDK` RPC. The workspace includes files from `sdkWarmBlockingPaths` that require demotion, but demotion is unavailable. Runtime authors must implement `DemoteSDK` before declaring `preConnect: true`. See [Section 6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like). |
-| `ELICITATION_NOT_FOUND`       | `PERMANENT` | 404         | `respond_to_elicitation` or `dismiss_elicitation` rejected because the `(session_id, user_id, elicitation_id)` triple does not match any pending elicitation. The ID is unknown, belongs to a different session, or belongs to a different user. 404 is returned in all mismatch cases to avoid leaking the existence of elicitations in other sessions. See [Section 9.2](09_mcp-integration.md#92-elicitation-chain). |
+| `ELICITATION_NOT_FOUND`       | `PERMANENT` | 404         | `respond_to_elicitation` or `dismiss_elicitation` on a session the caller may act on ([Section 10.2](10_gateway-internals.md#102-authentication) **Session ownership.**) rejected because the `(session_id, user_id, elicitation_id)` triple does not match any pending elicitation. The ID is unknown, belongs to a different session, or belongs to a different user. 404 is returned in all mismatch cases to avoid leaking the existence of elicitations in other sessions. A call naming a session the caller may not act on receives `RESOURCE_NOT_FOUND`. See [Section 9.2](09_mcp-integration.md#92-elicitation-chain). |
 | `ELICITATION_CONTENT_TAMPERED` | `PERMANENT` | 409         | Returned only when the tenant's **effective** elicitation content integrity enforcement mode is `enforce` (see [Section 9.2](09_mcp-integration.md#92-elicitation-chain) and the `PUT /v1/admin/tenants/{id}/elicitation-content-integrity` endpoint above). An intermediate pod re-emitted an MCP `elicitation/create` wire frame (see [Section 15.2.1](#1521-restmcp-consistency-contract) per-kind wire projection) for an existing `elicitation_id` carrying a `{message, schema}` pair that diverges from the gateway-recorded original (the gateway-origin-binding invariant in [Section 9.2](09_mcp-integration.md#92-elicitation-chain)). The forward attempt is dropped before the modified text can reach the client; the originating pod sees its pending elicitation fail with a tamper signal, the tampering pod receives this error on its forward call, and `lenny_elicitation_content_tamper_detected_total{origin_pod, tampering_pod, enforcement_mode="enforce"}` is incremented to fire `ElicitationContentTamperDetected` ([Section 16.5](16_observability.md#165-alerting-rules-and-slos)). `details.elicitationId`, `details.originPod`, `details.tamperingPod`, and `details.enforcementMode` (`enforce`) are included. Under effective mode `detect-only` the same divergence is recorded (audit event emitted, counter incremented under the `detect-only` label, `ElicitationContentIntegrityPermissiveTamper` warning alert fires) but the forward is NOT dropped and this error is NOT returned. Under effective mode `off` no check is performed. To present transformed text to a different audience, the intermediate pod must emit a new `lenny/request_elicitation` establishing a fresh `elicitation_id` rather than rewriting an existing one. Not retryable as-is. See [Section 9.2](09_mcp-integration.md#92-elicitation-chain) (elicitation content integrity). |
 | `ELICITATION_INTEGRITY_JUSTIFICATION_REQUIRED` | `PERMANENT` | 400 | `PUT /v1/admin/tenants/{id}/elicitation-content-integrity` rejected because the request body sets `mode` to `detect-only` or `off` without a non-empty `justification` string. The justification is mandatory whenever the stored mode is weaker than `enforce` so that the operator identity and the reason for weakening the integrity posture are captured in the audit trail. Not retryable as-is — the caller must resubmit with a non-empty `justification`. See [Section 9.2](09_mcp-integration.md#92-elicitation-chain) and [Section 15.1](#151-rest-api) (`PUT /v1/admin/tenants/{id}/elicitation-content-integrity`). |
 | `ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR` | `PERMANENT` | 400 | `PUT /v1/admin/tenants/{id}/elicitation-content-integrity` rejected because the requested stored `mode` is strictly weaker than the platform-configured minimum-enforcement floor (`.Values.security.elicitationContentIntegrity.floor`; see [Section 17.2](17_deployment-topology.md#172-namespace-layout)). Ordering is `off < detect-only < enforce`. `details.storedMode` (the requested value) and `details.platformFloor` (the deployed floor) are included. Not retryable as-is — the caller must either raise the requested `mode` to at least the floor, or the platform operator must lower the floor via Helm (recorded as `platform.elicitation_content_integrity_floor_changed`). See [Section 9.2](09_mcp-integration.md#92-elicitation-chain) and [Section 17.2](17_deployment-topology.md#172-namespace-layout). |

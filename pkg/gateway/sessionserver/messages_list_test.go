@@ -47,7 +47,7 @@ func seedMessagesServer(t *testing.T) (http.Handler, *transcriptstore.Memory, se
 	store := memstore.New()
 	transcripts := transcriptstore.NewMemory()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Transcripts: transcripts})
-	return srv.Handler(), transcripts, store
+	return asOwner(srv.Handler()), transcripts, store
 }
 
 func getMessages(t *testing.T, h http.Handler, path, tenant string) *httptest.ResponseRecorder {
@@ -69,7 +69,8 @@ func TestMessagesList_spec_15_1_692(t *testing.T) {
 	h, transcripts, store := seedMessagesServer(t)
 	ctx := context.Background()
 	_ = store.Create(ctx, sessionstore.Session{
-		ID: "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0),
+		UserID: testOwner,
+		ID:     "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0),
 	})
 	if _, err := transcripts.Append(
 		ctx, "acme", "s1",
@@ -125,7 +126,7 @@ func TestMessagesList_spec_15_1_692(t *testing.T) {
 func TestMessagesListPaginationAndSince_spec_15_1_692(t *testing.T) {
 	h, transcripts, store := seedMessagesServer(t)
 	ctx := context.Background()
-	_ = store.Create(ctx, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
 	for i := 0; i < 5; i++ {
 		_, _ = transcripts.Append(ctx, "acme", "s1", transcriptstore.Entry{Role: "user", Content: "m"})
 	}
@@ -160,7 +161,7 @@ func TestMessagesListPaginationAndSince_spec_15_1_692(t *testing.T) {
 func TestMessagesListThreadFilter_spec_15_4_1_1791(t *testing.T) {
 	h, transcripts, store := seedMessagesServer(t)
 	ctx := context.Background()
-	_ = store.Create(ctx, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
 	_, _ = transcripts.Append(ctx, "acme", "s1", transcriptstore.Entry{Role: "user", Content: "m"})
 
 	rr := getMessages(t, h, "/v1/sessions/s1/messages?threadId=t-other", "acme")
@@ -181,11 +182,12 @@ func TestMessagesListThreadFilter_spec_15_4_1_1791(t *testing.T) {
 func TestMessagesListNotFound_spec_15_1_661(t *testing.T) {
 	h, transcripts, store := seedMessagesServer(t)
 	ctx := context.Background()
-	_ = store.Create(ctx, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
+	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
 	_, _ = transcripts.Append(ctx, "acme", "s1", transcriptstore.Entry{Role: "user", Content: "m"})
 	// A derive_failure audit row: terminal failed + failureClass.
 	_ = store.Create(ctx, sessionstore.Session{
-		ID: "df", TenantID: "acme", State: session.StateFailed,
+		UserID: testOwner,
+		ID:     "df", TenantID: "acme", State: session.StateFailed,
 		FailureClass: session.FailureClassDeriveFailure, CreatedAt: time.Unix(2, 0),
 	})
 
@@ -201,7 +203,7 @@ func TestMessagesListNotFound_spec_15_1_661(t *testing.T) {
 
 	// No transcript store wired → 404.
 	noStore := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	if rr := getMessages(t, noStore.Handler(), "/v1/sessions/s1/messages", "acme"); rr.Code != http.StatusNotFound {
+	if rr := getMessages(t, asOwner(noStore.Handler()), "/v1/sessions/s1/messages", "acme"); rr.Code != http.StatusNotFound {
 		t.Errorf("no-transcript-store status = %d, want 404", rr.Code)
 	}
 }

@@ -51,7 +51,7 @@ async function main() {
   }
 
   // Drive a session over MCP: create, send a message, read the reply.
-  const created = await mcp.createSession('claude-code', 'alice@acme.com');
+  const created = await mcp.createSession('claude-code');
   if (!created.sessionId) {
     fail('create_session returned an empty session id');
     return;

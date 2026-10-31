@@ -206,7 +206,7 @@ class MCPCallToolTest(unittest.TestCase):
         # spec: section 15.2 tools/call drives a session over MCP.
         with _Server() as server:
             mcp = _mcp_client(server.url)
-            created = mcp.create_session("claude-code", "alice@acme.com")
+            created = mcp.create_session("claude-code")
             self.assertNotEqual(created.session_id, "")
             self.assertEqual(created.state, "running")
             reply = mcp.send_message(created.session_id, "hello")

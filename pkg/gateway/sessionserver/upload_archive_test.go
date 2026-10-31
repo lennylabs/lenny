@@ -27,7 +27,7 @@ func TestHandleUploadArchive_TagsResponse_spec_18_234(t *testing.T) {
 	req.Header.Set("X-Lenny-Upload-Token", tok)
 	req.Header.Set("Content-Type", "application/x-tar")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d (body=%s)", rr.Code, http.StatusCreated, rr.Body.String())
@@ -58,7 +58,7 @@ func TestHandleUpload_DoesNotTagResponse_spec_15_1(t *testing.T) {
 	srv, issuer, _, store, _ := newUploadServerWithSubsystem(t, nil)
 	tok := seedAndMintUploadSubsystem(t, store, issuer, "sess_subsystem", "default")
 
-	rr := doUpload(t, srv.Handler(), "sess_subsystem", "default", tok, "payload")
+	rr := doUpload(t, asOwner(srv.Handler()), "sess_subsystem", "default", tok, "payload")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d (body=%s)", rr.Code, http.StatusCreated, rr.Body.String())
 	}
@@ -86,7 +86,7 @@ func TestHandleUploadArchive_RequiresUploadToken_spec_7_1_58(t *testing.T) {
 	req.Header.Set("Content-Type", "application/zip")
 	// Deliberately omit X-Lenny-Upload-Token.
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d for missing token", rr.Code, http.StatusUnauthorized)
 	}

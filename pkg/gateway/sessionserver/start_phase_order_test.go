@@ -66,7 +66,7 @@ func TestSessionStartPostAuthChainRunsBeforePreRoute_spec_4_8(t *testing.T) {
 	srv := phaseOrderServer(t,
 		phaseRecorder{name: "postauth", action: interceptor.ActionAllow, calls: &calls},
 		phaseRecorder{name: "preroute", action: interceptor.ActionAllow, calls: &calls})
-	rr := createAndStartRequest(t, srv.Handler(),
+	rr := createAndStartRequest(t, asOwner(srv.Handler()),
 		sessionserver.CreateAndStartRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create-and-start with two ALLOW interceptors: status %d, want 201; body %s", rr.Code, rr.Body.String())
@@ -88,7 +88,7 @@ func TestSessionStartPostAuthRejectShortCircuitsBeforePreRoute_spec_4_8(t *testi
 	srv := phaseOrderServer(t,
 		phaseRecorder{name: "postauth", action: interceptor.ActionReject, calls: &calls},
 		phaseRecorder{name: "preroute", action: interceptor.ActionAllow, calls: &calls})
-	rr := createAndStartRequest(t, srv.Handler(),
+	rr := createAndStartRequest(t, asOwner(srv.Handler()),
 		sessionserver.CreateAndStartRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("PostAuth REJECT: status %d, want 429; body %s", rr.Code, rr.Body.String())

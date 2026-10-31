@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
@@ -21,6 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -35,13 +38,14 @@ func (failingUsers) Get(context.Context, string, string) (userstore.User, error)
 
 // newFencedDelegateMCP builds a delegation-capable MCP server over a
 // fenced session store, with the tenant and user registries the gate and
-// the fence read. The parent session sess_parent is owned by user_alice.
+// the fence read. The parent session sess_parent is owned by ownerprincipal.Alice.
 func newFencedDelegateMCP(t *testing.T, tenants *tenantstore.Memory, users userstore.Store, fenceUsers *userstore.Memory) (*mcp.Server, sessionstore.Store) {
 	t.Helper()
 	store := memstore.New(memstore.WithCreationMarkers(sessionstore.StoreMarkers(tenants, fenceUsers)))
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -60,7 +64,7 @@ func newFencedDelegateMCP(t *testing.T, tenants *tenantstore.Memory, users users
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	// The parent row is seeded before any marker is set.
 	if err := store.Create(ctx, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice", State: session.StateRunning,
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice, State: session.StateRunning,
 		RuntimeRef: "child-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
@@ -76,7 +80,7 @@ func seededRegistries(t *testing.T) (*tenantstore.Memory, *userstore.Memory) {
 	if err := tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme"}); err != nil {
 		t.Fatalf("seed tenant: %v", err)
 	}
-	if err := users.Create(context.Background(), userstore.User{Subject: "user_alice", TenantID: "acme"}); err != nil {
+	if err := users.Create(context.Background(), userstore.User{Subject: ownerprincipal.Alice, TenantID: "acme"}); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
 	return tenants, users
@@ -104,13 +108,13 @@ func TestDelegateGateTenantAndRestrictionMarkers_spec_12_8(t *testing.T) {
 			})
 		}, "TENANT_NOT_ACTIVE"},
 		{"owner restricted", func(t *testing.T, _ *tenantstore.Memory, us *userstore.Memory) {
-			_, _ = us.Update(context.Background(), "acme", "user_alice", func(u *userstore.User) error {
+			_, _ = us.Update(context.Background(), "acme", ownerprincipal.Alice, func(u *userstore.User) error {
 				u.ProcessingRestricted, u.ErasureJobID = true, "job-8"
 				return nil
 			})
 		}, "ERASURE_IN_PROGRESS"},
 		{"owner soft-disabled", func(t *testing.T, _ *tenantstore.Memory, us *userstore.Memory) {
-			_, _ = us.Update(context.Background(), "acme", "user_alice", func(u *userstore.User) error { u.Disabled = true; return nil })
+			_, _ = us.Update(context.Background(), "acme", ownerprincipal.Alice, func(u *userstore.User) error { u.Disabled = true; return nil })
 		}, ""},
 	}
 	for _, tc := range cases {
@@ -136,7 +140,7 @@ func TestDelegateGateTenantAndRestrictionMarkers_spec_12_8(t *testing.T) {
 			}
 			if tc.code == "ERASURE_IN_PROGRESS" {
 				details, _ := env["details"].(map[string]any)
-				if details["userId"] != "user_alice" || details["jobId"] != "job-8" {
+				if details["userId"] != ownerprincipal.Alice || details["jobId"] != "job-8" {
 					t.Errorf("details = %v, want the owner and the job", details)
 				}
 			}
@@ -179,6 +183,7 @@ func TestDelegateTaskMapsFenceRefusal_spec_12_8(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store, Executor: executor.NewEchoExecutor(), Runtimes: runtimes,
 		Users: users, Tenants: gateTenants,
@@ -188,7 +193,7 @@ func TestDelegateTaskMapsFenceRefusal_spec_12_8(t *testing.T) {
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "child-agent", Type: runtimestore.TypeAgent})
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice", State: session.StateRunning,
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice, State: session.StateRunning,
 		RuntimeRef: "child-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
@@ -207,32 +212,36 @@ func TestDelegateTaskMapsFenceRefusal_spec_12_8(t *testing.T) {
 	}
 }
 
-// TestMinimalCreateSessionMapsFenceRefusal_spec_12_8 pins the fallback
-// create_session of a gateway that wires no session server: the fence's
-// refusal answers a tool error with its code and details rather than the
-// raw store error.
-// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain)
-func TestMinimalCreateSessionMapsFenceRefusal_spec_12_8(t *testing.T) {
+// TestCreateSessionMapsFenceRefusal_spec_12_8 pins that create_session
+// answers an erasure-pending caller's refusal as a tool error carrying the
+// §15.1 code and details, through the shared §15.1 service.
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 10.2 (Session ownership)
+func TestCreateSessionMapsFenceRefusal_spec_12_8(t *testing.T) {
 	tenants, users := seededRegistries(t)
-	_, _ = users.Update(context.Background(), "acme", "user_alice", func(u *userstore.User) error {
+	_, _ = users.Update(context.Background(), "acme", ownerprincipal.Alice, func(u *userstore.User) error {
 		u.ProcessingRestricted, u.ErasureJobID = true, "job-6"
 		return nil
 	})
 	store := memstore.New(memstore.WithCreationMarkers(sessionstore.StoreMarkers(tenants, users)))
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store, Executor: executor.NewEchoExecutor(), Runtimes: runtimestore.NewMemory(),
 		IDFunc: func() string { return "sess_new" }, TenantID: "acme",
+		SessionCreator: sessionserver.New(store, sessionserver.Options{
+			IDFunc: func() string { return "sess_new" }, Tenants: tenants, Users: users,
+		}),
 	})
-	resp := call(t, srv.Handler(), "lenny/create_session", `{"runtimeRef":"claude-code","userId":"user_alice"}`)
+	resp := callWithPrincipal(t, srv.Handler(), authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme"},
+		"lenny/create_session", `{"runtimeRef":"claude-code"}`)
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
 	if env["code"] != "ERASURE_IN_PROGRESS" {
 		t.Fatalf("code = %v, want ERASURE_IN_PROGRESS", env["code"])
 	}
 	details, _ := env["details"].(map[string]any)
-	if details["userId"] != "user_alice" || details["jobId"] != "job-6" {
+	if details["userId"] != ownerprincipal.Alice || details["jobId"] != "job-6" {
 		t.Errorf("details = %v", details)
 	}
 }
@@ -246,15 +255,16 @@ func newResolutionMCP(t *testing.T, users userstore.Store) (*mcp.Server, interac
 	interactions := interactionstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store, Interactions: interactions, Users: users,
 		ElicitationTimeout: 5 * time.Second, IDFunc: func() string { return "elic_gen" }, TenantID: "acme",
 	})
-	mkUserSession(t, store, "sess_root", "alice", "")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
 	mkUserSession(t, store, "sess_bob", "bob", "")
 	if err := interactions.Put(context.Background(), interactionstore.Interaction{
 		ID: "elic_x", Kind: interactionstore.KindElicitation,
-		SessionID: "sess_root", TenantID: "acme", UserID: "alice", Phase: interactionstore.PhasePending,
+		SessionID: "sess_root", TenantID: "acme", UserID: ownerprincipal.Alice, Phase: interactionstore.PhasePending,
 	}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
@@ -278,9 +288,9 @@ func TestMCPElicitationResolutionCallerCheck_spec_12_8(t *testing.T) {
 		failing bool
 		code    string
 	}{
-		{name: "restricted", seed: &userstore.User{Subject: "alice", TenantID: "acme", ProcessingRestricted: true, ErasureJobID: "job-1"}, code: "ERASURE_IN_PROGRESS"},
-		{name: "invalidated", seed: &userstore.User{Subject: "alice", TenantID: "acme", Disabled: true}, code: "USER_INVALIDATED"},
-		{name: "both", seed: &userstore.User{Subject: "alice", TenantID: "acme", Disabled: true, ProcessingRestricted: true}, code: "USER_INVALIDATED"},
+		{name: "restricted", seed: &userstore.User{Subject: ownerprincipal.Alice, TenantID: "acme", ProcessingRestricted: true, ErasureJobID: "job-1"}, code: "ERASURE_IN_PROGRESS"},
+		{name: "invalidated", seed: &userstore.User{Subject: ownerprincipal.Alice, TenantID: "acme", Disabled: true}, code: "USER_INVALIDATED"},
+		{name: "both", seed: &userstore.User{Subject: ownerprincipal.Alice, TenantID: "acme", Disabled: true, ProcessingRestricted: true}, code: "USER_INVALIDATED"},
 		{name: "no registry row"},
 		{name: "read error", failing: true, code: "INTERNAL_ERROR"},
 	}
@@ -298,11 +308,14 @@ func TestMCPElicitationResolutionCallerCheck_spec_12_8(t *testing.T) {
 					}
 					srv, interactions := newResolutionMCP(t, us)
 					args := strings.Replace(tool.args, "%s", sessionID, 1)
-					resp := callAs(t, srv.Handler(), authmw.Principal{Subject: "alice", TenantID: "acme"}, tool.name, args)
+					resp := callAs(t, srv.Handler(), authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme"}, tool.name, args)
 					result, _ := resp["result"].(map[string]any)
 					want := st.code
+					// spec: §10.2 (Session ownership) rule 7 — a missing
+					// session answers RESOURCE_NOT_FOUND from the ownership
+					// check, ahead of the §9.2 triple check.
 					if want == "" && sessionID == "sess_missing" {
-						want = "ELICITATION_NOT_FOUND"
+						want = "RESOURCE_NOT_FOUND"
 					}
 					if want == "" {
 						if result["isError"] == true {
@@ -321,11 +334,11 @@ func TestMCPElicitationResolutionCallerCheck_spec_12_8(t *testing.T) {
 					}
 					if want == "ERASURE_IN_PROGRESS" {
 						details, _ := env["details"].(map[string]any)
-						if details["userId"] != "alice" || details["jobId"] != "job-1" {
+						if details["userId"] != ownerprincipal.Alice || details["jobId"] != "job-1" {
 							t.Errorf("details = %v", details)
 						}
 					}
-					cur, _ := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x")
+					cur, _ := interactions.Get(context.Background(), "acme", "sess_root", ownerprincipal.Alice, "elic_x")
 					if cur.Phase != interactionstore.PhasePending {
 						t.Errorf("a refused resolution changed the phase to %q", cur.Phase)
 					}
@@ -339,8 +352,10 @@ func TestMCPElicitationResolutionCallerCheck_spec_12_8(t *testing.T) {
 // as the user both the caller check and the triple read: a restricted
 // principal resolving another user's elicitation answers
 // ERASURE_IN_PROGRESS, and an active principal resolving another user's
-// elicitation through that user's session answers ELICITATION_NOT_FOUND.
-// spec: 9.2 (Elicitation Chain), 12.8 (Compliance Interfaces: Processing restriction during erasure (GDPR Article 18))
+// elicitation through that user's session answers RESOURCE_NOT_FOUND,
+// because the §10.2 ownership check refuses the session before the
+// triple check runs.
+// spec: 9.2 (Elicitation Chain), 10.2 (Session ownership), 12.8 (Compliance Interfaces: Processing restriction during erasure (GDPR Article 18))
 func TestMCPElicitationResolutionKeysOnPrincipal_spec_9_2(t *testing.T) {
 	mem := userstore.NewMemory()
 	_ = mem.Create(context.Background(), userstore.User{Subject: "bob", TenantID: "acme", ProcessingRestricted: true, ErasureJobID: "job-2"})
@@ -356,10 +371,10 @@ func TestMCPElicitationResolutionKeysOnPrincipal_spec_9_2(t *testing.T) {
 
 	resp = callAs(t, srv.Handler(), authmw.Principal{Subject: "carol", TenantID: "acme"}, "lenny/respond_to_elicitation", args)
 	result, _ = resp["result"].(map[string]any)
-	if env := readLennyErrorEnvelope(t, result); env["code"] != "ELICITATION_NOT_FOUND" {
-		t.Fatalf("another user's elicitation: code = %v, want ELICITATION_NOT_FOUND", env["code"])
+	if env := readLennyErrorEnvelope(t, result); env["code"] != "RESOURCE_NOT_FOUND" {
+		t.Fatalf("another user's elicitation: code = %v, want RESOURCE_NOT_FOUND", env["code"])
 	}
-	cur, _ := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x")
+	cur, _ := interactions.Get(context.Background(), "acme", "sess_root", ownerprincipal.Alice, "elic_x")
 	if cur.Phase != interactionstore.PhasePending {
 		t.Errorf("another principal resolved alice's elicitation: phase %q", cur.Phase)
 	}

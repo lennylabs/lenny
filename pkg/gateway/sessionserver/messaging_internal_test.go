@@ -65,7 +65,7 @@ func TestPostTerminalHookDrainsDLQ_spec_7_3_12(t *testing.T) {
 	}
 
 	srv := New(memstore.New(), Options{DevTenantHeader: true, Messaging: coord, Clock: msgTestClock})
-	row := sessionstore.Session{ID: "sess-t", TenantID: "acme", State: session.StateCompleted}
+	row := sessionstore.Session{UserID: testOwner, ID: "sess-t", TenantID: "acme", State: session.StateCompleted}
 	srv.emitTerminalLifecycle(ctx, row)
 	if len(em.events) != 0 {
 		t.Fatalf("emitTerminalLifecycle drained %d entries, want none: the hook owns the drain", len(em.events))
@@ -97,7 +97,8 @@ func TestMigrateInboxOnResumePendingWiring_spec_7_2_305(t *testing.T) {
 
 	srv := New(memstore.New(), Options{DevTenantHeader: true, Messaging: coord, Clock: msgTestClock})
 	srv.migrateInboxOnResumePending(ctx, sessionstore.Session{
-		ID: "sess-r", TenantID: "acme", State: session.StateResumePending, PoolRef: "pool-a",
+		UserID: testOwner,
+		ID:     "sess-r", TenantID: "acme", State: session.StateResumePending, PoolRef: "pool-a",
 	})
 
 	if n, _ := inbox.Len(ctx, "acme", "sess-r"); n != 0 {
@@ -113,13 +114,16 @@ func TestMigrateInboxOnResumePendingWiring_spec_7_2_305(t *testing.T) {
 func TestEmitTerminalLifecycleNoMessagingIsSafe(t *testing.T) {
 	srv := New(memstore.New(), Options{DevTenantHeader: true, Clock: func() time.Time { return time.Unix(0, 0) }})
 	srv.emitTerminalLifecycle(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", State: session.StateCompleted,
 	})
 	srv.migrateInboxOnResumePending(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", State: session.StateResumePending,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", State: session.StateResumePending,
 	})
 	if err := srv.deliverBuffered(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", State: session.StateRunning,
 	}); err != nil {
 		t.Fatalf("deliverBuffered with no messaging coordinator = %v, want nil", err)
 	}

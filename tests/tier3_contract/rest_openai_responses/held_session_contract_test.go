@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // holdingBinder creates a running session row with a fresh UUID id and
@@ -32,7 +33,7 @@ func (b holdingBinder) BindSingleShot(ctx context.Context, spec translator.Singl
 	id := session.NewID()
 	now := time.Now().UTC()
 	err := b.store.Create(ctx, sessionstore.Session{
-		ID: id, TenantID: spec.TenantID, UserID: spec.UserID, RuntimeRef: spec.RuntimeRef,
+		ID: id, TenantID: spec.TenantID, UserID: ownerprincipal.Subject(ctx), RuntimeRef: spec.RuntimeRef,
 		Environment: spec.Environment, State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	})
 	return translator.SingleShotBinding{SessionID: id, Hold: true}, err
@@ -53,7 +54,8 @@ func (refusingForwarder) ForwardResponsesTurn(w http.ResponseWriter, _ *http.Req
 func (refusingForwarder) Forwarded(context.Context) bool { return false }
 
 // newHeldServer serves the Open Responses translator with a holding binder
-// and the given forwarder. The forwarder is required; responsesstub.LocalForwarder
+// and the given forwarder, under alice's principal, with a session access
+// predicate that grants the row's owner. The forwarder is required; responsesstub.LocalForwarder
 // is the single-process default that serves every turn locally.
 func newHeldServer(t *testing.T, exec executor.Executor, fwd translator.HolderForwarder) *httptest.Server {
 	t.Helper()
@@ -64,8 +66,9 @@ func newHeldServer(t *testing.T, exec executor.Executor, fwd translator.HolderFo
 		SingleShotBinder: holdingBinder{store: store},
 		Transcripts:      transcriptstore.NewMemory(),
 		HolderForwarder:  fwd,
+		SessionAccess:    ownerprincipal.SessionAccess{},
 	})
-	srv := httptest.NewServer(h.Handler())
+	srv := httptest.NewServer(ownerprincipal.Wrap(h.Handler(), ownerprincipal.Alice))
 	t.Cleanup(srv.Close)
 	return srv
 }

@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
@@ -120,6 +122,10 @@ func TestOffHolderSendMessageReturnsTheCoordinatorsAnswer_spec_29_3(t *testing.T
 			exec := &countingExec{Executor: executor.NewEchoExecutor()}
 			srv, store, _, _, del := newMCPRoutingDeliveryWith(t, exec, func(d *mcptools.Deps) { d.HolderForward = tc.fwd })
 			mkSession(t, store, "sess_t", session.StateRunning, "")
+			// sess_ghost is a sender the caller owns that is outside the
+			// target's messaging scope, so the forward running before the
+			// scope check is what admits the delivered case.
+			mkSession(t, store, "sess_ghost", session.StateRunning, "")
 			resp := call(t, srv.Handler(), "lenny/send_message", tc.args)
 			if len(tc.fwd.calls) != 1 || tc.fwd.calls[0].tool != "lenny/send_message" || tc.fwd.calls[0].kind != tc.wantKind {
 				t.Fatalf("forward calls = %+v, want one lenny/send_message of kind %d", tc.fwd.calls, tc.wantKind)
@@ -362,6 +368,9 @@ func keyedCancel(h http.Handler, key string) *httptest.ResponseRecorder {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Idempotency-Key", key)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	// spec: §10.2 (Session ownership) — the call runs as the owner of the
+	// seeded session.
+	req.Header.Set("X-Lenny-User-ID", ownerprincipal.Alice)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec

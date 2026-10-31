@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -47,6 +49,7 @@ func TestDelegateTaskDefaultsLookupIsServiceUnavailable_spec_14_1(t *testing.T) 
 	}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -61,7 +64,7 @@ func TestDelegateTaskDefaultsLookupIsServiceUnavailable_spec_14_1(t *testing.T) 
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(ctx, sessionstore.Session{
-		ID: "sess_parent", State: session.StateRunning, TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", State: session.StateRunning, TenantID: "acme", UserID: ownerprincipal.Alice,
 		RuntimeRef: "child-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {

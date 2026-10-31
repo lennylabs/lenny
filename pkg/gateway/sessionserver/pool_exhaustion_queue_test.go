@@ -109,7 +109,7 @@ func queueExhaustionServer(t *testing.T, pool poolstore.Pool, poll time.Duration
 // and returns the recorded response. It is safe to call from a goroutine: each
 // call builds its own request and recorder.
 func fireQueueCreate(h http.Handler, userID string) *httptest.ResponseRecorder {
-	body := mustJSON(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: userID})
+	body := mustJSON(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -179,7 +179,7 @@ func claimExists(t *testing.T, c client.Client, podName string) bool {
 func TestQueueDispositionDrainsAsPodsFreeOnRealPool(t *testing.T) {
 	t.Parallel()
 	srv, cluster, store, probe := queueExhaustionServer(t, queueExhaustionPool(30), 10*time.Millisecond, "sbx-1")
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	ctx := context.Background()
 
 	// A claims the single warm pod and holds it through the created window.
@@ -245,7 +245,7 @@ func TestQueueDispositionDrainsAsPodsFreeOnRealPool(t *testing.T) {
 func TestQueueWaitTimeoutReturnsRetryableExhaustionOnRealPool(t *testing.T) {
 	t.Parallel()
 	srv, cluster, store, probe := queueExhaustionServer(t, queueExhaustionPool(1), 10*time.Millisecond, "sbx-1")
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	// A holds the single pod for the whole test.
 	if rr := fireQueueCreate(h, "alice@acme.com"); rr.Code != http.StatusCreated {

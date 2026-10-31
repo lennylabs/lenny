@@ -34,7 +34,7 @@ func finalizeTestServer(t *testing.T) (*Server, sessionstore.Store) {
 func seedCreated(t *testing.T, store sessionstore.Store, id string, plan string) {
 	t.Helper()
 	row := sessionstore.Session{
-		ID: id, TenantID: "default", UserID: "alice",
+		ID: id, TenantID: "default", UserID: testOwner,
 		RuntimeRef: "claude-code", State: session.StateCreated,
 		CreatedAt: time.Date(2026, 6, 8, 9, 0, 0, 0, time.UTC),
 	}
@@ -81,7 +81,7 @@ func postFinalizeWithToken(t *testing.T, srv *Server, id, body, token string) *h
 		r.Header.Set("X-Lenny-Upload-Token", token)
 	}
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, r)
+	asOwner(srv.Handler()).ServeHTTP(rr, r)
 	return rr
 }
 

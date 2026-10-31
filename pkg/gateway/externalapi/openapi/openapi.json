@@ -140,7 +140,6 @@
         "required": ["runtimeRef"],
         "properties": {
           "runtimeRef":       { "type": "string" },
-          "userId":           { "type": "string" },
           "environment":      { "type": "string" },
           "workspacePlan":    { "type": "object", "additionalProperties": true },
           "isolationProfile": { "type": "string", "enum": ["standard","sandboxed","microvm"] },
@@ -195,7 +194,6 @@
           "runtimeRef":              { "type": "string" },
           "targetPool":              { "type": "string" },
           "targetIsolationProfile":  { "type": "string", "enum": ["standard","sandboxed","microvm"] },
-          "userId":                  { "type": "string" },
           "allowStale":              { "type": "boolean", "default": false },
           "allowIsolationDowngrade": { "type": "boolean", "default": false },
           "ticketId":                { "type": "string" }

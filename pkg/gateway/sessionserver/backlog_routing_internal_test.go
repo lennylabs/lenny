@@ -27,7 +27,7 @@ func postMessage(t *testing.T, s *Server, id string) string {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	s.Handler().ServeHTTP(rr, req)
+	asOwner(s.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("POST messages = %d: %s", rr.Code, rr.Body.String())
 	}
@@ -42,7 +42,8 @@ func (r *suspensionRig) seedPodless(t *testing.T, id string) sessionstore.Sessio
 	t.Helper()
 	since := r.now.Add(-time.Hour)
 	row := sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateSuspended, SuspendedAt: since,
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: session.StateSuspended, SuspendedAt: since,
 		SuspendedReason: sessionstore.SuspendedReasonIdle, CreatedAt: since, UpdatedAt: since,
 	}
 	if err := r.store.Create(context.Background(), row); err != nil {
@@ -161,7 +162,7 @@ func TestUnboundSendReroutesWhenTheSessionLeftRunning_spec_6_2(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	r.srv.Handler().ServeHTTP(rr, req)
+	asOwner(r.srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusInternalServerError || !strings.Contains(rr.Body.String(), "EXECUTOR_FAILURE") {
 		t.Fatalf("unbound send on a running session = %d %s, want 500 EXECUTOR_FAILURE", rr.Code, rr.Body.String())
 	}
@@ -373,7 +374,8 @@ func TestBacklogResumeCountsAMessageHeldInTheSuspensionMillisecond_spec_7_2(t *t
 		r := newSuspensionRig(t, true)
 		store := r.store.(*memstore.Store)
 		if err := store.Create(ctx, sessionstore.Session{
-			ID: "s2", TenantID: "acme", State: session.StateSuspended, SuspendedAt: suspendedAt,
+			UserID: testOwner,
+			ID:     "s2", TenantID: "acme", State: session.StateSuspended, SuspendedAt: suspendedAt,
 			SuspendedReason: sessionstore.SuspendedReasonInterruptAcknowledged,
 			CreatedAt:       suspendedAt, UpdatedAt: suspendedAt,
 		}); err != nil {

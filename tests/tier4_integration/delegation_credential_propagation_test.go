@@ -65,6 +65,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // spec: 8.3 (deny receives no LLM credentials; inherit-from-deny fails closed)
@@ -144,7 +145,7 @@ func TestDenyChildReceivesNoCredentialAtFinalize(t *testing.T) {
 		CredentialRouter:        credrouter.NewDefault(),
 		Blobs:                   binder.Blobs,
 	})
-	h := srv.Handler()
+	h := ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 
 	post := func(path string, body []byte) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
@@ -160,7 +161,7 @@ func TestDenyChildReceivesNoCredentialAtFinalize(t *testing.T) {
 	// providers have active pools), so the create succeeds; the deny
 	// suppression applies at the finalize-time assignment below.
 	createChild := func() string {
-		body, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "shared-tool", UserID: "alice@acme.com"})
+		body, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "shared-tool"})
 		rr := post("/v1/sessions", body)
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("create child: status %d, body=%s", rr.Code, rr.Body.String())
@@ -320,6 +321,7 @@ func newDenyOriginFixture(t *testing.T) (*mcp.Server, sessionstore.Store) {
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),

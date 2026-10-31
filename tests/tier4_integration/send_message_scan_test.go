@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -47,19 +49,20 @@ import (
 )
 
 const (
-	scanTenant  = "acme"
-	scanPolicy  = "scanpol"
-	scanRef     = "scan"
-	scanRedact  = "<redacted by content scanner>"
-	scanSender  = "alice@acme.com"
-	scanUserBob = "bob@acme.com"
+	scanTenant = "acme"
+	scanPolicy = "scanpol"
+	scanRef    = "scan"
+	scanRedact = "<redacted by content scanner>"
+	scanSender = "alice@acme.com"
 )
 
 // scanTestbed is a composed lenny/send_message surface: a running sender
-// session (alice) and a running target session (bob, a direct child of
-// alice) whose runtime carries a DelegationPolicy naming the external
-// scanner over gRPC. The ctx is bound to alice's principal so the §7.2
-// scope check treats alice as the sender of the message to its child.
+// session and a running target session that is its direct child, both
+// owned by alice because a delegated child carries its parent's owner
+// (§10.2 Session ownership rule 2), whose runtime carries a DelegationPolicy
+// naming the external scanner over gRPC. The ctx is bound to alice's
+// principal so the §7.2 scope check treats alice's session as the sender of
+// the message to its child.
 type scanTestbed struct {
 	srv      *mcp.Server
 	ctx      context.Context
@@ -105,7 +108,7 @@ func newScanTestbed(t *testing.T, handler stubinterceptor.Handler, maxInputSize 
 	targetID := session.NewID()
 	for _, s := range []sessionstore.Session{
 		{ID: senderID, TenantID: scanTenant, UserID: scanSender, RuntimeRef: "parent", State: session.StateRunning, IsolationProfile: isolation.ProfileSandboxed, CreatedAt: clock(), UpdatedAt: clock()},
-		{ID: targetID, TenantID: scanTenant, UserID: scanUserBob, RuntimeRef: "worker", ParentSessionID: senderID, State: session.StateRunning, IsolationProfile: isolation.ProfileSandboxed, CreatedAt: clock(), UpdatedAt: clock()},
+		{ID: targetID, TenantID: scanTenant, UserID: scanSender, RuntimeRef: "worker", ParentSessionID: senderID, State: session.StateRunning, IsolationProfile: isolation.ProfileSandboxed, CreatedAt: clock(), UpdatedAt: clock()},
 	} {
 		if err := sessions.Create(ctx, s); err != nil {
 			t.Fatalf("seed session %s: %v", s.ID, err)
@@ -143,6 +146,7 @@ func newScanTestbed(t *testing.T, handler stubinterceptor.Handler, maxInputSize 
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             sessions,
 		Executor:          executor.NewEchoExecutor(),

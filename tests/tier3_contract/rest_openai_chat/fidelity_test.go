@@ -34,6 +34,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // repoRoot walks up from the working directory to the module root
@@ -76,11 +77,11 @@ func newOpenAIServers(t *testing.T, clock func() time.Time, id string) (*httptes
 		Clock:           clock,
 		IDFunc:          func() string { return id },
 	})
-	tsOpenAI := httptest.NewServer(translatorHandler.Handler())
+	tsOpenAI := httptest.NewServer(ownerprincipal.Wrap(translatorHandler.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsOpenAI.Close)
 
 	restHandler := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	tsREST := httptest.NewServer(restHandler.Handler())
+	tsREST := httptest.NewServer(ownerprincipal.Wrap(restHandler.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 
 	return tsOpenAI, tsREST, store

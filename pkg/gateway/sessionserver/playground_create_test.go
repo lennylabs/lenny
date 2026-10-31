@@ -64,7 +64,7 @@ func TestCreatePlaygroundOriginStampsCapsAndLabel_spec_27_6(t *testing.T) {
 	srv.SetPlaygroundCaps(playgroundCapsFake{idleSeconds: 300, sessionMins: 30},
 		func(rt string) { created++ })
 
-	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequestAs(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme", Origin: "playground"})
 	if rr.Code != http.StatusCreated {
@@ -114,7 +114,7 @@ func TestCreateNonPlaygroundLeavesOriginUnset_spec_27_6(t *testing.T) {
 	srv.SetPlaygroundCaps(playgroundCapsFake{idleSeconds: 300, sessionMins: 30},
 		func(string) { created++ })
 
-	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequestAs(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusCreated {

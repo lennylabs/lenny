@@ -84,7 +84,7 @@ func TestEmitChildrenReattachedSuppressedWhenNoneActive_spec_8_10_1062(t *testin
 }
 
 func sessionStoreRow(id, parent string, state session.State, now time.Time) sessionstore.Session {
-	return sessionstore.Session{ID: id, TenantID: "acme", State: state, ParentSessionID: parent, CreatedAt: now, UpdatedAt: now}
+	return sessionstore.Session{UserID: testOwner, ID: id, TenantID: "acme", State: state, ParentSessionID: parent, CreatedAt: now, UpdatedAt: now}
 }
 
 func childrenReattachedInternal(t *testing.T, bus *sessionevents.Bus, sessionID string) []reattachedChild {

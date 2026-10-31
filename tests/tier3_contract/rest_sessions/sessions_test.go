@@ -25,6 +25,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // newTestServer returns a running httptest.Server backed by a fresh
@@ -33,7 +34,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 	return ts
 }
@@ -78,7 +79,6 @@ func createSession(t *testing.T, ts *httptest.Server) string {
 	t.Helper()
 	resp, body := do(t, ts, "POST", "/v1/sessions", map[string]any{
 		"runtimeRef": "claude-code",
-		"userId":     "alice@acme.com",
 	})
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST /v1/sessions: want 201, got %d (body %v)", resp.StatusCode, body)
@@ -106,7 +106,6 @@ func TestCreateSessionReturnsCreatedRow(t *testing.T) {
 	ts := newTestServer(t)
 	resp, body := do(t, ts, "POST", "/v1/sessions", map[string]any{
 		"runtimeRef": "claude-code",
-		"userId":     "alice@acme.com",
 	})
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status: want 201, got %d", resp.StatusCode)
@@ -128,7 +127,7 @@ func TestCreateSessionReturnsCreatedRow(t *testing.T) {
 //	Inspect the request-body validator in sessionserver.
 func TestCreateRejectsMissingRuntimeRef(t *testing.T) {
 	ts := newTestServer(t)
-	resp, body := do(t, ts, "POST", "/v1/sessions", map[string]any{"userId": "alice"})
+	resp, body := do(t, ts, "POST", "/v1/sessions", map[string]any{})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("missing runtimeRef: want 400, got %d", resp.StatusCode)
 	}

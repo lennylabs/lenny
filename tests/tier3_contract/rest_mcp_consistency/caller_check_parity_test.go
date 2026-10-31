@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -26,6 +27,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // impersonationTokens reads every jti as a live impersonation row.
@@ -120,5 +122,90 @@ func TestCreateSessionCallerCheckParity_spec_15_2_1(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Errorf("sessions = %d, want 0", len(rows))
+	}
+}
+
+// newOwnershipParityServers stands up REST and MCP surfaces over one store
+// holding alice's running session sess_alice, both authenticated as bob,
+// who does not own it. The MCP session tools dispatch through the session
+// server, as the gateway wires them.
+func newOwnershipParityServers(t *testing.T) (rest, mcpURL string) {
+	t.Helper()
+	store := memstore.New()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess_alice", TenantID: "acme", UserID: ownerprincipal.Alice, RuntimeRef: "echo",
+		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: executor.NewEchoExecutor()})
+	t.Cleanup(srv.Close)
+	const bob = "bob@acme.com"
+	tsREST := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), bob))
+	t.Cleanup(tsREST.Close)
+	mcpSrv := mcp.NewServer()
+	mcptools.Register(mcpSrv, mcptools.Deps{
+		DevTenantFallback: true,
+		Store:             store,
+		SessionCreator:    srv,
+		SessionService:    srv,
+		Executor:          executor.NewEchoExecutor(),
+		Clock:             func() time.Time { return now },
+		TenantID:          "acme",
+	})
+	tsMCP := httptest.NewServer(ownerprincipal.Wrap(mcpSrv.Handler(), bob))
+	t.Cleanup(tsMCP.Close)
+	return tsREST.URL, tsMCP.URL
+}
+
+// restNotFoundEnvelope sends method to url and decodes its error envelope,
+// failing unless the status is 404.
+func restNotFoundEnvelope(t *testing.T, method, url string) capEnvelope {
+	t.Helper()
+	req, _ := http.NewRequest(method, url, nil)
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, url, err)
+	}
+	defer resp.Body.Close()
+	var env struct {
+		Error capEnvelope `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode %s %s: %v", method, url, err)
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("%s %s = %d %+v, want 404", method, url, resp.StatusCode, env.Error)
+	}
+	return env.Error
+}
+
+// spec: §15.2.1 (REST/MCP Consistency Contract), §10.2 (Session ownership) rule 7
+// diagnosis: a user that does not own a session receives different answers
+// from a REST session route and the MCP tool that mirrors it. Both must
+// answer the non-owner with the RESOURCE_NOT_FOUND a missing session gets,
+// in the same category, so neither surface reveals that the session exists
+// or lets the non-owner read or act on it.
+func TestNonOwnerNotFoundParity_spec_10_2(t *testing.T) {
+	restURL, mcpURL := newOwnershipParityServers(t)
+	for _, c := range []struct {
+		method, path, tool string
+	}{
+		{http.MethodGet, "/v1/sessions/sess_alice", "lenny/get_session_status"},
+		{http.MethodPost, "/v1/sessions/sess_alice/terminate", "lenny/terminate_session"},
+	} {
+		t.Run(c.tool, func(t *testing.T) {
+			rest := restNotFoundEnvelope(t, c.method, restURL+c.path)
+			mcpEnv := mcpCapEnvelope(t, mcpURL, c.tool, map[string]any{"sessionId": "sess_alice"})
+			if rest.Code != "RESOURCE_NOT_FOUND" || mcpEnv.Code != rest.Code {
+				t.Fatalf("codes REST=%q MCP=%q, want RESOURCE_NOT_FOUND on both", rest.Code, mcpEnv.Code)
+			}
+			if rest.Category != mcpEnv.Category || rest.Retryable != mcpEnv.Retryable {
+				t.Errorf("REST (%q, %v) and MCP (%q, %v) category/retryable differ",
+					rest.Category, rest.Retryable, mcpEnv.Category, mcpEnv.Retryable)
+			}
+		})
 	}
 }

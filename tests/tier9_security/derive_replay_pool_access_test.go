@@ -29,6 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // diagnosis: the §4 pool_tenant_access grant is not enforced on the
@@ -87,7 +88,8 @@ func TestDeriveAndReplayTargetPoolEnforcesTenantAccess_spec_4(t *testing.T) {
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
 		req.Header.Set("Content-Type", "application/json")
 		rr := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rr, req)
+		// spec: §10.2 (Session ownership) — the request runs as the source's owner.
+		ownerprincipal.Wrap(srv.Handler(), "alice@acme.com").ServeHTTP(rr, req)
 		return rr
 	}
 	for _, ep := range endpoints {

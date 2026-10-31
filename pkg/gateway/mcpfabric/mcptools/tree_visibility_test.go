@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -36,7 +38,8 @@ func vtSeedVis(t *testing.T, store sessionstore.Store, id, parent string, vis se
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     id, TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: parent, RuntimeRef: "echo", TreeVisibility: vis,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
@@ -113,6 +116,7 @@ func newMCPForDelegateVis(t *testing.T) (*mcp.Server, sessionstore.Store) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -132,7 +136,7 @@ func vtSeedParent(t *testing.T, store sessionstore.Store, vis session.TreeVisibi
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
 		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
-		UserID: "user_alice", RuntimeRef: "claude", PoolRef: "pool-a",
+		UserID: ownerprincipal.Alice, RuntimeRef: "claude", PoolRef: "pool-a",
 		IsolationProfile: isolation.ProfileSandboxed, TreeVisibility: vis,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {

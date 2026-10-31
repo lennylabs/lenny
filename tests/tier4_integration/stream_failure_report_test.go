@@ -64,6 +64,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/runtimekit/echocore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 const (
@@ -275,7 +276,8 @@ func newStreamFailureFixture(t *testing.T, rt adapter.RuntimeProcess, id string,
 		Interactions:            rep.interactions,
 	})
 	f.exec.SetStreamFailureHandler(f.srv.ReportAttachStreamFailure)
-	hs := httptest.NewServer(f.srv.Handler())
+	// spec: §10.2 (Session ownership) — the requests run as the seeded row's owner.
+	hs := httptest.NewServer(ownerprincipal.Wrap(f.srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(hs.Close)
 	f.base = hs.URL
 	streamFailureSeed(t, f.store, id, f.sandbox, st, retries)
@@ -323,7 +325,8 @@ func streamFailureSeed(t *testing.T, store sessionstore.Store, id, sandbox strin
 	t.Helper()
 	now := time.Now().UTC()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", State: st, RuntimeRef: matOKRuntime,
+		UserID: ownerprincipal.Alice,
+		ID:     id, TenantID: "acme", State: st, RuntimeRef: matOKRuntime,
 		IsolationProfile: isolation.ProfileSandboxed, PodAssignment: sandbox,
 		CoordinationGeneration: 1, RetryCount: retries,
 		RetryPolicy:       &session.RetryPolicy{MaxRetries: 1},
@@ -597,7 +600,7 @@ func TestCrossReplicaResumeIsAStoreWriteTheCoordinatorRestores_spec_7_3(t *testi
 		ReplicaID:               "rep-2",
 		IDFunc:                  func() string { return id },
 	})
-	secondHS := httptest.NewServer(second.Handler())
+	secondHS := httptest.NewServer(ownerprincipal.Wrap(second.Handler(), ownerprincipal.Alice))
 	t.Cleanup(secondHS.Close)
 
 	if code, resp := first.post(t, "turn-1"); code != http.StatusOK {

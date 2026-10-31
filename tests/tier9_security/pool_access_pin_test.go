@@ -41,6 +41,7 @@ import (
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -127,9 +128,12 @@ func TestCreateBodyPoolEnforcesTenantAccess_spec_4(t *testing.T) {
 
 	post := func(tenant string) *httptest.ResponseRecorder {
 		body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
-			RuntimeRef: "echo", UserID: "alice@" + tenant + ".com", Pool: "echo-pool",
+			RuntimeRef: "echo", Pool: "echo-pool",
 		})
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
+		// spec: §10.2 (Session ownership) rule 3 — a create carries a
+		// principal subject, which becomes the session's owner.
+		req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{Subject: "alice@" + tenant + ".com"}))
 		req.Header.Set("X-Lenny-Tenant-ID", tenant)
 		req.Header.Set("Content-Type", "application/json")
 		rr := httptest.NewRecorder()

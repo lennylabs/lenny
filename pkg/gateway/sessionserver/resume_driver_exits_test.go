@@ -129,7 +129,8 @@ func newDriverFixture(t *testing.T, brokenResume bool) *driverFixture {
 	})
 	t.Cleanup(f.srv.Close)
 	if err := f.store.Create(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", RuntimeRef: "echo", PoolRef: "echo-pool", State: session.StateResumePending,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", RuntimeRef: "echo", PoolRef: "echo-pool", State: session.StateResumePending,
 		IsolationProfile:  isolation.ProfileSandboxed,
 		WorkspaceSnapshot: checkpointed(),
 	}); err != nil {
@@ -354,7 +355,7 @@ func TestResumeDriverExits_spec_7_3(t *testing.T) {
 			go func() {
 				req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/s", nil)
 				req.Header.Set("X-Lenny-Tenant-ID", "acme")
-				f.srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
+				asOwner(f.srv.Handler()).ServeHTTP(httptest.NewRecorder(), req)
 			}()
 			time.Sleep(50 * time.Millisecond)
 		}

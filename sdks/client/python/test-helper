@@ -119,7 +119,6 @@ class Helper:
         assert self.client is not None
         req = lenny.CreateSessionRequest(
             runtime_ref=string_arg(args, "runtime"),
-            user_id=string_arg(args, "user_id"),
         )
         options = None
         key = string_arg(args, "idempotency_key")

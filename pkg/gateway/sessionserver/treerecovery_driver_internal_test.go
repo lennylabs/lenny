@@ -129,7 +129,7 @@ func TestTreeRecoveryReattachWaitsForTheRestoreOutcome_spec_8_10(t *testing.T) {
 			srv := New(store, Options{DevTenantHeader: true})
 			srv.treePollInterval = 2 * time.Millisecond
 			ctx := context.Background()
-			node := sessionstore.Session{ID: "n", TenantID: "acme", State: session.StateResumePending}
+			node := sessionstore.Session{UserID: testOwner, ID: "n", TenantID: "acme", State: session.StateResumePending}
 			if err := inner.Create(ctx, node); err != nil {
 				t.Fatalf("seed: %v", err)
 			}
@@ -175,7 +175,7 @@ func TestTreeRecoveryReattachWaitsForTheRestoreOutcome_spec_8_10(t *testing.T) {
 		store := memstore.New()
 		srv := New(store, Options{DevTenantHeader: true})
 		srv.treePollInterval = 2 * time.Millisecond
-		node := sessionstore.Session{ID: "n", TenantID: "acme", State: session.StateResumePending}
+		node := sessionstore.Session{UserID: testOwner, ID: "n", TenantID: "acme", State: session.StateResumePending}
 		if err := store.Create(context.Background(), node); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
@@ -200,7 +200,8 @@ func TestTreeRecoveryReattachWaitsForTheRestoreOutcome_spec_8_10(t *testing.T) {
 func TestTreeRecoveryStartNodeHonorsTheLeaseGate_spec_8_10(t *testing.T) {
 	f := newFunnelFixture(t, funnelOpts{})
 	if err := f.store.Create(context.Background(), sessionstore.Session{
-		ID: "sess-child", TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending,
+		UserID: testOwner,
+		ID:     "sess-child", TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

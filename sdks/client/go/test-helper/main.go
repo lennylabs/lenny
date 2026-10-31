@@ -159,7 +159,6 @@ func (h *helper) opInit(args map[string]any) response {
 func (h *helper) opCreateSession(ctx context.Context, args map[string]any) response {
 	req := lenny.CreateSessionRequest{
 		RuntimeRef: stringArg(args, "runtime"),
-		UserID:     stringArg(args, "user_id"),
 	}
 	var opts []lenny.RequestOption
 	if key := stringArg(args, "idempotency_key"); key != "" {

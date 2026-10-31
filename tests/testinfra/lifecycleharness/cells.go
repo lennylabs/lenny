@@ -132,6 +132,7 @@ func (h *Harness) MCPCall(r *Replica, tool, args string) map[string]any {
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + tool + `","arguments":` + args + `}}`
 	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(body)))
 	req.Header.Set("X-Lenny-Tenant-ID", Tenant)
+	req.Header.Set("X-Lenny-User-ID", Owner)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	rr := httptest.NewRecorder()

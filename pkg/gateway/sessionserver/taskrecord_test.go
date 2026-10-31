@@ -62,7 +62,8 @@ func TestGetSessionProjectsTaskRecord_spec_8_8_806(t *testing.T) {
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_tr1", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "sess_tr1", TenantID: "acme", State: session.StateCompleted,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -75,7 +76,7 @@ func TestGetSessionProjectsTaskRecord_spec_8_8_806(t *testing.T) {
 		t.Fatalf("transcript: %v", err)
 	}
 
-	rr := getSession(t, srv.Handler(), "sess_tr1")
+	rr := getSession(t, asOwner(srv.Handler()), "sess_tr1")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
 	}
@@ -121,12 +122,13 @@ func TestGetSessionOmitsTaskRecordWithoutTranscripts_spec_8_8_806(t *testing.T) 
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: executor.NewEchoExecutor()})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_no_tr", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_no_tr", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	rr := getSession(t, srv.Handler(), "sess_no_tr")
+	rr := getSession(t, asOwner(srv.Handler()), "sess_no_tr")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
 	}

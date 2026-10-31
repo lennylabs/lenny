@@ -56,7 +56,7 @@ func (c *countingLeaseStore) Get(ctx context.Context, tenantID, sessionID string
 
 // forwardRow is a running session that names its pod.
 func forwardRow() sessionstore.Session {
-	return sessionstore.Session{ID: "sess-1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-1"}
+	return sessionstore.Session{UserID: testOwner, ID: "sess-1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-1"}
 }
 
 // forwardServer builds a Server with a pod binder, the lease store, the
@@ -433,7 +433,7 @@ func silentListener(t *testing.T) string {
 func coordinatorChain(t *testing.T, m *gatewaypki.Material, mcpSrv *mcp.Server, rest http.Handler, opts authmw.Options) string {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", mcpSrv.Handler())
+	mux.Handle("/mcp", asOwner(mcpSrv.Handler()))
 	if rest != nil {
 		mux.Handle("/v1/sessions/", rest)
 	}
@@ -1035,7 +1035,7 @@ func newServingSurface(s *Server, row sessionstore.Session) *servingSurface {
 		return res, err
 	})
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", mcpSrv.Handler())
+	mux.Handle("/mcp", asOwner(mcpSrv.Handler()))
 	mux.HandleFunc("/v1/sessions/{id}/resume", func(w http.ResponseWriter, r *http.Request) {
 		ss.calls.Add(1)
 		s.forwardToHolder(w, r, row, ForwardKindResume, r.Body)
@@ -1170,7 +1170,7 @@ func toolForwardingServer(s *Server, row sessionstore.Session, credential string
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := authmw.WithCredential(r.Context(), authmw.Credential{Authorization: "Bearer " + credential})
-		mcpSrv.Handler().ServeHTTP(w, r.WithContext(ctx))
+		asOwner(mcpSrv.Handler()).ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -1343,7 +1343,7 @@ func credentialServingSurface(s *Server, verifier jwt.Verifier) http.Handler {
 	})
 	mux := http.NewServeMux()
 	mux.Handle("/v1/sessions/", rest)
-	mux.Handle("POST /mcp", tools.Handler())
+	mux.Handle("POST /mcp", asOwner(tools.Handler()))
 	mux.Handle("GET /mcp/v1/ws", tools.WebSocketHandler())
 	return authmw.Wrap(mux, authmw.Options{Verifier: verifier})
 }
@@ -1850,7 +1850,7 @@ func TestResponsesTurnForwardStatesAreRunningOnly_spec_29_3(t *testing.T) {
 	}
 	s := forwardServer(nil, "gw-a", nil)
 	for _, st := range []session.State{session.StateInputRequired, session.StateSuspended, session.StateResumePending, session.StateCompleted} {
-		if s.forwardGated(sessionstore.Session{State: st, PodAssignment: "pod-1"}, ForwardKindResponsesTurn) {
+		if s.forwardGated(sessionstore.Session{UserID: testOwner, State: st, PodAssignment: "pod-1"}, ForwardKindResponsesTurn) {
 			t.Errorf("state %q is gated, want only running", st)
 		}
 	}

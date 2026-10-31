@@ -138,7 +138,7 @@ func TestStaleBindingStepLeavesPreRunningStatesAlone_spec_10_1_5(t *testing.T) {
 	}
 	t.Run("no registry", func(t *testing.T) {
 		f := newFunnelFixture(t, funnelOpts{noRegistry: true})
-		f.srv.settleStaleBinding(session.StateRunning, sessionstore.Session{ID: "s", CoordinationGeneration: 3})
+		f.srv.settleStaleBinding(session.StateRunning, sessionstore.Session{UserID: testOwner, ID: "s", CoordinationGeneration: 3})
 	})
 }
 
@@ -159,7 +159,7 @@ func TestBindingStaleCallSitesAgree_spec_10_1_1(t *testing.T) {
 				if got := bindingStale(bindGen, rowGen); got != want {
 					t.Fatalf("bindingStale = %v, want %v", got, want)
 				}
-				peer := reportSupersededByPeer(sessionstore.Session{ID: "s", State: session.StateRunning, CoordinationGeneration: rowGen},
+				peer := reportSupersededByPeer(sessionstore.Session{UserID: testOwner, ID: "s", State: session.StateRunning, CoordinationGeneration: rowGen},
 					&podsession.BindResult{CoordinationGeneration: bindGen})
 				if peer != want {
 					t.Errorf("reportSupersededByPeer = %v, want %v", peer, want)

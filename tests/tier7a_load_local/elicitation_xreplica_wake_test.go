@@ -35,6 +35,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -90,6 +92,7 @@ type elicitReplica struct {
 func newElicitReplica(sessions sessionstore.Store, inter interactionstore.Store, idFn func() string) elicitReplica {
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:     ownerprincipal.SessionAccess{},
 		DevTenantFallback:  true,
 		Store:              sessions,
 		Interactions:       inter,
@@ -97,7 +100,9 @@ func newElicitReplica(sessions sessionstore.Store, inter interactionstore.Store,
 		IDFunc:             idFn,
 		TenantID:           elicitXReplicaTenant,
 	})
-	return elicitReplica{handler: srv.Handler()}
+	// spec: §10.2 (Session ownership) — a call with no principal runs as the
+	// seeded sessions' owner.
+	return elicitReplica{handler: ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)}
 }
 
 // callTool invokes one MCP tool on the replica and returns the decoded
@@ -182,7 +187,7 @@ func TestElicitationAnsweredOnAnotherReplicaWakesTheBlockedCall_spec_9_2(t *test
 	now := time.Now()
 	for i := range elicitXReplicaSessions {
 		if err := sessions.Create(ctx, sessionstore.Session{
-			ID: elicitSessionID(i), TenantID: elicitXReplicaTenant, UserID: "alice",
+			ID: elicitSessionID(i), TenantID: elicitXReplicaTenant, UserID: ownerprincipal.Alice,
 			State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 		}); err != nil {
 			t.Fatalf("seed session %d: %v", i, err)
@@ -259,7 +264,7 @@ func resolveOnReplicaB(t *testing.T, ctx context.Context, b elicitReplica, inter
 		// The MCP resolution tools key the (tenant, session, user,
 		// elicitation) triple on the authenticated caller, so the owner's
 		// principal rides the call. spec: §9.2.
-		owner := authmw.WithPrincipal(ctx, authmw.Principal{Subject: "alice", TenantID: elicitXReplicaTenant})
+		owner := authmw.WithPrincipal(ctx, authmw.Principal{Subject: ownerprincipal.Alice, TenantID: elicitXReplicaTenant})
 		res, err := b.callTool(owner, tool, args)
 		at := time.Now()
 		if err != nil || res["isError"] == true {
@@ -307,7 +312,7 @@ func waitPendingElicitation(t *testing.T, inter interactionstore.Store, i int) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		got, err := inter.Get(context.Background(), elicitXReplicaTenant, elicitSessionID(i), "alice", elicitID(i))
+		got, err := inter.Get(context.Background(), elicitXReplicaTenant, elicitSessionID(i), ownerprincipal.Alice, elicitID(i))
 		if err == nil && got.Phase == interactionstore.PhasePending {
 			return
 		}

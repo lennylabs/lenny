@@ -55,11 +55,11 @@ func TestServiceModeSuspendedSessionResumesToRunning_spec_7_3(t *testing.T) {
 	})
 	t.Cleanup(srv.Close)
 
-	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "svc-runtime", UserID: "alice@acme.com"})
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "svc-runtime"})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("service-mode start: status = %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}

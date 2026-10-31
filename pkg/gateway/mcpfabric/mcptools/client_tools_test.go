@@ -9,8 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
@@ -37,6 +40,12 @@ func (f *fakeService) ServiceCall(_ context.Context, _ /*tenantID*/, method, tar
 	return f.result, nil
 }
 
+// SessionAccessible grants the row's owner, so the double satisfies
+// SessionService. spec: §10.2 (Session ownership).
+func (f *fakeService) SessionAccessible(ctx context.Context, row sessionstore.Session, _ bool) bool {
+	return ownerprincipal.SessionAccess{}.SessionAccessible(ctx, row, false)
+}
+
 func newClientToolsMCP(t *testing.T, svc mcptools.SessionService) *mcp.Server {
 	t.Helper()
 	srv := mcp.NewServer()
@@ -51,7 +60,7 @@ func newClientToolsMCP(t *testing.T, svc mcptools.SessionService) *mcp.Server {
 
 func dispatch(t *testing.T, srv *mcp.Server, name, args string) (mcp.ToolResult, error) {
 	t.Helper()
-	res, ok, err := srv.DispatchTool(context.Background(), name, json.RawMessage(args))
+	res, ok, err := srv.DispatchTool(ownerprincipal.Context(context.Background(), ownerprincipal.Alice), name, json.RawMessage(args))
 	if !ok {
 		t.Fatalf("tool %q not registered", name)
 	}

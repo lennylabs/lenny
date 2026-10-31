@@ -117,7 +117,7 @@ func TestReplayRequiresMatchingExecutionMode_spec_15_1(t *testing.T) {
 					IDFunc:          func() string { return "sess_replay" },
 					Runtimes:        reg,
 				}))
-				rr := replayReq(t, srv.Handler(), sessionserver.ReplayRequest{ReplayMode: mode, TargetRuntime: tc.target})
+				rr := replayReq(t, asOwner(srv.Handler()), sessionserver.ReplayRequest{ReplayMode: mode, TargetRuntime: tc.target})
 				if rr.Code != tc.status {
 					t.Fatalf("status = %d, want %d; body=%s", rr.Code, tc.status, rr.Body.String())
 				}

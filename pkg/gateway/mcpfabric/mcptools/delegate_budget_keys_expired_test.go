@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
@@ -36,6 +38,7 @@ func newBudgetErrorMCP(t *testing.T, reserveErr error) *mcp.Server {
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -55,7 +58,7 @@ func newBudgetErrorMCP(t *testing.T, reserveErr error) *mcp.Server {
 		{ID: "sess_parent", State: session.StateRunning},
 		{ID: "sess_old", State: session.StateRunning, ParentSessionID: "sess_parent", RootSessionID: "sess_parent", DelegationDepth: 1},
 	} {
-		row.TenantID, row.UserID = "acme", "user_alice"
+		row.TenantID, row.UserID = "acme", ownerprincipal.Alice
 		row.RuntimeRef, row.PoolRef, row.IsolationProfile = "child-agent", "pool-a", isolation.ProfileSandboxed
 		row.CreatedAt, row.UpdatedAt = now, now
 		if err := store.Create(ctx, row); err != nil {

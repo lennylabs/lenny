@@ -56,7 +56,7 @@ func TestMaterializeTaskResultCompletedOutput_spec_8_8_2(t *testing.T) {
 	srv := New(memstore.New(), Options{DevTenantHeader: true, Clock: taskResultClock, Transcripts: tx, Artifacts: cat})
 
 	res := srv.materializeTaskResult(context.Background(),
-		sessionstore.Session{ID: "sess_c", TenantID: "acme", State: session.StateCompleted}, 0)
+		sessionstore.Session{UserID: testOwner, ID: "sess_c", TenantID: "acme", State: session.StateCompleted}, 0)
 
 	if res.SchemaVersion != sessionrecord.SchemaVersion || res.State != "completed" || res.Error != nil {
 		t.Fatalf("result = %+v, want schemaVersion=%d state=completed error=nil", res, sessionrecord.SchemaVersion)
@@ -97,7 +97,8 @@ func TestMaterializeTaskResultFailedError_spec_8_8_4(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			sess := sessionstore.Session{
-				ID: "sess_c", TenantID: "acme", State: tc.state,
+				UserID: testOwner,
+				ID:     "sess_c", TenantID: "acme", State: tc.state,
 				FailureReason: tc.failureReason, RetryCount: tc.retryCount,
 			}
 			if tc.maxRetries > 0 {
@@ -157,7 +158,8 @@ func TestIsDeliverableArtifact_spec_8_8_2(t *testing.T) {
 func TestArchiveSettledChildPreservesSchemaVersion_spec_8_8_11(t *testing.T) {
 	store := memstore.New()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_p", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_p", TenantID: "acme", State: session.StateRunning,
 	}); err != nil {
 		t.Fatalf("seed root: %v", err)
 	}
@@ -175,7 +177,8 @@ func TestArchiveSettledChildPreservesSchemaVersion_spec_8_8_11(t *testing.T) {
 	}
 
 	srv.archiveSettledChild(context.Background(), sessionstore.Session{
-		ID: "sess_c", TenantID: "acme", State: session.StateCompleted, ParentSessionID: "sess_p",
+		UserID: testOwner,
+		ID:     "sess_c", TenantID: "acme", State: session.StateCompleted, ParentSessionID: "sess_p",
 	})
 	if got := archivedSchemaVersion(t, archive, "sess_c"); got != 7 {
 		t.Errorf("re-archived schemaVersion = %d, want the preserved 7", got)
@@ -183,7 +186,8 @@ func TestArchiveSettledChildPreservesSchemaVersion_spec_8_8_11(t *testing.T) {
 
 	// A node with no prior archive takes the current producer version.
 	srv.archiveSettledChild(context.Background(), sessionstore.Session{
-		ID: "sess_d", TenantID: "acme", State: session.StateCompleted, ParentSessionID: "sess_p",
+		UserID: testOwner,
+		ID:     "sess_d", TenantID: "acme", State: session.StateCompleted, ParentSessionID: "sess_p",
 	})
 	if got := archivedSchemaVersion(t, archive, "sess_d"); got != sessionrecord.SchemaVersion {
 		t.Errorf("fresh schemaVersion = %d, want producer %d", got, sessionrecord.SchemaVersion)
@@ -191,7 +195,7 @@ func TestArchiveSettledChildPreservesSchemaVersion_spec_8_8_11(t *testing.T) {
 
 	// The materialize helper preserves an explicit prior version directly.
 	res := srv.materializeTaskResult(context.Background(),
-		sessionstore.Session{ID: "sess_e", TenantID: "acme", State: session.StateCompleted}, 9)
+		sessionstore.Session{UserID: testOwner, ID: "sess_e", TenantID: "acme", State: session.StateCompleted}, 9)
 	if res.SchemaVersion != 9 {
 		t.Errorf("materialize with existing=9 → schemaVersion %d, want 9", res.SchemaVersion)
 	}
@@ -211,7 +215,8 @@ func TestMaterializeTaskResultStampsUsage_spec_8_8_3(t *testing.T) {
 	created := time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC)
 	terminal := created.Add(90 * time.Second) // 1.5 pod/lease minutes
 	sess := sessionstore.Session{
-		ID: "sess_u", TenantID: "acme", RootSessionID: "sess_u",
+		UserID: testOwner,
+		ID:     "sess_u", TenantID: "acme", RootSessionID: "sess_u",
 		State: session.StateCompleted, PodAssignment: "pod-1",
 		CreatedAt: created, UpdatedAt: terminal,
 	}
@@ -284,7 +289,8 @@ func TestMaterializeTaskResultRetriesExhaustedUsesEffectiveBudget_spec_8_8(t *te
 				RetryPolicyCaps: session.RetryPolicyCaps{MaxRetries: tc.capMaxRetries},
 			})
 			sess := sessionstore.Session{
-				ID: "sess_c", TenantID: "acme", State: session.StateFailed,
+				UserID: testOwner,
+				ID:     "sess_c", TenantID: "acme", State: session.StateFailed,
 				FailureReason: string(session.FailurePodEvicted), RetryCount: tc.retryCount,
 			}
 			res := srv.materializeTaskResult(context.Background(), sess, 0)

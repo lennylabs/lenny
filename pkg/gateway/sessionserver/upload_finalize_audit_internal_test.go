@@ -38,7 +38,7 @@ func TestRunUploadEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 	})
 
 	row := sessionstore.Session{
-		ID: "sess_audit", TenantID: "default", UserID: "alice",
+		ID: "sess_audit", TenantID: "default", UserID: testOwner,
 		RuntimeRef: "claude-code", State: session.StateCreated,
 		CreatedAt: clock(), UpdatedAt: clock(),
 	}
@@ -55,7 +55,7 @@ func TestRunUploadEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 	req.Header.Set("X-Lenny-Upload-Token", tok)
 	req.Header.Set("Content-Type", "text/plain")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -101,7 +101,7 @@ func TestHandleFinalizeEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 		t.Fatalf("mint: %v", err)
 	}
 	row := sessionstore.Session{
-		ID: "sess_fin", TenantID: "default", UserID: "alice",
+		ID: "sess_fin", TenantID: "default", UserID: testOwner,
 		RuntimeRef: "claude-code", State: session.StateCreated,
 		CreatedAt: clock(), UpdatedAt: clock(),
 		UploadTokenDigest: parsed.Digest,
@@ -115,7 +115,7 @@ func TestHandleFinalizeEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "default")
 	req.Header.Set("X-Lenny-Upload-Token", tok)
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -154,7 +154,8 @@ func TestRunUploadAuditNilSinkSafe_spec_7_4_17(t *testing.T) {
 	})
 
 	row := sessionstore.Session{
-		ID: "sess_nil", TenantID: "default", State: session.StateCreated,
+		UserID: testOwner,
+		ID:     "sess_nil", TenantID: "default", State: session.StateCreated,
 		CreatedAt: clock(), UpdatedAt: clock(),
 	}
 	if err := store.Create(context.Background(), row); err != nil {
@@ -165,7 +166,7 @@ func TestRunUploadAuditNilSinkSafe_spec_7_4_17(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "default")
 	req.Header.Set("X-Lenny-Upload-Token", tok)
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
 	}

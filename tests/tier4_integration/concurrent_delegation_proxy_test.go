@@ -249,7 +249,6 @@ func TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2(t *testing.T) {
 			ParentSessionID: alice.sessionID,
 			RuntimeRef:      "child-alice",
 			PoolRef:         "pool-child-alice",
-			UserID:          "alice@acme.com",
 			LeaseSlice:      dlease.LeaseSlice{MaxTokenBudget: aliceBudget},
 		})
 		if err != nil {
@@ -284,7 +283,6 @@ func TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2(t *testing.T) {
 		ParentSessionID: alice.sessionID,
 		RuntimeRef:      "child-bob", // fresh (runtime, pool) — not a cycle under alice
 		PoolRef:         "pool-overbudget",
-		UserID:          "alice@acme.com",
 		LeaseSlice:      dlease.LeaseSlice{MaxTokenBudget: overSlice},
 	}); !isBudgetExceeded(err) {
 		t.Errorf("over-budget delegation from slot 0 err = %v, want *BudgetExceededError; alice's budget was pooled with bob's", err)
@@ -296,7 +294,6 @@ func TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2(t *testing.T) {
 		ParentSessionID: bob.sessionID,
 		RuntimeRef:      "child-bob",
 		PoolRef:         "pool-child-bob",
-		UserID:          "bob@acme.com",
 		LeaseSlice:      dlease.LeaseSlice{MaxTokenBudget: overSlice},
 	}); err != nil {
 		t.Errorf("same slice under slot 1 err = %v, want admitted; budgets are not independent per slot", err)

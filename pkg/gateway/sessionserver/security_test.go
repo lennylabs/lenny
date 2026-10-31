@@ -32,7 +32,8 @@ func TestResolveTenantPrefersAuthenticatedPrincipal(t *testing.T) {
 	// Session belongs to acme.
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_a", TenantID: "acme", State: session.StateCreated, CreatedAt: now, UpdatedAt: now,
+		UserID: testOwner,
+		ID:     "sess_a", TenantID: "acme", State: session.StateCreated, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -41,10 +42,10 @@ func TestResolveTenantPrefersAuthenticatedPrincipal(t *testing.T) {
 	// hijack the header to read a different tenant — Principal wins.
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_a", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "globex")
-	ctx := authmw.WithPrincipal(req.Context(), authmw.Principal{TenantID: "acme"})
+	ctx := authmw.WithPrincipal(req.Context(), authmw.Principal{Subject: testOwner, TenantID: "acme"})
 	req = req.WithContext(ctx)
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("Principal should win: status=%d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -68,7 +69,7 @@ func TestResolveTenantRejectsMalformedHeader(t *testing.T) {
 			req.Header.Set("X-Lenny-Tenant-ID", hijacked)
 		}
 		rr := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rr, req)
+		asOwner(srv.Handler()).ServeHTTP(rr, req)
 		// The list endpoint always returns 200 for an empty result —
 		// the key assertion is that it doesn't 500 or echo the
 		// hijacked tenant id back to the caller.
@@ -101,7 +102,7 @@ func TestFinalizeConsumesUploadToken(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(createBody))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -117,7 +118,7 @@ func TestFinalizeConsumesUploadToken(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("X-Lenny-Upload-Token", tok)
 	rr = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("upload 1: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -127,7 +128,7 @@ func TestFinalizeConsumesUploadToken(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("X-Lenny-Upload-Token", tok)
 	rr = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("finalize: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -138,7 +139,7 @@ func TestFinalizeConsumesUploadToken(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("X-Lenny-Upload-Token", tok)
 	rr = httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	// Note: the session is now `ready`, so the precondition table
 	// rejects with 409 INVALID_STATE_TRANSITION before reaching the
 	// token check. The §7.1 invariant is satisfied at either layer —
@@ -152,7 +153,8 @@ func TestFinalizeConsumesUploadToken(t *testing.T) {
 func TestExtendRetentionRejectsExcessiveTTL(t *testing.T) {
 	store := memstore.New()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_R", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "sess_R", TenantID: "acme", State: session.StateCompleted,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -165,7 +167,7 @@ func TestExtendRetentionRejectsExcessiveTTL(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_R/extend-retention", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("over-cap retention: got %d, want 400", rr.Code)
 	}
@@ -174,7 +176,8 @@ func TestExtendRetentionRejectsExcessiveTTL(t *testing.T) {
 func TestExtendRetentionAdmitsAtCap(t *testing.T) {
 	store := memstore.New()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_R", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "sess_R", TenantID: "acme", State: session.StateCompleted,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -187,7 +190,7 @@ func TestExtendRetentionAdmitsAtCap(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_R/extend-retention", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Errorf("at-cap retention: got %d, want 200", rr.Code)
 	}
@@ -203,7 +206,7 @@ func TestCreateRejectsOversizedJSONBody(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code == http.StatusCreated {
 		t.Errorf("oversized JSON should be rejected; got 201")
 	}
@@ -230,7 +233,7 @@ func TestResolveTenantAuthHeaderHijackBlocked(t *testing.T) {
 	})
 	req = req.WithContext(ctx)
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	// The handler resolves tenant=acme; sess_globex is foreign → 404.
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("hijack: got %d, want 404 (tenant from Principal wins over header)", rr.Code)

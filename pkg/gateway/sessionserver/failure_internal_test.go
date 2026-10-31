@@ -301,7 +301,8 @@ func funnelPools(t *testing.T) poolstore.Store {
 func (f *funnelFixture) seed(t *testing.T, id string, st session.State, retries int64, slot bool) (sessionstore.Session, *podsession.BindResult) {
 	t.Helper()
 	if err := f.store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", RuntimeRef: "echo", State: st, RetryCount: retries,
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", RuntimeRef: "echo", State: st, RetryCount: retries,
 	}); err != nil {
 		t.Fatalf("seed %s: %v", id, err)
 	}
@@ -437,7 +438,8 @@ func TestFailureFunnelCommitsOnlyFromSnapshotState_spec_7_3(t *testing.T) {
 	t.Run("resuming snapshot over a running row", func(t *testing.T) {
 		f := newFunnelFixture(t, funnelOpts{})
 		if err := f.store.Create(context.Background(), sessionstore.Session{
-			ID: "sess-res", TenantID: "acme", RuntimeRef: "echo",
+			UserID: testOwner,
+			ID:     "sess-res", TenantID: "acme", RuntimeRef: "echo",
 			State: session.StateRunning, CoordinationGeneration: 7,
 		}); err != nil {
 			t.Fatalf("seed: %v", err)

@@ -22,7 +22,7 @@ func TestCreatePlaygroundRejectsRuntimeOutsideAllowedRuntimes_spec_27_5_190(t *t
 	srv, _ := seedNoEnvServer(t, "sess_hidden", tenantstore.NoEnvPolicyAllowAll, tenantstore.NoEnvPolicyDenyAll)
 	srv.SetPlaygroundCaps(playgroundCapsFake{idleSeconds: 300, sessionMins: 30, hidden: "claude-code"}, nil)
 
-	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequestAs(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme", Origin: "playground"})
 	if rr.Code != http.StatusForbidden {
@@ -41,7 +41,7 @@ func TestCreateNonPlaygroundIgnoresAllowedRuntimes_spec_27_5_190(t *testing.T) {
 	srv, _ := seedNoEnvServer(t, "sess_plain_hidden", tenantstore.NoEnvPolicyAllowAll, tenantstore.NoEnvPolicyDenyAll)
 	srv.SetPlaygroundCaps(playgroundCapsFake{idleSeconds: 300, sessionMins: 30, hidden: "claude-code"}, nil)
 
-	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequestAs(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusCreated {
@@ -57,7 +57,7 @@ func TestCreatePlaygroundAdmitsVisibleRuntime_spec_27_5_190(t *testing.T) {
 	// hidden names a different runtime, so claude-code stays visible.
 	srv.SetPlaygroundCaps(playgroundCapsFake{idleSeconds: 300, sessionMins: 30, hidden: "gpt-agent"}, nil)
 
-	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequestAs(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme", Origin: "playground"})
 	if rr.Code != http.StatusCreated {

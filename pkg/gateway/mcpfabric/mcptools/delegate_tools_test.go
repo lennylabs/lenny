@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
@@ -25,7 +27,7 @@ func TestDelegateTaskRejectsMCPTargetSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10(t
 	srv, store, rt := newMCPWithRuntimes(t)
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_parent_810", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent_810", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
@@ -59,7 +61,7 @@ func TestDelegateTaskRejectsInsideInterceptorWeakeningCooldown_spec_8_3_181(t *t
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_parent_cd", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent_cd", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
@@ -93,6 +95,7 @@ func TestDelegateTaskRejectsInsideInterceptorWeakeningCooldown_spec_8_3_181(t *t
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -139,7 +142,7 @@ func TestDelegateTaskTool(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
@@ -163,7 +166,7 @@ func TestDelegateTaskToolDetectsCycle(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
@@ -185,7 +188,7 @@ func TestDelegateTaskToolReturnsTaskHandleEnvelope(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
@@ -216,9 +219,10 @@ func TestDelegateTaskToolReturnsTaskHandleEnvelope(t *testing.T) {
 	}
 }
 
-// spec: §8.2 — Delegate rejects a userless parent with
-// ErrParentNoUser; the MCP shim surfaces DELEGATION_PARENT_NO_USER
-// so callers can distinguish it from the generic error path.
+// spec: §8.2, §10.2 (Session ownership) rules 3 and 7 — a userless parent
+// has no owner, so no principal may act on it: the MCP ownership check
+// answers RESOURCE_NOT_FOUND before the delegation service runs, and no
+// child is created.
 func TestDelegateTaskToolRejectsUserlessParent(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
@@ -241,8 +245,8 @@ func TestDelegateTaskToolRejectsUserlessParent(t *testing.T) {
 	}
 	c0, _ := content[0].(map[string]any)
 	errText, _ := c0["text"].(string)
-	if !strings.Contains(errText, "DELEGATION_PARENT_NO_USER") {
-		t.Errorf("error text = %q, want DELEGATION_PARENT_NO_USER reason", errText)
+	if env := readLennyErrorEnvelope(t, result); env["code"] != "RESOURCE_NOT_FOUND" {
+		t.Errorf("code = %v (text %q), want RESOURCE_NOT_FOUND", env["code"], errText)
 	}
 	// No child must be created when the gate trips.
 	if _, err := store.Get(context.Background(), "acme", "sess_child"); err == nil {

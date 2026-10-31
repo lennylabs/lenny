@@ -30,7 +30,7 @@ func memoryServer(t *testing.T, seed ...sessionstore.Session) (http.Handler, mem
 	}
 	mem := memorystore.NewInMemory(0, nil)
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Memory: mem})
-	return srv.Handler(), mem
+	return asOwner(srv.Handler()), mem
 }
 
 func memorySession(id, user string) sessionstore.Session {
@@ -40,7 +40,7 @@ func memorySession(id, user string) sessionstore.Session {
 // spec: §9.4 (POST /v1/sessions/{id}/memory writes records under
 // the session's (tenant, user) scope and returns the stored shape)
 func TestMemoryWriteIngestsRecords(t *testing.T) {
-	h, store := memoryServer(t, memorySession("sess_1", "alice"))
+	h, store := memoryServer(t, memorySession("sess_1", testOwner))
 	body, _ := json.Marshal(sessionserver.MemoryRequest{
 		Memories: []sessionserver.MemoryItem{
 			{Content: "kubectl is the cluster CLI"},
@@ -62,7 +62,7 @@ func TestMemoryWriteIngestsRecords(t *testing.T) {
 	}
 	// The store sees the same records under the (tenant, user, session) scope.
 	stored, err := store.List(context.Background(), memorystore.MemoryScope{
-		TenantID: "default", UserID: "alice", SessionID: "sess_1",
+		TenantID: "default", UserID: testOwner, SessionID: "sess_1",
 	}, memorystore.MemoryFilter{})
 	if err != nil {
 		t.Fatalf("List: %v", err)
@@ -71,7 +71,7 @@ func TestMemoryWriteIngestsRecords(t *testing.T) {
 		t.Errorf("store has %d memories, want 2", len(stored))
 	}
 	for _, m := range stored {
-		if m.TenantID != "default" || m.UserID != "alice" || m.SessionID != "sess_1" {
+		if m.TenantID != "default" || m.UserID != testOwner || m.SessionID != "sess_1" {
 			t.Errorf("stored memory has wrong scope: %+v", m)
 		}
 	}
@@ -82,7 +82,7 @@ func TestMemoryWriteIngestsRecords(t *testing.T) {
 func TestMemoryWriteRejectsInvalid(t *testing.T) {
 	h, _ := memoryServer(
 		t,
-		memorySession("sess_user", "alice"),
+		memorySession("sess_user", testOwner),
 		sessionstore.Session{ID: "sess_no_user", TenantID: "default", State: session.StateRunning},
 	)
 	cases := []struct {
@@ -107,9 +107,12 @@ func TestMemoryWriteRejectsInvalid(t *testing.T) {
 			http.StatusNotFound, "RESOURCE_NOT_FOUND",
 		},
 		{
-			"no user", "/v1/sessions/sess_no_user/memory",
+			// spec: §10.2 (Session ownership) rules 5 and 7 — a row with
+			// no owner is a session no caller may act on, so the route
+			// answers it as a missing session before the handler runs.
+			"no owner", "/v1/sessions/sess_no_user/memory",
 			[]byte(`{"memories":[{"content":"x"}]}`),
-			http.StatusUnprocessableEntity, "SESSION_NOT_USER_SCOPED",
+			http.StatusNotFound, "RESOURCE_NOT_FOUND",
 		},
 		{
 			"malformed JSON", "/v1/sessions/sess_user/memory",
@@ -135,8 +138,8 @@ func TestMemoryWriteRejectsInvalid(t *testing.T) {
 // spec: §9.4 (GET /v1/sessions/{id}/memory returns recorded
 // memories, with q narrowing by content and limit capping)
 func TestMemoryQueryFiltersAndLimits(t *testing.T) {
-	h, store := memoryServer(t, memorySession("sess_q", "alice"))
-	scope := memorystore.MemoryScope{TenantID: "default", UserID: "alice", SessionID: "sess_q"}
+	h, store := memoryServer(t, memorySession("sess_q", testOwner))
+	scope := memorystore.MemoryScope{TenantID: "default", UserID: testOwner, SessionID: "sess_q"}
 	if err := store.Write(context.Background(), scope, []memorystore.Memory{
 		{Content: "kubectl reaches the cluster"},
 		{Content: "docker hosts the local stack"},
@@ -179,8 +182,8 @@ func TestMemoryQueryFiltersAndLimits(t *testing.T) {
 // spec: §9.4 (DELETE /v1/sessions/{id}/memory/{memoryId} removes
 // the named record within the session's scope)
 func TestMemoryDeleteRemovesRecord(t *testing.T) {
-	h, store := memoryServer(t, memorySession("sess_d", "alice"))
-	scope := memorystore.MemoryScope{TenantID: "default", UserID: "alice", SessionID: "sess_d"}
+	h, store := memoryServer(t, memorySession("sess_d", testOwner))
+	scope := memorystore.MemoryScope{TenantID: "default", UserID: testOwner, SessionID: "sess_d"}
 	if err := store.Write(context.Background(), scope, []memorystore.Memory{
 		{ID: "m_remove", Content: "to be removed"},
 		{ID: "m_keep", Content: "stays"},
@@ -203,9 +206,9 @@ func TestMemoryDeleteRemovesRecord(t *testing.T) {
 // the server is built without a memory store)
 func TestMemoryEndpointsUnavailableWhenStoreNil(t *testing.T) {
 	store := memstore.New()
-	_ = store.Create(context.Background(), memorySession("sess_x", "alice"))
+	_ = store.Create(context.Background(), memorySession("sess_x", testOwner))
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}) // no Memory wired
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	cases := []struct {
 		method, path string

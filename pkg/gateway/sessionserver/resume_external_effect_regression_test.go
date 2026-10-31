@@ -102,7 +102,8 @@ func TestResumeRestoresFromFreshestRefAndConsultsNoDedupLedger_spec_7_3(t *testi
 	// is inside the replay window and the restore must proceed from this stale
 	// checkpoint without suppressing the re-derivable effect.
 	seedAwaitingSession(t, store, sessionstore.Session{
-		ID: "sess-alo-resume",
+		UserID: testOwner,
+		ID:     "sess-alo-resume",
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
 			Ref:    periodicCheckpointRef,
 			Source: sessionstore.WorkspaceSnapshotCheckpoint,

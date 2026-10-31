@@ -171,7 +171,7 @@ test('callTool drives a session over MCP', async () => {
   const srv = await startServer(mcpHandler);
   try {
     const mcp = newClient(srv.url, { tenantId: 'acme' }).mcp();
-    const created = await mcp.createSession('claude-code', 'alice@acme.com');
+    const created = await mcp.createSession('claude-code');
     assert.ok(created.sessionId, 'create returned no session id');
     assert.equal(created.state, 'running');
     const reply = await mcp.sendMessage(created.sessionId, 'hello');

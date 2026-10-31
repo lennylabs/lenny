@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -50,7 +52,7 @@ func callCtx(t *testing.T, h http.Handler, ctx context.Context, tool, args strin
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + tool + `","arguments":` + args + `}}`
 	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(body))).WithContext(ctx)
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
+	ownerprincipal.Wrap(h, ownerprincipal.Alice).ServeHTTP(rr, req)
 	var resp map[string]any
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	return resp
@@ -140,8 +142,8 @@ func TestRequestElicitationEmitsElicitationSpan_spec_16_3(t *testing.T) {
 	defer restore()
 
 	srv, store, interactions := newMCPForChain(t, chainOpts{})
-	mkUserSession(t, store, "sess_root", "alice", "")
-	mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
+	mkUserSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_root")
 	h := srv.Handler()
 
 	got := make(chan map[string]any, 1)
@@ -149,8 +151,8 @@ func TestRequestElicitationEmitsElicitationSpan_spec_16_3(t *testing.T) {
 		got <- call(t, h, "lenny/request_elicitation",
 			`{"sessionId":"sess_leaf","message":"approve?","schema":{},"elicitationId":"elic_x"}`)
 	}()
-	waitElicitationFor(t, interactions, "sess_root", "alice", "elic_x")
-	resolveAt(t, interactions, "sess_root", "alice", "elic_x", "yes")
+	waitElicitationFor(t, interactions, "sess_root", ownerprincipal.Alice, "elic_x")
+	resolveAt(t, interactions, "sess_root", ownerprincipal.Alice, "elic_x", "yes")
 	select {
 	case <-got:
 	case <-time.After(3 * time.Second):
@@ -183,8 +185,8 @@ func TestRequestElicitationSpanRecordsErrorOnURLModeRejection_spec_16_3(t *testi
 	defer restore()
 
 	srv, store, _ := newMCPForChain(t, chainOpts{})
-	mkUserSession(t, store, "sess_root", "alice", "")
-	mkUserSession(t, store, "sess_leaf", "alice", "sess_root")
+	mkUserSession(t, store, "sess_root", ownerprincipal.Alice, "")
+	mkUserSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_root")
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
 		`{"sessionId":"sess_leaf","message":"login","schema":{},"url":"https://evil.example/oauth","elicitationId":"elic_y"}`)

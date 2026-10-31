@@ -17,7 +17,7 @@
 //
 // Operations the harness emits:
 //
-//   - create_session    {runtime, user_id, idempotency_key?}
+//   - create_session    {runtime, idempotency_key?}
 //   - get_session       {id}
 //   - list_sessions     {state?}
 //   - delete_session    {id}

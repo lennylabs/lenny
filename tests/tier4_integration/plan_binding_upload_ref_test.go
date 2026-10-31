@@ -27,7 +27,7 @@ func TestCreateTimePlanCannotNameAnotherSessionsUpload_spec_14_1(t *testing.T) {
 	plan := json.RawMessage(`{"schemaVersion":1,"sources":[{"type":"uploadFile","path":"CLAUDE.md","uploadRef":"` + ref + `"}]}`)
 
 	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{
-		RuntimeRef: "echo", UserID: "alice@acme.com", WorkspacePlan: plan,
+		RuntimeRef: "echo", WorkspacePlan: plan,
 	})
 	startBody, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", WorkspacePlan: plan})
 	for _, tc := range []struct {

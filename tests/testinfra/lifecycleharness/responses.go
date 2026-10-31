@@ -18,7 +18,8 @@ import (
 // handler is wired as the gateway wires it: the binder runs the replica's
 // create-and-start service, the holder forwarder adapts the replica's session
 // server as the gateway's forwarder adapter does, and the replica's session
-// server is the session terminal. The replicas share one transcript store, as
+// server is the session terminal and the §10.2 ownership predicate a
+// response id resolves through. The replicas share one transcript store, as
 // the replicas of one deployment share one.
 //
 // hold is the binder's hold decision for every session it binds. The
@@ -36,6 +37,7 @@ func (h *Harness) WireOpenResponses(hold bool) {
 			Transcripts:      transcripts,
 			HolderForwarder:  responsesForwarder{srv: r.Server},
 			Terminal:         r.Server,
+			SessionAccess:    r.Server,
 			DevTenantHeader:  true,
 		})
 		r.SetResponsesHandler(handler.Handler())
@@ -56,7 +58,7 @@ type responsesBinder struct {
 // refusal into the translator's binder error.
 func (b responsesBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (translator.SingleShotBinding, error) {
 	resp, serr := b.srv.CreateAndStartService(ctx, spec.TenantID, sessionserver.CreateSessionRequest{
-		RuntimeRef: spec.RuntimeRef, UserID: spec.UserID, Environment: spec.Environment,
+		RuntimeRef: spec.RuntimeRef, Environment: spec.Environment,
 	})
 	if serr != nil {
 		return translator.SingleShotBinding{}, &translator.SingleShotError{

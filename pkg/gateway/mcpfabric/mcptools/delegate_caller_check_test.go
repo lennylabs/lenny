@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
@@ -58,13 +60,14 @@ func (d *delegateAudit) Append(_ context.Context, _, eventType string, _ json.Ra
 
 // newDelegateMCPWithCallerCheck builds a delegation-capable MCP server
 // whose caller check runs over deps. The parent session sess_parent is
-// running and owned by user_alice.
+// running and owned by ownerprincipal.Alice.
 func newDelegateMCPWithCallerCheck(t *testing.T, deps callercheck.Deps) (*mcp.Server, sessionstore.Store) {
 	t.Helper()
 	store := memstore.New()
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -81,7 +84,7 @@ func newDelegateMCPWithCallerCheck(t *testing.T, deps callercheck.Deps) (*mcp.Se
 	_ = runtimes.Create(ctx, runtimestore.Runtime{Name: "child-agent", Type: runtimestore.TypeAgent})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(ctx, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "child-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
@@ -92,7 +95,7 @@ func newDelegateMCPWithCallerCheck(t *testing.T, deps callercheck.Deps) (*mcp.Se
 const callerCheckDelegateArgs = `{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","task":{"input":[{"type":"text","inline":"do work"}]}}`
 
 func edgeBearer() authmw.Principal {
-	return authmw.Principal{Subject: "user_alice", TenantID: "acme", JTI: "jti-alice"}
+	return authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", JTI: "jti-alice"}
 }
 
 // spec: §10.2 (Signing topology), §13.3 (Credential Flow: Write-before-issue
@@ -157,7 +160,7 @@ func TestDelegateTaskAdmitsPodPathAndLiveBearer_spec_10_2(t *testing.T) {
 		row       issuedtokenstore.IssuedToken
 		wantReads int
 	}{
-		{"pod path", authmw.Principal{Subject: "user_alice", TenantID: "acme", SessionID: "sess_parent"}, issuedtokenstore.IssuedToken{ActSubject: "bob@platform"}, 0},
+		{"pod path", authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", SessionID: "sess_parent"}, issuedtokenstore.IssuedToken{ActSubject: "bob@platform"}, 0},
 		{"live edge bearer", edgeBearer(), issuedtokenstore.IssuedToken{TenantID: "acme"}, 1},
 	}
 	for _, tc := range cases {

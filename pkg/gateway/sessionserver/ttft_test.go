@@ -73,14 +73,15 @@ func TestMessagesObservesTTFTOnFirstResponse_spec_6_3_F_6_3_3(t *testing.T) {
 		ObserveTimeToFirstToken: cap.observe,
 	})
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_ttft", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_ttft", TenantID: "acme", State: session.StateRunning,
 		PoolRef: "pool-runc", IsolationProfile: isolation.ProfileStandard,
 		CreatedAt: createdAt, UpdatedAt: createdAt,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_ttft", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_ttft", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 	})
 	if rr.Code != 200 {
@@ -124,7 +125,8 @@ func TestMessagesTTFTObservedOnlyOncePerSession_spec_6_3_F_6_3_3(t *testing.T) {
 		ObserveTimeToFirstToken: cap.observe,
 	})
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_ttft_once", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_ttft_once", TenantID: "acme", State: session.StateRunning,
 		PoolRef: "pool-runc", IsolationProfile: isolation.ProfileStandard,
 		CreatedAt: createdAt, UpdatedAt: createdAt,
 	}); err != nil {
@@ -132,7 +134,7 @@ func TestMessagesTTFTObservedOnlyOncePerSession_spec_6_3_F_6_3_3(t *testing.T) {
 	}
 
 	for i := 0; i < 3; i++ {
-		rr := sendMessageRequest(t, srv.Handler(), "sess_ttft_once", sessionserver.MessageRequest{
+		rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_ttft_once", sessionserver.MessageRequest{
 			Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 		})
 		if rr.Code != 200 {
@@ -166,14 +168,15 @@ func TestMessagesTTFTSkipsNonResponseEvents_spec_6_3_F_6_3_3(t *testing.T) {
 		ObserveTimeToFirstToken: cap.observe,
 	})
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_ttft_skip", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_ttft_skip", TenantID: "acme", State: session.StateRunning,
 		PoolRef: "pool-runc", IsolationProfile: isolation.ProfileStandard,
 		CreatedAt: createdAt, UpdatedAt: createdAt,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_ttft_skip", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_ttft_skip", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 	})
 	if rr.Code != 200 {
@@ -203,14 +206,15 @@ func TestMessagesTTFTSkipsUnresolvedIsolation_spec_6_3_F_6_3_3(t *testing.T) {
 		ObserveTimeToFirstToken: cap.observe,
 	})
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_ttft_unresolved", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_ttft_unresolved", TenantID: "acme", State: session.StateRunning,
 		// IsolationProfile left empty: RuntimeClassName(empty) returns ok=false.
 		CreatedAt: createdAt, UpdatedAt: createdAt,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess_ttft_unresolved", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess_ttft_unresolved", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 	})
 	if rr.Code != 200 {

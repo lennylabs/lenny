@@ -210,6 +210,7 @@ func TestApplyPlaygroundCaps_IdleIgnoresSessionAge_spec_27_6(t *testing.T) {
 func TestApplyPlaygroundCaps_MinWinsOverClientTimeouts_spec_27_6(t *testing.T) {
 	s := &Server{playgroundCaps: fakePlaygroundCaps{idleSeconds: 300, sessionMins: 30}}
 	row := sessionstore.Session{
+		UserID:   testOwner,
 		Timeouts: &sessionstore.SessionTimeouts{MaxSessionAgeSeconds: 900, MaxIdleSeconds: 120},
 	}
 	s.applyPlaygroundCaps(playgroundCtx(), "rt", &row)

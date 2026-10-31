@@ -36,7 +36,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	obstracing "github.com/lennylabs/lenny/pkg/observability/tracing"
-	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
@@ -94,9 +93,10 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			if in.SessionID == "" {
 				return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR", "sessionId is required", nil)
 			}
-			row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+			// spec: §10.2 (Session ownership) — attaching reads the session.
+			row, err := lookupCallerSession(ctx, deps, tenant, in.SessionID, false, false)
 			if err != nil {
-				return mcp.ToolResult{}, errSessionLookup(err)
+				return mcp.ToolResult{}, errCallerSessionLookup(err)
 			}
 			out, _ := json.Marshal(map[string]any{
 				"sessionId":     row.ID,
@@ -115,7 +115,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// schema for this overlapping operation) by the build-pipeline code
 		// generation step in pkg/gateway/mcptools/internal/genmcpschemas,
 		// so the MCP create_session surface advertises the same fields the
-		// REST POST /v1/sessions validates (runtimeRef, userId, environment,
+		// REST POST /v1/sessions validates (runtimeRef, environment,
 		// workspacePlan, isolationProfile, metadata, retryPolicy) plus the
 		// MCP-only §11.5 `idempotencyKey` extension.
 		// TestGeneratedSchemasMatchOpenAPI guards against drift. F-15.2.7.
@@ -165,59 +165,37 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// MCP-created session therefore consumes tenant quota and is
 		// subject to policy interception exactly like a REST-created one.
 		// F-15.2.4.
-		if deps.SessionCreator != nil {
-			resp, svcErr := deps.SessionCreator.CreateSessionService(ctx, tenant, in)
-			if svcErr != nil {
-				// The §15.2.1 rule-3 envelope: surface the REST code +
-				// details so the shared errorclassify table assigns the
-				// same (category, retryable) pair on both surfaces.
-				return mcp.ToolResult{}, mcp.NewToolError(svcErr.Code, svcErr.Message, svcErr.Details)
-			}
-			// Project the shared response onto the MCP create_session
-			// envelope: the `sessionId`/`state` fields the MCP clients and
-			// SDKs already read, plus the §7.1 `uploadToken` the REST
-			// surface returns (previously absent on the MCP path, so a
-			// subsequent upload over REST failed differently — impact (e)).
-			// F-15.2.4.
-			out := map[string]any{
-				"sessionId":   resp.ID,
-				"state":       resp.State,
-				"uploadToken": resp.UploadToken,
-			}
-			payload, err := json.Marshal(out)
-			if err != nil {
-				return mcp.ToolResult{}, mcp.NewToolError("INTERNAL_ERROR",
-					"create response encode: "+err.Error(), nil)
-			}
-			return textResult(string(payload)), nil
+		//
+		// spec: §10.2 (Session ownership) rule 1 — the service layer is the
+		// only create path, because it binds the owner from the principal.
+		// A registration with no SessionCreator fails closed and writes no
+		// row rather than writing one through the store with no gates.
+		if deps.SessionCreator == nil {
+			return mcp.ToolResult{}, mcp.NewToolError("INTERNAL_ERROR",
+				"session creation is not configured on this server", nil)
 		}
-		// Legacy direct-store fallback for the minimal in-process gateway
-		// that wires no session server. It runs no gates and mints no
-		// uploadToken; production always wires deps.SessionCreator. The
-		// runtimeRef-required check above already covers both paths.
+		resp, svcErr := deps.SessionCreator.CreateSessionService(ctx, tenant, in)
+		if svcErr != nil {
+			// The §15.2.1 rule-3 envelope: surface the REST code +
+			// details so the shared errorclassify table assigns the
+			// same (category, retryable) pair on both surfaces.
+			return mcp.ToolResult{}, mcp.NewToolError(svcErr.Code, svcErr.Message, svcErr.Details)
+		}
+		// Project the shared response onto the MCP create_session
+		// envelope: the `sessionId`/`state` fields the MCP clients and
+		// SDKs read, plus the §7.1 `uploadToken` the REST surface returns.
 		// F-15.2.4.
-		now := clock()
-		row := sessionstore.Session{
-			ID:               idFn(),
-			TenantID:         tenant,
-			UserID:           in.UserID,
-			RuntimeRef:       in.RuntimeRef,
-			Environment:      in.Environment,
-			State:            session.StateRunning,
-			IsolationProfile: isolation.DefaultForMode(deps.DevMode),
-			CreatedAt:        now,
-			UpdatedAt:        now,
+		out := map[string]any{
+			"sessionId":   resp.ID,
+			"state":       resp.State,
+			"uploadToken": resp.UploadToken,
 		}
-		if err := deps.Store.Create(ctx, row); err != nil {
-			// spec: §12.8 (Lifecycle fence and drain) — the fence in the
-			// store refuses with its code and details.
-			var ref *sessionstore.CreationRefusal
-			if errors.As(err, &ref) {
-				return mcp.ToolResult{}, mcp.NewToolError(ref.Code, ref.Message, ref.Details)
-			}
-			return mcp.ToolResult{}, err
+		payload, err := json.Marshal(out)
+		if err != nil {
+			return mcp.ToolResult{}, mcp.NewToolError("INTERNAL_ERROR",
+				"create response encode: "+err.Error(), nil)
 		}
-		return textResult(fmt.Sprintf(`{"sessionId":%q,"state":%q}`, row.ID, row.State)), nil
+		return textResult(string(payload)), nil
 	})
 
 	srv.RegisterTool(mcp.Tool{
@@ -268,9 +246,10 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"to is required (§8.5)", nil)
 		}
-		row, err := deps.Store.Get(ctx, tenant, in.To)
+		// spec: §10.2 (Session ownership) — messaging a session acts on it.
+		row, err := lookupCallerSession(ctx, deps, tenant, in.To, true, false)
 		if err != nil {
-			return mcp.ToolResult{}, errSessionLookup(err)
+			return mcp.ToolResult{}, errCallerSessionLookup(err)
 		}
 		if session.IsTerminal(row.State) {
 			// spec: §15 catalog (15:998) — a message to a terminal
@@ -287,6 +266,20 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 				"target session belongs to a different tenant (§7.2)", nil)
 		}
 		senderID := callerSessionID(ctx, in.FromSessionID)
+		// spec: §10.2 (Session ownership) — sending from a session acts on
+		// it, so the caller must own the sender before the sender's
+		// outbound limit is charged. A sender the caller may not act on
+		// answers as a missing sender does.
+		var sender sessionstore.Session
+		if senderID != "" {
+			sender, err = lookupCallerSession(ctx, deps, tenant, senderID, true, false)
+			if err != nil {
+				if isUnauthorized(err) {
+					return mcp.ToolResult{}, err
+				}
+				return mcp.ToolResult{}, errSenderNotFound(senderID)
+			}
+		}
 		// spec: §15.4 — the gateway assigns a `msg_` prefix
 		// id when the sender omits one so every receipt is
 		// correlatable. F-7.2.10.
@@ -338,11 +331,6 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// transport fallback for callers that have not yet bound a
 		// principal. F-7.2.6, F-7.2.22, F-8.5.16.
 		if senderID != "" {
-			sender, err := deps.Store.Get(ctx, tenant, senderID)
-			if err != nil {
-				return mcp.ToolResult{}, mcp.NewToolError("SCOPE_DENIED",
-					fmt.Sprintf("sender session %s not found", senderID), nil)
-			}
 			if !withinMessagingScope(sender, row, msgScope) {
 				return mcp.ToolResult{}, mcp.NewToolError("SCOPE_DENIED",
 					fmt.Sprintf("target %s is not reachable from sender %s under messagingScope %q",
@@ -427,8 +415,15 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// hint, not an authoritative teardown. A dropped/late frame must
 		// not error; it falls through to the idle-timeout path.
 		bestEffort := in.Reason == "playground_client_closed"
-		row, err := deps.Store.Get(ctx, tenant, in.SessionID)
+		// spec: §10.2 (Session ownership) — cancelling acts on the session.
+		// A caller with no principal subject is refused before the
+		// best-effort branch, and a session the caller may not act on takes
+		// that branch exactly as a missing one does.
+		row, err := lookupCallerSession(ctx, deps, tenant, in.SessionID, true, false)
 		if err != nil {
+			if isUnauthorized(err) {
+				return mcp.ToolResult{}, err
+			}
 			if bestEffort {
 				return textResult(fmt.Sprintf(`{"sessionId":%q,"accepted":true,"reason":%q}`, in.SessionID, in.Reason)), nil
 			}
@@ -560,9 +555,11 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
 		}
-		caller, err := deps.Store.Get(ctx, tenant, sessionID)
+		// spec: §10.2 (Session ownership) — reading a task tree reads the
+		// session it is rooted at.
+		caller, err := lookupCallerSession(ctx, deps, tenant, sessionID, false, false)
 		if err != nil {
-			return mcp.ToolResult{}, errSessionLookup(err)
+			return mcp.ToolResult{}, errCallerSessionLookup(err)
 		}
 		// spec: §8.9 — read only the rows belonging to the
 		// requested session's delegation tree via the §12.5
@@ -631,8 +628,14 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"a session cannot cancel itself as its own child", nil)
 		}
-		child, err := deps.Store.Get(ctx, tenant, in.ChildSessionID)
+		// spec: §10.2 (Session ownership) rules 2 and 5 — cancelling a child
+		// acts on it, and a delegated child carries its parent's owner, so
+		// an agent cancelling its own child passes.
+		child, err := lookupCallerSession(ctx, deps, tenant, in.ChildSessionID, true, false)
 		if err != nil {
+			if isUnauthorized(err) {
+				return mcp.ToolResult{}, err
+			}
 			return mcp.ToolResult{}, mcp.NewToolError("RESOURCE_NOT_FOUND",
 				fmt.Sprintf("child session lookup: %v", err), nil)
 		}
@@ -710,8 +713,10 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				fmt.Sprintf("mode %q is not one of all, any, or settled", mode), nil)
 		}
-		if _, err := deps.Store.Get(ctx, tenant, in.SessionID); err != nil {
-			return mcp.ToolResult{}, errSessionLookup(err)
+		// spec: §10.2 (Session ownership) — awaiting children acts on the
+		// awaiting session.
+		if _, err := lookupCallerSession(ctx, deps, tenant, in.SessionID, true, false); err != nil {
+			return mcp.ToolResult{}, errCallerSessionLookup(err)
 		}
 		// Authorization: every awaited id must be a direct child of the
 		// caller — a session may only await children it delegated. A
@@ -844,9 +849,10 @@ func registerTracingTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
 		}
-		row, err := deps.Store.Get(ctx, tenant, sessionID)
+		// spec: §10.2 (Session ownership) — this tool acts on the session.
+		row, err := lookupCallerSession(ctx, deps, tenant, sessionID, true, false)
 		if err != nil {
-			return mcp.ToolResult{}, errSessionLookup(err)
+			return mcp.ToolResult{}, errCallerSessionLookup(err)
 		}
 		if session.IsTerminal(row.State) {
 			return mcp.ToolResult{}, errSessionTerminalState(sessionID, row.State)
@@ -951,9 +957,10 @@ func registerOutputTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				return mcp.ToolResult{}, err
 			}
 		}
-		row, err := deps.Store.Get(ctx, tenant, sessionID)
+		// spec: §10.2 (Session ownership) — this tool acts on the session.
+		row, err := lookupCallerSession(ctx, deps, tenant, sessionID, true, false)
 		if err != nil {
-			return mcp.ToolResult{}, errSessionLookup(err)
+			return mcp.ToolResult{}, errCallerSessionLookup(err)
 		}
 		if session.IsTerminal(row.State) {
 			return mcp.ToolResult{}, errSessionTerminalState(sessionID, row.State)
@@ -1023,9 +1030,10 @@ func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		// spec: §15.4 — `requestId` in `lenny/request_input` is
 		// generated by the gateway; the runtime only supplies `parts`.
 		requestID := "req_" + idFn()
-		row, err := deps.Store.Get(ctx, tenant, sessionID)
+		// spec: §10.2 (Session ownership) — this tool acts on the session.
+		row, err := lookupCallerSession(ctx, deps, tenant, sessionID, true, false)
 		if err != nil {
-			return mcp.ToolResult{}, errSessionLookup(err)
+			return mcp.ToolResult{}, errCallerSessionLookup(err)
 		}
 		if session.IsTerminal(row.State) {
 			return mcp.ToolResult{}, errSessionTerminalState(sessionID, row.State)
@@ -1258,9 +1266,11 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		// primary, so a raise whose check runs after a terminal write commits
 		// is refused on any replica, and the post-terminal hook's expiry
 		// misses only a raise whose check passed before the write.
-		row, err := sessionstore.ReadPrimary(ctx, deps.Store, deps.PrimaryReadTimeout, tenant, sessionID)
+		// spec: §10.2 (Session ownership) — raising an elicitation acts on
+		// the session; the row is read from the primary.
+		row, err := lookupCallerSession(ctx, deps, tenant, sessionID, true, true)
 		if err != nil {
-			return mcp.ToolResult{}, errSessionLookup(err)
+			return mcp.ToolResult{}, errCallerSessionLookup(err)
 		}
 		if session.IsTerminal(row.State) {
 			return mcp.ToolResult{}, errSessionTerminalState(sessionID, row.State)
@@ -1555,11 +1565,13 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 
 	// spec: §9.2 — respond_to_elicitation/dismiss_elicitation
 	// are MCP-callable resolution surfaces parallel to the §15.1 REST
-	// endpoints. The gateway validates the (session_id, user_id,
-	// elicitation_id) triple before routing the response down the
-	// chain; any mismatch collapses to ELICITATION_NOT_FOUND so the
-	// existence of another session's or user's elicitation never
-	// leaks. F-9.2.17.
+	// endpoints. The gateway first applies §10.2 (Session ownership),
+	// so a session the caller may not act on answers
+	// RESOURCE_NOT_FOUND. On a session the caller may act on, the
+	// gateway validates the (session_id, user_id, elicitation_id)
+	// triple before routing the response down the chain, and any
+	// mismatch collapses to ELICITATION_NOT_FOUND so the existence of
+	// another session's or user's elicitation never leaks. F-9.2.17.
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/respond_to_elicitation",
 		Description: "Respond to a pending §9.2 elicitation on the calling session.",
@@ -1664,7 +1676,11 @@ func registerRuntimeDiscoveryTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// A caller whose session resolves no policy (or no
 		// Delegation service is wired) sees every
 		// environment-authorized agent. F-8.5.7.
-		runtimes, err = filterByEffectiveDelegationPolicy(ctx, deps, tenant, callerSessionID(ctx, in.SessionID), runtimes)
+		policySessionID, err := discoverySessionID(ctx, deps, tenant, callerSessionID(ctx, in.SessionID))
+		if err != nil {
+			return mcp.ToolResult{}, err
+		}
+		runtimes, err = filterByEffectiveDelegationPolicy(ctx, deps, tenant, policySessionID, runtimes)
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
@@ -1867,6 +1883,13 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		// delegating bearer runs before every other delegation gate.
 		if err := requireDelegatingBearerAllowed(ctx, deps, env.clock()); err != nil {
 			return mcp.ToolResult{}, err
+		}
+		// spec: §10.2 (Session ownership) — delegating acts on the parent
+		// session, so the caller must own it before the parent's owner is
+		// read for the lifecycle gate. A parent the caller may not act on
+		// answers as a missing one does.
+		if _, err := lookupCallerSession(ctx, deps, tenant, in.ParentSessionID, true, false); err != nil {
+			return mcp.ToolResult{}, errCallerSessionLookup(err)
 		}
 		// spec: §11.4, §12.8 (Lifecycle fence and drain) — the early
 		// creation gate of the delegated child over the parent's owning

@@ -47,7 +47,7 @@ func TestResumeHeldPodTransitionsSuspendedWithBoundPod(t *testing.T) {
 	sink := &captureLifecycleAudit{}
 	srv := New(store, Options{DevTenantHeader: true, Events: bus, LifecycleAuditSink: sink})
 
-	if _, err := srv.resumeHeldPod(context.Background(), sessionstore.Session{TenantID: "acme", ID: "s-held"}); err != nil {
+	if _, err := srv.resumeHeldPod(context.Background(), sessionstore.Session{UserID: testOwner, TenantID: "acme", ID: "s-held"}); err != nil {
 		t.Fatalf("resumeHeldPod: %v", err)
 	}
 
@@ -84,7 +84,7 @@ func TestResumeHeldPodTransitionsDevModeShapeWithNoPod(t *testing.T) {
 	seedResumeRow(t, store, "s-dev", session.StateSuspended, "")
 	srv := New(store, Options{DevTenantHeader: true})
 
-	if _, err := srv.resumeHeldPod(context.Background(), sessionstore.Session{TenantID: "acme", ID: "s-dev"}); err != nil {
+	if _, err := srv.resumeHeldPod(context.Background(), sessionstore.Session{UserID: testOwner, TenantID: "acme", ID: "s-dev"}); err != nil {
 		t.Fatalf("resumeHeldPod (dev-mode shape): %v", err)
 	}
 
@@ -111,7 +111,7 @@ func TestResumeHeldPodMisrouteReturnsSentinelNoTransition(t *testing.T) {
 	sink := &captureLifecycleAudit{}
 	srv := New(store, Options{DevTenantHeader: true, Events: bus, LifecycleAuditSink: sink})
 
-	_, err := srv.resumeHeldPod(context.Background(), sessionstore.Session{TenantID: "acme", ID: "s-run"})
+	_, err := srv.resumeHeldPod(context.Background(), sessionstore.Session{UserID: testOwner, TenantID: "acme", ID: "s-run"})
 	if !errors.Is(err, errResumeHeldPodNotSuspended) {
 		t.Fatalf("err = %v, want errResumeHeldPodNotSuspended", err)
 	}
@@ -176,7 +176,7 @@ func TestResumeHeldPodRejectsConcurrentTerminalTransition(t *testing.T) {
 	bus := sessionevents.NewBus(64)
 	srv := New(store, Options{DevTenantHeader: true, Events: bus})
 
-	_, err := srv.resumeHeldPod(context.Background(), sessionstore.Session{TenantID: "acme", ID: "s-race"})
+	_, err := srv.resumeHeldPod(context.Background(), sessionstore.Session{UserID: testOwner, TenantID: "acme", ID: "s-race"})
 	if !errors.Is(err, errResumeHeldPodNotSuspended) {
 		t.Fatalf("err = %v, want errResumeHeldPodNotSuspended (terminal row must be rejected)", err)
 	}

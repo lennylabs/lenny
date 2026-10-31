@@ -19,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 func newOpenAIHandler(t *testing.T) (*translator.OpenAIChatHandler, sessionstore.Store) {
@@ -36,6 +37,7 @@ func openaiPost(t *testing.T, h http.Handler, body translator.OpenAIChatCompleti
 	t.Helper()
 	buf, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(buf))
+	req = req.WithContext(ownerprincipal.Context(req.Context(), ownerprincipal.Alice))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -154,6 +156,7 @@ func TestOpenAIChatDefaultsRuntimeWhenModelEmpty(t *testing.T) {
 func TestOpenAIChatRejectsMalformedJSON(t *testing.T) {
 	h, _ := newOpenAIHandler(t)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte("not-json")))
+	req = req.WithContext(ownerprincipal.Context(req.Context(), ownerprincipal.Alice))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
 	h.Handler().ServeHTTP(rr, req)
@@ -212,7 +215,7 @@ func (b stubSingleShotBinder) BindSingleShot(ctx context.Context, spec translato
 	if b.store != nil {
 		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 		if err := b.store.Create(ctx, sessionstore.Session{
-			ID: b.id, TenantID: spec.TenantID, UserID: spec.UserID, RuntimeRef: spec.RuntimeRef,
+			ID: b.id, TenantID: spec.TenantID, UserID: ownerprincipal.Subject(ctx), RuntimeRef: spec.RuntimeRef,
 			State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 		}); err != nil {
 			return translator.SingleShotBinding{}, err

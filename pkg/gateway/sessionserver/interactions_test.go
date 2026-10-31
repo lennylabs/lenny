@@ -10,9 +10,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
@@ -22,8 +24,27 @@ import (
 func newInteractionServer(t *testing.T) (*sessionserver.Server, *interactionstore.Memory) {
 	t.Helper()
 	store := interactionstore.NewMemory()
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Interactions: store})
+	srv := sessionserver.New(aliceSessions(t), sessionserver.Options{DevTenantHeader: true, Interactions: store})
 	return srv, store
+}
+
+// aliceSessions returns a session store holding the sessions the
+// interaction tests resolve against, sess_1 and sess_a in tenant acme,
+// both owned by alice. The tool-use and elicitation routes reach their
+// handlers only for a caller that may act on the session.
+//
+// spec: §10.2 (Session ownership) rules 5 and 7.
+func aliceSessions(t *testing.T) *memstore.Store {
+	t.Helper()
+	st := memstore.New()
+	for _, id := range []string{"sess_1", "sess_a"} {
+		if err := st.Create(context.Background(), sessionstore.Session{
+			ID: id, TenantID: "acme", UserID: "alice", State: session.StateRunning,
+		}); err != nil {
+			t.Fatalf("seed session %s: %v", id, err)
+		}
+	}
+	return st
 }
 
 func asAlice(req *http.Request) *http.Request {
@@ -43,7 +64,7 @@ func TestToolUseApprove(t *testing.T) {
 	})
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_1/approve", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("approve: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -63,7 +84,7 @@ func TestToolUseDenyWithReason(t *testing.T) {
 		strings.NewReader(`{"reason":"unsafe"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("deny: %d", rr.Code)
 	}
@@ -83,7 +104,7 @@ func TestElicitationRespond(t *testing.T) {
 		strings.NewReader(`{"response":"yes"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("respond: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -101,7 +122,7 @@ func TestElicitationDismiss(t *testing.T) {
 	})
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/elicitations/el_1/dismiss", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("dismiss: %d", rr.Code)
 	}
@@ -115,12 +136,18 @@ func TestToolUseApproveUnknownReturns404(t *testing.T) {
 	srv, _ := newInteractionServer(t)
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_missing/approve", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("unknown tool call: %d, want 404", rr.Code)
 	}
 }
 
+// TestElicitationRespondWrongUserReturns404 pins that a caller who does not
+// own the session receives the missing-session response before any
+// elicitation lookup runs.
+//
+// spec: §10.2 (Session ownership) rules 5 and 7; §9.2
+// (respond_to_elicitation authorization).
 func TestElicitationRespondWrongUserReturns404(t *testing.T) {
 	srv, store := newInteractionServer(t)
 	// Interaction is directed at alice; bob must not resolve it.
@@ -135,7 +162,7 @@ func TestElicitationRespondWrongUserReturns404(t *testing.T) {
 	ctx := authmw.WithPrincipal(req.Context(), authmw.Principal{Subject: "bob", TenantID: "acme"})
 	req = req.WithContext(ctx)
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("wrong-user respond: %d, want 404", rr.Code)
 	}
@@ -145,8 +172,31 @@ func TestElicitationRespondWrongUserReturns404(t *testing.T) {
 		} `json:"error"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &env)
-	if env.Error.Code != "ELICITATION_NOT_FOUND" {
-		t.Errorf("error code: %q, want ELICITATION_NOT_FOUND", env.Error.Code)
+	if env.Error.Code != "RESOURCE_NOT_FOUND" {
+		t.Errorf("error code: %q, want RESOURCE_NOT_FOUND", env.Error.Code)
+	}
+	got, _ := store.Get(context.Background(), "acme", "sess_1", "alice", "el_1")
+	if got.Phase == interactionstore.PhaseResponded {
+		t.Errorf("bob's respond resolved alice's elicitation")
+	}
+}
+
+// TestElicitationRespondUnknownOnOwnSessionReturnsElicitationNotFound
+// pins that the ownership check passes the session's owner through to the
+// §9.2 lookup, so an unknown elicitation on the caller's own session keeps
+// its route-specific code.
+//
+// spec: §10.2 (Session ownership) rule 7; §9.2 (respond_to_elicitation
+// authorization); §15.1 (ELICITATION_NOT_FOUND).
+func TestElicitationRespondUnknownOnOwnSessionReturnsElicitationNotFound(t *testing.T) {
+	srv, _ := newInteractionServer(t)
+	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/elicitations/el_missing/respond",
+		strings.NewReader(`{"response":"x"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound || !strings.Contains(rr.Body.String(), `"ELICITATION_NOT_FOUND"`) {
+		t.Errorf("unknown elicitation on own session = %d %s, want 404 ELICITATION_NOT_FOUND", rr.Code, rr.Body.String())
 	}
 }
 
@@ -159,7 +209,7 @@ func TestDoubleResolveReturns409(t *testing.T) {
 	for i, want := range []int{http.StatusOK, http.StatusConflict} {
 		req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_1/approve", nil))
 		rr := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rr, req)
+		asOwner(srv.Handler()).ServeHTTP(rr, req)
 		if rr.Code != want {
 			t.Errorf("resolve #%d: got %d, want %d", i, rr.Code, want)
 		}
@@ -175,17 +225,17 @@ func TestKindMismatchReturns404(t *testing.T) {
 	})
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/el_1/approve", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("kind mismatch: %d, want 404", rr.Code)
 	}
 }
 
 func TestInteractionsUnavailableWhenUnwired(t *testing.T) {
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
+	srv := sessionserver.New(aliceSessions(t), sessionserver.Options{DevTenantHeader: true})
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_1/approve", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("unwired: %d, want 503", rr.Code)
 	}
@@ -261,7 +311,7 @@ func TestInteractionResolutionAudit_spec_7_2_8(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			interStore := interactionstore.NewMemory()
 			sink := &captureInteractionAudit{}
-			srv := sessionserver.New(memstore.New(), sessionserver.Options{
+			srv := sessionserver.New(aliceSessions(t), sessionserver.Options{
 				DevTenantHeader:      true,
 				Interactions:         interStore,
 				InteractionAuditSink: sink,
@@ -281,7 +331,7 @@ func TestInteractionResolutionAudit_spec_7_2_8(t *testing.T) {
 			req := asAlice(httptest.NewRequest(http.MethodPost, c.path, body))
 			req.Header.Set("Content-Type", "application/json")
 			rr := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rr, req)
+			asOwner(srv.Handler()).ServeHTTP(rr, req)
 			if rr.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
 			}
@@ -327,7 +377,7 @@ func TestInteractionResolutionAudit_spec_7_2_8(t *testing.T) {
 func TestInteractionResolutionAuditNotEmittedOnFailure(t *testing.T) {
 	interStore := interactionstore.NewMemory()
 	sink := &captureInteractionAudit{}
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+	srv := sessionserver.New(aliceSessions(t), sessionserver.Options{
 		DevTenantHeader:      true,
 		Interactions:         interStore,
 		InteractionAuditSink: sink,
@@ -335,7 +385,7 @@ func TestInteractionResolutionAuditNotEmittedOnFailure(t *testing.T) {
 	// No interaction seeded.
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_a/tool-use/tc_x/approve", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rr.Code)
 	}
@@ -349,7 +399,7 @@ func TestInteractionResolutionAuditNotEmittedOnFailure(t *testing.T) {
 // best-effort per the §11.7 sink contract. F-7.2.8.
 func TestInteractionResolutionAuditNilSinkIsSafe(t *testing.T) {
 	interStore := interactionstore.NewMemory()
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Interactions: interStore})
+	srv := sessionserver.New(aliceSessions(t), sessionserver.Options{DevTenantHeader: true, Interactions: interStore})
 	if err := interStore.Put(context.Background(), interactionstore.Interaction{
 		ID: "tc_1", Kind: interactionstore.KindToolUse,
 		SessionID: "sess_a", TenantID: "acme", UserID: "alice",
@@ -358,7 +408,7 @@ func TestInteractionResolutionAuditNilSinkIsSafe(t *testing.T) {
 	}
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_a/tool-use/tc_1/approve", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Errorf("nil sink: status = %d, want 200", rr.Code)
 	}

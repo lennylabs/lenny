@@ -72,7 +72,8 @@ func seedRunningChild(t *testing.T, store sessionstore.Store, id, parent string)
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: parent, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed %s: %v", id, err)
@@ -98,7 +99,7 @@ func TestCascadeCancelDrainsDescendantRuntimes_spec_11_3_9(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/p", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("DELETE status = %d, want 200", rr.Code)
 	}
@@ -144,7 +145,7 @@ func TestSessionModePodDrainedOnTerminalTransition_spec_6_1(t *testing.T) {
 		exec := newCancelTrackingExecutor()
 		srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
 		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-		sess := sessionstore.Session{ID: "sm", TenantID: "acme", State: tc.state, CreatedAt: now, UpdatedAt: now}
+		sess := sessionstore.Session{UserID: testOwner, ID: "sm", TenantID: "acme", State: tc.state, CreatedAt: now, UpdatedAt: now}
 		if err := store.Create(ctx, sess); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
@@ -190,7 +191,7 @@ func TestTerminalTransitionStampsTerminatedConditionOnRow_spec_7_2(t *testing.T)
 		req := httptest.NewRequest(tc.method, tc.path, nil)
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
 		rr := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rr, req)
+		asOwner(srv.Handler()).ServeHTTP(rr, req)
 		if rr.Code != http.StatusOK {
 			t.Fatalf("%s %s = %d, want 200; body %s", tc.method, tc.path, rr.Code, rr.Body.String())
 		}
@@ -217,7 +218,7 @@ func TestTerminalConditionStampIsIdempotent_spec_7_2(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/idem", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
-	srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
+	asOwner(srv.Handler()).ServeHTTP(httptest.NewRecorder(), req)
 	first, err := store.Get(ctx, "acme", "idem")
 	if err != nil {
 		t.Fatalf("get after first: %v", err)
@@ -253,7 +254,8 @@ func TestCascadeCancelDetachLeavesGrandchildRuntimeRunning_spec_11_3_9(t *testin
 	// c1 detaches, so its child gc must stay running and undrained.
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "c1", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "c1", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: "p", CascadeOnFailure: session.CascadeDetach,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
@@ -264,7 +266,7 @@ func TestCascadeCancelDetachLeavesGrandchildRuntimeRunning_spec_11_3_9(t *testin
 	req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/p", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("DELETE status = %d, want 200", rr.Code)
 	}

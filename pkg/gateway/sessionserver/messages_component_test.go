@@ -149,7 +149,8 @@ func seedConcurrentSession(t *testing.T, store sessionstore.Store, id string, st
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", State: st, RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: st, RuntimeRef: "echo",
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed %s: %v", id, err)
@@ -193,7 +194,7 @@ func TestMessagesPerSlotRoutingOnConcurrentPod(t *testing.T) {
 	seedConcurrentSession(t, store, "sess-slot-02", session.StateInputRequired)
 
 	// Slot 01 (running) delivers (path 2) even though slot 02 is blocked.
-	rr := sendMessageRequest(t, srv.Handler(), "sess-slot-01", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess-slot-01", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("to-slot-01")}},
 	})
 	if rr.Code != http.StatusOK {
@@ -208,7 +209,7 @@ func TestMessagesPerSlotRoutingOnConcurrentPod(t *testing.T) {
 	}
 
 	// Slot 02 (input_required) buffers (path 3) independently.
-	rr = sendMessageRequest(t, srv.Handler(), "sess-slot-02", sessionserver.MessageRequest{
+	rr = sendMessageRequest(t, asOwner(srv.Handler()), "sess-slot-02", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("to-slot-02")}},
 	})
 	if rr.Code != http.StatusOK {
@@ -264,7 +265,7 @@ func TestMessagesIgnoresAClientAddressAndRoutesBySession(t *testing.T) {
 	// A raw body that carries a stray client address pointing at a
 	// different session. The gateway must ignore it and route by the
 	// session the request names.
-	rr := sendRawMessageRequest(t, srv.Handler(), "sess-slot-01",
+	rr := sendRawMessageRequest(t, asOwner(srv.Handler()), "sess-slot-01",
 		`{"messages":[{"content":"hello","sessionId":"sess-slot-99"}]}`)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("message carrying a stray client address rejected: %d, body=%s", rr.Code, rr.Body.String())
@@ -306,7 +307,7 @@ func TestMessagesAddressesTheStreamBySessionOnAPoolOfOne(t *testing.T) {
 	srv, store, _ := concurrentRoutingServer(t, reg)
 	seedConcurrentSession(t, store, "sess-excl", session.StateRunning)
 
-	rr := sendMessageRequest(t, srv.Handler(), "sess-excl", sessionserver.MessageRequest{
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "sess-excl", sessionserver.MessageRequest{
 		Messages: []sessionserver.MessagePayload{{Role: "user", Content: sessionrecord.MessageContentFromText("hello")}},
 	})
 	if rr.Code != http.StatusOK {

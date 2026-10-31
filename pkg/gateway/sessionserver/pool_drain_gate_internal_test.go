@@ -48,7 +48,8 @@ func TestRequirePoolNotDrainingRejects_spec_15_1_797(t *testing.T) {
 	}
 	// A live session aged 120s sets the drain estimate (under the cap).
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s1", TenantID: "acme", PoolRef: "p", State: apisession.StateRunning,
+		UserID: testOwner,
+		ID:     "s1", TenantID: "acme", PoolRef: "p", State: apisession.StateRunning,
 		CreatedAt: gateClock.Add(-120 * time.Second),
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)
