@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/delegation/cycle"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
@@ -130,6 +132,7 @@ func TestDelegateTaskFullFlowIntegration_spec_8_2(t *testing.T) {
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          exec,
@@ -143,7 +146,7 @@ func TestDelegateTaskFullFlowIntegration_spec_8_2(t *testing.T) {
 
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		RuntimeRef: "claude", PoolRef: "pool-a",
 		State: session.StateRunning, IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,

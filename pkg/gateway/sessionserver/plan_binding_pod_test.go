@@ -40,11 +40,11 @@ func newPlanBindPodEnv(t *testing.T, sessionID string) *planBindPodEnv {
 	adapterSrv.Runtime = &podBindRuntime{}
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 	blobs := blobstore.NewMemoryStore(nil)
 	binder.Blobs = blobs
 	staged := blobstore.URI{
@@ -64,17 +64,17 @@ func newPlanBindPodEnv(t *testing.T, sessionID string) *planBindPodEnv {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Blobs:                   blobs,
 	})
-	return &planBindPodEnv{cluster: cluster, store: store, handler: srv.Handler(), stagedRef: staged.String()}
+	return &planBindPodEnv{cluster: cluster, store: store, handler: asOwner(srv.Handler()), stagedRef: staged.String()}
 }
 
 // claimPresent reports whether the per-pod claim on sbx-1 exists.
 func (e *planBindPodEnv) claimPresent(t *testing.T) bool {
 	t.Helper()
 	var claim lennyv1.SandboxClaim
-	err := e.cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim)
+	err := e.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim)
 	return err == nil
 }
 
@@ -102,7 +102,7 @@ func TestCreateTimeUploadRefRejectedBeforePodClaim_spec_14_1(t *testing.T) {
 				})
 			} else {
 				body, _ = json.Marshal(sessionserver.CreateSessionRequest{
-					RuntimeRef: "echo", UserID: "alice@acme.com", WorkspacePlan: uploadFilePlanNaming(env.stagedRef),
+					RuntimeRef: "echo", WorkspacePlan: uploadFilePlanNaming(env.stagedRef),
 				})
 			}
 			rr := postSessionStep(t, env.handler, path, body)
@@ -131,7 +131,7 @@ func TestCreateTimeUploadRefRejectedBeforePodClaim_spec_14_1(t *testing.T) {
 func TestFinalizeForeignUploadRefKeepsClaimedPod_spec_14_1(t *testing.T) {
 	t.Parallel()
 	env := newPlanBindPodEnv(t, "sess-fin-foreign")
-	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
 	if rr := postSessionStep(t, env.handler, "/v1/sessions", createBody); rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
 	}

@@ -14,8 +14,9 @@ import (
 )
 
 // errContinuationNotFound marks a response id that names no completed
-// response of a session in the caller's tenant: an unparsable id, an unknown
-// or cross-tenant session, an ordinal past the session's newest response, or
+// response of a session the caller may read: an unparsable id, an unknown
+// or cross-tenant session, a session the §10.2 ownership rule hides from the
+// caller, an ordinal past the session's newest response, or
 // a response that has not completed. The handler maps it to a native OpenAI
 // 404 with no rehydration and no dispatch. A cross-tenant id is
 // indistinguishable from an unknown id because the tenant-scoped
@@ -49,6 +50,17 @@ type continuity struct {
 	// primaryReadTimeout bounds the primary read of the head row; zero
 	// selects sessionstore.DefaultPrimaryReadTimeout.
 	primaryReadTimeout time.Duration
+	// access decides whether the request principal may read a resolved
+	// session. A nil access refuses every session.
+	access SessionAccess
+}
+
+// readable reports whether the principal on ctx may read row. A nil access
+// refuses, so a handler wired without one fails closed to the native 404.
+// spec: §10.2 (Session ownership) rules 4 and 7; §15 (Open Responses
+// conversation sessions).
+func (c *continuity) readable(ctx context.Context, row sessionstore.Session) bool {
+	return c.access != nil && c.access.SessionAccessible(ctx, row, false)
 }
 
 // readPrimary reads the row from the Postgres primary. A response the gateway
@@ -62,8 +74,9 @@ func (c *continuity) readPrimary(ctx context.Context, tenantID, id string) (sess
 
 // resolve reads the session a response id names from the primary and
 // returns the row with the response's ordinal. It returns
-// errContinuationNotFound for an unparsable id, a session the tenant cannot
-// read, an ordinal past the newest response, or a response that has not
+// errContinuationNotFound for an unparsable id, a session outside the
+// tenant, a session the request principal may not read under §10.2 Session
+// ownership, an ordinal past the newest response, or a response that has not
 // completed. Any other store error is returned wrapped. It is every hop of
 // rehydrate, the resolution a continuation performs, and the read behind
 // GET /v1/responses/{id}. It reads the primary because a miss on any of these
@@ -85,6 +98,12 @@ func (c *continuity) resolve(ctx context.Context, tenantID, responseID string) (
 			return sessionstore.Session{}, 0, errContinuationNotFound
 		}
 		return sessionstore.Session{}, 0, fmt.Errorf("resolve response %s: %w", responseID, err)
+	}
+	// A session the caller may not read answers exactly as an unknown id,
+	// so the 404 does not reveal that the session exists.
+	// spec: §10.2 (Session ownership) rule 7.
+	if !c.readable(ctx, row) {
+		return sessionstore.Session{}, 0, errContinuationNotFound
 	}
 	if n > len(row.Responses) || !row.Responses[n-1].Completed {
 		return sessionstore.Session{}, 0, errContinuationNotFound

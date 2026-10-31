@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -33,6 +35,7 @@ func newMCPWithPools(t *testing.T, pools poolstore.Store, timeout time.Duration)
 		timeout = 2 * time.Second
 	}
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:     ownerprincipal.SessionAccess{},
 		DevTenantFallback:  true,
 		Store:              store,
 		Interactions:       interactions,
@@ -79,7 +82,7 @@ func TestRequestElicitationPerPoolURLModeAllowsConfiguredDomain_spec_9_2_F_9_2_1
 		},
 	})
 	srv, store, interactions := newMCPWithPools(t, pools, 2*time.Second)
-	mkPooledSession(t, store, "sess_root", "alice", "", "pool-oauth")
+	mkPooledSession(t, store, "sess_root", ownerprincipal.Alice, "", "pool-oauth")
 	h := srv.Handler()
 
 	go func() {
@@ -88,7 +91,7 @@ func TestRequestElicitationPerPoolURLModeAllowsConfiguredDomain_spec_9_2_F_9_2_1
 	}()
 	// A url-mode elicitation permitted by the pool's allowlist forwards up
 	// the chain and is recorded for resolution.
-	waitElicitationFor(t, interactions, "sess_root", "alice", "elic_x")
+	waitElicitationFor(t, interactions, "sess_root", ownerprincipal.Alice, "elic_x")
 }
 
 // TestRequestElicitationPerPoolURLModeBlocksUnconfiguredPool_spec_9_2_F_9_2_12
@@ -108,7 +111,7 @@ func TestRequestElicitationPerPoolURLModeBlocksUnconfiguredPool_spec_9_2_F_9_2_1
 	srv, store, interactions := newMCPWithPools(t, pools, time.Second)
 	// The raising session is in pool-default, which does not allowlist
 	// url-mode, so the elicitation must be blocked.
-	mkPooledSession(t, store, "sess_root", "alice", "", "pool-default")
+	mkPooledSession(t, store, "sess_root", ownerprincipal.Alice, "", "pool-default")
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
 		`{"sessionId":"sess_root","message":"sign in","schema":{},"url":"https://accounts.example.com/oauth/authorize","elicitationId":"elic_x"}`)
@@ -116,7 +119,7 @@ func TestRequestElicitationPerPoolURLModeBlocksUnconfiguredPool_spec_9_2_F_9_2_1
 	if result["isError"] != true {
 		t.Fatalf("a url-mode elicitation in a non-allowlisting pool should be blocked: %+v", resp)
 	}
-	if _, err := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x"); err == nil {
+	if _, err := interactions.Get(context.Background(), "acme", "sess_root", ownerprincipal.Alice, "elic_x"); err == nil {
 		t.Error("a blocked url-mode elicitation was recorded in the interaction store")
 	}
 }
@@ -134,8 +137,8 @@ func TestRequestElicitationPerPoolDepthBlockAll_spec_9_2_F_9_2_12(t *testing.T) 
 	srv, store, interactions := newMCPWithPools(t, pools, time.Second)
 	// §9.2: block_all suppresses delegated sessions; the leaf is
 	// at depth 1.
-	mkPooledSession(t, store, "sess_root", "alice", "", "pool-locked")
-	mkPooledSession(t, store, "sess_leaf", "alice", "sess_root", "pool-locked")
+	mkPooledSession(t, store, "sess_root", ownerprincipal.Alice, "", "pool-locked")
+	mkPooledSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_root", "pool-locked")
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
 		`{"sessionId":"sess_leaf","message":"ask","schema":{},"elicitationId":"elic_x"}`)
@@ -144,7 +147,7 @@ func TestRequestElicitationPerPoolDepthBlockAll_spec_9_2_F_9_2_12(t *testing.T) 
 		t.Errorf("result = %q, want a SUPPRESSED response under block_all", text)
 	}
 	for _, sid := range []string{"sess_leaf", "sess_root"} {
-		if _, err := interactions.Get(context.Background(), "acme", sid, "alice", "elic_x"); err == nil {
+		if _, err := interactions.Get(context.Background(), "acme", sid, ownerprincipal.Alice, "elic_x"); err == nil {
 			t.Errorf("a block_all-suppressed elicitation was recorded against %s", sid)
 		}
 	}
@@ -164,10 +167,10 @@ func TestRequestElicitationPerPoolAllowAllOverridesDefault_spec_9_2_F_9_2_12(t *
 	})
 	srv, store, interactions := newMCPWithPools(t, pools, 2*time.Second)
 	// root(0) → a(1) → b(2) → leaf(3); the leaf raises at depth 3.
-	mkPooledSession(t, store, "sess_root", "alice", "", "pool-open")
-	mkPooledSession(t, store, "sess_a", "alice", "sess_root", "pool-open")
-	mkPooledSession(t, store, "sess_b", "alice", "sess_a", "pool-open")
-	mkPooledSession(t, store, "sess_leaf", "alice", "sess_b", "pool-open")
+	mkPooledSession(t, store, "sess_root", ownerprincipal.Alice, "", "pool-open")
+	mkPooledSession(t, store, "sess_a", ownerprincipal.Alice, "sess_root", "pool-open")
+	mkPooledSession(t, store, "sess_b", ownerprincipal.Alice, "sess_a", "pool-open")
+	mkPooledSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_b", "pool-open")
 	h := srv.Handler()
 
 	go func() {
@@ -176,7 +179,7 @@ func TestRequestElicitationPerPoolAllowAllOverridesDefault_spec_9_2_F_9_2_12(t *
 	}()
 	// allow_all defeats the depth-3 platform default; the elicitation
 	// forwards to the human-facing root and is recorded there.
-	waitElicitationFor(t, interactions, "sess_root", "alice", "elic_x")
+	waitElicitationFor(t, interactions, "sess_root", ownerprincipal.Alice, "elic_x")
 }
 
 // TestRequestElicitationDefaultPoolSuppressesAtDepth3_spec_9_2_F_9_2_12
@@ -187,10 +190,10 @@ func TestRequestElicitationDefaultPoolSuppressesAtDepth3_spec_9_2_F_9_2_12(t *te
 	pools := poolstore.NewMemory()
 	seedPool(t, pools, poolstore.Pool{Name: "pool-default"})
 	srv, store, interactions := newMCPWithPools(t, pools, time.Second)
-	mkPooledSession(t, store, "sess_root", "alice", "", "pool-default")
-	mkPooledSession(t, store, "sess_a", "alice", "sess_root", "pool-default")
-	mkPooledSession(t, store, "sess_b", "alice", "sess_a", "pool-default")
-	mkPooledSession(t, store, "sess_leaf", "alice", "sess_b", "pool-default") // depth 3
+	mkPooledSession(t, store, "sess_root", ownerprincipal.Alice, "", "pool-default")
+	mkPooledSession(t, store, "sess_a", ownerprincipal.Alice, "sess_root", "pool-default")
+	mkPooledSession(t, store, "sess_b", ownerprincipal.Alice, "sess_a", "pool-default")
+	mkPooledSession(t, store, "sess_leaf", ownerprincipal.Alice, "sess_b", "pool-default") // depth 3
 
 	resp := call(t, srv.Handler(), "lenny/request_elicitation",
 		`{"sessionId":"sess_leaf","message":"ask","schema":{},"elicitationId":"elic_x"}`)
@@ -198,7 +201,7 @@ func TestRequestElicitationDefaultPoolSuppressesAtDepth3_spec_9_2_F_9_2_12(t *te
 	if !strings.Contains(text, "suppressed") {
 		t.Errorf("result = %q, want SUPPRESSED at depth 3 under the platform default", text)
 	}
-	if _, err := interactions.Get(context.Background(), "acme", "sess_root", "alice", "elic_x"); err == nil {
+	if _, err := interactions.Get(context.Background(), "acme", "sess_root", ownerprincipal.Alice, "elic_x"); err == nil {
 		t.Error("a depth-3 suppressed elicitation was recorded")
 	}
 }

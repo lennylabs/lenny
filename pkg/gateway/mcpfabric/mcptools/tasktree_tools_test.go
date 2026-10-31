@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -26,11 +28,13 @@ func TestGetTaskTreeTool(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_root", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_root", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_kid", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_kid", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: "sess_root",
 		CreatedAt:       now, UpdatedAt: now,
 	})
@@ -50,15 +54,17 @@ func TestGetTaskTreeAcceptsEmptyArgsFromBoundPrincipal_spec_8_9_F_8_9_11(t *test
 	srv, store := newMCP(t)
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_principal_899", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_principal_899", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_kid_899", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_kid_899", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: "sess_principal_899",
 		CreatedAt:       now, UpdatedAt: now,
 	})
-	principal := authmw.Principal{Subject: "alice", TenantID: "acme", SessionID: "sess_principal_899"}
+	principal := authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", SessionID: "sess_principal_899"}
 	resp := callAs(t, srv.Handler(), principal, "lenny/get_task_tree", `{}`)
 	text := resultText(t, resp)
 	for _, want := range []string{"sess_principal_899", "sess_kid_899"} {
@@ -123,18 +129,21 @@ func TestGetTaskTreeEmitsCycleObservation_spec_8_9_F_8_9_10(t *testing.T) {
 	now := time.Now()
 	// A two-node cycle: sess_a.parent = sess_b, sess_b.parent = sess_a.
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_a", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_a", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: "sess_b",
 		CreatedAt:       now, UpdatedAt: now,
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_b", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_b", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: "sess_a",
 		CreatedAt:       now, UpdatedAt: now,
 	})
 	observer := &captureTreeCycle{}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		TenantID:          "acme",
@@ -168,17 +177,20 @@ func TestGetTaskTreeAcyclicTreeEmitsNoCycle_spec_8_9_F_8_9_10(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_root_cl", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_root_cl", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_kid_cl", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_kid_cl", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: "sess_root_cl",
 		CreatedAt:       now, UpdatedAt: now,
 	})
 	observer := &captureTreeCycle{}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		TenantID:          "acme",
@@ -199,12 +211,14 @@ func TestGetTaskTreeIncludesRuntimeRef_spec_8_5_F_8_5_1(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_root2", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_root2", TenantID: "acme", State: session.StateRunning,
 		RuntimeRef: "claude",
 		CreatedAt:  now, UpdatedAt: now,
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_kid2", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_kid2", TenantID: "acme", State: session.StateRunning,
 		RuntimeRef: "gemini", ParentSessionID: "sess_root2",
 		CreatedAt: now, UpdatedAt: now,
 	})
@@ -225,12 +239,14 @@ func TestGetTaskTreeUsesTaskIDField_spec_8_5_540(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_root_tid", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_root_tid", TenantID: "acme", State: session.StateRunning,
 		RuntimeRef: "claude",
 		CreatedAt:  now, UpdatedAt: now,
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_kid_tid", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_kid_tid", TenantID: "acme", State: session.StateRunning,
 		RuntimeRef: "gemini", ParentSessionID: "sess_root_tid",
 		CreatedAt: now, UpdatedAt: now,
 	})
@@ -255,11 +271,13 @@ func TestGetTaskTreeSurfacesNodeAttributes_spec_8_9_1010(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_root_attr", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_root_attr", TenantID: "acme", State: session.StateRunning,
 		RuntimeRef: "claude", CreatedAt: now, UpdatedAt: now,
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_kid_attr", TenantID: "acme", State: session.StateFailed,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_kid_attr", TenantID: "acme", State: session.StateFailed,
 		RuntimeRef: "gemini", ParentSessionID: "sess_root_attr",
 		RecoveryGeneration: 2, PodAssignment: "pod-xyz",
 		DelegationLease: &sessionstore.DelegationLease{MaxTokenBudget: 5000},
@@ -339,7 +357,8 @@ func TestCancelChildToolHonoursAwaitCompletion(t *testing.T) {
 	mkSession(t, store, "sess_root", session.StateRunning, "")
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_target", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_target", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID:  "sess_root",
 		CascadeOnFailure: session.CascadeAwaitCompletion,
 		CreatedAt:        now, UpdatedAt: now,
@@ -372,7 +391,8 @@ func TestCancelChildToolHonoursDetach(t *testing.T) {
 	mkSession(t, store, "sess_root", session.StateRunning, "")
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_target", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_target", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID:  "sess_root",
 		CascadeOnFailure: session.CascadeDetach,
 		CreatedAt:        now, UpdatedAt: now,
@@ -668,7 +688,8 @@ func TestAwaitChildrenFailedSurfacesErrorBlock_spec_8_8_4(t *testing.T) {
 	mkSession(t, store, "sess_p", session.StateRunning, "")
 	// A failed child that consumed its whole automatic-recovery budget.
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_fail", TenantID: "acme", State: session.StateFailed, ParentSessionID: "sess_p",
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_fail", TenantID: "acme", State: session.StateFailed, ParentSessionID: "sess_p",
 		FailureReason: "DELEGATION_BUDGET_EXHAUSTED", RetryCount: 2,
 		RetryPolicy: &session.RetryPolicy{MaxRetries: 2},
 		CreatedAt:   time.Now(), UpdatedAt: time.Now(),

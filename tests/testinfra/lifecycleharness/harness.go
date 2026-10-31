@@ -53,6 +53,13 @@ import (
 // Tenant is the tenant every harness session belongs to.
 const Tenant = "acme"
 
+// Owner is the subject every harness request authenticates as through the
+// X-Lenny-User-ID dev header, and therefore the owner of every session the
+// harness creates.
+//
+// spec: §10.2 (Session ownership) rule 1.
+const Owner = "alice@acme.com"
+
 // Timers the harness applies. Every timer a cell does not fire is longer
 // than a cell and its checker run; the resume windows are short so the
 // checker's horizon is reached in a few passes.
@@ -739,11 +746,12 @@ func (h *Harness) Row(id string) sessionstore.Session {
 
 // Do sends an HTTP request to the replica's session API through its public
 // path, behind the auth middleware, and returns the status and the decoded
-// body. The X-Lenny-Tenant-ID header is the request's credential, which a
-// forward to the session's coordinating replica relays.
+// body. The X-Lenny-Tenant-ID and X-Lenny-User-ID headers are the request's
+// credential, which a forward to the session's coordinating replica relays.
+// The principal is Owner.
 func (h *Harness) Do(r *Replica, method, path string, body any) (int, map[string]any) {
 	h.T.Helper()
-	return h.DoAs(r, "", method, path, body)
+	return h.DoAs(r, Owner, method, path, body)
 }
 
 // DoAs is Do with the X-Lenny-User-ID header naming user, so the request's
@@ -779,6 +787,7 @@ func (h *Harness) Upload(r *Replica, id, token, mime string, body []byte) (int, 
 	h.T.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+id+"/upload", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", Tenant)
+	req.Header.Set("X-Lenny-User-ID", Owner)
 	req.Header.Set("X-Lenny-Upload-Token", token)
 	req.Header.Set("Content-Type", mime)
 	rr := httptest.NewRecorder()
@@ -794,6 +803,7 @@ func (h *Harness) Events(r *Replica, id string) (int, []any) {
 	h.T.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/"+id+"/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", Tenant)
+	req.Header.Set("X-Lenny-User-ID", Owner)
 	req.Header.Set("Accept", "application/json")
 	rr := httptest.NewRecorder()
 	r.public.ServeHTTP(rr, req)
@@ -824,7 +834,7 @@ func (h *Harness) StartSession(r *Replica) string {
 func (h *Harness) TryStartSession(r *Replica) (string, int, map[string]any) {
 	h.T.Helper()
 	code, body := h.Do(r, http.MethodPost, "/v1/sessions/start", sessionserver.CreateAndStartRequest{
-		RuntimeRef: RuntimeRef, UserID: "alice@acme.com",
+		RuntimeRef: RuntimeRef,
 	})
 	id, _ := body["id"].(string)
 	if id != "" {
@@ -840,7 +850,7 @@ func (h *Harness) TryStartSession(r *Replica) (string, int, map[string]any) {
 func (h *Harness) CreateSession(r *Replica) string {
 	h.T.Helper()
 	code, body := h.Do(r, http.MethodPost, "/v1/sessions", sessionserver.CreateSessionRequest{
-		RuntimeRef: RuntimeRef, UserID: "alice@acme.com",
+		RuntimeRef: RuntimeRef,
 	})
 	id, _ := body["id"].(string)
 	if code != http.StatusCreated || id == "" {

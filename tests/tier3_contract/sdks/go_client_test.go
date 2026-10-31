@@ -56,6 +56,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	"github.com/lennylabs/lenny/sdks/client/go/lenny"
+	"github.com/lennylabs/lenny/tests/testinfra/mcpcreate"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/tier3_contract/sdks/harness"
 )
 
@@ -66,19 +68,30 @@ import (
 // closed by the caller's t.Cleanup.
 //
 // The tool surface binds the acme tenant: a session created over MCP
-// is stamped acme, and lenny/send_message resolves it on the same
+// is stamped acme and owned by ownerprincipal.Alice, the principal the
+// server's wrapper gives every request, and lenny/send_message resolves it on the same
 // tenant. The echo executor returns the §15.4.4 reference echo runtime
 // shape so the send-message reply is deterministic.
 func newMCPGateway(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := mcp.NewServer()
+	store := memstore.New()
+	sessions := sessionserver.New(store, sessionserver.Options{})
 	mcptools.Register(srv, mcptools.Deps{
 		DevTenantFallback: true,
-		Store:             memstore.New(),
+		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
-		TenantID:          "acme",
+		// spec: §15.2.1 rule 1; §10.2 (Session ownership) — create_session
+		// runs through the shared §15.1 create-and-start service, which
+		// binds the owner from the caller's principal and leaves the
+		// session running, so the send that follows reaches the runtime.
+		SessionCreator: mcpcreate.StartingCreator{Srv: sessions},
+		// spec: §10.2 (Session ownership) — lenny/send_message checks the
+		// caller against the session's owner through the shared service.
+		SessionService: sessions,
+		TenantID:       "acme",
 	})
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 	return ts
 }
@@ -140,7 +153,7 @@ func newGateway(t *testing.T) *httptest.Server {
 		UploadTokenIssuer:   uploadtoken.NewIssuer(ring, nil),
 		UploadTokenVerifier: uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), nil),
 	})
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 	return ts
 }
@@ -187,7 +200,6 @@ func TestGoClientWireFormatRoundTrip(t *testing.T) {
 
 	create := send(t, h, harness.Command{Op: "create_session", Args: map[string]any{
 		"runtime": "claude-code",
-		"user_id": "alice@acme.com",
 	}})
 	if !create.OK {
 		t.Fatalf("create_session failed: %v", create.Error)
@@ -259,7 +271,7 @@ func TestGoClientStreamingReconnect(t *testing.T) {
 	// and forces the SDK to reconnect. Every later connection is
 	// served straight through. This forces a mid-stream disconnect
 	// without modifying the gateway.
-	d := &disconnector{inner: srv.Handler()}
+	d := &disconnector{inner: ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)}
 	ts := httptest.NewServer(d)
 	t.Cleanup(ts.Close)
 
@@ -535,7 +547,7 @@ func TestGoClientIdempotencyKeyHandling(t *testing.T) {
 	// replayed key returns the cached create response.
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	ts := httptest.NewServer(idempotencyWrapped(srv.Handler()))
+	ts := httptest.NewServer(idempotencyWrapped(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)))
 	t.Cleanup(ts.Close)
 	h := spawnHelper(t, ts.URL)
 
@@ -579,9 +591,7 @@ func TestGoClientErrorEnvelope(t *testing.T) {
 
 	// A create missing runtimeRef is rejected with the §15.1
 	// VALIDATION_ERROR envelope; the helper surfaces the parsed code.
-	missing := send(t, h, harness.Command{Op: "create_session", Args: map[string]any{
-		"user_id": "alice@acme.com",
-	}})
+	missing := send(t, h, harness.Command{Op: "create_session", Args: map[string]any{}})
 	if missing.OK {
 		t.Fatal("create without runtime succeeded; expected VALIDATION_ERROR")
 	}
@@ -716,7 +726,7 @@ func TestGoClientMCP(t *testing.T) {
 
 	// Drive a session over MCP: create it, send a message, read the
 	// reply. The echo executor echoes the message back.
-	created, err := mcpClient.CreateSession(ctx, "claude-code", "alice@acme.com")
+	created, err := mcpClient.CreateSession(ctx, "claude-code")
 	if err != nil {
 		t.Fatalf("lenny/create_session over MCP: %v", err)
 	}

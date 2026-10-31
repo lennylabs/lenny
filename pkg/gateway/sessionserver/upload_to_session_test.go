@@ -72,7 +72,7 @@ func midSessionFixtureAudited(t *testing.T, capability, policyEnabled, withBindi
 	store := memstore.New()
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_mid", TenantID: "acme", UserID: "alice", RuntimeRef: "rt-mid",
+		ID: "sess_mid", TenantID: "acme", UserID: testOwner, RuntimeRef: "rt-mid",
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func midSessionFixtureAudited(t *testing.T, capability, policyEnabled, withBindi
 		MidSessionUploadEnabled: policyEnabled,
 		LifecycleAuditSink:      audit,
 	})
-	return srv.Handler(), root
+	return asOwner(srv.Handler()), root
 }
 
 func uploadToSession(t *testing.T, h http.Handler, body string) *httptest.ResponseRecorder {
@@ -239,7 +239,7 @@ func TestRuntimeDiscoveryExposesMidSessionUpload_spec_7_4_433(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/runtimes", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rr.Code)
 	}

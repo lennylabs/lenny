@@ -142,7 +142,6 @@ func TestProviderPartitionMidDelegationRecovers(t *testing.T) {
 			ParentSessionID: "root",
 			RuntimeRef:      runtimeRef,
 			PoolRef:         poolRef,
-			UserID:          "alice@acme.com",
 			LeaseSlice:      dlease.LeaseSlice{MaxTokenBudget: budget},
 		})
 		if err != nil {

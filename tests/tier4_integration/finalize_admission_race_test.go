@@ -42,6 +42,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // admissionSessionID is the session every finalize admission case creates.
@@ -280,10 +281,10 @@ func newAdmissionFixture(t *testing.T) *admissionFixture {
 		Events:                  bus,
 	})
 	f := &admissionFixture{
-		handler: srv.Handler(), store: store, cluster: cluster,
+		handler: ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice), store: store, cluster: cluster,
 		assigner: assigner, rpcs: rpcs, bus: bus,
 	}
-	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
 	if rr := f.do(http.MethodPost, "/v1/sessions", createBody, nil); rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
 	}

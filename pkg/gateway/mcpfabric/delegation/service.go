@@ -95,10 +95,6 @@ type Request struct {
 	// spec: §8.2. F-8.2.2.
 	LeaseSlice lease.LeaseSlice
 
-	// UserID owns the child session. Inherits the parent's when
-	// blank.
-	UserID string
-
 	// ApprovalMode is the §8.4 closed enum on the delegation lease.
 	// The empty string and "policy"/"approval" share the auto-approval
 	// path (with "approval" recorded verbatim on audit per the v1
@@ -936,9 +932,6 @@ func (s *Service) validateDelegation(ctx context.Context, tenantID string, req R
 	// subtree is rejected at admission rather than spawning a child
 	// whose §11.2 quotas, §10.6 environment scope, §11.7 audit
 	// attribution, and §9.2 elicitation routing are undifferentiated.
-	// req.UserID is rejected as a substitute: the spec ties the
-	// child's identity to the *authenticated* parent, not to a
-	// caller-supplied label.
 	if parent.UserID == "" {
 		return admission{}, ErrParentNoUser
 	}
@@ -1232,14 +1225,11 @@ func (s *Service) reserveTreeBudget(ctx context.Context, tenantID string, req Re
 	// children a single user can spread across all their sessions and
 	// trees. Counted and rejected before any tree budget is reserved so an
 	// over-limit delegation consumes no §12.4 counter state. The owning
-	// user is the child's effective user_id (req override, else the
-	// parent's, which §8.2 guarantees is non-empty). F-11.1.4.
+	// user is the child's owner, the parent's owner, which §8.2
+	// guarantees is non-empty. spec: §10.2 (Session ownership) rule 2.
+	// F-11.1.4.
 	if s.maxActiveChildrenPerUser > 0 {
-		owner := req.UserID
-		if owner == "" {
-			owner = parent.UserID
-		}
-		active, err := s.store.CountActiveDelegatedChildrenByUser(ctx, tenantID, owner)
+		active, err := s.store.CountActiveDelegatedChildrenByUser(ctx, tenantID, parent.UserID)
 		if err != nil {
 			return err
 		}
@@ -1419,10 +1409,9 @@ func credentialOriginID(mode lease.CredentialPropagation, parent sessionstore.Se
 // F-8.1.2, F-8.2.7, F-8.7.1, F-8.9.8, F-10.7.5.
 func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Request, adm admission, rootSessionID string) (_ sessionstore.Session, reserved bool, retErr error) {
 	parent := adm.parent
-	userID := req.UserID
-	if userID == "" {
-		userID = parent.UserID
-	}
+	// spec: §10.2 (Session ownership) rule 2; §8.2 (Child identity) — a
+	// delegated child takes its parent's owner. No request field sets it.
+	userID := parent.UserID
 	now := s.clock()
 	// §8.7 / §8.2 steps 3, 4, 6: when the lease declares `fileExport`
 	// entries, run the gateway-side export materialization before the

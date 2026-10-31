@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
@@ -25,10 +28,10 @@ func (r *recCheckpointer) CheckpointSubject(_ context.Context, tenantID, userID 
 func TestSessionCompletionWritesFinalQuotaCheckpoint_spec_11_2(t *testing.T) {
 	cp := &recCheckpointer{}
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, QuotaCheckpointer: cp})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	rr := createRequest(t, h,
-		sessionserver.CreateSessionRequest{RuntimeRef: "claude-code", UserID: "alice@acme.com"})
+		sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -47,18 +50,23 @@ func TestSessionCompletionWritesFinalQuotaCheckpoint_spec_11_2(t *testing.T) {
 	}
 }
 
-// A session with no user id writes no per-user final checkpoint (the
-// guard short-circuits), and the absence of a checkpointer never breaks a
-// terminal transition.
+// A session row with no user id writes no per-user final checkpoint (the
+// guard short-circuits). No create path writes such a row, because the
+// owner is the creating principal's subject, and no session route reaches
+// one, because no caller owns it (§10.2 Session ownership rules 1 and 5),
+// so the test drives the terminal pipeline directly.
 func TestSessionCompletionNoCheckpointWithoutUser_spec_11_2(t *testing.T) {
 	cp := &recCheckpointer{}
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, QuotaCheckpointer: cp})
-	h := srv.Handler()
-
-	id := createSessionID(t, h) // no principal → empty user id
-	term := sessionRequest(t, h, http.MethodPost, "/v1/sessions/"+id+"/terminate")
-	if term.Code != http.StatusOK {
-		t.Fatalf("terminate: status %d, body %s", term.Code, term.Body.String())
+	now := time.Now().UTC()
+	srv.OnSessionTerminal(context.Background(), session.StateRunning, sessionstore.Session{
+		ID: "sess_userless", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.WaitTerminalWork(ctx); err != nil {
+		t.Fatalf("wait for the terminal pipeline: %v", err)
 	}
 	if len(cp.calls) != 0 {
 		t.Errorf("final checkpoint calls = %v, want none for a user-less session", cp.calls)

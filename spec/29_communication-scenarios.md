@@ -431,9 +431,9 @@ reading from it ([§7.1](07_session-lifecycle.md#71-normal-flow),
    ([§7.2](07_session-lifecycle.md#72-interactive-session-model)).
 
 2. `gateway`, `internal`. The gateway authenticates the caller and authorizes the operation against the
-   RBAC permission matrix, under which a caller holding the `user` role reaches only their own sessions
-   unless a tenant-admin has granted otherwise
-   ([§10.2](10_gateway-internals.md#102-authentication)).
+   RBAC permission matrix, and applies [§10.2](10_gateway-internals.md#102-authentication)
+   **Session ownership.**, under which only the session's owner sends it a message and a caller that may
+   not act on the session receives the response for a session that does not exist.
 
 3. `gateway`, `internal`. The gateway loads the target session and applies the state and runtime
    preconditions the endpoint states. The endpoint accepts any non-terminal state, and delivery semantics

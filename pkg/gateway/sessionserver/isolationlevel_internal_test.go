@@ -379,12 +379,13 @@ func TestPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
 	}{
 		{
 			name: "empty execution mode falls back to session-mode default",
-			row:  sessionstore.Session{IsolationProfile: isolation.ProfileSandboxed},
+			row:  sessionstore.Session{UserID: testOwner, IsolationProfile: isolation.ProfileSandboxed},
 			want: defaultIsolationLevel(isolation.ProfileSandboxed),
 		},
 		{
 			name: "session mode: no reuse, no scrub, no warning",
 			row: sessionstore.Session{
+				UserID:                 testOwner,
 				IsolationProfile:       isolation.ProfileSandboxed,
 				ExecutionMode:          "session",
 				ConversationContinuity: "platform",
@@ -398,6 +399,7 @@ func TestPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
 		{
 			name: "recycle mode: pod reuse + warning + scrub",
 			row: sessionstore.Session{
+				UserID:                 testOwner,
 				IsolationProfile:       isolation.ProfileMicrovm,
 				ExecutionMode:          "session",
 				ScrubPolicy:            "vm-restart",
@@ -415,6 +417,7 @@ func TestPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
 		{
 			name: "service mode: pod reuse + warning + no scrub + no continuity",
 			row: sessionstore.Session{
+				UserID:                 testOwner,
 				IsolationProfile:       isolation.ProfileSandboxed,
 				ExecutionMode:          "service",
 				ScrubPolicy:            "none",
@@ -432,6 +435,7 @@ func TestPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
 		{
 			name: "concurrent sessions: per-slot scrub recorded on the row",
 			row: sessionstore.Session{
+				UserID:                 testOwner,
 				IsolationProfile:       isolation.ProfileSandboxed,
 				ExecutionMode:          "session",
 				ScrubPolicy:            "best-effort-per-slot",
@@ -454,6 +458,7 @@ func TestPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
 			// never reports "platform" for a service-mode session.
 			name: "service mode with empty continuity column falls back to none",
 			row: sessionstore.Session{
+				UserID:           testOwner,
 				IsolationProfile: isolation.ProfileSandboxed,
 				ExecutionMode:    "service",
 				ScrubPolicy:      "none",
@@ -472,6 +477,7 @@ func TestPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
 			// continuity column falls back to "platform".
 			name: "session mode with empty continuity column falls back to platform",
 			row: sessionstore.Session{
+				UserID:           testOwner,
 				IsolationProfile: isolation.ProfileSandboxed,
 				ExecutionMode:    "session",
 			},
@@ -542,6 +548,7 @@ func TestPersistedContinuity_spec_7_1_74(t *testing.T) {
 // handoff.
 func TestToResponse_SurfacesPersistedIsolationLevel_spec_7_1_75(t *testing.T) {
 	row := sessionstore.Session{
+		UserID:           testOwner,
 		ID:               "sess-1",
 		TenantID:         "tenant-1",
 		IsolationProfile: isolation.ProfileSandboxed,

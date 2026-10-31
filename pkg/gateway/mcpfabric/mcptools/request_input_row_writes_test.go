@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -86,13 +88,14 @@ func newInputRig(t *testing.T, st session.State, timeout time.Duration) *inputRi
 	}
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := r.store.Create(context.Background(), sessionstore.Session{
-		ID: rowSessionID, TenantID: "acme", UserID: "alice@acme.com", RuntimeRef: "echo",
+		ID: rowSessionID, TenantID: "acme", UserID: ownerprincipal.Alice, RuntimeRef: "echo",
 		State: st, PodAssignment: "pod-a", CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	r.srv = mcp.NewServer()
 	mcptools.Register(r.srv, mcptools.Deps{
+		SessionService:      ownerprincipal.SessionAccess{},
 		DevTenantFallback:   true,
 		Store:               r.store,
 		Executor:            executor.NewEchoExecutor(),
@@ -119,7 +122,7 @@ func (r *inputRig) start(ctx context.Context) <-chan callResult {
 	out := make(chan callResult, 1)
 	args := fmt.Sprintf(`{"sessionId":%q,"parts":[{"type":"text","inline":"ok?"}]}`, rowSessionID)
 	go func() {
-		res, _, err := r.srv.DispatchTool(ctx, "lenny/request_input", json.RawMessage(args))
+		res, _, err := r.srv.DispatchTool(ownerprincipal.Context(ctx, ownerprincipal.Alice), "lenny/request_input", json.RawMessage(args))
 		out <- callResult{res, err}
 	}()
 	return out

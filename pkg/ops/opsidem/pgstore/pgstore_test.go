@@ -28,7 +28,7 @@ func TestPgStoreRoundTrip_spec_25_4(t *testing.T) {
 	}
 	pg := embpostgres.New(embpostgres.Config{
 		DataDir:      t.TempDir(),
-		Port:         15497,
+		Port:         0,
 		Database:     "lenny",
 		Username:     "lenny",
 		Password:     "lenny",

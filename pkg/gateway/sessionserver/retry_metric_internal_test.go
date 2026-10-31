@@ -80,6 +80,7 @@ func TestRecordSessionRetryDefaultsFailureClassToUnknown_F_7_3_10(t *testing.T) 
 	counter := &recordedRetry{}
 	srv := New(memstore.New(), Options{DevTenantHeader: true, IncSessionRetry: counter.record})
 	srv.recordSessionRetry(context.Background(), sessionstore.Session{
+		UserID:   testOwner,
 		ID:       "sess_noclass",
 		TenantID: "acme",
 		State:    session.StateRunning,
@@ -99,6 +100,7 @@ func TestRecordSessionRetryDefaultsFailureClassToUnknown_F_7_3_10(t *testing.T) 
 func TestRecordSessionRetryWithoutHooksIsNoOp_F_7_3_10_F_7_3_18(t *testing.T) {
 	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	srv.recordSessionRetry(context.Background(), sessionstore.Session{
+		UserID:   testOwner,
 		ID:       "sess_nohook",
 		TenantID: "acme",
 		State:    session.StateRunning,
@@ -141,7 +143,8 @@ func TestRetrySpentOnlyOnFailureEdgeIntoResumePending_spec_7_3(t *testing.T) {
 		Clock:              func() time.Time { return time.Date(2026, 5, 26, 11, 0, 0, 0, time.UTC) },
 	})
 	if err := store.Create(ctx, sessionstore.Session{
-		ID: "sess_spend", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_spend", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

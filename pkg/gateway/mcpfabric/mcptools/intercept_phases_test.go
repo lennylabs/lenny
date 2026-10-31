@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -96,7 +98,8 @@ func runningSession(t *testing.T, store sessionstore.Store) {
 	t.Helper()
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_x", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_x", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)

@@ -222,7 +222,8 @@ func newSuspensionRig(t *testing.T, withBinder bool) *suspensionRig {
 func (r *suspensionRig) seedRunning(t *testing.T, id string) sessionstore.Session {
 	t.Helper()
 	row := sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-1",
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-1",
 		PoolRef: "pool-a", CoordinationGeneration: rigGeneration,
 		CreatedAt: r.now.Add(-time.Hour), UpdatedAt: r.now.Add(-time.Hour),
 		LastAgentActivityAt: r.now.Add(-time.Hour),
@@ -240,7 +241,8 @@ func (r *suspensionRig) seedRunning(t *testing.T, id string) sessionstore.Sessio
 func (r *suspensionRig) seedSuspended(t *testing.T, id string, since time.Time) sessionstore.Session {
 	t.Helper()
 	row := sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateSuspended, PodAssignment: "pod-1",
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: session.StateSuspended, PodAssignment: "pod-1",
 		PoolRef: "pool-a", CoordinationGeneration: rigGeneration,
 		SuspendedAt: since, SuspendedReason: sessionstore.SuspendedReasonInterruptAcknowledged,
 		CreatedAt: since, UpdatedAt: since,
@@ -289,7 +291,7 @@ func (r *suspensionRig) metrics() (released, cpFailed int) {
 // (Stateless Replicas and Per-Session Coordination)
 func TestClassifyIdleWrite_spec_6_2(t *testing.T) {
 	at := time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC)
-	listed := sessionstore.Session{State: session.StateRunning, PodAssignment: "pod-1", LastAgentActivityAt: at, CoordinationGeneration: 3}
+	listed := sessionstore.Session{UserID: testOwner, State: session.StateRunning, PodAssignment: "pod-1", LastAgentActivityAt: at, CoordinationGeneration: 3}
 	with := func(f func(*sessionstore.Session)) sessionstore.Session {
 		r := listed
 		f(&r)

@@ -62,10 +62,10 @@ func TestRetentionWindowReturnsTheTierWindowAndLookupErrors_spec_7_1(t *testing.
 		want    time.Duration
 		wantErr bool
 	}{
-		{"T4 tier window", sessionstore.Session{TenantID: "acme"}, 24 * time.Hour, false},
-		{"deployer window shorter than the budget", sessionstore.Session{TenantID: "globex"}, short, false},
-		{"not-found tenant takes the default", sessionstore.Session{TenantID: "ghost"}, short, false},
-		{"not-found environment keeps the tenant tier", sessionstore.Session{TenantID: "acme", Environment: "missing"}, 24 * time.Hour, false},
+		{"T4 tier window", sessionstore.Session{UserID: testOwner, TenantID: "acme"}, 24 * time.Hour, false},
+		{"deployer window shorter than the budget", sessionstore.Session{UserID: testOwner, TenantID: "globex"}, short, false},
+		{"not-found tenant takes the default", sessionstore.Session{UserID: testOwner, TenantID: "ghost"}, short, false},
+		{"not-found environment keeps the tenant tier", sessionstore.Session{UserID: testOwner, TenantID: "acme", Environment: "missing"}, 24 * time.Hour, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := srv.RetentionWindow(ctx, tc.sess)
@@ -78,13 +78,13 @@ func TestRetentionWindowReturnsTheTierWindowAndLookupErrors_spec_7_1(t *testing.
 	failTenant := sessionserver.New(memstore.New(), sessionserver.Options{
 		DevTenantHeader: true, Tenants: failingTenants{tenants}, Environments: environmentstore.NewMemory(),
 	})
-	if _, err := failTenant.RetentionWindow(ctx, sessionstore.Session{TenantID: "acme"}); err == nil {
+	if _, err := failTenant.RetentionWindow(ctx, sessionstore.Session{UserID: testOwner, TenantID: "acme"}); err == nil {
 		t.Error("RetentionWindow with a failing tenant Get = nil error, want the lookup error")
 	}
 	failEnv := sessionserver.New(memstore.New(), sessionserver.Options{
 		DevTenantHeader: true, Tenants: tenants, Environments: failingEnvironments{environmentstore.NewMemory()},
 	})
-	if _, err := failEnv.RetentionWindow(ctx, sessionstore.Session{TenantID: "acme", Environment: "restricted"}); err == nil {
+	if _, err := failEnv.RetentionWindow(ctx, sessionstore.Session{UserID: testOwner, TenantID: "acme", Environment: "restricted"}); err == nil {
 		t.Error("RetentionWindow with a failing environment Get = nil error, want the lookup error")
 	}
 }

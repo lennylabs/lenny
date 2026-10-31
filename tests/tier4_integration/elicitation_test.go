@@ -64,13 +64,22 @@ func (c mcpClient) rest(method, path string, body any) (int, map[string]any) {
 	return resp.StatusCode, out
 }
 
-// callTool invokes one MCP tool via JSON-RPC tools/call and returns
-// the decoded JSON-RPC response.
+// callTool invokes one MCP tool via JSON-RPC tools/call as the same
+// dev-header principal the rest helper uses, and returns the decoded
+// JSON-RPC response. The principal carries the subject that owns the
+// sessions rest creates, because a tool that dispatches to a
+// /v1/sessions/{id} route is refused 401 without a subject and 404 for
+// another subject's session.
+// spec: §10.2 Session ownership.
 func (c mcpClient) callTool(name, argsJSON string) map[string]any {
 	c.t.Helper()
 	reqBody := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` +
 		name + `","arguments":` + argsJSON + `}}`
-	resp, err := http.DefaultClient.Post(c.base+"/mcp", "application/json", strings.NewReader(reqBody))
+	req, _ := http.NewRequest(http.MethodPost, c.base+"/mcp", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", mcpTenant)
+	req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		c.t.Fatalf("POST /mcp %s: %v", name, err)
 	}

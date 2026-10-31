@@ -55,6 +55,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 const (
@@ -105,12 +106,14 @@ func newStreamChaosGateway(t *testing.T, id string, cl *adapterclient.Client) *s
 		g.reports.Add(1)
 		srv.ReportAttachStreamFailure(tenantID, sessionID, sandboxName, cause)
 	})
-	hs := httptest.NewServer(srv.Handler())
+	// spec: §10.2 (Session ownership) — the requests run as the seeded row's owner.
+	hs := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(hs.Close)
 	g.base = hs.URL
 	now := time.Now().UTC()
 	if err := g.store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateRunning, RuntimeRef: "echo",
+		UserID: ownerprincipal.Alice,
+		ID:     id, TenantID: "acme", State: session.StateRunning, RuntimeRef: "echo",
 		PodAssignment: sandbox, CoordinationGeneration: 1, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed %s: %v", id, err)

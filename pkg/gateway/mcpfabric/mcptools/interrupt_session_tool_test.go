@@ -5,6 +5,9 @@ package mcptools_test
 import (
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
@@ -51,7 +54,8 @@ func TestInterruptSessionToolProjectsRESTError_spec_15_2_1(t *testing.T) {
 //
 // spec: 15.2.1 (REST/MCP Consistency Contract)
 func TestInterruptSessionToolAbsentWithoutService_spec_15_2_1(t *testing.T) {
-	srv, _ := newMCP(t)
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{DevTenantFallback: true, Store: memstore.New(), TenantID: "acme"})
 	for _, tool := range srv.Catalog() {
 		if tool.Name == "lenny/interrupt_session" {
 			t.Fatal("lenny/interrupt_session registered without a SessionService")

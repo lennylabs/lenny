@@ -22,7 +22,6 @@ func TestStartCombinedReturnsRunningSession(t *testing.T) {
 	ts := newTestServer(t)
 	resp, body := do(t, ts, "POST", "/v1/sessions/start", map[string]any{
 		"runtimeRef": "echo",
-		"userId":     "alice@acme.com",
 	})
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status: want 201, got %d (body %v)", resp.StatusCode, body)
@@ -37,7 +36,7 @@ func TestStartCombinedReturnsRunningSession(t *testing.T) {
 // diagnosis: §15.1 REST contract — pins the §15.1 error envelope on the wire for the previously-unexercised /v1/sessions/* endpoints.
 func TestStartCombinedRejectsMissingRuntimeRef(t *testing.T) {
 	ts := newTestServer(t)
-	resp, body := do(t, ts, "POST", "/v1/sessions/start", map[string]any{"userId": "alice"})
+	resp, body := do(t, ts, "POST", "/v1/sessions/start", map[string]any{})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status: want 400, got %d (body %v)", resp.StatusCode, body)
 	}
@@ -131,7 +130,7 @@ func TestMeteringEventsRequiresViewUsagePermission(t *testing.T) {
 func TestEnvironmentSessionsRejectsMissingRuntime(t *testing.T) {
 	ts := newTestServer(t)
 	resp, body := do(t, ts, "POST", "/v1/environments/security-team/sessions",
-		map[string]any{"userId": "alice"})
+		map[string]any{})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status: want 400, got %d (body %v)", resp.StatusCode, body)
 	}
@@ -213,52 +212,58 @@ func TestTreeUnknownSessionReturns404(t *testing.T) {
 	}
 }
 
-// spec: §15.1 (POST /v1/sessions/{id}/tool-use/{toolCallId}/approve)
-// diagnosis: tool-use approve on an unknown session returns 404. The
-// path validates the {id} segment before consulting any pending tool
-// call so the error envelope is consistent.
+// assertSessionNotFound requires the §15.1 404 RESOURCE_NOT_FOUND envelope
+// the §10.2 ownership check writes for a session the caller may not use.
+func assertSessionNotFound(t *testing.T, path string, resp *http.Response, body map[string]any) {
+	t.Helper()
+	errObj, _ := body["error"].(map[string]any)
+	if resp.StatusCode != http.StatusNotFound || errObj["code"] != "RESOURCE_NOT_FOUND" {
+		t.Errorf("POST %s = %d %v, want 404 RESOURCE_NOT_FOUND", path, resp.StatusCode, body)
+	}
+}
+
+// spec: §15.1 (POST /v1/sessions/{id}/tool-use/{toolCallId}/approve), §10.2 (Session ownership) rule 7
+// diagnosis: tool-use approve on an unknown session did not answer 404
+// RESOURCE_NOT_FOUND. The session ownership check runs before the
+// tool-call lookup or the interaction-store availability check, so a
+// missing session answers the missing-session envelope.
 func TestToolUseApproveUnknownSession(t *testing.T) {
 	ts := newTestServer(t)
-	resp, _ := do(t, ts, "POST", "/v1/sessions/missing/tool-use/call_1/approve", nil)
-	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status: want 404 or 503, got %d", resp.StatusCode)
-	}
+	const path = "/v1/sessions/missing/tool-use/call_1/approve"
+	resp, body := do(t, ts, "POST", path, nil)
+	assertSessionNotFound(t, path, resp, body)
 }
 
-// spec: §15.1 (POST /v1/sessions/{id}/tool-use/{toolCallId}/deny)
-// diagnosis: §15.1 REST contract — pins the §15.1 error envelope on the wire for the previously-unexercised /v1/sessions/* endpoints.
+// spec: §15.1 (POST /v1/sessions/{id}/tool-use/{toolCallId}/deny), §10.2 (Session ownership) rule 7
+// diagnosis: tool-use deny on an unknown session did not answer 404
+// RESOURCE_NOT_FOUND from the session ownership check.
 func TestToolUseDenyUnknownSession(t *testing.T) {
 	ts := newTestServer(t)
-	resp, _ := do(t, ts, "POST", "/v1/sessions/missing/tool-use/call_1/deny", nil)
-	if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status: want 404 or 503, got %d", resp.StatusCode)
-	}
+	const path = "/v1/sessions/missing/tool-use/call_1/deny"
+	resp, body := do(t, ts, "POST", path, nil)
+	assertSessionNotFound(t, path, resp, body)
 }
 
-// spec: §15.1 (POST /v1/sessions/{id}/elicitations/{elicitationId}/respond)
-// diagnosis: an elicitation respond against a session with no
-// elicitation registry returns 503 INTERACTIONS_UNAVAILABLE; the
-// session existence check still runs first so an unknown session
-// returns 404.
+// spec: §15.1 (POST /v1/sessions/{id}/elicitations/{elicitationId}/respond), §10.2 (Session ownership) rule 7, §9.2 (respond_to_elicitation authorization)
+// diagnosis: an elicitation respond against an unknown session did not
+// answer 404 RESOURCE_NOT_FOUND. The session ownership check precedes the
+// elicitation lookup, so ELICITATION_NOT_FOUND or INTERACTIONS_UNAVAILABLE
+// here means the route skipped the check.
 func TestElicitationRespondUnknownSession(t *testing.T) {
 	ts := newTestServer(t)
-	resp, body := do(t, ts, "POST",
-		"/v1/sessions/missing/elicitations/eli_1/respond",
-		map[string]any{"response": map[string]any{"answer": "ok"}})
-	if resp.StatusCode == http.StatusOK {
-		t.Errorf("respond on missing session unexpectedly succeeded (body %v)", body)
-	}
+	const path = "/v1/sessions/missing/elicitations/eli_1/respond"
+	resp, body := do(t, ts, "POST", path, map[string]any{"response": map[string]any{"answer": "ok"}})
+	assertSessionNotFound(t, path, resp, body)
 }
 
-// spec: §15.1 (POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss)
-// diagnosis: §15.1 REST contract — pins the §15.1 error envelope on the wire for the previously-unexercised /v1/sessions/* endpoints.
+// spec: §15.1 (POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss), §10.2 (Session ownership) rule 7
+// diagnosis: an elicitation dismiss against an unknown session did not
+// answer 404 RESOURCE_NOT_FOUND from the session ownership check.
 func TestElicitationDismissUnknownSession(t *testing.T) {
 	ts := newTestServer(t)
-	resp, body := do(t, ts, "POST",
-		"/v1/sessions/missing/elicitations/eli_1/dismiss", nil)
-	if resp.StatusCode == http.StatusOK {
-		t.Errorf("dismiss on missing session unexpectedly succeeded (body %v)", body)
-	}
+	const path = "/v1/sessions/missing/elicitations/eli_1/dismiss"
+	resp, body := do(t, ts, "POST", path, nil)
+	assertSessionNotFound(t, path, resp, body)
 }
 
 // spec: §15.1 (GET /v1/blobs/{ref...} dereferences a lenny-blob URI)
@@ -319,7 +324,7 @@ func TestEventsUnknownSession(t *testing.T) {
 // the simple error paths above and pin the shape.
 func TestErrorEnvelopeShape(t *testing.T) {
 	ts := newTestServer(t)
-	resp, body := do(t, ts, "POST", "/v1/sessions", map[string]any{"userId": "alice"})
+	resp, body := do(t, ts, "POST", "/v1/sessions", map[string]any{})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("expected a 400 to test the envelope, got %d", resp.StatusCode)
 	}

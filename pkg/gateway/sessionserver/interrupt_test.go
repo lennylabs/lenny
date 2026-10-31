@@ -81,7 +81,8 @@ func TestInterruptSignalsAdapterAndSuspendsOnAck_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_int", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_int", TenantID: "acme", RuntimeRef: "echo",
 		State:     session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
@@ -95,7 +96,7 @@ func TestInterruptSignalsAdapterAndSuspendsOnAck_spec_7_2(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_int/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
@@ -120,7 +121,8 @@ func TestInterruptForcesSuspendedOnTimeout_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_to", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_to", TenantID: "acme", RuntimeRef: "echo",
 		State:     session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
@@ -134,7 +136,7 @@ func TestInterruptForcesSuspendedOnTimeout_spec_7_2(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_to/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
@@ -160,7 +162,8 @@ func TestInterruptReturnsBusyAndLeavesRowRunning_spec_4_7(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_busy", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_busy", TenantID: "acme", RuntimeRef: "echo",
 		State:     session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
@@ -174,7 +177,7 @@ func TestInterruptReturnsBusyAndLeavesRowRunning_spec_4_7(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_busy/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409; body=%s", rr.Code, rr.Body.String())
@@ -196,7 +199,8 @@ func TestInterruptFallsBackToRowOnlyWhenNoBinding_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_nobind", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_nobind", TenantID: "acme", RuntimeRef: "echo",
 		State:     session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
@@ -207,7 +211,7 @@ func TestInterruptFallsBackToRowOnlyWhenNoBinding_spec_7_2(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_nobind/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
@@ -224,7 +228,8 @@ func TestInterruptRejectsNonRunningStateBeforeAdapterCall_spec_15_1(t *testing.T
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_sus", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_sus", TenantID: "acme", RuntimeRef: "echo",
 		State:     session.StateSuspended, // already suspended
 		CreatedAt: now, UpdatedAt: now,
 	})
@@ -238,7 +243,7 @@ func TestInterruptRejectsNonRunningStateBeforeAdapterCall_spec_15_1(t *testing.T
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_sus/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusConflict {
 		t.Errorf("status = %d, want 409 INVALID_STATE_TRANSITION; body=%s", rr.Code, rr.Body.String())
@@ -255,7 +260,8 @@ func TestInterruptForwardsDeadlineMs_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_ddl", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_ddl", TenantID: "acme", RuntimeRef: "echo",
 		State:     session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
@@ -269,7 +275,7 @@ func TestInterruptForwardsDeadlineMs_spec_7_2(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_ddl/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rr.Code)

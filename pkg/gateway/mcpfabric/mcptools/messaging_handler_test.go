@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -25,6 +27,7 @@ func newMCPMessaging(t *testing.T, def, max session.MessagingScope, limits mcpto
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:        ownerprincipal.SessionAccess{},
 		DevTenantFallback:     true,
 		Store:                 store,
 		Executor:              executor.NewEchoExecutor(),
@@ -129,7 +132,7 @@ type foreignTenantStore struct {
 
 func (s *foreignTenantStore) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
 	if id == s.foreignID {
-		return sessionstore.Session{ID: id, TenantID: "globex", State: session.StateRunning}, nil
+		return sessionstore.Session{UserID: ownerprincipal.Alice, ID: id, TenantID: "globex", State: session.StateRunning}, nil
 	}
 	return s.Store.Get(ctx, tenantID, id)
 }
@@ -141,6 +144,7 @@ func TestSendMessageCrossTenantDenied_spec_7_2_268(t *testing.T) {
 	store := &foreignTenantStore{Store: memstore.New(), foreignID: "sess_foreign"}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),

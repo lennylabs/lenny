@@ -48,6 +48,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // funnelRaceNS is the agent namespace the funnel race fixture resolves in.
@@ -179,7 +180,8 @@ func newFunnelRaceFixture(t *testing.T, n int) *funnelRaceFixture {
 func (f *funnelRaceFixture) seedSlot(t *testing.T, id, pod string, retries int64) {
 	t.Helper()
 	if err := f.store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning, RetryCount: retries,
+		UserID: ownerprincipal.Alice,
+		ID:     id, TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning, RetryCount: retries,
 	}); err != nil {
 		t.Fatalf("seed %s: %v", id, err)
 	}
@@ -275,7 +277,8 @@ func TestFailureFunnelRacesSameReplicaResume_spec_7_3(t *testing.T) {
 			t.Fatalf("sibling report: %v", err)
 		}
 		f.seedSlot(t, id, pod, 2)
-		h := f.srv.Handler()
+		// spec: §10.2 (Session ownership) — the resumes run as the seeded rows' owner.
+		h := ownerprincipal.Wrap(f.srv.Handler(), ownerprincipal.Alice)
 
 		start := make(chan struct{})
 		var wg sync.WaitGroup

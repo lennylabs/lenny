@@ -84,7 +84,7 @@ func TestPerRuntimeRateLimitRejects_spec_11_1_7(t *testing.T) {
 		PerRuntimePerMinute:       2,
 		RateLimitMetrics:          rec,
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	for i := 1; i <= 2; i++ {
 		rr := createRequest(t, h, sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 		if rr.Code != http.StatusCreated {
@@ -113,7 +113,7 @@ func TestPerRuntimeRateLimitIsPerRuntime_spec_11_1_7(t *testing.T) {
 		AdmissionRateLimitCounter: rlcounter.NewMemory(),
 		PerRuntimePerMinute:       1,
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	// claude-code exhausts its allowance.
 	if rr := createRequest(t, h, sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"}); rr.Code != http.StatusCreated {
 		t.Fatalf("claude-code 1st create: status %d, want 201", rr.Code)
@@ -135,7 +135,7 @@ func TestPerRuntimeRateLimitFailsOpen_spec_11_1_7(t *testing.T) {
 		PerRuntimePerMinute:       1,
 		RateLimitMetrics:          rec,
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	// §11.1 fail-open: a counter outage must not block admission.
 	for i := 1; i <= 5; i++ {
 		rr := createRequest(t, h, sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
@@ -152,7 +152,7 @@ func TestAdmissionRateLimitNilCounterNoLimit_spec_11_1_7(t *testing.T) {
 	// No counter wired: the per-runtime / per-pool scopes are disabled
 	// even when a limit is configured.
 	srv := admissionServer(sessionserver.Options{DevTenantHeader: true, PerRuntimePerMinute: 1, PerPoolPerMinute: 1})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	for i := 1; i <= 4; i++ {
 		rr := createRequest(t, h, sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 		if rr.Code != http.StatusCreated {
@@ -170,7 +170,7 @@ func TestAdmissionRateLimitSkipsEmptyRuntime_spec_11_1_7(t *testing.T) {
 		AdmissionRateLimitCounter: rlcounter.NewMemory(),
 		PerRuntimePerMinute:       1,
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	rr := createRequest(t, h, sessionserver.CreateSessionRequest{})
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("empty runtimeRef: status %d, want 400 VALIDATION_ERROR; body %s", rr.Code, rr.Body.String())
@@ -215,7 +215,7 @@ func TestPerPoolRateLimitRejects_spec_11_1_7(t *testing.T) {
 		AgentNamespace:            ns,
 		RateLimitMetrics:          rec,
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	for i := 1; i <= 2; i++ {
 		rr := createRequest(t, h, sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 		if rr.Code != http.StatusCreated {
@@ -241,7 +241,7 @@ func TestPerPoolRateLimitSkippedWithoutBinder_spec_11_1_7(t *testing.T) {
 		AdmissionRateLimitCounter: rlcounter.NewMemory(),
 		PerPoolPerMinute:          1, // would reject the 2nd create if a pool resolved
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	for i := 1; i <= 3; i++ {
 		rr := createRequest(t, h, sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 		if rr.Code != http.StatusCreated {

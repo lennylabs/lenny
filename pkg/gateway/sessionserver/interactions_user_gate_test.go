@@ -11,7 +11,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
@@ -30,11 +29,11 @@ func TestToolUseApproveDeniedForDisabledUser_spec_11_4(t *testing.T) {
 		ID: "tc_1", Kind: interactionstore.KindToolUse,
 		SessionID: "sess_1", TenantID: "acme", UserID: "alice",
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Interactions: store, Users: us})
+	srv := sessionserver.New(aliceSessions(t), sessionserver.Options{DevTenantHeader: true, Interactions: store, Users: us})
 
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_1/approve", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("disabled user approve: %d, want 403; body=%s", rr.Code, rr.Body.String())
 	}
@@ -62,13 +61,13 @@ func TestElicitationRespondAllowedForActiveUser_spec_11_4(t *testing.T) {
 		ID: "el_1", Kind: interactionstore.KindElicitation,
 		SessionID: "sess_1", TenantID: "acme", UserID: "alice",
 	})
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Interactions: store, Users: us})
+	srv := sessionserver.New(aliceSessions(t), sessionserver.Options{DevTenantHeader: true, Interactions: store, Users: us})
 
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/elicitations/el_1/respond",
 		strings.NewReader(`{"response":"yes"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("active user respond: %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
@@ -124,11 +123,11 @@ func TestInteractionResolutionCallerCheck_spec_12_8(t *testing.T) {
 					ID: "ix_1", Kind: ep.kind, SessionID: "sess_1", TenantID: "acme", UserID: "alice",
 					Phase: interactionstore.PhasePending,
 				})
-				srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Interactions: ix, Users: us})
+				srv := sessionserver.New(aliceSessions(t), sessionserver.Options{DevTenantHeader: true, Interactions: ix, Users: us})
 				req := asAlice(httptest.NewRequest(http.MethodPost, ep.path, strings.NewReader(ep.body)))
 				req.Header.Set("Content-Type", "application/json")
 				rr := httptest.NewRecorder()
-				srv.Handler().ServeHTTP(rr, req)
+				asOwner(srv.Handler()).ServeHTTP(rr, req)
 				if st.status == http.StatusOK {
 					if rr.Code >= 400 {
 						t.Fatalf("status = %d, want success; body %s", rr.Code, rr.Body.String())

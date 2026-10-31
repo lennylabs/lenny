@@ -45,10 +45,11 @@ func TestEmitChildFailedInjectsEventOnParentStream_spec_8_10_1082(t *testing.T) 
 	bus := sessionevents.NewBus(0)
 	srv := New(store, Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
-	mustCreate(t, store, sessionstore.Session{ID: "parent", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now})
+	mustCreate(t, store, sessionstore.Session{UserID: testOwner, ID: "parent", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now})
 
 	child := sessionstore.Session{
-		ID: "child", TenantID: "acme", State: session.StateFailed,
+		UserID: testOwner,
+		ID:     "child", TenantID: "acme", State: session.StateFailed,
 		ParentSessionID: "parent",
 		FailureClass:    session.FailureClassRuntime,
 		FailureReason:   string(session.FailurePodEvicted), // retryable → transient
@@ -112,9 +113,10 @@ func TestEmitChildFailedRetriesExhaustedFromSpentBudget_spec_8_8(t *testing.T) {
 			bus := sessionevents.NewBus(0)
 			srv := New(store, Options{DevTenantHeader: true, Events: bus, RetryPolicyCaps: session.RetryPolicyCaps{MaxRetries: tc.capMaxRetries}})
 			now := time.Now()
-			mustCreate(t, store, sessionstore.Session{ID: "p", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now})
+			mustCreate(t, store, sessionstore.Session{UserID: testOwner, ID: "p", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now})
 			child := sessionstore.Session{
-				ID: "c", TenantID: "acme", State: session.StateFailed,
+				UserID: testOwner,
+				ID:     "c", TenantID: "acme", State: session.StateFailed,
 				ParentSessionID: "p",
 				FailureReason:   string(tc.reason),
 				RetryCount:      tc.retryCount,
@@ -146,10 +148,11 @@ func TestEmitChildFailedPermanentForNonRetryable_spec_8_10_1082(t *testing.T) {
 	bus := sessionevents.NewBus(0)
 	srv := New(store, Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
-	mustCreate(t, store, sessionstore.Session{ID: "p2", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now})
+	mustCreate(t, store, sessionstore.Session{UserID: testOwner, ID: "p2", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now})
 
 	child := sessionstore.Session{
-		ID: "c2", TenantID: "acme", State: session.StateFailed,
+		UserID: testOwner,
+		ID:     "c2", TenantID: "acme", State: session.StateFailed,
 		ParentSessionID: "p2",
 		FailureReason:   string(session.FailureSetupCommandFailed), // non-retryable → permanent
 		CreatedAt:       now, UpdatedAt: now,
@@ -181,8 +184,8 @@ func TestEmitChildFailedSkipsNonFailedTerminals_spec_8_10_1082(t *testing.T) {
 		bus := sessionevents.NewBus(0)
 		srv := New(store, Options{DevTenantHeader: true, Events: bus})
 		now := time.Now()
-		mustCreate(t, store, sessionstore.Session{ID: "p", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now})
-		child := sessionstore.Session{ID: "c", TenantID: "acme", State: st, ParentSessionID: "p", CreatedAt: now, UpdatedAt: now}
+		mustCreate(t, store, sessionstore.Session{UserID: testOwner, ID: "p", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now})
+		child := sessionstore.Session{UserID: testOwner, ID: "c", TenantID: "acme", State: st, ParentSessionID: "p", CreatedAt: now, UpdatedAt: now}
 		mustCreate(t, store, child)
 
 		srv.recordSessionCompleted(context.Background(), session.StateRunning, child)
@@ -200,7 +203,7 @@ func TestEmitChildFailedSkipsRootSession_spec_8_10_1082(t *testing.T) {
 	bus := sessionevents.NewBus(0)
 	srv := New(store, Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
-	root := sessionstore.Session{ID: "root", TenantID: "acme", State: session.StateFailed, FailureReason: string(session.FailurePodEvicted), CreatedAt: now, UpdatedAt: now}
+	root := sessionstore.Session{UserID: testOwner, ID: "root", TenantID: "acme", State: session.StateFailed, FailureReason: string(session.FailurePodEvicted), CreatedAt: now, UpdatedAt: now}
 	mustCreate(t, store, root)
 
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, root)

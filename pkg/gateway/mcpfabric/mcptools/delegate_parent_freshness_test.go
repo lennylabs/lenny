@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
@@ -109,6 +111,7 @@ func TestDelegateTaskParentEndedBeforeInsertAnswersParentRevoked_spec_8_2(t *tes
 			runtimes := runtimestore.NewMemory()
 			srv := mcp.NewServer()
 			mcptools.Register(srv, mcptools.Deps{
+				SessionService:    ownerprincipal.SessionAccess{},
 				DevTenantFallback: true,
 				Store:             store,
 				Executor:          executor.NewEchoExecutor(),
@@ -129,7 +132,7 @@ func TestDelegateTaskParentEndedBeforeInsertAnswersParentRevoked_spec_8_2(t *tes
 			}
 			now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 			if err := mem.Create(ctx, sessionstore.Session{
-				ID: "sess_parent", TenantID: "acme", UserID: "user_alice", State: session.StateRunning,
+				ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice, State: session.StateRunning,
 				RuntimeRef: "child-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 				CreatedAt: now, UpdatedAt: now,
 			}); err != nil {
@@ -164,7 +167,7 @@ func TestDelegateTaskParentEndedBeforeInsertAnswersParentRevoked_spec_8_2(t *tes
 			if len(objects.ids) != 1 || objects.ids[0] != "sess_child" {
 				t.Errorf("export objects deleted = %v, want [sess_child]", objects.ids)
 			}
-			ids, err := mem.ReservedSessionIDs(ctx, "acme", "user_alice")
+			ids, err := mem.ReservedSessionIDs(ctx, "acme", ownerprincipal.Alice)
 			if err != nil {
 				t.Fatalf("ReservedSessionIDs: %v", err)
 			}

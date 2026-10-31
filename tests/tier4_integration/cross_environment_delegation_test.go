@@ -67,6 +67,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // The provider set the tenant credentialPolicy spans. Every provider used
@@ -110,6 +111,7 @@ func newCrossEnvFixture(t *testing.T) *crossEnvFixture {
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -206,7 +208,7 @@ func newCrossEnvFixture(t *testing.T) *crossEnvFixture {
 
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(ctx, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "team-a-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		Environment: "team-a", CreatedAt: now, UpdatedAt: now,
@@ -225,8 +227,8 @@ func newCrossEnvFixture(t *testing.T) *crossEnvFixture {
 // environment would see the target as directly in scope and the delegation
 // would not be cross-environment at all.
 var (
-	crossEnvCallerTeamA = authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"team-a-members"}}
-	crossEnvCallerTeamB = authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"team-b-members"}}
+	crossEnvCallerTeamA = authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"team-a-members"}}
+	crossEnvCallerTeamB = authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"team-b-members"}}
 )
 
 // spec: 8.3 (cross-environment inherit provider-compatibility check,
@@ -403,7 +405,7 @@ func crossEnvCall(t *testing.T, srv *mcp.Server, principal authmw.Principal, par
 	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(body)))
 	req = req.WithContext(authmw.WithPrincipal(req.Context(), principal))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice).ServeHTTP(rr, req)
 	var resp map[string]any
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode delegate_task response: %v; body=%s", err, rr.Body.String())
@@ -629,7 +631,7 @@ func assertInheritChildDrawsFromOriginPool(t *testing.T) {
 		CredentialRouter:        credrouter.NewDefault(),
 		Blobs:                   binder.Blobs,
 	})
-	h := srv.Handler()
+	h := ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 
 	post := func(path string, body []byte) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
@@ -643,7 +645,7 @@ func assertInheritChildDrawsFromOriginPool(t *testing.T) {
 	// Create the child (eager pod claim). The create-time pre-check uses
 	// the child's own eligible set ({anthropic_direct, openai_direct}); the
 	// inherit constraint applies at finalize.
-	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "shared-tool", UserID: "alice@acme.com"})
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "shared-tool"})
 	if rr := post("/v1/sessions", createBody); rr.Code != http.StatusCreated {
 		t.Fatalf("create inherit child: status %d, body=%s", rr.Code, rr.Body.String())
 	}

@@ -34,6 +34,13 @@ const (
 	crossTenantAttacker = "acme"
 )
 
+// crossTenantSubject is the principal subject both tenants present. The
+// create paths refuse a request without a subject, and the attacker uses
+// the same subject as the owner so that a refused cross-tenant read is
+// attributable to tenant isolation alone rather than to session ownership.
+// spec: §10.2 Session ownership.
+const crossTenantSubject = "alice"
+
 // spec: TESTING.md §12.9.1 ("A composed adversarial scenario: seed tenants A and
 // B with rich state on every store, then for each store and each
 // operation, attempt cross-tenant reads and writes through every code
@@ -44,7 +51,8 @@ const (
 // spec: §15.1 (REST API): the Open Responses adapter serves no delete
 // operation on /v1/responses/{id}.
 // spec: §15 (Open Responses conversation sessions): GET /v1/responses/{id}
-// answers a completed response of the caller's tenant by its <session>.<n> id.
+// answers a completed response of a session the caller may read under §10.2
+// (Session ownership) by its <session>.<n> id.
 // diagnosis: a cross-tenant GET of an Open Responses resource, or a
 // cross-tenant REST read of a session created through POST
 // /v1/chat/completions, that returns anything other than the
@@ -69,7 +77,8 @@ func TestOpenAICompatibleSurfacesCrossTenantIsolation(t *testing.T) {
 }
 
 // crossTenantRequest issues method against base+path with the given
-// tenant stamped on the dev-mode X-Lenny-Tenant-ID header, and
+// tenant stamped on the dev-mode X-Lenny-Tenant-ID header and
+// crossTenantSubject on the dev-mode X-Lenny-User-ID header, and
 // returns the status code, the decoded JSON body (nil on decode
 // failure), and the raw bytes for substring checks.
 func crossTenantRequest(t *testing.T, base, method, path, tenant string, body []byte) (int, map[string]any, []byte) {
@@ -86,6 +95,7 @@ func crossTenantRequest(t *testing.T, base, method, path, tenant string, body []
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("X-Lenny-Tenant-ID", tenant)
+	req.Header.Set("X-Lenny-User-ID", crossTenantSubject)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)

@@ -37,6 +37,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 const (
@@ -181,7 +182,7 @@ func newFinalizeRaceFixture(t *testing.T, entryPeers int) *finalizeRaceFixture {
 		store.entryGate = newPeerGate(entryPeers)
 	}
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	return &finalizeRaceFixture{h: srv.Handler(), store: store}
+	return &finalizeRaceFixture{h: ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice), store: store}
 }
 
 // call serves one request against the session and returns its status and

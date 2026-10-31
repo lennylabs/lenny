@@ -153,7 +153,7 @@ func newExitFixture(t *testing.T, opts Options) *exitFixture {
 func (f *exitFixture) seed(t *testing.T, id, podAssignment, plan string, mut func(*sessionstore.Session)) {
 	t.Helper()
 	row := sessionstore.Session{
-		ID: id, TenantID: "default", UserID: "alice", RuntimeRef: "claude-code",
+		ID: id, TenantID: "default", UserID: testOwner, RuntimeRef: "claude-code",
 		State: session.StateCreated, PodAssignment: podAssignment,
 		CreatedAt: time.Date(2026, 9, 27, 9, 0, 0, 0, time.UTC),
 	}

@@ -5,6 +5,8 @@ package sessionserver_test
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,7 +68,7 @@ func TestSessionStartPostAuthChainRunsBeforePreRoute_spec_4_8(t *testing.T) {
 	srv := phaseOrderServer(t,
 		phaseRecorder{name: "postauth", action: interceptor.ActionAllow, calls: &calls},
 		phaseRecorder{name: "preroute", action: interceptor.ActionAllow, calls: &calls})
-	rr := createAndStartRequest(t, srv.Handler(),
+	rr := createAndStartRequest(t, asOwner(srv.Handler()),
 		sessionserver.CreateAndStartRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create-and-start with two ALLOW interceptors: status %d, want 201; body %s", rr.Code, rr.Body.String())
@@ -88,12 +90,47 @@ func TestSessionStartPostAuthRejectShortCircuitsBeforePreRoute_spec_4_8(t *testi
 	srv := phaseOrderServer(t,
 		phaseRecorder{name: "postauth", action: interceptor.ActionReject, calls: &calls},
 		phaseRecorder{name: "preroute", action: interceptor.ActionAllow, calls: &calls})
-	rr := createAndStartRequest(t, srv.Handler(),
+	rr := createAndStartRequest(t, asOwner(srv.Handler()),
 		sessionserver.CreateAndStartRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("PostAuth REJECT: status %d, want 429; body %s", rr.Code, rr.Body.String())
 	}
 	if len(calls) != 1 || calls[0] != "postauth" {
 		t.Fatalf("invocation order = %v, want [postauth] only; the PreRoute chain must not run once the PostAuth chain REJECTs", calls)
+	}
+}
+
+// TestTwoStepCreatePostAuthPrecedesPreRoute_spec_4_8 pins the §4.8 phase order
+// on POST /v1/sessions: the PostAuth chain runs first, and a PostAuth REJECT
+// short-circuits before the PreRoute chain.
+// spec: 4.8 (Gateway Policy Engine)
+func TestTwoStepCreatePostAuthPrecedesPreRoute_spec_4_8(t *testing.T) {
+	cases := []struct {
+		name       string
+		action     interceptor.Action
+		wantCalls  []string
+		wantStatus int
+	}{
+		{"allow", interceptor.ActionAllow, []string{"postauth", "preroute"}, http.StatusCreated},
+		{"reject", interceptor.ActionReject, []string{"postauth"}, http.StatusTooManyRequests},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls []string
+			srv := phaseOrderServer(t,
+				phaseRecorder{name: "postauth", action: tc.action, calls: &calls},
+				phaseRecorder{name: "preroute", action: interceptor.ActionAllow, calls: &calls})
+			r := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"runtimeRef":"claude-code"}`))
+			r.Header.Set("Content-Type", "application/json")
+			r.Header.Set("X-Lenny-Tenant-ID", "acme")
+			rr := httptest.NewRecorder()
+			asOwner(srv.Handler()).ServeHTTP(rr, r)
+			if rr.Code != tc.wantStatus {
+				t.Fatalf("status %d, want %d; body %s", rr.Code, tc.wantStatus, rr.Body.String())
+			}
+			if strings.Join(calls, ",") != strings.Join(tc.wantCalls, ",") {
+				t.Fatalf("invocation order = %v, want %v", calls, tc.wantCalls)
+			}
+		})
 	}
 }

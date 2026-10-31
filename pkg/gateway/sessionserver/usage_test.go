@@ -35,7 +35,7 @@ func TestUsageRecordsSessionCreation(t *testing.T) {
 		IDFunc:          func() string { n++; return "sess_u" + string(rune('0'+n)) },
 		Usage:           usage,
 	})
-	handler := srv.Handler()
+	handler := asOwner(srv.Handler())
 
 	// Create two sessions through the same server.
 	for i := 0; i < 2; i++ {
@@ -78,7 +78,7 @@ func TestUsageLabelFilter_spec_14_106(t *testing.T) {
 		IDFunc:          func() string { n++; return "sess_ul" + string(rune('0'+n)) },
 		Usage:           usage,
 	})
-	handler := srv.Handler()
+	handler := asOwner(srv.Handler())
 
 	create := func(labels map[string]string) {
 		body, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", Labels: labels})
@@ -126,7 +126,7 @@ func TestUsageRejectsCallerWithoutViewUsage(t *testing.T) {
 		Roles: []pkgauth.Role{pkgauth.RoleUser},
 	}))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("user role on /v1/usage: got %d, want 403", rr.Code)
 	}
@@ -136,7 +136,7 @@ func TestUsageEmptyWhenUnwired(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	req := withUsageViewer(httptest.NewRequest(http.MethodGet, "/v1/usage", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("usage unwired: %d", rr.Code)
 	}
@@ -157,7 +157,7 @@ func TestUsageTenantScoped(t *testing.T) {
 
 	req := withUsageViewer(httptest.NewRequest(http.MethodGet, "/v1/usage", nil))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("acme usage: %d", rr.Code)
 	}

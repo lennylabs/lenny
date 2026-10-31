@@ -21,13 +21,14 @@ import (
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 func newTestServer(t *testing.T, reg cbmw.Registry) *httptest.Server {
 	t.Helper()
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	wrapped := cbmw.Wrap(srv.Handler(), reg, cbmw.Options{})
+	wrapped := cbmw.Wrap(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice), reg, cbmw.Options{})
 	ts := httptest.NewServer(wrapped)
 	t.Cleanup(ts.Close)
 	return ts

@@ -47,6 +47,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // deliveryGateCluster seeds an envtest cluster with a warm pool whose
@@ -190,7 +191,7 @@ func TestCredentialDeliveryGateRejectsProxySpiffeDisabledAtFinalize(t *testing.T
 		// layer-1 registration check and the layer-2 webhook read.
 		TenancyMode: direct_mode_isolation.TenancyMulti,
 	})
-	h := srv.Handler()
+	h := ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 
 	post := func(path string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -204,7 +205,7 @@ func TestCredentialDeliveryGateRejectsProxySpiffeDisabledAtFinalize(t *testing.T
 		return rr
 	}
 
-	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
 	if rr := post("/v1/sessions", createBody, nil); rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
 	}

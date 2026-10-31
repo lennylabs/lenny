@@ -50,7 +50,7 @@ func targetingHarness(t *testing.T, ofrepHandler http.HandlerFunc) targetingResu
 		OpsEmitter:           emitter,
 		IDFunc:               func() string { return "sess_targeting" },
 	})
-	rr := postSession(t, srv.Handler(), "/v1/sessions", "alice", "default")
+	rr := postSession(t, asOwner(srv.Handler()), "/v1/sessions", "alice", "default")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
 	}

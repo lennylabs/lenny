@@ -48,7 +48,7 @@ func routerServer(t *testing.T, sessionID string, exps experimentstore.Store) (h
 		Experiments:     exps,
 		IDFunc:          func() string { return sessionID },
 	})
-	return srv.Handler(), store
+	return asOwner(srv.Handler()), store
 }
 
 func TestExperimentRouterEnrollsSessionAtCreation(t *testing.T) {
@@ -179,7 +179,7 @@ func TestExperimentRouterEnrollsViaOFREP(t *testing.T) {
 		IDFunc:          func() string { return "sess_ext" },
 	})
 
-	rr := postSession(t, srv.Handler(), "/v1/sessions", "alice", "default")
+	rr := postSession(t, asOwner(srv.Handler()), "/v1/sessions", "alice", "default")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -216,7 +216,7 @@ func TestExperimentRouterOFREPFailureEmitsTargetingFailed(t *testing.T) {
 		IDFunc:          func() string { return "sess_fail" },
 	})
 
-	rr := postSession(t, srv.Handler(), "/v1/sessions", "alice", "default")
+	rr := postSession(t, asOwner(srv.Handler()), "/v1/sessions", "alice", "default")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -250,7 +250,7 @@ func TestExperimentRouterEmitsMultiEligibleSkipped(t *testing.T) {
 		IDFunc:          func() string { return "sess_multi" },
 	})
 
-	rr := postSession(t, srv.Handler(), "/v1/sessions", "alice", "default")
+	rr := postSession(t, asOwner(srv.Handler()), "/v1/sessions", "alice", "default")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -303,7 +303,7 @@ func TestExperimentRouterNoSkipEmitsNothing(t *testing.T) {
 		IDFunc:          func() string { return "sess_one" },
 	})
 
-	rr := postSession(t, srv.Handler(), "/v1/sessions", "alice", "default")
+	rr := postSession(t, asOwner(srv.Handler()), "/v1/sessions", "alice", "default")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d", rr.Code)
 	}

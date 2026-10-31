@@ -40,6 +40,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -342,6 +344,7 @@ func materializeServer(
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          podExec,
@@ -382,7 +385,7 @@ func materializeDelegateCall(t *testing.T, srv *mcp.Server, target, propagation,
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/delegate_task","arguments":` + args + `}}`
 	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(body)))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice).ServeHTTP(rr, req)
 	var resp map[string]any
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode delegate_task response: %v; body=%s", err, rr.Body.String())

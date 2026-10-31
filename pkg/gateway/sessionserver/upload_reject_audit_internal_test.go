@@ -57,7 +57,7 @@ func uploadTestServer(t *testing.T, opts Options) (*Server, *uploadtoken.Issuer,
 func seedCreatedSession(t *testing.T, srv *Server, id string, clock func() time.Time) sessionstore.Session {
 	t.Helper()
 	row := sessionstore.Session{
-		ID: id, TenantID: "default", UserID: "alice",
+		ID: id, TenantID: "default", UserID: testOwner,
 		RuntimeRef: "claude-code", State: session.StateCreated,
 		CreatedAt: clock(), UpdatedAt: clock(),
 	}
@@ -81,7 +81,7 @@ func uploadRequest(t *testing.T, issuer *uploadtoken.Issuer, srv *Server, id, bo
 		req.Header.Set(k, v)
 	}
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	return rr
 }
 

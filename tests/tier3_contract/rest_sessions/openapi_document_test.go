@@ -26,6 +26,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
@@ -236,16 +238,18 @@ func TestSessionDomainDocumentedPathsHaveLiveHandlers(t *testing.T) {
 		t.Fatal("served document has no paths object")
 	}
 
-	sess := newTestServer(t)
-	// The session server wraps its mux in the §10.2 tenant gate, which
-	// exposes the mux through Mux() for route introspection.
-	h := sess.Config.Handler
+	// Route introspection reads the session server's own handler rather
+	// than newTestServer's, which sits behind the test owner-principal
+	// layer. The session server wraps its mux in the §10.2 tenant gate,
+	// which exposes the mux through Mux().
+	sess := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true}).Handler()
+	h := sess
 	if u, ok := h.(interface{ Mux() *http.ServeMux }); ok {
 		h = u.Mux()
 	}
 	mux, ok := h.(*http.ServeMux)
 	if !ok {
-		t.Fatalf("session server handler is %T, not *http.ServeMux", sess.Config.Handler)
+		t.Fatalf("session server handler is %T, not *http.ServeMux", sess)
 	}
 
 	checked := 0
@@ -523,5 +527,34 @@ func TestServedDocumentUploadRoutesReturnOpaqueUploadRef(t *testing.T) {
 	}
 	if strings.Contains(desc, "lenny-blob://") {
 		t.Errorf("UploadResponse.uploadRef description %q names the internal URI scheme a client must not interpret", desc)
+	}
+}
+
+// spec: §10.2 (Session ownership) rules 1 and 2; §15.1 (REST API).
+// diagnosis: a failure here means the served OpenAPI document again lets a
+// client name a session's owner. CreateSessionRequest and DeriveRequest
+// must declare no userId property, because the owner is the creating
+// principal's subject or the source session's owner and the server ignores
+// a body userId; a client or SDK generated from a document that declares
+// it would offer an input with no effect. Session keeps userId, because it
+// reports the owner. Edit components.schemas in
+// pkg/gateway/externalapi/openapi/openapi.json.
+func TestServedDocumentCarriesNoOwnerInput_spec_10_2(t *testing.T) {
+	doc := decodeServedSessionDocument(t)
+	for _, name := range []string{"CreateSessionRequest", "DeriveRequest"} {
+		schema, ok := doc.Components.Schemas[name]
+		if !ok {
+			t.Fatalf("served document has no %s schema, so the owner-input check reads nothing", name)
+		}
+		if _, ok := schema.Properties["userId"]; ok {
+			t.Errorf("%s declares a userId property", name)
+		}
+	}
+	session, ok := doc.Components.Schemas["Session"]
+	if !ok {
+		t.Fatal("served document has no Session schema")
+	}
+	if _, ok := session.Properties["userId"]; !ok {
+		t.Error("Session lost its userId property, which reports the owner")
 	}
 }

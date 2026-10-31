@@ -655,7 +655,8 @@ func TestClaimAtCreateServiceModeClaimless(t *testing.T) {
 	s := &Server{podBinder: &podsession.Binder{Client: c, Namespace: ns}, agentNamespace: ns}
 
 	out, err := s.claimAtCreate(context.Background(), sessionstore.Session{
-		ID: "s1", TenantID: "acme", RuntimeRef: "svc-runtime", IsolationProfile: isolation.ProfileSandboxed,
+		UserID: testOwner,
+		ID:     "s1", TenantID: "acme", RuntimeRef: "svc-runtime", IsolationProfile: isolation.ProfileSandboxed,
 	}, workspaceplan.Plan{}, claimRouteCreate)
 	if err != nil {
 		t.Fatalf("claimAtCreate (service mode): %v", err)
@@ -849,7 +850,8 @@ func TestLaunchOnPodServiceModeClaimless(t *testing.T) {
 	s := &Server{podBinder: &podsession.Binder{Client: c, Namespace: ns}, agentNamespace: ns}
 
 	result, err := s.launchOnPod(context.Background(), sessionstore.Session{
-		ID: "s1", TenantID: "acme", RuntimeRef: "svc-runtime", IsolationProfile: isolation.ProfileSandboxed, State: session.StateReady,
+		UserID: testOwner,
+		ID:     "s1", TenantID: "acme", RuntimeRef: "svc-runtime", IsolationProfile: isolation.ProfileSandboxed, State: session.StateReady,
 	}, workspaceplan.Plan{})
 	if err != nil {
 		t.Fatalf("launchOnPod (service mode): %v", err)

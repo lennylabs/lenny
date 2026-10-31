@@ -129,7 +129,7 @@ func TestNoTestCreatesOrDeletesAKindClusterAgainstTheInheritedKubeconfig(t *test
 }
 
 // installStep3 extracts the cluster-creation step of install.sh: from the
-// `kind get clusters` check through the line before KCTX is set.
+// `kind get clusters` capture through the line before KCTX is set.
 func installStep3(t *testing.T) string {
 	t.Helper()
 	b, err := os.ReadFile("install.sh")
@@ -137,7 +137,7 @@ func installStep3(t *testing.T) string {
 		t.Fatalf("read install.sh: %v", err)
 	}
 	s := string(b)
-	start := strings.Index(s, `if kind get clusters 2>/dev/null | grep -qx "${CLUSTER}"; then`)
+	start := strings.Index(s, `existing_clusters="$(kind get clusters 2>/dev/null || true)"`)
 	end := strings.Index(s, `KCTX="kind-${CLUSTER}"`)
 	if start < 0 || end < 0 || end < start {
 		t.Fatalf("install.sh: cluster-creation step not found (start=%d end=%d)", start, end)
@@ -163,11 +163,19 @@ func TestInstallRestoresTheKubeconfigCurrentContext(t *testing.T) {
 
 	// The stub records each invocation and models the kubeconfig effect
 	// of the subcommands the step uses: create and export set the
-	// current-context, and get clusters lists $STUB_CLUSTERS.
+	// current-context, and get clusters lists $STUB_CLUSTERS one line at a
+	// time with a pause between lines. The pause holds kind in the list
+	// past the moment a grep matching the first line exits, so a step that
+	// pipes the list into `grep -q` under pipefail fails on every run
+	// rather than on the runs where the scheduler lets grep win.
 	stub := `#!/usr/bin/env bash
 echo "$*" >> "${STUB_LOG}"
 case "$1 $2" in
-  "get clusters") printf '%s\n' ${STUB_CLUSTERS} ;;
+  "get clusters")
+    for c in ${STUB_CLUSTERS}; do
+      printf '%s\n' "${c}"
+      sleep 0.05
+    done ;;
   "create cluster"|"export kubeconfig")
     printf 'apiVersion: v1\nkind: Config\ncurrent-context: kind-%s\n' "$4" > "${KUBECONFIG}" ;;
   *) echo "stub kind: unexpected $*" >&2; exit 3 ;;

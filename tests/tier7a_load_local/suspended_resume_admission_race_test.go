@@ -37,6 +37,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // spec: 11.1 (Concurrent-session count), 11.1 (Resume admission), 11.1
@@ -61,14 +62,16 @@ func TestConcurrentSuspendedResumesAtQuota_spec_11_1(t *testing.T) {
 	}
 	for i := 0; i < limit-1; i++ {
 		if err := store.Create(ctx, sessionstore.Session{
-			ID: fmt.Sprintf("running-%d", i), TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
+			UserID: ownerprincipal.Alice,
+			ID:     fmt.Sprintf("running-%d", i), TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
 		}); err != nil {
 			t.Fatalf("seed running: %v", err)
 		}
 	}
 	for i := 0; i < suspended+1; i++ {
 		if err := store.Create(ctx, sessionstore.Session{
-			ID: fmt.Sprintf("suspended-%d", i), TenantID: "acme", RuntimeRef: "echo", State: session.StateSuspended,
+			UserID: ownerprincipal.Alice,
+			ID:     fmt.Sprintf("suspended-%d", i), TenantID: "acme", RuntimeRef: "echo", State: session.StateSuspended,
 		}); err != nil {
 			t.Fatalf("seed suspended: %v", err)
 		}
@@ -86,7 +89,8 @@ func TestConcurrentSuspendedResumesAtQuota_spec_11_1(t *testing.T) {
 		PodBinder: &podsession.Binder{}, PodRegistry: podsession.NewRegistry(),
 	})
 	t.Cleanup(srv.Close)
-	h := srv.Handler()
+	// spec: §10.2 (Session ownership) — the requests run as the seeded rows' owner.
+	h := ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 
 	codes := make([]int, suspended)
 	var wg sync.WaitGroup

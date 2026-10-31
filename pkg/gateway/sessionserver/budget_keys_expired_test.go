@@ -160,7 +160,8 @@ func (f *keysExpiredFixture) seed(t *testing.T, row sessionstore.Session) {
 func (f *keysExpiredFixture) seedTree(t *testing.T, rootState session.State, podAssignment string) {
 	t.Helper()
 	f.seed(t, sessionstore.Session{
-		ID: "root", State: rootState, PoolRef: "pool-a", PodAssignment: podAssignment,
+		UserID: testOwner,
+		ID:     "root", State: rootState, PoolRef: "pool-a", PodAssignment: podAssignment,
 		CallbackURL: f.cbURL, CallbackPinnedIP: f.cbIP, CallbackSecret: []byte("opaque-sealed"),
 	})
 	for _, n := range []struct {
@@ -173,7 +174,8 @@ func (f *keysExpiredFixture) seedTree(t *testing.T, rootState session.State, pod
 		{"detached-child", "detached", session.CascadeCancelAll},
 	} {
 		f.seed(t, sessionstore.Session{
-			ID: n.id, State: session.StateRunning, ParentSessionID: n.parent,
+			UserID: testOwner,
+			ID:     n.id, State: session.StateRunning, ParentSessionID: n.parent,
 			RootSessionID: "root", CascadeOnFailure: n.policy,
 		})
 	}
@@ -367,7 +369,7 @@ func TestBudgetKeysExpiredGuardAdmitsOnlyTheSpecStates_spec_7_2(t *testing.T) {
 		session.StateRunning: true, session.StateInputRequired: true, session.StateSuspended: true,
 	}
 	for _, st := range session.AllStates() {
-		r := &sessionstore.Session{State: st}
+		r := &sessionstore.Session{UserID: testOwner, State: st}
 		err := budgetKeysExpiredGuard(r)
 		if admitted[st] {
 			if err != nil || r.FailureClass != session.FailureClassBudgetKeysExpired || r.FailureReason != reasonBudgetKeysExpired {
@@ -432,9 +434,10 @@ func TestBudgetKeysExpiredRootUpdateErrorEndsItsClaim_spec_8_3(t *testing.T) {
 // cleanup)
 func TestBudgetKeysExpiredTerminalRootCancelsAnOrphan_spec_8_3(t *testing.T) {
 	f := newKeysExpiredFixture(t, memstore.New())
-	f.seed(t, sessionstore.Session{ID: "root", State: session.StateCompleted, PoolRef: "pool-a"})
+	f.seed(t, sessionstore.Session{UserID: testOwner, ID: "root", State: session.StateCompleted, PoolRef: "pool-a"})
 	f.seed(t, sessionstore.Session{
-		ID: "orphan", State: session.StateRunning, ParentSessionID: "root",
+		UserID: testOwner,
+		ID:     "orphan", State: session.StateRunning, ParentSessionID: "root",
 		RootSessionID: "root", CascadeOnFailure: session.CascadeDetach,
 	})
 	ctx := context.Background()
@@ -518,7 +521,7 @@ func runBudgetKeysExpiredRound(t *testing.T, rng *rand.Rand, round, detections i
 		UsageQuiescenceTimer:           orphanfixture.FiredTimer,
 	})
 	defer srv.Close()
-	orphanfixture.Seed(t, writes, sessionstore.Session{TenantID: "acme", RuntimeRef: "echo", PoolRef: "pool-a"}, nodes)
+	orphanfixture.Seed(t, writes, sessionstore.Session{UserID: testOwner, TenantID: "acme", RuntimeRef: "echo", PoolRef: "pool-a"}, nodes)
 	rootID := nodes[0].ID
 	ctx := context.Background()
 	slices := orphanfixture.AssignSlices(t, writes, "acme", nodes, 1000)

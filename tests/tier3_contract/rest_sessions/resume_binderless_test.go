@@ -19,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
@@ -32,7 +33,7 @@ import (
 func TestResumeAnswersTheNewStateWithNoPodBinder_spec_15_1(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	t.Run("awaiting_client_action answers resume_pending", func(t *testing.T) {

@@ -205,7 +205,8 @@ func newTCFixture(t *testing.T, st session.State, cancelWriter context.CancelFun
 	})
 	t.Cleanup(f.srv.Close)
 	if err := f.store.Create(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", RuntimeRef: "echo", State: st,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: st,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -221,7 +222,7 @@ func restDriver(method, path string) tcDriver {
 	return func(ctx context.Context, f *tcFixture) {
 		req := httptest.NewRequest(method, path, nil).WithContext(ctx)
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
-		f.srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
+		asOwner(f.srv.Handler()).ServeHTTP(httptest.NewRecorder(), req)
 	}
 }
 
@@ -532,7 +533,8 @@ func TestFailFinalizingCommitsOnCancelledRequest_spec_7_1(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := memstore.New()
 			if err := inner.Create(context.Background(), sessionstore.Session{
-				ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateFinalizing,
+				UserID: testOwner,
+				ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateFinalizing,
 			}); err != nil {
 				t.Fatalf("seed: %v", err)
 			}

@@ -42,7 +42,7 @@ func TestTerminalMarkerFailsOnlyResumePending_spec_8_10(t *testing.T) {
 				srv := New(store, Options{DevTenantHeader: true, Events: bus})
 				defer srv.Close()
 				ctx := context.Background()
-				row := sessionstore.Session{ID: "n1", TenantID: "acme", RuntimeRef: "echo", State: st}
+				row := sessionstore.Session{UserID: testOwner, ID: "n1", TenantID: "acme", RuntimeRef: "echo", State: st}
 				if err := store.Create(ctx, row); err != nil {
 					t.Fatalf("seed: %v", err)
 				}
@@ -205,7 +205,7 @@ func TestTreeRecoveryFailRacesResumeEntry_spec_8_10(t *testing.T) {
 		bus := sessionevents.NewBus(64)
 		srv := New(store, Options{DevTenantHeader: true, Events: bus})
 		ctx := context.Background()
-		if err := store.Create(ctx, sessionstore.Session{ID: "n1", TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending}); err != nil {
+		if err := store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "n1", TenantID: "acme", RuntimeRef: "echo", State: session.StateResumePending}); err != nil {
 			t.Fatalf("seed row: %v", err)
 		}
 		row, _ := store.Get(ctx, "acme", "n1")
@@ -253,7 +253,7 @@ func TestNodeNeedsRecoveryNilRegistry(t *testing.T) {
 	if srv.podRegistry != nil {
 		t.Skip("test assumes the bare server has no pod registry")
 	}
-	if srv.nodeNeedsRecovery(sessionstore.Session{ID: "n1", State: session.StateRunning}) {
+	if srv.nodeNeedsRecovery(sessionstore.Session{UserID: testOwner, ID: "n1", State: session.StateRunning}) {
 		t.Fatal("nodeNeedsRecovery should be false without a pod registry")
 	}
 }

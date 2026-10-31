@@ -280,7 +280,8 @@ func TestHookReleaseSkippedOnServerShutdown_spec_7_2(t *testing.T) {
 		p := newPreRunningFixture(t)
 		p.reserve(t, "sess-1")
 		row := sessionstore.Session{
-			ID: "sess-1", TenantID: "acme", RuntimeRef: "echo", State: session.StateCancelled,
+			UserID: testOwner,
+			ID:     "sess-1", TenantID: "acme", RuntimeRef: "echo", State: session.StateCancelled,
 			PodAssignment: reclaimPod, ScrubPolicy: ScrubPolicyPerSlot,
 		}
 		if err := p.store.Create(context.Background(), row); err != nil {
@@ -341,7 +342,8 @@ func seedReleaseFixture(t *testing.T, terminatedAt time.Time) (*preRunningFixtur
 	p.srv.executor = executor.NewPodExecutor(p.registry, p.srv.podBinder)
 	p.reserve(t, "sess-1")
 	row := sessionstore.Session{
-		ID: "sess-1", TenantID: "acme", RuntimeRef: "echo", State: session.StateCancelled,
+		UserID: testOwner,
+		ID:     "sess-1", TenantID: "acme", RuntimeRef: "echo", State: session.StateCancelled,
 		PodAssignment: reclaimPod, ScrubPolicy: ScrubPolicyPerSlot,
 	}
 	if err := p.store.Create(context.Background(), row); err != nil {

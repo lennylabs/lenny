@@ -104,7 +104,7 @@ func TestSealWorkspaceRetriesThenSucceeds_spec_7_1_3(t *testing.T) {
 		Clock:                        clock,
 	})
 
-	sess := sessionstore.Session{ID: "s1", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted}
+	sess := sessionstore.Session{UserID: testOwner, ID: "s1", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted}
 	if err := srv.sealWorkspace(context.Background(), sess); err != nil {
 		t.Fatalf("sealWorkspace returned error after eventual success: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestSealWorkspaceBackoffBoundedByWindow_spec_7_1_3(t *testing.T) {
 		Clock:                        clock,
 	})
 
-	sess := sessionstore.Session{ID: "s1", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted}
+	sess := sessionstore.Session{UserID: testOwner, ID: "s1", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted}
 	err := srv.sealWorkspace(context.Background(), sess)
 	if err == nil {
 		t.Fatal("sealWorkspace must return the last error when the window is exhausted")
@@ -193,7 +193,7 @@ func TestSealWorkspacePermanentErrorReturnsImmediately_spec_7_1_permanent(t *tes
 				Clock:                        clock,
 			})
 
-			sess := sessionstore.Session{ID: "s1", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted}
+			sess := sessionstore.Session{UserID: testOwner, ID: "s1", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted}
 			err := srv.sealWorkspace(context.Background(), sess)
 			if err == nil {
 				t.Fatal("sealWorkspace must return the permanent seal error")
@@ -235,7 +235,8 @@ func TestRecordSessionCompletedPermanentSealStaysTimeoutClass_spec_7_1_permanent
 		Clock:                        func() time.Time { return time.Unix(0, 0).UTC() },
 	})
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s_perm", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "s_perm", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -273,7 +274,8 @@ func TestRecordSessionCompletedFailsOnSealTimeout_spec_7_1_3(t *testing.T) {
 	// The session has already transitioned to completed (the handler does
 	// this before recordSessionCompleted runs).
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s_seal", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "s_seal", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -325,7 +327,8 @@ func TestRecordSessionCompletedCleanSealStaysCompleted_spec_7_1_3(t *testing.T) 
 		Clock:                        func() time.Time { return time.Unix(0, 0).UTC() },
 	})
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s_ok", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "s_ok", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -520,7 +523,7 @@ func runSealOutcomeCase(t *testing.T, tc sealOutcomeCase) {
 		SealSleep: sleep, ObserveWorkspaceSealDuration: metric.observe, Clock: clock,
 	})
 	t.Cleanup(srv.Close)
-	row := sessionstore.Session{ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateCompleted}
+	row := sessionstore.Session{UserID: testOwner, ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateCompleted}
 	if err := inner.Create(context.Background(), row); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -608,7 +611,7 @@ func runRandomBindingRemoval(t *testing.T, iter, k int, duringWait bool) {
 		SealSleep: sleep, ObserveWorkspaceSealDuration: metric.observe, Clock: clock,
 	})
 	defer srv.Close()
-	sess := sessionstore.Session{ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateCompleted}
+	sess := sessionstore.Session{UserID: testOwner, ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateCompleted}
 
 	if err := srv.sealWorkspace(context.Background(), sess); err == nil {
 		t.Fatalf("iteration %d (k=%d wait=%v): sealWorkspace succeeded though the binding was removed", iter, k, duringWait)

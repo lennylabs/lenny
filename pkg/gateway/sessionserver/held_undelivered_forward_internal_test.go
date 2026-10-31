@@ -54,7 +54,7 @@ func TestHoldUndeliveredForwardHoldsWithTheRecoveringTTL_spec_29_3(t *testing.T)
 	t.Run("a server without messaging refuses the hold", func(t *testing.T) {
 		f := newHeldFixture(t, false)
 		f.srv.messaging = nil
-		_, _, err := f.srv.HoldUndeliveredForward(ctx, sessionstore.Session{ID: "s", TenantID: "acme"},
+		_, _, err := f.srv.HoldUndeliveredForward(ctx, sessionstore.Session{UserID: testOwner, ID: "s", TenantID: "acme"},
 			sessioninbox.Message{MessageID: "m-fwd"})
 		if !errors.Is(err, sessioninbox.ErrMessagingUnavailable) {
 			t.Fatalf("HoldUndeliveredForward = %v, want ErrMessagingUnavailable", err)

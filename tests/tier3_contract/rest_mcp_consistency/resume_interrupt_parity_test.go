@@ -26,6 +26,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/sdks/client/go/lenny"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 const paritySessionID = "00000000-0000-4000-8000-0000000000b1"
@@ -52,7 +53,8 @@ func newParitySurface(t *testing.T, st session.State) *paritySurface {
 	exec := executor.NewEchoExecutor()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
 	t.Cleanup(srv.Close)
-	rest := httptest.NewServer(srv.Handler())
+	// spec: §10.2 (Session ownership) — REST requests run as the seeded rows' owner.
+	rest := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(rest.Close)
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
@@ -60,7 +62,7 @@ func newParitySurface(t *testing.T, st session.State) *paritySurface {
 		Store:             store, SessionService: srv, Delivery: srv, Executor: exec,
 		Clock: func() time.Time { return now }, TenantID: "acme",
 	})
-	m := httptest.NewServer(mcpSrv.Handler())
+	m := httptest.NewServer(ownerprincipal.Wrap(mcpSrv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(m.Close)
 	return &paritySurface{store: store, rest: rest, mcp: m}
 }

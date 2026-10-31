@@ -22,6 +22,7 @@ import (
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // resumeCapFixture is one gateway session server over compose Postgres
@@ -98,7 +99,8 @@ func (f *resumeCapFixture) do(t *testing.T, method, path, body string) (int, map
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	f.srv.Handler().ServeHTTP(rec, req)
+	// spec: §10.2 (Session ownership) — the requests run as the rows' owner.
+	ownerprincipal.Wrap(f.srv.Handler(), "alice").ServeHTTP(rec, req)
 	var out map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
 	return rec.Code, out

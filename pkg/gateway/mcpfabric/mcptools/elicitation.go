@@ -609,18 +609,28 @@ func ResolveElicitation(
 
 // resolveElicitationTool is the shared body of the §9.2 MCP
 // `lenny/respond_to_elicitation` and `lenny/dismiss_elicitation` tools.
-// It runs the caller check on the authenticated principal, looks up the
-// calling session row, enforces the (tenant, session, user, elicitation)
-// triple via ResolveElicitation with the principal's subject as the
-// triple's user, and surfaces a well-typed lenny error envelope on the
-// failure paths: USER_INVALIDATED or ERASURE_IN_PROGRESS from the caller
-// check, ELICITATION_NOT_FOUND on triple mismatch (another user's
-// elicitation included), INTERACTION_ALREADY_RESOLVED on a second
-// resolution attempt, INTERNAL_ERROR otherwise. The caller check runs
-// before the session lookup, so a refused principal gets the same answer
-// for a session that exists and one that does not. Symmetric with
-// sessionserver.resolveInteraction. F-9.2.17.
-// spec: §9.2 (respond_to_elicitation authorization), §11.4 (User
+// It runs three checks in order and surfaces a well-typed lenny error
+// envelope on each failure path:
+//
+//  1. The caller check on the authenticated principal answers
+//     USER_INVALIDATED or ERASURE_IN_PROGRESS. It runs first, so a refused
+//     principal gets the same answer for a session that exists and one
+//     that does not.
+//  2. The §10.2 ownership check reads the session and requires that the
+//     caller may act on it. A principal with no subject answers
+//     UNAUTHORIZED, and a missing session or another user's session
+//     answers RESOURCE_NOT_FOUND.
+//  3. The (tenant, session, user, elicitation) triple check, through
+//     ResolveElicitation with the principal's subject as the triple's
+//     user, answers ELICITATION_NOT_FOUND for an unknown id on the
+//     caller's own session and INTERACTION_ALREADY_RESOLVED on a second
+//     resolution attempt.
+//
+// Any other failure answers INTERNAL_ERROR. Symmetric with the REST
+// resolution route, whose wrapper applies the same ownership check ahead
+// of sessionserver.resolveInteraction. F-9.2.17.
+// spec: §9.2 (respond_to_elicitation authorization), §10.2 (Session
+// ownership), §11.4 (User
 // Invalidation), §12.8 (Processing restriction during erasure (GDPR
 // Article 18)).
 func resolveElicitationTool(
@@ -635,11 +645,16 @@ func resolveElicitationTool(
 	if err := requireActiveResolver(ctx, deps, tenant, principal.Subject); err != nil {
 		return mcp.ToolResult{}, err
 	}
-	if _, err := deps.Store.Get(ctx, tenant, sessionID); err != nil {
-		if errors.Is(err, sessionstore.ErrNotFound) {
-			return mcp.ToolResult{}, mcp.NewToolError("ELICITATION_NOT_FOUND",
-				"elicitation not found",
-				map[string]any{"elicitationId": elicitationID})
+	// spec: §10.2 (Session ownership) rules 5 and 7 — resolving an
+	// elicitation acts on its session, so a missing session and one the
+	// caller may not act on both answer RESOURCE_NOT_FOUND before the
+	// triple check runs.
+	if _, err := lookupCallerSession(ctx, deps, tenant, sessionID, true, false); err != nil {
+		switch {
+		case isUnauthorized(err):
+			return mcp.ToolResult{}, err
+		case errors.Is(err, sessionstore.ErrNotFound):
+			return mcp.ToolResult{}, mcp.NewToolError("RESOURCE_NOT_FOUND", "session not found", nil)
 		}
 		return mcp.ToolResult{}, mcp.NewToolError("INTERNAL_ERROR",
 			fmt.Sprintf("session lookup: %v", err), nil)

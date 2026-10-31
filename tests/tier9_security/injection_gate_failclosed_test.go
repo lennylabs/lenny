@@ -45,6 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // failClosedRuntimeStore returns a transient (non-not-found) read error
@@ -96,7 +97,8 @@ func postInjectionMessage(t *testing.T, h http.Handler, id, tenant string) *http
 	req.Header.Set("X-Lenny-Tenant-ID", tenant)
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
+	// spec: §10.2 (Session ownership) — the message runs as the seeded row's owner.
+	ownerprincipal.Wrap(h, ownerprincipal.Alice).ServeHTTP(rr, req)
 	return rr
 }
 
@@ -163,7 +165,8 @@ func TestInjectionGateFailsClosedOnTransientOverrideStoreError_spec_5_1_49(t *te
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "acme1", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "acme1", TenantID: "acme", State: session.StateRunning,
 		RuntimeRef: "chatty", CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)
@@ -193,7 +196,8 @@ func TestInjectionGateFailsClosedOnTransientRegistryError_spec_5_1(t *testing.T)
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s1", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "s1", TenantID: "acme", State: session.StateRunning,
 		RuntimeRef: "chatty", CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)

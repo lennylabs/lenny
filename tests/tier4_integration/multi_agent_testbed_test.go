@@ -180,7 +180,6 @@ func TestMultiAgentDelegationTestbedPerHopInvariants(t *testing.T) {
 			ParentSessionID: parent.id,
 			RuntimeRef:      runtimeRef,
 			PoolRef:         poolRef,
-			UserID:          "alice@acme.com",
 			LeaseSlice:      dlease.LeaseSlice{MaxTokenBudget: budget},
 		})
 		if err != nil {
@@ -288,7 +287,6 @@ func TestMultiAgentDelegationTestbedPerHopInvariants(t *testing.T) {
 		ParentSessionID: d1a.id,
 		RuntimeRef:      "worker-2ab", // fresh identity — not a cycle
 		PoolRef:         "pool-overbudget",
-		UserID:          "alice@acme.com",
 		LeaseSlice:      dlease.LeaseSlice{MaxTokenBudget: 50000},
 	})
 	var budgetErr *dlease.BudgetExceededError
@@ -307,7 +305,6 @@ func TestMultiAgentDelegationTestbedPerHopInvariants(t *testing.T) {
 		ParentSessionID:  root.id,
 		RuntimeRef:       "worker-2bb", // fresh identity under root — not a cycle
 		PoolRef:          "pool-weakiso",
-		UserID:           "alice@acme.com",
 		IsolationProfile: isolation.ProfileStandard,
 		LeaseSlice:       dlease.LeaseSlice{MaxTokenBudget: 1000},
 	})

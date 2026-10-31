@@ -69,7 +69,7 @@ Send a chat completion request. The gateway creates a session, runs the specifie
 | `n` | integer | No | Number of completions. Only `n=1` is supported; values > 1 return `400`. |
 | `presence_penalty` | number | No | Presence penalty. Passed through as metadata. |
 | `frequency_penalty` | number | No | Frequency penalty. Passed through as metadata. |
-| `user` | string | No | End-user identifier for tracking. |
+| `user` | string | No | Accepted and ignored. The session owner is the authenticated caller. |
 
 ### Non-streaming response
 

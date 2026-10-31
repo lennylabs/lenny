@@ -82,7 +82,8 @@ func newHeldFixture(t *testing.T, durable bool) *heldFixture {
 	coord := sessioninbox.NewCoordinator(sessioninbox.Config{Inbox: inbox, DLQ: dlq})
 	store := memstore.New()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -252,7 +253,7 @@ func TestDeliverBufferedKeepsDeliveryExactlyOnce_spec_7_2(t *testing.T) {
 	t.Run("no messaging coordinator", func(t *testing.T) {
 		srv := New(memstore.New(), Options{DevTenantHeader: true, Executor: &heldExecutor{}})
 		defer srv.Close()
-		if err := srv.deliverBuffered(context.Background(), sessionstore.Session{TenantID: "acme", ID: "s"}); err != nil {
+		if err := srv.deliverBuffered(context.Background(), sessionstore.Session{UserID: testOwner, TenantID: "acme", ID: "s"}); err != nil {
 			t.Errorf("deliverBuffered = %v, want nil", err)
 		}
 	})

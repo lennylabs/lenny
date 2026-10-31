@@ -92,7 +92,7 @@ func TestMeteringEventsLabelFilter_spec_14_106(t *testing.T) {
 	}
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Billing: billing})
 
-	rr := meteringRequest(t, srv.Handler(), "?label=team=search", pkgauth.RoleBillingViewer)
+	rr := meteringRequest(t, asOwner(srv.Handler()), "?label=team=search", pkgauth.RoleBillingViewer)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("filtered metering: %d", rr.Code)
 	}
@@ -117,7 +117,7 @@ func TestMeteringEventsLabelFilter_spec_14_106(t *testing.T) {
 
 	// Pagination under the filter: limit 2 returns a first page of 2
 	// matching events with hasMore set.
-	rr = meteringRequest(t, srv.Handler(), "?label=team=search&limit=2", pkgauth.RoleBillingViewer)
+	rr = meteringRequest(t, asOwner(srv.Handler()), "?label=team=search&limit=2", pkgauth.RoleBillingViewer)
 	if err := json.Unmarshal(rr.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode page 2: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestMeteringEventsLabelFilter_spec_14_106(t *testing.T) {
 func TestMeteringEventsRequiresViewUsage(t *testing.T) {
 	srv := meteringServer(t, 3)
 
-	rr := meteringRequest(t, srv.Handler(), "", pkgauth.RoleUser)
+	rr := meteringRequest(t, asOwner(srv.Handler()), "", pkgauth.RoleUser)
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("a plain user: status %d, want 403", rr.Code)
 	}
@@ -140,7 +140,7 @@ func TestMeteringEventsRequiresViewUsage(t *testing.T) {
 		pkgauth.RoleBillingViewer, pkgauth.RoleTenantAdmin,
 		pkgauth.RoleTenantViewer, pkgauth.RolePlatformAdmin,
 	} {
-		rr := meteringRequest(t, srv.Handler(), "", role)
+		rr := meteringRequest(t, asOwner(srv.Handler()), "", role)
 		if rr.Code != http.StatusOK {
 			t.Errorf("role %q: status %d, want 200", role, rr.Code)
 		}
@@ -149,7 +149,7 @@ func TestMeteringEventsRequiresViewUsage(t *testing.T) {
 
 func TestMeteringEventsReturnsLedger(t *testing.T) {
 	srv := meteringServer(t, 3)
-	rr := meteringRequest(t, srv.Handler(), "", pkgauth.RoleBillingViewer)
+	rr := meteringRequest(t, asOwner(srv.Handler()), "", pkgauth.RoleBillingViewer)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -172,7 +172,7 @@ func TestMeteringEventsReturnsLedger(t *testing.T) {
 
 func TestMeteringEventsSinceSequence(t *testing.T) {
 	srv := meteringServer(t, 5)
-	rr := meteringRequest(t, srv.Handler(), "?since_sequence=2", pkgauth.RoleBillingViewer)
+	rr := meteringRequest(t, asOwner(srv.Handler()), "?since_sequence=2", pkgauth.RoleBillingViewer)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -186,13 +186,13 @@ func TestMeteringEventsSinceSequence(t *testing.T) {
 func TestMeteringEventsPaginates(t *testing.T) {
 	srv := meteringServer(t, 5)
 
-	first := decodeMeteringPage(t, meteringRequest(t, srv.Handler(), "?limit=2", pkgauth.RoleBillingViewer))
+	first := decodeMeteringPage(t, meteringRequest(t, asOwner(srv.Handler()), "?limit=2", pkgauth.RoleBillingViewer))
 	if len(first.Items) != 2 || !first.HasMore || first.Cursor == "" {
 		t.Fatalf("page 1: events=%d hasMore=%v cursor=%q, want 2/true/non-empty",
 			len(first.Items), first.HasMore, first.Cursor)
 	}
 
-	second := decodeMeteringPage(t, meteringRequest(t, srv.Handler(),
+	second := decodeMeteringPage(t, meteringRequest(t, asOwner(srv.Handler()),
 		"?cursor="+first.Cursor+"&limit=2", pkgauth.RoleBillingViewer))
 	if len(second.Items) != 2 || !second.HasMore || second.Cursor == "" {
 		t.Fatalf("page 2: events=%d hasMore=%v cursor=%q, want 2/true/non-empty",
@@ -203,14 +203,14 @@ func TestMeteringEventsPaginates(t *testing.T) {
 			first.Items[len(first.Items)-1].SequenceNumber)
 	}
 
-	third := decodeMeteringPage(t, meteringRequest(t, srv.Handler(),
+	third := decodeMeteringPage(t, meteringRequest(t, asOwner(srv.Handler()),
 		"?cursor="+second.Cursor+"&limit=2", pkgauth.RoleBillingViewer))
 	if len(third.Items) != 1 || third.HasMore {
 		t.Fatalf("page 3: events=%d hasMore=%v, want 1/false", len(third.Items), third.HasMore)
 	}
 
 	// The legacy `?since_sequence=` parameter still works for v0 clients.
-	legacy := decodeMeteringPage(t, meteringRequest(t, srv.Handler(),
+	legacy := decodeMeteringPage(t, meteringRequest(t, asOwner(srv.Handler()),
 		"?since_sequence=2&limit=2", pkgauth.RoleBillingViewer))
 	if len(legacy.Items) != 2 || legacy.Items[0].SequenceNumber != 3 {
 		t.Errorf("legacy since_sequence path broke: events=%d, first seq=%d",
@@ -220,7 +220,7 @@ func TestMeteringEventsPaginates(t *testing.T) {
 
 func TestMeteringEventsRejectsBadSinceSequence(t *testing.T) {
 	srv := meteringServer(t, 1)
-	rr := meteringRequest(t, srv.Handler(), "?since_sequence=-1", pkgauth.RoleBillingViewer)
+	rr := meteringRequest(t, asOwner(srv.Handler()), "?since_sequence=-1", pkgauth.RoleBillingViewer)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("since_sequence=-1: status %d, want 400", rr.Code)
 	}
@@ -231,7 +231,7 @@ func TestMeteringEventsRejectsBadSinceSequence(t *testing.T) {
 // endpoint. F-15.1.20.
 func TestMeteringEventsClampsLimitToSpecMax_spec_15_1_1236(t *testing.T) {
 	srv := meteringServer(t, 250)
-	rr := meteringRequest(t, srv.Handler(), "?limit=500", pkgauth.RoleBillingViewer)
+	rr := meteringRequest(t, asOwner(srv.Handler()), "?limit=500", pkgauth.RoleBillingViewer)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -248,7 +248,7 @@ func TestMeteringEventsClampsLimitToSpecMax_spec_15_1_1236(t *testing.T) {
 // VALIDATION_ERROR. F-15.1.20.
 func TestMeteringEventsRejectsBadSort_spec_15_1_1236(t *testing.T) {
 	srv := meteringServer(t, 3)
-	rr := meteringRequest(t, srv.Handler(), "?sort=nope:asc", pkgauth.RoleBillingViewer)
+	rr := meteringRequest(t, asOwner(srv.Handler()), "?sort=nope:asc", pkgauth.RoleBillingViewer)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("unknown sort: status %d, want 400 (body=%s)", rr.Code, rr.Body.String())
 	}
@@ -259,7 +259,7 @@ func TestMeteringEventsRejectsBadSort_spec_15_1_1236(t *testing.T) {
 
 func TestMeteringEventsWithoutBillingStore(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
-	rr := meteringRequest(t, srv.Handler(), "", pkgauth.RoleBillingViewer)
+	rr := meteringRequest(t, asOwner(srv.Handler()), "", pkgauth.RoleBillingViewer)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("no billing store: status %d, want 200", rr.Code)
 	}

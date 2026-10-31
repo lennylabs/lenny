@@ -43,7 +43,7 @@ func seedRaised(t *testing.T, store interactionstore.Store, sessionID string) {
 // spec: 9.2 (Elicitation Chain), 7.2 (Interactive Session Model)
 func TestPostTerminalHookExpiresRaisedElicitations_spec_9_2(t *testing.T) {
 	now := time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC)
-	row := sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateCompleted, CreatedAt: now, UpdatedAt: now}
+	row := sessionstore.Session{UserID: testOwner, ID: "s1", TenantID: "acme", State: session.StateCompleted, CreatedAt: now, UpdatedAt: now}
 
 	t.Run("expires", func(t *testing.T) {
 		store := memstore.New()

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
@@ -42,6 +44,7 @@ func newMCPRouting(t *testing.T) (*mcp.Server, sessionstore.Store, *sessioninbox
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -487,6 +490,7 @@ func TestSendMessageRouting_InboxUnavailable_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),

@@ -48,7 +48,7 @@ func routedPolicyExperiments(t *testing.T) experimentstore.Store {
 // PreRoute MODIFY at priority.
 func routedPolicyChain(t *testing.T, priority int32) *interceptor.Chain {
 	t.Helper()
-	modified, _ := json.Marshal(routeTaskSpec{TenantID: wdTenant, UserID: "alice", RequestedRuntime: spRouted})
+	modified, _ := json.Marshal(routeTaskSpec{TenantID: wdTenant, UserID: testOwner, RequestedRuntime: spRouted})
 	chain := interceptor.NewChain()
 	if err := chain.Register(interceptor.PhasePreRoute, routeModifyInterceptor{priority: priority, out: modified}); err != nil {
 		t.Fatalf("register: %v", err)
@@ -76,10 +76,10 @@ func TestSetupCommandPolicyFollowsRoutedRuntime_spec_7_5(t *testing.T) {
 		{"experiment", []string{"/v1/sessions", "/v1/sessions/start"}, func(t *testing.T) wdOpts {
 			return wdOpts{experiments: routedPolicyExperiments(t)}
 		}},
-		{"preroute-modify-below-pivot", []string{"/v1/sessions/start"}, func(t *testing.T) wdOpts {
+		{"preroute-modify-below-pivot", []string{"/v1/sessions", "/v1/sessions/start"}, func(t *testing.T) wdOpts {
 			return wdOpts{chain: routedPolicyChain(t, 150)}
 		}},
-		{"preroute-modify-above-pivot", []string{"/v1/sessions/start"}, func(t *testing.T) wdOpts {
+		{"preroute-modify-above-pivot", []string{"/v1/sessions", "/v1/sessions/start"}, func(t *testing.T) wdOpts {
 			return wdOpts{chain: routedPolicyChain(t, 350)}
 		}},
 		{"no-routing", []string{"/v1/sessions", "/v1/sessions/start"}, func(*testing.T) wdOpts { return wdOpts{} }},

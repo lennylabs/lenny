@@ -30,7 +30,8 @@ func waitReleaseIdle(t *testing.T, srv *Server) {
 func bindAt(t *testing.T, f *funnelFixture, id string, st session.State, gen, stamp int64) (sessionstore.Session, *podsession.BindResult) {
 	t.Helper()
 	if err := f.store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", RuntimeRef: "echo", State: st,
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", RuntimeRef: "echo", State: st,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -103,7 +104,7 @@ func TestReleaseTerminalBindingReleasesOnlyItsOwnBinding_spec_7_2(t *testing.T) 
 	})
 	t.Run("unbound session", func(t *testing.T) {
 		f := newFunnelFixture(t, funnelOpts{})
-		f.srv.ReleaseTerminalBinding(sessionstore.Session{ID: "none", TenantID: "acme", State: session.StateCancelled})
+		f.srv.ReleaseTerminalBinding(sessionstore.Session{UserID: testOwner, ID: "none", TenantID: "acme", State: session.StateCancelled})
 		waitReleaseIdle(t, f.srv)
 		if len(f.exec.callList()) != 0 {
 			t.Error("an unbound session was released")

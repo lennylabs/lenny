@@ -80,6 +80,13 @@ type Releaser interface {
 	ReapStaleSlots(ctx context.Context, sandboxName string, sessionIDs []string, wait func(context.Context) error) (int, error)
 }
 
+// ReservationReclaimer deletes the abandoned §12.4 slot reservation records:
+// those recorded before cutoff whose session row is absent, has been terminal
+// since before cutoff, or is non-terminal and names another pod.
+type ReservationReclaimer interface {
+	ReclaimSlotReservations(ctx context.Context, cutoff time.Time) (int, error)
+}
+
 // Limiter paces releases. *rate.Limiter satisfies it.
 type Limiter interface {
 	Wait(ctx context.Context) error
@@ -92,6 +99,14 @@ type Config struct {
 	Members  MemberReader
 	Sessions StaleResolver
 	Releaser Releaser
+	// Reservations, when set, reclaims the abandoned slot reservation
+	// records once per pass, with the cutoff TerminalAge before now. A
+	// reservation record whose create ended before its session row was
+	// persisted, or whose session ended without a release, is deleted only
+	// here, so an unreclaimed record over-counts its pod's §12.4 gate.
+	// spec: §12.4 (Redis failure behavior), §4.6.1 (Orphaned SandboxClaim
+	// detection).
+	Reservations ReservationReclaimer
 	// Rate is the most members released per second, and the most pods
 	// whose release is in flight at once.
 	Rate int
@@ -174,6 +189,9 @@ type PassStats struct {
 	Eligible int
 	// Released is the number of members the releaser removed.
 	Released int
+	// Reservations is the number of abandoned slot reservation records the
+	// pass deleted.
+	Reservations int
 }
 
 // Kept is the number of eligible members the pass left in their sets.
@@ -184,9 +202,11 @@ func (p PassStats) Kept() int { return p.Eligible - p.Released }
 // stop the pass.
 func (r *Reaper) Pass(ctx context.Context) PassStats {
 	var stats PassStats
+	stats.Reservations = r.reclaimReservations(ctx)
 	pods, err := r.cfg.Pods.ListPodsWithActiveSlots(ctx)
 	if err != nil {
-		r.cfg.Logger.Warn("stale-slot reaper: list pods failed", "error", err)
+		r.cfg.Logger.Warn("stale-slot reaper: list pods failed", "error", err,
+			"reservations_reclaimed", stats.Reservations)
 		return stats
 	}
 	stats.Pods = len(pods)
@@ -199,12 +219,35 @@ func (r *Reaper) Pass(ctx context.Context) PassStats {
 	// A pass with nothing eligible logs at debug level, so a quiet leader
 	// does not write a line every interval.
 	level := slog.LevelDebug
-	if stats.Eligible > 0 {
+	if stats.Eligible > 0 || stats.Reservations > 0 {
 		level = slog.LevelInfo
 	}
 	r.cfg.Logger.Log(ctx, level, "stale-slot reaper pass",
-		"pods", stats.Pods, "eligible", stats.Eligible, "released", stats.Released, "kept", stats.Kept())
+		"pods", stats.Pods, "eligible", stats.Eligible, "released", stats.Released, "kept", stats.Kept(),
+		"reservations_reclaimed", stats.Reservations)
 	return stats
+}
+
+// reclaimReservations deletes the abandoned slot reservation records with
+// the cutoff TerminalAge before now, and returns how many it deleted. A
+// failure is logged and leaves the records for the next pass. The call is
+// bounded by Interval, because it runs at the head of the pass and a stalled
+// delete must not stop the pass's member releases.
+// spec: §12.4 (Redis failure behavior), §4.6.1 (Orphaned SandboxClaim
+// detection).
+func (r *Reaper) reclaimReservations(ctx context.Context) int {
+	if r.cfg.Reservations == nil {
+		return 0
+	}
+	cutoff := r.cfg.Now().Add(-r.cfg.TerminalAge)
+	ctx, cancel := context.WithTimeout(ctx, r.cfg.Interval)
+	defer cancel()
+	n, err := r.cfg.Reservations.ReclaimSlotReservations(ctx, cutoff)
+	if err != nil {
+		r.cfg.Logger.Warn("stale-slot reaper: reclaim slot reservations failed", "error", err)
+		return 0
+	}
+	return n
 }
 
 // readMembers reads each pod's plain members. A pod whose read fails is

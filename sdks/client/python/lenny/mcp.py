@@ -290,17 +290,15 @@ class MCPClient:
         )
         return MCPToolResult.from_wire(raw)
 
-    def create_session(
-        self, runtime_ref: str, user_id: str = ""
-    ) -> MCPCreateSessionResult:
+    def create_session(self, runtime_ref: str) -> MCPCreateSessionResult:
         """Invoke the section 15.2 ``lenny/create_session`` MCP tool.
 
         It returns the created session identifier and state. It is the
         MCP counterpart of :meth:`~lenny.client.Client.create_session`.
+        The gateway records the authenticated caller as the session's
+        owner, so the tool takes no owner argument.
         """
         args: dict[str, Any] = {"runtimeRef": runtime_ref}
-        if user_id:
-            args["userId"] = user_id
         result = self.call_tool("lenny/create_session", args)
         if result.is_error:
             raise MCPError(
@@ -451,11 +449,9 @@ class AsyncMCPClient:
         """Await the section 15.2 ``tools/call`` method."""
         return await self._run(self._sync.call_tool, name, arguments)
 
-    async def create_session(
-        self, runtime_ref: str, user_id: str = ""
-    ) -> MCPCreateSessionResult:
+    async def create_session(self, runtime_ref: str) -> MCPCreateSessionResult:
         """Await the ``lenny/create_session`` MCP tool."""
-        return await self._run(self._sync.create_session, runtime_ref, user_id)
+        return await self._run(self._sync.create_session, runtime_ref)
 
     async def send_message(self, session_id: str, content: str) -> str:
         """Await the ``lenny/send_message`` MCP tool."""

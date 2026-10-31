@@ -64,6 +64,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 const eagerNS = "lenny-agents"
@@ -273,7 +274,7 @@ func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
 		CredentialRouter:        credrouter.NewDefault(),
 		Blobs:                   blobs,
 	})
-	h := srv.Handler()
+	h := ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 
 	post := func(path string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -289,7 +290,7 @@ func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
 
 	// 1. Create: claims the pod synchronously (§7.1 step 4). No workspace
 	// content, no lease yet.
-	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
 	rr := post("/v1/sessions", createBody, nil)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())

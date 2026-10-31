@@ -103,15 +103,15 @@ func claimingServerWith(t *testing.T, store sessionstore.Store, rt newSessionRou
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return rt.newID },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	}
 	if mod != nil {
 		mod(&opts)
 	}
 	srv := sessionserver.New(store, snap.wire(opts))
-	return srv.Handler(), cluster, snap
+	return asOwner(srv.Handler()), cluster, snap
 }
 
 // TestDeriveAndReplayClaimAWarmPodAtCreate_spec_7_1 pins that derive and
@@ -130,9 +130,9 @@ func TestDeriveAndReplayClaimAWarmPodAtCreate_spec_7_1(t *testing.T) {
 			rt.seed(t, store)
 			h, cluster, _ := claimingServer(
 				t, store, rt,
-				podBindWarmPool("echo-pool", "echo-tmpl"),
-				podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-				podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+				podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+				podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+				podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 			)
 			rr := rt.call(t, h)
 			if rr.Code != http.StatusCreated {
@@ -150,7 +150,7 @@ func TestDeriveAndReplayClaimAWarmPodAtCreate_spec_7_1(t *testing.T) {
 					row.PodAssignment, row.PoolRef)
 			}
 			var claim lennyv1.SandboxClaim
-			if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+			if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err != nil {
 				t.Fatalf("the create-time claim object is missing: %v", err)
 			}
 		})
@@ -173,8 +173,8 @@ func TestDeriveAndReplayClaimFailureLeavesNoRowAndNoCopy_spec_7_1(t *testing.T) 
 			rt.seed(t, store)
 			h, _, snap := claimingServer(
 				t, store, rt,
-				podBindWarmPool("echo-pool", "echo-tmpl"),
-				podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+				podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+				podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 			)
 			rr := rt.call(t, h)
 			if rr.Code != http.StatusServiceUnavailable {
@@ -211,16 +211,16 @@ func TestDeriveAndReplayInsertFailureReleasesTheClaim_spec_7_1(t *testing.T) {
 			rt.seed(t, mem)
 			h, cluster, _ := claimingServer(
 				t, &insertRejectingStore{Store: mem}, rt,
-				podBindWarmPool("echo-pool", "echo-tmpl"),
-				podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-				podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+				podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+				podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+				podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 			)
 			rr := rt.call(t, h)
 			if rr.Code != http.StatusInternalServerError {
 				t.Fatalf("status = %d, want 500; body=%s", rr.Code, rr.Body.String())
 			}
 			var claim lennyv1.SandboxClaim
-			err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim)
+			err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim)
 			if !apierrors.IsNotFound(err) {
 				t.Errorf("claim-sbx-1 after the failed insert: err=%v phase=%q, want NotFound (released)", err, claim.Status.Phase)
 			}
@@ -246,9 +246,9 @@ func TestDeriveAndReplayMintFailureReleasesTheClaim_spec_7_1(t *testing.T) {
 			rt.seed(t, store)
 			h, cluster, _ := claimingServer(
 				t, store, rt,
-				podBindWarmPool("echo-pool", "echo-tmpl"),
-				podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-				podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+				podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+				podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+				podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 			)
 			rr := rt.call(t, h)
 			if rr.Code != http.StatusServiceUnavailable {
@@ -261,7 +261,7 @@ func TestDeriveAndReplayMintFailureReleasesTheClaim_spec_7_1(t *testing.T) {
 				t.Error("a row was persisted although the mint failed")
 			}
 			var claim lennyv1.SandboxClaim
-			err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim)
+			err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim)
 			if !apierrors.IsNotFound(err) {
 				t.Errorf("claim-sbx-1 after the failed mint: err=%v phase=%q, want NotFound (released)", err, claim.Status.Phase)
 			}

@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -66,6 +68,7 @@ func TestCancelChildDrainsCancelledRuntimes_spec_11_3_1(t *testing.T) {
 	hook := newHookTerminal(exec)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          exec,
@@ -154,6 +157,7 @@ func TestCancelChildListsPrimaryPerLevel_spec_12_8(t *testing.T) {
 	hook := newHookTerminal(exec)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          exec,
@@ -167,7 +171,8 @@ func TestCancelChildListsPrimaryPerLevel_spec_12_8(t *testing.T) {
 	mkSession(t, store, "sess_a1", session.StateRunning, "sess_a")
 	store.afterFirstPrimary = func() {
 		if err := store.Create(context.Background(), sessionstore.Session{
-			ID: "sess_a1_late", TenantID: "acme", State: session.StateRunning,
+			UserID: ownerprincipal.Alice,
+			ID:     "sess_a1_late", TenantID: "acme", State: session.StateRunning,
 			ParentSessionID: "sess_a1", RootSessionID: "sess_root", DelegationDepth: 3,
 		}); err != nil {
 			t.Errorf("insert the late grandchild: %v", err)
@@ -204,6 +209,7 @@ func TestCancelChildPrimaryListingErrorFailsTheCall_spec_12_8(t *testing.T) {
 	store := &primaryListingStore{Store: memstore.New(), primaryErr: errors.New("primary unreachable")}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
@@ -322,6 +328,7 @@ func TestCancelChildUnderStoreFaultsConvergesThroughOrphanCleanup_spec_8_10(t *t
 		hook := newHookTerminal(nil)
 		srv := mcp.NewServer()
 		mcptools.Register(srv, mcptools.Deps{
+			SessionService:    ownerprincipal.SessionAccess{},
 			DevTenantFallback: true,
 			Store:             faults,
 			Terminal:          hook,
@@ -329,7 +336,7 @@ func TestCancelChildUnderStoreFaultsConvergesThroughOrphanCleanup_spec_8_10(t *t
 			IDFunc:            func() string { return "sess_mcp" },
 			TenantID:          "acme",
 		})
-		orphanfixture.Seed(t, writes, sessionstore.Session{TenantID: "acme"}, nodes)
+		orphanfixture.Seed(t, writes, sessionstore.Session{UserID: ownerprincipal.Alice, TenantID: "acme"}, nodes)
 
 		faults.arm(true)
 		_ = call(t, srv.Handler(), "lenny/cancel_child",

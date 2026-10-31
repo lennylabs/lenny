@@ -3460,7 +3460,11 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   `delegation/service.go`, `mcptools_register.go`, `derive.go`, `replay.go`, and
   `docs/operator-guide/security.md` with them at different symbols or sections, and whichever lands second
   rebases textually. If the A/B split fallback is taken, this entry is rewritten to name the open part. Its
-  unstaged defects are filed below, in the block for proposal 0110. The next change-proposal run is proposal
+  unstaged defects are filed below, in the block for proposal 0110. Position (2026-10-31): implemented whole on
+  `impl/0110-session-owner` after 0108's implementation merged, so the A/B split fallback was not taken. The
+  spec edits are `3e2325c01` to `b35dfc0fc`, and the code, tests, and docs are `a9434a2c8` to `5048ad21c`. Its
+  records step closed F-15.1.55, F-10.2.30, and F-15.1.54 in BUILD-GAPS and annotated each unstaged-defect
+  entry below in place; F-15.1.64 is recorded as the successor of closed F-15.1.32. The next change-proposal run is proposal
   0077, re-derived, below, drafting as 0111.
 - [ ] **Proposal 0077, re-derived** (Draft; owner decision 2026-10-28): pre-materialize workspace content on a
   warm pod, starting with massive git repositories, and extensible to other content later. The owner wants the
@@ -3695,7 +3699,7 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
       §8.2 calls the exchange an in-process Token Service call while the Token Service runs as its own
       Deployment, and how the gateway authenticates as that internal caller;
     - how the child token is delivered to the child pod.
-  - [ ] **Shared gateway key-source proposal** (not yet written): **F-7.1.31** (Medium), the per-process
+  - [ ] **Shared gateway key-source proposal** (not yet written): **F-7.1.31** (High since 2026-10-31: every finalize now verifies the token, so a finalize on a replica other than the minter is refused; next change-proposal after 0111), the per-process
     `uploadToken` key ring and consumed-token tracker, and **F-27.3.16** (Medium), the per-process playground
     OIDC state-cookie key (rerouted here 2026-10-27, because a direct-fix attempt found no key source with
     spec text: the playground session cookie is opaque, no mounted chart Secret covers this use, the spec
@@ -4219,9 +4223,16 @@ D2), which stays with the upload route proposal.
     ordering the specification does not state, it goes to a proposal. Closed 2026-10-31 by direct fix on
     `fix/finalize-policy-forward`: both create routes check `row.RuntimeRef` after routing and immediately
     before the defaults composition, the position §14.1 rule 1 states. Filed from the fix: F-4.8.25.
-  - [ ] **F-4.8.25** (Medium, filed from F-7.5.16): `POST /v1/sessions` runs no §4.8 PreRoute or PostRoute
-    chain, while create-and-start runs both around the ExperimentRouter. Direct fix after proposal 0110,
-    which edits the create path.
+  - [x] **F-4.8.25** (Medium, filed from F-7.5.16): `POST /v1/sessions` runs no §4.8 PreRoute or PostRoute
+    chain, while create-and-start runs both around the ExperimentRouter. Closed 2026-10-31 by direct fix on
+    `fix/route-chain-create`: both create routes call one set of route helpers, and the drain gate judges the
+    routed runtime. Filed from the fix: F-4.8.26, F-15.1.72, and F-12.9.25.
+  - [ ] **F-4.8.26** (Low, filed from F-4.8.25): the §14 envelope and the §27.6 caps read a runtime that
+    experiment routing or a late PreRoute MODIFY may replace. The order needs specification text, so it goes
+    to a proposal.
+  - [ ] **F-15.1.72** (Medium, filed from F-4.8.25): `POST /v1/sessions/start` has no drain gate. Direct fix.
+  - [ ] **F-12.9.25** (Medium, filed from F-4.8.25): `POST /v1/sessions` does not validate tenant
+    classification. Direct fix.
   - [x] **F-16.1.8** (Medium): `lenny_warmpool_warmup_failure_total` has no warm-up emitter and only the
     `error_type` label, so `PoolScaleoutBlockedByQuota` never fires. The Sandbox reconciler now emits
     `image_pull_error`, `resource_quota_exceeded`, and `node_pressure` with the §16.1 labels, once per
@@ -4347,6 +4358,12 @@ filing a duplicate.
   - [ ] **F-29.3.5** (Low, filed from F-29.3.4): a forward listener that does not hold the lease answers a
     route's `INVALID_STATE_TRANSITION` when the re-read row fails the route precondition, where rule 5 names
     `TARGET_NOT_READY`. Needs the order of rule 5 and the precondition check decided first.
+  - [ ] **F-11.5.27** (Medium, filed from the F-7.4.21 review): finalize's `uploadToken` check runs behind the
+    §11.5 idempotency middleware, so a token refusal is replayed and a stored success replays with no token.
+    Needs §11.5 to state both. Routed with F-11.5.26.
+  - [ ] **F-12.4.39** (Medium, filed from the F-12.4.38 review): `slot_reservations` has no specification
+    statement, and the Redis path gained a Postgres transaction per reservation. Routed with the F-5.2.55
+    second residue.
 - Proposal routing: a session-owner authorization proposal (new, unwritten), after 0108's implementation,
   which rewrites the Open Responses read and resolution paths. This proposal is 0110 (approved 2026-10-29,
   merge `05ed531a5`), whose REC-1 closes all three entries below. Only its Open Responses steps wait for
@@ -4422,11 +4439,11 @@ than filing a duplicate. F-10.1.45 was already closed and needed no record.
   (`fix/direct-batch-2`); its entry carries a note. Every other listed defect is filed or annotated.
 
 **Defects filed from proposal 0110's unstaged-defect list (2026-10-29).** Proposal 0110 (session-owner
-authorization, approved 2026-10-29, merge `05ed531a5`, implementation pending) lists defects in the shipped
+authorization, approved 2026-10-29, merge `05ed531a5`, implemented 2026-10-31) lists defects in the shipped
 tree that it does not stage. Its REC-1 files them at implementation; they are filed now, because no defect is
 dropped, and each new BUILD-GAPS entry says 0110's REC-1 updates the entry rather than filing a duplicate. Each
-was re-confirmed against the tree at `05ed531a5`. 0110's REC-1 closes F-15.1.55, F-10.2.30, and F-15.1.54,
-whose owner lines now name proposal 0110 with their checklist steps. The closed F-10.2.4 and F-15.1.32 carry
+was re-confirmed against the tree at `05ed531a5`, and again at `5048ad21c` by 0110's records step, which
+annotated each entry and left it OPEN. 0110's implementation closed F-15.1.55, F-10.2.30, and F-15.1.54. The closed F-10.2.4 and F-15.1.32 carry
 notes pointing at their successors.
 
 - Proposal routing, security.
@@ -4459,6 +4476,20 @@ notes pointing at their successors.
     no consumer, because `handleRPC` answers it as an unknown method. The fix routes `elicit:` and
     `toolapprove:` replies to the existing elicitation and tool-use service calls and refuses a non-owner.
 - Not filed: none. Every listed defect is filed.
+- Proposal routing, filed from proposal 0110's quality review (2026-10-31). Each needs a specification
+  decision before code.
+  - [ ] **F-10.2.35** (Medium): no SDK can send `X-Lenny-User-ID`, so an SDK client with only a tenant receives
+    `401` from every session call on a `--dev-mode` gateway. The proposal states the dev identity headers.
+  - [ ] **F-10.2.36** (Medium): a memory query under the read bypass returns the owner's user-wide memories.
+    The proposal decides whether memory recall is a session read under rule 4.
+  - [ ] **F-10.2.37** (Low): the `attach_session` stream checks read access once, at open. The proposal states
+    whether an attached stream re-evaluates access.
+- Direct-fix queue, filed from proposal 0110's implementation (2026-10-31), independent of it.
+  - [ ] **F-10.2.34** (Medium): the Postgres user store's `validateRoles` refuses every custom role name, so
+    `PUT /v1/admin/tenants/{id}/users/{userId}/role` with a custom role answers `500` on a Postgres
+    deployment, although §10.2 **Role assignment:** makes custom roles assignable through the platform-managed
+    mapping. The tier-9 session owner isolation test assigns its custom role through the bearer role claim
+    until the fix lands, and the fix switches it back.
 
 - [ ] **Proposal 0112** (`proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/`): approved
   2026-10-31. Credential Secrets live in a dedicated namespace that the Token Service reads namespace-wide; a
@@ -4520,8 +4551,10 @@ other test in that binary.
     package. Filed from the T-17.4.26 fix (2026-10-27). Fixed in `1edca69df`: the package shares one control
     plane and each test gets its own namespace. The package fell from 237.4 s to 19.4 s. The slowest measured
     unit-tier package is now `pkg/gateway/sessionserver` (T-17.4.27, 198.9 s).
-  - [ ] **T-17.4.27** (Medium): `pkg/gateway/sessionserver` starts a private control plane per test in
+  - [x] **T-17.4.27** (Medium): `pkg/gateway/sessionserver` starts a private control plane per test in
     parallel, and under load one start failed the unit tier with "resource quota evaluation timed out".
+    Fixed on `fix/route-chain-create`: the package shares one control plane and each test gets its own
+    namespace. The package passes in about 105 s, against 198.9 s and 164.4 s recorded at higher load.
   - [x] **T-17.4.23** (Low): `pkg/embedded/stack` starts a control plane in each of 19 tests (127.4 s).
     Fixed in `2a0c51c4a` with no product change: tests whose code takes the namespace, or whose manifest
     the test supplies, use per-test namespaces, and each object at a product-fixed namespace and name has
@@ -4541,8 +4574,13 @@ other test in that binary.
     selects them on their own changes. Survey every `tests/tier*/` directory and add a `validate-maps` check. Direct fix.
     Fixed on `fix/test-infra-gaps`: 104 of 115 tier test directories had no key and each now has one, and
     `validate-maps` fails on a tracked test directory under `tests/tier*/` that no glob key covers.
-  - [ ] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s). It took
-    109.1 s in a scoped unit-tier run on 2026-10-27, the slowest of that run.
+  - [x] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s). It took
+    109.1 s in a scoped unit-tier run on 2026-10-27, the slowest of that run. Fixed on
+    `fix/route-chain-create`: the package shares one control plane and each test gets its own namespace.
+    The package passes in 63.6 s.
+  - [ ] **T-17.4.49** (Low): a process that exited and is not yet reaped reads as `HolderUnknown`, so
+    `ports.Ready` hands back a process that lost its port. It failed
+    `TestOpsHarnessRestartsOnAnOccupiedAddress` once on 2026-10-31. Direct fix.
   - [x] **T-17.4.29** (Medium): parallel implementation worktrees share the one `lenny-e2e` kind cluster,
     and `tests/testinfra/kind/install.sh` runs the installing branch's migrations against the shared
     Postgres, so branches with different migration sets leave the database ahead of each other or dirty. On
@@ -4757,12 +4795,16 @@ the warm-time shared-asset fill proposal in "Queue after P4b" above, queued afte
 **Filed 2026-10-31 (recurring flakes).** Branch `fix/recurring-flakes` from `e4f0eedd9` fixed the test
 infrastructure behind T-12.3.13 and T-17.7.12 and traced T-12.4.13 and T-12.4.14 to a product race.
 
-- [ ] **F-12.4.38** (High): the §12.4 Redis-outage slot gate `ReserveSlotUnderLock` releases its per-pod
+- [x] **F-12.4.38** (High): the §12.4 Redis-outage slot gate `ReserveSlotUnderLock` releases its per-pod
   advisory lock before the admission is recorded anywhere the next gated count reads, because the occupancy
   is written only when the session row's `pod_assignment` is persisted on bind. Concurrent admissions on one
   pod during a Redis outage therefore overrun `maxConcurrentSessions`. `TestReserveSlotUnderLock` is the
   acceptance test and stays red under load until the fix lands. A direct fix if the occupancy record needs
-  no §12.4 or §5.2 text, otherwise a small proposal. Independent of the R-steps.
+  no §12.4 or §5.2 text, otherwise a small proposal. Independent of the R-steps. Closed 2026-10-31 by a
+  direct fix on `fix/f-12-4-38` (3f405936e, 36265ea99): migration 0197 `slot_reservations`, written inside the gate's
+  locked transaction and before the Redis script, deleted on release, and reclaimed by the stale-slot
+  reaper after `claimOrphanTimeout`. F-5.2.55 stays open; its rehydration-seed residue now needs only §5.2
+  to name the record.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -21,7 +23,8 @@ func seedTracingSessions(t *testing.T, store sessionstore.Store, ids ...string) 
 	now := time.Now()
 	for _, id := range ids {
 		if err := store.Create(context.Background(), sessionstore.Session{
-			ID: id, TenantID: "acme", State: session.StateRunning,
+			UserID: ownerprincipal.Alice,
+			ID:     id, TenantID: "acme", State: session.StateRunning,
 			CreatedAt: now, UpdatedAt: now,
 		}); err != nil {
 			t.Fatalf("seed %s: %v", id, err)
@@ -42,7 +45,7 @@ func TestSetTracingContextWritesPrincipalSessionNotArgument_spec_8_3(t *testing.
 	seedTracingSessions(t, store, "sess_a", "sess_b")
 
 	resp := callWithPrincipal(t, srv.Handler(),
-		authmw.Principal{TenantID: "acme", Subject: "user_alice", SessionID: "sess_a"},
+		authmw.Principal{TenantID: "acme", Subject: ownerprincipal.Alice, SessionID: "sess_a"},
 		"lenny/set_tracing_context",
 		`{"sessionId":"sess_b","context":{"trace_id":"t-1"}}`)
 
@@ -75,7 +78,7 @@ func TestSetTracingContextHonoursArgumentWithoutPrincipalSession_spec_8_3(t *tes
 	seedTracingSessions(t, store, "sess_a")
 
 	resp := callWithPrincipal(t, srv.Handler(),
-		authmw.Principal{TenantID: "acme", Subject: "user_alice"},
+		authmw.Principal{TenantID: "acme", Subject: ownerprincipal.Alice},
 		"lenny/set_tracing_context",
 		`{"sessionId":"sess_a","context":{"trace_id":"t-2"}}`)
 
@@ -102,7 +105,7 @@ func TestSetTracingContextRefusesUnboundCaller_spec_8_3(t *testing.T) {
 	seedTracingSessions(t, store, "sess_a")
 
 	resp := callWithPrincipal(t, srv.Handler(),
-		authmw.Principal{TenantID: "acme", Subject: "user_alice"},
+		authmw.Principal{TenantID: "acme", Subject: ownerprincipal.Alice},
 		"lenny/set_tracing_context",
 		`{"context":{"trace_id":"t-3"}}`)
 

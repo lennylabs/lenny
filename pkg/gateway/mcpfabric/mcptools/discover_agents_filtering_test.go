@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
@@ -33,6 +35,7 @@ func newMCPFiltered(t *testing.T) (*mcp.Server, runtimestore.Store, environments
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             memstore.New(),
 		Executor:          executor.NewEchoExecutor(),
@@ -91,7 +94,7 @@ func TestDiscoverAgentsTransparentFiltering(t *testing.T) {
 
 	// A caller in the security-engineers group sees only the runtime
 	// the environment's runtimeSelector admits.
-	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	caller := authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"security-engineers"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/discover_agents", `{}`))
 	if !strings.Contains(text, "sec-agent") {
 		t.Errorf("member should see sec-agent: %q", text)
@@ -155,7 +158,7 @@ func TestListRuntimesToolCoversAllTypesAndFilters(t *testing.T) {
 		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
 	))
 
-	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	caller := authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"security-engineers"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))
 	// §9.1 discovery covers every runtime type — unlike discover_agents
 	// it includes type:mcp runtimes — and is environment-filtered.
@@ -196,7 +199,7 @@ func TestListRuntimesToolEnvironmentIDStubNarrows_spec_10_6_672(t *testing.T) {
 		RuntimeSelector: environment.Selector{MatchLabels: map[string]string{"team": "research"}},
 	})
 
-	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	caller := authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"security-engineers"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes",
 		`{"environmentId":"research-team"}`))
 	if !strings.Contains(text, "research-agent") {
@@ -220,7 +223,7 @@ func TestListRuntimesToolEnvironmentIDStubUnknownEnvIsEmpty_spec_10_6_672(t *tes
 		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
 	))
 
-	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	caller := authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"security-engineers"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes",
 		`{"environmentId":"does-not-exist"}`))
 	if strings.Contains(text, "sec-agent") {
@@ -243,7 +246,7 @@ func TestListRuntimesToolSurfacesAgentInterface(t *testing.T) {
 		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
 	))
 
-	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	caller := authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"security-engineers"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))
 
 	var resp struct {
@@ -280,7 +283,7 @@ func TestListRuntimesToolSurfacesPublicMetadataRefs(t *testing.T) {
 		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
 	))
 
-	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	caller := authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"security-engineers"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))
 
 	var resp struct {
@@ -322,7 +325,7 @@ func TestListRuntimesToolResolvesDerivedRuntime(t *testing.T) {
 		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
 	))
 
-	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	caller := authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"security-engineers"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))
 
 	var resp struct {
@@ -361,7 +364,7 @@ func TestListRuntimesToolEmbedsAdapterCapabilities(t *testing.T) {
 		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
 	))
 
-	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	caller := authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"security-engineers"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))
 
 	// §9.1: the list_runtimes response embeds a top-level
@@ -392,6 +395,7 @@ func buildFilteredMCP(t *testing.T, defaultPolicy string) (*mcp.Server, runtimes
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:             ownerprincipal.SessionAccess{},
 		DevTenantFallback:          true,
 		Store:                      memstore.New(),
 		Executor:                   executor.NewEchoExecutor(),
@@ -411,7 +415,7 @@ func TestDiscoverAgentsPlatformDefaultFallback(t *testing.T) {
 	// of which is the environment's member group — so the caller is in
 	// no environment and the §10.6 noEnvironmentPolicy governs access.
 	caller := authmw.Principal{
-		Subject: "alice", TenantID: "acme",
+		Subject: ownerprincipal.Alice, TenantID: "acme",
 		Groups: []string{
 			"infra", "leads", "oncall", "verifiers", "engineers", "billing",
 			"hardware", "auditors", "researchers", "analysts", "triage",
@@ -473,7 +477,7 @@ func TestListRuntimesStampsMcpEndpointForMcpTypes_spec_9_1_38(t *testing.T) {
 		environment.Selector{MatchLabels: map[string]string{"team": "security"}},
 	))
 
-	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	caller := authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"security-engineers"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/list_runtimes", `{}`))
 	var resp struct {
 		Runtimes []struct {

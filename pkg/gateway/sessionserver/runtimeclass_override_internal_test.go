@@ -56,7 +56,8 @@ func TestServerLabelsRuntimeClassThroughTheOverride_spec_16_1(t *testing.T) {
 			s.recordStartupPhases(match, timings)
 			s.recordStartupDuration(match, timings)
 			s.recordTTFTOnce(sessionstore.Session{
-				ID: "sess-1", PoolRef: "pool-a", IsolationProfile: tc.profile, CreatedAt: now.Add(-time.Second),
+				UserID: testOwner,
+				ID:     "sess-1", PoolRef: "pool-a", IsolationProfile: tc.profile, CreatedAt: now.Add(-time.Second),
 			}, "response")
 
 			for _, got := range [][]string{phaseRC, durationRC, ttftRC} {

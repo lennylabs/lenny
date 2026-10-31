@@ -28,6 +28,10 @@ func finalizeTestServerWithStore(store sessionstore.Store) *Server {
 // before any of them reaches its entry Update. Without the barrier a second
 // call that starts after the first commits reads `finalizing` in its
 // pre-lock Validate, and the test would pass without the locked re-check.
+// The §10.2 ownership check's read runs under the primary-read bound, so it
+// carries a deadline, and it passes the barrier untouched: only the
+// handler's own pre-lock read, which runs under the request's context,
+// counts as a party.
 type barrierGetStore struct {
 	sessionstore.Store
 	id      string
@@ -42,7 +46,7 @@ func newBarrierGetStore(inner sessionstore.Store, id string, parties int) *barri
 
 func (b *barrierGetStore) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
 	row, err := b.Store.Get(ctx, tenantID, id)
-	if id == b.id {
+	if _, bounded := ctx.Deadline(); id == b.id && !bounded {
 		b.arrived.Done()
 		b.arrived.Wait()
 	}

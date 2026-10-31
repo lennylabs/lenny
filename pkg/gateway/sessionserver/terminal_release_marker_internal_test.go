@@ -74,7 +74,8 @@ func markerServer(t *testing.T, reg *podsession.Registry, exec executor.Executor
 	t.Helper()
 	store := &markerStore{Store: memstore.New()}
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateCompleted, PodAssignment: "pod-a",
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateCompleted, PodAssignment: "pod-a",
 		TerminatedAt: time.Now(), CoordinationGeneration: sealBoundGeneration,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)

@@ -122,17 +122,17 @@ func TestRecycleScrubConfigFoldsEndToEnd_spec_5_2(t *testing.T) {
 	// The CRD template carries the recycle block so ResolvePool sets
 	// PoolMatch.Recycle and MicrovmScrubMode (both CRD-sourced), while the
 	// poolstore mirror above supplies the gateway-enforced cleanup config.
-	tmpl := podBindTemplate("recycle-tmpl", "echo", string(isolation.ProfileMicrovm))
+	tmpl := podBindTemplate(t, "recycle-tmpl", "echo", string(isolation.ProfileMicrovm))
 	tmpl.Spec.SessionPolicy = &lennyv1.SessionPolicy{
 		Recycle: &lennyv1.RecyclePolicy{ScrubProfile: string(runtimestore.MicrovmScrubVMRestart)},
 	}
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("recycle-pool", "recycle-tmpl"),
+		podBindWarmPool(t, "recycle-pool", "recycle-tmpl"),
 		tmpl,
-		podBindIdleSandbox("sbx-r", "recycle-pool", "10.244.3.9"),
+		podBindIdleSandbox(t, "sbx-r", "recycle-pool", "10.244.3.9"),
 	)
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 	binder.RecycleBoundary = &noopRecycleBoundary{}
 	registry := podsession.NewRegistry()
 
@@ -142,15 +142,15 @@ func TestRecycleScrubConfigFoldsEndToEnd_spec_5_2(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileMicrovm,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Pools:                   pools,
 	})
 
-	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo"})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("start status = %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}

@@ -24,7 +24,7 @@ func TestBindRequestComposersCarryRestore_spec_7_1(t *testing.T) {
 	res := &keyRecordingResolver{grants: []adapterclient.ChunkGrant{{Index: 0, URL: "u0"}}}
 	s := &Server{resumeChunkResolver: res}
 	derived := derivedRow("acme", "sess_derived", "ck_derived")
-	ordinary := sessionstore.Session{ID: "sess_plain", TenantID: "acme"}
+	ordinary := sessionstore.Session{UserID: testOwner, ID: "sess_plain", TenantID: "acme"}
 
 	composers := map[string]func(sessionstore.Session) func(context.Context) ([]adapterclient.ChunkGrant, error){
 		"exclusive": func(row sessionstore.Session) func(context.Context) ([]adapterclient.ChunkGrant, error) {

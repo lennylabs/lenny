@@ -68,7 +68,7 @@ func getSessionResp(t *testing.T, h http.Handler, id string) sessionserver.Sessi
 
 func TestCreateRejectsBlockedEnvVar_spec_14_105(t *testing.T) {
 	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		Env:        map[string]string{"ANTHROPIC_API_KEY": "sk-secret"},
 	})
@@ -89,7 +89,7 @@ func TestCreateRejectsBlockedEnvVar_spec_14_105(t *testing.T) {
 
 func TestCreateRejectsDeployerBlockedEnvVar_spec_14_105(t *testing.T) {
 	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true, EnvVarBlocklist: []string{"INTERNAL_*"}})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		Env:        map[string]string{"INTERNAL_ENDPOINT": "http://x"},
 	})
@@ -111,7 +111,7 @@ func TestCreateAcceptsAndEchoesEnv_spec_14(t *testing.T) {
 		Clock:           clock, IDFunc: func() string { return "sess_env_ok" },
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
 	})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		Env:        map[string]string{"NODE_ENV": "production", "LOG_LEVEL": "info"},
 	})
@@ -126,7 +126,7 @@ func TestCreateAcceptsAndEchoesEnv_spec_14(t *testing.T) {
 	if row.Env["LOG_LEVEL"] != "info" {
 		t.Errorf("stored env LOG_LEVEL: got %q", row.Env["LOG_LEVEL"])
 	}
-	got := getSessionResp(t, srv.Handler(), "sess_env_ok")
+	got := getSessionResp(t, asOwner(srv.Handler()), "sess_env_ok")
 	if got.Env["NODE_ENV"] != "production" {
 		t.Errorf("GET echo env NODE_ENV: got %q", got.Env["NODE_ENV"])
 	}
@@ -139,7 +139,7 @@ func TestCreateAcceptsAndEchoesEnv_spec_14(t *testing.T) {
 // mirroring the §14 env and label key checks. F-CS4 (0018).
 func TestCreateRejectsEmptyMetadataKey_spec_7_1(t *testing.T) {
 	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		Metadata:   map[string]string{"": "oops"},
 	})
@@ -164,14 +164,14 @@ func TestCreateAcceptsNonEmptyMetadataKey_spec_7_1(t *testing.T) {
 		DevTenantHeader: true,
 		Clock:           clock, IDFunc: func() string { return "sess_meta_ok" },
 	})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		Metadata:   map[string]string{"team": "payments"},
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
-	got := getSessionResp(t, srv.Handler(), "sess_meta_ok")
+	got := getSessionResp(t, asOwner(srv.Handler()), "sess_meta_ok")
 	if got.Metadata["team"] != "payments" {
 		t.Errorf("GET echo metadata team: got %v, want payments", got.Metadata)
 	}
@@ -195,7 +195,7 @@ func runtimeWithSchema(t *testing.T, schema string) *runtimestore.Memory {
 func TestCreateRuntimeOptionsSchemaValid_spec_14_155(t *testing.T) {
 	rs := runtimeWithSchema(t, `{"type":"object","properties":{"streamingMode":{"type":"boolean"}},"additionalProperties":false}`)
 	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true, Runtimes: rs})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:     "claude-code",
 		RuntimeOptions: json.RawMessage(`{"streamingMode":true}`),
 	})
@@ -211,7 +211,7 @@ func TestCreateRuntimeOptionsSchemaValid_spec_14_155(t *testing.T) {
 func TestCreateRuntimeOptionsSchemaInvalid_spec_14_155(t *testing.T) {
 	rs := runtimeWithSchema(t, `{"type":"object","properties":{"streamingMode":{"type":"boolean"}},"additionalProperties":false}`)
 	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true, Runtimes: rs})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:     "claude-code",
 		RuntimeOptions: json.RawMessage(`{"streamingMode":"yes","bogus":1}`),
 	})
@@ -230,7 +230,7 @@ func TestCreateRuntimeOptionsUnschematized_spec_14_155(t *testing.T) {
 	rs := runtimestore.NewMemory()
 	_ = rs.Create(context.Background(), runtimestore.Runtime{Name: "claude-code", Type: runtimestore.TypeAgent})
 	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true, Runtimes: rs})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:     "claude-code",
 		RuntimeOptions: json.RawMessage(`{"anything":true}`),
 	})
@@ -252,7 +252,7 @@ func TestCreateRuntimeOptionsUnschematized_spec_14_155(t *testing.T) {
 func TestCreateRuntimeOptionsTooLarge_spec_14_155(t *testing.T) {
 	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true})
 	big := `{"x":"` + strings.Repeat("a", 64*1024) + `"}`
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:     "claude-code",
 		RuntimeOptions: json.RawMessage(big),
 	})
@@ -269,7 +269,7 @@ func TestCreateRuntimeOptionsTooLarge_spec_14_155(t *testing.T) {
 
 func TestCreateRejectsNegativeTimeout_spec_14_154(t *testing.T) {
 	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		Timeouts:   &sessionstore.SessionTimeouts{MaxSessionAgeSeconds: -1},
 	})
@@ -281,7 +281,7 @@ func TestCreateRejectsNegativeTimeout_spec_14_154(t *testing.T) {
 func TestCreateRejectsTimeoutExceedingRuntimeCap_spec_14_154(t *testing.T) {
 	rs := runtimeWithSchema(t, `{}`) // Limits.MaxSessionAgeSeconds = 3600
 	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true, Runtimes: rs})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		Timeouts:   &sessionstore.SessionTimeouts{MaxSessionAgeSeconds: 7200},
 	})
@@ -300,7 +300,7 @@ func TestCreateRejectsTimeoutExceedingRuntimeCap_spec_14_154(t *testing.T) {
 func TestCreateAcceptsAndEchoesTimeouts_spec_14_154(t *testing.T) {
 	rs := runtimeWithSchema(t, `{}`)
 	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true, Runtimes: rs})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		Timeouts:   &sessionstore.SessionTimeouts{MaxSessionAgeSeconds: 1800, MaxIdleSeconds: 300},
 	})
@@ -317,7 +317,7 @@ func TestCreateAcceptsAndEchoesTimeouts_spec_14_154(t *testing.T) {
 
 func TestCreateRejectsInvalidPreferredSource_spec_14(t *testing.T) {
 	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:       "claude-code",
 		CredentialPolicy: &sessionstore.CredentialPolicyOverride{PreferredSource: "bogus"},
 	})
@@ -334,7 +334,7 @@ func TestCreateRejectsExpandingCredentialPolicy_spec_4_9(t *testing.T) {
 	})
 	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true, Tenants: ts})
 	// Tenant is pool-only; an override to user-scoped credentials expands.
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:       "claude-code",
 		CredentialPolicy: &sessionstore.CredentialPolicyOverride{PreferredSource: string(credential.PreferredSourceUser)},
 	})
@@ -358,7 +358,7 @@ func TestCreateAcceptsRestrictingCredentialPolicy_spec_4_9(t *testing.T) {
 	})
 	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true, Tenants: ts})
 	// Tenant allows user-then-pool; narrowing to pool-only is a restriction.
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:       "claude-code",
 		CredentialPolicy: &sessionstore.CredentialPolicyOverride{PreferredSource: string(credential.PreferredSourcePool)},
 	})
@@ -376,7 +376,7 @@ func TestCreateAcceptsRestrictingCredentialPolicy_spec_4_9(t *testing.T) {
 func TestCreateRejectsNegativeDelegationLease_spec_14(t *testing.T) {
 	srv := envelopeServer(t, sessionserver.Options{DevTenantHeader: true})
 	neg := -1
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:      "claude-code",
 		DelegationLease: &sessionstore.DelegationLeaseRequest{MaxDepth: &neg},
 	})
@@ -404,7 +404,7 @@ func TestCreateEchoesDelegationLease_spec_14(t *testing.T) {
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
 	})
 	depth, kids := 2, 5
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:      "claude-code",
 		DelegationLease: &sessionstore.DelegationLeaseRequest{MaxDepth: &depth, MaxChildrenTotal: &kids, DelegationPolicyRef: "default-policy"},
 	})
@@ -454,7 +454,7 @@ func TestCreateDecodesPlaygroundDelegationLeaseWireKey_spec_27_4(t *testing.T) {
 		"labels": {},
 		"delegationLease": {"delegationPolicyRef": "reviewer-policy"}
 	}`)
-	rr := createRequestRaw(t, srv.Handler(), body)
+	rr := createRequestRaw(t, asOwner(srv.Handler()), body)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}

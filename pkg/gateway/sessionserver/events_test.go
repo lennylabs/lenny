@@ -41,13 +41,14 @@ func TestEventsStreamReceivesMessageEvents(t *testing.T) {
 	})
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_ev", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_ev", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(asOwner(srv.Handler()))
 	defer ts.Close()
 
 	// Open the SSE stream.
@@ -110,7 +111,7 @@ func TestEventsStreamMissingSession(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_missing/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("missing session: got %d, want 404", rr.Code)
 	}
@@ -120,14 +121,15 @@ func TestEventsStreamUnavailableWhenBusUnwired(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_x", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_x", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}) // no Events bus
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_x/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("no event bus: got %d, want 503", rr.Code)
 	}
@@ -139,7 +141,8 @@ func TestEventsStreamReplaysBacklogWithCursor(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_bk", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_bk", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
 	// Pre-publish 3 events.
@@ -147,7 +150,7 @@ func TestEventsStreamReplaysBacklogWithCursor(t *testing.T) {
 	bus.Publish("sess_bk", "e2", `{}`, now)
 	bus.Publish("sess_bk", "e3", `{}`, now)
 
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(asOwner(srv.Handler()))
 	defer ts.Close()
 	// Reconnect with Last-Event-ID: 1 → backlog replays e2, e3.
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_bk/events", nil)
@@ -200,7 +203,8 @@ func TestEventsStreamEmitsGapAndCheckpointMarkers_spec_7_2(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_gap", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_gap", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
 	// Publish 10 events; maxHistory=3 keeps seqs 8,9,10.
@@ -208,7 +212,7 @@ func TestEventsStreamEmitsGapAndCheckpointMarkers_spec_7_2(t *testing.T) {
 		bus.Publish("sess_gap", "e", `{}`, now)
 	}
 
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(asOwner(srv.Handler()))
 	defer ts.Close()
 	// Reconnect with cursor=2 → oldest retained is 8, so 5 events lost (3..7).
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_gap/events", nil)
@@ -270,14 +274,15 @@ func TestEventsStreamOmitsGapMarkersWhenCursorWithinBuffer_spec_7_2(t *testing.T
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_ok", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_ok", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
 	for i := 0; i < 5; i++ {
 		bus.Publish("sess_ok", "e", `{}`, now)
 	}
 
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(asOwner(srv.Handler()))
 	defer ts.Close()
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_ok/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -320,14 +325,15 @@ func TestEventsStreamOmitsGapMarkersOnFreshConnect_spec_7_2(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_fresh", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_fresh", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
 	for i := 0; i < 10; i++ {
 		bus.Publish("sess_fresh", "e", `{}`, now)
 	}
 
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(asOwner(srv.Handler()))
 	defer ts.Close()
 	// No Last-Event-ID header → fresh connect.
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_fresh/events", nil)
@@ -412,12 +418,13 @@ func TestEventsStreamSynthesizesHandoffReattach_spec_10_4(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_handoff", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_handoff", TenantID: "acme", State: session.StateRunning,
 		LastSeq:   5, // a prior coordinator durably advanced the counter
 		CreatedAt: now, UpdatedAt: now,
 	})
 
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(asOwner(srv.Handler()))
 	defer ts.Close()
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_handoff/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -469,18 +476,21 @@ func TestEventsStreamHandoffSynthesisStreamsChildren_spec_10_4(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus, TreeArchive: archive})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_parent", TenantID: "acme", State: session.StateRunning,
 		LastSeq:   5,
 		CreatedAt: now, UpdatedAt: now,
 	})
 	// An active child (re-awaited) and a settled child whose completion
 	// (CompletionSeq 4) lands above the client's cursor of 2.
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_child_active", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_child_active", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: "sess_parent", CreatedAt: now, UpdatedAt: now,
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_child_done", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "sess_child_done", TenantID: "acme", State: session.StateCompleted,
 		ParentSessionID: "sess_parent", CreatedAt: now, UpdatedAt: now,
 	})
 	_ = archive.Archive(context.Background(), treearchive.ArchivedNode{
@@ -489,7 +499,7 @@ func TestEventsStreamHandoffSynthesisStreamsChildren_spec_10_4(t *testing.T) {
 		CompletionSeq: 4, SettledAt: now,
 	})
 
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(asOwner(srv.Handler()))
 	defer ts.Close()
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_parent/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -522,7 +532,8 @@ func TestEventsStreamNoHandoffSynthesisWithLocalHistory_spec_10_4(t *testing.T) 
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_local", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_local", TenantID: "acme", State: session.StateRunning,
 		LastSeq:   5,
 		CreatedAt: now, UpdatedAt: now,
 	})
@@ -530,7 +541,7 @@ func TestEventsStreamNoHandoffSynthesisWithLocalHistory_spec_10_4(t *testing.T) 
 		bus.PublishForTenant("acme", "sess_local", "e", `{}`, now)
 	}
 
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(asOwner(srv.Handler()))
 	defer ts.Close()
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_local/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -555,12 +566,13 @@ func TestEventsStreamNoHandoffSynthesisOnFreshConnect_spec_10_4(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_fresh2", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_fresh2", TenantID: "acme", State: session.StateRunning,
 		LastSeq:   5,
 		CreatedAt: now, UpdatedAt: now,
 	})
 
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(asOwner(srv.Handler()))
 	defer ts.Close()
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_fresh2/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -588,7 +600,8 @@ func TestEventsJSONListReturnsCanonicalEnvelope_spec_15_1_1228(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_json", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_json", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
 	for i := 0; i < 5; i++ {
@@ -599,7 +612,7 @@ func TestEventsJSONListReturnsCanonicalEnvelope_spec_15_1_1228(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Accept", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -624,7 +637,8 @@ func TestEventsJSONListPaginates_spec_15_1_1253(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_pag", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_pag", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
 	for i := 0; i < 7; i++ {
@@ -637,7 +651,7 @@ func TestEventsJSONListPaginates_spec_15_1_1253(t *testing.T) {
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
 		req.Header.Set("Accept", "application/json")
 		rr := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rr, req)
+		asOwner(srv.Handler()).ServeHTTP(rr, req)
 		return rr.Code, rr.Body.String()
 	}
 
@@ -665,7 +679,8 @@ func TestEventsJSONListRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 		Clock:           func() time.Time { return fixed },
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_exp", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_exp", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: fixed, UpdatedAt: fixed,
 	})
 	bus.PublishForTenant("acme", "sess_exp", "response", `{}`, fixed)
@@ -677,7 +692,7 @@ func TestEventsJSONListRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Accept", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expired cursor: %d, want 400 (body=%s)", rr.Code, rr.Body.String())
 	}

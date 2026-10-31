@@ -46,15 +46,16 @@ func TestInterruptRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_sus", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_sus", TenantID: "acme", RuntimeRef: "echo",
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	})
 
 	cluster := podBindClient(t, &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{Name: "sbx-att", Namespace: podTestNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "sbx-att", Namespace: testNS(t)},
 		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.1"},
 	})
-	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
+	binder := &podsession.Binder{Client: cluster, Namespace: testNS(t)}
 	_, adapter := suspendStubAdapter(t, adapterv1.InterruptResponse_STATUS_ACKNOWLEDGED)
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{
@@ -71,7 +72,7 @@ func TestInterruptRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_sus/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
@@ -108,15 +109,16 @@ func TestInterruptTimeoutRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_to", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_to", TenantID: "acme", RuntimeRef: "echo",
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	})
 
 	cluster := podBindClient(t, &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{Name: "sbx-to", Namespace: podTestNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "sbx-to", Namespace: testNS(t)},
 		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.2"},
 	})
-	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
+	binder := &podsession.Binder{Client: cluster, Namespace: testNS(t)}
 	_, adapter := suspendStubAdapter(t, adapterv1.InterruptResponse_STATUS_INTERRUPT_TIMEOUT)
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{
@@ -129,7 +131,7 @@ func TestInterruptTimeoutRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_to/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
@@ -161,15 +163,16 @@ func TestInterruptBusyLeavesRowRunning_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_busy", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_busy", TenantID: "acme", RuntimeRef: "echo",
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	})
 
 	cluster := podBindClient(t, &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{Name: "sbx-bz", Namespace: podTestNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "sbx-bz", Namespace: testNS(t)},
 		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.3"},
 	})
-	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
+	binder := &podsession.Binder{Client: cluster, Namespace: testNS(t)}
 	_, adapter := suspendStubAdapter(t, adapterv1.InterruptResponse_STATUS_BUSY)
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{
@@ -182,7 +185,7 @@ func TestInterruptBusyLeavesRowRunning_spec_7_2(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_busy/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409; body=%s", rr.Code, rr.Body.String())
@@ -210,7 +213,8 @@ func TestInterruptSuspendNoBindingStampsRow_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_nb", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "sess_nb", TenantID: "acme", RuntimeRef: "echo",
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	})
 	// No binder, no registry — row-only mode.
@@ -219,7 +223,7 @@ func TestInterruptSuspendNoBindingStampsRow_spec_7_2(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_nb/interrupt", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rr.Code)
@@ -242,7 +246,7 @@ func TestInterruptSuspendNoBindingStampsRow_spec_7_2(t *testing.T) {
 func getSandbox(t *testing.T, c client.Client, name string) lennyv1.Sandbox {
 	t.Helper()
 	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: name}, &sb); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: name}, &sb); err != nil {
 		t.Fatalf("get sandbox %s: %v", name, err)
 	}
 	return sb

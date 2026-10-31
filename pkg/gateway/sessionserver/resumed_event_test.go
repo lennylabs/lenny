@@ -217,6 +217,7 @@ func TestResumeEmitsResumedEvenWithoutSnapshot(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now().UTC()
 	if err := store.Create(context.Background(), sessionstore.Session{
+		UserID:           testOwner,
 		ID:               "sess_resumed_cold",
 		TenantID:         "acme",
 		State:            session.StateAwaitingClientAction,

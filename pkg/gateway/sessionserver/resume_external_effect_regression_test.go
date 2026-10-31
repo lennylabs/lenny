@@ -79,12 +79,12 @@ func TestResumeRestoresFromFreshestRefAndConsultsNoDedupLedger_spec_7_3(t *testi
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
@@ -93,7 +93,7 @@ func TestResumeRestoresFromFreshestRefAndConsultsNoDedupLedger_spec_7_3(t *testi
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
 	// The freshest recorded checkpoint is a periodic checkpoint (source
@@ -102,7 +102,8 @@ func TestResumeRestoresFromFreshestRefAndConsultsNoDedupLedger_spec_7_3(t *testi
 	// is inside the replay window and the restore must proceed from this stale
 	// checkpoint without suppressing the re-derivable effect.
 	seedAwaitingSession(t, store, sessionstore.Session{
-		ID: "sess-alo-resume",
+		UserID: testOwner,
+		ID:     "sess-alo-resume",
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
 			Ref:    periodicCheckpointRef,
 			Source: sessionstore.WorkspaceSnapshotCheckpoint,

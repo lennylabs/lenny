@@ -5,8 +5,11 @@ package mcptools_test
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/credential"
@@ -42,14 +45,23 @@ func (f *fakeCredChecker) CheckDelegationCredentialAvailability(_ context.Contex
 // getErrStore wraps a session store and forces Get to fail for one session id,
 // so a test can drive the §8.3 gate's parent-lookup-error fail-closed branch
 // deterministically. Every other method delegates to the embedded store.
+//
+// The first Get of errID succeeds, because the §10.2 ownership check of
+// lenny/delegate_task reads the parent before any delegation gate; every
+// later Get of errID fails, so the gates under test observe the error.
 type getErrStore struct {
 	sessionstore.Store
 	errID string
 	err   error
+	reads *atomic.Int32
+}
+
+func newGetErrStore(base sessionstore.Store, errID string, err error) getErrStore {
+	return getErrStore{Store: base, errID: errID, err: err, reads: &atomic.Int32{}}
 }
 
 func (s getErrStore) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
-	if id == s.errID {
+	if id == s.errID && s.reads.Add(1) > 1 {
 		return sessionstore.Session{}, s.err
 	}
 	return s.Store.Get(ctx, tenantID, id)
@@ -66,6 +78,7 @@ func newDelegateCredAvailMCP(t *testing.T, checker mcptools.CredentialAvailabili
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -82,7 +95,7 @@ func newDelegateCredAvailMCP(t *testing.T, checker mcptools.CredentialAvailabili
 	_ = runtimes.Create(ctxbg, runtimestore.Runtime{Name: "child-agent", Type: runtimestore.TypeAgent})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(ctxbg, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:                     session.StateRunning,
 		RuntimeRef:                "child-agent",
 		PoolRef:                   "pool-a",
@@ -211,6 +224,7 @@ func newCrossEnvInheritCredAvailMCP(t *testing.T, checker mcptools.CredentialAva
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -268,7 +282,7 @@ func newCrossEnvInheritCredAvailMCP(t *testing.T, checker mcptools.CredentialAva
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(ctxbg, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "team-a-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		Environment: "team-a", CreatedAt: now, UpdatedAt: now,
@@ -391,8 +405,8 @@ func TestDelegateTaskGateQueryContents_spec_8_3(t *testing.T) {
 		if q.TenantID != "acme" {
 			t.Errorf("q.TenantID = %q, want acme", q.TenantID)
 		}
-		if q.UserID != "user_alice" {
-			t.Errorf("q.UserID = %q, want user_alice", q.UserID)
+		if q.UserID != ownerprincipal.Alice {
+			t.Errorf("q.UserID = %q, want %s", q.UserID, ownerprincipal.Alice)
 		}
 		if q.ChildRuntimeRef != "child-agent" {
 			t.Errorf("q.ChildRuntimeRef = %q, want child-agent", q.ChildRuntimeRef)
@@ -438,9 +452,10 @@ func TestDelegateTaskParentLookupErrorFailsClosed_spec_8_3(t *testing.T) {
 	checker := &fakeCredChecker{err: nil}
 	base := memstore.New()
 	runtimes := runtimestore.NewMemory()
-	wrapped := getErrStore{Store: base, errID: "sess_parent", err: errors.New("store unavailable")}
+	wrapped := newGetErrStore(base, "sess_parent", errors.New("store unavailable"))
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             wrapped,
 		Executor:          executor.NewEchoExecutor(),
@@ -457,7 +472,7 @@ func TestDelegateTaskParentLookupErrorFailsClosed_spec_8_3(t *testing.T) {
 	_ = runtimes.Create(ctxbg, runtimestore.Runtime{Name: "child-agent", Type: runtimestore.TypeAgent})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = base.Create(ctxbg, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "child-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
@@ -488,9 +503,10 @@ func TestDelegateTaskIndependentParentLookupErrorRunsCheck_spec_8_3(t *testing.T
 	checker := &fakeCredChecker{err: sessionserver.ErrDelegationCredentialUnavailable}
 	base := memstore.New()
 	runtimes := runtimestore.NewMemory()
-	wrapped := getErrStore{Store: base, errID: "sess_parent", err: errors.New("store unavailable")}
+	wrapped := newGetErrStore(base, "sess_parent", errors.New("store unavailable"))
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             wrapped,
 		Executor:          executor.NewEchoExecutor(),
@@ -507,7 +523,7 @@ func TestDelegateTaskIndependentParentLookupErrorRunsCheck_spec_8_3(t *testing.T
 	_ = runtimes.Create(ctxbg, runtimestore.Runtime{Name: "child-agent", Type: runtimestore.TypeAgent})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = base.Create(ctxbg, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "child-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
@@ -531,17 +547,17 @@ func TestDelegateTaskIndependentParentLookupErrorRunsCheck_spec_8_3(t *testing.T
 	}
 }
 
-// spec: 8.3 (line 470) — the pre-check does not couple to store availability.
-// A wired checker with no session store still runs the gate: the §8.3 skip set
-// is a deny hop and a nil checker alone, and an independent hop needs no origin,
-// so an exhausted pool surfaces CREDENTIAL_POOL_EXHAUSTED even with a nil store.
-// Against the pre-fix code, whose gate condition required a non-nil store, a nil
-// store silently skipped the entire pre-check and admitted the delegation.
-func TestDelegateTaskNilStoreStillRunsCheck_spec_8_3(t *testing.T) {
+// spec: 10.2 (Session ownership), 8.3 (Delegation Policy and Lease) — with
+// no session store wired, the §10.2 ownership check of the parent cannot be
+// established, so the delegation fails closed with RESOURCE_NOT_FOUND before
+// any delegation gate runs: the credential pre-check is never reached and no
+// child is created.
+func TestDelegateTaskNilStoreFailsClosedOnOwnership_spec_10_2(t *testing.T) {
 	checker := &fakeCredChecker{err: sessionserver.ErrDelegationCredentialUnavailable}
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             nil,
 		Executor:          executor.NewEchoExecutor(),
@@ -560,10 +576,10 @@ func TestDelegateTaskNilStoreStillRunsCheck_spec_8_3(t *testing.T) {
 		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","credentialPropagation":"independent","task":{"input":[{"type":"text","inline":"do work"}]}}`)
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
-	if env["code"] != "CREDENTIAL_POOL_EXHAUSTED" {
-		t.Fatalf("code = %v, want CREDENTIAL_POOL_EXHAUSTED (a nil store must not skip the pre-check)", env["code"])
+	if env["code"] != "RESOURCE_NOT_FOUND" {
+		t.Fatalf("code = %v, want RESOURCE_NOT_FOUND (an unverifiable parent owner must fail closed)", env["code"])
 	}
-	if len(checker.calls) != 1 {
-		t.Errorf("checker calls = %d, want 1 (a nil store must not skip the pre-check)", len(checker.calls))
+	if len(checker.calls) != 0 {
+		t.Errorf("checker calls = %d, want 0 (the ownership check precedes the pre-check)", len(checker.calls))
 	}
 }

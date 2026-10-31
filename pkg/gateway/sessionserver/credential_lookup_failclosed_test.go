@@ -141,11 +141,11 @@ func newCredOutageFixture(t *testing.T, id string) *credOutageFixture {
 	adapterSrv.Runtime = &podBindRuntime{}
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 	ledger := newLeaseLedger()
 	binder.Credentials = ledger
 
@@ -183,7 +183,7 @@ func newCredOutageFixture(t *testing.T, id string) *credOutageFixture {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             f.registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Tenants:                 f.tenants,
 		Runtimes:                f.runtimes,
 		CredentialPools:         credPools,
@@ -197,7 +197,7 @@ func newCredOutageFixture(t *testing.T, id string) *credOutageFixture {
 func (f *credOutageFixture) sandboxClaimed(t *testing.T) bool {
 	t.Helper()
 	var claim lennyv1.SandboxClaim
-	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim)
+	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim)
 	return err == nil
 }
 
@@ -219,8 +219,8 @@ func (f *credOutageFixture) sandboxClaimed(t *testing.T) bool {
 func TestCreateAndStartFailsClosedOnCredentialLookupOutage_spec_4_9(t *testing.T) {
 	t.Parallel()
 	f := newCredOutageFixture(t, "sess-cred-outage")
-	h := f.srv.Handler()
-	body, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	h := asOwner(f.srv.Handler())
+	body, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
 
 	f.runtimes.set(true)
 	rr := postSessionStep(t, h, "/v1/sessions/start", body)
@@ -331,7 +331,7 @@ func TestResumeFailsClosedOnCredentialLookupOutage_spec_7_3(t *testing.T) {
 	seedAwaitingSession(t, f.store, sessionstore.Session{
 		ID: "sess-resume-outage", UserID: "alice@acme.com", WorkspaceSnapshot: checkpointed(),
 	})
-	rr := postSessionStep(t, f.srv.Handler(), "/v1/sessions/sess-resume-outage/resume", nil)
+	rr := postSessionStep(t, asOwner(f.srv.Handler()), "/v1/sessions/sess-resume-outage/resume", nil)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d; body=%s", rr.Code, rr.Body.String())
 	}

@@ -83,7 +83,8 @@ func newFinalizeExitFixture(t *testing.T, pool finalizeExitPool, outcome finaliz
 	p := newPreRunningFixture(t)
 	p.reserve(t, pool.reserve...)
 	if err := p.store.Create(context.Background(), sessionstore.Session{
-		ID: "sess-1", TenantID: "acme", RuntimeRef: "echo", State: session.StateFinalizing,
+		UserID: testOwner,
+		ID:     "sess-1", TenantID: "acme", RuntimeRef: "echo", State: session.StateFinalizing,
 		PodAssignment: reclaimPod, ScrubPolicy: pool.scrub,
 	}); err != nil {
 		t.Fatalf("seed finalizing row: %v", err)

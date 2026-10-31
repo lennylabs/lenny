@@ -23,7 +23,8 @@ import (
 func seedState(t *testing.T, store sessionstore.Store, id string, st session.State) {
 	t.Helper()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", RuntimeRef: "echo", State: st,
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", RuntimeRef: "echo", State: st,
 	}); err != nil {
 		t.Fatalf("seed %s: %v", id, err)
 	}
@@ -98,7 +99,7 @@ func TestFinalizingPreconditionRefusesNonFinalizing_spec_15_1(t *testing.T) {
 			}
 		})
 	}
-	if err := finalizingPrecondition(&sessionstore.Session{State: session.StateFinalizing}); err != nil {
+	if err := finalizingPrecondition(&sessionstore.Session{UserID: testOwner, State: session.StateFinalizing}); err != nil {
 		t.Errorf("finalizingPrecondition(finalizing) = %v, want nil", err)
 	}
 }

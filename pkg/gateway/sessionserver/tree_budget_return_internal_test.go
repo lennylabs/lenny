@@ -339,12 +339,14 @@ func newRTFixture(t *testing.T, o rtOpts) *rtFixture {
 	if childState == "" {
 		childState = session.StateRunning
 	}
-	f.seed(t, sessionstore.Session{ID: "root", State: session.StateRunning, RootSessionID: "root"})
+	f.seed(t, sessionstore.Session{UserID: testOwner, ID: "root", State: session.StateRunning, RootSessionID: "root"})
 	f.seed(t, sessionstore.Session{
-		ID: "parent", State: session.StateRunning, ParentSessionID: "root", RootSessionID: "root", DelegationDepth: 1,
+		UserID: testOwner,
+		ID:     "parent", State: session.StateRunning, ParentSessionID: "root", RootSessionID: "root", DelegationDepth: 1,
 	})
 	f.seed(t, sessionstore.Session{
-		ID: "child", State: childState, ParentSessionID: "parent", RootSessionID: "root", DelegationDepth: 2,
+		UserID: testOwner,
+		ID:     "child", State: childState, ParentSessionID: "parent", RootSessionID: "root", DelegationDepth: 2,
 		DelegationLease: &sessionstore.DelegationLease{MaxTokenBudget: rtSlice},
 	})
 	return f
@@ -503,10 +505,12 @@ func TestBudgetReturnSkipsNonDelegatedRows_spec_8_3(t *testing.T) {
 		row  sessionstore.Session
 	}{
 		{"delegated child recording itself as root", sessionstore.Session{
-			ID: "self", State: session.StateRunning, ParentSessionID: "root", RootSessionID: "self", DelegationDepth: 1,
+			UserID: testOwner,
+			ID:     "self", State: session.StateRunning, ParentSessionID: "root", RootSessionID: "self", DelegationDepth: 1,
 		}},
 		{"depth-0 row with a parent", sessionstore.Session{
-			ID: "derived", State: session.StateRunning, ParentSessionID: "root", RootSessionID: "root",
+			UserID: testOwner,
+			ID:     "derived", State: session.StateRunning, ParentSessionID: "root", RootSessionID: "root",
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -87,7 +87,8 @@ func TestEmitAwaitingClientActionEnteredIgnoresWrongState_spec_7_3_13(t *testing
 	srv := New(memstore.New(), Options{DevTenantHeader: true, Events: bus, OpsEmitter: emitter, LifecycleAuditSink: sink})
 
 	srv.emitAwaitingClientActionEntered(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", State: session.StateRunning,
 	})
 	if n := len(emitter.Buffer().Query(0, events.EventFilter{}, 100).Events); n != 0 {
 		t.Errorf("F-7.3.13: wrong-state emit produced %d ops events, want 0", n)
@@ -126,10 +127,12 @@ func TestEmitAwaitingClientActionExpiredEmitsAuditRow_spec_7_3_25(t *testing.T) 
 func TestAwaitingActionEmittersNoSinkSafe_spec_7_3_13(t *testing.T) {
 	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	srv.emitAwaitingClientActionEntered(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", State: session.StateAwaitingClientAction,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", State: session.StateAwaitingClientAction,
 	})
 	srv.emitAwaitingClientActionExpired(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", State: session.StateExpired,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", State: session.StateExpired,
 	})
 }
 
@@ -143,7 +146,8 @@ func TestServerImplementsAwaitingExpiryNotifier_spec_7_3_25(t *testing.T) {
 	} = srv
 	// Bonus: a method call with a nil sink is safe.
 	srv.OnSessionExpiredFromAwaitingClientAction(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme",
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme",
 	})
 }
 
@@ -171,7 +175,8 @@ func TestServerImplementsAwaitingEntryNotifier_spec_6_2_14(t *testing.T) {
 	} = srv
 
 	srv.OnSessionEnteredAwaitingClientAction(context.Background(), sessionstore.Session{
-		ID: "s_entry", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "s_entry", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateAwaitingClientAction,
 	})
 	if len(sink.events) != 1 || sink.events[0].EventType != auditSessionAwaitingActionEntered {
@@ -199,7 +204,8 @@ func TestServerImplementsRetryAttemptNotifier_spec_6_2_14(t *testing.T) {
 	} = srv
 
 	srv.OnSessionRetryAttempt(context.Background(), sessionstore.Session{
-		ID: "s_retry", TenantID: "acme", RuntimeRef: "claude-code",
+		UserID: testOwner,
+		ID:     "s_retry", TenantID: "acme", RuntimeRef: "claude-code",
 		State: session.StateResumePending,
 	})
 	if len(retryCalls) != 1 || retryCalls[0] != "unknown" {

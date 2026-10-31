@@ -332,7 +332,7 @@ func primaryNonLoopbackIP(t *testing.T) string {
 func assertCLIBearerAuthenticates(t *testing.T, bin, home string) {
 	t.Helper()
 	res := embedded.Run(t, bin, home, 2*time.Minute,
-		"session", "new", "--runtime", "echo", "--user", "alice@acme.com")
+		"session", "new", "--runtime", "echo")
 	if res.ExitCode == 0 {
 		return
 	}

@@ -37,6 +37,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // hookRaceRound is one randomized interleaving: the recovery edge the
@@ -123,7 +124,8 @@ func hookRaceOnce(t *testing.T, round int, rr hookRaceRound) bool {
 		}
 	}
 	f.seedBound(t, id, pod, rr.retries, rr.slot)
-	h := f.srv.Handler()
+	// spec: §10.2 (Session ownership) — the requests run as the seeded rows' owner.
+	h := ownerprincipal.Wrap(f.srv.Handler(), ownerprincipal.Alice)
 
 	start := make(chan struct{})
 	var wg sync.WaitGroup
@@ -200,7 +202,8 @@ func assertHookRaceEvents(t *testing.T, round int, f *funnelRaceFixture, id, pod
 func (f *funnelRaceFixture) seedBound(t *testing.T, id, pod string, retries int64, slot bool) {
 	t.Helper()
 	if err := f.store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning, RetryCount: retries,
+		UserID: ownerprincipal.Alice,
+		ID:     id, TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning, RetryCount: retries,
 	}); err != nil {
 		t.Fatalf("seed %s: %v", id, err)
 	}

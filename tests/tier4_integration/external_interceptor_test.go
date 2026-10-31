@@ -275,6 +275,84 @@ func TestExternalInterceptorModifyImmutableTenantThroughGateway_spec_4_8(t *test
 	}
 }
 
+// spec: 4.8 (Gateway Policy Engine), 15.1 (REST API) — a registered PreRoute or
+// PostRoute interceptor governs POST /v1/sessions as it governs
+// POST /v1/sessions/start: a REJECT answers 403 INTERCEPTOR_REJECTED naming the
+// phase, a runtime-hint MODIFY sets the session's runtime, and the forwarded
+// payload carries the authenticated tenant and the principal's subject rather
+// than the request's userId.
+// diagnosis: the two-step creation route did not run the §4.8 route chains
+// through the real gateway, so a deployer's routing policy is bypassed by
+// creating the session with POST /v1/sessions. Check that
+// validateAndBuildCreateRow calls the PreRoute segments and the PostRoute
+// chain, and that --external-interceptor reached the chain.
+func TestExternalRouteChainsGovernTwoStepCreate_spec_4_8(t *testing.T) {
+	t.Parallel()
+	gateway.SkipUnlessAvailable(t)
+
+	rewrite, _ := json.Marshal(map[string]any{
+		"tenant_id":         "acme",
+		"user_id":           "alice@acme.com",
+		"requested_runtime": "echo-hinted",
+	})
+	cases := []struct {
+		name        string
+		phase       string
+		handler     stubinterceptor.Handler
+		wantStatus  int
+		wantRuntime string
+	}{
+		{"preroute-reject", "PreRoute", stubinterceptor.Reject("blocked"), http.StatusForbidden, ""},
+		{"postroute-reject", "PostRoute", stubinterceptor.Reject("blocked"), http.StatusForbidden, ""},
+		{"preroute-allow", "PreRoute", stubinterceptor.Allow(), http.StatusCreated, "echo"},
+		{"preroute-modify", "PreRoute", stubinterceptor.Modify(rewrite), http.StatusCreated, "echo-hinted"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			stub := stubinterceptor.Start(t, tc.handler)
+			gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--agent-runtime", "echo",
+				"--external-interceptor=name=route-policy,endpoint="+stub.Addr()+",phase="+tc.phase)
+			do := interceptorReq(t, gw.BaseURL())
+			bootstrapEchoTenant(t, do)
+
+			code, resp := do(http.MethodPost, "/v1/sessions", "", map[string]any{
+				"runtimeRef": "echo",
+				"userId":     "bob@acme.com",
+			})
+			if code != tc.wantStatus {
+				t.Fatalf("POST /v1/sessions: status %d (%v), want %d", code, resp, tc.wantStatus)
+			}
+			if tc.wantStatus == http.StatusForbidden {
+				errBody, _ := resp["error"].(map[string]any)
+				if c, _ := errBody["code"].(string); c != "INTERCEPTOR_REJECTED" {
+					t.Errorf("error code = %q, want INTERCEPTOR_REJECTED", c)
+				}
+				details, _ := errBody["details"].(map[string]any)
+				if got, _ := details["phase"].(string); got != tc.phase {
+					t.Errorf("details.phase = %q, want %q", got, tc.phase)
+				}
+			} else if got, _ := resp["runtimeRef"].(string); got != tc.wantRuntime {
+				t.Errorf("runtimeRef = %q, want %q (%v)", got, tc.wantRuntime, resp)
+			}
+
+			var seen bool
+			for _, req := range stub.Requests() {
+				if req.GetPhase() != tc.phase {
+					continue
+				}
+				seen = true
+				if strings.Contains(string(req.GetContent()), "bob@acme.com") {
+					t.Errorf("forwarded content %q carried the request's userId", req.GetContent())
+				}
+			}
+			if !seen {
+				t.Fatalf("the stub received no %s request; the two-step route did not run the chain", tc.phase)
+			}
+		})
+	}
+}
+
 // spec: §4.8 — "If any interceptor returns `REJECT`, the chain
 // short-circuits immediately ... The rejection reason is logged and
 // returned to the caller." The PostAgentOutput phase MODIFY column adds

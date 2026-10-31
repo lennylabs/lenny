@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
@@ -46,7 +48,7 @@ func policyFilterHarness(t *testing.T, parentRuntimeRef string) (*mcp.Server, ru
 	// The caller's parent session — its runtime carries the effective
 	// DelegationPolicyRef the discover filter resolves.
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "u-alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State: session.StateRunning, RuntimeRef: parentRuntimeRef,
 	}); err != nil {
 		t.Fatalf("seed parent session: %v", err)
@@ -58,6 +60,7 @@ func policyFilterHarness(t *testing.T, parentRuntimeRef string) (*mcp.Server, ru
 	})
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -75,7 +78,7 @@ func policyFilterHarness(t *testing.T, parentRuntimeRef string) (*mcp.Server, ru
 // callerOnParent is the principal bound to the seeded parent session so
 // callerSessionID resolves the §8.3 effective policy.
 var callerOnParent = authmw.Principal{
-	Subject: "alice", TenantID: "acme", SessionID: "sess_parent",
+	Subject: ownerprincipal.Alice, TenantID: "acme", SessionID: "sess_parent",
 }
 
 func TestDiscoverAgentsFiltersByEffectiveDelegationPolicy_spec_8_3_244(t *testing.T) {
@@ -208,7 +211,7 @@ func TestDiscoverAgentsUnboundCallerSkipsPolicyFilter_spec_8_3_244(t *testing.T)
 		}},
 	})
 
-	unbound := authmw.Principal{Subject: "alice", TenantID: "acme"}
+	unbound := authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme"}
 	text := resultText(t, callAs(t, srv.Handler(), unbound, "lenny/discover_agents", `{}`))
 	// No policy narrowing without a resolvable session.
 	if !strings.Contains(text, "writer-agent") {
@@ -241,7 +244,7 @@ func TestDiscoverAgentsResolvesPolicyViaSessionIDArg_spec_8_3_244(t *testing.T) 
 		}},
 	})
 
-	unbound := authmw.Principal{Subject: "alice", TenantID: "acme"}
+	unbound := authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme"}
 	text := resultText(t, callAs(t, srv.Handler(), unbound, "lenny/discover_agents",
 		`{"sessionId":"sess_parent"}`))
 	if !strings.Contains(text, "reader-agent") {

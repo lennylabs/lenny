@@ -256,15 +256,15 @@ func newRaceFixture(t *testing.T, opt raceOptions) *raceFixture {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	var grpcOpts []grpc.ServerOption
 	if opt.failAssignRPC {
 		grpcOpts = append(grpcOpts, grpc.ChainUnaryInterceptor(failAssignCredentialsInterceptor))
 	}
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv, grpcOpts...))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv, grpcOpts...))
 	assigner := &recordingLeaseAssigner{}
 	binder.Credentials = assigner
 
@@ -279,7 +279,7 @@ func newRaceFixture(t *testing.T, opt raceOptions) *raceFixture {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Tenants:                 tenants,
 		Runtimes:                runtimes,
 		CredentialPools:         credPools,
@@ -300,7 +300,7 @@ func newRaceFixture(t *testing.T, opt raceOptions) *raceFixture {
 	}
 	srv := sessionserver.New(hooks, opts)
 	return &raceFixture{
-		h: srv.Handler(), uploadToken: uploadToken, inner: inner, hooks: hooks, cluster: cluster,
+		h: asOwner(srv.Handler()), uploadToken: uploadToken, inner: inner, hooks: hooks, cluster: cluster,
 		assigner: assigner, bus: bus, audit: audit,
 	}
 }
@@ -344,7 +344,7 @@ func raceCredentialStores(t *testing.T) (tenantstore.Store, runtimestore.Store, 
 func (f *raceFixture) create(t *testing.T, plan json.RawMessage) {
 	t.Helper()
 	body, _ := json.Marshal(sessionserver.CreateSessionRequest{
-		RuntimeRef: "echo", UserID: "alice@acme.com", WorkspacePlan: plan,
+		RuntimeRef: "echo", WorkspacePlan: plan,
 	})
 	if rr := postSessionStep(t, f.h, "/v1/sessions", body); rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
@@ -413,7 +413,7 @@ func (f *raceFixture) row(t *testing.T) sessionstore.Session {
 func (f *raceFixture) claimPresent(t *testing.T) bool {
 	t.Helper()
 	var claim lennyv1.SandboxClaim
-	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim)
+	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim)
 	return err == nil
 }
 

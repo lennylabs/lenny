@@ -109,7 +109,7 @@ func seedSuspendedSession(t *testing.T, store sessionstore.Store, id, pod string
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", UserID: "alice", RuntimeRef: "echo",
+		ID: id, TenantID: "acme", UserID: testOwner, RuntimeRef: "echo",
 		State: session.StateSuspended, PodAssignment: pod,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
@@ -146,7 +146,7 @@ func TestResumeAndDeliverPostResumeSendFailureBuffersQueuedSessionRunning(t *tes
 	seedSuspendedSession(t, store, "s-send-fail", "pod-1")
 	srv, inbox := inboxServer(t, store, &sendErrorExecutor{err: errors.New("runtime rejected prompt")})
 
-	rr := sendMessageRequest(t, srv.Handler(), "s-send-fail", immediateMessage("wake up"))
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "s-send-fail", immediateMessage("wake up"))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body=%s (a post-resume delivery failure must fail closed to a 200 queued receipt, not a 5xx)", rr.Code, rr.Body.String())
 	}
@@ -185,7 +185,7 @@ func TestResumeAndDeliverResumeFailureHoldsQueuedRowUnchanged(t *testing.T) {
 	// The echo executor must never be reached: the resume failed before delivery.
 	srv, inbox, dlq := inboxAndDLQServer(t, store, executor.NewEchoExecutor())
 
-	rr := sendMessageRequest(t, srv.Handler(), "s-resume-fail", immediateMessage("wake up"))
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "s-resume-fail", immediateMessage("wake up"))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body=%s (a resume failure must answer a 200 queued receipt, not a 5xx)", rr.Code, rr.Body.String())
 	}
@@ -233,7 +233,7 @@ func TestResumeAndDeliverResumeFailureRecordsTransientCategory(t *testing.T) {
 	store := &resumeWriteFailStore{Store: inner, err: errors.New("store update failed")}
 	srv, _ := inboxServer(t, store, executor.NewEchoExecutor())
 
-	rr := sendMessageRequest(t, srv.Handler(), "s-resume-cat", immediateMessage("wake up"))
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "s-resume-cat", immediateMessage("wake up"))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body=%s (a resume failure must fail closed to a 200 queued receipt)", rr.Code, rr.Body.String())
 	}
@@ -274,7 +274,7 @@ func TestResumeAndDeliverHappyPathDeliversAndRuns(t *testing.T) {
 	seedSuspendedSession(t, store, "s-happy", "pod-3")
 	srv, _ := inboxServer(t, store, executor.NewEchoExecutor())
 
-	rr := sendMessageRequest(t, srv.Handler(), "s-happy", immediateMessage("hello again"))
+	rr := sendMessageRequest(t, asOwner(srv.Handler()), "s-happy", immediateMessage("hello again"))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -334,7 +334,7 @@ func TestResumeAndDeliverSendFailureAfterReportUsesFreshState_spec_7_2(t *testin
 		seedSuspendedSession(t, store, "s-report-pending", "pod-1")
 		srv, inbox, dlq := inboxAndDLQServer(t, store, &reportingSendExecutor{store: store, state: session.StateResumePending})
 
-		rr := sendMessageRequest(t, srv.Handler(), "s-report-pending", immediateMessage("wake up"))
+		rr := sendMessageRequest(t, asOwner(srv.Handler()), "s-report-pending", immediateMessage("wake up"))
 		if rr.Code != http.StatusOK {
 			t.Fatalf("status %d, body=%s, want a 200 queued receipt", rr.Code, rr.Body.String())
 		}
@@ -358,7 +358,7 @@ func TestResumeAndDeliverSendFailureAfterReportUsesFreshState_spec_7_2(t *testin
 		seedSuspendedSession(t, store, "s-report-failed", "pod-1")
 		srv, inbox, dlq := inboxAndDLQServer(t, store, &reportingSendExecutor{store: store, state: session.StateFailed})
 
-		rr := sendMessageRequest(t, srv.Handler(), "s-report-failed", immediateMessage("wake up"))
+		rr := sendMessageRequest(t, asOwner(srv.Handler()), "s-report-failed", immediateMessage("wake up"))
 		if rr.Code != http.StatusConflict {
 			t.Fatalf("status %d, body=%s, want 409 TARGET_TERMINAL", rr.Code, rr.Body.String())
 		}

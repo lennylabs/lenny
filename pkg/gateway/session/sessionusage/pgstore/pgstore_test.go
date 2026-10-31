@@ -38,7 +38,7 @@ func TestSessionUsagePgStore_spec_8_8_897(t *testing.T) {
 	}
 	pg := embpostgres.New(embpostgres.Config{
 		DataDir:      t.TempDir(),
-		Port:         15544,
+		Port:         0,
 		Database:     "lenny",
 		Username:     "lenny",
 		Password:     "lenny",

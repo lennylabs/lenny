@@ -55,7 +55,7 @@ func TestSealWorkspaceStartsSealAndExportSpan_spec_16_3(t *testing.T) {
 		Sealer:          &flakySealer{failUntil: 0}, // succeeds first try
 		Clock:           func() time.Time { return time.Unix(0, 0).UTC() },
 	})
-	sess := sessionstore.Session{ID: "s1", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted}
+	sess := sessionstore.Session{UserID: testOwner, ID: "s1", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted}
 	if err := srv.sealWorkspace(context.Background(), sess); err != nil {
 		t.Fatalf("sealWorkspace: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestSealWorkspaceSpanRecordsTimeoutError_spec_16_3(t *testing.T) {
 		SealSleep:       sleep,
 		Clock:           clock,
 	})
-	sess := sessionstore.Session{ID: "s1", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted}
+	sess := sessionstore.Session{UserID: testOwner, ID: "s1", TenantID: "acme", RuntimeRef: "claude-code", State: session.StateCompleted}
 	if err := srv.sealWorkspace(context.Background(), sess); err == nil {
 		t.Fatal("sealWorkspace must return the last error when the window is exhausted")
 	}

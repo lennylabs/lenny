@@ -86,6 +86,7 @@ func leaseTestServer(t *testing.T, leases leasestore.LeaseStore, replicaID strin
 func seedRunningRow(t *testing.T, store sessionstore.Store, tenantID, id string) {
 	t.Helper()
 	if err := store.Create(context.Background(), sessionstore.Session{
+		UserID:     testOwner,
 		ID:         id,
 		TenantID:   tenantID,
 		State:      session.StateRunning,

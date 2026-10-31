@@ -40,6 +40,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
@@ -163,7 +164,7 @@ func (f snapCopyFixture) handler(mod func(*sessionserver.Options)) http.Handler 
 	if mod != nil {
 		mod(&o)
 	}
-	return sessionserver.New(f.store, o).Handler()
+	return ownerprincipal.Wrap(sessionserver.New(f.store, o).Handler(), ownerprincipal.Alice)
 }
 
 // call posts ep's body to ep's path for the source session.

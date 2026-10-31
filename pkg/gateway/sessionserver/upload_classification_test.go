@@ -43,6 +43,7 @@ func TestHandleUploadRejectsTierStoreMismatch_spec_12_9_1048(t *testing.T) {
 	})
 
 	row := sessionstore.Session{
+		UserID:    testOwner,
 		ID:        "sess_t4",
 		TenantID:  "restricted",
 		State:     session.StateCreated,
@@ -57,7 +58,7 @@ func TestHandleUploadRejectsTierStoreMismatch_spec_12_9_1048(t *testing.T) {
 		t.Fatalf("issue token: %v", err)
 	}
 
-	rr := doUpload(t, srv.Handler(), "sess_t4", "restricted", tok, "restricted-bytes")
+	rr := doUpload(t, asOwner(srv.Handler()), "sess_t4", "restricted", tok, "restricted-bytes")
 	if rr.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d (body=%s)", rr.Code, http.StatusUnprocessableEntity, rr.Body.String())
 	}

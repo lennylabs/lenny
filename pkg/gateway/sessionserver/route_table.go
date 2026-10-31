@@ -18,7 +18,9 @@ import (
 // endpoints require read_own_sessions ("Read own session history").
 // requireSessionPermission honors tenant custom roles and admits a
 // caller whose token carries no roles (the minimal gateway's no-OIDC
-// dev posture). See rbac_gate.go.
+// dev posture). On every /v1/sessions/{id} route except eval and usage,
+// requireSessionAccess then applies the §10.2 Session ownership rule.
+// See rbac_gate.go.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	manage := func(next http.HandlerFunc) http.HandlerFunc {
@@ -33,6 +35,10 @@ func (s *Server) Handler() http.Handler {
 	read := func(next http.HandlerFunc) http.HandlerFunc {
 		return s.requireSessionPermission(auth.PermReadOwnSessions, next)
 	}
+	// The eval route keeps its §10.7 caller rule and the usage route
+	// keeps its view_usage gate; every other /v1/sessions/{id} route
+	// mounts through one of these two ownership wrappers.
+	readID, manageID := s.readSessionRoute, s.manageSessionRoute
 	mux.HandleFunc("POST /v1/sessions", manage(s.handleCreate))
 	mux.HandleFunc("GET /v1/runtimes", s.handleListRuntimes)
 	// §15.1 — session-facing pool discovery. Mounted bare like
@@ -45,63 +51,83 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/environments/{name}/sessions", manage(s.handleEnvironmentSessions))
 	mux.HandleFunc("POST /v1/sessions/start", manage(s.handleCreateAndStart))
 	mux.HandleFunc("GET /v1/sessions", read(s.handleList))
-	mux.HandleFunc("GET /v1/sessions/{id}", read(s.handleGet))
-	mux.HandleFunc("DELETE /v1/sessions/{id}", manage(s.handleDelete))
-	mux.HandleFunc("POST /v1/sessions/{id}/finalize", manage(s.handleFinalize))
-	mux.HandleFunc("POST /v1/sessions/{id}/start", manage(s.handleStart))
+	mux.HandleFunc("GET /v1/sessions/{id}", readID(s.handleGet))
+	mux.HandleFunc("DELETE /v1/sessions/{id}", manageID(s.handleDelete))
+	mux.HandleFunc("POST /v1/sessions/{id}/finalize", manageID(s.handleFinalize))
+	mux.HandleFunc("POST /v1/sessions/{id}/start", manageID(s.handleStart))
 	// spec: §7.2 — the interrupt path signals the runtime
 	// through the pod's adapter and waits for `interrupt_acknowledged`
 	// within deadlineMs, rather than collapsing the transition to a
 	// row-only flip.
-	mux.HandleFunc("POST /v1/sessions/{id}/interrupt", manage(s.handleInterrupt))
+	mux.HandleFunc("POST /v1/sessions/{id}/interrupt", manageID(s.handleInterrupt))
 	mux.HandleFunc("POST /v1/sessions/{id}/terminate",
-		manage(s.handleTransition(session.EndpointTerminate, transitionTerminate)))
-	mux.HandleFunc("POST /v1/sessions/{id}/resume", manage(s.handleResume))
-	mux.HandleFunc("POST /v1/sessions/{id}/derive", manage(s.handleDerive))
-	mux.HandleFunc("POST /v1/sessions/{id}/replay", manage(s.handleReplay))
-	mux.HandleFunc("POST /v1/sessions/{id}/extend-retention", manage(s.handleExtendRetention))
+		manageID(s.handleTransition(session.EndpointTerminate, transitionTerminate)))
+	mux.HandleFunc("POST /v1/sessions/{id}/resume", manageID(s.handleResume))
+	mux.HandleFunc("POST /v1/sessions/{id}/derive", manageID(s.handleDerive))
+	mux.HandleFunc("POST /v1/sessions/{id}/replay", manageID(s.handleReplay))
+	mux.HandleFunc("POST /v1/sessions/{id}/extend-retention", manageID(s.handleExtendRetention))
 	mux.HandleFunc("POST /v1/sessions/{id}/eval", evalWrite(s.handleEval))
-	mux.HandleFunc("POST /v1/sessions/{id}/memory", manage(s.handleMemoryWrite))
-	mux.HandleFunc("GET /v1/sessions/{id}/memory", read(s.handleMemoryQuery))
-	mux.HandleFunc("DELETE /v1/sessions/{id}/memory/{memoryId}", manage(s.handleMemoryDelete))
-	mux.HandleFunc("POST /v1/sessions/{id}/upload", manage(s.handleUpload))
-	mux.HandleFunc("POST /v1/sessions/{id}/upload-archive", manage(s.handleUploadArchive))
-	mux.HandleFunc("POST /v1/sessions/{id}/upload-to-session", manage(s.handleUploadToSession))
-	mux.HandleFunc("POST /v1/sessions/{id}/messages", manage(s.handleMessages))
+	mux.HandleFunc("POST /v1/sessions/{id}/memory", manageID(s.handleMemoryWrite))
+	mux.HandleFunc("GET /v1/sessions/{id}/memory", readID(s.handleMemoryQuery))
+	mux.HandleFunc("DELETE /v1/sessions/{id}/memory/{memoryId}", manageID(s.handleMemoryDelete))
+	mux.HandleFunc("POST /v1/sessions/{id}/upload", manageID(s.handleUpload))
+	mux.HandleFunc("POST /v1/sessions/{id}/upload-archive", manageID(s.handleUploadArchive))
+	mux.HandleFunc("POST /v1/sessions/{id}/upload-to-session", manageID(s.handleUploadToSession))
+	mux.HandleFunc("POST /v1/sessions/{id}/messages", manageID(s.handleMessages))
 	// spec: §15.1 — the §15.4 MessageDAG list over the durable
 	// session_messages store, the read side of the message endpoint. Shares
 	// the transcript backing; projects each row to a message node with its
 	// stable id, derived `from`, and delivery state. F-15.1.3.
-	mux.HandleFunc("GET /v1/sessions/{id}/messages", read(s.handleMessagesList))
-	mux.HandleFunc("GET /v1/sessions/{id}/transcript", read(s.handleTranscript))
-	mux.HandleFunc("GET /v1/sessions/{id}/tree", read(s.handleTree))
+	mux.HandleFunc("GET /v1/sessions/{id}/messages", readID(s.handleMessagesList))
+	mux.HandleFunc("GET /v1/sessions/{id}/transcript", readID(s.handleTranscript))
+	mux.HandleFunc("GET /v1/sessions/{id}/tree", readID(s.handleTree))
 	mux.HandleFunc("GET /v1/usage", s.handleUsage)
 	mux.HandleFunc("GET /v1/metering/events", s.handleMeteringEvents)
-	mux.HandleFunc("GET /v1/sessions/{id}/events", read(s.handleEvents))
+	mux.HandleFunc("GET /v1/sessions/{id}/events", readID(s.handleEvents))
 	// spec: §15.1 / §24.17 — the `lenny session logs`
 	// target; session logs over the durable event store, content-
 	// negotiated SSE / JSON envelope with the `--since` filter.
-	mux.HandleFunc("GET /v1/sessions/{id}/logs", read(s.handleLogs))
+	mux.HandleFunc("GET /v1/sessions/{id}/logs", readID(s.handleLogs))
 	// spec: §15.1 — per-session artifact listing (the §15.2
 	// list_artifacts tool's REST equivalent) and reconciled per-session
 	// token usage (the §15.2 get_token_usage tool's REST equivalent). The
 	// usage route self-gates on view_usage like GET /v1/usage. F-15.2.3.
-	mux.HandleFunc("GET /v1/sessions/{id}/artifacts", read(s.handleListArtifacts))
+	mux.HandleFunc("GET /v1/sessions/{id}/artifacts", readID(s.handleListArtifacts))
 	mux.HandleFunc("GET /v1/sessions/{id}/usage", s.handleSessionUsage)
 	// spec: §15.1 — workspace snapshot download (tar.gz)
 	// and the §7.5 captured setup-command output, the REST reads the SDK
 	// references for artifact recovery and setup debugging. F-15.1.3.
-	mux.HandleFunc("GET /v1/sessions/{id}/workspace", read(s.handleWorkspace))
-	mux.HandleFunc("GET /v1/sessions/{id}/setup-output", read(s.handleSetupOutput))
-	mux.HandleFunc("GET /v1/sessions/{id}/webhook-events", read(s.handleWebhookEvents))
+	mux.HandleFunc("GET /v1/sessions/{id}/workspace", readID(s.handleWorkspace))
+	mux.HandleFunc("GET /v1/sessions/{id}/setup-output", readID(s.handleSetupOutput))
+	mux.HandleFunc("GET /v1/sessions/{id}/webhook-events", readID(s.handleWebhookEvents))
 	// spec: §15.1 path-parameter casing — camelCase route templates.
-	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{toolCallId}/approve", manage(s.handleToolUseApprove))
-	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{toolCallId}/deny", manage(s.handleToolUseDeny))
-	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/respond", manage(s.handleElicitationRespond))
-	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss", manage(s.handleElicitationDismiss))
+	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{toolCallId}/approve", manageID(s.handleToolUseApprove))
+	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{toolCallId}/deny", manageID(s.handleToolUseDeny))
+	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/respond", manageID(s.handleElicitationRespond))
+	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss", manageID(s.handleElicitationDismiss))
 	mux.HandleFunc("GET /v1/blobs/{ref...}", s.handleBlob)
 	// spec: §10.2 — a tenant-scoped route runs only for a request whose
 	// tenant resolves from its principal (or, under --dev-mode, from the
 	// dev header). F-10.2.21.
 	return s.requireTenant(mux)
+}
+
+// readSessionRoute wraps a /v1/sessions/{id} read route: the
+// read_own_sessions permission gate, then the ownership check, then next.
+//
+// spec: §10.2 (Session ownership) rules 5, 6, and 7 — the ownership check
+// runs inside the permission gate and ahead of the handler, so the
+// tool-use, elicitation, and memory routes answer a session the caller may
+// not use before any route-specific lookup runs.
+func (s *Server) readSessionRoute(next http.HandlerFunc) http.HandlerFunc {
+	return s.requireSessionPermission(auth.PermReadOwnSessions, s.requireSessionAccess(false, next))
+}
+
+// manageSessionRoute wraps a /v1/sessions/{id} action route: the
+// manage_own_sessions permission gate, then the owner-only check, then
+// next.
+//
+// spec: §10.2 (Session ownership) rules 5, 6, and 7.
+func (s *Server) manageSessionRoute(next http.HandlerFunc) http.HandlerFunc {
+	return s.requireSessionPermission(auth.PermManageOwnSessions, s.requireSessionAccess(true, next))
 }

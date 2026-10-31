@@ -23,7 +23,8 @@ import (
 func TestStartSetupOutputStoreErrorStillCommitsRunning_spec_7_5(t *testing.T) {
 	mem := memstore.New()
 	if err := mem.Create(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateStarting,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateStarting,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

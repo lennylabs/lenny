@@ -30,6 +30,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // newUnionServers stands up REST and MCP servers sharing a session store
@@ -42,19 +43,23 @@ func newUnionServers(t *testing.T) (restURL, mcpURL string, store sessionstore.S
 	exec := executor.NewEchoExecutor()
 
 	rest := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
-	tsREST := httptest.NewServer(rest.Handler())
+	// spec: §10.2 (Session ownership) — REST requests run as the seeded rows' owner.
+	tsREST := httptest.NewServer(ownerprincipal.Wrap(rest.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          exec,
-		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:            func() string { return "sess_union_mcp" },
-		TenantID:          "acme",
+		// spec: §10.2 (Session ownership) — lenny/send_message checks the
+		// caller against the target's owner through the shared service.
+		SessionService: rest,
+		Executor:       exec,
+		Clock:          func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:         func() string { return "sess_union_mcp" },
+		TenantID:       "acme",
 	})
-	tsMCP := httptest.NewServer(mcpSrv.Handler())
+	tsMCP := httptest.NewServer(ownerprincipal.Wrap(mcpSrv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsMCP.Close)
 
 	return tsREST.URL, tsMCP.URL, store

@@ -49,7 +49,7 @@ func TestRegisterAdapterUnderTestStateSequence(t *testing.T) {
 	tsREST, tsMCP, _ := newConsistencyServers(t, "acme")
 
 	resp, raw := postJSON(t, tsREST.URL+"/v1/sessions", "acme",
-		[]byte(`{"runtimeRef":"claude-code","userId":"alice@acme.com"}`))
+		[]byte(`{"runtimeRef":"claude-code"}`))
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("create: status %d, body %s", resp.StatusCode, raw)
 	}
@@ -128,12 +128,12 @@ func (e listEnvelope) ids() map[string]bool {
 func TestRegisterAdapterUnderTestPaginationParity(t *testing.T) {
 	tsREST, tsMCP, _ := newConsistencyServers(t, "acme")
 
-	// Seed two sessions so the list is non-trivial.
-	for _, user := range []string{"alice@acme.com", "bob@acme.com"} {
-		body := []byte(`{"runtimeRef":"claude-code","userId":"` + user + `"}`)
-		resp, raw := postJSON(t, tsREST.URL+"/v1/sessions", "acme", body)
+	// Seed two sessions so the list is non-trivial. Both are owned by the
+	// caller, the principal the servers' wrapper gives every request.
+	for i := range 2 {
+		resp, raw := postJSON(t, tsREST.URL+"/v1/sessions", "acme", []byte(`{"runtimeRef":"claude-code"}`))
 		if resp.StatusCode != http.StatusCreated {
-			t.Fatalf("seed %s: status %d, body %s", user, resp.StatusCode, raw)
+			t.Fatalf("seed %d: status %d, body %s", i, resp.StatusCode, raw)
 		}
 	}
 

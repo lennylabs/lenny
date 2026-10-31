@@ -37,7 +37,7 @@ func evalServer(t *testing.T, maxPerSession int, seed ...sessionstore.Session) (
 	}
 	evals := evalstore.NewMemory(maxPerSession, nil)
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Evals: evals})
-	return srv.Handler(), evals
+	return asOwner(srv.Handler()), evals
 }
 
 func evalServerWithExperiments(t *testing.T, exps experimentstore.Store, seed ...sessionstore.Session) (http.Handler, evalstore.Store) {
@@ -50,7 +50,7 @@ func evalServerWithExperiments(t *testing.T, exps experimentstore.Store, seed ..
 	}
 	evals := evalstore.NewMemory(0, nil)
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Evals: evals, Experiments: exps})
-	return srv.Handler(), evals
+	return asOwner(srv.Handler()), evals
 }
 
 func evalSession(id string, state session.State) sessionstore.Session {
@@ -148,7 +148,7 @@ func evalServerRLClock(t *testing.T, clock func() time.Time, perSession, perTena
 		EvalPerTenantPerMinute:  perTenant,
 		Clock:                   clock,
 	})
-	return srv.Handler()
+	return asOwner(srv.Handler())
 }
 
 // TestEvalRequiresSessionEvalWritePermission_spec_10_7_936 pins §10.7: the eval endpoint is gated on session:eval:write. A role
@@ -354,7 +354,7 @@ func TestEvalEmitsEvalScoreMetric_spec_16_1_164(t *testing.T) {
 			got = append(got, capturedEvalScore{tenantID, scorer, variantID, score})
 		},
 	})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	if rr := postEval(t, h, "sess_e", sessionserver.EvalRequest{Scorer: "safety", Score: evalScore(0.97)}); rr.Code != http.StatusCreated {
 		t.Fatalf("scalar eval: status %d, body %s", rr.Code, rr.Body.String())
@@ -465,7 +465,7 @@ func TestEvalUnavailableWithoutStore(t *testing.T) {
 	store := memstore.New()
 	_ = store.Create(context.Background(), evalSession("sess_1", session.StateRunning))
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}) // no Evals wired
-	rr := postEval(t, srv.Handler(), "sess_1", sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)})
+	rr := postEval(t, asOwner(srv.Handler()), "sess_1", sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)})
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("eval with no store: status %d, want 503", rr.Code)
 	}

@@ -54,6 +54,7 @@ func TestBlackboxFuzzOversizeHeaderRejected(t *testing.T) {
 		t.Fatalf("build request: %v", err)
 	}
 	req.Header.Set("X-Lenny-Tenant-ID", blackboxFuzzTenant)
+	req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 	// 2 MiB comfortably exceeds net/http's 1 MiB DefaultMaxHeaderBytes.
 	req.Header.Set("X-Lenny-Fuzz-Oversize-Header", strings.Repeat("a", 2*1024*1024))
 
@@ -75,6 +76,7 @@ func TestBlackboxFuzzOversizeHeaderRejected(t *testing.T) {
 		t.Fatalf("build follow-up request: %v", err)
 	}
 	follow.Header.Set("X-Lenny-Tenant-ID", blackboxFuzzTenant)
+	follow.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 	followResp, err := http.DefaultClient.Do(follow)
 	if err != nil {
 		t.Fatalf("gateway did not survive the oversize-header probe: %v", err)
@@ -106,6 +108,7 @@ func TestBlackboxFuzzDeeplyNestedJSONBodyRejected(t *testing.T) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", blackboxFuzzTenant)
+	req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -158,6 +161,7 @@ func TestBlackboxFuzzPathTraversalArtifactKeyRejected(t *testing.T) {
 				t.Fatalf("build request: %v", err)
 			}
 			req.Header.Set("X-Lenny-Tenant-ID", blackboxFuzzTenant)
+			req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
@@ -198,6 +202,7 @@ func TestBlackboxFuzzDeeplyNestedJSONRPCBodyRejectedByMCP(t *testing.T) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", blackboxFuzzTenant)
+	req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -252,6 +257,7 @@ func TestBlackboxFuzzOversizePayloadRejected(t *testing.T) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", blackboxFuzzTenant)
+	req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 	req.Header.Set("Idempotency-Key", "blackbox-fuzz-oversize-payload")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -276,6 +282,7 @@ func TestBlackboxFuzzOversizePayloadRejected(t *testing.T) {
 		t.Fatalf("build follow-up request: %v", err)
 	}
 	follow.Header.Set("X-Lenny-Tenant-ID", blackboxFuzzTenant)
+	follow.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 	followResp, err := http.DefaultClient.Do(follow)
 	if err != nil {
 		t.Fatalf("gateway did not survive the oversize-payload probe: %v", err)
@@ -314,6 +321,7 @@ func TestBlackboxFuzzMalformedJSONBodyRejected(t *testing.T) {
 			}
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Lenny-Tenant-ID", blackboxFuzzTenant)
+			req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
@@ -362,6 +370,7 @@ func TestBlackboxFuzzSQLInjectionTenantClaimRejected(t *testing.T) {
 				t.Fatalf("build request: %v", err)
 			}
 			req.Header.Set("X-Lenny-Tenant-ID", tc.tenant)
+			req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
@@ -387,6 +396,7 @@ func TestBlackboxFuzzSQLInjectionTenantClaimRejected(t *testing.T) {
 		t.Fatalf("build follow-up request: %v", err)
 	}
 	follow.Header.Set("X-Lenny-Tenant-ID", blackboxFuzzTenant)
+	follow.Header.Set("X-Lenny-User-ID", "alice@acme.com")
 	followResp, err := http.DefaultClient.Do(follow)
 	if err != nil {
 		t.Fatalf("gateway did not survive the SQL-injection tenant-claim probes: %v", err)

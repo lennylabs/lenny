@@ -38,6 +38,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/tier3_contract/sdks/harness"
 )
 
@@ -94,7 +95,6 @@ func TestPythonClientHelperProtocol(t *testing.T) {
 	// well-formed response line the harness can decode.
 	create := send(t, h, harness.Command{Op: "create_session", Args: map[string]any{
 		"runtime": "claude-code",
-		"user_id": "alice@acme.com",
 	}})
 	if !create.OK {
 		t.Fatalf("create_session over the helper protocol failed: %v", create.Error)
@@ -116,7 +116,6 @@ func TestPythonClientWireFormat(t *testing.T) {
 
 	create := send(t, h, harness.Command{Op: "create_session", Args: map[string]any{
 		"runtime": "claude-code",
-		"user_id": "alice@acme.com",
 	}})
 	if !create.OK {
 		t.Fatalf("create_session failed: %v", create.Error)
@@ -297,9 +296,7 @@ func TestPythonClientErrorEnvelope(t *testing.T) {
 
 	// A create missing runtimeRef is rejected with the §15.1
 	// VALIDATION_ERROR envelope; the helper surfaces the parsed code.
-	missing := send(t, h, harness.Command{Op: "create_session", Args: map[string]any{
-		"user_id": "alice@acme.com",
-	}})
+	missing := send(t, h, harness.Command{Op: "create_session", Args: map[string]any{}})
 	if missing.OK {
 		t.Fatal("create without runtime succeeded; expected VALIDATION_ERROR")
 	}
@@ -424,7 +421,7 @@ func TestPythonClientIdempotencyKeyHandling(t *testing.T) {
 	// replayed key returns the cached create response.
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	ts := httptest.NewServer(idempotencyWrapped(srv.Handler()))
+	ts := httptest.NewServer(idempotencyWrapped(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)))
 	t.Cleanup(ts.Close)
 	h := spawnPythonHelper(t, ts.URL)
 
@@ -527,7 +524,7 @@ func TestPythonClientEquivalenceWithGo(t *testing.T) {
 		},
 		{
 			Name:        "create_missing_runtime",
-			Command:     harness.Command{Op: "create_session", Args: map[string]any{"user_id": "alice@acme.com"}},
+			Command:     harness.Command{Op: "create_session", Args: map[string]any{}},
 			ExpectError: "VALIDATION_ERROR",
 		},
 		{

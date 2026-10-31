@@ -132,7 +132,7 @@ func TestSlotRetriesReachesSlotBindRequest_spec_5_2(t *testing.T) {
 	}
 
 	s := &Server{}
-	row := sessionstore.Session{ID: "sess-1", TenantID: "acme", RuntimeRef: "rt"}
+	row := sessionstore.Session{UserID: testOwner, ID: "sess-1", TenantID: "acme", RuntimeRef: "rt"}
 	match := podsession.PoolMatch{Pool: "set", MaxConcurrentSessions: 2, SlotRetries: slotRetriesPtr(0)}
 	got := s.slotBindRequest(ctx, row, match, workspaceplan.Plan{}, nil, nil, nil, "")
 	if got.SlotRetries == nil || *got.SlotRetries != 0 || slotRetryBudget(got) != 0 {

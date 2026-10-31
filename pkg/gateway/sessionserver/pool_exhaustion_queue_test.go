@@ -74,11 +74,11 @@ func queueExhaustionServer(t *testing.T, pool poolstore.Pool, poll time.Duration
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	objs := []client.Object{
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 	}
 	for i, name := range sandboxes {
-		objs = append(objs, podBindIdleSandbox(name, "echo-pool", fmt.Sprintf("10.244.2.%d", 5+i)))
+		objs = append(objs, podBindIdleSandbox(t, name, "echo-pool", fmt.Sprintf("10.244.2.%d", 5+i)))
 	}
 	cluster := podBindClient(t, objs...)
 
@@ -94,9 +94,9 @@ func queueExhaustionServer(t *testing.T, pool poolstore.Pool, poll time.Duration
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return fmt.Sprintf("sess-q-%d", idCounter.Add(1)) },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Pools:                   pools,
 		QueuePollInterval:       poll,
 		SetPodClaimQueueDepth:   probe.onDepth,
@@ -109,7 +109,7 @@ func queueExhaustionServer(t *testing.T, pool poolstore.Pool, poll time.Duration
 // and returns the recorded response. It is safe to call from a goroutine: each
 // call builds its own request and recorder.
 func fireQueueCreate(h http.Handler, userID string) *httptest.ResponseRecorder {
-	body := mustJSON(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: userID})
+	body := mustJSON(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -135,7 +135,7 @@ func waitForQueue(t *testing.T, timeout time.Duration, desc string, cond func() 
 func liveClaimCount(t *testing.T, c client.Client) int {
 	t.Helper()
 	var list lennyv1.SandboxClaimList
-	if err := c.List(context.Background(), &list, client.InNamespace(podTestNS)); err != nil {
+	if err := c.List(context.Background(), &list, client.InNamespace(testNS(t))); err != nil {
 		t.Fatalf("list SandboxClaims: %v", err)
 	}
 	return len(list.Items)
@@ -156,7 +156,7 @@ func persistedRowCount(t *testing.T, s *memstore.Store) int {
 func claimExists(t *testing.T, c client.Client, podName string) bool {
 	t.Helper()
 	var claim lennyv1.SandboxClaim
-	err := c.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: podclaim.ClaimName(podName)}, &claim)
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: podclaim.ClaimName(podName)}, &claim)
 	return err == nil
 }
 
@@ -179,7 +179,7 @@ func claimExists(t *testing.T, c client.Client, podName string) bool {
 func TestQueueDispositionDrainsAsPodsFreeOnRealPool(t *testing.T) {
 	t.Parallel()
 	srv, cluster, store, probe := queueExhaustionServer(t, queueExhaustionPool(30), 10*time.Millisecond, "sbx-1")
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 	ctx := context.Background()
 
 	// A claims the single warm pod and holds it through the created window.
@@ -208,7 +208,7 @@ func TestQueueDispositionDrainsAsPodsFreeOnRealPool(t *testing.T) {
 
 	// Release the pod. A queued request re-enters acquisition and succeeds; the
 	// per-pod CREATE guard admits exactly one waiter onto the freed pod.
-	if err := podclaim.DeleteClaim(ctx, cluster, podTestNS, "sbx-1"); err != nil {
+	if err := podclaim.DeleteClaim(ctx, cluster, testNS(t), "sbx-1"); err != nil {
 		t.Fatalf("release round 1 (delete claim): %v", err)
 	}
 	if first := <-results; first != http.StatusCreated {
@@ -221,7 +221,7 @@ func TestQueueDispositionDrainsAsPodsFreeOnRealPool(t *testing.T) {
 	}
 
 	// Release again for the remaining waiter, which then drains too.
-	if err := podclaim.DeleteClaim(ctx, cluster, podTestNS, "sbx-1"); err != nil {
+	if err := podclaim.DeleteClaim(ctx, cluster, testNS(t), "sbx-1"); err != nil {
 		t.Fatalf("release round 2 (delete claim): %v", err)
 	}
 	if second := <-results; second != http.StatusCreated {
@@ -245,7 +245,7 @@ func TestQueueDispositionDrainsAsPodsFreeOnRealPool(t *testing.T) {
 func TestQueueWaitTimeoutReturnsRetryableExhaustionOnRealPool(t *testing.T) {
 	t.Parallel()
 	srv, cluster, store, probe := queueExhaustionServer(t, queueExhaustionPool(1), 10*time.Millisecond, "sbx-1")
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	// A holds the single pod for the whole test.
 	if rr := fireQueueCreate(h, "alice@acme.com"); rr.Code != http.StatusCreated {

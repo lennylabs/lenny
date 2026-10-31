@@ -183,7 +183,8 @@ func (p *preRunningFixture) recreateClaim(t *testing.T) {
 func (p *preRunningFixture) terminal(t *testing.T, id string, from, to session.State, scrub string) {
 	t.Helper()
 	row := sessionstore.Session{
-		ID: id, TenantID: "acme", RuntimeRef: "echo", State: to,
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", RuntimeRef: "echo", State: to,
 		PodAssignment: reclaimPod, ScrubPolicy: scrub,
 	}
 	if err := p.store.Create(context.Background(), row); err != nil {

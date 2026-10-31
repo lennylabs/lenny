@@ -33,6 +33,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/delegation/cycle"
@@ -198,8 +200,8 @@ func TestInterceptorWeakeningCooldownComposed_spec_4_8_1058(t *testing.T) {
 	parentID := session.NewID()
 	const targetID = "sess_target"
 	for _, s := range []sessionstore.Session{
-		{ID: parentID, TenantID: weakeningTenant, UserID: "user_alice", RuntimeRef: "claude", PoolRef: "pool-a", State: session.StateRunning, IsolationProfile: isolation.ProfileSandboxed, CreatedAt: clk.now(), UpdatedAt: clk.now()},
-		{ID: targetID, TenantID: weakeningTenant, UserID: "user_alice", RuntimeRef: "worker", PoolRef: "pool-b", State: session.StateRunning, IsolationProfile: isolation.ProfileSandboxed, CreatedAt: clk.now(), UpdatedAt: clk.now()},
+		{ID: parentID, TenantID: weakeningTenant, UserID: ownerprincipal.Alice, RuntimeRef: "claude", PoolRef: "pool-a", State: session.StateRunning, IsolationProfile: isolation.ProfileSandboxed, CreatedAt: clk.now(), UpdatedAt: clk.now()},
+		{ID: targetID, TenantID: weakeningTenant, UserID: ownerprincipal.Alice, RuntimeRef: "worker", PoolRef: "pool-b", State: session.StateRunning, IsolationProfile: isolation.ProfileSandboxed, CreatedAt: clk.now(), UpdatedAt: clk.now()},
 	} {
 		if err := sessions.Create(ctx, s); err != nil {
 			t.Fatalf("seed session %s: %v", s.ID, err)
@@ -231,6 +233,7 @@ func TestInterceptorWeakeningCooldownComposed_spec_4_8_1058(t *testing.T) {
 	}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             sessions,
 		Executor:          executor.NewEchoExecutor(),
@@ -365,7 +368,7 @@ func TestInterceptorWeakeningCooldownComposed_spec_4_8_1058(t *testing.T) {
 // the lenny error code (empty on success) and the error details.
 func dispatchDelegateWeakening(t *testing.T, srv *mcp.Server, parentID string) (string, map[string]any) {
 	t.Helper()
-	res, ok, err := srv.DispatchTool(context.Background(), "lenny/delegate_task",
+	res, ok, err := srv.DispatchTool(ownerprincipal.Context(context.Background(), ownerprincipal.Alice), "lenny/delegate_task",
 		json.RawMessage(`{"parentSessionId":"`+parentID+`","target":"worker"}`))
 	if err != nil || !ok {
 		t.Fatalf("DispatchTool(delegate_task) = (ok=%v, err=%v)", ok, err)
@@ -378,7 +381,7 @@ func dispatchDelegateWeakening(t *testing.T, srv *mcp.Server, parentID string) (
 // the error details.
 func dispatchSendMessageWeakening(t *testing.T, srv *mcp.Server, targetID string) (string, map[string]any) {
 	t.Helper()
-	res, ok, err := srv.DispatchTool(context.Background(), "lenny/send_message",
+	res, ok, err := srv.DispatchTool(ownerprincipal.Context(context.Background(), ownerprincipal.Alice), "lenny/send_message",
 		json.RawMessage(`{"to":"`+targetID+`","message":"ping"}`))
 	if err != nil || !ok {
 		t.Fatalf("DispatchTool(send_message) = (ok=%v, err=%v)", ok, err)

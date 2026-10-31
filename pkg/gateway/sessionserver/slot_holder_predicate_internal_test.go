@@ -114,7 +114,7 @@ func (h *slotHolderFixture) rehydrateWithNewSession(t *testing.T) {
 // leaves the stored row naming no pod and removes the session's member, so a
 // rehydration after the recovery rebuild deletes the flag does not add the
 // released session again, and the §12.4 fallback gate counts the sibling
-// only.
+// and the new session's reservation record but not the released session.
 //
 // spec: §5.2 (Post-recovery rehydration atomicity), §7.3 (Resume flow after
 // pod failure), §12.4 (Redis failure behavior)
@@ -144,9 +144,12 @@ func TestFunnelRecoveryEdgesKeepSlotHolderPredicate_spec_5_2(t *testing.T) {
 			if got := h.members(t); got != "[new sib]" {
 				t.Fatalf("members after rehydration = %s, want [new sib]", got)
 			}
-			count, admitted, err := h.store.ReserveSlotUnderLock(context.Background(), "pod-a", 4)
-			if err != nil || !admitted || count != 2 {
-				t.Fatalf("ReserveSlotUnderLock = (%d, %v, %v), want (2, true, nil): the sibling only", count, admitted, err)
+			// The gate counts the sibling and new's reservation record
+			// (F-12.4.38), plus the probe: the released session's record
+			// went with its release.
+			count, admitted, err := h.store.ReserveSlotUnderLock(context.Background(), "pod-a", "probe", 4)
+			if err != nil || !admitted || count != 3 {
+				t.Fatalf("ReserveSlotUnderLock = (%d, %v, %v), want (3, true, nil): the sibling and new only", count, admitted, err)
 			}
 		})
 	}

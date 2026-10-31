@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // responseIDPattern is the wire form of a response id the default id source
@@ -34,11 +35,12 @@ func newIdentityServer(t *testing.T, ts transcriptstore.Store) *httptest.Server 
 	h := translator.NewOpenResponsesHandler(memstore.New(), executor.NewEchoExecutor(), translator.OpenResponsesOptions{
 		HolderForwarder: responsesstub.LocalForwarder{},
 		Terminal:        responsesstub.ReleasingTerminal{Exec: nil, Store: nil},
+		SessionAccess:   ownerprincipal.SessionAccess{},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		Transcripts:     ts,
 	})
-	srv := httptest.NewServer(h.Handler())
+	srv := httptest.NewServer(ownerprincipal.Wrap(h.Handler(), ownerprincipal.Alice))
 	t.Cleanup(srv.Close)
 	return srv
 }

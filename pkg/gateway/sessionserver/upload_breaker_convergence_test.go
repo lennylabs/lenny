@@ -81,7 +81,7 @@ func newOutageReplica(t *testing.T, blobs blobstore.Store, threshold int) replic
 
 	const tenant, session = "acme", "sess_convergence"
 	tok := seedAndMintUploadSubsystem(t, store, issuer, session, tenant)
-	return replica{handler: srv.Handler(), tenant: tenant, session: session, token: tok, breaker: br}
+	return replica{handler: asOwner(srv.Handler()), tenant: tenant, session: session, token: tok, breaker: br}
 }
 
 // upload drives one upload through the replica's real HTTP handler and

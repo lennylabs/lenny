@@ -20,7 +20,9 @@ import (
 )
 
 // movingStore moves the row with move after the handler's entry read, so the
-// locked row differs from the row the handler validated.
+// locked row differs from the row the handler validated. The §10.2 ownership
+// check's read runs under the primary-read bound, so it carries a deadline,
+// and it does not count as the handler's entry read.
 type movingStore struct {
 	sessionstore.Store
 	once sync.Once
@@ -29,6 +31,9 @@ type movingStore struct {
 
 func (m *movingStore) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
 	row, err := m.Store.Get(ctx, tenantID, id)
+	if _, bounded := ctx.Deadline(); bounded {
+		return row, err
+	}
 	m.once.Do(func() {
 		_, _ = m.Update(ctx, tenantID, id, func(r *sessionstore.Session) error {
 			m.move(r)
@@ -63,7 +68,7 @@ func terminalRequest(t *testing.T, srv *Server, method, path string) *httptest.R
 	req := httptest.NewRequest(method, path, nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	return rr
 }
 
@@ -112,7 +117,8 @@ func TestTerminateAndDeleteRevalidateOnTheLockedRow_spec_15_1(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := memstore.New()
 			if err := inner.Create(context.Background(), sessionstore.Session{
-				ID: "s", TenantID: "acme", RuntimeRef: "echo", State: tc.from, CoordinationGeneration: 4,
+				UserID: testOwner,
+				ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: tc.from, CoordinationGeneration: 4,
 			}); err != nil {
 				t.Fatalf("seed: %v", err)
 			}
@@ -185,7 +191,7 @@ func TestFunnelAndHookWritersEmitTheTerminalEventsOnce_spec_7_2(t *testing.T) {
 		{"DELETE", func(ctx context.Context, srv *Server) {
 			req := httptest.NewRequest(http.MethodDelete, "/v1/sessions/s", nil).WithContext(ctx)
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
-			srv.Handler().ServeHTTP(httptest.NewRecorder(), req)
+			asOwner(srv.Handler()).ServeHTTP(httptest.NewRecorder(), req)
 		}, session.StateCancelled, ""},
 		{"failure funnel", func(ctx context.Context, srv *Server) {
 			_, _ = srv.ReportSessionFailure(ctx, FailureReport{
@@ -220,7 +226,8 @@ func TestFunnelAndHookWritersEmitTheTerminalEventsOnce_spec_7_2(t *testing.T) {
 					seed = session.StateRunning
 				}
 				if err := store.Create(context.Background(), sessionstore.Session{
-					ID: "s", TenantID: "acme", RuntimeRef: "echo", State: seed,
+					UserID: testOwner,
+					ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: seed,
 				}); err != nil {
 					t.Fatalf("seed: %v", err)
 				}
@@ -430,7 +437,8 @@ func TestRESTMessageToAClosingBindingTakesTheTerminalReroute_spec_7_1(t *testing
 		sessionstore.MarkTerminated(r, from, time.Now().UTC())
 	}}
 	if err := inner.Create(context.Background(), sessionstore.Session{
-		ID: "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -445,7 +453,7 @@ func TestRESTMessageToAClosingBindingTakesTheTerminalReroute_spec_7_1(t *testing
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if strings.Contains(rr.Body.String(), "EXECUTOR_FAILURE") {
 		t.Fatalf("POST messages to a closing binding answered EXECUTOR_FAILURE: %d %s", rr.Code, rr.Body.String())

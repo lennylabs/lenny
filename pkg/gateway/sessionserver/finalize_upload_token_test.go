@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -74,7 +75,7 @@ func newFinalizeTokenFixture(t *testing.T) *finalizeTokenFixture {
 	}
 	for _, id := range []string{finalizeTokenSession, "sess_other"} {
 		row := sessionstore.Session{
-			ID: id, TenantID: finalizeTokenTenant, UserID: "alice",
+			ID: id, TenantID: finalizeTokenTenant, UserID: testOwner,
 			RuntimeRef: "claude-code", State: session.StateCreated,
 			CreatedAt: now, UpdatedAt: now,
 		}
@@ -86,7 +87,7 @@ func newFinalizeTokenFixture(t *testing.T) *finalizeTokenFixture {
 			t.Fatalf("seed %s: %v", id, err)
 		}
 	}
-	return &finalizeTokenFixture{h: srv.Handler(), store: store, issuer: issuer, tracker: tracker, now: now, token: tok}
+	return &finalizeTokenFixture{h: asOwner(srv.Handler()), store: store, issuer: issuer, tracker: tracker, now: now, token: tok}
 }
 
 func (f *finalizeTokenFixture) finalize(t *testing.T, token string, setHeader bool, body string) *httptest.ResponseRecorder {
@@ -244,8 +245,11 @@ func TestFinalizeRequiresUploadToken_spec_7_4(t *testing.T) {
 			if got := finalizeErrorCode(t, rr); got != tc.wantCode {
 				t.Errorf("code = %q, want %q", got, tc.wantCode)
 			}
-			if n := f.store.gets.Load(); n != 0 {
-				t.Errorf("store Get calls = %d, want 0 before the token check", n)
+			// The one read is the §10.2 ownership check, which precedes the
+			// token check (Session ownership rule 7). A refused token costs
+			// no further read.
+			if n := f.store.gets.Load(); n != 1 {
+				t.Errorf("store Get calls = %d, want the ownership read alone", n)
 			}
 			if n := f.store.updates.Load(); n != 0 {
 				t.Errorf("store Update calls = %d, want 0 before the token check", n)
@@ -283,11 +287,41 @@ func TestFinalizeAdmitsIssuedTokenThenRefusesItsReuse_spec_7_4(t *testing.T) {
 	if got := finalizeErrorCode(t, rr); got != "UPLOAD_TOKEN_CONSUMED" {
 		t.Errorf("code = %q, want UPLOAD_TOKEN_CONSUMED", got)
 	}
-	if f.store.gets.Load() != gets || f.store.updates.Load() != updates {
-		t.Errorf("refused finalize touched the store: gets %d->%d, updates %d->%d",
+	// The one further read is the §10.2 ownership check.
+	if f.store.gets.Load() != gets+1 || f.store.updates.Load() != updates {
+		t.Errorf("refused finalize passed the token check: gets %d->%d, updates %d->%d",
 			gets, f.store.gets.Load(), updates, f.store.updates.Load())
 	}
 	if got := f.row(t).State; got != session.StateReady {
 		t.Errorf("state after refused finalize = %q, want ready", got)
+	}
+}
+
+// TestFinalizeByNonOwnerWithValidTokenLeavesTheTokenUsable_spec_10_2 pins the
+// order of the two finalize checks. A non-owner presenting the session's valid
+// token receives the 404 of a missing session, because the ownership check
+// precedes the token check, and the token is not consumed, so the owner's
+// finalize still succeeds.
+//
+// spec: 10.2 (Session ownership) rules 5 and 7, 7.4 (Upload authorization)
+func TestFinalizeByNonOwnerWithValidTokenLeavesTheTokenUsable_spec_10_2(t *testing.T) {
+	f := newFinalizeTokenFixture(t)
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+finalizeTokenSession+"/finalize", nil)
+	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{Subject: "bob@acme.com"}))
+	req.Header.Set("X-Lenny-Tenant-ID", finalizeTokenTenant)
+	req.Header.Set("X-Lenny-Upload-Token", f.token)
+	rr := httptest.NewRecorder()
+	f.h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("non-owner finalize: status %d, want 404; body %s", rr.Code, rr.Body.String())
+	}
+	if got := finalizeErrorCode(t, rr); got != "RESOURCE_NOT_FOUND" {
+		t.Errorf("code = %q, want RESOURCE_NOT_FOUND", got)
+	}
+	if n := f.store.updates.Load(); n != 0 {
+		t.Errorf("store Update calls = %d, want 0", n)
+	}
+	if rr := f.finalize(t, f.token, true, ""); rr.Code != http.StatusOK {
+		t.Fatalf("owner finalize after the refusal: status %d, want 200; body %s", rr.Code, rr.Body.String())
 	}
 }

@@ -51,6 +51,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // multiTurnEchoRuntime is an adapter.RuntimeProcess that answers every
@@ -143,7 +144,8 @@ func multiTurnSeed(t *testing.T, store sessionstore.Store, id string, st session
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", State: st, RuntimeRef: "echo",
+		UserID: ownerprincipal.Alice,
+		ID:     id, TenantID: "acme", State: st, RuntimeRef: "echo",
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed %s: %v", id, err)
@@ -214,7 +216,8 @@ func multiTurnRESTServer(t *testing.T, e executor.Executor) (*httptest.Server, s
 		Executor:        e,
 		Transcripts:     transcriptstore.NewMemory(),
 	})
-	hs := httptest.NewServer(srv.Handler())
+	// spec: §10.2 (Session ownership) — the requests run as the seeded rows' owner.
+	hs := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(hs.Close)
 	return hs, store
 }
@@ -302,6 +305,7 @@ func TestMCPSendMessageCarriesEveryMessageOnTheHeldStream_spec_28_5_1(t *testing
 	multiTurnSeed(t, store, "sess-mcp", session.StateRunning)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          e,
@@ -309,7 +313,8 @@ func TestMCPSendMessageCarriesEveryMessageOnTheHeldStream_spec_28_5_1(t *testing
 		IDFunc:            func() string { return "unused" },
 		TenantID:          "acme",
 	})
-	hs := httptest.NewServer(srv.Handler())
+	// spec: §10.2 (Session ownership) — the calls run as the seeded rows' owner.
+	hs := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(hs.Close)
 
 	for i := 1; i <= 3; i++ {
@@ -330,7 +335,8 @@ func TestDelegateTaskThenAFollowUpOnTheHeldStream_spec_28_5_1(t *testing.T) {
 	tenants, runtimes, credPools := materializeStores(t)
 	rt := newMultiTurnEchoRuntime()
 	srv, _, _, _ := materializeServer(t, cluster, tenants, runtimes, credPools, &poolRecordingAssigner{}, rt)
-	hs := httptest.NewServer(srv.Handler())
+	// spec: §10.2 (Session ownership) — the calls run as the seeded rows' owner.
+	hs := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(hs.Close)
 
 	args := `{"parentSessionId":"sess_parent","target":"` + matOKRuntime +

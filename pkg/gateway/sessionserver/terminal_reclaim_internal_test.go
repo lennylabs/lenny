@@ -100,7 +100,8 @@ func TestTerminalReclaimPreRunningReleasesPodAndLease(t *testing.T) {
 	s, c, assigner := reclaimTestServer(t, "sbx-pre")
 
 	ran := s.terminalReclaimPreRunning(context.Background(), session.StateFinalizing, sessionstore.Session{
-		ID: "sess-pre", TenantID: "acme", PodAssignment: "sbx-pre", PoolRef: "pool-a",
+		UserID: testOwner,
+		ID:     "sess-pre", TenantID: "acme", PodAssignment: "sbx-pre", PoolRef: "pool-a",
 	})
 	if !ran {
 		t.Fatalf("terminalReclaimPreRunning = false, want true (a pre-running terminal session is reclaimed)")
@@ -128,7 +129,8 @@ func TestTerminalReclaimPreRunningSkipsLocallyBoundSession(t *testing.T) {
 	s.podRegistry.Put(&podsession.BindResult{SessionID: "sess-bound", TenantID: "acme", SandboxName: "sbx-bound"})
 
 	ran := s.terminalReclaimPreRunning(context.Background(), session.StateReady, sessionstore.Session{
-		ID: "sess-bound", TenantID: "acme", PodAssignment: "sbx-bound",
+		UserID: testOwner,
+		ID:     "sess-bound", TenantID: "acme", PodAssignment: "sbx-bound",
 	})
 	if ran {
 		t.Fatalf("terminalReclaimPreRunning = true for a locally-bound session, want false (executor path owns the release)")
@@ -158,7 +160,8 @@ func TestTerminalReclaimPreRunningSkipsHandedOffRunningSession(t *testing.T) {
 	// replica (coordinator handoff), so this replica's registry misses it.
 
 	ran := s.terminalReclaimPreRunning(context.Background(), session.StateRunning, sessionstore.Session{
-		ID: "sess-run", TenantID: "acme", PodAssignment: "sbx-run", PoolRef: "pool-a",
+		UserID: testOwner,
+		ID:     "sess-run", TenantID: "acme", PodAssignment: "sbx-run", PoolRef: "pool-a",
 	})
 	if ran {
 		t.Fatalf("terminalReclaimPreRunning = true for a handed-off running session, want false " +
@@ -178,7 +181,8 @@ func TestTerminalReclaimPreRunningSkipsResumingSession(t *testing.T) {
 	s, c, _ := reclaimTestServer(t, "sbx-resume")
 
 	ran := s.terminalReclaimPreRunning(context.Background(), session.StateResuming, sessionstore.Session{
-		ID: "sess-resume", TenantID: "acme", PodAssignment: "sbx-resume", PoolRef: "pool-a",
+		UserID: testOwner,
+		ID:     "sess-resume", TenantID: "acme", PodAssignment: "sbx-resume", PoolRef: "pool-a",
 	})
 	if ran {
 		t.Fatalf("terminalReclaimPreRunning = true for a resuming session, want false")
@@ -202,7 +206,8 @@ func TestTerminalReclaimPreRunningReclaimsUnboundStartingSession_spec_7_2(t *tes
 	s, c, assigner := reclaimTestServer(t, "sbx-start")
 
 	ran := s.terminalReclaimPreRunning(context.Background(), session.StateStarting, sessionstore.Session{
-		ID: "sess-start", TenantID: "acme", PodAssignment: "sbx-start", PoolRef: "pool-a",
+		UserID: testOwner,
+		ID:     "sess-start", TenantID: "acme", PodAssignment: "sbx-start", PoolRef: "pool-a",
 	})
 	if !ran {
 		t.Fatalf("terminalReclaimPreRunning = false for an unbound starting session, want true")
@@ -227,7 +232,8 @@ func TestTerminalReclaimPreRunningLeavesBoundStartingSessionToExecutor_spec_7_2(
 	s.podRegistry.Put(&podsession.BindResult{SessionID: "sess-start-bound", TenantID: "acme", SandboxName: "sbx-start-bound"})
 
 	ran := s.terminalReclaimPreRunning(context.Background(), session.StateStarting, sessionstore.Session{
-		ID: "sess-start-bound", TenantID: "acme", PodAssignment: "sbx-start-bound", PoolRef: "pool-a",
+		UserID: testOwner,
+		ID:     "sess-start-bound", TenantID: "acme", PodAssignment: "sbx-start-bound", PoolRef: "pool-a",
 	})
 	if ran {
 		t.Fatalf("terminalReclaimPreRunning = true for a locally bound starting session, want false")
@@ -245,7 +251,8 @@ func TestTerminalReclaimPreRunningNoPodBindingIsSkipped(t *testing.T) {
 	s, _, assigner := reclaimTestServer(t, "sbx-none")
 
 	ran := s.terminalReclaimPreRunning(context.Background(), session.StateCreated, sessionstore.Session{
-		ID: "sess-none", TenantID: "acme", PodAssignment: "",
+		UserID: testOwner,
+		ID:     "sess-none", TenantID: "acme", PodAssignment: "",
 	})
 	if ran {
 		t.Fatalf("terminalReclaimPreRunning = true for a row with no pod binding, want false")
@@ -262,7 +269,8 @@ func TestTerminalReclaimPreRunningNoPodBindingIsSkipped(t *testing.T) {
 func TestTerminalReclaimPreRunningNoBinderIsSkipped(t *testing.T) {
 	s := &Server{} // podBinder and podRegistry nil
 	ran := s.terminalReclaimPreRunning(context.Background(), session.StateCreated, sessionstore.Session{
-		ID: "sess-x", TenantID: "acme", PodAssignment: "sbx-x",
+		UserID: testOwner,
+		ID:     "sess-x", TenantID: "acme", PodAssignment: "sbx-x",
 	})
 	if ran {
 		t.Fatalf("terminalReclaimPreRunning = true with no binder, want false")
@@ -278,7 +286,8 @@ func TestTerminalReclaimPreRunningCreatedStateReclaims(t *testing.T) {
 	s, c, assigner := reclaimTestServer(t, "sbx-created")
 
 	ran := s.terminalReclaimPreRunning(context.Background(), session.StateCreated, sessionstore.Session{
-		ID: "sess-created", TenantID: "acme", PodAssignment: "sbx-created", PoolRef: "pool-a",
+		UserID: testOwner,
+		ID:     "sess-created", TenantID: "acme", PodAssignment: "sbx-created", PoolRef: "pool-a",
 	})
 	if !ran {
 		t.Fatalf("terminalReclaimPreRunning = false for a created session, want true")

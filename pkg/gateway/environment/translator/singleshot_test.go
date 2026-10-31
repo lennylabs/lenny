@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
@@ -25,11 +26,10 @@ func TestNoopSingleShotBinderPersistsRunningRow(t *testing.T) {
 
 	spec := SingleShotSpec{
 		TenantID:    "acme",
-		UserID:      "alice",
 		RuntimeRef:  "echo",
 		Environment: "prod",
 	}
-	binding, err := b.BindSingleShot(context.Background(), spec)
+	binding, err := b.BindSingleShot(ownerContext(context.Background(), "alice@acme.com"), spec)
 	if err != nil {
 		t.Fatalf("BindSingleShot: %v", err)
 	}
@@ -50,7 +50,9 @@ func TestNoopSingleShotBinderPersistsRunningRow(t *testing.T) {
 	if row.State != session.StateRunning {
 		t.Errorf("state: got %q, want %q", row.State, session.StateRunning)
 	}
-	if row.TenantID != "acme" || row.UserID != "alice" ||
+	// spec: §10.2 (Session ownership) rule 1 — the owner is the principal's
+	// subject.
+	if row.TenantID != "acme" || row.UserID != "alice@acme.com" ||
 		row.RuntimeRef != "echo" || row.Environment != "prod" {
 		t.Errorf("row fields mismatch: %+v", row)
 	}
@@ -84,7 +86,7 @@ func TestNoopSingleShotBinderWrapsStoreError(t *testing.T) {
 		func() string { return "dup_id" },
 		func() time.Time { return time.Now().UTC() },
 	)
-	binding, err := b.BindSingleShot(context.Background(), SingleShotSpec{TenantID: "acme"})
+	binding, err := b.BindSingleShot(ownerContext(context.Background(), "alice@acme.com"), SingleShotSpec{TenantID: "acme"})
 	if err == nil {
 		t.Fatalf("expected error on duplicate id, got nil (id=%q)", binding.SessionID)
 	}
@@ -132,12 +134,57 @@ func (refusingStore) Create(context.Context, sessionstore.Session) error {
 func TestNoopSingleShotBinderMapsFenceRefusal_spec_12_8(t *testing.T) {
 	b := newNoopSingleShotBinder(refusingStore{memstore.New()},
 		func() string { return "sess_refused" }, time.Now)
-	_, err := b.BindSingleShot(context.Background(), SingleShotSpec{TenantID: "acme", UserID: "alice"})
+	_, err := b.BindSingleShot(ownerContext(context.Background(), "alice@acme.com"), SingleShotSpec{TenantID: "acme"})
 	var sse *SingleShotError
 	if !errors.As(err, &sse) {
 		t.Fatalf("err = %v, want *SingleShotError", err)
 	}
 	if sse.HTTPStatus != 403 || sse.Code != "USER_INVALIDATED" || sse.Message == "" {
 		t.Errorf("SingleShotError = %+v, want 403 USER_INVALIDATED with the refusal's message", sse)
+	}
+}
+
+// ownerContext returns ctx carrying an authenticated principal whose Subject
+// is subject. The internal test package cannot import the shared
+// ownerprincipal helper, which imports the session server, which imports
+// this package.
+func ownerContext(ctx context.Context, subject string) context.Context {
+	return authmw.WithPrincipal(ctx, authmw.Principal{Subject: subject})
+}
+
+// TestNoopSingleShotBinderRefusesMissingSubject_spec_10_2 pins the default
+// binder's no-subject refusal: a request with no principal, and one whose
+// principal carries an empty Subject, is the 401 UNAUTHORIZED
+// *SingleShotError and writes no session row. Before the binder took the
+// owner from the principal it wrote an ownerless running row for both.
+//
+// spec: §10.2 (Session ownership) rules 1 and 3.
+func TestNoopSingleShotBinderRefusesMissingSubject_spec_10_2(t *testing.T) {
+	cases := []struct {
+		name string
+		ctx  context.Context
+	}{
+		{name: "no principal", ctx: context.Background()},
+		{name: "empty subject", ctx: authmw.WithPrincipal(context.Background(), authmw.Principal{TenantID: "acme"})},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := memstore.New()
+			b := newNoopSingleShotBinder(store, func() string { return "sess_unauth" }, time.Now)
+			binding, err := b.BindSingleShot(tc.ctx, SingleShotSpec{TenantID: "acme", RuntimeRef: "echo"})
+			var sse *SingleShotError
+			if !errors.As(err, &sse) {
+				t.Fatalf("err = %v, want *SingleShotError", err)
+			}
+			if sse.HTTPStatus != 401 || sse.Code != "UNAUTHORIZED" {
+				t.Errorf("SingleShotError = %+v, want 401 UNAUTHORIZED", sse)
+			}
+			if binding.SessionID != "" {
+				t.Errorf("session id on refusal = %q, want empty", binding.SessionID)
+			}
+			if _, gerr := store.Get(context.Background(), "acme", "sess_unauth"); !errors.Is(gerr, sessionstore.ErrNotFound) {
+				t.Errorf("store.Get after refusal: err = %v, want ErrNotFound (no row written)", gerr)
+			}
+		})
 	}
 }

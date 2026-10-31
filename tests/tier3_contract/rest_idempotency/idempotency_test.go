@@ -20,6 +20,7 @@ import (
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 func newTestServer(t *testing.T) *httptest.Server {
@@ -27,7 +28,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	idem := idemmw.NewMemoryStore()
-	wrapped := idemmw.Wrap(srv.Handler(), idem, idemmw.Options{})
+	wrapped := idemmw.Wrap(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice), idem, idemmw.Options{})
 	ts := httptest.NewServer(wrapped)
 	t.Cleanup(ts.Close)
 	return ts
@@ -70,7 +71,7 @@ func post(t *testing.T, ts *httptest.Server, path, idemKey string, body any) (*h
 //	store.Put in pkg/gateway/middleware/idempotency.
 func TestIdempotencyReplayReturnsCachedResponse(t *testing.T) {
 	ts := newTestServer(t)
-	body := map[string]any{"runtimeRef": "claude-code", "userId": "alice"}
+	body := map[string]any{"runtimeRef": "claude-code"}
 
 	// First call creates the session.
 	resp1, b1 := post(t, ts, "/v1/sessions", "key-1", body)

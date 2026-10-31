@@ -70,9 +70,10 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 	// session whose turn failed through the session server's terminal claim
 	// and post-terminal hook. Both are always wired: the session server
 	// answers local when it coordinates every session and not-delivered when
-	// no forward client exists.
+	// no forward client exists. The session server's ownership predicate
+	// decides which sessions a response id may resolve to.
 	// spec: §15 (Open Responses conversation sessions); §29.3 (Interactive
-	// message send) Forwarding.
+	// message send) Forwarding; §10.2 (Session ownership).
 	singleShotBinder := sessionSingleShotBinder{srv: sessionSrv, runtimes: w.runtimes, capOverrides: w.capOverrides}
 	openaiHandler := translator.NewOpenAIChatHandler(w.sessions, w.exec, translator.OpenAIChatOptions{Clock: clockinject.Now, SingleShotBinder: singleShotBinder, DevTenantHeader: *w.f.devMode})
 	responsesHandler := translator.NewOpenResponsesHandler(w.sessions, w.exec, translator.OpenResponsesOptions{
@@ -81,6 +82,7 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 		Transcripts:        w.transcripts,
 		HolderForwarder:    sessionHolderForwarder{srv: sessionSrv},
 		Terminal:           sessionSrv,
+		SessionAccess:      sessionSrv,
 		DevTenantHeader:    *w.f.devMode,
 		PrimaryReadTimeout: *w.f.sessionPrimaryReadTimeout,
 	})
@@ -279,13 +281,16 @@ type sessionSingleShotBinder struct {
 // its native error envelope. The Retry-After seconds are zero for the
 // CREDENTIAL_POOL_EXHAUSTED case, which sets no header.
 //
-// spec: §15 built-in adapter single-shot compute model; §7.1 create-and-start
+// The session owner is not taken from the spec: CreateAndStartService binds
+// it from the principal ctx carries and refuses a ctx with no principal
+// subject with 401.
+//
+// spec: §10.2 (Session ownership) rule 1; §15 built-in adapter single-shot compute model; §7.1 create-and-start
 // atomicity; §4.9 CREDENTIAL_POOL_EXHAUSTED; §15 (Open Responses conversation
 // sessions).
 func (b sessionSingleShotBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (translator.SingleShotBinding, error) {
 	resp, serr := b.srv.CreateAndStartService(ctx, spec.TenantID, sessionserver.CreateSessionRequest{
 		RuntimeRef:  spec.RuntimeRef,
-		UserID:      spec.UserID,
 		Environment: spec.Environment,
 	})
 	if serr != nil {

@@ -504,7 +504,9 @@ func (g *liveGateway) deriveWrites(ctx context.Context, parent string) []string 
 // or the fence's refusal mapping diverged from the §12.8 refusal rows; a
 // derive that reserved, copied, or inserted anything under a new session ID,
 // even a write it later undid, means the source-owner check runs after the
-// reservation or the copy; bob resolving or seeing alice's elicitation
+// reservation or the copy; a non-owner tenant-admin's derive answered with
+// anything but 404 RESOURCE_NOT_FOUND means the route wrapper's §10.2
+// owner check is missing or runs after the fence; bob resolving or seeing alice's elicitation
 // means the MCP resolution tools key the triple on something other than
 // the authenticated caller; a DELETE /v1/responses/{id} other than 405
 // means the removed route is back.
@@ -563,10 +565,19 @@ func TestCreationFenceAndResolutionOnLiveGateway_spec_12_8(t *testing.T) {
 		if err := restrictAlice(ctx, g); err != nil {
 			t.Fatal(err)
 		}
+		// spec: §10.2 Session ownership — derive is an owner-only action
+		// for every role, so a tenant-admin that does not own the source
+		// gets the not-found answer before the §12.8 fence is consulted,
+		// and only the owner's derive reaches the fence.
 		code, body := g.rest("carol@acme.com", pkgauth.RoleTenantAdmin, http.MethodPost,
-			"/v1/sessions/"+parent+"/derive", map[string]any{"userId": "bob@acme.com"})
+			"/v1/sessions/"+parent+"/derive", map[string]any{})
+		if code != http.StatusNotFound || errorCode(body) != "RESOURCE_NOT_FOUND" {
+			t.Errorf("derive by a non-owner tenant-admin = %d %s, want 404 RESOURCE_NOT_FOUND", code, errorCode(body))
+		}
+		code, body = g.rest("alice@acme.com", pkgauth.RoleUser, http.MethodPost,
+			"/v1/sessions/"+parent+"/derive", map[string]any{})
 		if code != http.StatusForbidden || errorCode(body) != "ERASURE_IN_PROGRESS" {
-			t.Errorf("derive = %d %s, want 403 ERASURE_IN_PROGRESS", code, errorCode(body))
+			t.Errorf("derive by the owner = %d %s, want 403 ERASURE_IN_PROGRESS", code, errorCode(body))
 		}
 		if after := g.pgExec(`SELECT count(*) FROM sessions WHERE tenant_id = $1`, liveTenant); after != before {
 			t.Errorf("the refused derive changed the session rows from %d to %d", before, after)
@@ -600,8 +611,10 @@ func TestCreationFenceAndResolutionOnLiveGateway_spec_12_8(t *testing.T) {
 		}
 		args := map[string]any{"sessionId": parent, "elicitationId": elicitationID, "response": "approved"}
 		for _, tool := range []string{"lenny/respond_to_elicitation", "lenny/dismiss_elicitation"} {
-			if isErr, code, text := g.tool("bob@acme.com", pkgauth.RoleUser, tool, args); !isErr || code != "ELICITATION_NOT_FOUND" {
-				t.Errorf("bob %s on alice's elicitation = isError %v code %q (%s), want ELICITATION_NOT_FOUND", tool, isErr, code, text)
+			// spec: §10.2 (Session ownership) rule 7, §9.2 — the ownership
+			// check refuses bob on alice's session before the triple check.
+			if isErr, code, text := g.tool("bob@acme.com", pkgauth.RoleUser, tool, args); !isErr || code != "RESOURCE_NOT_FOUND" {
+				t.Errorf("bob %s on alice's elicitation = isError %v code %q (%s), want RESOURCE_NOT_FOUND", tool, isErr, code, text)
 			}
 		}
 		if pending() != 1 {

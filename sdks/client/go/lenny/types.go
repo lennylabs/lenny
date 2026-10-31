@@ -29,9 +29,6 @@ type CreateSessionRequest struct {
 	// RuntimeRef identifies the runtime the session targets. Required.
 	RuntimeRef string `json:"runtimeRef"`
 
-	// UserID is the §10.2 user the session is created for. Optional.
-	UserID string `json:"userId,omitempty"`
-
 	// WorkspacePlan is the §14 workspace plan submitted at creation.
 	// Optional; an absent plan starts the session with an empty
 	// workspace.

@@ -9,6 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -18,7 +19,24 @@ import (
 func newContinuity() (*continuity, sessionstore.Store, transcriptstore.Store) {
 	sessions := memstore.New()
 	transcripts := transcriptstore.NewMemory()
-	return &continuity{sessions: sessions, transcripts: transcripts}, sessions, transcripts
+	return &continuity{sessions: sessions, transcripts: transcripts, access: ownerAccess{}}, sessions, transcripts
+}
+
+// testOwner is the subject that owns every session these tests seed and the
+// principal they resolve as.
+const testOwner = "alice"
+
+// ownerCtx returns a context carrying a principal whose Subject is testOwner.
+func ownerCtx() context.Context {
+	return authmw.WithPrincipal(context.Background(), authmw.Principal{Subject: testOwner})
+}
+
+// ownerAccess grants a read of a row to its owner only, the owner half of
+// the §10.2 ownership predicate the session server implements.
+type ownerAccess struct{}
+
+func (ownerAccess) SessionAccessible(ctx context.Context, row sessionstore.Session, _ bool) bool {
+	return principalSubject(ctx) != "" && principalSubject(ctx) == row.UserID
 }
 
 // seedConversation creates session id continuing from parentID (empty for the
@@ -30,7 +48,7 @@ func seedConversation(t *testing.T, sessions sessionstore.Store, transcripts tra
 	tenantID, id, parentID string, turns ...[]transcriptstore.Entry,
 ) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := ownerCtx()
 	var responses []sessionstore.ConversationResponse
 	for _, turn := range turns {
 		var endSeq uint64
@@ -43,7 +61,7 @@ func seedConversation(t *testing.T, sessions sessionstore.Store, transcripts tra
 		responses = append(responses, sessionstore.ConversationResponse{EndSeq: endSeq, Completed: true})
 	}
 	if err := sessions.Create(ctx, sessionstore.Session{
-		ID: id, TenantID: tenantID, State: session.StateRunning, RuntimeRef: "echo",
+		ID: id, TenantID: tenantID, UserID: testOwner, State: session.StateRunning, RuntimeRef: "echo",
 		ContinuationParentID: parentID, Responses: responses,
 	}); err != nil {
 		t.Fatalf("seed session %s: %v", id, err)
@@ -83,7 +101,7 @@ func TestContinuityRehydrateWalksLineageRootFirst_spec_15(t *testing.T) {
 	seedConversation(t, sessions, transcripts, tenant, "ref", "mid.2",
 		turn(userMsg("four"), assistantMsg("answer four")))
 
-	got, err := c.rehydrate(context.Background(), tenant, "ref.1")
+	got, err := c.rehydrate(ownerCtx(), tenant, "ref.1")
 	if err != nil {
 		t.Fatalf("rehydrate: %v", err)
 	}
@@ -98,7 +116,7 @@ func TestContinuityRehydrateWalksLineageRootFirst_spec_15(t *testing.T) {
 		{Role: "assistant", Content: "answer four"},
 	})
 
-	got, err = c.rehydrate(context.Background(), tenant, "mid.1")
+	got, err = c.rehydrate(ownerCtx(), tenant, "mid.1")
 	if err != nil {
 		t.Fatalf("rehydrate mid.1: %v", err)
 	}
@@ -120,7 +138,7 @@ func TestContinuityRehydrateWalksLineageRootFirst_spec_15(t *testing.T) {
 func TestContinuityRehydrateBoundsByEndSeqWithInterleavedEntries_spec_15(t *testing.T) {
 	c, sessions, transcripts := newContinuity()
 	const tenant = "acme"
-	ctx := context.Background()
+	ctx := ownerCtx()
 
 	end1, err := transcripts.Append(ctx, tenant, "S", userMsg("one"), assistantMsg("answer one"))
 	if err != nil {
@@ -137,7 +155,7 @@ func TestContinuityRehydrateBoundsByEndSeqWithInterleavedEntries_spec_15(t *test
 		t.Fatal(err)
 	}
 	if err := sessions.Create(ctx, sessionstore.Session{
-		ID: "S", TenantID: tenant, State: session.StateRunning,
+		ID: "S", TenantID: tenant, UserID: testOwner, State: session.StateRunning,
 		Responses: []sessionstore.ConversationResponse{
 			{EndSeq: end1, Completed: true}, {EndSeq: end2, Completed: true},
 		},
@@ -174,7 +192,7 @@ func TestContinuityRehydrateBoundsByEndSeqWithInterleavedEntries_spec_15(t *test
 // tenant isolation)
 func TestContinuityResolveFailsClosed_spec_15(t *testing.T) {
 	c, sessions, transcripts := newContinuity()
-	ctx := context.Background()
+	ctx := ownerCtx()
 	seedConversation(t, sessions, transcripts, "acme", "S", "",
 		turn(userMsg("one"), assistantMsg("answer one")))
 	seedConversation(t, sessions, transcripts, "globex", "G", "",
@@ -212,7 +230,7 @@ func TestContinuityResolveFailsClosed_spec_15(t *testing.T) {
 func TestContinuityResolveStoreErrorIsNotNotFound_spec_15(t *testing.T) {
 	boom := errors.New("store unavailable")
 	c := &continuity{sessions: failingGetStore{Store: memstore.New(), err: boom}}
-	_, _, err := c.resolve(context.Background(), "acme", "S.1")
+	_, _, err := c.resolve(ownerCtx(), "acme", "S.1")
 	if !errors.Is(err, boom) || errors.Is(err, errContinuationNotFound) {
 		t.Fatalf("resolve store error = %v, want wrapped %v", err, boom)
 	}
@@ -247,7 +265,7 @@ func TestContinuityRehydrateErasedTranscriptContributesNothing_spec_12_8(t *test
 	seedConversation(t, sessions, transcripts, tenant, "ref", "mid.1",
 		turn(userMsg("three"), assistantMsg("answer three")))
 
-	got, err := c.rehydrate(context.Background(), tenant, "ref.1")
+	got, err := c.rehydrate(ownerCtx(), tenant, "ref.1")
 	if err != nil {
 		t.Fatalf("rehydrate: %v", err)
 	}
@@ -259,7 +277,7 @@ func TestContinuityRehydrateErasedTranscriptContributesNothing_spec_12_8(t *test
 	})
 
 	seedConversation(t, sessions, transcripts, tenant, "empty", "", nil)
-	got, err = c.rehydrate(context.Background(), tenant, "empty.1")
+	got, err = c.rehydrate(ownerCtx(), tenant, "empty.1")
 	if err != nil || len(got) != 0 {
 		t.Fatalf("rehydrate empty.1 = (%+v, %v), want empty context", got, err)
 	}
@@ -287,7 +305,7 @@ func TestContinuityRehydrateStopsAtLineageGap_spec_15(t *testing.T) {
 			const tenant = "acme"
 			seedConversation(t, sessions, transcripts, tenant, "root", "",
 				turn(userMsg("one"), assistantMsg("answer one")))
-			if _, err := sessions.Update(context.Background(), tenant, "root", func(s *sessionstore.Session) error {
+			if _, err := sessions.Update(ownerCtx(), tenant, "root", func(s *sessionstore.Session) error {
 				s.Responses = append(s.Responses, sessionstore.ConversationResponse{})
 				return nil
 			}); err != nil {
@@ -296,7 +314,7 @@ func TestContinuityRehydrateStopsAtLineageGap_spec_15(t *testing.T) {
 			seedConversation(t, sessions, transcripts, tenant, "ref", tc.parent,
 				turn(userMsg("three"), assistantMsg("answer three")))
 
-			got, err := c.rehydrate(context.Background(), tenant, "ref.1")
+			got, err := c.rehydrate(ownerCtx(), tenant, "ref.1")
 			if err != nil {
 				t.Fatalf("rehydrate must not fail closed on a later-hop gap: %v", err)
 			}
@@ -322,7 +340,7 @@ func TestContinuityRehydrateVisitedGuardKeyedBySession_spec_15(t *testing.T) {
 	seedConversation(t, sessions, transcripts, tenant, "b", "a.2",
 		turn(userMsg("b in"), assistantMsg("b out")))
 
-	got, err := c.rehydrate(context.Background(), tenant, "a.1")
+	got, err := c.rehydrate(ownerCtx(), tenant, "a.1")
 	if err != nil {
 		t.Fatalf("rehydrate with cycle: %v", err)
 	}
@@ -343,7 +361,7 @@ func TestContinuityRehydrateVisitedGuardKeyedBySession_spec_15(t *testing.T) {
 func TestContinuityRecordReturnsEndSeq_spec_15(t *testing.T) {
 	c, _, transcripts := newContinuity()
 	const tenant = "acme"
-	ctx := context.Background()
+	ctx := ownerCtx()
 
 	in := []executor.Message{{Role: "user", Content: "hello"}}
 	out := []executor.MessagePart{
@@ -379,7 +397,7 @@ func TestContinuityRecordReturnsEndSeq_spec_15(t *testing.T) {
 //
 // spec: §15 (Open Responses conversation sessions)
 func TestContinuityRecordIsRequired_spec_15(t *testing.T) {
-	ctx := context.Background()
+	ctx := ownerCtx()
 	in := []executor.Message{{Role: "user", Content: "x"}}
 
 	failing := &continuity{sessions: memstore.New(), transcripts: appendErrTranscripts{Store: transcriptstore.NewMemory()}}
@@ -426,4 +444,74 @@ func assertMessages(t *testing.T, got, want []executor.Message) {
 				i, got[i].Role, got[i].Content, want[i].Role, want[i].Content)
 		}
 	}
+}
+
+// TestContinuityResolveRefusesUnreadableSession_spec_10_2 pins the resolve
+// step's ownership check: a completed response of a session the principal
+// may not read resolves to errContinuationNotFound, exactly as an unknown id
+// does, for another user's principal, for a principal with an empty Subject,
+// for a context with no principal, and for a helper wired with no
+// SessionAccess. The owner resolves the same id.
+//
+// spec: §10.2 (Session ownership) rules 4 and 7; §15 (Open Responses
+// conversation sessions)
+func TestContinuityResolveRefusesUnreadableSession_spec_10_2(t *testing.T) {
+	c, sessions, transcripts := newContinuity()
+	seedConversation(t, sessions, transcripts, "acme", "S", "",
+		turn(userMsg("one"), assistantMsg("answer one")))
+	nilAccess := &continuity{sessions: sessions, transcripts: transcripts}
+
+	cases := []struct {
+		name string
+		c    *continuity
+		ctx  context.Context
+	}{
+		{"another user", c, authmw.WithPrincipal(context.Background(), authmw.Principal{Subject: "bob"})},
+		{"empty subject", c, authmw.WithPrincipal(context.Background(), authmw.Principal{})},
+		{"no principal", c, context.Background()},
+		{"nil SessionAccess", nilAccess, ownerCtx()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, err := tc.c.resolve(tc.ctx, "acme", "S.1"); !errors.Is(err, errContinuationNotFound) {
+				t.Errorf("resolve = %v, want errContinuationNotFound", err)
+			}
+			if _, err := tc.c.rehydrate(tc.ctx, "acme", "S.1"); !errors.Is(err, errContinuationNotFound) {
+				t.Errorf("rehydrate = %v, want errContinuationNotFound", err)
+			}
+		})
+	}
+	if row, n, err := c.resolve(ownerCtx(), "acme", "S.1"); err != nil || row.ID != "S" || n != 1 {
+		t.Fatalf("owner resolve(S.1) = (%q, %d, %v), want (S, 1, nil)", row.ID, n, err)
+	}
+}
+
+// TestContinuityRehydrateStopsAtUnreadableAncestor_spec_10_2 pins that the
+// lineage walk treats an ancestor session the principal may not read as a
+// gap: the walk keeps the readable sessions' context and contributes nothing
+// from the unreadable ancestor.
+//
+// spec: §10.2 (Session ownership) rule 4; §15 (Open Responses conversation
+// sessions)
+func TestContinuityRehydrateStopsAtUnreadableAncestor_spec_10_2(t *testing.T) {
+	c, sessions, transcripts := newContinuity()
+	const tenant = "acme"
+	seedConversation(t, sessions, transcripts, tenant, "root", "",
+		turn(userMsg("root secret"), assistantMsg("root answer")))
+	if _, err := sessions.Update(ownerCtx(), tenant, "root", func(s *sessionstore.Session) error {
+		s.UserID = "bob"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedConversation(t, sessions, transcripts, tenant, "ref", "root.1",
+		turn(userMsg("mine"), assistantMsg("my answer")))
+
+	got, err := c.rehydrate(ownerCtx(), tenant, "ref.1")
+	if err != nil {
+		t.Fatalf("rehydrate ref.1: %v", err)
+	}
+	assertMessages(t, got, []executor.Message{
+		{Role: "user", Content: "mine"}, {Role: "assistant", Content: "my answer"},
+	})
 }

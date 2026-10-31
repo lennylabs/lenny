@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -31,7 +33,7 @@ func TestRequestElicitationResolvedByResponse(t *testing.T) {
 	waitElicitation(t, interactions, "sess_e", "elic_x")
 
 	// A human responds — the path the §15.1 respond endpoint drives.
-	if _, err := interactions.Resolve(context.Background(), "acme", "sess_e", "", "elic_x",
+	if _, err := interactions.Resolve(context.Background(), "acme", "sess_e", ownerprincipal.Alice, "elic_x",
 		func(i *interactionstore.Interaction) error {
 			i.Phase = interactionstore.PhaseResponded
 			i.Response = "option-A"
@@ -62,7 +64,7 @@ func TestRequestElicitationDismissed(t *testing.T) {
 	}()
 	waitElicitation(t, interactions, "sess_e", "elic_x")
 
-	if _, err := interactions.Resolve(context.Background(), "acme", "sess_e", "", "elic_x",
+	if _, err := interactions.Resolve(context.Background(), "acme", "sess_e", ownerprincipal.Alice, "elic_x",
 		func(i *interactionstore.Interaction) error {
 			i.Phase = interactionstore.PhaseDismissed
 			return nil
@@ -136,7 +138,7 @@ func TestRequestElicitationBudgetExceeded(t *testing.T) {
 		t.Errorf("error = %q, want an elicitation-budget message", msg)
 	}
 	// The over-budget elicitation was dropped, not recorded.
-	if _, err := interactions.Get(context.Background(), "acme", "sess_e", "", "elic_over"); err == nil {
+	if _, err := interactions.Get(context.Background(), "acme", "sess_e", ownerprincipal.Alice, "elic_over"); err == nil {
 		t.Error("the dropped elicitation was recorded in the interaction store")
 	}
 }
@@ -148,6 +150,7 @@ func TestRequestElicitationDropRecordsMetric(t *testing.T) {
 	rec := &fakeElicitationMetrics{}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:            ownerprincipal.SessionAccess{},
 		DevTenantFallback:         true,
 		Store:                     store,
 		Interactions:              interactions,
@@ -181,6 +184,7 @@ func TestRequestElicitationSuppressedAtDepth(t *testing.T) {
 	interactions := interactionstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:             ownerprincipal.SessionAccess{},
 		DevTenantFallback:          true,
 		Store:                      store,
 		Interactions:               interactions,
@@ -206,7 +210,7 @@ func TestRequestElicitationSuppressedAtDepth(t *testing.T) {
 	// The suppressed elicitation was not recorded against any session
 	// in the chain.
 	for _, sid := range []string{"sess_leaf", "sess_mid", "sess_root"} {
-		if _, err := interactions.Get(context.Background(), "acme", sid, "", "elic_x"); err == nil {
+		if _, err := interactions.Get(context.Background(), "acme", sid, ownerprincipal.Alice, "elic_x"); err == nil {
 			t.Errorf("a suppressed elicitation was recorded against %s", sid)
 		}
 	}
@@ -217,6 +221,7 @@ func TestRequestElicitationNotSuppressedBelowDepth(t *testing.T) {
 	interactions := interactionstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:             ownerprincipal.SessionAccess{},
 		DevTenantFallback:          true,
 		Store:                      store,
 		Interactions:               interactions,
@@ -239,7 +244,7 @@ func TestRequestElicitationNotSuppressedBelowDepth(t *testing.T) {
 	// forwards up the chain to the human-facing root. It is recorded
 	// against the chain resolver, sess_root.
 	waitElicitation(t, interactions, "sess_root", "elic_x")
-	if _, err := interactions.Resolve(context.Background(), "acme", "sess_root", "", "elic_x",
+	if _, err := interactions.Resolve(context.Background(), "acme", "sess_root", ownerprincipal.Alice, "elic_x",
 		func(i *interactionstore.Interaction) error {
 			i.Phase = interactionstore.PhaseResponded
 			i.Response = "ok"
@@ -279,6 +284,7 @@ func TestRequestElicitationPublishesElicitationRequestEvent_spec_7_2(t *testing.
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:     ownerprincipal.SessionAccess{},
 		DevTenantFallback:  true,
 		Store:              store,
 		Events:             bus,
@@ -310,7 +316,7 @@ func TestRequestElicitationPublishesElicitationRequestEvent_spec_7_2(t *testing.
 	}
 
 	// Resolve so the goroutine returns cleanly.
-	if _, err := interactions.Resolve(context.Background(), "acme", "sess_e", "", "elic_x",
+	if _, err := interactions.Resolve(context.Background(), "acme", "sess_e", ownerprincipal.Alice, "elic_x",
 		func(i *interactionstore.Interaction) error {
 			i.Phase = interactionstore.PhaseDismissed
 			return nil

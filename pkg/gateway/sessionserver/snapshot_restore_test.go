@@ -60,7 +60,8 @@ func (p *countingPresigner) PresignGet(u blobstore.URI, ttl time.Duration) (blob
 
 func derivedRow(tenant, id, ref string) sessionstore.Session {
 	return sessionstore.Session{
-		ID: id, TenantID: tenant,
+		UserID: testOwner,
+		ID:     id, TenantID: tenant,
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: ref},
 	}
 }

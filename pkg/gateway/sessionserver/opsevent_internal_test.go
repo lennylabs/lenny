@@ -37,7 +37,8 @@ func TestRecordSessionCompletedEmitsSessionFailed(t *testing.T) {
 	srv := New(memstore.New(), Options{DevTenantHeader: true, OpsEmitter: emitter})
 
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
-		ID: "s1", TenantID: "acme", RuntimeRef: "echo",
+		UserID: testOwner,
+		ID:     "s1", TenantID: "acme", RuntimeRef: "echo",
 		State: session.StateFailed, FailureClass: "runtime_crash",
 	})
 	if !hasSessionFailed(emitter.Buffer()) {
@@ -71,7 +72,8 @@ func TestRecordSessionCompletedEmitsTerminalLifecycleEvents(t *testing.T) {
 		emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")
 		srv := New(memstore.New(), Options{DevTenantHeader: true, OpsEmitter: emitter})
 		srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
-			ID: "s", TenantID: "acme", RuntimeRef: "echo", State: tc.state,
+			UserID: testOwner,
+			ID:     "s", TenantID: "acme", RuntimeRef: "echo", State: tc.state,
 		})
 		if !eventTypeInBuffer(emitter.Buffer(), tc.eventType) {
 			t.Errorf("state %q must emit %q", tc.state, tc.eventType)
@@ -90,7 +92,8 @@ func TestRecordSessionCompletedNoEmitForNonTerminal(t *testing.T) {
 	srv := New(memstore.New(), Options{DevTenantHeader: true, OpsEmitter: emitter})
 
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
-		ID: "s2", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "s2", TenantID: "acme", State: session.StateRunning,
 	})
 	if n := len(emitter.Buffer().Query(0, events.EventFilter{}, 100).Events); n != 0 {
 		t.Errorf("a non-terminal state emitted %d events, want 0", n)
@@ -101,7 +104,8 @@ func TestRecordSessionCompletedNoEmitterIsSafe(t *testing.T) {
 	// The emit is best-effort: a nil OpsEmitter must not panic.
 	srv := New(memstore.New(), Options{DevTenantHeader: true})
 	srv.recordSessionCompleted(context.Background(), session.StateRunning, sessionstore.Session{
-		ID: "s3", TenantID: "acme", State: session.StateFailed,
+		UserID: testOwner,
+		ID:     "s3", TenantID: "acme", State: session.StateFailed,
 	})
 }
 

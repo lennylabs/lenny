@@ -70,7 +70,7 @@ func postBindRequest(t *testing.T, srv *Server, path string, plan json.RawMessag
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("X-Lenny-Tenant-ID", "default")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, r)
+	asOwner(srv.Handler()).ServeHTTP(rr, r)
 	return rr
 }
 

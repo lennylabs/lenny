@@ -124,7 +124,7 @@ def main() -> None:
     )
 
     created = client.create_session(
-        CreateSessionRequest(runtime_ref="chat", user_id="alice@acme.com"),
+        CreateSessionRequest(runtime_ref="chat"),
         RequestOptions(idempotency_key="alice-session-2026-05-19-001"),
     )
     print(f"created {created.session.id} in state {created.session.state}")

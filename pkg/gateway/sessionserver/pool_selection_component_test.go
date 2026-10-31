@@ -62,14 +62,14 @@ func TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1(t *testing.T) {
 	// (not the disambiguation) selected it. Each pool carries one idle pod.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool-a", "echo-tmpl-a"),
-		podBindTemplate("echo-tmpl-a", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-a", "echo-pool-a", "10.244.2.5"),
-		podBindWarmPool("echo-pool-b", "echo-tmpl-b"),
-		podBindTemplate("echo-tmpl-b", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-b", "echo-pool-b", "10.244.2.6"),
+		podBindWarmPool(t, "echo-pool-a", "echo-tmpl-a"),
+		podBindTemplate(t, "echo-tmpl-a", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-a", "echo-pool-a", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool-b", "echo-tmpl-b"),
+		podBindTemplate(t, "echo-tmpl-b", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-b", "echo-pool-b", "10.244.2.6"),
 	)
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 	registry := podsession.NewRegistry()
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
@@ -78,17 +78,17 @@ func TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		TenantAccess:            poolSelectTenantAccess(t, "echo-pool-b"),
 	})
 
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
-		RuntimeRef: "echo", UserID: "alice@acme.com", Pool: "echo-pool-b",
+		RuntimeRef: "echo", Pool: "echo-pool-b",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 for a backed+authorized pin; body=%s", rr.Code, rr.Body.String())
@@ -126,11 +126,11 @@ func TestCreateBodyPoolHonorsPinnedProfileWhenIsolationOmitted_spec_7_1(t *testi
 	// pool's own profile govern rather than reject on the defaulted profile.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("microvm-pool", "microvm-tmpl"),
-		podBindTemplate("microvm-tmpl", "echo", string(isolation.ProfileMicrovm)),
-		podBindIdleSandbox("sbx-mv", "microvm-pool", "10.244.2.7"),
+		podBindWarmPool(t, "microvm-pool", "microvm-tmpl"),
+		podBindTemplate(t, "microvm-tmpl", "echo", string(isolation.ProfileMicrovm)),
+		podBindIdleSandbox(t, "sbx-mv", "microvm-pool", "10.244.2.7"),
 	)
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 	registry := podsession.NewRegistry()
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
@@ -139,18 +139,18 @@ func TestCreateBodyPoolHonorsPinnedProfileWhenIsolationOmitted_spec_7_1(t *testi
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		TenantAccess:            poolSelectTenantAccess(t, "microvm-pool"),
 	})
 
 	// No IsolationProfile in the body: the client defers to the pinned pool.
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
-		RuntimeRef: "echo", UserID: "alice@acme.com", Pool: "microvm-pool",
+		RuntimeRef: "echo", Pool: "microvm-pool",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 when a pinned pool's profile differs from the default and isolationProfile is omitted; body=%s", rr.Code, rr.Body.String())
@@ -176,15 +176,15 @@ func TestCreateBodyPoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
 	cluster := podBindClient(
 		t,
 		// echo-pool backs echo / sandboxed.
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 		// other-pool backs a different runtime at a stricter isolation.
-		podBindWarmPool("other-pool", "other-tmpl"),
-		podBindTemplate("other-tmpl", "other-runtime", string(isolation.ProfileMicrovm)),
-		podBindIdleSandbox("sbx-2", "other-pool", "10.244.2.6"),
+		podBindWarmPool(t, "other-pool", "other-tmpl"),
+		podBindTemplate(t, "other-tmpl", "other-runtime", string(isolation.ProfileMicrovm)),
+		podBindIdleSandbox(t, "sbx-2", "other-pool", "10.244.2.6"),
 	)
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
 		DevTenantHeader:         true,
@@ -192,7 +192,7 @@ func TestCreateBodyPoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		// Grant every pool so the rejection is on the satisfiability check,
 		// not the authorization check.
 		TenantAccess: poolSelectTenantAccess(t, "echo-pool", "other-pool", "no-such-pool"),
@@ -211,13 +211,13 @@ func TestCreateBodyPoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
-				RuntimeRef: tc.runtimeRef, UserID: "alice@acme.com",
+				RuntimeRef:       tc.runtimeRef,
 				IsolationProfile: tc.isolationProfile, Pool: tc.pool,
 			})
 			req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
 			rr := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rr, req)
+			asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 			if rr.Code != http.StatusBadRequest {
 				t.Fatalf("status = %d, want 400 for an unsatisfiable pin; body=%s", rr.Code, rr.Body.String())
@@ -253,11 +253,11 @@ func TestCreateBodyPoolRejectsUnauthorizedPin_spec_7_1(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
 		DevTenantHeader:         true,
@@ -265,19 +265,19 @@ func TestCreateBodyPoolRejectsUnauthorizedPin_spec_7_1(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		// A tenant-access store with a grant to a *different* pool, so acme
 		// has no grant for echo-pool: the pin is satisfiable but unauthorized.
 		TenantAccess: poolSelectTenantAccess(t, "some-other-pool"),
 	})
 
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{
-		RuntimeRef: "echo", UserID: "alice@acme.com", Pool: "echo-pool",
+		RuntimeRef: "echo", Pool: "echo-pool",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 for an unauthorized pin; body=%s", rr.Code, rr.Body.String())

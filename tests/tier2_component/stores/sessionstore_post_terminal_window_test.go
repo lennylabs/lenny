@@ -67,7 +67,7 @@ func TestSessionStorePostTerminalWindowQueries_spec_7_1(t *testing.T) {
 	if err != nil || !containsString(pods, pod) {
 		t.Errorf("ListPodsWithActiveSlots = (%v, %v), want it to list %s", pods, err, pod)
 	}
-	if _, admitted, err := store.ReserveSlotUnderLock(ctx, pod, 1); err != nil || admitted {
+	if _, admitted, err := store.ReserveSlotUnderLock(ctx, pod, newUUID(t), 1); err != nil || admitted {
 		t.Errorf("ReserveSlotUnderLock at bound 1 = (admitted %v, %v), want refused", admitted, err)
 	}
 
@@ -90,7 +90,7 @@ func TestSessionStorePostTerminalWindowQueries_spec_7_1(t *testing.T) {
 	if pods, err := store.ListPodsWithActiveSlots(ctx); err != nil || containsString(pods, pod) {
 		t.Errorf("ListPodsWithActiveSlots after the release = (%v, %v), want %s omitted", pods, err, pod)
 	}
-	if _, admitted, err := store.ReserveSlotUnderLock(ctx, pod, 1); err != nil || !admitted {
+	if _, admitted, err := store.ReserveSlotUnderLock(ctx, pod, newUUID(t), 1); err != nil || !admitted {
 		t.Errorf("ReserveSlotUnderLock after the release = (admitted %v, %v), want admitted", admitted, err)
 	}
 

@@ -5,12 +5,10 @@ package sessionserver
 import (
 	"encoding/json"
 	"errors"
-	"math"
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
@@ -21,7 +19,6 @@ import (
 type CreateAndStartRequest struct {
 	// Inherits the same shape as CreateSessionRequest.
 	RuntimeRef       string            `json:"runtimeRef"`
-	UserID           string            `json:"userId,omitempty"`
 	WorkspacePlan    json.RawMessage   `json:"workspacePlan,omitempty"`
 	IsolationProfile isolation.Profile `json:"isolationProfile,omitempty"`
 	Environment      string            `json:"environment,omitempty"`
@@ -59,6 +56,14 @@ type CreateAndStartResponse = CreateSessionResponse
 // extra work here is just to advance the row through the §15.1
 // precondition table to running before returning.
 func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
+	// spec: §10.2 (Session ownership) rules 1 and 3 — the owner is the
+	// principal's subject, resolved before any gate, store write, or claim.
+	// It is the one value the §12.8 creation fence, the §11.1 per-user
+	// concurrency key, the §4.8 route-chain task spec, and the stored row use.
+	owner, ok := s.requireOwner(w, r)
+	if !ok {
+		return
+	}
 	tenantID := s.resolveTenant(r)
 
 	// spec: §11.1; §10.6; §4.8; §15.2.1 rule 1 — decode the request first so
@@ -76,11 +81,11 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.createAndStartGates(w, r, tenantID, req) {
+	if !s.createAndStartGates(w, r, tenantID, owner, req) {
 		return
 	}
 
-	row, build, ok := s.buildCreateAndStartRow(w, r, tenantID, req)
+	row, build, ok := s.buildCreateAndStartRow(w, r, tenantID, owner, req)
 	if !ok {
 		return
 	}
@@ -113,16 +118,17 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 // router, preserving the §4.8 PostAuth-before-PreRoute phase order (spec: §4.8
 // PreAuth → PostAuth → PreRoute → PostRoute). Each gate writes its own §15.1
 // error envelope and returns false; true means the request may proceed to the
-// row build and pod claim.
-// spec: §15.1, §12.8, §12.9, §11, §11.1, §10.6, §4.8, §15.2.1 rule 1.
-func (s *Server) createAndStartGates(w http.ResponseWriter, r *http.Request, tenantID string, req CreateAndStartRequest) bool {
+// row build and pod claim. owner is the session owner handleCreateAndStart
+// resolved from the principal.
+// spec: §15.1, §12.8, §12.9, §11, §11.1, §10.6, §4.8, §15.2.1 rule 1, §10.2.
+func (s *Server) createAndStartGates(w http.ResponseWriter, r *http.Request, tenantID, owner string, req CreateAndStartRequest) bool {
 	if !s.requireActiveUser(w, r) {
 		return false
 	}
 	// spec: §12.8 (Lifecycle fence and drain) — the early creation gate
-	// over the tenant row and the new row's owner (the body's userId)
+	// over the tenant row and the new row's owner (the principal's subject)
 	// rejects a fenced create before any other admission work.
-	if !s.requireCreationAllowed(w, r, tenantID, req.UserID) {
+	if !s.requireCreationAllowed(w, r, tenantID, owner) {
 		return false
 	}
 	// spec: §12.9 — the gateway policy engine validates tenant
@@ -137,13 +143,8 @@ func (s *Server) createAndStartGates(w http.ResponseWriter, r *http.Request, ten
 	// spec: §11.1 — global, per-user, and per-runtime concurrent-session
 	// admission caps. Enforced before the admission-rate and policy gates so an
 	// over-limit create consumes no rate budget and reserves no token budget,
-	// matching the two-step create path. The caller's subject is the per-user
-	// scope key; an unauthenticated principal leaves the per-user scope inert.
-	concUser := ""
-	if p, ok := getPrincipal(r); ok {
-		concUser = p.Subject
-	}
-	if !s.requireConcurrencyLimits(w, r, tenantID, concUser, req.RuntimeRef) {
+	// matching the two-step create path. The owner is the per-user scope key.
+	if !s.requireConcurrencyLimits(w, r, tenantID, owner, req.RuntimeRef) {
 		return false
 	}
 	// spec: §11.1 — per-runtime and per-pool requests-per-minute
@@ -218,7 +219,7 @@ func (s *Server) decodeCreateAndStartRequest(w http.ResponseWriter, r *http.Requ
 // order holds. It returns the built row and the createAndStartBuild the persist
 // and response stages consume, writing the §15.1 error envelope and returning
 // ok=false on any rejection. spec: §27.4, §5.3, §7.1, §14, §7.5, §4.8, §10.7.
-func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, tenantID string, req CreateAndStartRequest) (sessionstore.Session, createAndStartBuild, bool) {
+func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, tenantID, owner string, req CreateAndStartRequest) (sessionstore.Session, createAndStartBuild, bool) {
 	// spec: §27.5 / §27.9 — parity with handleCreate: an
 	// origin=playground caller may only create against a playground-visible
 	// runtime, so the create-and-start ingress enforces the same §27.4
@@ -258,25 +259,11 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	if !planOK {
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
-	// §4.8 PreRoute (below the ExperimentRouter pivot): run the PreRoute
-	// interceptors with priority < 300 over the TaskSpec after
-	// authentication and before runtime selection. A REJECT blocks the
-	// create; a MODIFY may rewrite runtime hints (the requested runtime)
-	// but not the authenticated identity, which the chain enforces. This
-	// segment runs before routeExperiment so a priority 101–299 MODIFY of
-	// the runtime hint affects which variant the ExperimentRouter assigns
-	// (spec: §4.8).
-	preRoute, ok := s.runRouteChainRange(w, r, interceptor.PhasePreRoute, routeTaskSpec{
-		TenantID:         tenantID,
-		UserID:           req.UserID,
-		RequestedRuntime: req.RuntimeRef,
-	}, math.MinInt32, ExperimentRouterPriority)
+	// spec: §4.8 — the PreRoute segment below the ExperimentRouter pivot; the
+	// two-step create path runs the same segment.
+	runtimeRef, ok := s.preRouteBeforeExperiment(w, r, tenantID, owner, req.RuntimeRef)
 	if !ok {
 		return sessionstore.Session{}, createAndStartBuild{}, false
-	}
-	runtimeRef := req.RuntimeRef
-	if preRoute.RequestedRuntime != "" {
-		runtimeRef = preRoute.RequestedRuntime
 	}
 
 	// spec: §7.1 — resolve the pool-derived isolation level
@@ -296,7 +283,7 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	row := sessionstore.Session{
 		ID:               s.idFn(),
 		TenantID:         tenantID,
-		UserID:           req.UserID,
+		UserID:           owner, // spec: §10.2 (Session ownership) rule 1
 		RuntimeRef:       runtimeRef,
 		Environment:      req.Environment,
 		State:            session.StateRunning, // skip directly to running per §15.1
@@ -339,31 +326,10 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	if !s.routeExperiment(w, r, &row) {
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
-	// §4.8 PreRoute (at or above the ExperimentRouter pivot): run the
-	// PreRoute interceptors with priority ≥ 300 after experiment routing,
-	// so an external interceptor at priority ≥ 300 orders after the
-	// ExperimentRouter built-in per the §4.8 line-12 ascending-priority
-	// rule. It sees the experiment-assigned runtime as the requested
-	// runtime; a runtime-hint MODIFY here gets the final say on the
-	// runtime before runtime selection completes, with the isolation
-	// level re-resolved so executionMode/scrubPolicy stay consistent.
-	afterRoute, ok := s.runRouteChainRange(w, r, interceptor.PhasePreRoute, routeTaskSpec{
-		TenantID:         tenantID,
-		UserID:           req.UserID,
-		RequestedRuntime: row.RuntimeRef,
-	}, ExperimentRouterPriority, math.MaxInt32)
-	if !ok {
+	// spec: §4.8 — the PreRoute segment at or above the ExperimentRouter
+	// pivot; the two-step create path runs the same segment.
+	if !s.preRouteAfterExperiment(w, r, &row, effProf, req.Pool) {
 		return sessionstore.Session{}, createAndStartBuild{}, false
-	}
-	if afterRoute.RequestedRuntime != "" && afterRoute.RequestedRuntime != row.RuntimeRef {
-		row.RuntimeRef = afterRoute.RequestedRuntime
-		// spec: §7.1 — re-resolve against the effective
-		// requested profile so a pinned pool's own profile still governs after
-		// a runtime-hint MODIFY. F-CS2 (0018).
-		afterLevel := s.resolveIsolationLevel(r.Context(), row.RuntimeRef, effProf, req.Pool)
-		row.ExecutionMode = afterLevel.ExecutionMode
-		row.ScrubPolicy = afterLevel.ScrubPolicy
-		row.ConversationContinuity = afterLevel.ConversationContinuity
 	}
 	// spec: §7.5 Setup Commands (Command policy); §5.1 — the client's
 	// setup commands are checked against the setupCommandPolicy of the
@@ -384,15 +350,9 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
-	// §4.8 PostRoute: run the interceptor chain after runtime selection
-	// with the resolved runtime metadata. A REJECT blocks the create; a
-	// MODIFY may rewrite runtime-specific parameters but not the resolved
-	// runtime or credential assignment, which the chain enforces.
-	if _, ok := s.runRouteChain(w, r, interceptor.PhasePostRoute, routeTaskSpec{
-		TenantID:            tenantID,
-		UserID:              req.UserID,
-		ResolvedRuntimeName: row.RuntimeRef,
-	}); !ok {
+	// spec: §4.8 — the PostRoute chain; the two-step create path runs the
+	// same chain.
+	if !s.postRouteAfterSelection(w, r, &row) {
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 

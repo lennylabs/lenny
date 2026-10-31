@@ -55,7 +55,7 @@ func TestCreateRejectedAtPerRuntimeConcurrencyLimit_spec_11_1(t *testing.T) {
 	srv := concurrencyServer(t,
 		sessionserver.Options{DevTenantHeader: true, MaxConcurrentSessionsPerRuntime: 2},
 		runningRows("acme", "alice", "claude-code", 2))
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("at per-runtime limit: status %d, want 429; body %s", rr.Code, rr.Body.String())
 	}
@@ -70,7 +70,7 @@ func TestCreateAdmittedUnderPerRuntimeLimitForDifferentRuntime_spec_11_1(t *test
 	srv := concurrencyServer(t,
 		sessionserver.Options{DevTenantHeader: true, MaxConcurrentSessionsPerRuntime: 2},
 		runningRows("acme", "alice", "claude-code", 2))
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "gpt"})
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "gpt"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("different runtime under limit: status %d, want 201; body %s", rr.Code, rr.Body.String())
 	}
@@ -80,7 +80,7 @@ func TestCreateRejectedAtPerUserConcurrencyLimit_spec_11_1(t *testing.T) {
 	srv := concurrencyServer(t,
 		sessionserver.Options{DevTenantHeader: true, MaxConcurrentSessionsPerUser: 2},
 		runningRows("acme", "alice@acme.com", "claude-code", 2))
-	rr := createRequestAs(t, srv.Handler(),
+	rr := createRequestAs(t, asOwner(srv.Handler()),
 		sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"},
 		authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusTooManyRequests {
@@ -96,7 +96,7 @@ func TestCreateAdmittedForDifferentUserUnderPerUserLimit_spec_11_1(t *testing.T)
 	srv := concurrencyServer(t,
 		sessionserver.Options{DevTenantHeader: true, MaxConcurrentSessionsPerUser: 2},
 		runningRows("acme", "alice@acme.com", "claude-code", 2))
-	rr := createRequestAs(t, srv.Handler(),
+	rr := createRequestAs(t, asOwner(srv.Handler()),
 		sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"},
 		authmw.Principal{Subject: "bob@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusCreated {
@@ -109,7 +109,7 @@ func TestCreateRejectedAtGlobalConcurrencyLimit_spec_11_1(t *testing.T) {
 	seed := append(runningRows("acme", "alice", "claude-code", 1),
 		runningRows("globex", "bob", "gpt", 1)...)
 	srv := concurrencyServer(t, sessionserver.Options{DevTenantHeader: true, MaxConcurrentSessionsGlobal: 2}, seed)
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("at global limit: status %d, want 429; body %s", rr.Code, rr.Body.String())
 	}
@@ -122,7 +122,7 @@ func TestConcurrencyLimitsZeroIsUnlimited_spec_11_1(t *testing.T) {
 	// Every cap left at zero: the saturated runtime/global counts admit.
 	srv := concurrencyServer(t, sessionserver.Options{DevTenantHeader: true},
 		runningRows("acme", "alice", "claude-code", 5))
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("zero caps (unlimited): status %d, want 201; body %s", rr.Code, rr.Body.String())
 	}

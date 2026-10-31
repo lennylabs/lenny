@@ -23,7 +23,8 @@ func seedTreeSession(t *testing.T, store sessionstore.Store, id, parent string) 
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	row := sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: parent, RuntimeRef: "echo",
 		CreatedAt: now, UpdatedAt: now,
 	}
@@ -50,7 +51,7 @@ func TestTreeSingleNode(t *testing.T) {
 	seedTreeSession(t, store, "sess_root", "")
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
-	rr, resp := getTree(t, srv.Handler(), "sess_root")
+	rr, resp := getTree(t, asOwner(srv.Handler()), "sess_root")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -70,7 +71,7 @@ func TestTreeWithChildren(t *testing.T) {
 	seedTreeSession(t, store, "sess_grandchild", "sess_child_a")
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
-	rr, resp := getTree(t, srv.Handler(), "sess_root")
+	rr, resp := getTree(t, asOwner(srv.Handler()), "sess_root")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -105,7 +106,8 @@ func TestTreeNodeAttributes_spec_8_9_1010(t *testing.T) {
 	seedTreeSession(t, store, "sess_root", "")
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_kid", TenantID: "acme", State: session.StateFailed,
+		UserID: testOwner,
+		ID:     "sess_kid", TenantID: "acme", State: session.StateFailed,
 		ParentSessionID: "sess_root", RuntimeRef: "echo",
 		RecoveryGeneration: 3, PodAssignment: "pod-7",
 		DelegationLease: &sessionstore.DelegationLease{MaxParallelChildren: 4},
@@ -117,7 +119,7 @@ func TestTreeNodeAttributes_spec_8_9_1010(t *testing.T) {
 	}
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
-	rr, resp := getTree(t, srv.Handler(), "sess_root")
+	rr, resp := getTree(t, asOwner(srv.Handler()), "sess_root")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -152,7 +154,8 @@ func seedTreeSessionVis(t *testing.T, store sessionstore.Store, id, parent strin
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	row := sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     id, TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: parent, RuntimeRef: "echo",
 		TreeVisibility: vis,
 		CreatedAt:      now, UpdatedAt: now,
@@ -175,7 +178,7 @@ func TestTreeFullVisibilityShowsEntireTreeFromApex_spec_8_5_540(t *testing.T) {
 
 	// sess_mid carries the default (empty → full) visibility, so the
 	// tree it sees is rooted at the apex (sess_root) with all 3 nodes.
-	_, resp := getTree(t, srv.Handler(), "sess_mid")
+	_, resp := getTree(t, asOwner(srv.Handler()), "sess_mid")
 	if resp.NodeCount != 3 || resp.Root.TaskID != "sess_root" {
 		t.Errorf("full from mid: got root=%q count=%d, want sess_root/3 (§8.5)", resp.Root.TaskID, resp.NodeCount)
 	}
@@ -192,7 +195,7 @@ func TestTreeParentAndSelfVisibility_spec_8_5_540(t *testing.T) {
 	seedTreeSession(t, store, "sess_leaf", "sess_mid")
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
-	_, resp := getTree(t, srv.Handler(), "sess_mid")
+	_, resp := getTree(t, asOwner(srv.Handler()), "sess_mid")
 	// Rooted at the parent (sess_root) with exactly sess_mid as its only
 	// visible child; the sibling and the leaf are pruned. 2 nodes.
 	if resp.NodeCount != 2 || resp.Root.TaskID != "sess_root" {
@@ -215,7 +218,7 @@ func TestTreeSelfOnlyVisibility_spec_8_5_540(t *testing.T) {
 	seedTreeSession(t, store, "sess_leaf", "sess_mid")
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
-	_, resp := getTree(t, srv.Handler(), "sess_mid")
+	_, resp := getTree(t, asOwner(srv.Handler()), "sess_mid")
 	if resp.NodeCount != 1 || resp.Root.TaskID != "sess_mid" || len(resp.Root.Children) != 0 {
 		t.Errorf("self-only: got %+v, want sess_mid alone", resp)
 	}
@@ -230,7 +233,7 @@ func TestTreeParentAndSelfAtRootDegradesToSelf_spec_8_3_315(t *testing.T) {
 	seedTreeSession(t, store, "sess_child", "sess_root")
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
-	_, resp := getTree(t, srv.Handler(), "sess_root")
+	_, resp := getTree(t, asOwner(srv.Handler()), "sess_root")
 	if resp.NodeCount != 1 || resp.Root.TaskID != "sess_root" || len(resp.Root.Children) != 0 {
 		t.Errorf("parent-and-self at root: got %+v, want sess_root alone", resp)
 	}
@@ -239,7 +242,7 @@ func TestTreeParentAndSelfAtRootDegradesToSelf_spec_8_3_315(t *testing.T) {
 func TestTreeMissingSession(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	rr, _ := getTree(t, srv.Handler(), "sess_missing")
+	rr, _ := getTree(t, asOwner(srv.Handler()), "sess_missing")
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("missing session: got %d, want 404", rr.Code)
 	}
@@ -259,7 +262,7 @@ func TestTreeRecordsAreSessionRowsLinkedByParentSessionID(t *testing.T) {
 	seedTreeSession(t, store, "sess_grandchild", "sess_child")
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
-	rr, resp := getTree(t, srv.Handler(), "sess_root")
+	rr, resp := getTree(t, asOwner(srv.Handler()), "sess_root")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -304,16 +307,18 @@ func TestTreeCrossTenantIsolation(t *testing.T) {
 	// A foreign-tenant session must not appear in acme's tree even
 	// if its ParentSessionID points at an acme session.
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_root", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_root", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_foreign", TenantID: "globex", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_foreign", TenantID: "globex", State: session.StateRunning,
 		ParentSessionID: "sess_root",
 		CreatedAt:       now, UpdatedAt: now,
 	})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	_, resp := getTree(t, srv.Handler(), "sess_root")
+	_, resp := getTree(t, asOwner(srv.Handler()), "sess_root")
 	if resp.NodeCount != 1 {
 		t.Errorf("cross-tenant child must not appear: %+v", resp)
 	}
@@ -335,7 +340,7 @@ func TestTreeReadsOnlySessionsInTheRequestedTree_spec_8_9_1010(t *testing.T) {
 	seedTreeSession(t, store, "sess_kid_b", "sess_root_b")
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
-	rr, resp := getTree(t, srv.Handler(), "sess_root_a")
+	rr, resp := getTree(t, asOwner(srv.Handler()), "sess_root_a")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -362,7 +367,7 @@ func TestTreeUsesTaskIDField_spec_8_5_540(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_root_rt/tree", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -397,12 +402,14 @@ func TestTreeEmitsCycleObservation_spec_8_9_F_8_9_10(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	// A two-node cycle: sess_a.parent = sess_b, sess_b.parent = sess_a.
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_a_899", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_a_899", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: "sess_b_899",
 		CreatedAt:       now, UpdatedAt: now,
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_b_899", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_b_899", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: "sess_a_899",
 		CreatedAt:       now, UpdatedAt: now,
 	})
@@ -412,7 +419,7 @@ func TestTreeEmitsCycleObservation_spec_8_9_F_8_9_10(t *testing.T) {
 		TreeCycleObserver: observer,
 	})
 
-	rr, resp := getTree(t, srv.Handler(), "sess_a_899")
+	rr, resp := getTree(t, asOwner(srv.Handler()), "sess_a_899")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -449,7 +456,7 @@ func TestTreeAcyclicEmitsNoCycle_spec_8_9_F_8_9_10(t *testing.T) {
 		DevTenantHeader:   true,
 		TreeCycleObserver: observer,
 	})
-	rr, _ := getTree(t, srv.Handler(), "sess_root_clean")
+	rr, _ := getTree(t, asOwner(srv.Handler()), "sess_root_clean")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -465,17 +472,19 @@ func TestTreeNilObserverIsSafe_spec_8_9_F_8_9_10(t *testing.T) {
 	store := memstore.New()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_x_899", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_x_899", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: "sess_y_899",
 		CreatedAt:       now, UpdatedAt: now,
 	})
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_y_899", TenantID: "acme", State: session.StateRunning,
+		UserID: testOwner,
+		ID:     "sess_y_899", TenantID: "acme", State: session.StateRunning,
 		ParentSessionID: "sess_x_899",
 		CreatedAt:       now, UpdatedAt: now,
 	})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	rr, _ := getTree(t, srv.Handler(), "sess_x_899")
+	rr, _ := getTree(t, asOwner(srv.Handler()), "sess_x_899")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}

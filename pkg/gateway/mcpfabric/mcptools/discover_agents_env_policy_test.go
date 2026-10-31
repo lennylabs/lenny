@@ -19,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // spec: §10.6 — defaultDelegationPolicy is the
@@ -56,7 +57,7 @@ func envPolicyHarness(t *testing.T, parentRuntimeRef, envName, envDefaultPolicy 
 		}
 	}
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "u-alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State: session.StateRunning, RuntimeRef: parentRuntimeRef, Environment: envName,
 	}); err != nil {
 		t.Fatalf("seed parent session: %v", err)
@@ -68,6 +69,7 @@ func envPolicyHarness(t *testing.T, parentRuntimeRef, envName, envDefaultPolicy 
 	})
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),

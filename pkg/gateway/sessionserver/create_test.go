@@ -75,9 +75,8 @@ func TestCreateSessionServiceHappyPath_spec_15_2_1_1380(t *testing.T) {
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
 	})
 
-	resp, svcErr := srv.CreateSessionService(context.Background(), "acme", sessionserver.CreateSessionRequest{
+	resp, svcErr := srv.CreateSessionService(ownerCtx(context.Background()), "acme", sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
-		UserID:     "alice@acme.com",
 	})
 	if svcErr != nil {
 		t.Fatalf("unexpected service error: %+v", svcErr)
@@ -111,7 +110,7 @@ func TestCreateSessionServiceValidationError_spec_15_2_1_1380(t *testing.T) {
 		IDFunc:          func() string { return "sess_svc" },
 	})
 
-	_, svcErr := srv.CreateSessionService(context.Background(), "acme", sessionserver.CreateSessionRequest{})
+	_, svcErr := srv.CreateSessionService(ownerCtx(context.Background()), "acme", sessionserver.CreateSessionRequest{})
 	if svcErr == nil {
 		t.Fatal("expected a ServiceError for an empty runtimeRef")
 	}
@@ -139,9 +138,8 @@ func TestCreateAndStartServiceHappyPath(t *testing.T) {
 	t.Parallel()
 	srv, registry, _, _ := podBindServer(t, "sess-cas-svc")
 
-	resp, svcErr := srv.CreateAndStartService(context.Background(), "acme", sessionserver.CreateSessionRequest{
+	resp, svcErr := srv.CreateAndStartService(ownerCtx(context.Background()), "acme", sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo",
-		UserID:     "alice@acme.com",
 	})
 	if svcErr != nil {
 		t.Fatalf("unexpected service error: %+v", svcErr)
@@ -184,19 +182,19 @@ func TestCreateAndStartServiceCarriesRetryAfterOnPoolExhaustion(t *testing.T) {
 	// envelope with a Retry-After header.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 	)
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-cas-exhausted" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
-	_, svcErr := srv.CreateAndStartService(context.Background(), "acme", sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
+	_, svcErr := srv.CreateAndStartService(ownerCtx(context.Background()), "acme", sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
 	if svcErr == nil {
 		t.Fatal("expected a ServiceError for a create-and-start against an exhausted pool")
 	}
@@ -224,9 +222,8 @@ func TestCreateMintsUploadTokenAndIsolationLevel(t *testing.T) {
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
 	})
 
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
-		UserID:     "alice@acme.com",
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
@@ -286,7 +283,7 @@ func TestCreateRecordsEnvironment(t *testing.T) {
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
 	})
 
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:  "claude-code",
 		Environment: "security-team",
 	})
@@ -312,7 +309,7 @@ func TestCreateRecordsEnvironment(t *testing.T) {
 	getReq := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_env", nil)
 	getReq.Header.Set("X-Lenny-Tenant-ID", "acme")
 	getRR := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(getRR, getReq)
+	asOwner(srv.Handler()).ServeHTTP(getRR, getReq)
 	if getRR.Code != http.StatusOK {
 		t.Fatalf("GET status: %d, body=%s", getRR.Code, getRR.Body.String())
 	}
@@ -333,7 +330,7 @@ func TestCreateWithoutEnvironmentLeavesItEmpty(t *testing.T) {
 		IDFunc:            func() string { return "sess_noenv" },
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
 	})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -359,7 +356,7 @@ func TestEnvironmentSessionsEndpointSetsEnvironment(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -396,7 +393,7 @@ func TestEnvironmentSessionsEndpointPathOverridesBody(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -426,9 +423,8 @@ func TestCreateDevModeDefaultIsolation_spec_5_3(t *testing.T) {
 		DevMode:         true,
 	})
 
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
-		UserID:     "alice@acme.com",
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
@@ -450,7 +446,7 @@ func TestCreateDevModeDefaultIsolation_spec_5_3(t *testing.T) {
 func TestCreateRespectsExplicitIsolationProfile(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_iso" }})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:       "claude-code",
 		IsolationProfile: isolation.ProfileMicrovm,
 	})
@@ -474,7 +470,7 @@ func TestGetReturnsSessionIsolationLevel_spec_7_1(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_getiso" }})
 
-	if rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	if rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:       "claude-code",
 		IsolationProfile: isolation.ProfileMicrovm,
 	}); rr.Code != http.StatusCreated {
@@ -485,7 +481,7 @@ func TestGetReturnsSessionIsolationLevel_spec_7_1(t *testing.T) {
 	get := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_getiso", nil)
 	get.Header.Set("X-Lenny-Tenant-ID", "acme")
 	gr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(gr, get)
+	asOwner(srv.Handler()).ServeHTTP(gr, get)
 	if gr.Code != http.StatusOK {
 		t.Fatalf("GET status: got %d, want 200; body=%s", gr.Code, gr.Body.String())
 	}
@@ -509,7 +505,7 @@ func TestGetReturnsSessionIsolationLevel_spec_7_1(t *testing.T) {
 	list := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
 	list.Header.Set("X-Lenny-Tenant-ID", "acme")
 	lr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(lr, list)
+	asOwner(srv.Handler()).ServeHTTP(lr, list)
 	if lr.Code != http.StatusOK {
 		t.Fatalf("LIST status: got %d, want 200", lr.Code)
 	}
@@ -531,7 +527,7 @@ func TestGetReturnsSessionIsolationLevel_spec_7_1(t *testing.T) {
 func TestCreateRejectsUnknownIsolationProfile(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:       "claude-code",
 		IsolationProfile: isolation.Profile("ferrous"),
 	})
@@ -544,7 +540,7 @@ func TestCreateValidatesWorkspacePlan(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_wp" }})
 
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		WorkspacePlan: json.RawMessage(`{
 			"schemaVersion": 1,
@@ -566,7 +562,7 @@ func TestCreateValidatesWorkspacePlan(t *testing.T) {
 func TestGetReturnsStoredWorkspacePlan(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_wp_get" }})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	const plan = `{"schemaVersion":1,"sources":[{"type":"mkdir","path":"out/"}]}`
 	if rr := createRequest(t, h, sessionserver.CreateSessionRequest{
@@ -601,7 +597,7 @@ func TestGetReturnsStoredWorkspacePlan(t *testing.T) {
 func TestGetOmitsWorkspacePlanWhenAbsent(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_noplan" }})
-	h := srv.Handler()
+	h := asOwner(srv.Handler())
 
 	if rr := createRequest(t, h, sessionserver.CreateSessionRequest{RuntimeRef: "echo"}); rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d", rr.Code)
@@ -624,7 +620,7 @@ func TestCreateRejectsMalformedWorkspacePlan(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
 	// Setuid mode → WORKSPACE_PLAN_INVALID with setuid_setgid_prohibited.
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		WorkspacePlan: json.RawMessage(`{
 			"schemaVersion": 1,
@@ -659,7 +655,7 @@ func TestCreateRejectsUnsupportedSchemaVersion_spec_14_1_326(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef:    "claude-code",
 		WorkspacePlan: json.RawMessage(`{"schemaVersion": 2, "sources": []}`),
 	})
@@ -696,7 +692,7 @@ func TestCreateMultiViolationReportsDetailsFields_spec_15_1_979(t *testing.T) {
 
 	// Two bad sources — parser aggregates both into SubErrs and the
 	// gateway maps them to details.fields per the spec.
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		WorkspacePlan: json.RawMessage(`{
 			"schemaVersion": 1,
@@ -733,7 +729,7 @@ func TestCreateMultiViolationReportsDetailsFields_spec_15_1_979(t *testing.T) {
 func TestCreatePropagatesUnknownSourceWarning(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_warn" }})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 		WorkspacePlan: json.RawMessage(`{
 			"schemaVersion": 1,
@@ -755,7 +751,7 @@ func TestCreatePropagatesUnknownSourceWarning(t *testing.T) {
 func TestCreateAcceptsNullWorkspacePlan(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, IDFunc: func() string { return "sess_null" }})
-	rr := createRequestRaw(t, srv.Handler(), []byte(`{"runtimeRef": "x", "workspacePlan": null}`))
+	rr := createRequestRaw(t, asOwner(srv.Handler()), []byte(`{"runtimeRef": "x", "workspacePlan": null}`))
 	if rr.Code != http.StatusCreated {
 		t.Errorf("status: got %d, want 201", rr.Code)
 	}
@@ -779,7 +775,7 @@ func TestCreateReturnsSessionCreationFailedOnPersistFailure_spec_7_1_4(t *testin
 		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
 	})
 
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	})
 
@@ -826,7 +822,7 @@ func TestCreateReturnsPlatformDegradedWhenDualStoreDown_spec_10_1(t *testing.T) 
 		DualStore:       stubDualStore{unavailable: true},
 	})
 
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	})
 
@@ -869,7 +865,7 @@ func TestCreateProceedsWhenDualStoreAvailable_spec_10_1(t *testing.T) {
 		IDFunc:          func() string { return "sess_ok" },
 		DualStore:       stubDualStore{unavailable: false},
 	})
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	})
 	if rr.Code != http.StatusCreated {
@@ -893,7 +889,7 @@ func TestCreateReturnsSessionCreationFailedOnMintFailure_spec_7_1_4(t *testing.T
 		},
 	})
 
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	})
 
@@ -984,7 +980,7 @@ func createRequestAs(t *testing.T, h http.Handler, body sessionserver.CreateSess
 func TestCreateWithoutEnvironmentRejectedUnderDenyAll_spec_11_1(t *testing.T) {
 	srv, store := seedNoEnvServer(t, "sess_deny", tenantstore.NoEnvPolicyDenyAll, tenantstore.NoEnvPolicyDenyAll)
 
-	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequestAs(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusForbidden {
@@ -1009,7 +1005,7 @@ func TestCreateWithoutEnvironmentRejectedUnderDenyAll_spec_11_1(t *testing.T) {
 func TestCreateWithoutEnvironmentAdmittedUnderAllowAll_spec_11_1(t *testing.T) {
 	srv, _ := seedNoEnvServer(t, "sess_allow", tenantstore.NoEnvPolicyAllowAll, tenantstore.NoEnvPolicyDenyAll)
 
-	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequestAs(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusCreated {
@@ -1037,9 +1033,8 @@ func TestCreateWithoutEnvironmentAdmittedWhenCallerIsMember_spec_11_1(t *testing
 	}
 	srv, _ := seedNoEnvServer(t, "sess_member", tenantstore.NoEnvPolicyDenyAll, tenantstore.NoEnvPolicyDenyAll, env)
 
-	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequestAs(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
-		UserID:     "alice@acme.com",
 	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 for an env-member caller; body=%s", rr.Code, rr.Body.String())
@@ -1052,7 +1047,7 @@ func TestCreateWithoutEnvironmentAdmittedWhenCallerIsMember_spec_11_1(t *testing
 func TestCreateWithoutEnvironmentEmptyTenantPolicyDefaultsToDenyAll_spec_10_6(t *testing.T) {
 	srv, _ := seedNoEnvServer(t, "sess_empty", "", tenantstore.NoEnvPolicyDenyAll)
 
-	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequestAs(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusForbidden {
@@ -1136,7 +1131,7 @@ func member(value string, role environment.Role) environmentstore.Member {
 func TestExplicitEnvironmentUnknownRejected_spec_10_6_557(t *testing.T) {
 	srv, store := seedExplicitEnvServer(t, "sess_unknown", runtimestore.Runtime{})
 
-	rr := createEnvRequestAs(t, srv.Handler(), "security-team", sessionserver.CreateSessionRequest{
+	rr := createEnvRequestAs(t, asOwner(srv.Handler()), "security-team", sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusForbidden {
@@ -1156,7 +1151,7 @@ func TestExplicitEnvironmentNonMemberRejected_spec_10_6_557(t *testing.T) {
 	env := envWithMembers("security-team", member("alice@acme.com", environment.RoleCreator))
 	srv, _ := seedExplicitEnvServer(t, "sess_nonmember", runtimestore.Runtime{}, env)
 
-	rr := createEnvRequestAs(t, srv.Handler(), "security-team", sessionserver.CreateSessionRequest{
+	rr := createEnvRequestAs(t, asOwner(srv.Handler()), "security-team", sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	}, authmw.Principal{Subject: "carol@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusForbidden {
@@ -1174,7 +1169,7 @@ func TestExplicitEnvironmentViewerRejected_spec_10_6_605(t *testing.T) {
 	env := envWithMembers("security-team", member("bob@acme.com", environment.RoleViewer))
 	srv, _ := seedExplicitEnvServer(t, "sess_viewer", runtimestore.Runtime{}, env)
 
-	rr := createEnvRequestAs(t, srv.Handler(), "security-team", sessionserver.CreateSessionRequest{
+	rr := createEnvRequestAs(t, asOwner(srv.Handler()), "security-team", sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	}, authmw.Principal{Subject: "bob@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusForbidden {
@@ -1193,7 +1188,7 @@ func TestExplicitEnvironmentCreatorAdmitted_spec_10_6_605(t *testing.T) {
 	rt := runtimestore.Runtime{Name: "claude-code", Type: runtimestore.TypeAgent, Labels: map[string]string{"team": "security"}}
 	srv, store := seedExplicitEnvServer(t, "sess_creator", rt, env)
 
-	rr := createEnvRequestAs(t, srv.Handler(), "security-team", sessionserver.CreateSessionRequest{
+	rr := createEnvRequestAs(t, asOwner(srv.Handler()), "security-team", sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
 	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusCreated {
@@ -1216,7 +1211,7 @@ func TestExplicitEnvironmentRuntimeNotInScopeRejected_spec_10_6_629(t *testing.T
 	rogue := runtimestore.Runtime{Name: "rogue", Type: runtimestore.TypeAgent, Labels: map[string]string{"team": "platform"}}
 	srv, _ := seedExplicitEnvServer(t, "sess_rogue", rogue, env)
 
-	rr := createEnvRequestAs(t, srv.Handler(), "security-team", sessionserver.CreateSessionRequest{
+	rr := createEnvRequestAs(t, asOwner(srv.Handler()), "security-team", sessionserver.CreateSessionRequest{
 		RuntimeRef: "rogue",
 	}, authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusForbidden {
@@ -1240,7 +1235,7 @@ func TestExplicitEnvironmentNoPrincipalPassesThrough_spec_10_6(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 when no principal is present; body=%s", rr.Code, rr.Body.String())
 	}
@@ -1263,7 +1258,7 @@ func TestCreateAdmissionGateDisabledWhenRegistriesUnwired_spec_11_1(t *testing.T
 		UploadTokenIssuer:          uploadtoken.NewIssuer(ring, clock),
 		DefaultNoEnvironmentPolicy: tenantstore.NoEnvPolicyDenyAll,
 	})
-	rr := createRequestAs(t, srv.Handler(), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"},
+	rr := createRequestAs(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"},
 		authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 without env registries wired; body=%s", rr.Code, rr.Body.String())
@@ -1299,7 +1294,7 @@ func TestCreateRejectsSetupCommandsOverMaxCommands(t *testing.T) {
 			{"cmd": "echo c"}
 		]
 	}`)
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "capped", WorkspacePlan: plan,
 	})
 	if rr.Code != http.StatusBadRequest {
@@ -1352,7 +1347,7 @@ func TestCreateAdmitsSetupCommandsWithinMaxCommands(t *testing.T) {
 		"sources": [],
 		"setupCommands": [{"cmd": "echo a"}, {"cmd": "echo b"}]
 	}`)
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "capped", WorkspacePlan: plan,
 	})
 	if rr.Code != http.StatusCreated {
@@ -1379,7 +1374,7 @@ func TestCreateAdmitsSetupCommandsWhenPolicyUnset(t *testing.T) {
 			{"cmd": "echo a"}, {"cmd": "echo b"}, {"cmd": "echo c"}, {"cmd": "echo d"}
 		]
 	}`)
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "uncapped", WorkspacePlan: plan,
 	})
 	if rr.Code != http.StatusCreated {
@@ -1410,7 +1405,7 @@ func TestCreateRejectsSetupCommandOutsideAllowlist(t *testing.T) {
 		"sources": [],
 		"setupCommands": [{"cmd": "npm ci"}, {"cmd": "curl http://evil"}]
 	}`)
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "locked", WorkspacePlan: plan,
 	})
 	if rr.Code != http.StatusBadRequest {
@@ -1463,7 +1458,7 @@ func TestCreateRejectsSetupCommandOnBlocklist(t *testing.T) {
 		"sources": [],
 		"setupCommands": [{"cmd": "rm -rf /"}]
 	}`)
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "blocked", WorkspacePlan: plan,
 	})
 	if rr.Code != http.StatusBadRequest {
@@ -1506,7 +1501,7 @@ func TestCreateAdmitsSetupCommandWithinAllowlist(t *testing.T) {
 		"sources": [],
 		"setupCommands": [{"cmd": "npm ci"}, {"cmd": "make test"}]
 	}`)
-	rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "locked", WorkspacePlan: plan,
 	})
 	if rr.Code != http.StatusCreated {
@@ -1529,23 +1524,22 @@ func TestCreateClaimsPodAndPersistsBinding_spec_7_1_4(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-create-claim" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{
+	rr := postSessionStep(t, asOwner(srv.Handler()), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo",
-		UserID:     "alice@acme.com",
 	}))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, want 201; body=%s", rr.Code, rr.Body.String())
@@ -1577,7 +1571,7 @@ func TestCreateClaimsPodAndPersistsBinding_spec_7_1_4(t *testing.T) {
 	// spec: §4.6.1 — the per-pod SandboxClaim exists in `bound` after the
 	// create-time claim, so the pod is reserved through the upload window.
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err != nil {
 		t.Fatalf("get per-pod claim after create: %v", err)
 	}
 	if claim.Status.Phase != string(claimstate.Bound) {
@@ -1604,20 +1598,20 @@ func TestCreateLeavesNoRowOnPoolExhaustion_spec_7_1_28(t *testing.T) {
 	// Postgres, the fallback), so the create-time claim returns ErrNoIdlePod.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 	)
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-create-exhausted" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{RuntimeRef: "echo"}))
+	rr := postSessionStep(t, asOwner(srv.Handler()), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{RuntimeRef: "echo"}))
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("create on empty pool: status %d, want 503; body=%s", rr.Code, rr.Body.String())
 	}
@@ -1657,22 +1651,22 @@ func TestCreateServiceModeIsClaimless_spec_5_2(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("svc-pool", "svc-tmpl"),
-		podBindServiceTemplate("svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("svc-sbx-1", "svc-pool", "10.244.3.9"),
+		podBindWarmPool(t, "svc-pool", "svc-tmpl"),
+		podBindServiceTemplate(t, "svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "svc-sbx-1", "svc-pool", "10.244.3.9"),
 	)
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-create-svc" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Pools:                   podBindServicePool(t, "svc-pool", "svc-runtime", 8),
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{RuntimeRef: "svc-runtime"}))
+	rr := postSessionStep(t, asOwner(srv.Handler()), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{RuntimeRef: "svc-runtime"}))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("service-mode create: status %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
@@ -1690,7 +1684,7 @@ func TestCreateServiceModeIsClaimless_spec_5_2(t *testing.T) {
 
 	// The idle Sandbox is untouched: no per-pod claim was created at create.
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-svc-sbx-1"}, &claim); !apierrors.IsNotFound(err) {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-svc-sbx-1"}, &claim); !apierrors.IsNotFound(err) {
 		t.Errorf("service-mode create created/looked up claim-svc-sbx-1 (err=%v); want NotFound (claimless)", err)
 	}
 }
@@ -1708,21 +1702,21 @@ func TestCreateRollsBackClaimOnPersistFailure_spec_7_1_28(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-rb", "echo-pool", "10.244.2.6"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-rb", "echo-pool", "10.244.2.6"),
 	)
 	store := &createRejectingStore{Store: memstore.New()}
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-create-rb" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{RuntimeRef: "echo"}))
+	rr := postSessionStep(t, asOwner(srv.Handler()), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{RuntimeRef: "echo"}))
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("create with rejecting store: status %d, want 503; body=%s", rr.Code, rr.Body.String())
 	}
@@ -1730,7 +1724,7 @@ func TestCreateRollsBackClaimOnPersistFailure_spec_7_1_28(t *testing.T) {
 	// spec: §7.1 — the create-time claim is rolled back: the per-pod
 	// SandboxClaim is deleted, returning the pod to the pool.
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-rb"}, &claim); !apierrors.IsNotFound(err) {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-rb"}, &claim); !apierrors.IsNotFound(err) {
 		t.Errorf("per-pod claim after a rolled-back create (err=%v); want NotFound (claim released)", err)
 	}
 }
@@ -1752,31 +1746,31 @@ func TestTerminateCreatedSessionReleasesClaimedPod_spec_15_1(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-term-created" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
 	// Create claims the warm pod and persists the §4.6 binding; the session is
 	// in `created` (never launched, so no live BindResult).
-	rr := postSessionStep(t, srv.Handler(), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{
-		RuntimeRef: "echo", UserID: "alice@acme.com",
+	rr := postSessionStep(t, asOwner(srv.Handler()), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo",
 	}))
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
 	// The create-time claim is present in `bound` before the terminate.
 	var bound lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &bound); err != nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &bound); err != nil {
 		t.Fatalf("get per-pod claim after create: %v", err)
 	}
 	if bound.Status.Phase != string(claimstate.Bound) {
@@ -1787,7 +1781,7 @@ func TestTerminateCreatedSessionReleasesClaimedPod_spec_15_1(t *testing.T) {
 	delReq := httptest.NewRequest(http.MethodDelete, "/v1/sessions/sess-term-created", nil)
 	delReq.Header.Set("X-Lenny-Tenant-ID", "acme")
 	delRR := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(delRR, delReq)
+	asOwner(srv.Handler()).ServeHTTP(delRR, delReq)
 	if delRR.Code != http.StatusOK {
 		t.Fatalf("DELETE created session: status %d, want 200; body=%s", delRR.Code, delRR.Body.String())
 	}
@@ -1795,7 +1789,7 @@ func TestTerminateCreatedSessionReleasesClaimedPod_spec_15_1(t *testing.T) {
 	// spec: §15.1 — the terminate released the claimed pod: the per-pod
 	// SandboxClaim is deleted, returning the pod to the pool.
 	var after lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &after); !apierrors.IsNotFound(err) {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &after); !apierrors.IsNotFound(err) {
 		t.Errorf("per-pod claim after terminate (err=%v); want NotFound (pod released to the pool)", err)
 	}
 }

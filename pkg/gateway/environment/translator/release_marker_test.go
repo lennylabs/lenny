@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
@@ -87,6 +88,7 @@ func TestSingleShotReleaseRecordsTheRelease_spec_7_1(t *testing.T) {
 					id = "resp_rm"
 					h = translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
 						HolderForwarder: responsesstub.LocalForwarder{},
+						SessionAccess:   ownerprincipal.SessionAccess{},
 						Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: store},
 						DevTenantHeader: true, Clock: clock, IDFunc: func() string { return id },
 					}).Handler()

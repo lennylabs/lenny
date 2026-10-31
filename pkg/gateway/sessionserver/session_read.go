@@ -21,7 +21,7 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 	row, err := s.store.Get(r.Context(), tenantID, id)
 	if err != nil {
 		if errors.Is(err, sessionstore.ErrNotFound) {
-			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+			s.writeSessionNotFound(w)
 			return
 		}
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
@@ -40,7 +40,17 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 
 // handleList implements GET /v1/sessions. Supports the §15.1 ?state=
 // and ?runtime= filters in their basic form.
+//
+// The listing holds only the sessions the caller may read: a caller whose
+// roles do not grant "Read other users' sessions (same tenant)" sees only
+// the sessions it owns, and a request with no principal subject is
+// refused with 401 before any list runs. spec: §10.2 (Session ownership)
+// rules 3, 4, and 6.
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
+	owner, ok := s.requireOwner(w, r)
+	if !ok {
+		return
+	}
 	q := r.URL.Query()
 	// spec: §15.1 — a platform-admin may scope the listing to a
 	// specific tenant via `?tenant=<id>`. A non-admin's `?tenant=` is
@@ -59,6 +69,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		RuntimeRef:   q.Get("runtime"),
 		FailureClass: session.FailureClass(q.Get("failureClass")),
 		Labels:       parseLabelFilter(q["label"]),
+		UserID:       s.listOwnerFilter(r, owner),
 	}
 	// spec: §15.1 — derive_failure audit rows are included
 	// by default; `?includeDeriveFailures=false` excludes them. Any other
@@ -97,6 +108,22 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(env)
+}
+
+// listOwnerFilter returns the ListFilter.UserID that scopes a session
+// listing to the rows the caller may read: empty for a principal whose
+// roles grant PermReadTenantSessions, and owner otherwise. A platform-admin
+// listing another tenant through ?tenant= passes through its role. The
+// check calls principalHolds, so a role-less principal lists only its own
+// sessions in every tenancy mode.
+//
+// spec: §10.2 (Session ownership) rules 4 and 6.
+func (s *Server) listOwnerFilter(r *http.Request, owner string) string {
+	p, _ := getPrincipal(r)
+	if s.principalHolds(r.Context(), p, auth.PermReadTenantSessions) {
+		return ""
+	}
+	return owner
 }
 
 // sessionListSortFields / sessionListDefaultSort pin the §15.1

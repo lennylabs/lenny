@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
@@ -33,6 +35,7 @@ func TestDelegateTaskEnvironmentScope(t *testing.T) {
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -62,7 +65,7 @@ func TestDelegateTaskEnvironmentScope(t *testing.T) {
 	))
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(ctxbg, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "sec-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
@@ -70,7 +73,7 @@ func TestDelegateTaskEnvironmentScope(t *testing.T) {
 
 	// The caller is a member of security-team via the security-engineers
 	// group; the environment's runtimeSelector admits team=security only.
-	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"security-engineers"}}
+	caller := authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"security-engineers"}}
 
 	// research-agent is outside the caller's environment scope — reject.
 	resp := callAs(t, srv.Handler(), caller, "lenny/delegate_task",
@@ -106,6 +109,7 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -151,7 +155,7 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(ctxbg, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "base-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		Environment: "team-a", CreatedAt: now, UpdatedAt: now,
@@ -161,7 +165,7 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 	// environment), but shared-tool is outside team-a's runtimeSelector,
 	// so the within-environment check denies it; the bilateral
 	// team-a <-> team-b declaration makes it reachable cross-environment.
-	caller := authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"team-a-members"}}
+	caller := authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"team-a-members"}}
 	text := resultText(t, callAs(t, srv.Handler(), caller, "lenny/delegate_task",
 		`{"parentSessionId":"sess_parent","target":"shared-tool","poolRef":"pool-b"}`))
 	if !strings.Contains(text, "sess_child") {
@@ -188,6 +192,7 @@ func TestDelegateTaskRejectsTypeMCPTarget_spec_8_2_F_8_2_8(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Runtimes:          runtimes,
@@ -205,7 +210,7 @@ func TestDelegateTaskRejectsTypeMCPTarget_spec_8_2_F_8_2_8(t *testing.T) {
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(ctxbg, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "claude", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
@@ -245,6 +250,7 @@ func TestDelegateTaskPoolIsolationMonotonicity(t *testing.T) {
 	audit := &fakeDelegationAuditor{}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -268,7 +274,7 @@ func TestDelegateTaskPoolIsolationMonotonicity(t *testing.T) {
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(ctxbg, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "base-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,

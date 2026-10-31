@@ -47,6 +47,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // spec: §15.1 / §10.1 — the workspace download returns
@@ -68,7 +69,8 @@ func TestWorkspaceDownloadStreamsConcatenatedChunks(t *testing.T) {
 
 	handler, _ := newChunkGateway(t, store, mstore, func() string { return "unused" },
 		sessionstore.Session{
-			ID: sessID, TenantID: tenant, State: session.StateCompleted,
+			UserID: ownerprincipal.Alice,
+			ID:     sessID, TenantID: tenant, State: session.StateCompleted,
 			WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: ck},
 		})
 
@@ -111,7 +113,8 @@ func TestDeriveCopiesEveryChunkIntoDerivedPrefix(t *testing.T) {
 		ids = ids[1:]
 		return id
 	}, sessionstore.Session{
-		ID: parentID, TenantID: tenant, State: session.StateCompleted,
+		UserID: ownerprincipal.Alice,
+		ID:     parentID, TenantID: tenant, State: session.StateCompleted,
 		RuntimeRef: "claude-code", PoolRef: "default-pool", IsolationProfile: isolation.ProfileSandboxed,
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: parentCk, Source: sessionstore.WorkspaceSnapshotSealed},
 	})
@@ -214,7 +217,8 @@ func TestReplayCopiesEveryChunkIntoReplayedPrefix(t *testing.T) {
 				ids = append(ids[1:], "unused")
 				return id
 			}, sessionstore.Session{
-				ID: parentID, TenantID: tenant, State: session.StateCompleted,
+				UserID: ownerprincipal.Alice,
+				ID:     parentID, TenantID: tenant, State: session.StateCompleted,
 				RuntimeRef: "claude-code", PoolRef: "default-pool", IsolationProfile: isolation.ProfileSandboxed,
 				WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: parentCk, Source: sessionstore.WorkspaceSnapshotSealed},
 			})
@@ -277,7 +281,8 @@ func TestWorkspaceDownloadResolvesFourSegmentRef(t *testing.T) {
 	fourSegmentRef := "/" + tenant + "/checkpoints/" + sessID + "/" + ck
 	handler, _ := newChunkGateway(t, store, mstore, func() string { return "unused" },
 		sessionstore.Session{
-			ID: sessID, TenantID: tenant, State: session.StateCompleted,
+			UserID: ownerprincipal.Alice,
+			ID:     sessID, TenantID: tenant, State: session.StateCompleted,
 			WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: fourSegmentRef},
 		})
 
@@ -318,7 +323,8 @@ func TestDeriveFromFourSegmentParentRefCopiesChunks(t *testing.T) {
 		ids = ids[1:]
 		return id
 	}, sessionstore.Session{
-		ID: parentID, TenantID: tenant, State: session.StateCompleted,
+		UserID: ownerprincipal.Alice,
+		ID:     parentID, TenantID: tenant, State: session.StateCompleted,
 		RuntimeRef: "claude-code", PoolRef: "default-pool", IsolationProfile: isolation.ProfileSandboxed,
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: fourSegmentRef, Source: sessionstore.WorkspaceSnapshotSealed},
 	})

@@ -111,6 +111,14 @@ func (c *Counter) needsRebuild() bool {
 	return !c.outageSince.IsZero() || len(c.ledger) > 0
 }
 
+// outageKnown reports whether this Counter has observed a Redis outage that
+// it has not finished recovering: the outage clock is set.
+func (c *Counter) outageKnown() bool {
+	c.outageMu.Lock()
+	defer c.outageMu.Unlock()
+	return !c.outageSince.IsZero()
+}
+
 // rebuildSnapshot is what one rebuild read under outageMu.
 type rebuildSnapshot struct {
 	since   time.Time
@@ -170,7 +178,7 @@ func (c *Counter) listedPods(ctx context.Context, clockSet bool) (map[string]boo
 	}
 	pods, err := c.source.ListPodsWithActiveSlots(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("slotcounter: recovery rebuild: list pods with active slots: %w", err)
+		return nil, fmt.Errorf("slotcounter: recovery rebuild: list pods with active slots: %w: %w", errSlotSourceRead, err)
 	}
 	for _, pod := range pods {
 		if pod != "" {

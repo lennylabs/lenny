@@ -28,6 +28,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // spec: 14.1 (WorkspacePlan Schema Versioning), 5.1 (Runtime)
@@ -81,7 +82,7 @@ func TestRuntimeDefaultsMaterializeAtFinalize_spec_14_1(t *testing.T) {
 		CredentialRouter:        credrouter.NewDefault(),
 		Blobs:                   blobs,
 	})
-	h := srv.Handler()
+	h := ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 	post := func(path string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
@@ -94,7 +95,7 @@ func TestRuntimeDefaultsMaterializeAtFinalize_spec_14_1(t *testing.T) {
 		return rr
 	}
 
-	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
 	if rr := post("/v1/sessions", createBody, nil); rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
 	}

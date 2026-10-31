@@ -27,7 +27,8 @@ func TestTerminalPipelineForgetsBudgetAccounting_spec_11_2(t *testing.T) {
 		BudgetForget:    func(sessionID string) { forgotten = append(forgotten, sessionID) },
 	})
 	row := sessionstore.Session{
-		ID: "s_1", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "s_1", TenantID: "acme", State: session.StateCompleted,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	if err := store.Create(ctx, row); err != nil {
@@ -49,7 +50,8 @@ func TestTerminalPipelineNilBudgetForgetIsSafe_spec_11_2(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	row := sessionstore.Session{
-		ID: "s_1", TenantID: "acme", State: session.StateCompleted,
+		UserID: testOwner,
+		ID:     "s_1", TenantID: "acme", State: session.StateCompleted,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}
 	if err := store.Create(ctx, row); err != nil {

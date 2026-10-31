@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -39,6 +41,7 @@ type waitConn struct {
 func newWaitConn(name string, store sessionstore.Store, ids *atomic.Int64) *waitConn {
 	c := &waitConn{name: name, reg: inputwait.NewRegistry(), srv: mcp.NewServer(), gen: inputwaitrecovery.NewGeneration()}
 	mcptools.Register(c.srv, mcptools.Deps{
+		SessionService:      ownerprincipal.SessionAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
 		Executor:            executor.NewEchoExecutor(),
@@ -69,7 +72,7 @@ func (c *waitConn) start(t *testing.T, store sessionstore.Store) *liveWait {
 	ctx := inputwaitrecovery.NewContext(context.Background(), c.gen)
 	go func() {
 		defer close(w.done)
-		_, _, _ = c.srv.DispatchTool(ctx, "lenny/request_input", json.RawMessage(args))
+		_, _, _ = c.srv.DispatchTool(ownerprincipal.Context(ctx, ownerprincipal.Alice), "lenny/request_input", json.RawMessage(args))
 	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -231,7 +234,7 @@ func TestConcurrentRequestInputWaitsEndRunning_spec_7_2(t *testing.T) {
 				args := fmt.Sprintf(`{"sessionId":%q,"parts":[{"type":"text","inline":"q"}]}`, waitSession)
 				ctx, cancel := context.WithTimeout(inputwaitrecovery.NewContext(context.Background(), c.gen), time.Duration(1+i)*time.Millisecond)
 				defer cancel()
-				_, _, _ = c.srv.DispatchTool(ctx, "lenny/request_input", json.RawMessage(args))
+				_, _, _ = c.srv.DispatchTool(ownerprincipal.Context(ctx, ownerprincipal.Alice), "lenny/request_input", json.RawMessage(args))
 			}(i)
 		}
 		wg.Wait()

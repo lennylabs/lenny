@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -49,6 +51,7 @@ func newMCPCapturingFrom(t *testing.T) (*mcp.Server, sessionstore.Store, *fromCa
 	exec := &fromCapturingExecutor{msgs: map[string][]executor.Message{}}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:        ownerprincipal.SessionAccess{},
 		DevTenantFallback:     true,
 		Store:                 store,
 		Executor:              exec,
