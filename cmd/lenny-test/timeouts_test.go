@@ -56,11 +56,12 @@ func TestTierTimeoutResolvesOverrideAndDefaults(t *testing.T) {
 // exceed the slowest package's observed runtime, or a passing package is
 // reported as a tier failure for a timeout alone.
 func TestUnitTimeoutExceedsObservedRuntime(t *testing.T) {
-	// Observed: 156.8s for cmd/lenny-gateway under the race detector, inside
-	// a scoped run of 25 unit-tier package patterns on 2026-10-27 at load
-	// average 14 to 22. pkg/gateway/sessionserver, which took 198.9s in that
-	// run, took 108.2s alone on 2026-10-31 at load average 6 to 13 once it
-	// shared one envtest control plane per test binary (TEST-GAPS T-17.4.27).
+	// Observed: 108.2s for pkg/gateway/sessionserver under the race detector,
+	// alone on 2026-10-31 at load average 6 to 13, once it shared one envtest
+	// control plane per test binary (TEST-GAPS T-17.4.27); it took 198.9s in a
+	// scoped run of 25 unit-tier package patterns on 2026-10-27 at load
+	// average 14 to 22. cmd/lenny-gateway, which took 156.8s in that run, took
+	// 63.6s on 2026-10-31 at load average 10 to 16 (TEST-GAPS T-17.4.25).
 	// pkg/gateway/session/recycle, which set an earlier figure of
 	// 251.5s, took 14.7s once it shared one envtest control plane per test
 	// binary (TEST-GAPS T-17.4.28), and pkg/embedded/stack took 13.5s
@@ -70,7 +71,7 @@ func TestUnitTimeoutExceedsObservedRuntime(t *testing.T) {
 	// (464.3s to 19.8s, TEST-GAPS T-17.4.26) and pkg/gateway/podlifecycle/
 	// podsession (1776.6s to 46.0s, TEST-GAPS T-17.4.22) made the same change
 	// before them.
-	const observedSlowest = 157 * time.Second
+	const observedSlowest = 109 * time.Second
 	if tierUnitTimeout <= observedSlowest {
 		t.Errorf("tierUnitTimeout %s does not exceed observed unit runtime %s; a passing package will be aborted as a timeout",
 			tierUnitTimeout, observedSlowest)

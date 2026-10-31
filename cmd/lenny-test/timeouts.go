@@ -63,13 +63,13 @@ var (
 	// under the race detector on a loaded host. That package, together with
 	// pkg/gateway/podlifecycle/podclaim, pkg/controller/warmpool,
 	// pkg/controller/sandbox, pkg/gateway/session/recycle,
-	// pkg/embedded/stack, and pkg/gateway/sessionserver, now shares one
-	// control plane per test binary (TEST-GAPS T-17.4.22, T-17.4.26,
-	// T-17.4.28, T-17.4.23, and T-17.4.27); podsession passes in under a
-	// minute, sandbox, recycle, and stack in about 15 to 20 seconds each, and
-	// sessionserver in about 110 seconds. The slowest package measured since
-	// is cmd/lenny-gateway, which took 157 seconds inside a scoped unit-tier
-	// run. The budget stays at 1800 seconds because a whole
+	// pkg/embedded/stack, pkg/gateway/sessionserver, and cmd/lenny-gateway,
+	// now shares one control plane per test binary (TEST-GAPS T-17.4.22,
+	// T-17.4.26, T-17.4.28, T-17.4.23, T-17.4.27, and T-17.4.25); podsession
+	// passes in under a minute, sandbox, recycle, and stack in about 15 to 20
+	// seconds each, cmd/lenny-gateway in about a minute, and sessionserver in
+	// about 110 seconds, the slowest of these measured. The budget stays at
+	// 1800 seconds because a whole
 	// `./...` run under load has not been measured since the change.
 	// Override: LENNY_TEST_UNIT_TIMEOUT.
 	tierUnitTimeout = tierTimeout("LENNY_TEST_UNIT_TIMEOUT", 1800*time.Second)

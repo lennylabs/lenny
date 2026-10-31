@@ -10,7 +10,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -25,11 +24,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
-
-// scrubWiringNS is the agent namespace the scrub-report wiring test seeds.
-const scrubWiringNS = "lenny-agents"
 
 // scrubWiringScheme registers the clientgo (Pod, Namespace) and lenny.dev
 // (SandboxClaim) types the wiring exercises.
@@ -62,15 +57,8 @@ func scrubWiringScheme(t *testing.T) *runtime.Scheme {
 // counters so the session cap never advances, or failed to drive the claim
 // disposition so a scrubbed pod is never reserved for its tenant.
 func TestScrubReportServiceWiringDrivesRecycle_spec_4_7(t *testing.T) {
-	env := envtest.Start(t)
-	cl, err := client.New(env.RESTConfig(), client.Options{Scheme: scrubWiringScheme(t)})
-	if err != nil {
-		t.Fatalf("client: %v", err)
-	}
+	cl, scrubWiringNS := sharedEnvtestClient(t, scrubWiringScheme(t))
 	ctx := context.Background()
-	if err := cl.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: scrubWiringNS}}); err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatalf("create namespace: %v", err)
-	}
 
 	const podID = "pod-recycle-1"
 	const poolName = "agents"
@@ -133,7 +121,7 @@ func TestScrubReportServiceWiringDrivesRecycle_spec_4_7(t *testing.T) {
 		t.Fatalf("create runtime: %v", err)
 	}
 
-	svc := newScrubService(t, cl, counters, pools, runtimes)
+	svc := newScrubService(t, cl, scrubWiringNS, counters, pools, runtimes)
 
 	// A clean session release increments sessions_served.
 	if _, err := svc.ReportSessionScrub(ctx, &adapterv1.ReportSessionScrubRequest{
@@ -194,15 +182,8 @@ func TestScrubReportServiceWiringDrivesRecycle_spec_4_7(t *testing.T) {
 // concurrent-session pod is drained on its first leaked slot rather than at
 // the ceil(maxConcurrentSessions/2) trigger, retiring a still-healthy pod.
 func TestScrubReportServiceWiringResolvesPerPoolDrainThreshold_spec_5_2(t *testing.T) {
-	env := envtest.Start(t)
-	cl, err := client.New(env.RESTConfig(), client.Options{Scheme: scrubWiringScheme(t)})
-	if err != nil {
-		t.Fatalf("client: %v", err)
-	}
+	cl, scrubWiringNS := sharedEnvtestClient(t, scrubWiringScheme(t))
 	ctx := context.Background()
-	if err := cl.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: scrubWiringNS}}); err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatalf("create namespace: %v", err)
-	}
 
 	const podID = "pod-concurrent-1"
 	const poolName = "concurrent-agents"
@@ -249,7 +230,7 @@ func TestScrubReportServiceWiringResolvesPerPoolDrainThreshold_spec_5_2(t *testi
 		t.Fatalf("create runtime: %v", err)
 	}
 
-	svc := newScrubService(t, cl, counters, pools, runtimes)
+	svc := newScrubService(t, cl, scrubWiringNS, counters, pools, runtimes)
 
 	reportLeak := func(sessionID string) {
 		t.Helper()
@@ -304,15 +285,8 @@ func TestScrubReportServiceWiringResolvesPerPoolDrainThreshold_spec_5_2(t *testi
 // degraded across both paths is never drained — the combined-accounting design
 // the proposal requires is unreachable.
 func TestScrubReportServiceWiringCombinesSlotFailuresAndLeaks_spec_5_2(t *testing.T) {
-	env := envtest.Start(t)
-	cl, err := client.New(env.RESTConfig(), client.Options{Scheme: scrubWiringScheme(t)})
-	if err != nil {
-		t.Fatalf("client: %v", err)
-	}
+	cl, scrubWiringNS := sharedEnvtestClient(t, scrubWiringScheme(t))
 	ctx := context.Background()
-	if err := cl.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: scrubWiringNS}}); err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatalf("create namespace: %v", err)
-	}
 
 	const podID = "pod-combined-1"
 	const poolName = "concurrent-agents"
@@ -361,7 +335,7 @@ func TestScrubReportServiceWiringCombinesSlotFailuresAndLeaks_spec_5_2(t *testin
 	// The shared tracker the gateway threads into both the sessionserver
 	// slot-failure path and the scrub-report drain ledger.
 	tracker := slothealth.New(slothealth.WithClock(func() time.Time { return time.Unix(0, 0) }))
-	svc := newScrubServiceWithTracker(t, cl, counters, pools, runtimes, tracker)
+	svc := newScrubServiceWithTracker(t, cl, scrubWiringNS, counters, pools, runtimes, tracker)
 
 	drainStamped := func() bool {
 		t.Helper()
@@ -396,16 +370,16 @@ func TestScrubReportServiceWiringCombinesSlotFailuresAndLeaks_spec_5_2(t *testin
 // newScrubService builds a leasecontrol.Service wired with the §4.7 scrub
 // reporter the gateway constructs in main, so the test drives the same
 // handlers the GatewayControl listener serves.
-func newScrubService(t *testing.T, cl client.Client, counters *memstore.Store, pools poolstore.Store, runtimes runtimestore.Store) *leasecontrol.Service {
+func newScrubService(t *testing.T, cl client.Client, scrubWiringNS string, counters *memstore.Store, pools poolstore.Store, runtimes runtimestore.Store) *leasecontrol.Service {
 	t.Helper()
-	return newScrubServiceWithTracker(t, cl, counters, pools, runtimes, slothealth.New())
+	return newScrubServiceWithTracker(t, cl, scrubWiringNS, counters, pools, runtimes, slothealth.New())
 }
 
 // newScrubServiceWithTracker builds the scrub service over a caller-supplied
 // fail/leak tracker so a test can record slot-bind failures on the same
 // Tracker the gateway shares with the sessionserver slot-failure path, proving
 // the §5.2 combined failed+leaked accounting.
-func newScrubServiceWithTracker(t *testing.T, cl client.Client, counters *memstore.Store, pools poolstore.Store, runtimes runtimestore.Store, tracker *slothealth.Tracker) *leasecontrol.Service {
+func newScrubServiceWithTracker(t *testing.T, cl client.Client, scrubWiringNS string, counters *memstore.Store, pools poolstore.Store, runtimes runtimestore.Store, tracker *slothealth.Tracker) *leasecontrol.Service {
 	t.Helper()
 	// holdTTL 0 falls back to the driver's DefaultClaimHoldTTL; nil HoldRegistrar
 	// leaves reserved-claim expiry to the §4.6.1 orphan GC and nil boundary
