@@ -80,8 +80,9 @@ func (w *tokenServiceWiring) buildGRPCSurface() {
 	if clientset, kerr := inClusterClientset(*w.f.clusterQPS, *w.f.clusterBurst); kerr != nil {
 		log.Printf("lenny-token-service: §4.9 credential Secret reads disabled (no in-cluster Kubernetes client: %v)", kerr)
 	} else {
-		tsGRPC.SetSecretAccessProber(secretprobe.New(clientset, *w.f.secretNamespace))
-		log.Printf("lenny-token-service: §4.9 credential Secret reads active in namespace %q", *w.f.secretNamespace)
+		secretNamespace := w.f.resolvedSecretNamespace()
+		tsGRPC.SetSecretAccessProber(secretprobe.New(clientset, secretNamespace))
+		log.Printf("lenny-token-service: §4.9 credential Secret reads active in namespace %q", secretNamespace)
 	}
 
 	if *w.f.grpcAddr == "" {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 )
 
@@ -124,10 +125,21 @@ func (f *tokenServiceFlags) registerIssuerAndStateFlags() {
 		"Postgres connection string. When set, the §13.3 write-before-issue path persists issued-token metadata to the issued_tokens table and writes `token.exchanged` audit rows to audit_log under the §11.7 per-tenant advisory lock. When empty, the Token Service runs without durable issued-token or audit state (dev mode).")
 	// §4.9 credentials namespace. Every Token Service credential Secret
 	// read (the admin-time probe and the gateway's keyed reads) is one get
-	// in this namespace, and no request can name another. The chart sets
-	// the flag from credentials.namespace.
-	f.secretNamespace = flag.String("secret-namespace", envOr("POD_NAMESPACE", "lenny-system"),
-		"credentials namespace the §4.9 Token Service credential Secret reads target. The chart sets it from credentials.namespace.")
+	// in this namespace, and no request can name another. The default and
+	// the environment override match the gateway's --credentials-namespace,
+	// so the two binaries agree without the chart's argument.
+	f.secretNamespace = flag.String("secret-namespace", envOr("LENNY_CREDENTIALS_NAMESPACE", credential.DefaultNamespace),
+		"credentials namespace the §4.9 Token Service credential Secret reads target. The chart sets it from credentials.namespace. Override via LENNY_CREDENTIALS_NAMESPACE.")
+}
+
+// resolvedSecretNamespace returns the §4.9 credentials namespace the
+// --secret-namespace flag selects. envOr defaults only an empty environment
+// variable, so an explicit empty flag value still reaches here;
+// credential.ResolveNamespace maps it to credential.DefaultNamespace.
+//
+// spec: §4.9 (Credential Storage Topology), §17.6 (Packaging and Installation).
+func (f *tokenServiceFlags) resolvedSecretNamespace() string {
+	return credential.ResolveNamespace(*f.secretNamespace)
 }
 
 // registerClusterClientFlags registers the client-go rate limit for the
