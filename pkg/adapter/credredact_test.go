@@ -28,7 +28,7 @@ func assignReq() *adapterv1.AssignCredentialsRequest {
 	}
 }
 
-// spec: §16.4 — AssignCredentials and RotateCredentials are the
+// spec: §16.4 — AssignCredentials and RotateCredentials are the adapter's
 // credential-sensitive methods; SendMessage is not. F-16.4.8.
 func TestIsCredentialSensitiveMethod_spec_16_4_376(t *testing.T) {
 	sensitive := []string{

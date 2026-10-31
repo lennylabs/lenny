@@ -12,8 +12,9 @@ import (
 // cluster's actual addressing.
 type ClusterCIDRConfig struct {
 	// KubeAPIServerCIDR is the chart kubeApiServerCIDR value: the CIDR
-	// the gateway is allowed to reach the kube-apiserver Service on. It
-	// is always the cluster service CIDR (§13.2 NET-040).
+	// the components whose §13.2.4 egress rule names it, the gateway and
+	// the Token Service among them, use to reach the kube-apiserver
+	// Service. It is always the cluster service CIDR (§13.2 NET-040).
 	KubeAPIServerCIDR string
 	// ExcludeClusterServiceCIDR is the chart
 	// egressCIDRs.excludeClusterServiceCIDR value: the cluster service
