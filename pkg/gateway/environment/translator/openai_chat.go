@@ -266,7 +266,6 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 	// spec: §15 (Built-in adapter single-shot compute model).
 	binding, err := h.binder.BindSingleShot(r.Context(), SingleShotSpec{
 		TenantID:    tenantID,
-		UserID:      req.User,
 		RuntimeRef:  runtimeRef,
 		Environment: envScope,
 	})

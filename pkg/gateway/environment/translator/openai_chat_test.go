@@ -19,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 func newOpenAIHandler(t *testing.T) (*translator.OpenAIChatHandler, sessionstore.Store) {
@@ -36,6 +37,7 @@ func openaiPost(t *testing.T, h http.Handler, body translator.OpenAIChatCompleti
 	t.Helper()
 	buf, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(buf))
+	req = req.WithContext(ownerprincipal.Context(req.Context(), ownerprincipal.Alice))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -212,7 +214,7 @@ func (b stubSingleShotBinder) BindSingleShot(ctx context.Context, spec translato
 	if b.store != nil {
 		now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 		if err := b.store.Create(ctx, sessionstore.Session{
-			ID: b.id, TenantID: spec.TenantID, UserID: spec.UserID, RuntimeRef: spec.RuntimeRef,
+			ID: b.id, TenantID: spec.TenantID, UserID: ownerprincipal.Subject(ctx), RuntimeRef: spec.RuntimeRef,
 			State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 		}); err != nil {
 			return translator.SingleShotBinding{}, err
@@ -411,5 +413,91 @@ func TestOpenAIChatAdapterCapabilities_spec_9_1_35(t *testing.T) {
 	}
 	if caps.SupportsDelegation || caps.SupportsElicitation || caps.SupportsInterrupt {
 		t.Errorf("OpenAI Chat exposes no Lenny surfaces: %+v", caps)
+	}
+}
+
+// TestBuiltInAdaptersBindOwnerFromPrincipal_spec_10_2 pins the default
+// binder behind both built-in adapters: a request with no authenticated
+// principal subject answers the native 401 UNAUTHORIZED envelope and writes
+// no session row, and a request under a principal creates a row owned by
+// that principal's subject whatever the request's `user` field names. Before
+// the owner was bound from the principal, the first request created an
+// ownerless row and the second a row owned by the `user` field.
+//
+// spec: §10.2 (Session ownership) rules 1 and 3; §15 (built-in adapter
+// single-shot compute model).
+func TestBuiltInAdaptersBindOwnerFromPrincipal_spec_10_2(t *testing.T) {
+	adapters := []struct {
+		name  string
+		path  string
+		id    string
+		build func(t *testing.T) (http.Handler, sessionstore.Store)
+		body  map[string]any
+	}{
+		{
+			name: "chat completions", path: "/v1/chat/completions", id: "sess_oa_1",
+			build: func(t *testing.T) (http.Handler, sessionstore.Store) {
+				h, s := newOpenAIHandler(t)
+				return h.Handler(), s
+			},
+			body: map[string]any{"model": "echo", "user": "bob", "messages": []map[string]string{{"role": "user", "content": "hi"}}},
+		},
+		{
+			name: "responses", path: "/v1/responses", id: "resp_1",
+			build: func(t *testing.T) (http.Handler, sessionstore.Store) {
+				h, s := newResponsesHandler(t)
+				return h.Handler(), s
+			},
+			body: map[string]any{"model": "echo", "user": "bob", "input": "hi"},
+		},
+	}
+	principals := []struct {
+		name      string
+		ctx       func(context.Context) context.Context
+		wantCode  int
+		wantOwner string
+	}{
+		{name: "no principal", ctx: func(c context.Context) context.Context { return c }, wantCode: http.StatusUnauthorized},
+		{name: "empty subject", ctx: func(c context.Context) context.Context { return ownerprincipal.Context(c, "") }, wantCode: http.StatusUnauthorized},
+		{name: "principal subject", ctx: func(c context.Context) context.Context { return ownerprincipal.Context(c, ownerprincipal.Alice) }, wantCode: http.StatusOK, wantOwner: ownerprincipal.Alice},
+	}
+	for _, a := range adapters {
+		for _, p := range principals {
+			t.Run(a.name+"/"+p.name, func(t *testing.T) {
+				h, store := a.build(t)
+				buf, _ := json.Marshal(a.body)
+				req := httptest.NewRequest(http.MethodPost, a.path, bytes.NewReader(buf))
+				req = req.WithContext(p.ctx(req.Context()))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("X-Lenny-Tenant-ID", "acme")
+				rr := httptest.NewRecorder()
+				h.ServeHTTP(rr, req)
+				if rr.Code != p.wantCode {
+					t.Fatalf("status = %d, want %d; body=%s", rr.Code, p.wantCode, rr.Body.String())
+				}
+				row, err := store.Get(context.Background(), "acme", a.id)
+				if p.wantCode != http.StatusOK {
+					var env struct {
+						Error struct {
+							Code string `json:"code"`
+						} `json:"error"`
+					}
+					_ = json.Unmarshal(rr.Body.Bytes(), &env)
+					if env.Error.Code != "UNAUTHORIZED" {
+						t.Errorf("error code = %q, want UNAUTHORIZED", env.Error.Code)
+					}
+					if !errors.Is(err, sessionstore.ErrNotFound) {
+						t.Errorf("store.Get after refusal: row %+v, err %v; want ErrNotFound", row, err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("store.Get: %v", err)
+				}
+				if row.UserID != p.wantOwner {
+					t.Errorf("row owner = %q, want the principal subject %q", row.UserID, p.wantOwner)
+				}
+			})
+		}
 	}
 }

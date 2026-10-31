@@ -579,7 +579,6 @@ func (h *OpenResponsesHandler) serveCold(w http.ResponseWriter, r *http.Request,
 	}
 	b, err := h.binder.BindSingleShot(ctx, SingleShotSpec{
 		TenantID:    t.tenantID,
-		UserID:      t.req.User,
 		RuntimeRef:  t.runtimeRef,
 		Environment: t.envScope,
 	})

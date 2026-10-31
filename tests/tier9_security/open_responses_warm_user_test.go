@@ -19,11 +19,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // orHoldingBinder creates a running session row per bind and reports hold,
 // as the gateway's binder does for a multi_turn runtime with injection
-// supported. It records each created session's user.
+// supported. It records each created session's owner, the request
+// principal's subject.
 type orHoldingBinder struct {
 	store sessionstore.Store
 	mu    sync.Mutex
@@ -32,12 +34,12 @@ type orHoldingBinder struct {
 
 func (b *orHoldingBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (translator.SingleShotBinding, error) {
 	b.mu.Lock()
-	b.users = append(b.users, spec.UserID)
+	b.users = append(b.users, ownerprincipal.Subject(ctx))
 	b.mu.Unlock()
 	id := session.NewID()
 	now := time.Now().UTC()
 	err := b.store.Create(ctx, sessionstore.Session{
-		ID: id, TenantID: spec.TenantID, UserID: spec.UserID, RuntimeRef: spec.RuntimeRef,
+		ID: id, TenantID: spec.TenantID, UserID: ownerprincipal.Subject(ctx), RuntimeRef: spec.RuntimeRef,
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	})
 	return translator.SingleShotBinding{SessionID: id, Hold: true}, err
@@ -69,7 +71,7 @@ func TestOpenResponsesWarmContinuationByAnotherUserGoesCold_spec_15(t *testing.T
 		if prev != "" {
 			body["previous_response_id"] = prev
 		}
-		code, raw := f.do(t, http.MethodPost, "/v1/responses", "acme", body)
+		code, raw := f.doAs(t, user, http.MethodPost, "/v1/responses", "acme", body)
 		if code != http.StatusOK {
 			t.Fatalf("POST by %s: %d, body=%s", user, code, raw)
 		}

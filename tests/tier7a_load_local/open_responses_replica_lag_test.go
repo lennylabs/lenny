@@ -29,6 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
 )
 
@@ -77,7 +78,7 @@ func (b *lagBinder) BindSingleShot(ctx context.Context, spec translator.SingleSh
 	id := session.NewID()
 	now := time.Now().UTC()
 	if err := b.store.Create(ctx, sessionstore.Session{
-		ID: id, TenantID: spec.TenantID, UserID: spec.UserID, RuntimeRef: spec.RuntimeRef,
+		ID: id, TenantID: spec.TenantID, UserID: ownerprincipal.Subject(ctx), RuntimeRef: spec.RuntimeRef,
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		return translator.SingleShotBinding{}, err
@@ -85,7 +86,8 @@ func (b *lagBinder) BindSingleShot(ctx context.Context, spec translator.SingleSh
 	return translator.SingleShotBinding{SessionID: id, Hold: !b.coldOnly}, nil
 }
 
-// lagPost sends one turn as alice in tenant acme and returns the status, the
+// lagPost sends one turn as alice, the request's principal subject and its
+// user field, in tenant acme and returns the status, the
 // response id, and the body.
 func lagPost(h http.Handler, prev, input string) (int, string, string) {
 	body := map[string]any{"model": "echo", "input": input, "user": "alice"}
@@ -94,6 +96,7 @@ func lagPost(h http.Handler, prev, input string) (int, string, string) {
 	}
 	raw, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(raw))
+	req = req.WithContext(ownerprincipal.Context(req.Context(), "alice"))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

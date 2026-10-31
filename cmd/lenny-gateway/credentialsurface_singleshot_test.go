@@ -196,7 +196,7 @@ func TestSessionSingleShotBinderReturnsTheCreatedSession_spec_15(t *testing.T) {
 	// spec: §10.2 (Session ownership) — the create-and-start service binds
 	// the owner from the principal the context carries.
 	ownerCtx := authmw.WithPrincipal(context.Background(), authmw.Principal{Subject: "alice@acme.com", TenantID: "acme"})
-	binding, err := binder.BindSingleShot(ownerCtx, translator.SingleShotSpec{TenantID: "acme", RuntimeRef: "chat", UserID: "alice@acme.com"})
+	binding, err := binder.BindSingleShot(ownerCtx, translator.SingleShotSpec{TenantID: "acme", RuntimeRef: "chat"})
 	if err != nil {
 		t.Fatalf("BindSingleShot = %v, want the created session", err)
 	}

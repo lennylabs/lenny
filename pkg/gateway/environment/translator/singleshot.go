@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
@@ -97,10 +98,14 @@ type SessionTerminal interface {
 // credential-lease semantics, so an Open Responses previous_response_id is
 // not threaded through the single-shot path.
 //
-// spec: §15 built-in adapter single-shot compute model.
+// It carries no owner: the binder takes the session owner from the
+// authenticated principal on the request context, never from a request
+// field such as the adapter's `user`.
+//
+// spec: §15 built-in adapter single-shot compute model; §10.2 (Session
+// ownership) rule 1.
 type SingleShotSpec struct {
 	TenantID    string
-	UserID      string
 	RuntimeRef  string
 	Environment string
 }
@@ -121,6 +126,22 @@ type SingleShotError struct {
 }
 
 func (e *SingleShotError) Error() string { return e.Code + ": " + e.Message }
+
+// principalOwner returns the Subject of the authenticated principal on ctx,
+// the owner of a session the request creates. A missing principal or an
+// empty Subject is the 401 UNAUTHORIZED *SingleShotError.
+//
+// spec: §10.2 (Session ownership) rules 1 and 3.
+func principalOwner(ctx context.Context) (string, error) {
+	if p, ok := authmw.FromContext(ctx); ok && p.Subject != "" {
+		return p.Subject, nil
+	}
+	return "", &SingleShotError{
+		HTTPStatus: http.StatusUnauthorized,
+		Code:       "UNAUTHORIZED",
+		Message:    "the request carries no authenticated principal subject",
+	}
+}
 
 // noopSingleShotBinder is the default SingleShotBinder a handler falls
 // back to when no binder is injected (the pure in-process translator unit
@@ -144,19 +165,26 @@ func newNoopSingleShotBinder(store sessionstore.Store, idFn func() string, clock
 	return &noopSingleShotBinder{store: store, idFn: idFn, clock: clock}
 }
 
-// BindSingleShot generates a session id and persists a running row,
-// returning the id for the subsequent dispatch. It never claims a pod, so it
-// never holds the session.
+// BindSingleShot generates a session id and persists a running row owned by
+// the request principal's subject, returning the id for the subsequent
+// dispatch. A request with no principal, or one whose Subject is empty, is
+// refused with 401 UNAUTHORIZED and no row is written. The binder cannot
+// import the session server, so it applies the ownership rule itself. It
+// never claims a pod, so it never holds the session.
 //
 // spec: §15 built-in adapter single-shot compute model; §15 (Open Responses
-// conversation sessions).
+// conversation sessions); §10.2 (Session ownership) rules 1 and 3.
 func (b *noopSingleShotBinder) BindSingleShot(ctx context.Context, spec SingleShotSpec) (SingleShotBinding, error) {
+	owner, err := principalOwner(ctx)
+	if err != nil {
+		return SingleShotBinding{}, err
+	}
 	sessionID := b.idFn()
 	now := b.clock()
 	row := sessionstore.Session{
 		ID:          sessionID,
 		TenantID:    spec.TenantID,
-		UserID:      spec.UserID,
+		UserID:      owner,
 		RuntimeRef:  spec.RuntimeRef,
 		Environment: spec.Environment,
 		State:       session.StateRunning,

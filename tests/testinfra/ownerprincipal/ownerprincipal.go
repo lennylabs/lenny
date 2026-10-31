@@ -28,6 +28,16 @@ func Context(ctx context.Context, subject string) context.Context {
 	return authmw.WithPrincipal(ctx, authmw.Principal{Subject: subject})
 }
 
+// Subject returns the Subject of the principal on ctx, or "" when ctx
+// carries none. A fake session binder stamps it as the created row's owner,
+// as the production binders do.
+//
+// spec: §10.2 (Session ownership) rule 1.
+func Subject(ctx context.Context) string {
+	p, _ := authmw.FromContext(ctx)
+	return p.Subject
+}
+
 // Wrap returns h behind a layer that gives a request with no principal a
 // principal whose Subject is subject. A request that already carries a
 // principal keeps it, so a test that sets its own principal, including one

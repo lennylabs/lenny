@@ -23,6 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // convBinder creates a running session row for each bind, named sess_1,
@@ -50,7 +51,7 @@ func (b *convBinder) BindSingleShot(ctx context.Context, spec translator.SingleS
 	}
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := b.store.Create(ctx, sessionstore.Session{
-		ID: id, TenantID: spec.TenantID, UserID: spec.UserID, RuntimeRef: rt, Environment: spec.Environment,
+		ID: id, TenantID: spec.TenantID, UserID: ownerprincipal.Subject(ctx), RuntimeRef: rt, Environment: spec.Environment,
 		State: session.StateRunning, RecoveryGeneration: b.gen, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		return translator.SingleShotBinding{}, err
@@ -330,9 +331,18 @@ func newConvFixture(t *testing.T, o convOptions) *convFixture {
 	return f
 }
 
-// post sends a POST /v1/responses with body on ctx as tenant acme.
+// convOwner is the subject of the principal a fixture request carries when
+// its context names none, and the `user` field turn sends.
+const convOwner = "alice"
+
+// post sends a POST /v1/responses with body on ctx as tenant acme. A ctx
+// with no principal is given one whose Subject is convOwner, the owner the
+// binder stamps on a created session.
 func (f *convFixture) post(t *testing.T, ctx context.Context, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
+	if ownerprincipal.Subject(ctx) == "" {
+		ctx = ownerprincipal.Context(ctx, convOwner)
+	}
 	buf, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(buf)).WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")

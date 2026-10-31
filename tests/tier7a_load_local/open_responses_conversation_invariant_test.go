@@ -40,6 +40,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
 )
 
@@ -271,7 +272,7 @@ func (b orInvBinder) BindSingleShot(ctx context.Context, spec translator.SingleS
 	id := session.NewID()
 	now := time.Now().UTC()
 	if err := b.store.Create(ctx, sessionstore.Session{
-		ID: id, TenantID: spec.TenantID, UserID: spec.UserID, RuntimeRef: spec.RuntimeRef,
+		ID: id, TenantID: spec.TenantID, UserID: ownerprincipal.Subject(ctx), RuntimeRef: spec.RuntimeRef,
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		return translator.SingleShotBinding{}, err
@@ -331,7 +332,8 @@ func newORInvWorld(t *testing.T) *orInvWorld {
 	return w
 }
 
-// post sends one turn and returns the status and the response id.
+// post sends one turn as the principal whose subject is user, with user
+// as the request's user field, and returns the status and the response id.
 func (w *orInvWorld) post(user, prev, input string) (int, string) {
 	body := map[string]any{"model": orInvRuntimeRef, "input": input, "user": user}
 	if prev != "" {
@@ -339,6 +341,7 @@ func (w *orInvWorld) post(user, prev, input string) (int, string) {
 	}
 	raw, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(raw))
+	req = req.WithContext(ownerprincipal.Context(req.Context(), user))
 	req.Header.Set("X-Lenny-Tenant-ID", orInvTenant)
 	rr := httptest.NewRecorder()
 	w.handler.ServeHTTP(rr, req)

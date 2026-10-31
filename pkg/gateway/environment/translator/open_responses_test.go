@@ -23,6 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 func newResponsesHandler(t *testing.T) (*translator.OpenResponsesHandler, sessionstore.Store) {
@@ -42,6 +43,7 @@ func respPost(t *testing.T, h http.Handler, body any) *httptest.ResponseRecorder
 	t.Helper()
 	buf, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(buf))
+	req = req.WithContext(ownerprincipal.Context(req.Context(), ownerprincipal.Alice))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -386,6 +388,7 @@ func respPostTenant(t *testing.T, h http.Handler, tenant string, body any) *http
 	t.Helper()
 	buf, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(buf))
+	req = req.WithContext(ownerprincipal.Context(req.Context(), ownerprincipal.Alice))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", tenant)
 	rr := httptest.NewRecorder()
@@ -663,7 +666,7 @@ type genBinder struct {
 func (b genBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (translator.SingleShotBinding, error) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	return translator.SingleShotBinding{SessionID: b.id, RecoveryGeneration: b.gen}, b.store.Create(ctx, sessionstore.Session{
-		ID: b.id, TenantID: spec.TenantID, UserID: spec.UserID, RuntimeRef: spec.RuntimeRef,
+		ID: b.id, TenantID: spec.TenantID, UserID: ownerprincipal.Subject(ctx), RuntimeRef: spec.RuntimeRef,
 		State: session.StateRunning, RecoveryGeneration: b.gen, CreatedAt: now, UpdatedAt: now,
 	})
 }

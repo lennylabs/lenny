@@ -29,6 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 // orRecordingExecutor records every message slice it is sent and answers
@@ -81,11 +82,20 @@ func newORFixture(t *testing.T) *orFixture {
 
 func (f *orFixture) do(t *testing.T, method, path, tenant string, body any) (int, []byte) {
 	t.Helper()
+	return f.doAs(t, ownerprincipal.Alice, method, path, tenant, body)
+}
+
+// doAs sends one request as the authenticated principal whose Subject is
+// subject; the adapter binds a created session's owner from it.
+// spec: §10.2 (Session ownership) rule 1.
+func (f *orFixture) doAs(t *testing.T, subject, method, path, tenant string, body any) (int, []byte) {
+	t.Helper()
 	var buf []byte
 	if body != nil {
 		buf, _ = json.Marshal(body)
 	}
 	req := httptest.NewRequest(method, path, bytes.NewReader(buf))
+	req = req.WithContext(ownerprincipal.Context(req.Context(), subject))
 	req.Header.Set("X-Lenny-Tenant-ID", tenant)
 	rr := httptest.NewRecorder()
 	f.handler.ServeHTTP(rr, req)
@@ -241,4 +251,39 @@ func TestOpenResponsesErasureBoundsConversationContext_spec_12_8(t *testing.T) {
 		f.post(t, "acme", "three", mid)
 		assertSent(t, f.exec.last(), msgs("one", "reply1", "three"))
 	})
+}
+
+// spec: §10.2 (Session ownership) rules 1 and 3, §15 (built-in adapter single-shot compute model)
+// diagnosis: an Open Responses create on the default in-memory binder either
+// admitted a request with no principal subject, writing an ownerless session
+// outside every user's erasure, or stamped an owner other than the
+// principal's subject (such as the request's `user` field). Check
+// noopSingleShotBinder.BindSingleShot and principalOwner in
+// pkg/gateway/environment/translator/singleshot.go.
+func TestOpenResponsesDefaultBinderOwnerIsThePrincipal_spec_10_2(t *testing.T) {
+	f := newORFixture(t)
+	body := map[string]any{"model": "echo", "input": "hello", "user": "bob"}
+	code, raw := f.doAs(t, "", http.MethodPost, "/v1/responses", "acme", body)
+	if code != http.StatusUnauthorized || !bytes.Contains(raw, []byte("UNAUTHORIZED")) {
+		t.Fatalf("no-subject create = %d %s, want 401 UNAUTHORIZED", code, raw)
+	}
+	rows, err := f.sessions.List(context.Background(), "acme", sessionstore.ListFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("no-subject create wrote %d session rows, want none: %+v", len(rows), rows)
+	}
+
+	code, raw = f.doAs(t, ownerprincipal.Alice, http.MethodPost, "/v1/responses", "acme", body)
+	if code != http.StatusOK {
+		t.Fatalf("create as %s = %d %s, want 200", ownerprincipal.Alice, code, raw)
+	}
+	rows, err = f.sessions.List(context.Background(), "acme", sessionstore.ListFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].UserID != ownerprincipal.Alice {
+		t.Errorf("created rows = %+v, want one owned by the principal %s rather than the user field", rows, ownerprincipal.Alice)
+	}
 }
