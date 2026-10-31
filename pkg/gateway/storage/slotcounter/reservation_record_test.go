@@ -118,9 +118,12 @@ func TestFallbackReserveRecordsOnlyAdmissions_spec_12_4(t *testing.T) {
 }
 
 // spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
-// diagnosis: a release left the session's record, so the gate kept
+// §6.2 (leaked slot semantics).
+// diagnosis: a clean release left the session's record, so the gate kept
 // counting a slot the session no longer holds after its post-terminal
-// window, or a release refused because Redis is down kept the record.
+// window, or a clean release refused because Redis is down kept the record;
+// or a leaked release deleted the record, so the gate admitted beside a
+// runtime that may still be running.
 func TestReleaseDeletesTheRecord_spec_12_4(t *testing.T) {
 	for _, leaked := range []bool{false, true} {
 		t.Run(fmt.Sprintf("leaked %v redis up", leaked), func(t *testing.T) {
@@ -133,11 +136,25 @@ func TestReleaseDeletesTheRecord_spec_12_4(t *testing.T) {
 			if _, _, _, err := c.Release(ctx, "pod-1", "s", leaked); err != nil {
 				t.Fatalf("Release: %v", err)
 			}
-			if fb.hasRecord("pod-1", "s") {
-				t.Error("record present after the release")
+			if got := fb.hasRecord("pod-1", "s"); got != leaked {
+				t.Errorf("record present = %v after the release, want %v", got, leaked)
 			}
 		})
 	}
+	t.Run("leaked release with redis down keeps the record", func(t *testing.T) {
+		fb := newFakeFallback()
+		c := downedCounter(t, slotcounter.WithFallbackSource(fb))
+		ctx := context.Background()
+		if _, _, err := c.Reserve(ctx, "pod-1", "s", 2); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, _, err := c.Release(ctx, "pod-1", "s", true); err == nil {
+			t.Fatal("Release with Redis down returned no error")
+		}
+		if !fb.hasRecord("pod-1", "s") {
+			t.Error("a leaked release deleted the record, so the gate stops counting the leaked slot")
+		}
+	})
 	t.Run("redis down", func(t *testing.T) {
 		fb := newFakeFallback()
 		c := downedCounter(t, slotcounter.WithFallbackSource(fb))

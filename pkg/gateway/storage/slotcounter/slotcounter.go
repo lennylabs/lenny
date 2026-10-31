@@ -627,6 +627,9 @@ func lockToken() (string, error) {
 // (§6.2). The caller runs the occupancy-zero disposition only when the
 // release is clean, removed is true, and remaining is zero.
 //
+// A clean release deletes the session's reservation record whatever the
+// Redis release reports. A leaked release keeps it.
+//
 // A release that finds the rehydrated flag absent rehydrates the set first,
 // adding its own member to the seed, and then removes it, so it reports
 // removed and rehydrated. While an outage is being recovered, Release runs
@@ -642,12 +645,15 @@ func (c *Counter) Release(ctx context.Context, podID, sessionID string, leaked b
 		return false, 0, false, fmt.Errorf("slotcounter: release %s: %w", podID, errEmptySessionID)
 	}
 	removed, remaining, rehydrated, err = c.release(ctx, podID, sessionID, leaked)
-	// spec: §12.4 — the release ends the reservation's Postgres record on
-	// every outcome. A Redis release that failed leaves the Redis member
-	// counted; the §12.4 gate keeps counting the session through its row's
-	// post-terminal window, as it does for a session whose reservation
-	// predates the record.
-	c.dropReservation(ctx, podID, sessionID)
+	// spec: §12.4 — a clean release ends the reservation's Postgres record
+	// even when the Redis release failed: the session has left the slot, so
+	// only the Redis member over-counts. A leaked release keeps the record,
+	// because §6.2 keeps a leaked slot counted and the record may be the only
+	// thing the §12.4 gate can count when no row names the pod. The
+	// stale-slot reaper reclaims a leaked release's record.
+	if !leaked {
+		c.dropReservation(ctx, podID, sessionID)
+	}
 	if err != nil {
 		if leaked {
 			c.record(entryLeaked, podID, sessionID)
