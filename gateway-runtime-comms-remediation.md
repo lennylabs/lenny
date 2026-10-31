@@ -3695,7 +3695,7 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
       §8.2 calls the exchange an in-process Token Service call while the Token Service runs as its own
       Deployment, and how the gateway authenticates as that internal caller;
     - how the child token is delivered to the child pod.
-  - [ ] **Shared gateway key-source proposal** (not yet written): **F-7.1.31** (Medium), the per-process
+  - [ ] **Shared gateway key-source proposal** (not yet written): **F-7.1.31** (High since 2026-10-31: every finalize now verifies the token, so a finalize on a replica other than the minter is refused; next change-proposal after 0111), the per-process
     `uploadToken` key ring and consumed-token tracker, and **F-27.3.16** (Medium), the per-process playground
     OIDC state-cookie key (rerouted here 2026-10-27, because a direct-fix attempt found no key source with
     spec text: the playground session cookie is opaque, no mounted chart Secret covers this use, the spec
