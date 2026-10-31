@@ -221,6 +221,7 @@ type gatewayFlags struct {
 	holderForwardListenAddr                       *string
 	tokenServiceAddr                              *string
 	credentialsNamespace                          *string
+	credentialSecretTimeout                       *time.Duration
 	tokenServiceHTTPURL                           *string
 	tokenServiceCert                              *string
 	tokenServiceKey                               *string
@@ -947,6 +948,8 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"§4.3 lenny-token-service gRPC address (host:port). When set, the gateway materializes every §4.9 credential lease over mTLS against the Token Service instead of running pkg/credential.MintLease in-process, enforcing the §4.3 'gateway has no KMS decrypt rights' boundary. Empty falls back to the in-process credassign.Service for dev mode and self-contained tests.")
 	f.credentialsNamespace = flag.String("credentials-namespace", envOr("LENNY_CREDENTIALS_NAMESPACE", credential.DefaultNamespace),
 		"§4.9 credentials namespace: the namespace that holds credential Secrets. The admin credential-pool handlers and the bootstrap seed accept a secretRef only as <name> or <credentials-namespace>/<name> and store it in the canonical <credentials-namespace>/<name> form, and the Token Service probe is sent the parsed Secret name. The chart sets it from credentials.namespace. Default lenny-credentials.")
+	f.credentialSecretTimeout = flag.Duration("credential-secret-timeout", envDuration("LENNY_CREDENTIAL_SECRET_TIMEOUT", defaultCredentialSecretTimeout),
+		"§4.9 deadline for each Kubernetes call the gateway makes to write or delete a Lenny-written credential Secret in the credentials namespace (create, update, delete, delete-collection). A call that exceeds it fails the admin credential-pool write with 503 SERVICE_UNAVAILABLE. Operator-tunable; default 10s.")
 	f.tokenServiceHTTPURL = flag.String("token-service-http-url", os.Getenv("LENNY_TOKEN_SERVICE_HTTP_URL"),
 		"§4.3 lenny-token-service HTTP token-exchange URL (scheme://host:port). When set, the gateway reverse-proxies /v1/oauth/* to the Token Service so the §13.3 canonical endpoint is served by the actual minter. Empty disables the /v1/oauth/ surface on the gateway entirely; deployments that wire a Token Service binary MUST set this to keep /v1/oauth/token reachable.")
 	f.tokenServiceCert = flag.String("token-service-tls-cert", os.Getenv("LENNY_TOKEN_SERVICE_TLS_CERT"),

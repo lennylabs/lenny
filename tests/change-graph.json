@@ -589,8 +589,8 @@
       "unit": ["pkg/gateway/externalapi/admin/..."],
       "component": ["tests/tier2_component/gateway_subsystems/admin_plane_test.go"],
       "contract": ["tests/tier3_contract/gateway_ops/...", "tests/tier3_contract/rest_pools/...", "tests/tier3_contract/admin_credential_pool_codes/..."],
-      "integration": ["tests/tier4_integration/admin_bootstrap_test.go"],
-      "security": ["tests/tier9_security/credential_secret_ref_cross_tenant_test.go"]
+      "integration": ["tests/tier4_integration/admin_bootstrap_test.go", "tests/tier4_integration/credential_pool_secret_write_pg_test.go"],
+      "security": ["tests/tier9_security/credential_secret_ref_cross_tenant_test.go", "tests/tier9_security/credential_secret_data_value_test.go"]
     },
     "pkg/gateway/externalapi/openapi": {
       "unit": ["pkg/gateway/externalapi/openapi/..."],

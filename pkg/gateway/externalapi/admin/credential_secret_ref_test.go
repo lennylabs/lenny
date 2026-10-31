@@ -734,7 +734,7 @@ func TestCredentialAddCommitFailureLeavesRow_spec_4_9(t *testing.T) {
 func seedBody(entries []admin.CredentialEntryPayload, maxSessions int) admin.BootstrapRequest {
 	p := poolBody("p1", entries)
 	p.MaxConcurrentSessions = maxSessions
-	return admin.BootstrapRequest{CredentialPools: []admin.CredentialPoolPayload{p, poolBody("other", nil)}}
+	return admin.BootstrapRequest{CredentialPools: []admin.CredentialPoolRequest{asPoolRequest(p), asPoolRequest(poolBody("other", nil))}}
 }
 
 func runSeed(t *testing.T, hs *refHarness, query string, body admin.BootstrapRequest) admin.BootstrapSection {

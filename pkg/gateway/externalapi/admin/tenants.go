@@ -316,6 +316,11 @@ type Router struct {
 
 	credentialRekey CredentialRekeyer
 	secretProber    SecretAccessProber
+	// secretWriter writes and deletes Lenny-written credential Secrets.
+	// Nil when no Token Service is configured, which refuses every write
+	// that needs a Secret operation (§4.9 Credential values submitted
+	// through the admin API rule 6).
+	secretWriter CredentialSecretWriter
 
 	// credNS is the §4.9 credentials namespace every credential-pool
 	// secretRef is parsed against (Options.CredentialsNamespace).

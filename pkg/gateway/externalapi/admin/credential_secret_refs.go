@@ -37,9 +37,16 @@ type adminWriteError struct {
 	code    string
 	message string
 	details map[string]any
+	// cause is the failure behind the refusal, when there is one. It is
+	// reachable through errors.Is and errors.As and never written to the
+	// response.
+	cause error
 }
 
 func (e *adminWriteError) Error() string { return e.code + ": " + e.message }
+
+// Unwrap returns the failure behind the refusal, or nil.
+func (e *adminWriteError) Unwrap() error { return e.cause }
 
 // writeAdminWriteError writes err when it wraps an *adminWriteError and
 // reports whether it did.

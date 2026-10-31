@@ -443,51 +443,55 @@ type gatewayWiringFields struct {
 	// provisions the per-tenant audit sequence the §13.3 issued-token
 	// write-before-issue path seals on the primary. In the single-instance
 	// topology it aliases billingAuditDDLPool. spec: §12.3, §15.1. F-11.2.10.
-	primaryDDLPool     *pgxpool.Pool
-	billingLedger      billingstore.Store
-	blobProbe          drainreadiness.Prober
-	capOverrides       runtimecapoverride.Store
-	connectors         connectorstore.Store
-	coordFencer        sessionserver.CoordinationFencer
-	coordLeaseStore    leasestore.LeaseStore
-	coordMirror        coordlease.Store
-	credAssign         credassign.Assigner
-	credCache          *credcache.Cache
-	erasureLeaseStore  leasestore.LeaseStore
-	exec               executor.Executor
-	expectedAuds       []string
-	experiments        experimentstore.Store
-	holdCoordinator    *recycle.HoldCoordinator
-	hwmReader          sessionserver.DelegationHighWatermarkReader
-	inProcessAssign    *credassign.Service
-	interactions       interactionstore.Store
-	jwtKeySet          *jwt.KeySet
-	jwtSigner          *jwt.BreakerSigner
-	kmsBreakerObs      *kmsBreakerObserver
-	kmsProvider        kms.Provider
-	kubeHealthzProbe   func(context.Context) error
-	llmLeases          credleasestore.LeaseStore
-	messagingCoord     *sessioninbox.Coordinator
-	minioStore         *miniostore.Store
-	objectStore        blobstore.Store
-	podRegistry        *podsession.Registry
-	rateLimiter        ratelimit.Counter
-	readPool           *pgxpool.Pool
-	recycleBoundary    *recycle.RecycleBoundaryCoordinator
-	ring               *uploadtoken.KeyRing
-	runtimes           runtimestore.Store
-	saTokenVerifier    leasecontrol.TokenVerifier
-	saUserVerifier     serviceidentity.SATokenAuthenticator
-	scatterRouter      *storerouter.SingleShardRouter
-	secretProber       admin.SecretAccessProber
-	sessionLogs        sessionlogstore.Store
-	sessionSealer      sessionserver.Sealer
-	storeRouter        storerouter.StoreRouter
-	toolApprovalWaits  *toolapproval.Registry
-	treeBudgetReserver delegation.TreeBudgetReserver
-	uploadIssuer       *uploadtoken.Issuer
-	uploadVerifier     *uploadtoken.Verifier
-	users              userstore.Store
+	primaryDDLPool    *pgxpool.Pool
+	billingLedger     billingstore.Store
+	blobProbe         drainreadiness.Prober
+	capOverrides      runtimecapoverride.Store
+	connectors        connectorstore.Store
+	coordFencer       sessionserver.CoordinationFencer
+	coordLeaseStore   leasestore.LeaseStore
+	coordMirror       coordlease.Store
+	credAssign        credassign.Assigner
+	credCache         *credcache.Cache
+	erasureLeaseStore leasestore.LeaseStore
+	exec              executor.Executor
+	expectedAuds      []string
+	experiments       experimentstore.Store
+	holdCoordinator   *recycle.HoldCoordinator
+	hwmReader         sessionserver.DelegationHighWatermarkReader
+	inProcessAssign   *credassign.Service
+	interactions      interactionstore.Store
+	jwtKeySet         *jwt.KeySet
+	jwtSigner         *jwt.BreakerSigner
+	kmsBreakerObs     *kmsBreakerObserver
+	kmsProvider       kms.Provider
+	kubeHealthzProbe  func(context.Context) error
+	llmLeases         credleasestore.LeaseStore
+	messagingCoord    *sessioninbox.Coordinator
+	minioStore        *miniostore.Store
+	objectStore       blobstore.Store
+	podRegistry       *podsession.Registry
+	rateLimiter       ratelimit.Counter
+	readPool          *pgxpool.Pool
+	recycleBoundary   *recycle.RecycleBoundaryCoordinator
+	ring              *uploadtoken.KeyRing
+	runtimes          runtimestore.Store
+	saTokenVerifier   leasecontrol.TokenVerifier
+	saUserVerifier    serviceidentity.SATokenAuthenticator
+	scatterRouter     *storerouter.SingleShardRouter
+	secretProber      admin.SecretAccessProber
+	// credentialSecretWriter is the §4.9 writer of Lenny-written credential
+	// Secrets, nil when no Token Service is configured. The admin Router
+	// and the tenant eraser read it.
+	credentialSecretWriter admin.CredentialSecretWriter
+	sessionLogs            sessionlogstore.Store
+	sessionSealer          sessionserver.Sealer
+	storeRouter            storerouter.StoreRouter
+	toolApprovalWaits      *toolapproval.Registry
+	treeBudgetReserver     delegation.TreeBudgetReserver
+	uploadIssuer           *uploadtoken.Issuer
+	uploadVerifier         *uploadtoken.Verifier
+	users                  userstore.Store
 	// erasureJobs is the §12.8 erasure job store buildPersistenceStores
 	// builds for the posture: the Postgres store over the primary pool, or
 	// erasurejob.Memory writing the flag through the branch's user store.

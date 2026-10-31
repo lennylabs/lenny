@@ -48,13 +48,13 @@ func TestBootstrapCredentialPools(t *testing.T) {
 	}).WithCredentialPools(pools)
 
 	body := admin.BootstrapRequest{
-		CredentialPools: []admin.CredentialPoolPayload{
-			{
+		CredentialPools: []admin.CredentialPoolRequest{
+			{CredentialPoolPayload: admin.CredentialPoolPayload{
 				TenantID: "acme", Name: "anthropic-shared", Provider: "anthropic_direct",
 				AssignmentStrategy: "least-loaded", CacheScope: "per-user",
-			},
+			}},
 			// Rejected: cacheScope tenant on a hipaa tenant.
-			{TenantID: "globex", Name: "bad-cache", Provider: "anthropic_direct", CacheScope: "tenant"},
+			{CredentialPoolPayload: admin.CredentialPoolPayload{TenantID: "globex", Name: "bad-cache", Provider: "anthropic_direct", CacheScope: "tenant"}},
 		},
 	}
 	buf, _ := json.Marshal(body)

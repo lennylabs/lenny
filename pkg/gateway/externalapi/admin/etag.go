@@ -120,6 +120,18 @@ func compareIfMatch(want, current int64) error {
 	}
 }
 
+// optionalIfMatch applies the presence and format halves of the §15.1
+// If-Match precondition to a DELETE, which honours the header only when it
+// is present. It returns the requested version and whether the header was
+// sent; on a malformed header it writes the 400 and reports ok false.
+func optionalIfMatch(w http.ResponseWriter, req *http.Request) (want int64, present, ok bool) {
+	if strings.TrimSpace(req.Header.Get("If-Match")) == "" {
+		return 0, false, true
+	}
+	want, ok = requireIfMatch(w, req)
+	return want, true, ok
+}
+
 // enforceIfMatchIfPresent honours the §15.1 optimistic-concurrency
 // precondition on a DELETE: a present If-Match is enforced exactly as on
 // a PUT (malformed → 400 VALIDATION_ERROR, stale → 412 ETAG_MISMATCH),

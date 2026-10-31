@@ -155,8 +155,9 @@ func TestAuthorizedToolsIncludeTenantAccess_spec_24_3(t *testing.T) {
 // TestAuthorizedToolsIncludeCredentialPools_spec_24_5 asserts the §24.5
 // credential-pool operations are discoverable in the authorized-tools
 // catalog so a §25.14 agent finds the credential-management surface. The
-// manage operations are tenant-admin-visible (the manage_credential_pools
-// permission); re-enable is platform-admin per §15.1. F-24.5.5.
+// operations, re-enable included, are tenant-admin-visible, because each
+// is gated on the manage_credential_pools permission the §24.5 rows name.
+// F-24.5.5.
 func TestAuthorizedToolsIncludeCredentialPools_spec_24_5(t *testing.T) {
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{})
 
@@ -180,52 +181,42 @@ func TestAuthorizedToolsIncludeCredentialPools_spec_24_5(t *testing.T) {
 		"admin.remove_pool_credential",
 		"admin.revoke_pool_credential",
 		"admin.revoke_credential_pool",
+		"admin.re_enable_pool_credential",
 	} {
 		if !taGot[w] {
 			t.Errorf("tenant-admin missing credential-pool tool %q: %+v", w, taResp.Tools)
 		}
-	}
-	// re-enable is platform-admin only.
-	if taGot["admin.re_enable_pool_credential"] {
-		t.Error("tenant-admin should not see admin.re_enable_pool_credential (platform-admin per §15.1)")
-	}
-
-	paReq := withAdminPrincipal(httptest.NewRequest(http.MethodGet, "/v1/admin/me/authorized-tools", nil))
-	paRR := httptest.NewRecorder()
-	router.Handler().ServeHTTP(paRR, paReq)
-	var paResp admin.AuthorizedToolsPayload
-	_ = json.Unmarshal(paRR.Body.Bytes(), &paResp)
-	paGot := map[string]bool{}
-	for _, tool := range paResp.Tools {
-		paGot[tool.Tool] = true
-	}
-	if !paGot["admin.re_enable_pool_credential"] {
-		t.Errorf("platform-admin missing admin.re_enable_pool_credential: %+v", paResp.Tools)
 	}
 }
 
 // TestCredentialPoolCatalogMirrorsOpenAPI_spec_25_14 asserts every
 // credential-pool MCP tool the catalog advertises is declared in the
 // OpenAPI document, so a discovered tool resolves to a real route
-// (§25.14 — the catalog is the source of truth for agent-callable ops).
-// F-24.5.5.
+// (§25.14 — the catalog is the source of truth for agent-callable ops),
+// and that each operation's x-lenny-required-role equals the catalog's
+// minimum role for the tool. The catalog role is observed through the
+// authorized-tools filter: a tool a tenant-admin sees has the tenant-admin
+// minimum, and any other has the platform-admin minimum. F-24.5.5.
+// spec: §24.5 (Credential Management), §25.14
 func TestCredentialPoolCatalogMirrorsOpenAPI_spec_25_14(t *testing.T) {
 	doc := openapi.Document()
 	var parsed map[string]any
 	if err := json.Unmarshal(doc, &parsed); err != nil {
 		t.Fatalf("decode openapi: %v", err)
 	}
-	declared := map[string]bool{}
+	declared := map[string]string{}
 	paths, _ := parsed["paths"].(map[string]any)
 	for _, raw := range paths {
 		methods, _ := raw.(map[string]any)
 		for _, m := range methods {
 			body, _ := m.(map[string]any)
 			if tool, ok := body["x-lenny-mcp-tool"].(string); ok {
-				declared[tool] = true
+				role, _ := body["x-lenny-required-role"].(string)
+				declared[tool] = role
 			}
 		}
 	}
+	tenantAdminTools := authorizedToolNames(t, withTenantAdminPrincipal)
 	for _, tool := range []string{
 		"admin.create_credential_pool", "admin.list_credential_pools",
 		"admin.get_credential_pool", "admin.update_credential_pool",
@@ -234,10 +225,37 @@ func TestCredentialPoolCatalogMirrorsOpenAPI_spec_25_14(t *testing.T) {
 		"admin.revoke_pool_credential", "admin.revoke_credential_pool",
 		"admin.re_enable_pool_credential",
 	} {
-		if !declared[tool] {
+		role, ok := declared[tool]
+		if !ok {
 			t.Errorf("credential-pool tool %q not declared in OpenAPI document", tool)
+			continue
+		}
+		catalogRole := string(pkgauth.RolePlatformAdmin)
+		if tenantAdminTools[tool] {
+			catalogRole = string(pkgauth.RoleTenantAdmin)
+		}
+		if role != catalogRole {
+			t.Errorf("tool %q: OpenAPI x-lenny-required-role %q, catalog MinRole %q", tool, role, catalogRole)
 		}
 	}
+}
+
+// authorizedToolNames returns the tools the authorized-tools endpoint lists
+// for the principal as a set.
+func authorizedToolNames(t *testing.T, as func(*http.Request) *http.Request) map[string]bool {
+	t.Helper()
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{})
+	rr := httptest.NewRecorder()
+	router.Handler().ServeHTTP(rr, as(httptest.NewRequest(http.MethodGet, "/v1/admin/me/authorized-tools", nil)))
+	var resp admin.AuthorizedToolsPayload
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode authorized tools: %v", err)
+	}
+	out := map[string]bool{}
+	for _, tool := range resp.Tools {
+		out[tool.Tool] = true
+	}
+	return out
 }
 
 func contains(roles []pkgauth.Role, r pkgauth.Role) bool {

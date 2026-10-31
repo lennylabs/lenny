@@ -71,27 +71,52 @@ func pool(name string, refs ...string) admin.CredentialPoolPayload {
 	return p
 }
 
+// writer is a credential Secret writer whose Put and Delete return err.
+type writer struct{ err error }
+
+func (w writer) Put(context.Context, string, admin.SecretOwner, map[string]string) error {
+	return w.err
+}
+func (w writer) Delete(context.Context, string) error       { return w.err }
+func (w writer) DeleteTenant(context.Context, string) error { return w.err }
+
 // newHandler returns the production admin handler over a store holding
-// acme/p1 at version 1 with one operator ref.
-func newHandler(t *testing.T, pr admin.SecretAccessProber) http.Handler {
+// acme/p1 at version 1 with one operator ref and acme/gone, soft-deleted.
+// w is wired as the credential Secret writer unless it is nil.
+func newHandler(t *testing.T, pr admin.SecretAccessProber, w admin.CredentialSecretWriter) http.Handler {
 	t.Helper()
 	store := credentialpoolstore.NewMemory()
-	if err := store.Create(context.Background(), credentialpoolstore.CredentialPool{
-		TenantID: "acme", Name: "p1", Provider: "anthropic_direct",
-		AssignmentStrategy: "least-loaded", MaxConcurrentSessions: 10,
-		Credentials: []credentialpoolstore.Credential{{ID: "key-1", SecretRef: credNS + "/existing"}},
-	}); err != nil {
-		t.Fatalf("seed: %v", err)
+	for _, name := range []string{"p1", "gone"} {
+		if err := store.Create(context.Background(), credentialpoolstore.CredentialPool{
+			TenantID: "acme", Name: name, Provider: "anthropic_direct",
+			AssignmentStrategy: "least-loaded", MaxConcurrentSessions: 10,
+			Credentials: []credentialpoolstore.Credential{{ID: "key-1", SecretRef: credNS + "/existing"}},
+		}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
 	}
-	return admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+	if err := store.SoftDelete(context.Background(), "acme", "gone", time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("soft delete: %v", err)
+	}
+	r := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock:                func() time.Time { return time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC) },
 		CredentialsNamespace: credNS,
-	}).WithCredentialPools(store).WithSecretAccessProber(pr).Handler()
+	}).WithCredentialPools(store).WithSecretAccessProber(pr)
+	if w != nil {
+		r = r.WithCredentialSecretWriter(w)
+	}
+	return r.Handler()
+}
+
+// secretData is a credential addition body carrying a submitted value.
+func secretData(id string) map[string]any {
+	return map[string]any{"id": id, "secretData": map[string]string{"apiKey": "sk-ant-x"}}
 }
 
 type wireCase struct {
 	name         string
 	prober       admin.SecretAccessProber
+	writer       admin.CredentialSecretWriter
 	as           func(*http.Request) *http.Request
 	method, path string
 	ifMatch      string
@@ -113,7 +138,8 @@ type wireCase struct {
 // has no errorclassify table entry, so a client branching on the catalog
 // mishandles it.
 // spec: §15.1 (error catalog: VALIDATION_ERROR, ETAG_REQUIRED, ETAG_MISMATCH,
-// FORBIDDEN, CREDENTIAL_SECRET_RBAC_MISSING, CREDENTIAL_PROBE_UNAVAILABLE),
+// FORBIDDEN, CREDENTIAL_SECRET_RBAC_MISSING, CREDENTIAL_PROBE_UNAVAILABLE,
+// TOKEN_SERVICE_NOT_CONFIGURED, SERVICE_UNAVAILABLE, RESOURCE_NOT_FOUND),
 // §4.9 (Credential Storage Topology), §25.2 (errorclassify)
 func TestAdminCredentialPoolSecretRefCodesOnWire(t *testing.T) {
 	cases := []wireCase{
@@ -163,10 +189,54 @@ func TestAdminCredentialPoolSecretRefCodesOnWire(t *testing.T) {
 			status: http.StatusServiceUnavailable, code: "CREDENTIAL_PROBE_UNAVAILABLE", detailKeys: []string{"secretRef"},
 			category: errorclassify.CategoryTransient, retryable: true, retryAfter: true,
 		},
+		{
+			name: "secretData on pool create", prober: prober{}, as: platformAdmin,
+			method: http.MethodPost, path: "/v1/admin/credential-pools",
+			body:   map[string]any{"tenantId": "acme", "name": "new", "provider": "anthropic_direct", "credentials": []any{secretData("k")}},
+			status: http.StatusBadRequest, code: "VALIDATION_ERROR", detailKeys: []string{"field"},
+			category: errorclassify.CategoryPermanent,
+		},
+		{
+			name: "empty secretData on credential add", prober: prober{}, writer: writer{}, as: tenantAdmin,
+			method: http.MethodPost, path: "/v1/admin/credential-pools/p1/credentials?tenantId=acme",
+			body:   map[string]any{"id": "k", "secretData": map[string]string{}},
+			status: http.StatusBadRequest, code: "VALIDATION_ERROR", detailKeys: []string{"field"},
+			category: errorclassify.CategoryPermanent,
+		},
+		{
+			name: "credential add on a soft-deleted pool", prober: prober{}, writer: writer{}, as: tenantAdmin,
+			method: http.MethodPost, path: "/v1/admin/credential-pools/gone/credentials?tenantId=acme", body: secretData("k"),
+			status: http.StatusNotFound, code: "RESOURCE_NOT_FOUND",
+			category: errorclassify.CategoryPermanent,
+		},
+		{
+			name: "secretData with no Token Service", prober: prober{}, as: tenantAdmin,
+			method: http.MethodPost, path: "/v1/admin/credential-pools/p1/credentials?tenantId=acme", body: secretData("k"),
+			status: http.StatusUnprocessableEntity, code: "TOKEN_SERVICE_NOT_CONFIGURED",
+			category: errorclassify.CategoryPermanent,
+		},
+		{
+			name: "secretData dryRun with no Token Service", prober: prober{}, as: tenantAdmin,
+			method: http.MethodPost, path: "/v1/admin/credential-pools/p1/credentials?tenantId=acme&dryRun=true", body: secretData("k"),
+			status: http.StatusUnprocessableEntity, code: "TOKEN_SERVICE_NOT_CONFIGURED",
+			category: errorclassify.CategoryPermanent,
+		},
+		{
+			name: "failed Secret Put", prober: prober{}, writer: writer{err: errors.New("apiserver down")}, as: tenantAdmin,
+			method: http.MethodPost, path: "/v1/admin/credential-pools/p1/credentials?tenantId=acme", body: secretData("k"),
+			status: http.StatusServiceUnavailable, code: "SERVICE_UNAVAILABLE",
+			category: errorclassify.CategoryTransient, retryable: true, retryAfter: true,
+		},
+		{
+			name: "pool DELETE stale If-Match", prober: prober{}, writer: writer{}, as: tenantAdmin,
+			method: http.MethodDelete, path: "/v1/admin/credential-pools/p1?tenantId=acme", ifMatch: `"9"`,
+			status: http.StatusPreconditionFailed, code: "ETAG_MISMATCH", detailKeys: []string{"currentEtag"},
+			category: errorclassify.CategoryPermanent,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := newHandler(t, tc.prober)
+			h := newHandler(t, tc.prober, tc.writer)
 			buf, _ := json.Marshal(tc.body)
 			req := tc.as(httptest.NewRequest(tc.method, tc.path, bytes.NewReader(buf)))
 			if tc.ifMatch != "" {

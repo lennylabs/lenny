@@ -178,6 +178,11 @@ var table = map[string]entry{
 	// timeout). TRANSIENT and retryable; the write was rejected rather
 	// than fail open.
 	"CREDENTIAL_PROBE_UNAVAILABLE": {CategoryTransient, true},
+	// §4.9 Credential values submitted through the admin API rule 6,
+	// §15.1: an admin credential-pool write whose Lenny-written Secret
+	// operation has no writer because no Token Service is configured.
+	// PERMANENT; the same write fails until the Token Service is enabled.
+	"TOKEN_SERVICE_NOT_CONFIGURED": {CategoryPermanent, false},
 	// §4.9, §15.1 — the §4.9 pre-claim check found
 	// no provider in the intersection with an assignable credential, or
 	// the credential pool exhausted at assignment. POLICY, HTTP 503; the

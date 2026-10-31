@@ -927,6 +927,12 @@ func (w *gatewayWiring) buildAdminRouter(
 	if credentialRekeyJob != nil {
 		adminRouter = adminRouter.WithCredentialRekey(credentialRekeyJob)
 	}
+	// §4.9 Lenny-written credential Secret writer. Wired only when the
+	// Token Service link is present and a cluster config resolves; without
+	// it a write that needs a Secret operation is refused with 422.
+	if w.credentialSecretWriter != nil {
+		adminRouter = adminRouter.WithCredentialSecretWriter(w.credentialSecretWriter)
+	}
 	// §4.9 admin-time RBAC live-probe on credential-pool writes. Wired
 	// only when the Token Service link is present.
 	if w.secretProber != nil {
