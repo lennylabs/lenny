@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -234,7 +235,7 @@ func TestCreateVCSCredentialReadClassification(t *testing.T) {
 				RefResolver:     stub,
 				VCSCredentials:  &stubVCSCreds{err: tc.err},
 			})
-			rr := createRequest(t, srv.Handler(), sessionserver.CreateSessionRequest{
+			rr := createRequest(t, ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice), sessionserver.CreateSessionRequest{
 				RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", "main"),
 			})
 			if rr.Code != tc.wantStatus {

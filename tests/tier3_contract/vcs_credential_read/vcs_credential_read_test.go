@@ -24,6 +24,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -151,7 +152,7 @@ func TestPlanBindingVCSCredentialReadCodes(t *testing.T) {
 				CredentialPools: pools,
 				VCSCredentials:  &vcscred.StoreResolver{Pools: pools, Secrets: secrets},
 			})
-			rr := createSession(t, srv.Handler())
+			rr := createSession(t, ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 			if rr.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d; body %s", rr.Code, tc.wantStatus, rr.Body.String())
 			}
