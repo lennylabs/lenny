@@ -110,21 +110,30 @@ PATCH /v1/admin/credential-pools/<name>/credentials/<id>
 
 ### Step 2 — Add credentials
 
-Add new credentials to the pool. You need a provisioned Kubernetes Secret containing the new provider key:
+Add new credentials to the pool, by value or by reference.
+
+To add by value, send the new provider key in `secretData`. The gateway writes the Secret. A `tenant-admin` or a `platform-admin` can run this request:
+
+<!-- access: api method=POST path=/v1/admin/credential-pools/{name}/credentials -->
+```
+POST /v1/admin/credential-pools/<name>/credentials
+{"id": "<credential-id>", "secretData": {"apiKey": "<new-key>"}}
+```
+
+To add by reference, create the Kubernetes Secret in the credentials namespace first, then register it with its bare name. Introducing a `secretRef` requires `platform-admin`:
 
 <!-- access: lenny-ctl -->
 ```bash
 lenny-ctl admin credential-pools add-credential \
-  --pool <pool> --provider <provider>
+  --pool <pool> --provider <provider> \
+  --id <credential-id> --secret-ref <secret-name>
 ```
 
 <!-- access: api method=POST path=/v1/admin/credential-pools/{name}/credentials -->
 ```
 POST /v1/admin/credential-pools/<name>/credentials
-{"secretRef": "lenny-system/<secret-name>", "maxConcurrentSessions": 50}
+{"id": "<credential-id>", "secretRef": "<secret-name>"}
 ```
-
-`secretRef` and `maxConcurrentSessions` are body fields on the admin API; supply them via the API call (or pre-populate them in the pool's Helm values) when the new credential needs non-default settings.
 
 **Expected outcome:** `availableCount` > 0 shortly after the add completes. New sessions succeed.
 

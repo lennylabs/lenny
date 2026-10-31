@@ -165,16 +165,18 @@ lenny-ctl admin credential-pools get --pool <name>
 
 **Resolution:**
 
-1. Add more credentials to the pool
+1. Add more credentials to the pool, by value or by reference ([Credential Secrets](configuration.md#credential-secrets))
 2. Review cooldown settings -- reduce cooldown duration if rate-limiting is transient
-3. Check for revoked credentials that can be re-enabled
+3. Check for revoked credentials that can be re-enabled after rotation
 4. Review `maxLeases` per credential -- may be too low
 
 ```bash
-# Add a new credential
+# Add a new credential whose Secret exists in the credentials namespace
 lenny-ctl admin credential-pools add-credential \
   --pool anthropic-prod \
-  --provider anthropic_direct
+  --provider anthropic_direct \
+  --id key-3 \
+  --secret-ref anthropic-key-3
 
 # Re-enable a revoked credential after rotation
 lenny-ctl admin credential-pools re-enable \
@@ -182,6 +184,8 @@ lenny-ctl admin credential-pools re-enable \
   --credential key-1 \
   --reason "Key rotated at provider"
 ```
+
+Adding by reference requires `platform-admin`. A `tenant-admin` adds a credential by value through the admin API `secretData` field. Rotate a revoked credential before re-enabling it, either by updating its Secret in the credentials namespace or by sending a credential update carrying `secretData`.
 
 ---
 

@@ -78,15 +78,24 @@ kubectl exec -it <token-service-pod> -n lenny-system -- \
 #   gcloud kms keys describe <key> --keyring <ring> --location <loc>
 ```
 
-### Step 4 — RBAC on the Token Service SA
+### Step 4 — RBAC and kube-apiserver egress for the Token Service
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-kubectl auth can-i get secret -n lenny-system \
+kubectl auth can-i get secrets -n <credentials.namespace> \
   --as=system:serviceaccount:lenny-system:lenny-token-service
 ```
 
 A `no` indicates RBAC drift from the installed chart.
+
+The Token Service reads each credential Secret from the kube-apiserver, so check its egress rule as well:
+
+<!-- access: kubectl requires=cluster-access -->
+```bash
+kubectl get networkpolicy allow-token-service -n lenny-system -o yaml
+```
+
+The egress list must carry an `ipBlock` for the `kubeApiServerCIDR` Helm value on the `kubeApiServerPorts` ports. A missing rule indicates drift from the installed chart, and a CIDR that excludes the kube-apiserver endpoint indicates a wrong Helm value. Either condition fails every Secret read.
 
 ### Step 5 — Circuit breaker state
 
@@ -121,12 +130,11 @@ Resolves transient panics, deadlocks, or stale KMS connections.
 
 ### Step 4 — RBAC fix
 
-If Secret access is denied, re-apply Token Service RBAC from the Helm chart:
+If Secret access is denied or the egress rule is missing, restore the chart's resources with a Helm upgrade:
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-helm template lenny lennylabs/lenny -f values.yaml | \
-  kubectl apply -f - -l app.kubernetes.io/component=token-service
+helm upgrade lenny lennylabs/lenny -n lenny-system -f values.yaml
 ```
 
 ### Step 5 — Verify recovery

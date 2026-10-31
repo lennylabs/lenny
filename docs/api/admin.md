@@ -538,20 +538,44 @@ Credential pools are **tenant-scoped**.
 
 | Endpoint | Method | Role | Description |
 |:---------|:-------|:-----|:------------|
-| `POST /v1/admin/credential-pools` | POST | platform-admin, tenant-admin | Create a credential pool |
-| `GET /v1/admin/credential-pools` | GET | platform-admin, tenant-admin | List credential pools (tenant-scoped) |
-| `GET /v1/admin/credential-pools/{name}` | GET | platform-admin, tenant-admin | Get a specific credential pool |
-| `PUT /v1/admin/credential-pools/{name}` | PUT | platform-admin, tenant-admin | Update. Requires `If-Match`. |
+| `POST /v1/admin/credential-pools` | POST | platform-admin, tenant-admin | Create a credential pool. Each `credentials[].secretRef` follows the [credential write rules](#credential-write-rules). `secretData` is refused. |
+| `GET /v1/admin/credential-pools` | GET | platform-admin, tenant-admin, tenant-viewer | List credential pools (tenant-scoped) |
+| `GET /v1/admin/credential-pools/{name}` | GET | platform-admin, tenant-admin, tenant-viewer | Get a specific credential pool |
+| `PUT /v1/admin/credential-pools/{name}` | PUT | platform-admin, tenant-admin | Update. Requires `If-Match`. Each `secretRef` follows the [credential write rules](#credential-write-rules). `secretData` is refused. |
 | `DELETE /v1/admin/credential-pools/{name}` | DELETE | platform-admin, tenant-admin | Delete. Blocked if active leases exist. |
 
 ### Credential management
 
 | Endpoint | Method | Role | Description |
 |:---------|:-------|:-----|:------------|
-| `POST /v1/admin/credential-pools/{name}/credentials` | POST | platform-admin, tenant-admin | Add a credential to a pool |
+| `POST /v1/admin/credential-pools/{name}/credentials` | POST | platform-admin, tenant-admin | Add a credential to a pool by `secretRef`, `roleArn`, or `secretData`. Introducing a `secretRef` requires platform-admin. |
+| `PUT /v1/admin/credential-pools/{name}/credentials/{credId}` | PUT | platform-admin, tenant-admin | Update a credential. The body may change `secretRef`, `roleArn`, or `region`, or carry `secretData`. Requires `If-Match`. Introducing a `secretRef` requires platform-admin. |
+| `DELETE /v1/admin/credential-pools/{name}/credentials/{credId}` | DELETE | platform-admin, tenant-admin | Remove a credential from a pool. Deletes the Secret when the gateway wrote it. |
 | `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke` | POST | platform-admin, tenant-admin | Emergency revocation of a single credential. Immediately invalidates all active leases. |
-| `POST /v1/admin/credential-pools/{name}/credentials/{credId}/re-enable` | POST | platform-admin | Re-enable a previously revoked credential |
+| `POST /v1/admin/credential-pools/{name}/credentials/{credId}/re-enable` | POST | platform-admin, tenant-admin | Re-enable a previously revoked credential |
 | `POST /v1/admin/credential-pools/{name}/revoke` | POST | platform-admin, tenant-admin | Emergency revocation of all credentials in pool |
+
+Every role except platform-admin applies to the caller's own tenant.
+
+### Credential write rules
+
+A credential body carries at most one of `secretRef`, `secretData`, and `roleArn`.
+
+`secretRef` names a Secret in the credentials namespace, as `<name>` or `<credentials.namespace>/<name>`. A write that submits a `secretRef` the pool does not already carry introduces it, and an introduced `secretRef` requires the platform-admin role. A custom role holding `manage_credential_pools` does not qualify. The prefix `lenny-cred-` is reserved for Secrets the gateway writes. A `secretRef` with that prefix is accepted only when the entry with the same credential id in the same pool already carries the identical reference.
+
+`secretData` is a write-only object of string values, keyed by the provider's Secret keys. No response returns it. The gateway writes the value to a Secret named `lenny-cred-<hash>` in the credentials namespace and stores the reference to it on the credential. Credential addition and credential update accept `secretData`, and pool creation and pool update refuse it. [Credential Secrets](../operator-guide/configuration.md#credential-secrets) describes both paths and the provider keys.
+
+A write that drops a gateway-written reference deletes that Secret, and so does a pool deletion. Revocation and re-enable perform no Secret operation.
+
+| Status | Code | Condition |
+|:-------|:-----|:----------|
+| 400 | `VALIDATION_ERROR` | The body carries more than one of `secretRef`, `secretData`, and `roleArn`; `secretData` is sent on pool creation or pool update; `secretData` is empty or fails Kubernetes Secret validation (`details.field: "secretData"`); or the `secretRef` is malformed or uses the reserved prefix without qualifying (`details.field: "secretRef"`). |
+| 403 | `FORBIDDEN` | A caller without the platform-admin role introduces a `secretRef`. |
+| 404 | `RESOURCE_NOT_FOUND` | A credential addition or update targets a soft-deleted pool. |
+| 422 | `CREDENTIAL_SECRET_RBAC_MISSING` | The Secret probe refused an introduced `secretRef`. `details.missingSecrets` lists the canonical reference of every failing Secret. Create each Secret in the credentials namespace and retry. |
+| 422 | `TOKEN_SERVICE_NOT_CONFIGURED` | The write needs a Secret operation and no Token Service is configured. Nothing changes. |
+| 503 | `CREDENTIAL_PROBE_UNAVAILABLE` | The Secret probe returned no verdict. `details.secretRef` names the reference. Retry after resolving Token Service health. |
+| 503 | `SERVICE_UNAVAILABLE` | Writing or deleting the Secret failed. The credential pool does not change. |
 
 ---
 
