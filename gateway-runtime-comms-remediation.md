@@ -3384,7 +3384,8 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   `impl/0086-plan-binding` merges into this branch.
 - [x] **Proposal 0085**
   (`proposals/0085_fix_the-6-2-pre-attached-failure-retry-loop-has/`): approved 2026-10-29, merge
-  `f5151ba18`. It confines the §6.2 pre-attached failure retry to the `POST /v1/sessions/start` creation unit,
+  `f5151ba18`; implemented 2026-10-31 (commits `8cec66acf`, `b3df750df`, `5e8993886`; the first run with the
+  code-review and security-review quality phase, which found nothing). It confines the §6.2 pre-attached failure retry to the `POST /v1/sessions/start` creation unit,
   the one request that has persisted no session row, so finalize and delegated-child materialization make one
   attempt and need no stop condition for a session that ends mid-setup. It changes no production behavior. Its
   implementation is small: the staged spec edits in §6.2, §15.1, §4.7, §29.2, and §28.5.3, comment corrections
