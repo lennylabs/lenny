@@ -14,7 +14,7 @@
 // platform-managed assignment, which replaces the claim, so carol removes
 // that assignment through the tenant user role endpoint before bob relies
 // on the claim. The platform-managed source is not used for the custom role
-// because the Postgres user store refuses a custom role name (F-10.2.33).
+// because the Postgres user store refuses a custom role name (F-10.2.34).
 
 package tier9_security_test
 

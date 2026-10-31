@@ -4463,8 +4463,16 @@ notes pointing at their successors.
     no consumer, because `handleRPC` answers it as an unknown method. The fix routes `elicit:` and
     `toolapprove:` replies to the existing elicitation and tool-use service calls and refuses a non-owner.
 - Not filed: none. Every listed defect is filed.
+- Proposal routing, filed from proposal 0110's quality review (2026-10-31). Each needs a specification
+  decision before code.
+  - [ ] **F-10.2.35** (Medium): no SDK can send `X-Lenny-User-ID`, so an SDK client with only a tenant receives
+    `401` from every session call on a `--dev-mode` gateway. The proposal states the dev identity headers.
+  - [ ] **F-10.2.36** (Medium): a memory query under the read bypass returns the owner's user-wide memories.
+    The proposal decides whether memory recall is a session read under rule 4.
+  - [ ] **F-10.2.37** (Low): the `attach_session` stream checks read access once, at open. The proposal states
+    whether an attached stream re-evaluates access.
 - Direct-fix queue, filed from proposal 0110's implementation (2026-10-31), independent of it.
-  - [ ] **F-10.2.33** (Medium): the Postgres user store's `validateRoles` refuses every custom role name, so
+  - [ ] **F-10.2.34** (Medium): the Postgres user store's `validateRoles` refuses every custom role name, so
     `PUT /v1/admin/tenants/{id}/users/{userId}/role` with a custom role answers `500` on a Postgres
     deployment, although §10.2 **Role assignment:** makes custom roles assignable through the platform-managed
     mapping. The tier-9 session owner isolation test assigns its custom role through the bearer role claim
