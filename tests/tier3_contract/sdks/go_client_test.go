@@ -75,6 +75,7 @@ func newMCPGateway(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := mcp.NewServer()
 	store := memstore.New()
+	sessions := sessionserver.New(store, sessionserver.Options{})
 	mcptools.Register(srv, mcptools.Deps{
 		DevTenantFallback: true,
 		Store:             store,
@@ -83,7 +84,10 @@ func newMCPGateway(t *testing.T) *httptest.Server {
 		// runs through the shared §15.1 create-and-start service, which
 		// binds the owner from the caller's principal and leaves the
 		// session running, so the send that follows reaches the runtime.
-		SessionCreator: mcpcreate.StartingCreator{Srv: sessionserver.New(store, sessionserver.Options{})},
+		SessionCreator: mcpcreate.StartingCreator{Srv: sessions},
+		// spec: §10.2 (Session ownership) — lenny/send_message checks the
+		// caller against the session's owner through the shared service.
+		SessionService: sessions,
 		TenantID:       "acme",
 	})
 	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))

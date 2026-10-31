@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -41,6 +43,7 @@ func vcsTokenServer(t *testing.T, r vcscred.Resolver, a mcptools.VCSLeaseAuditor
 	t.Helper()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		TenantID:          "fallback",
 		VCSCreds:          r,
@@ -212,7 +215,7 @@ func TestVCSTokenNoUsableCredentialIsConfigError_spec_26_2_119(t *testing.T) {
 // F-26.2.5.
 func TestVCSTokenNotRegisteredWithoutResolver_spec_26_2_119(t *testing.T) {
 	srv := mcp.NewServer()
-	mcptools.Register(srv, mcptools.Deps{DevTenantFallback: true, TenantID: "fallback"})
+	mcptools.Register(srv, mcptools.Deps{SessionService: ownerprincipal.SessionAccess{}, DevTenantFallback: true, TenantID: "fallback"})
 	if _, ok, _ := srv.DispatchTool(context.Background(), "lenny/vcs_token", json.RawMessage(`{"host":"github.com"}`)); ok {
 		t.Fatal("lenny/vcs_token registered without a VCSCreds resolver")
 	}

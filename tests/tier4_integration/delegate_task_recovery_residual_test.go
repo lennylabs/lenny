@@ -49,6 +49,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/delegation/cycle"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
@@ -136,6 +138,7 @@ func testIntraPodResidual(t *testing.T) {
 	// GatewayControl.CallPlatformTool. Leaving it unset mirrors that
 	// intra-pod surface directly.
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Delegation:        svc,
@@ -145,7 +148,7 @@ func testIntraPodResidual(t *testing.T) {
 	})
 
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: parentID, TenantID: tenant, UserID: "user_alice",
+		ID: parentID, TenantID: tenant, UserID: ownerprincipal.Alice,
 		RuntimeRef: "claude", PoolRef: "pool-a",
 		State: session.StateRunning, IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
@@ -212,7 +215,9 @@ func testIntraPodResidual(t *testing.T) {
 // fails the test if the dispatch reports a tool-level error.
 func dispatchDelegate(t *testing.T, srv *mcp.Server, argsJSON string) string {
 	t.Helper()
-	res, ok, err := srv.DispatchTool(context.Background(), "lenny/delegate_task", json.RawMessage(argsJSON))
+	// spec: §10.2 (Session ownership) — the intra-pod call runs under the
+	// parent session's principal, whose subject is the parent's owner.
+	res, ok, err := srv.DispatchTool(ownerprincipal.Context(context.Background(), ownerprincipal.Alice), "lenny/delegate_task", json.RawMessage(argsJSON))
 	if err != nil || !ok {
 		t.Fatalf("DispatchTool(delegate_task) = (ok=%v, err=%v), want (true, nil)", ok, err)
 	}
@@ -236,7 +241,7 @@ func dispatchDelegate(t *testing.T, srv *mcp.Server, argsJSON string) string {
 // task ids.
 func intraPodTreeChildren(t *testing.T, srv *mcp.Server, parentID string) []string {
 	t.Helper()
-	res, ok, err := srv.DispatchTool(context.Background(), "lenny/get_task_tree",
+	res, ok, err := srv.DispatchTool(ownerprincipal.Context(context.Background(), ownerprincipal.Alice), "lenny/get_task_tree",
 		json.RawMessage(`{"sessionId":"`+parentID+`"}`))
 	if err != nil || !ok {
 		t.Fatalf("DispatchTool(get_task_tree) = (ok=%v, err=%v), want (true, nil)", ok, err)

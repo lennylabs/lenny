@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
@@ -43,6 +45,7 @@ func newMCPWithRuntimes(t *testing.T) (*mcp.Server, sessionstore.Store, runtimes
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -69,6 +72,7 @@ func newMCPForInput(t *testing.T, timeout time.Duration) (*mcp.Server, sessionst
 	reg := inputwait.NewRegistry()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:      ownerprincipal.SessionAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
 		Executor:            executor.NewEchoExecutor(),
@@ -93,6 +97,7 @@ func newMCPForInputWithRuntimes(t *testing.T, timeout time.Duration) (*mcp.Serve
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:      ownerprincipal.SessionAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
 		Executor:            executor.NewEchoExecutor(),
@@ -124,6 +129,7 @@ func newMCPForArchiveHook(t *testing.T) (*mcp.Server, sessionstore.Store, treear
 	hook := newHookTerminal(nil)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		TreeArchive:       archive,
@@ -143,6 +149,7 @@ func newMCPForElicitation(t *testing.T, timeout time.Duration) (*mcp.Server, ses
 	interactions := interactionstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:     ownerprincipal.SessionAccess{},
 		DevTenantFallback:  true,
 		Store:              store,
 		Interactions:       interactions,
@@ -159,7 +166,7 @@ func waitElicitation(t *testing.T, interactions interactionstore.Store, sessionI
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, err := interactions.Get(context.Background(), "acme", sessionID, "", id); err == nil {
+		if _, err := interactions.Get(context.Background(), "acme", sessionID, ownerprincipal.Alice, id); err == nil {
 			return
 		}
 		time.Sleep(time.Millisecond)
@@ -194,6 +201,7 @@ func newMCPForOutput(t *testing.T) (*mcp.Server, sessionstore.Store, *sessioneve
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -210,7 +218,10 @@ func call(t *testing.T, h http.Handler, tool, args string) map[string]any {
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + tool + `","arguments":` + args + `}}`
 	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(body)))
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
+	// spec: §10.2 (Session ownership) — the session-naming tools refuse a
+	// call with no principal subject, so the call runs as the owner the
+	// fixtures seed.
+	ownerprincipal.Wrap(h, ownerprincipal.Alice).ServeHTTP(rr, req)
 	var resp map[string]any
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v; body=%s", err, rr.Body.String())
@@ -317,6 +328,7 @@ func newMCPWithChain(t *testing.T, chain *interceptor.Chain) (*mcp.Server, sessi
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -344,7 +356,8 @@ func TestSendMessageTool(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_x", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_x", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
 	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_x","message":"ping"}`)
@@ -401,7 +414,8 @@ func TestSendMessageToolAcceptsContentUnion_spec_15_4(t *testing.T) {
 			srv, store := newMCP(t)
 			now := time.Now()
 			_ = store.Create(context.Background(), sessionstore.Session{
-				ID: "sess_union", TenantID: "acme", State: session.StateRunning,
+				UserID: ownerprincipal.Alice,
+				ID:     "sess_union", TenantID: "acme", State: session.StateRunning,
 				CreatedAt: now, UpdatedAt: now,
 			})
 			resp := call(t, srv.Handler(), "lenny/send_message", tc.args)
@@ -480,7 +494,8 @@ func TestSendMessageToolRejectsTerminalSession(t *testing.T) {
 	srv, store := newMCP(t)
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_done", TenantID: "acme", State: session.StateCompleted,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_done", TenantID: "acme", State: session.StateCompleted,
 		CreatedAt: now, UpdatedAt: now,
 	})
 	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_done","message":"x"}`)
@@ -500,7 +515,8 @@ func TestSendMessageRejectedByInterceptor(t *testing.T) {
 	srv, store := newMCPWithChain(t, chain)
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_x", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_x", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
 
@@ -521,7 +537,8 @@ func TestSendMessageModifiedByInterceptor(t *testing.T) {
 	srv, store := newMCPWithChain(t, chain)
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_x", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_x", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
 
@@ -553,7 +570,8 @@ func (c *captureTreeCycle) OnTreeCycle(_ context.Context, ev mcptools.TreeCycleE
 func TestRequestInputTimeoutSurfacesEnvelopeCode_spec_15_2_1_F_8_5_10(t *testing.T) {
 	srv, store, _ := newMCPForInput(t, 20*time.Millisecond)
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_in", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_in", TenantID: "acme", State: session.StateRunning,
 	})
 	resp := call(t, srv.Handler(), "lenny/request_input",
 		`{"sessionId":"sess_in","parts":[{"type":"text","text":"hi"}]}`)
@@ -581,7 +599,8 @@ func TestToolErrorsCarryCanonicalEnvelopeCode(t *testing.T) {
 	now := time.Now()
 	mustCreate := func(id string, st session.State) {
 		if err := store.Create(context.Background(), sessionstore.Session{
-			ID: id, TenantID: "acme", State: st, CreatedAt: now, UpdatedAt: now,
+			UserID: ownerprincipal.Alice,
+			ID:     id, TenantID: "acme", State: st, CreatedAt: now, UpdatedAt: now,
 		}); err != nil {
 			t.Fatalf("seed %s: %v", id, err)
 		}
@@ -637,7 +656,8 @@ func TestToolErrorsCarryCanonicalEnvelopeCode(t *testing.T) {
 func TestRequestInputTimeoutCarriesExpiredAt_spec_11_3_238(t *testing.T) {
 	srv, store, _ := newMCPForInput(t, 10*time.Millisecond)
 	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_t1", TenantID: "acme", State: session.StateRunning,
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_t1", TenantID: "acme", State: session.StateRunning,
 	})
 	resp := call(t, srv.Handler(), "lenny/request_input",
 		`{"sessionId":"sess_t1","parts":[{"type":"text","text":"hi"}]}`)
@@ -682,7 +702,8 @@ func mkSession(t *testing.T, store sessionstore.Store, id string, state session.
 	t.Helper()
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", State: state, ParentSessionID: parent,
+		UserID: ownerprincipal.Alice,
+		ID:     id, TenantID: "acme", State: state, ParentSessionID: parent,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed session %s: %v", id, err)
@@ -990,6 +1011,7 @@ func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:      ownerprincipal.SessionAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
 		Events:              bus,
@@ -1050,7 +1072,8 @@ func TestRequestInputOneShotRejectsSecondCall_spec_8_8_869(t *testing.T) {
 		t.Fatalf("Create runtime: %v", err)
 	}
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_os", TenantID: "acme", State: session.StateRunning, RuntimeRef: "rt_one",
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_os", TenantID: "acme", State: session.StateRunning, RuntimeRef: "rt_one",
 	}); err != nil {
 		t.Fatalf("Create session: %v", err)
 	}
@@ -1099,7 +1122,8 @@ func TestRequestInputMultiTurnAllowsRepeat_spec_8_8_869(t *testing.T) {
 		t.Fatalf("Create runtime: %v", err)
 	}
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_mt", TenantID: "acme", State: session.StateRunning, RuntimeRef: "rt_mt",
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_mt", TenantID: "acme", State: session.StateRunning, RuntimeRef: "rt_mt",
 	}); err != nil {
 		t.Fatalf("Create session: %v", err)
 	}
@@ -1132,7 +1156,8 @@ func TestRequestInputOneShotStampsMaxInputRoundsOnEvent_spec_8_8_869(t *testing.
 		t.Fatalf("Create runtime: %v", err)
 	}
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_os2", TenantID: "acme", State: session.StateRunning, RuntimeRef: "rt_one2",
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_os2", TenantID: "acme", State: session.StateRunning, RuntimeRef: "rt_one2",
 	}); err != nil {
 		t.Fatalf("Create session: %v", err)
 	}
@@ -1358,6 +1383,7 @@ func TestRequestInputPerRuntimeTimeoutOverride(t *testing.T) {
 	}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:      ownerprincipal.SessionAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
 		Executor:            executor.NewEchoExecutor(),
@@ -1369,7 +1395,8 @@ func TestRequestInputPerRuntimeTimeoutOverride(t *testing.T) {
 		TenantID:            "acme",
 	})
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "sess_r", TenantID: "acme", State: session.StateRunning, RuntimeRef: "slow-input",
+		UserID: ownerprincipal.Alice,
+		ID:     "sess_r", TenantID: "acme", State: session.StateRunning, RuntimeRef: "slow-input",
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)

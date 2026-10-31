@@ -177,6 +177,78 @@ func errSessionLookup(err error) error {
 	return mcp.NewToolError("RESOURCE_NOT_FOUND", fmt.Sprintf("session lookup: %v", err), nil)
 }
 
+// errCallerUnauthorized is the UNAUTHORIZED tool error lookupCallerSession
+// returns for a call with no principal subject. Callers return it
+// unchanged, ahead of their own miss mapping, because errSessionLookup
+// would turn it into RESOURCE_NOT_FOUND.
+func errCallerUnauthorized() *mcp.ToolError {
+	return mcp.NewToolError("UNAUTHORIZED", "session access requires an authenticated principal subject",
+		map[string]any{"reason": "auth_required"})
+}
+
+// lookupCallerSession reads the session a tool call names and applies the
+// §10.2 ownership check to it. A call whose principal is absent or has an
+// empty Subject receives UNAUTHORIZED and reads nothing. The row is read
+// from the store, or from the primary when primary is true. A row the
+// caller may not read (act == false) or act on (act == true) returns
+// sessionstore.ErrNotFound, so the handler answers exactly as for a
+// missing session. A nil SessionService or a nil Store grants nothing.
+//
+// spec: §10.2 (Session ownership) rules 3 and 7
+func lookupCallerSession(ctx context.Context, deps Deps, tenant, id string, act, primary bool) (sessionstore.Session, error) {
+	if p, ok := authmw.FromContext(ctx); !ok || p.Subject == "" {
+		return sessionstore.Session{}, errCallerUnauthorized()
+	}
+	// A refusal returns the bare sentinel the stores return for a miss, so
+	// the handler's error text is byte-identical for a missing session and
+	// a refused one (§10.2 rule 7).
+	if deps.Store == nil {
+		return sessionstore.Session{}, sessionstore.ErrNotFound
+	}
+	var (
+		row sessionstore.Session
+		err error
+	)
+	if primary {
+		row, err = sessionstore.ReadPrimary(ctx, deps.Store, deps.PrimaryReadTimeout, tenant, id)
+	} else {
+		row, err = deps.Store.Get(ctx, tenant, id)
+	}
+	if err != nil {
+		return sessionstore.Session{}, err
+	}
+	if deps.SessionService == nil || !deps.SessionService.SessionAccessible(ctx, row, act) {
+		return sessionstore.Session{}, sessionstore.ErrNotFound
+	}
+	return row, nil
+}
+
+// errCallerSessionLookup maps a lookupCallerSession failure onto the tool
+// error envelope: the UNAUTHORIZED refusal passes through unchanged, and
+// every other failure maps through errSessionLookup.
+//
+// spec: §10.2 (Session ownership) rules 3 and 7
+func errCallerSessionLookup(err error) error {
+	if isUnauthorized(err) {
+		return err
+	}
+	return errSessionLookup(err)
+}
+
+// isUnauthorized reports whether err is the UNAUTHORIZED tool error
+// lookupCallerSession returns for a call with no principal subject.
+func isUnauthorized(err error) bool {
+	var te *mcp.ToolError
+	return errors.As(err, &te) && te.Code == "UNAUTHORIZED"
+}
+
+// errSenderNotFound is the SCOPE_DENIED refusal lenny/send_message
+// returns for a sender session that is missing or that the caller may not
+// act on. spec: §7.2 (messagingScope); §10.2 (Session ownership) rule 7.
+func errSenderNotFound(senderID string) error {
+	return mcp.NewToolError("SCOPE_DENIED", fmt.Sprintf("sender session %s not found", senderID), nil)
+}
+
 // errSessionTerminalState maps an operation on the caller's own
 // terminal session to INVALID_STATE_TRANSITION (PERMANENT, not
 // retryable), the REST code for an operation invalid in the current
@@ -383,6 +455,11 @@ type Deps struct {
 	// in-process gateway / unit suite). Production wires *sessionserver.Server,
 	// so the MCP surface runs the identical REST route, validation, and
 	// response shaping. spec: §15.2; §15.2.1 rule 1. F-15.2.3.
+	//
+	// Its SessionAccessible is also the §10.2 ownership predicate every tool
+	// that names a session from its arguments applies to that session's row.
+	// A nil SessionService grants no session access, so those tools answer
+	// every named session as missing. spec: §10.2 (Session ownership).
 	SessionService SessionService
 
 	// CredAvailability runs the §8.3 delegation-time pre-claim
@@ -1269,9 +1346,11 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"content is required (§8.5)", nil)
 		}
-		row, err := deps.Store.Get(ctx, tenant, sessionID)
+		// spec: §10.2 (Session ownership) — a memory write acts on the
+		// session whose user scopes the record.
+		row, err := lookupCallerSession(ctx, deps, tenant, sessionID, true, false)
 		if err != nil {
-			return mcp.ToolResult{}, errSessionLookup(err)
+			return mcp.ToolResult{}, errCallerSessionLookup(err)
 		}
 		scope := memorystore.MemoryScope{
 			TenantID: tenant, UserID: row.UserID,
@@ -1333,9 +1412,11 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 		if limit == 0 {
 			limit = 10
 		}
-		row, err := deps.Store.Get(ctx, tenant, sessionID)
+		// spec: §10.2 (Session ownership) — a memory query reads the
+		// session whose user scopes the recall.
+		row, err := lookupCallerSession(ctx, deps, tenant, sessionID, false, false)
 		if err != nil {
-			return mcp.ToolResult{}, errSessionLookup(err)
+			return mcp.ToolResult{}, errCallerSessionLookup(err)
 		}
 		// §9.4: memory recall is user-scoped — it spans every session
 		// the user has run, not just the calling session.
@@ -1593,6 +1674,30 @@ func filterByEffectiveDelegationPolicy(ctx context.Context, deps Deps, tenant, s
 		}
 	}
 	return out, nil
+}
+
+// discoverySessionID resolves the session whose effective delegation
+// policy scopes lenny/discover_agents. A session the caller may not read
+// filters exactly as a missing one does, which resolves no session policy,
+// so the result does not reveal whether that session exists. A caller with
+// no principal subject receives UNAUTHORIZED, and a store failure other
+// than a miss is returned.
+//
+// spec: §10.2 (Session ownership) rules 3 and 7; §8.3 (Delegation Policy
+// and Lease)
+func discoverySessionID(ctx context.Context, deps Deps, tenant, sessionID string) (string, error) {
+	if sessionID == "" {
+		return "", nil
+	}
+	_, err := lookupCallerSession(ctx, deps, tenant, sessionID, false, false)
+	switch {
+	case err == nil:
+		return sessionID, nil
+	case errors.Is(err, sessionstore.ErrNotFound):
+		return "", nil
+	default:
+		return "", err
+	}
 }
 
 // allPoliciesPermit reports whether c is permitted by every policy —

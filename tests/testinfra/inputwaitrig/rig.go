@@ -30,6 +30,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -131,6 +133,10 @@ func Start(t testing.TB, opts Options) *Server {
 	var ids atomic.Int64
 	tools := mcp.NewServer()
 	mcptools.Register(tools, mcptools.Deps{
+		// spec: §10.2 (Session ownership) — the platform-tool path runs
+		// under the calling session's principal, whose subject is the
+		// session's owner, so the owner-granting double admits it.
+		SessionService:      ownerprincipal.SessionAccess{},
 		DevTenantFallback:   true,
 		Store:               s.store,
 		Executor:            executor.NewEchoExecutor(),

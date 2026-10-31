@@ -14,6 +14,8 @@ import (
 	"net/http"
 
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
 // Alice is the default owner subject the suites authenticate as.
@@ -37,4 +39,28 @@ func Wrap(h http.Handler, subject string) http.Handler {
 		}
 		h.ServeHTTP(w, r)
 	})
+}
+
+// SessionAccess is a session-service double for a suite that calls the MCP
+// tools reading the session store directly. Its SessionAccessible grants
+// the row's owner and nobody else, the owner half of the §10.2 ownership
+// predicate, so a fixture that calls as the seeded owner reaches the tool
+// body. Its ServiceCall refuses, because such a suite dispatches no
+// client-facing tool through the shared service layer.
+//
+// spec: §10.2 (Session ownership) rules 4 and 5.
+type SessionAccess struct{}
+
+// ServiceCall refuses every call with INTERNAL_ERROR.
+func (SessionAccess) ServiceCall(context.Context, string, string, string, []byte, string, map[string]string) (sessionserver.ServiceResult, *sessionserver.ServiceError) {
+	return sessionserver.ServiceResult{}, &sessionserver.ServiceError{
+		HTTPStatus: http.StatusInternalServerError, Code: "INTERNAL_ERROR",
+		Message: "ownerprincipal.SessionAccess serves no client-facing tool",
+	}
+}
+
+// SessionAccessible reports whether the principal on ctx owns row.
+func (SessionAccess) SessionAccessible(ctx context.Context, row sessionstore.Session, _ bool) bool {
+	p, ok := authmw.FromContext(ctx)
+	return ok && p.Subject != "" && p.Subject == row.UserID
 }

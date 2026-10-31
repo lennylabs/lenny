@@ -77,7 +77,7 @@ const (
 // denyLeakageCaller is the delegating principal. The fixture wires no §10.6
 // environment store and the sessions carry no environment, so the caller's
 // group is unused; the delegation resolves same-environment.
-var denyLeakageCaller = authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"agents"}}
+var denyLeakageCaller = authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"agents"}}
 
 // spec: §8.3 (deny receives no LLM credentials; inherit-from-deny fails closed
 // — no lease token reaches the deny pod)
@@ -192,6 +192,7 @@ func TestDenyDelegationDeliversNoLeaseToken(t *testing.T) {
 	// store the finalize path also reads.
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),

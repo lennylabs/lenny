@@ -372,9 +372,11 @@ func (w *gatewayWiring) buildMCPSurface(
 	// stream (sourced from the same §15.1 event bus the REST
 	// GET /v1/sessions/{id}/events path tails). Tenant is the
 	// authenticated principal's so the bus enforces the §7.2 binding; the
-	// Authorize gate runs the §4.2 session-store Get before any SSE byte
-	// is written so a missing or foreign session surfaces as a normal
-	// JSON-RPC RESOURCE_NOT_FOUND rather than a half-open stream.
+	// Authorize gate runs the §4.2 session-store Get and the §10.2
+	// ownership predicate before any SSE byte is written, so a missing
+	// session, a foreign tenant's session, and a session the caller may
+	// not read all surface as a normal JSON-RPC RESOURCE_NOT_FOUND rather
+	// than a half-open stream.
 	// F-15.2.2, F-9.1.7.
 	mcpSrv.SetAttach(mcp.AttachConfig{
 		Events: w.eventBus,
@@ -385,15 +387,28 @@ func (w *gatewayWiring) buildMCPSurface(
 			return ""
 		},
 		Authorize: func(ctx context.Context, tenantID, sessionID string) error {
+			// spec: §10.2 (Session ownership) rules 3 and 7 — a caller
+			// with no principal subject is refused before any read, and a
+			// session the caller may not read answers exactly as a missing
+			// one, before any SSE byte is written.
+			if p, ok := authmw.FromContext(ctx); !ok || p.Subject == "" {
+				return mcp.NewToolError("UNAUTHORIZED",
+					"attach_session requires an authenticated principal subject",
+					map[string]any{"reason": "auth_required"})
+			}
 			if tenantID == "" {
 				return mcp.NewToolError("UNAUTHORIZED",
 					"attach_session: tenant could not be resolved; auth chain must precede MCP dispatch", nil)
 			}
-			if _, err := w.sessions.Get(ctx, tenantID, sessionID); err != nil {
+			row, err := w.sessions.Get(ctx, tenantID, sessionID)
+			if err != nil {
 				if errors.Is(err, sessionstore.ErrNotFound) {
 					return mcp.NewToolError("RESOURCE_NOT_FOUND", "session not found", nil)
 				}
 				return mcp.NewToolError("INTERNAL_ERROR", err.Error(), nil)
+			}
+			if !sessionSrv.SessionAccessible(ctx, row, false) {
+				return mcp.NewToolError("RESOURCE_NOT_FOUND", "session not found", nil)
 			}
 			return nil
 		},

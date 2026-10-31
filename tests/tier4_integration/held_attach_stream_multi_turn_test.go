@@ -305,6 +305,7 @@ func TestMCPSendMessageCarriesEveryMessageOnTheHeldStream_spec_28_5_1(t *testing
 	multiTurnSeed(t, store, "sess-mcp", session.StateRunning)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          e,
@@ -312,7 +313,8 @@ func TestMCPSendMessageCarriesEveryMessageOnTheHeldStream_spec_28_5_1(t *testing
 		IDFunc:            func() string { return "unused" },
 		TenantID:          "acme",
 	})
-	hs := httptest.NewServer(srv.Handler())
+	// spec: §10.2 (Session ownership) — the calls run as the seeded rows' owner.
+	hs := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(hs.Close)
 
 	for i := 1; i <= 3; i++ {
@@ -333,7 +335,8 @@ func TestDelegateTaskThenAFollowUpOnTheHeldStream_spec_28_5_1(t *testing.T) {
 	tenants, runtimes, credPools := materializeStores(t)
 	rt := newMultiTurnEchoRuntime()
 	srv, _, _, _ := materializeServer(t, cluster, tenants, runtimes, credPools, &poolRecordingAssigner{}, rt)
-	hs := httptest.NewServer(srv.Handler())
+	// spec: §10.2 (Session ownership) — the calls run as the seeded rows' owner.
+	hs := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(hs.Close)
 
 	args := `{"parentSessionId":"sess_parent","target":"` + matOKRuntime +

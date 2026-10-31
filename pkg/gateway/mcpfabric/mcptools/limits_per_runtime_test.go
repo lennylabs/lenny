@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -42,6 +44,7 @@ func newMCPForElicitationWithRuntimes(t *testing.T, globalTimeout time.Duration,
 	rts := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:            ownerprincipal.SessionAccess{},
 		DevTenantFallback:         true,
 		Store:                     store,
 		Interactions:              interactions,
@@ -124,6 +127,7 @@ func TestRequestInputExpiredPublishedToParentStream_spec_11_3_238(t *testing.T) 
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:      ownerprincipal.SessionAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
 		Events:              bus,
@@ -170,6 +174,7 @@ func TestRequestInputExpiredSkippedForRootSession_spec_11_3_238(t *testing.T) {
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:      ownerprincipal.SessionAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
 		Events:              bus,
@@ -201,7 +206,7 @@ func mkSessionRuntime(t *testing.T, store sessionstore.Store, id, runtimeRef str
 	t.Helper()
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: "acme", State: session.StateRunning, UserID: "alice",
+		ID: id, TenantID: "acme", State: session.StateRunning, UserID: ownerprincipal.Alice,
 		RuntimeRef: runtimeRef, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed session %s: %v", id, err)

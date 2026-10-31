@@ -29,6 +29,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -165,6 +167,7 @@ func newGatewayURLModeElicitationServer(t *testing.T, auditor mcptools.Delegatio
 	interactions := interactionstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Interactions:      interactions,
@@ -179,7 +182,7 @@ func newGatewayURLModeElicitationServer(t *testing.T, auditor mcptools.Delegatio
 	now := time.Now()
 	seed := func(id, parent string, depth int) {
 		if err := store.Create(context.Background(), sessionstore.Session{
-			ID: id, TenantID: "acme", UserID: "alice", State: session.StateRunning,
+			ID: id, TenantID: "acme", UserID: ownerprincipal.Alice, State: session.StateRunning,
 			ParentSessionID: parent, DelegationDepth: uint32(depth),
 			CreatedAt: now, UpdatedAt: now,
 		}); err != nil {
@@ -188,7 +191,8 @@ func newGatewayURLModeElicitationServer(t *testing.T, auditor mcptools.Delegatio
 	}
 	seed("sess_root", "", 0)
 	seed("sess_leaf", "sess_root", 1)
-	return srv.Handler()
+	// spec: §10.2 (Session ownership) — the calls run as the seeded owner.
+	return ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 }
 
 // callElicitation drives a tools/call against the MCP handler for

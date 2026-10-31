@@ -270,6 +270,7 @@ func TestCredentialLookupOutageFailsClosed(t *testing.T) {
 	t.Run("delegated child during a tenant-store outage", func(t *testing.T) {
 		mcpSrv := mcp.NewServer()
 		mcptools.Register(mcpSrv, mcptools.Deps{
+			SessionService:    ownerprincipal.SessionAccess{},
 			DevTenantFallback: true,
 			Store:             store,
 			Executor:          executor.NewEchoExecutor(),

@@ -35,6 +35,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -225,6 +227,7 @@ func (st *dlgLossStack) newReplica(t *testing.T) *dlgLossReplica {
 	}
 	surface := mcp.NewServer()
 	mcptools.Register(surface, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             st.sessions,
 		Executor:          executor.NewEchoExecutor(),
@@ -233,7 +236,7 @@ func (st *dlgLossStack) newReplica(t *testing.T) *dlgLossReplica {
 		TenantID:          dlgLossTenant,
 	})
 	return &dlgLossReplica{
-		client: client, srv: srv, svc: svc, mcp: surface.Handler(),
+		client: client, srv: srv, svc: svc, mcp: ownerprincipal.Wrap(surface.Handler(), dlgLossUser),
 		metrics: m, enforcer: enforcer, returns: returns,
 	}
 }
@@ -351,7 +354,7 @@ func (st *dlgLossStack) flushAll(t *testing.T) {
 func (r *dlgLossReplica) keysExpired(t *testing.T) float64 {
 	t.Helper()
 	rr := httptest.NewRecorder()
-	r.metrics.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	ownerprincipal.Wrap(r.metrics.Handler(), ownerprincipal.Alice).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	series := `lenny_delegation_budget_keys_expired_total{pool="` + dlgLossRootPool + `",tenant_id="` + dlgLossTenant + `"} `
 	sc := bufio.NewScanner(rr.Body)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)

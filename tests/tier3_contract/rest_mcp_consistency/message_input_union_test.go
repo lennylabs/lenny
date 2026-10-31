@@ -51,10 +51,13 @@ func newUnionServers(t *testing.T) (restURL, mcpURL string, store sessionstore.S
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          exec,
-		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:            func() string { return "sess_union_mcp" },
-		TenantID:          "acme",
+		// spec: §10.2 (Session ownership) — lenny/send_message checks the
+		// caller against the target's owner through the shared service.
+		SessionService: rest,
+		Executor:       exec,
+		Clock:          func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:         func() string { return "sess_union_mcp" },
+		TenantID:       "acme",
 	})
 	tsMCP := httptest.NewServer(ownerprincipal.Wrap(mcpSrv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsMCP.Close)

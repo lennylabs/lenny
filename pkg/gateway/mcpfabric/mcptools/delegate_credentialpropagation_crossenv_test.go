@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/environment"
@@ -40,6 +42,7 @@ func newCrossEnvInheritMCP(t *testing.T, childProviders []string) (*mcp.Server, 
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -106,7 +109,7 @@ func newCrossEnvInheritMCP(t *testing.T, childProviders []string) (*mcp.Server, 
 	})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(ctxbg, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "team-a-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		Environment: "team-a", CreatedAt: now, UpdatedAt: now,
@@ -116,7 +119,7 @@ func newCrossEnvInheritMCP(t *testing.T, childProviders []string) (*mcp.Server, 
 
 // teamAMember is a caller that genuinely belongs to team-a (the parent
 // session's environment), so the §10.6 cross-environment reach is trusted.
-var teamAMember = authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"team-a-members"}}
+var teamAMember = authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"team-a-members"}}
 
 // spec: §8.3 — a cross-environment `credentialPropagation: inherit`
 // delegation whose origin credential pool shares no provider with the

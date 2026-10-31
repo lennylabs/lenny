@@ -28,6 +28,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -59,19 +61,21 @@ func newTracingMCP(t *testing.T, store sessionstore.Store, sessionID string) htt
 	t.Helper()
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: sessionID, TenantID: "acme", State: session.StateRunning,
+		ID: sessionID, TenantID: "acme", UserID: ownerprincipal.Alice, State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed session %s: %v", sessionID, err)
 	}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Clock:             func() time.Time { return now },
 		TenantID:          "acme",
 	})
-	return srv.Handler()
+	// spec: §10.2 (Session ownership) — the calls run as the seeded owner.
+	return ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 }
 
 // registerTracingContext calls lenny/set_tracing_context with one identifier

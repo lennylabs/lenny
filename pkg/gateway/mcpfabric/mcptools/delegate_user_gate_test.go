@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
@@ -21,13 +23,14 @@ import (
 
 // newDelegateMCPWithUsers builds a delegation-capable MCP server whose
 // §11.4 user gate is backed by the supplied user store. The parent
-// session `sess_parent` is owned by `user_alice`.
+// session `sess_parent` is owned by `ownerprincipal.Alice`.
 func newDelegateMCPWithUsers(t *testing.T, users userstore.Store) (*mcp.Server, sessionstore.Store) {
 	t.Helper()
 	store := memstore.New()
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -44,7 +47,7 @@ func newDelegateMCPWithUsers(t *testing.T, users userstore.Store) (*mcp.Server, 
 	_ = runtimes.Create(ctxbg, runtimestore.Runtime{Name: "child-agent", Type: runtimestore.TypeAgent})
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	_ = store.Create(ctxbg, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "child-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		CreatedAt: now, UpdatedAt: now,
@@ -60,7 +63,7 @@ func newDelegateMCPWithUsers(t *testing.T, users userstore.Store) (*mcp.Server, 
 func TestDelegateTaskAdmitsSoftDisabledOwner_spec_11_4(t *testing.T) {
 	users := userstore.NewMemory()
 	if err := users.Create(context.Background(), userstore.User{
-		Subject: "user_alice", TenantID: "acme", Disabled: true,
+		Subject: ownerprincipal.Alice, TenantID: "acme", Disabled: true,
 	}); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
@@ -82,10 +85,10 @@ func TestDelegateTaskAdmitsSoftDisabledOwner_spec_11_4(t *testing.T) {
 func TestDelegateTaskRejectsRevokedOwner_spec_11_4(t *testing.T) {
 	users := userstore.NewMemory()
 	ctx := context.Background()
-	if err := users.Create(ctx, userstore.User{Subject: "user_alice", TenantID: "acme"}); err != nil {
+	if err := users.Create(ctx, userstore.User{Subject: ownerprincipal.Alice, TenantID: "acme"}); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
-	if err := users.SoftDelete(ctx, "acme", "user_alice", time.Now()); err != nil {
+	if err := users.SoftDelete(ctx, "acme", ownerprincipal.Alice, time.Now()); err != nil {
 		t.Fatalf("soft-delete: %v", err)
 	}
 	srv, store := newDelegateMCPWithUsers(t, users)
@@ -108,7 +111,7 @@ func TestDelegateTaskRejectsRevokedOwner_spec_11_4(t *testing.T) {
 func TestDelegateTaskAdmitsActiveOwner_spec_11_4(t *testing.T) {
 	users := userstore.NewMemory()
 	if err := users.Create(context.Background(), userstore.User{
-		Subject: "user_alice", TenantID: "acme",
+		Subject: ownerprincipal.Alice, TenantID: "acme",
 	}); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}

@@ -60,10 +60,13 @@ func newUnwiredMessagingServers(t *testing.T) (*httptest.Server, *httptest.Serve
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          exec,
-		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:            func() string { return "sess_mcp_unavailable" },
-		TenantID:          "acme",
+		// spec: §10.2 (Session ownership) — lenny/send_message checks the
+		// caller against the target's owner through the shared service.
+		SessionService: rest,
+		Executor:       exec,
+		Clock:          func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:         func() string { return "sess_mcp_unavailable" },
+		TenantID:       "acme",
 		// No Messaging coordinator: the buffered branch fails the enqueue.
 	})
 	tsMCP := httptest.NewServer(ownerprincipal.Wrap(mcpSrv.Handler(), ownerprincipal.Alice))

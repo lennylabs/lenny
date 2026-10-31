@@ -611,8 +611,10 @@ func TestCreationFenceAndResolutionOnLiveGateway_spec_12_8(t *testing.T) {
 		}
 		args := map[string]any{"sessionId": parent, "elicitationId": elicitationID, "response": "approved"}
 		for _, tool := range []string{"lenny/respond_to_elicitation", "lenny/dismiss_elicitation"} {
-			if isErr, code, text := g.tool("bob@acme.com", pkgauth.RoleUser, tool, args); !isErr || code != "ELICITATION_NOT_FOUND" {
-				t.Errorf("bob %s on alice's elicitation = isError %v code %q (%s), want ELICITATION_NOT_FOUND", tool, isErr, code, text)
+			// spec: §10.2 (Session ownership) rule 7, §9.2 — the ownership
+			// check refuses bob on alice's session before the triple check.
+			if isErr, code, text := g.tool("bob@acme.com", pkgauth.RoleUser, tool, args); !isErr || code != "RESOURCE_NOT_FOUND" {
+				t.Errorf("bob %s on alice's elicitation = isError %v code %q (%s), want RESOURCE_NOT_FOUND", tool, isErr, code, text)
 			}
 		}
 		if pending() != 1 {

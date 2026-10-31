@@ -37,6 +37,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -78,7 +80,7 @@ func TestPlatformTracingToolRefusesToWriteAnotherSession(t *testing.T) {
 	handler, store := newPlatformTracingServer(t)
 
 	resp := callPlatformTracingTool(t, handler,
-		authmw.Principal{TenantID: platformTracingTenant, Subject: "alice", SessionID: platformTracingCaller},
+		authmw.Principal{TenantID: platformTracingTenant, Subject: ownerprincipal.Alice, SessionID: platformTracingCaller},
 		`{"sessionId":"`+platformTracingVictim+`","context":{"trace_id":"caller-trace","span_id":"caller-span"}}`)
 
 	// The call succeeds against the caller's own session rather than
@@ -110,7 +112,7 @@ func TestPlatformTracingToolRegistersTheCallerWithNoSessionArgument(t *testing.T
 	handler, store := newPlatformTracingServer(t)
 
 	resp := callPlatformTracingTool(t, handler,
-		authmw.Principal{TenantID: platformTracingTenant, Subject: "alice", SessionID: platformTracingCaller},
+		authmw.Principal{TenantID: platformTracingTenant, Subject: ownerprincipal.Alice, SessionID: platformTracingCaller},
 		`{"context":{"trace_id":"caller-trace"}}`)
 
 	body := platformTracingResultText(t, resp)
@@ -131,6 +133,7 @@ func newPlatformTracingServer(t *testing.T) (http.Handler, sessionstore.Store) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		TenantID:          platformTracingTenant,
@@ -139,7 +142,7 @@ func newPlatformTracingServer(t *testing.T) (http.Handler, sessionstore.Store) {
 	now := time.Now()
 	seed := func(id string, tc map[string]string) {
 		if err := store.Create(context.Background(), sessionstore.Session{
-			ID: id, TenantID: platformTracingTenant, UserID: "alice",
+			ID: id, TenantID: platformTracingTenant, UserID: ownerprincipal.Alice,
 			State: session.StateRunning, TracingContext: tc,
 			CreatedAt: now, UpdatedAt: now,
 		}); err != nil {

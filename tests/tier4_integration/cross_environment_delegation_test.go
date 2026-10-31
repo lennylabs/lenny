@@ -111,6 +111,7 @@ func newCrossEnvFixture(t *testing.T) *crossEnvFixture {
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -207,7 +208,7 @@ func newCrossEnvFixture(t *testing.T) *crossEnvFixture {
 
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(ctx, sessionstore.Session{
-		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		ID: "sess_parent", TenantID: "acme", UserID: ownerprincipal.Alice,
 		State:      session.StateRunning,
 		RuntimeRef: "team-a-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
 		Environment: "team-a", CreatedAt: now, UpdatedAt: now,
@@ -226,8 +227,8 @@ func newCrossEnvFixture(t *testing.T) *crossEnvFixture {
 // environment would see the target as directly in scope and the delegation
 // would not be cross-environment at all.
 var (
-	crossEnvCallerTeamA = authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"team-a-members"}}
-	crossEnvCallerTeamB = authmw.Principal{Subject: "alice", TenantID: "acme", Groups: []string{"team-b-members"}}
+	crossEnvCallerTeamA = authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"team-a-members"}}
+	crossEnvCallerTeamB = authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme", Groups: []string{"team-b-members"}}
 )
 
 // spec: 8.3 (cross-environment inherit provider-compatibility check,

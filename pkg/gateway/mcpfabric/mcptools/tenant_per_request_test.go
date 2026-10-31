@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
@@ -46,6 +48,7 @@ func TestCreateSessionStampsPrincipalTenant_spec_15_2_1335(t *testing.T) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -59,7 +62,7 @@ func TestCreateSessionStampsPrincipalTenant_spec_15_2_1335(t *testing.T) {
 	})
 
 	callWithPrincipal(t, srv.Handler(),
-		authmw.Principal{TenantID: "acme", Subject: "user_alice"},
+		authmw.Principal{TenantID: "acme", Subject: ownerprincipal.Alice},
 		"lenny/create_session",
 		`{"runtimeRef":"echo"}`)
 
@@ -87,6 +90,7 @@ func TestCreateSessionFallsBackWhenPrincipalHasNoTenant_spec_15_2_1335(t *testin
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -115,6 +119,7 @@ func TestTenantsAreIsolatedBetweenPrincipals_spec_15_2_1335(t *testing.T) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -127,7 +132,7 @@ func TestTenantsAreIsolatedBetweenPrincipals_spec_15_2_1335(t *testing.T) {
 	})
 
 	callWithPrincipal(t, srv.Handler(),
-		authmw.Principal{TenantID: "acme", Subject: "user_alice"},
+		authmw.Principal{TenantID: "acme", Subject: ownerprincipal.Alice},
 		"lenny/create_session", `{"runtimeRef":"echo"}`)
 	callWithPrincipal(t, srv.Handler(),
 		authmw.Principal{TenantID: "globex", Subject: "user_bob"},

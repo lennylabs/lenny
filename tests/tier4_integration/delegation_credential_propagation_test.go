@@ -321,6 +321,7 @@ func newDenyOriginFixture(t *testing.T) (*mcp.Server, sessionstore.Store) {
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		SessionService:    ownerprincipal.SessionAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
