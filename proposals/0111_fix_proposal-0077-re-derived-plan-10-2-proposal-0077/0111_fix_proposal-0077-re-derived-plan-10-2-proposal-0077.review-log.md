@@ -1280,3 +1280,8 @@ FACT: tests/tier8_chaos has per-key Redis outage and FLUSHALL precedents, so a l
 WATCHOUT: the slot call site builds `allow.WorkspaceRoot` from the slot's current directory, so a binder row on the exclusive path alone pins neither the eligibility map nor the symlink root on the slot path. EVIDENCE: pkg/gateway/podlifecycle/podsession/slotbinder.go materializeSlotStages.
 DECISION: did not file the writeUploadArchiveLimitExceeded message row, a release.yml static gate, or item 14's absence from the injected-cluster-reader list — BECAUSE each is polish or hardening below the bar — ALTERNATIVES: filing them, rejected as likely material-skeptic refutations.
 USEFUL [spec.1.review-mechanism.1 and the ledger FACTs at review-log.md 581-612]: they closed the security UNVERIFIEDs without new work.
+
+### [f2.other-proposals]
+DECISION: impact row for 0100 added to summary.md "## Impacts on other proposals": status Implemented (approved 2026-10-25, implemented 2026-10-27); the 0100 CODE-2 item 2(d) shutdown order survives, its GatewayControl `GracefulStop` entry becomes a bounded step under 0111 CODE-3 step 6 **Shutdown.** rule S2, rule S4 protects the later steps' context, and 0100's author has nothing to do. — EVIDENCE: proposals/0100_fix_the-terminal-pipeline-what-happens-between-a-session-s/0100_fix_the-terminal-pipeline-what-happens-between-a-session-s.non-spec-changes.md:98; 0111 non-spec-changes.md:95-100; cmd/lenny-gateway/shutdown.go:155 and :183
+WATCHOUT: `## Retired` is absent from this log, so this block sits at the end of `## Ledger`, which is the end of the file.
+WATCHOUT: rule S2 carries an exception for an input-wait exit write under rule S3; the row names the rule and does not restate it.
