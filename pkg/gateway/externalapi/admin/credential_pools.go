@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingfanout"
@@ -313,146 +312,53 @@ type SecretProbeVerdict int
 const (
 	// SecretProbeAllowed — the Token Service can read the Secret.
 	SecretProbeAllowed SecretProbeVerdict = iota
-	// SecretProbeDenied — the Token Service ServiceAccount lacks the
-	// RBAC grant to read the Secret.
+	// SecretProbeDenied — the Token Service Get returned Forbidden (the
+	// chart Role is absent).
 	SecretProbeDenied
-	// SecretProbeNotFound — the grant exists but the Secret is absent.
+	// SecretProbeNotFound — the Secret is absent from the credentials
+	// namespace.
 	SecretProbeNotFound
 )
 
-// SecretAccessProber runs the §4.9 admin-time RBAC live-probe against
-// the Token Service over the gateway↔Token-Service mTLS link. The
-// gateway implementation calls the Token Service's ProbeSecretAccess
-// RPC; the Token Service reviews its own ServiceAccount's access. A
-// non-nil error is an indeterminate probe (Token Service unreachable,
-// mTLS failure, Kubernetes API timeout) that the handler maps to
-// 503 CREDENTIAL_PROBE_UNAVAILABLE and never fails open.
+// SecretAccessProber runs the §4.9 admin-time Secret probe against the
+// Token Service over the gateway↔Token-Service mTLS link. secretRef is the
+// canonical "<credentials namespace>/<name>" ref; the gateway
+// implementation sends the Token Service the Secret name alone in an
+// unkeyed ProbeSecretAccess call, and the Token Service performs one Get in
+// the credentials namespace. A non-nil error is an indeterminate probe
+// (Token Service unreachable, mTLS failure, Kubernetes API timeout) that
+// the handler maps to 503 CREDENTIAL_PROBE_UNAVAILABLE and never fails
+// open.
 //
-// spec: §4.9.
+// spec: §4.9 (Credential Storage Topology) — Admin-time Secret probe
+// (required).
 type SecretAccessProber interface {
 	ProbeSecretAccess(ctx context.Context, secretRef string) (SecretProbeVerdict, error)
 }
 
-// WithSecretAccessProber wires the §4.9 admin-time RBAC live-probe onto
-// the Router. With it set, pool creation and any pool update that
-// introduces a new secretRef probe the Token Service's read access to
-// each referenced Secret before the write is persisted, rejecting an
-// unreadable secretRef with 422 CREDENTIAL_SECRET_RBAC_MISSING (or
-// 503 CREDENTIAL_PROBE_UNAVAILABLE when the probe cannot be evaluated).
-// Without it the probe is skipped, the dev-mode posture parallel to the
-// in-process credential path the gateway uses when no Token Service link
-// is configured (`--token-service-grpc-addr` empty); the probe is
-// Token-Service-owned and has no meaning without that link.
+// WithSecretAccessProber wires the §4.9 admin-time Secret probe onto the
+// Router. With it set, every admin write that introduces a secretRef
+// probes each introduced ref before the write commits, rejecting an
+// unreadable ref with 422 CREDENTIAL_SECRET_RBAC_MISSING (or 503
+// CREDENTIAL_PROBE_UNAVAILABLE when the probe cannot be evaluated).
+// Without it no probe runs, which is the §4.9 posture when no Token
+// Service is configured (`--token-service-grpc-addr` empty).
 //
-// spec: §4.9.
+// spec: §4.9 (Credential Storage Topology) — Admin-time Secret probe
+// (required).
 func (r *Router) WithSecretAccessProber(p SecretAccessProber) *Router {
 	r.secretProber = p
 	return r
 }
 
-// probeSecretRefs runs the §4.9 RBAC live-probe over refs (the new or
-// changed secretRef values for a pool write). It returns true when every
-// ref is readable (or no prober is wired). On a DENIED/NOT_FOUND verdict
-// it writes 422 CREDENTIAL_SECRET_RBAC_MISSING naming every failing
-// Secret plus the RBAC patch command, and returns false. On an
-// indeterminate probe it writes 503 CREDENTIAL_PROBE_UNAVAILABLE and
-// returns false — the handler MUST NOT fail open by persisting a write
-// whose probe could not be evaluated.
-//
-// spec: §4.9.
-func (r *Router) probeSecretRefs(w http.ResponseWriter, req *http.Request, refs []string) bool {
-	if r.secretProber == nil {
-		return true
-	}
-	var missing []string
-	for _, ref := range refs {
-		if ref == "" {
-			continue
-		}
-		verdict, err := r.secretProber.ProbeSecretAccess(req.Context(), ref)
-		if err != nil {
-			// Indeterminate: a transport/evaluation failure prevents a
-			// definitive verdict. Reject with the distinct 5xx so the
-			// operator fixes reachability rather than RBAC, and never
-			// persist the unprobed secretRef.
-			writeError(w, http.StatusServiceUnavailable, "CREDENTIAL_PROBE_UNAVAILABLE",
-				"Token Service secret-access probe could not be evaluated; the write was rejected",
-				map[string]any{"secretRef": ref})
-			return false
-		}
-		if verdict != SecretProbeAllowed {
-			missing = append(missing, ref)
-		}
-	}
-	if len(missing) > 0 {
-		writeError(w, http.StatusUnprocessableEntity, "CREDENTIAL_SECRET_RBAC_MISSING",
-			"the Token Service ServiceAccount cannot read every referenced Secret; patch its RBAC and retry",
-			map[string]any{
-				"missingSecrets": missing,
-				"remediation":    tokenServiceRBACPatch(missing),
-			})
-		return false
-	}
-	return true
-}
-
-// secretRefsOf returns the non-empty secretRef values in entries.
-func secretRefsOf(entries []CredentialEntryPayload) []string {
-	out := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if e.SecretRef != "" {
-			out = append(out, e.SecretRef)
-		}
-	}
-	return out
-}
-
-// newSecretRefs returns the secretRef values in want that are absent
-// from have. It is the §4.9 "update changes secretRef" set: a PUT
-// re-keys the full credential list, so only a secretRef not already in
-// the stored pool needs an admission-time probe.
-func newSecretRefs(have []credentialpoolstore.Credential, want []CredentialEntryPayload) []string {
-	existing := make(map[string]struct{}, len(have))
-	for _, c := range have {
-		if c.SecretRef != "" {
-			existing[c.SecretRef] = struct{}{}
-		}
-	}
-	var out []string
-	for _, e := range want {
-		if e.SecretRef == "" {
-			continue
-		}
-		if _, ok := existing[e.SecretRef]; !ok {
-			out = append(out, e.SecretRef)
-		}
-	}
-	return out
-}
-
-// tokenServiceRBACPatch builds the kubectl patch command that adds the
-// missing Secret names to the Token Service's secret-reader Role
-// resourceNames list — the remediation `lenny-ctl admin credential-pools
-// add-credential` emits. spec: §4.9.
-func tokenServiceRBACPatch(missing []string) string {
-	ops := make([]string, 0, len(missing))
-	for _, s := range missing {
-		ops = append(ops, fmt.Sprintf(`{"op":"add","path":"/rules/0/resourceNames/-","value":%q}`, s))
-	}
-	return fmt.Sprintf(
-		`kubectl patch role lenny-token-service-secrets -n lenny-system --type=json -p '[%s]'`,
-		strings.Join(ops, ","),
-	)
-}
-
 // handleCreateCredentialPool implements POST /v1/admin/credential-pools.
 //
-// When a §4.9 RBAC live-probe is wired (the gateway↔Token-Service mTLS
-// link is present), every credentials[].secretRef is probed for Token
-// Service read access before the pool is persisted, so a missing RBAC
-// grant fails admission with 422 CREDENTIAL_SECRET_RBAC_MISSING rather
-// than surfacing later as an opaque CREDENTIAL_POOL_EXHAUSTED. spec:
-// §4.9.
+// Every credentials[].secretRef is parsed and stored canonical, and a new
+// pool introduces each of them, so the registration rule, the reserved
+// prefix, and (outside dryRun) the admin-time Secret probe run over the
+// full set before the pool is created.
+//
+// spec: §4.9 (Credential Storage Topology); §15.1.
 func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Request) {
 	var body CredentialPoolPayload
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -478,9 +384,15 @@ func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Req
 	if !r.validatePoolProxyDialect(w, req, body.Provider, body.ProxyDialect) {
 		return
 	}
-	// §4.9 admin-time RBAC live-probe over every referenced Secret. A
-	// new pool introduces all of its secretRefs.
-	if !r.probeSecretRefs(w, req, secretRefsOf(body.Credentials)) {
+	dryRun := req.URL.Query().Get("dryRun") == "true"
+	if err := r.canonicalizeSecretRefs(body.Credentials); err != nil {
+		writeAdminWriteError(w, err)
+		return
+	}
+	// spec: §4.9 — a new pool carries no ref, so every submitted ref is
+	// introduced. A dryRun request makes no probe call.
+	if err := r.checkSecretRefWrite(req.Context(), nil, body.Credentials, !dryRun); err != nil {
+		writeAdminWriteError(w, err)
 		return
 	}
 	pool := credentialpoolstore.CredentialPool{
@@ -503,7 +415,7 @@ func (r *Router) handleCreateCredentialPool(w http.ResponseWriter, req *http.Req
 	}
 	pool.UpdatedAt = pool.CreatedAt
 	// spec: §15.1 — ?dryRun=true validates without persisting or auditing.
-	if req.URL.Query().Get("dryRun") == "true" {
+	if dryRun {
 		if verr := credentialpoolstore.Validate(pool); verr != nil {
 			if writeProxyEndpointError(w, verr) {
 				return
@@ -676,62 +588,37 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 	if !r.validatePoolProxyDialect(w, req, body.Provider, body.ProxyDialect) {
 		return
 	}
-	// Resolve the current pool once: the §15.1 If-Match precondition reads
-	// its version, the §4.9 secretRef probe diffs against its credential set,
-	// and the dry-run preview applies the body onto it (preserving §4.9
-	// revocation state). A missing pool 404s ahead of all three.
-	current, gerr := r.credentialPools.Get(req.Context(), tenant, name)
-	if gerr != nil {
-		if errors.Is(gerr, credentialpoolstore.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential pool not found", nil)
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+	if err := r.canonicalizeSecretRefs(body.Credentials); err != nil {
+		writeAdminWriteError(w, err)
 		return
 	}
-	// spec: §15.1 — every admin PUT requires If-Match. Enforce
-	// the optimistic-concurrency precondition before the probe / dry-run
-	// branches so dryRun=true combined with a missing/stale If-Match fails here.
-	if !enforceIfMatch(w, req, current.Version) {
-		return
-	}
-	// §4.9 admin-time RBAC live-probe. A PUT replaces the full credential
-	// list, so probe only the secretRefs the update introduces (those not
-	// already in the stored pool). Skipped entirely when no prober is
-	// wired so the dev-mode update path takes no extra read.
-	if r.secretProber != nil {
-		if !r.probeSecretRefs(w, req, newSecretRefs(current.Credentials, body.Credentials)) {
-			return
-		}
-	}
-	// spec: §15.1 — ?dryRun=true validates without persisting or auditing.
 	if req.URL.Query().Get("dryRun") == "true" {
-		preview := current
-		applyCredentialPoolUpdate(&preview, body)
-		preview.TenantID = tenant
-		if verr := credentialpoolstore.Validate(preview); verr != nil {
-			if writeProxyEndpointError(w, verr) {
-				return
-			}
-			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", verr.Error(), nil)
-			return
-		}
-		writeDryRun(w, http.StatusOK, fromCredentialPool(preview))
+		r.previewCredentialPoolUpdate(w, req, tenant, name, body)
 		return
 	}
+	// spec: §15.1 — every admin PUT requires If-Match. The presence and
+	// format checks run here, ahead of any store read, so a PUT with no
+	// If-Match against a missing pool receives 428 ahead of 404.
+	want, ok := requireIfMatch(w, req)
+	if !ok {
+		return
+	}
+	// spec: §4.9 — the version compare, the registration rule, the
+	// reserved prefix, and the probe run against the row the store holds
+	// locked, so a concurrent write between a read and the commit cannot
+	// change what they decide.
 	updated, err := r.credentialPools.Update(req.Context(), tenant, name, func(p *credentialpoolstore.CredentialPool) error {
+		if err := compareIfMatch(want, p.Version); err != nil {
+			return err
+		}
+		if err := r.checkSecretRefWrite(req.Context(), p.Credentials, body.Credentials, true); err != nil {
+			return err
+		}
 		applyCredentialPoolUpdate(p, body)
 		return nil
 	})
 	if err != nil {
-		if errors.Is(err, credentialpoolstore.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential pool not found", nil)
-			return
-		}
-		if writeProxyEndpointError(w, err) {
-			return
-		}
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
+		r.writeCredentialPoolUpdateError(w, err)
 		return
 	}
 	principal, _ := authmw.FromContext(req.Context())
@@ -742,6 +629,55 @@ func (r *Router) handleUpdateCredentialPool(w http.ResponseWriter, req *http.Req
 	w.Header().Set("ETag", formatETag(updated.Version))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(fromCredentialPool(updated))
+}
+
+// previewCredentialPoolUpdate serves a dryRun pool PUT: it reads the pool
+// without a lock (a missing pool is 404), applies the If-Match
+// precondition against it, runs the registration and reserved-prefix
+// checks against its credentials with no probe call, and returns the
+// validated preview without persisting or auditing.
+//
+// spec: §15.1 (dryRun); §4.9 (Credential Storage Topology).
+func (r *Router) previewCredentialPoolUpdate(w http.ResponseWriter, req *http.Request, tenant, name string, body CredentialPoolPayload) {
+	current, err := r.credentialPools.Get(req.Context(), tenant, name)
+	if err != nil {
+		if errors.Is(err, credentialpoolstore.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential pool not found", nil)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
+	if !enforceIfMatch(w, req, current.Version) {
+		return
+	}
+	if err := r.checkSecretRefWrite(req.Context(), current.Credentials, body.Credentials, false); err != nil {
+		writeAdminWriteError(w, err)
+		return
+	}
+	preview := current
+	applyCredentialPoolUpdate(&preview, body)
+	preview.TenantID = tenant
+	if verr := credentialpoolstore.Validate(preview); verr != nil {
+		r.writeCredentialPoolUpdateError(w, verr)
+		return
+	}
+	writeDryRun(w, http.StatusOK, fromCredentialPool(preview))
+}
+
+// writeCredentialPoolUpdateError maps a pool PUT failure: a missing pool is
+// 404, a check refusal is its own response, a plaintext proxy endpoint is
+// 422 INVALID_POOL_PROXY_ENDPOINT, and any other failure is the store's
+// validation refusal, 400.
+func (r *Router) writeCredentialPoolUpdateError(w http.ResponseWriter, err error) {
+	if errors.Is(err, credentialpoolstore.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential pool not found", nil)
+		return
+	}
+	if writeAdminWriteError(w, err) || writeProxyEndpointError(w, err) {
+		return
+	}
+	writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), nil)
 }
 
 func (r *Router) handleDeleteCredentialPool(w http.ResponseWriter, req *http.Request) {
@@ -788,13 +724,15 @@ var errCredentialExists = errors.New("credential id already exists in pool")
 
 // handleAddCredential implements POST
 // /v1/admin/credential-pools/{name}/credentials — the §24.5 row-3
-// add-credential operation. The body is a single credential entry; the
-// handler runs the §4.9 admin-time RBAC live-probe over its secretRef
-// before appending it, so a Secret the Token Service cannot read fails
-// admission with 422 CREDENTIAL_SECRET_RBAC_MISSING rather than later as
-// an opaque CREDENTIAL_POOL_EXHAUSTED.
+// add-credential operation. The body is a single credential entry. Its
+// secretRef is stored canonical, and inside the mutate closure the
+// registration rule, the reserved prefix, and the admin-time Secret probe
+// run against the locked row before the entry is appended, so a Secret the
+// Token Service cannot read fails admission with 422
+// CREDENTIAL_SECRET_RBAC_MISSING rather than later as an opaque
+// CREDENTIAL_POOL_EXHAUSTED.
 //
-// spec: §15.1; §24.5 row 3; §4.9.
+// spec: §15.1; §24.5 row 3; §4.9 (Credential Storage Topology).
 func (r *Router) handleAddCredential(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	var body CredentialEntryPayload
@@ -812,13 +750,20 @@ func (r *Router) handleAddCredential(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"field": "id"})
 		return
 	}
-	// §4.9 admin-time RBAC live-probe over the new secretRef.
-	if !r.probeSecretRefs(w, req, secretRefsOf([]CredentialEntryPayload{body})) {
+	entries := []CredentialEntryPayload{body}
+	if err := r.canonicalizeSecretRefs(entries); err != nil {
+		writeAdminWriteError(w, err)
 		return
 	}
+	body = entries[0]
 	updated, err := r.credentialPools.Update(req.Context(), tenant, name, func(p *credentialpoolstore.CredentialPool) error {
 		if credentialIndex(p, body.ID) >= 0 {
 			return errCredentialExists
+		}
+		// spec: §4.9 — registration, reserved prefix, and probe against
+		// the locked row.
+		if err := r.checkSecretRefWrite(req.Context(), p.Credentials, entries, true); err != nil {
+			return err
 		}
 		p.Credentials = append(p.Credentials, credentialpoolstore.Credential{
 			ID: body.ID, SecretRef: body.SecretRef, RoleArn: body.RoleArn, Region: body.Region,
@@ -845,10 +790,12 @@ func (r *Router) handleAddCredential(w http.ResponseWriter, req *http.Request) {
 // row-4 update-credential operation. It replaces the addressed
 // credential's mutable fields (secretRef, roleArn, region) in place,
 // preserving its §4.9 revocation status (an update is not a re-enable).
-// When the secretRef changes, the §4.9 admin-time RBAC live-probe runs
-// over the new value.
+// The secretRef is stored canonical. When it is a ref the pool does not
+// carry, the registration rule and the admin-time Secret probe run over it
+// against the locked row, and the reserved prefix is checked against the
+// addressed credential.
 //
-// spec: §15.1; §24.5 row 4; §4.9.
+// spec: §15.1; §24.5 row 4; §4.9 (Credential Storage Topology).
 func (r *Router) handleUpdateCredentialEntry(w http.ResponseWriter, req *http.Request) {
 	name := req.PathValue("name")
 	credID := req.PathValue("credId")
@@ -862,35 +809,22 @@ func (r *Router) handleUpdateCredentialEntry(w http.ResponseWriter, req *http.Re
 		writeError(w, http.StatusForbidden, "FORBIDDEN", err.Error(), nil)
 		return
 	}
-	// §4.9 admin-time RBAC live-probe runs only when the update changes
-	// secretRef (§15.1). Resolve the current entry first so an
-	// unchanged secretRef takes no probe and a missing credential 404s
-	// before any probe.
-	if r.secretProber != nil && body.SecretRef != "" {
-		current, gerr := r.credentialPools.Get(req.Context(), tenant, name)
-		if gerr != nil {
-			if errors.Is(gerr, credentialpoolstore.ErrNotFound) {
-				writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential pool not found", nil)
-				return
-			}
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
-			return
-		}
-		idx := credentialIndex(&current, credID)
-		if idx < 0 {
-			writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential not found in pool", nil)
-			return
-		}
-		if body.SecretRef != current.Credentials[idx].SecretRef {
-			if !r.probeSecretRefs(w, req, []string{body.SecretRef}) {
-				return
-			}
-		}
+	entries := []CredentialEntryPayload{entryWithID(body, credID)}
+	if err := r.canonicalizeSecretRefs(entries); err != nil {
+		writeAdminWriteError(w, err)
+		return
 	}
+	body = entries[0]
 	updated, err := r.credentialPools.Update(req.Context(), tenant, name, func(p *credentialpoolstore.CredentialPool) error {
 		idx := credentialIndex(p, credID)
 		if idx < 0 {
 			return errCredentialNotFound
+		}
+		// spec: §4.9 — an unchanged ref is carried by the pool and so is
+		// not introduced; a changed one is checked and probed against the
+		// locked row.
+		if err := r.checkSecretRefWrite(req.Context(), p.Credentials, entries, true); err != nil {
+			return err
 		}
 		p.Credentials[idx].SecretRef = body.SecretRef
 		p.Credentials[idx].RoleArn = body.RoleArn
@@ -1256,10 +1190,14 @@ func revokeCredentialInPool(p *credentialpoolstore.CredentialPool, credID, revok
 	return nil
 }
 
-// writeCredentialMutateError maps the shared revoke/re-enable mutate
-// failures to HTTP responses: an unknown pool or credential is 404, any
-// other failure is a 400 validation error.
+// writeCredentialMutateError maps the shared credential mutate failures
+// to HTTP responses: a check refusal is its own response, an unknown pool
+// or credential is 404, a duplicate id is 409, and any other failure is a
+// 400 validation error.
 func (r *Router) writeCredentialMutateError(w http.ResponseWriter, err error) {
+	if writeAdminWriteError(w, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, credentialpoolstore.ErrNotFound):
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "credential pool not found", nil)

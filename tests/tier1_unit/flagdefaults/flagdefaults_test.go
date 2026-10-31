@@ -22,6 +22,9 @@ var requiredFlags = []struct {
 	{"lenny-gateway", "cluster-qps"},
 	{"lenny-gateway", "cluster-burst"},
 	{"lenny-gateway", "token-service-grpc-addr"},
+	// spec: §4.9 Credential Storage Topology. The admin credential-pool
+	// handlers parse every secretRef against the credentials namespace.
+	{"lenny-gateway", "credentials-namespace"},
 	// spec: §4.9 Token Service secret resolution. Every gateway credential
 	// read is one get through the Token Service's Kubernetes client.
 	{"lenny-token-service", "cluster-qps"},

@@ -317,6 +317,10 @@ type Router struct {
 	credentialRekey CredentialRekeyer
 	secretProber    SecretAccessProber
 
+	// credNS is the §4.9 credentials namespace every credential-pool
+	// secretRef is parsed against (Options.CredentialsNamespace).
+	credNS string
+
 	// caRotation drives the §10.3 CA-rotation state machine. Nil leaves
 	// the /v1/admin/ca-rotation routes unregistered (mTLS PKI disabled).
 	// F-10.3.21.
@@ -477,6 +481,14 @@ type Options struct {
 	// --session-primary-read-timeout flag; zero uses
 	// sessionstore.DefaultPrimaryReadTimeout. spec: §12.3, §11.4.
 	PrimaryReadTimeout time.Duration
+
+	// CredentialsNamespace is the §4.9 credentials namespace, sourced from
+	// the gateway --credentials-namespace flag. The credential-pool handlers
+	// and the bootstrap seed parse every submitted secretRef against it and
+	// store the canonical "<namespace>/<name>" form. Empty selects
+	// credential.DefaultNamespace, the flag's default.
+	// spec: §4.9 (Credential Storage Topology).
+	CredentialsNamespace string
 }
 
 // NewRouter returns a Router. Pass nil for opts to use the defaults.
@@ -484,6 +496,10 @@ func NewRouter(tenants tenantstore.Store, opts Options) *Router {
 	clock := opts.Clock
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
+	}
+	credNS := opts.CredentialsNamespace
+	if credNS == "" {
+		credNS = credential.DefaultNamespace
 	}
 	return &Router{
 		tenants:             tenants,
@@ -495,6 +511,7 @@ func NewRouter(tenants tenantstore.Store, opts Options) *Router {
 		billingAuditDDLPool: opts.BillingAuditDDLPool,
 		primaryDDLPool:      opts.PrimaryDDLPool,
 		primaryReadTimeout:  opts.PrimaryReadTimeout,
+		credNS:              credNS,
 	}
 }
 

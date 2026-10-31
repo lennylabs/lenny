@@ -142,7 +142,10 @@ func (w *gatewayWiring) buildExecutorAndCredentials() {
 		// §4.9: the admin credential-pool handlers probe Token
 		// Service Secret-read access over this same mTLS link before
 		// persisting a new secretRef.
-		secretProber = &tokenServiceSecretProber{stub: tokensv1.NewTokenServiceClient(conn)}
+		secretProber = &tokenServiceSecretProber{
+			stub:   tokensv1.NewTokenServiceClient(conn),
+			credNS: *f.credentialsNamespace,
+		}
 		log.Printf("lenny-gateway: §4.3 credential materialization via lenny-token-service at %s", *tokenServiceAddr)
 	} else {
 		inProcessAssign = credassign.New(llmLeases, credCache)

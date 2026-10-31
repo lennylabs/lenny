@@ -65,8 +65,8 @@ func seedRevocationPool(t *testing.T, store *credentialpoolstore.Memory, name st
 		Name:     name,
 		Provider: "anthropic_direct",
 		Credentials: []credentialpoolstore.Credential{
-			{ID: "key-1", SecretRef: "lenny-system/k1"},
-			{ID: "key-2", SecretRef: "lenny-system/k2"},
+			{ID: "key-1", SecretRef: "lenny-credentials/k1"},
+			{ID: "key-2", SecretRef: "lenny-credentials/k2"},
 		},
 	}); err != nil {
 		t.Fatalf("seed pool: %v", err)
@@ -285,8 +285,8 @@ func TestUpdatePoolPreservesRevocation(t *testing.T) {
 		TenantID: "acme", Name: "claude-prod", Provider: "anthropic_direct",
 		AssignmentStrategy: "least-loaded",
 		Credentials: []admin.CredentialEntryPayload{
-			{ID: "key-1", SecretRef: "lenny-system/k1"},
-			{ID: "key-2", SecretRef: "lenny-system/k2"},
+			{ID: "key-1", SecretRef: "k1"},
+			{ID: "key-2", SecretRef: "k2"},
 		},
 	}
 	if rr := doAdminReq(t, router.Handler(), http.MethodPut,

@@ -6,31 +6,43 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 )
 
-// tokenServiceSecretProber is the §4.9 gateway-side RBAC live-probe. It
-// calls the Token Service ProbeSecretAccess RPC over the gateway↔Token-
-// Service mTLS link and maps the wire verdict onto the admin verdict the
-// credential-pool handlers consume. The probe is Token-Service-owned:
-// the gateway never reviews the Secret access itself, it asks the Token
-// Service whether the Token Service's own ServiceAccount can read it.
+// tokenServiceSecretProber is the gateway side of the §4.9 admin-time
+// Secret probe. It calls the Token Service ProbeSecretAccess RPC over the
+// gateway↔Token-Service mTLS link with an unkeyed request and maps the wire
+// verdict onto the admin verdict the credential-pool handlers consume.
 //
-// A gRPC error (the RPC could not return a definitive verdict — Token
-// Service unreachable, mTLS failure, upstream Kubernetes API timeout) is
+// The admin handlers pass the stored canonical ref. The prober parses it
+// with credential.ParseSecretRef against the credentials namespace and
+// sends the Secret name alone, because the Token Service reads only its
+// configured namespace and the request names no namespace. A ref the
+// parser refuses returns an error with no RPC made, which the handler maps
+// to 503 CREDENTIAL_PROBE_UNAVAILABLE rather than a silent ALLOWED.
+//
+// A gRPC error (the RPC could not return a definitive verdict: Token
+// Service unreachable, mTLS failure, or a kube-apiserver failure) is
 // propagated so the admin handler maps it to 503
 // CREDENTIAL_PROBE_UNAVAILABLE and never fails open.
 //
-// spec: §4.9.
+// spec: §4.9 (Credential Storage Topology).
 type tokenServiceSecretProber struct {
 	stub tokensv1.TokenServiceClient
+	// credNS is the --credentials-namespace value.
+	credNS string
 }
 
 var _ admin.SecretAccessProber = (*tokenServiceSecretProber)(nil)
 
 func (p *tokenServiceSecretProber) ProbeSecretAccess(ctx context.Context, secretRef string) (admin.SecretProbeVerdict, error) {
-	resp, err := p.stub.ProbeSecretAccess(ctx, &tokensv1.ProbeSecretAccessRequest{SecretName: secretRef})
+	name, err := credential.ParseSecretRef(secretRef, p.credNS)
+	if err != nil {
+		return 0, fmt.Errorf("probe secretRef: %w", err)
+	}
+	resp, err := p.stub.ProbeSecretAccess(ctx, &tokensv1.ProbeSecretAccessRequest{SecretName: name})
 	if err != nil {
 		return 0, err
 	}

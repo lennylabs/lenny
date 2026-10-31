@@ -335,6 +335,9 @@
     "tests/tier3_contract/tokenservice_secret_read/": {
       "contract": ["tests/tier3_contract/tokenservice_secret_read/..."]
     },
+    "tests/tier3_contract/admin_credential_pool_codes/": {
+      "contract": ["tests/tier3_contract/admin_credential_pool_codes/..."]
+    },
     "tests/tier3_contract/workspaceplan/": {
       "contract": ["tests/tier3_contract/workspaceplan/..."]
     },
@@ -585,8 +588,9 @@
     "pkg/gateway/externalapi/admin": {
       "unit": ["pkg/gateway/externalapi/admin/..."],
       "component": ["tests/tier2_component/gateway_subsystems/admin_plane_test.go"],
-      "contract": ["tests/tier3_contract/gateway_ops/...", "tests/tier3_contract/rest_pools/..."],
-      "integration": ["tests/tier4_integration/admin_bootstrap_test.go"]
+      "contract": ["tests/tier3_contract/gateway_ops/...", "tests/tier3_contract/rest_pools/...", "tests/tier3_contract/admin_credential_pool_codes/..."],
+      "integration": ["tests/tier4_integration/admin_bootstrap_test.go"],
+      "security": ["tests/tier9_security/credential_secret_ref_cross_tenant_test.go"]
     },
     "pkg/gateway/externalapi/openapi": {
       "unit": ["pkg/gateway/externalapi/openapi/..."],

@@ -367,8 +367,21 @@ func (r *Router) upsertCredentialPools(req *http.Request, in []CredentialPoolPay
 			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
+		// spec: §4.9 — the seed stores every ref canonical and reports a
+		// ref Secret references rule 1 refuses on this entry. The seed is
+		// exempt from the registration rule and runs no probe.
+		if err := r.canonicalizeSecretRefs(p.Credentials); err != nil {
+			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
+			continue
+		}
 		existing, err := r.credentialPools.Get(req.Context(), tenant, p.Name)
 		if errors.Is(err, credentialpoolstore.ErrNotFound) {
+			// spec: §4.9 — Secret references rule 3: a pool that does
+			// not exist carries no Lenny-written ref.
+			if err := checkReservedSecretRefs(nil, p.Credentials); err != nil {
+				out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
+				continue
+			}
 			if !opts.dryRun {
 				pool := credentialpoolstore.CredentialPool{
 					TenantID:                   tenant,
@@ -403,8 +416,21 @@ func (r *Router) upsertCredentialPools(req *http.Request, in []CredentialPoolPay
 		}
 		conflicts := credentialPoolConflicts(existing, p)
 		action, code, doUpdate := resolveExisting(conflicts, nil, opts.forceUpdate)
+		if !doUpdate || opts.dryRun {
+			// spec: §4.9 — Secret references rule 3 against the read row
+			// when the seed writes nothing.
+			if err := checkReservedSecretRefs(existing.Credentials, p.Credentials); err != nil {
+				out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
+				continue
+			}
+		}
 		if doUpdate && !opts.dryRun {
 			_, err = r.credentialPools.Update(req.Context(), tenant, p.Name, func(pool *credentialpoolstore.CredentialPool) error {
+				// spec: §4.9 — Secret references rule 3 against the
+				// locked row on a forced update.
+				if err := checkReservedSecretRefs(pool.Credentials, p.Credentials); err != nil {
+					return err
+				}
 				pool.Provider = p.Provider
 				pool.Credentials = toCredentials(p.Credentials)
 				pool.AssignmentStrategy = p.AssignmentStrategy
@@ -422,13 +448,27 @@ func (r *Router) upsertCredentialPools(req *http.Request, in []CredentialPoolPay
 				return nil
 			})
 			if err != nil {
-				out.add(i, p.Name, actionError, seedStoreErrorCode, err.Error(), nil)
+				out.add(i, p.Name, actionError, seedEntryErrorCode(err), err.Error(), nil)
 				continue
 			}
 		}
 		out.add(i, p.Name, action, code, "", conflicts)
 	}
 	return out
+}
+
+// seedEntryErrorCode returns the seed entry code for a credential-pool
+// update failure: seedValidationCode for a secretRef check refusal the
+// mutate closure returned, and seedStoreErrorCode for every other failure.
+//
+// spec: §4.9 (Credential Storage Topology) — the seed reports a ref rule 1
+// or rule 3 refuses as an error on that pool entry; §17.6.
+func seedEntryErrorCode(err error) string {
+	var aw *adminWriteError
+	if errors.As(err, &aw) {
+		return seedValidationCode
+	}
+	return seedStoreErrorCode
 }
 
 // bootstrapT4KMSProbe runs the §12.5 admin-time KMS availability
@@ -985,7 +1025,8 @@ func runtimeConflicts(existing runtimestore.Runtime, p RuntimePayload) (conflict
 // credentialPoolConflicts returns the seed-specified credential-pool
 // fields whose values differ from the stored row (§17.6). The
 // credential-pool update mutator replaces every field, so all seeded
-// scalars are compared.
+// scalars are compared. p's secretRefs are canonical by the time it is
+// called, so a seeded ref in bare form equals the stored canonical ref.
 func credentialPoolConflicts(existing credentialpoolstore.CredentialPool, p CredentialPoolPayload) []string {
 	var c []string
 	if p.Provider != "" && existing.Provider != p.Provider {

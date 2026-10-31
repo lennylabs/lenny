@@ -299,6 +299,9 @@ func (w *gatewayWiring) buildAdminRouter(
 		// spec: §11.4, §12.3 — bounds the full_revoke primary re-read of a
 		// cancel write that reported an error.
 		PrimaryReadTimeout: *f.sessionPrimaryReadTimeout,
+		// spec: §4.9 — the credentials namespace every credential-pool
+		// secretRef is parsed against and stored canonical in.
+		CredentialsNamespace: *f.credentialsNamespace,
 	})).
 		WithKMSProbe(kmsProbeLifecycle).
 		WithRuntimes(w.runtimes).

@@ -60,13 +60,34 @@ func parseIfMatch(raw string) (int64, bool) {
 //
 // spec: §15.1; error codes §15.1.
 func enforceIfMatch(w http.ResponseWriter, req *http.Request, current int64) bool {
+	want, ok := requireIfMatch(w, req)
+	if !ok {
+		return false
+	}
+	if err := compareIfMatch(want, current); err != nil {
+		writeAdminWriteError(w, err)
+		return false
+	}
+	return true
+}
+
+// requireIfMatch applies the presence and format halves of the §15.1
+// If-Match precondition and returns the requested version. On a missing
+// header it writes 428 ETAG_REQUIRED, on a malformed one 400
+// VALIDATION_ERROR, and returns false. A handler that compares the version
+// against a row it holds locked calls it before the store call and
+// compareIfMatch inside the mutate closure.
+//
+// spec: §15.1; §4.9 (Credential Storage Topology) — the credential-pool
+// write compares against the locked row.
+func requireIfMatch(w http.ResponseWriter, req *http.Request) (int64, bool) {
 	raw := strings.TrimSpace(req.Header.Get("If-Match"))
 	if raw == "" {
 		// spec: §15.1 — ETAG_REQUIRED is 428 Precondition Required.
 		writeError(w, http.StatusPreconditionRequired, "ETAG_REQUIRED",
 			"If-Match header is required on this PUT",
 			map[string]any{"fields": []string{"If-Match"}})
-		return false
+		return 0, false
 	}
 	want, ok := parseIfMatch(raw)
 	if !ok {
@@ -75,17 +96,28 @@ func enforceIfMatch(w http.ResponseWriter, req *http.Request, current int64) boo
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"If-Match header is not a strong quoted-decimal entity tag",
 			map[string]any{"fields": []string{"If-Match"}})
-		return false
+		return 0, false
 	}
-	if want != current {
-		// spec: §15.1 — ETAG_MISMATCH is 412 and carries the
-		// current ETag so clients refresh without a round-trip GET.
-		writeError(w, http.StatusPreconditionFailed, "ETAG_MISMATCH",
-			"If-Match etag does not match the current resource version",
-			map[string]any{"currentEtag": formatETag(current)})
-		return false
+	return want, true
+}
+
+// compareIfMatch returns nil when the requested version equals the
+// current one, and otherwise an *adminWriteError carrying the §15.1 412
+// ETAG_MISMATCH response with details.currentEtag, so a mutate closure can
+// return it and the handler writes it with writeAdminWriteError.
+//
+// spec: §15.1 — ETAG_MISMATCH is 412 and carries the current ETag so
+// clients refresh without a round-trip GET.
+func compareIfMatch(want, current int64) error {
+	if want == current {
+		return nil
 	}
-	return true
+	return &adminWriteError{
+		status:  http.StatusPreconditionFailed,
+		code:    "ETAG_MISMATCH",
+		message: "If-Match etag does not match the current resource version",
+		details: map[string]any{"currentEtag": formatETag(current)},
+	}
 }
 
 // enforceIfMatchIfPresent honours the §15.1 optimistic-concurrency

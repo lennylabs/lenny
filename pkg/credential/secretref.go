@@ -18,6 +18,13 @@ import (
 // spec: §4.9 (Credential Storage Topology)
 const ManagedSecretPrefix = "lenny-cred-"
 
+// DefaultNamespace is the default credentials namespace, the default of the
+// Helm value credentials.namespace and of the gateway and Token Service
+// flags that carry it.
+//
+// spec: §4.9 (Credential Storage Topology), §17.6 (Packaging and Installation)
+const DefaultNamespace = "lenny-credentials"
+
 // managedHashHexLen is the number of hexadecimal SHA-256 characters a
 // Lenny-written Secret name and its tenant-hash label carry.
 const managedHashHexLen = 40

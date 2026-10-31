@@ -60,9 +60,9 @@ func TestAddCredentialAppendsAndAudits(t *testing.T) {
 	seedRevocationPool(t, store, "claude-prod")
 
 	rr := doAdminReq(t, router.Handler(), http.MethodPost,
-		"/v1/admin/credential-pools/claude-prod/credentials",
-		map[string]string{"id": "key-3", "secretRef": "lenny-system/k3"},
-		withTenantAdminPrincipal)
+		"/v1/admin/credential-pools/claude-prod/credentials?tenantId=acme",
+		map[string]string{"id": "key-3", "secretRef": "k3"},
+		withAdminPrincipal)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status %d, want 201; body %s", rr.Code, rr.Body.String())
 	}
@@ -70,7 +70,7 @@ func TestAddCredentialAppendsAndAudits(t *testing.T) {
 	if len(row.Credentials) != 3 {
 		t.Fatalf("credential count = %d, want 3", len(row.Credentials))
 	}
-	if c := getCred(t, store, "claude-prod", "key-3"); c.SecretRef != "lenny-system/k3" {
+	if c := getCred(t, store, "claude-prod", "key-3"); c.SecretRef != "lenny-credentials/k3" {
 		t.Errorf("key-3 secretRef = %q", c.SecretRef)
 	}
 	if !auditTypes(audit)["admin.credential_pool.credential_added"] {
@@ -86,7 +86,7 @@ func TestAddCredentialDuplicateIDConflicts(t *testing.T) {
 
 	rr := doAdminReq(t, router.Handler(), http.MethodPost,
 		"/v1/admin/credential-pools/claude-prod/credentials",
-		map[string]string{"id": "key-1", "secretRef": "lenny-system/dup"},
+		map[string]string{"id": "key-1", "secretRef": "dup"},
 		withTenantAdminPrincipal)
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("status %d, want 409; body %s", rr.Code, rr.Body.String())
@@ -103,7 +103,7 @@ func TestAddCredentialRequiresID(t *testing.T) {
 
 	rr := doAdminReq(t, router.Handler(), http.MethodPost,
 		"/v1/admin/credential-pools/claude-prod/credentials",
-		map[string]string{"secretRef": "lenny-system/k9"},
+		map[string]string{"secretRef": "k9"},
 		withTenantAdminPrincipal)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status %d, want 400; body %s", rr.Code, rr.Body.String())
@@ -115,7 +115,7 @@ func TestAddCredentialMissingPool404(t *testing.T) {
 	router, _, _ := newCredEntryAdmin(t)
 	rr := doAdminReq(t, router.Handler(), http.MethodPost,
 		"/v1/admin/credential-pools/ghost/credentials",
-		map[string]string{"id": "key-1", "secretRef": "lenny-system/k1"},
+		map[string]string{"id": "key-1", "secretRef": "k1"},
 		withTenantAdminPrincipal)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404; body %s", rr.Code, rr.Body.String())
@@ -128,7 +128,7 @@ func TestAddCredentialMissingPool404(t *testing.T) {
 // §15.1.
 func TestAddCredentialRBACProbeDenied(t *testing.T) {
 	prober := &fakeSecretProber{verdicts: map[string]admin.SecretProbeVerdict{
-		"lenny-system/forbidden": admin.SecretProbeDenied,
+		"lenny-credentials/forbidden": admin.SecretProbeDenied,
 	}}
 	store := credentialpoolstore.NewMemory()
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
@@ -137,9 +137,9 @@ func TestAddCredentialRBACProbeDenied(t *testing.T) {
 	seedRevocationPool(t, store, "claude-prod")
 
 	rr := doAdminReq(t, router.Handler(), http.MethodPost,
-		"/v1/admin/credential-pools/claude-prod/credentials",
-		map[string]string{"id": "key-3", "secretRef": "lenny-system/forbidden"},
-		withTenantAdminPrincipal)
+		"/v1/admin/credential-pools/claude-prod/credentials?tenantId=acme",
+		map[string]string{"id": "key-3", "secretRef": "forbidden"},
+		withAdminPrincipal)
 	if rr.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status %d, want 422; body %s", rr.Code, rr.Body.String())
 	}
@@ -169,15 +169,15 @@ func TestUpdateCredentialReplacesFieldsPreservingRevocation(t *testing.T) {
 	}
 
 	rr := doAdminReq(t, router.Handler(), http.MethodPut,
-		"/v1/admin/credential-pools/claude-prod/credentials/key-1",
-		map[string]string{"secretRef": "lenny-system/k1-rotated"},
-		withTenantAdminPrincipal)
+		"/v1/admin/credential-pools/claude-prod/credentials/key-1?tenantId=acme",
+		map[string]string{"secretRef": "k1-rotated"},
+		withAdminPrincipal)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, want 200; body %s", rr.Code, rr.Body.String())
 	}
 	c := getCred(t, store, "claude-prod", "key-1")
-	if c.SecretRef != "lenny-system/k1-rotated" {
-		t.Errorf("secretRef = %q, want lenny-system/k1-rotated", c.SecretRef)
+	if c.SecretRef != "lenny-credentials/k1-rotated" {
+		t.Errorf("secretRef = %q, want lenny-credentials/k1-rotated", c.SecretRef)
 	}
 	if !c.IsRevoked() || c.RevokedBy != "alice@acme.com" {
 		t.Errorf("update clobbered revocation state: %+v", c)
@@ -195,7 +195,7 @@ func TestUpdateCredentialMissingCredential404(t *testing.T) {
 
 	rr := doAdminReq(t, router.Handler(), http.MethodPut,
 		"/v1/admin/credential-pools/claude-prod/credentials/ghost",
-		map[string]string{"secretRef": "lenny-system/x"},
+		map[string]string{"secretRef": "x"},
 		withTenantAdminPrincipal)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404; body %s", rr.Code, rr.Body.String())
@@ -207,7 +207,7 @@ func TestUpdateCredentialMissingCredential404(t *testing.T) {
 // the update. spec: §15.1.
 func TestUpdateCredentialProbesChangedSecretRef(t *testing.T) {
 	prober := &fakeSecretProber{verdicts: map[string]admin.SecretProbeVerdict{
-		"lenny-system/forbidden": admin.SecretProbeDenied,
+		"lenny-credentials/forbidden": admin.SecretProbeDenied,
 	}}
 	store := credentialpoolstore.NewMemory()
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
@@ -216,17 +216,18 @@ func TestUpdateCredentialProbesChangedSecretRef(t *testing.T) {
 	seedRevocationPool(t, store, "claude-prod")
 
 	rr := doAdminReq(t, router.Handler(), http.MethodPut,
-		"/v1/admin/credential-pools/claude-prod/credentials/key-1",
-		map[string]string{"secretRef": "lenny-system/forbidden"},
-		withTenantAdminPrincipal)
+		"/v1/admin/credential-pools/claude-prod/credentials/key-1?tenantId=acme",
+		map[string]string{"secretRef": "forbidden"},
+		withAdminPrincipal)
 	if rr.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status %d, want 422; body %s", rr.Code, rr.Body.String())
 	}
-	// An update that re-sends the existing secretRef takes no probe.
+	// An update that re-sends the existing secretRef, in bare form, takes
+	// no probe and is not an introduction, so a tenant-admin may send it.
 	prober.calls = nil
 	rr = doAdminReq(t, router.Handler(), http.MethodPut,
 		"/v1/admin/credential-pools/claude-prod/credentials/key-1",
-		map[string]string{"secretRef": "lenny-system/k1"},
+		map[string]string{"secretRef": "k1"},
 		withTenantAdminPrincipal)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("unchanged-secretRef update status %d, want 200; body %s", rr.Code, rr.Body.String())
