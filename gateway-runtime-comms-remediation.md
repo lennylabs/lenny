@@ -4717,12 +4717,16 @@ the warm-time shared-asset fill proposal in "Queue after P4b" above, queued afte
 **Filed 2026-10-31 (recurring flakes).** Branch `fix/recurring-flakes` from `e4f0eedd9` fixed the test
 infrastructure behind T-12.3.13 and T-17.7.12 and traced T-12.4.13 and T-12.4.14 to a product race.
 
-- [ ] **F-12.4.38** (High): the §12.4 Redis-outage slot gate `ReserveSlotUnderLock` releases its per-pod
+- [x] **F-12.4.38** (High): the §12.4 Redis-outage slot gate `ReserveSlotUnderLock` releases its per-pod
   advisory lock before the admission is recorded anywhere the next gated count reads, because the occupancy
   is written only when the session row's `pod_assignment` is persisted on bind. Concurrent admissions on one
   pod during a Redis outage therefore overrun `maxConcurrentSessions`. `TestReserveSlotUnderLock` is the
   acceptance test and stays red under load until the fix lands. A direct fix if the occupancy record needs
-  no §12.4 or §5.2 text, otherwise a small proposal. Independent of the R-steps.
+  no §12.4 or §5.2 text, otherwise a small proposal. Independent of the R-steps. Closed 2026-10-31 by a
+  direct fix on `fix/f-12-4-38` (3f405936e, 36265ea99): migration 0197 `slot_reservations`, written inside the gate's
+  locked transaction and before the Redis script, deleted on release, and reclaimed by the stale-slot
+  reaper after `claimOrphanTimeout`. F-5.2.55 stays open; its rehydration-seed residue now needs only §5.2
+  to name the record.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
