@@ -6,17 +6,17 @@
 
 **What changes.**
 
-- §4.9 states the credentials namespace, the single `secretRef` rule, the platform-admin registration rule, the `secretData` write path, the probe, and the per-read fail-closed Token Service read (SPEC-1 to SPEC-3). §10.2, §12.8, §12.9, §13.2.4, §15.1, §16, §17, §18.38, §24.5, §25, and §28.7 follow (SPEC-4 to SPEC-14).
+- §4.9 states the credentials namespace, the single `secretRef` rule, the platform-admin registration rule, the `secretData` write path, the probe, and the per-read fail-closed Token Service read (SPEC-1 to SPEC-3). §10.2, §12.8, §12.9, §13.2.4, §15.1, §16, §17, §18.38, §24, §25, and §28.7 follow (SPEC-4 to SPEC-14).
 - The Token Service `ProbeSecretAccess` call becomes one uncached `Get` with an optional key that returns the value, and the gateway VCS reader uses it (CODE-2, CODE-6).
-- The gateway admin handlers canonicalize refs with one parser, enforce the registration and reserved-prefix rules at the locked row, drop the kubectl remediation, and write and delete Lenny-written Secrets under the pool row lock (CODE-1, CODE-3, CODE-4).
-- Tenant erasure deletes Lenny-written Secrets after the pool rows (CODE-5), and the preflight warning text follows the namespace (CODE-7).
+- The gateway admin handlers canonicalize refs with one parser, enforce the registration and reserved-prefix rules, drop the kubectl remediation, and write and delete Lenny-written Secrets under the pool row lock (CODE-1, CODE-3, CODE-4).
+- Tenant erasure deletes Lenny-written Secrets after the pool rows (CODE-5), the preflight warning text follows the namespace (CODE-7), and `lenny-ctl` gains the unreferenced-Secret listing (CODE-8).
 - The chart renders the namespace with a keep annotation and a `pods: "0"` quota, the two Secret Roles, the render guard, the Token Service egress, and both namespace flags (CHART-1). Docs and records follow (DOCS-1, REC-1).
 
 **Decisions.**
 
 - The gateway is the only writer, with `create`, `update`, `delete`, and `deletecollection` and no `get`, `list`, `watch`, or `patch`. The Token Service holds a namespace-wide `get` only. No new RPC, no Token Service write or list grant, and no background sweeper are added; this spine has the fewest moving parts that cover both variants and the tenant binding.
 - Tenant binding is a role check: introducing a `secretRef` needs `platform-admin` or the bootstrap seed, and anything else gets `403 FORBIDDEN`. It takes one check at the point refs enter, with no proto field, no per-read annotation check, and no operator labelling step.
-- The check uses `HasRole(auth.RolePlatformAdmin)`, because a custom role may hold `manage_credential_pools`, and it runs against the row the mutate closure holds locked, because the unlocked diff is a time-of-check/time-of-use race.
+- The check uses `HasRole(auth.RolePlatformAdmin)`, because a custom role may hold `manage_credential_pools`, and on a committing update it and the probe run against the row the mutate closure holds locked, because the unlocked diff is a time-of-check/time-of-use race.
 - The `lenny-cred-` prefix is reserved, and a prefixed ref is accepted only when the same id in the same pool already carries it. Without this, a written Secret could be referenced from another tenant's pool or another entry and deleted under it.
 - Lenny-written Secret names are `lenny-cred-` plus 40 hex characters of SHA-256 over (tenant, pool, credential id), and ownership is recorded in annotations plus a `lenny.dev/tenant-hash` label. Tenant ids run to 128 characters and fit no label value, so the label carries a hash, which lets tenant erasure reach an orphan that no stored reference names; deterministic names let rotation update in place.
 - Secret operations run under the pool row lock as the last step before the row commits (SPEC-2 **Credential values submitted through the admin API.** rule 4), so a refused request touches no Secret. The lock does not fence an operation the kube-apiserver applies after the transaction ends, and no client-side bound closes that window, so rule 5 states the residue by Secret state and accepts an orphan created after the tenant-deletion delete-collection. No compensating delete follows a failed commit. It would leave the same orphan an interrupted or late operation leaves, and it would need its own race check.
@@ -26,9 +26,9 @@
 - `lenny_token_service_secret_reloads_total` is repurposed to count credential Secret reads by outcome (`success`, `not_found`, `denied`, `unavailable`) with no secret-name label, and §16.1 is edited to match. The counter has no production caller today, and §16.1 already catalogs it as secret resolution. This settles a conflict between two challenge revisions in favor of the one that also stages the §16.1 edit.
 - The 422 keeps `CREDENTIAL_SECRET_RBAC_MISSING` and the `details.missingSecrets` key the code already emits. `remediation` and `rbacPatch` are retired. The 503 probe row documents `details.secretRef`, the key the code emits.
 - Bootstrap runs no probe: the seed runs under platform-admin authority on every upgrade, its Secrets may arrive after the Job, and a missing Secret fails each read closed.
-- The namespace is guarded by the keep annotation, the `pods: "0"` quota, a render guard against the release and agent namespaces, and a documented operator obligation. The quota is the control that closes pod mounts, because the controller ClusterRole grants pod creation cluster-wide.
+- The namespace is guarded by the keep annotation, the `pods: "0"` quota, a render guard against the release and agent namespaces, and a documented operator obligation, which a `platform-admin` checks with an operator-run `lenny-ctl` listing under their own Kubernetes credentials (SPEC-11, CODE-8), so no Lenny component gains `list` on the namespace. The quota is the control that closes pod mounts, because the controller ClusterRole grants pod creation cluster-wide.
 - Variant B values sit under the existing etcd KMS envelope encryption. The `TokenStore` is not used, because it is user-scoped and pool credentials keep one read path by `secretRef`.
-- The §24.5 credential-pools minimum roles follow the §10.2 **Manage credential pools** row (SPEC-11).
+- The §24.5 credential-pool endpoint rows take their minimum roles from the §10.2 **Manage credential pools** row (SPEC-11).
 - The VCS read error keeps surfacing as `INTERNAL_ERROR`, which §15.1 already classifies `TRANSIENT` and retryable, so no tool-error mapping changes.
 - With no writer wired, the lifecycle fails closed (SPEC-2 **Credential values submitted through the admin API.** rule 6). Committing a row without its Secret operation would leave a Secret that no later write names, and erasing the rows would delete the only record that names it.
 
@@ -96,7 +96,7 @@
 
 ## Open decisions for human to make
 
-None. The listing of stray Secrets was decided on 2026-10-30 by the orchestrator under the owner's standing delegation. The proposal adds a read-only `lenny-ctl` command that an operator runs under their own Kubernetes credentials. It lists the Secrets in the credentials namespace that no credential pool references and Lenny did not write. No Lenny component gains `list` on the namespace. The chart guards and the documented operator obligation stay as staged.
+None.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -128,17 +128,18 @@ None. The listing of stray Secrets was decided on 2026-10-30 by the orchestrator
 - SPEC-8 — spec/16_observability.md — §16.1 secret reloads metric row and §16.4 credential-sensitive RPCs bullet.
 - SPEC-9 — spec/12_storage-architecture.md — §12.8 Phase 4 Lenny-written Secret deletion and the §12.9 credential pool secrets Store cell.
 - SPEC-10 — spec/17_deployment-topology.md — §17.2 namespace layout, §17.6 Helm value and preflight row, §17.7 runbooks.
-- SPEC-11 — spec/24_lenny-ctl-command-reference.md — §24.5 credential-pools rows and footnote.
+- SPEC-11 — spec/24_lenny-ctl-command-reference.md — §24 thin-client exception and §24.5 credential-pools rows and footnote.
 - SPEC-12 — spec/25_agent-operability.md — `lenny_credential_add` and `lenny_credential_retire` rows.
 - SPEC-13 — spec/28_communication-channels.md — §28.7 `lenny-tokenservice.proto` register row.
 - SPEC-14 — spec/18_build-sequence.md — §18.38 uninstall runbook residual item.
 - CODE-1 — pkg/credential/secretref.go — `ParseSecretRef` and Lenny-written name helpers.
 - CODE-2 — schemas/lenny-tokenservice.proto, pkg/tokenservice, cmd/lenny-token-service — keyed, Get-only `ProbeSecretAccess`, metric, and redaction.
 - CODE-3 — pkg/gateway/externalapi/admin, cmd/lenny-gateway — canonical refs, registration and prefix checks, single 422 key.
-- CODE-4 — pkg/gateway/externalapi/admin, pkg/gateway/externalapi/errorclassify, cmd/lenny-gateway — `secretData` write path, Lenny-written Secret operations, and the no-writer error mapping.
+- CODE-4 — pkg/gateway/externalapi/admin, pkg/gateway/externalapi/errorclassify, pkg/gateway/externalapi/openapi, pkg/ops/mcp, cmd/lenny-gateway — `secretData` write path, Lenny-written Secret operations, the no-writer error mapping, and the re-enable role.
 - CODE-5 — cmd/lenny-gateway/tenant_erasers.go — erasure deletes Lenny-written Secrets after `DeleteByTenant`.
 - CODE-6 — cmd/lenny-gateway, pkg/gateway/provisioning/vcscred — VCS reader through the Token Service keyed read.
 - CODE-7 — pkg/preflight/install_prereqs.go — etcd encryption warning text.
+- CODE-8 — pkg/ctlcli — `lenny-ctl` listing of unreferenced credentials-namespace Secrets.
 - CHART-1 — charts/lenny, pkg/chart/values, tests/tier1_unit/rbac — credentials namespace, quota, Roles, guard, egress, and flags.
 - TEST-1 — tests/tier3_contract, tests/tier5_e2e_kind, tests/tier9_security — cross-tier tests.
 - DOCS-1 — docs/ — operator, API, metrics, and runbook docs.

@@ -12,7 +12,7 @@
 
 **Admin-time Secret probe (required).** (SPEC-2) replaces the RBAC live-probe paragraph and uses the unkeyed call. §15.1 (SPEC-7), §10.2 (SPEC-5), §24.5 (SPEC-11), and §25 (SPEC-12) carry the role and error consequences. §13.2.4 (SPEC-6) adds the Token Service kube-apiserver egress, §12.8 and §12.9 (SPEC-9) carry the erasure step and the data-classification store, §16 (SPEC-8) carries the metric and the logging exclusion, and §17 (SPEC-10) carries the namespace layout, the Helm value, the preflight warning text, and the runbooks.
 
-The design adds no endpoint and no RPC. It adds one error code (`TOKEN_SERVICE_NOT_CONFIGURED`), one request field (`secretData`), one Helm value (`credentials.namespace`), and one optional request field and one response field on the existing `ProbeSecretAccess` call.
+The design adds no endpoint and no RPC. It adds one error code (`TOKEN_SERVICE_NOT_CONFIGURED`), one request field (`secretData`), one Helm value (`credentials.namespace`), one optional request field and one response field on the existing `ProbeSecretAccess` call, and one `lenny-ctl` subcommand (SPEC-11).
 
 ## Edge cases and accepted failure modes
 
@@ -425,7 +425,7 @@ In *Remediation:*, replace "(4) **RBAC fix:** If Secret access is denied, re-app
 carrying `secretData`, or have a `platform-admin` register a new `secretRef`.
 ```
 
-### SPEC-11 · spec/24_lenny-ctl-command-reference.md § 24.5 Credential Management
+### SPEC-11 · spec/24_lenny-ctl-command-reference.md § 24 Exceptions to the thin-client rule, § 24.5 Credential Management
 
 Replace the eight data rows of the table under `### 24.5 Credential Management` with the following rows, each one physical line:
 
@@ -438,12 +438,19 @@ Replace the eight data rows of the table under `### 24.5 Credential Management` 
 | `lenny-ctl admin credential-pools revoke-credential --pool <name> --credential <id> --reason <r>` | Emergency revocation of a single credential; affects all active leases (terminated in direct mode, denied in place in proxy mode). See [Section 4.9](04_system-components.md#49-credential-leasing-service) emergency revocation runbook. | `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke` | `tenant-admin` (own tenant) |
 | `lenny-ctl admin credential-pools revoke-pool --pool <name> --reason <r>` | Emergency revocation of all credentials in a pool | `POST /v1/admin/credential-pools/{name}/revoke` | `tenant-admin` (own tenant) |
 | `lenny-ctl admin credential-pools re-enable --pool <name> --credential <id> --reason <r>` | Re-enable a previously revoked credential. Use after rotating the underlying secret at the provider and updating the Kubernetes Secret, or after a credential update carrying `secretData`. | `POST /v1/admin/credential-pools/{name}/credentials/{credId}/re-enable` | `tenant-admin` (own tenant) |
+| `lenny-ctl admin credential-pools list-unreferenced-secrets [--namespace <ns>]` | List the names of the Secrets in the credentials namespace (`--namespace`, default `lenny-credentials`; [Section 4.9](04_system-components.md#49-credential-leasing-service) **Credentials namespace.**) that no credential pool of any tenant references and whose names lack the reserved `lenny-cred-` prefix. The command reads Secret metadata only. It exits non-zero and lists no name when any call fails or when a stored `secretRef` does not name a Secret in that namespace. | `GET /v1/admin/tenants`, then `GET /v1/admin/credential-pools` for each tenant; a metadata-only Secret list through the current `kubeconfig` context | `platform-admin`, plus Kubernetes `list` on `secrets` in the credentials namespace |
 ```
 
 Directly after the table, insert:
 
 ```markdown
 ¹ Introducing a `secretRef` requires `platform-admin` ([Section 4.9](04_system-components.md#49-credential-leasing-service) **Registering a Secret by reference.**).
+```
+
+Under **Exceptions to the thin-client rule.** at the top of §24, directly after item 4, insert:
+
+```markdown
+5. **`lenny-ctl admin credential-pools list-unreferenced-secrets`** ([§24.5](#245-credential-management)) also lists Secret metadata in the credentials namespace through the current `kubeconfig` context, because no Lenny component may list Secrets there ([Section 4.9](04_system-components.md#49-credential-leasing-service) **Credentials namespace.**).
 ```
 
 ### SPEC-12 · spec/25_agent-operability.md § Action Tools (mutating)

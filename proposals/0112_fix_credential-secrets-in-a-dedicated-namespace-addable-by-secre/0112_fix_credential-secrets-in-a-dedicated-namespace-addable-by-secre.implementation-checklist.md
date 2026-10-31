@@ -18,7 +18,7 @@
       Tiers 0, 11. Depends on: S1
 - [ ] **S8 · spec** — SPEC-10. Lands the §17.2, §17.6, and §17.7 edits.
       Tiers 0, 11. Depends on: S1
-- [ ] **S9 · spec** — SPEC-11. Lands the §24.5 table and footnote.
+- [ ] **S9 · spec** — SPEC-11. Lands the §24 thin-client exception and the §24.5 table and footnote.
       Tiers 0, 11. Depends on: S1, S3
 - [ ] **S10 · spec** — SPEC-12. Lands the §25 action tool rows.
       Tiers 0, 11. Depends on: S1
@@ -32,7 +32,7 @@
       Tiers 0, 1, 2, 3, 9. Depends on: S1, S6, S11
 - [ ] **S15 · code** — CODE-3. Lands canonical refs, the registration and prefix checks, and the single 422 key in the admin handlers and bootstrap.
       Tiers 0, 1, 3, 4, 7a, 9. Depends on: S1, S3, S5, S13, S14
-- [ ] **S16 · code** — CODE-4. Lands the `secretData` write path and the Lenny-written Secret operations.
+- [ ] **S16 · code** — CODE-4. Lands the `secretData` write path, the Lenny-written Secret operations, and the re-enable role.
       Tiers 0, 1, 2, 3, 4, 7a, 8, 9. Depends on: S1, S5, S15
 - [ ] **S17 · code** — CODE-5. Lands the tenant-erasure Secret deletion.
       Tiers 0, 1, 4, 8, 9. Depends on: S1, S7, S13, S16
@@ -40,11 +40,13 @@
       Tiers 0, 1, 3, 9. Depends on: S1, S13, S14
 - [ ] **S19 · code** — CODE-7. Lands the preflight warning text.
       Tiers 0, 1. Depends on: S1, S8
-- [ ] **S20 · code** — CHART-1. Lands the credentials namespace templates, the egress rule, the flags, and their chart tests.
+- [ ] **S20 · code** — CODE-8. Lands the `lenny-ctl` unreferenced-Secret listing.
+      Tiers 0, 1. Depends on: S9, S13
+- [ ] **S21 · code** — CHART-1. Lands the credentials namespace templates, the egress rule, the flags, and their chart tests.
       Tiers 0, 1, 5, 9. Depends on: S1, S4, S8, S14, S15, S16
-- [ ] **S21 · test** — TEST-1. Lands the tier 3, tier 5, and tier 9 cross-tier tests.
-      Tiers 3, 5, 9. Depends on: S14, S15, S16, S17, S18, S20
-- [ ] **S22 · docs** — DOCS-1. Lands the operator, API, metrics, and runbook docs.
+- [ ] **S22 · test** — TEST-1. Lands the tier 3, tier 5, and tier 9 cross-tier tests.
+      Tiers 3, 5, 9. Depends on: S14, S15, S16, S17, S18, S20, S21
+- [ ] **S23 · docs** — DOCS-1. Lands the operator, API, metrics, and runbook docs.
       Tiers 0, 11. Depends on: S1, S5, S6, S8, S9, S10
-- [ ] **S23 · docs** — REC-1. Lands the BUILD-GAPS records.
-      Tiers 0. Depends on: S21, S22
+- [ ] **S24 · docs** — REC-1. Lands the BUILD-GAPS records.
+      Tiers 0. Depends on: S22, S23
