@@ -155,6 +155,9 @@
     "tests/tier2_component/tenantsalt/": {
       "component": ["tests/tier2_component/tenantsalt/..."]
     },
+    "tests/tier2_component/secretprobe/": {
+      "component": ["tests/tier2_component/secretprobe/..."]
+    },
     "tests/tier2_component/tokensigning/": {
       "component": ["tests/tier2_component/tokensigning/..."]
     },
@@ -328,6 +331,9 @@
     },
     "tests/tier3_contract/tokenservice_release/": {
       "contract": ["tests/tier3_contract/tokenservice_release/..."]
+    },
+    "tests/tier3_contract/tokenservice_secret_read/": {
+      "contract": ["tests/tier3_contract/tokenservice_secret_read/..."]
     },
     "tests/tier3_contract/workspaceplan/": {
       "contract": ["tests/tier3_contract/workspaceplan/..."]
@@ -1156,6 +1162,10 @@
       ],
       "conformance": ["tests/tier10_conformance/..."]
     },
+    "schemas/lenny-tokenservice.proto": {
+      "unit": ["pkg/tokenservice/..."],
+      "contract": ["tests/tier3_contract/tokenservice_secret_read/..."]
+    },
     "schemas/lenny-interceptor.proto": {
       "static": ["tests/tier0_static/schemas_test.go"],
       "contract": ["tests/tier3_contract/interceptor_proto/..."]
@@ -1192,8 +1202,9 @@
     },
     "pkg/tokenservice": {
       "unit": ["pkg/tokenservice/..."],
-      "component": ["tests/tier2_component/stores/tokencache_test.go"],
-      "contract": ["tests/tier3_contract/oauth_token/..."]
+      "component": ["tests/tier2_component/stores/tokencache_test.go", "tests/tier2_component/secretprobe/..."],
+      "contract": ["tests/tier3_contract/oauth_token/...", "tests/tier3_contract/tokenservice_secret_read/..."],
+      "security": ["tests/tier9_security/tokenservice_secret_read_redaction_test.go"]
     },
     "cmd/lenny-test": {
       "static": ["tests/tier0_static/..."],

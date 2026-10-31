@@ -22,6 +22,10 @@ var requiredFlags = []struct {
 	{"lenny-gateway", "cluster-qps"},
 	{"lenny-gateway", "cluster-burst"},
 	{"lenny-gateway", "token-service-grpc-addr"},
+	// spec: §4.9 Token Service secret resolution. Every gateway credential
+	// read is one get through the Token Service's Kubernetes client.
+	{"lenny-token-service", "cluster-qps"},
+	{"lenny-token-service", "cluster-burst"},
 }
 
 // helpCache memoises --help output per binary across the parallel subtests.

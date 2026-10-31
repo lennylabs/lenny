@@ -77,15 +77,34 @@ func envOr(name, def string) string {
 }
 
 // inClusterClientset builds a Kubernetes clientset from the in-cluster
-// ServiceAccount config for the §4.9 RBAC live-probe. It returns an
-// error when the Token Service is not running inside a cluster (local
-// dev), in which case the probe is disabled.
-func inClusterClientset() (kubernetes.Interface, error) {
+// ServiceAccount config for the §4.9 Token Service credential Secret reads,
+// with the client-go rate limit set from --cluster-qps and --cluster-burst
+// because every gateway credential read reaches this client. It returns an
+// error when the Token Service is not running inside a cluster (local dev),
+// in which case the reads are disabled and fail closed.
+func inClusterClientset(qps float64, burst int) (kubernetes.Interface, error) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, err
 	}
+	applyClientRateLimit(cfg, qps, burst)
 	return kubernetes.NewForConfig(cfg)
+}
+
+// applyClientRateLimit sets the client-go token-bucket rate limit on cfg.
+func applyClientRateLimit(cfg *rest.Config, qps float64, burst int) {
+	cfg.QPS = float32(qps)
+	cfg.Burst = burst
+}
+
+// envFloat resolves a float64 from the named env var, falling back to def
+// when unset or unparseable.
+func envFloat(name string, def float64) float64 {
+	v, err := strconv.ParseFloat(os.Getenv(name), 64)
+	if err != nil {
+		return def
+	}
+	return v
 }
 
 // envInt resolves an int from the named env var, falling back to def

@@ -5,11 +5,12 @@ package tokenservice
 import "time"
 
 // Metrics captures the §16.1 Token Service catalog emit surface. The
-// concrete implementation lives in `cmd/lenny-token-service` and wires
-// the four declared metrics:
+// concrete implementation lives in pkg/tokenservice/promemit and wires
+// the declared metrics, among them:
 //
 //   - lenny_token_service_request_duration_seconds (histogram)
 //   - lenny_token_service_errors_total (counter, labelled by err_type)
+//   - lenny_token_service_secret_reloads_total (counter, by outcome)
 //   - lenny_oauth_token_rate_limited_total (counter, labelled by tier)
 //   - lenny_oauth_token_rate_limited_sampled_total (counter, by tier)
 //
@@ -54,6 +55,36 @@ type Metrics interface {
 	// TokenRevocationPropagationLag alert reads the `eventbus` bucket.
 	// spec: §16.5, §16.7.
 	ObserveRevocationPropagation(outcome string, d time.Duration)
+
+	// IncCredentialSecretRead records one credential Secret read or probe
+	// into the §16.1 lenny_token_service_secret_reloads_total counter by
+	// outcome (SecretReadOutcomeSuccess, SecretReadOutcomeNotFound,
+	// SecretReadOutcomeDenied, or SecretReadOutcomeUnavailable). The
+	// counter carries no Secret-name label. spec: §16.1; §4.9 Token
+	// Service secret resolution rule 5.
+	IncCredentialSecretRead(outcome string)
+}
+
+// The §16.1 lenny_token_service_secret_reloads_total outcome label values.
+const (
+	SecretReadOutcomeSuccess     = "success"
+	SecretReadOutcomeNotFound    = "not_found"
+	SecretReadOutcomeDenied      = "denied"
+	SecretReadOutcomeUnavailable = "unavailable"
+)
+
+// secretReadOutcome maps a definitive read verdict onto its §16.1 outcome
+// label. A failed read has no verdict and records
+// SecretReadOutcomeUnavailable at the call site.
+func secretReadOutcome(v SecretAccessVerdict) string {
+	switch v {
+	case SecretAccessAllowed:
+		return SecretReadOutcomeSuccess
+	case SecretAccessDenied:
+		return SecretReadOutcomeDenied
+	default:
+		return SecretReadOutcomeNotFound
+	}
 }
 
 // NoMetrics is a no-op Metrics. It is the default when Options.Metrics
@@ -77,6 +108,9 @@ func (NoMetrics) Inc5xx(string) {}
 
 // ObserveRevocationPropagation implements Metrics.
 func (NoMetrics) ObserveRevocationPropagation(string, time.Duration) {}
+
+// IncCredentialSecretRead implements Metrics.
+func (NoMetrics) IncCredentialSecretRead(string) {}
 
 // Ensure NoMetrics satisfies Metrics at compile time.
 var _ Metrics = NoMetrics{}

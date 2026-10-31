@@ -66,6 +66,9 @@ type recordingMetrics struct {
 	// ObserveRevocationPropagation call, keyed by the §16.7 outcome
 	// label, so a test can assert the SEC-TS-1 producer fired. SEC-TS-1.
 	revocationPropagations []propagationObservation
+	// secretReads records one entry per IncCredentialSecretRead call,
+	// keyed by the §16.1 outcome label.
+	secretReads []string
 }
 
 type propagationObservation struct {
@@ -107,6 +110,18 @@ func (m *recordingMetrics) ObserveRevocationPropagation(outcome string, d time.D
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.revocationPropagations = append(m.revocationPropagations, propagationObservation{outcome: outcome, d: d})
+}
+
+func (m *recordingMetrics) IncCredentialSecretRead(outcome string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.secretReads = append(m.secretReads, outcome)
+}
+
+func (m *recordingMetrics) secretReadOutcomes() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.secretReads...)
 }
 
 func (m *recordingMetrics) propagations() []propagationObservation {

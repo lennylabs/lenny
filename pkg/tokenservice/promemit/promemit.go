@@ -60,7 +60,7 @@ func New() (*Emitter, error) {
 	}
 	secretReloads, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_token_service_secret_reloads_total",
-		Help: "§16.1 Token Service signing-secret reloads by outcome.",
+		Help: "§16.1 Token Service credential Secret reads and probes by outcome.",
 	}, []string{"outcome"})
 	if err != nil {
 		return nil, err
@@ -171,12 +171,12 @@ func (e *Emitter) ObserveRevocationPropagation(outcome string, d time.Duration) 
 	e.revocationPropagation.WithLabelValues(outcome).Observe(d.Seconds())
 }
 
-// IncSecretReload records one signing-secret reload outcome. The
-// §16.1 lenny_token_service_secret_reloads_total counter is wired
-// through this; production reload paths land here once §4.9.1 KEK
-// rotation is implemented end-to-end. outcome takes "success" or
-// "failure".
-func (e *Emitter) IncSecretReload(outcome string) {
+// IncCredentialSecretRead implements tokenservice.Metrics. It counts one
+// credential Secret read or probe into the §16.1
+// lenny_token_service_secret_reloads_total counter by outcome (success,
+// not_found, denied, or unavailable). No Secret-name label is recorded.
+// spec: §16.1; §4.9 Token Service secret resolution rule 5.
+func (e *Emitter) IncCredentialSecretRead(outcome string) {
 	e.secretReloads.WithLabelValues(outcome).Inc()
 }
 
