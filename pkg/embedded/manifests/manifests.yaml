@@ -20,6 +20,21 @@ metadata:
     pod-security.kubernetes.io/audit: restricted
 
 ---
+# Source: lenny/templates/credentials-namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lenny-credentials
+  labels:
+    helm.sh/chart: lenny-0.1.0
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/instance: lenny
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
+    lenny.dev/component: credentials
+  annotations:
+    helm.sh/resource-policy: keep
+---
 # Source: lenny/templates/agent-network-policies.yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -716,6 +731,18 @@ spec:
       ports:
         - port: 443
           protocol: TCP
+    # §13.2.4 / §4.9: the admin-time Secret probe and every credential
+    # Secret read are one kube-apiserver get. The CIDR is operator-tunable,
+    # bounded by the kubeApiServerPorts rule, exactly as in
+    # allow-controller-egress.
+    - to:
+        - ipBlock:
+            cidr: "10.96.0.0/12"
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 6443
+          protocol: TCP
     - to:
         - namespaceSelector:
             matchLabels:
@@ -1295,6 +1322,24 @@ spec:
         - port: 53
           protocol: TCP
   policyTypes: [Ingress, Egress]
+
+---
+# Source: lenny/templates/credentials-namespace.yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: lenny-credentials-no-pods
+  namespace: lenny-credentials
+  labels:
+    helm.sh/chart: lenny-0.1.0
+    app.kubernetes.io/name: lenny
+    app.kubernetes.io/instance: lenny
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
+    lenny.dev/component: credentials
+spec:
+  hard:
+    pods: "0"
 
 ---
 # Source: lenny/templates/resourcequota.yaml
@@ -4092,6 +4137,11 @@ spec:
           args:
             - --addr=:8080
             - --grpc-addr=:50051
+            # §4.9 "Secret references and registration.": the namespace every
+            # credential secretRef is canonicalized into. It renders in every
+            # profile because the admin handlers parse refs with or without a
+            # Token Service.
+            - --credentials-namespace=lenny-credentials
             # §8.6 — deployment-default auto-mode lease-extension
             # rate limit. Rendered only when set; 0/unset keeps the spec
             # default of no limit. F-8.6.7.
