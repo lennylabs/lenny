@@ -402,7 +402,12 @@ fi
 # ---------------------------------------------------------------------
 # Step 3: create the Kind cluster (idempotent).
 # ---------------------------------------------------------------------
-if kind get clusters 2>/dev/null | grep -qx "${CLUSTER}"; then
+# The list is captured before it is matched. `kind get clusters | grep -q`
+# under pipefail reports failure whenever grep exits on its match while kind
+# is still writing: kind takes SIGPIPE and the pipeline's status is 141, so an
+# existing cluster reads as absent and the step tries to create it.
+existing_clusters="$(kind get clusters 2>/dev/null || true)"
+if grep -qxF "${CLUSTER}" <<<"${existing_clusters}"; then
   log "kind cluster ${CLUSTER} already exists; skipping create"
 else
   log "creating kind cluster ${CLUSTER}"

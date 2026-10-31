@@ -8527,6 +8527,14 @@ Proposal 0017 ("re-architect §17.4 Embedded Mode to run the full production sta
 - **Gap:** The tier-0 verdict depended on the state of other worktrees and of ignored scratch trees rather than on the checkout under test, so the main checkout's gate failed or passed according to what other agents had left unformatted at that moment.
 - **Dependencies:** none.
 
+### - [x] T-17.4.47 — `install.sh` reads an existing Kind cluster as absent when `grep -q` closes the `kind get clusters` pipe under pipefail [Medium] — RESOLVED (branch fix/unit-flakes)
+- **Spec/Doc:** TESTING.md §12.5 (Tier 5 — E2E on Kind); `tests/testinfra/kind/install.sh`, the cluster-creation step.
+- **Existing tests:** `tests/testinfra/kind/kubeconfig_test.go::TestInstallRestoresTheKubeconfigCurrentContext`.
+- **Evidence:** The `existing_cluster` subtest failed in the full unit tier of 2026-10-31 and passed alone. Under load on two cores it failed 21 of 150 runs with `created = true, want false; calls: ["get clusters" "create cluster ..." "export kubeconfig ..."]`. The step was `if kind get clusters 2>/dev/null | grep -qx "${CLUSTER}"` under `set -euo pipefail`. `grep -q` exits on its first match, and a producer still writing takes SIGPIPE, so the pipeline status is 141 and the `if` takes the create branch. A loop of 400 pipelines over a stub printing two lines recorded `141 0` in `PIPESTATUS` 5 times without load. Only the subtest whose cluster is listed ahead of another can fail, which is why the `new cluster` and `no clusters` subtests never did.
+- **Gap:** On a host with a second Kind cluster, `install.sh` can try to create a cluster that exists and stop on the error. The fault is in the script rather than in the test.
+- **Dependencies:** none.
+- **Resolution:** `install.sh` captures the list into a variable before it matches, so `grep` closes no pipe. The stub now writes one line at a time with a 50 ms pause, which makes the old pipeline fail on every run: restoring it failed the subtest 5 of 5 times. The test then passed 100 of 100 runs under load.
+
 ## §17.5 Cloud Portability <a id="t-17.5"></a>
 **Spec file:** `spec/17_deployment-topology.md`
 **Reviewed:** 2026-07-06
