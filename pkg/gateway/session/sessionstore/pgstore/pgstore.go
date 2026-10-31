@@ -1400,8 +1400,9 @@ func (s *Store) DeleteSlotReservation(ctx context.Context, podID, sessionID stri
 // ReclaimSlotReservations implements Store: the stale-slot reaper's
 // reclamation of abandoned slot reservations. A record older than cutoff is
 // deleted when no session row has its identifier (the create that reserved
-// it ended before persisting the row) or when that row has been terminal
-// since before cutoff. The NOT EXISTS reads sessions by primary key, so each
+// it ended before persisting the row), when that row has been terminal since
+// before cutoff, or when that row is non-terminal and names another pod (the
+// session moved and the release's deletion did not finish). The NOT EXISTS reads sessions by primary key, so each
 // candidate costs one index probe.
 // spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity),
 // §4.6.1 (Orphaned SandboxClaim detection).
@@ -1414,9 +1415,10 @@ func (s *Store) ReclaimSlotReservations(ctx context.Context, cutoff time.Time) (
 			    AND NOT EXISTS (
 			        SELECT 1 FROM sessions s
 			         WHERE s.id = r.session_id
-			           AND (s.state NOT IN ('completed', 'failed', 'cancelled', 'expired')
-			                OR s.terminated_at IS NULL
-			                OR s.terminated_at >= $1))`,
+			           AND ((s.state NOT IN ('completed', 'failed', 'cancelled', 'expired')
+			                 AND s.pod_assignment IN ('', r.pod_id))
+			                OR (s.state IN ('completed', 'failed', 'cancelled', 'expired')
+			                 AND (s.terminated_at IS NULL OR s.terminated_at >= $1))))`,
 			cutoff)
 		if err != nil {
 			return err

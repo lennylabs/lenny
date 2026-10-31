@@ -81,8 +81,8 @@ type Releaser interface {
 }
 
 // ReservationReclaimer deletes the abandoned §12.4 slot reservation records:
-// those recorded before cutoff whose session row is absent or has been
-// terminal since before cutoff.
+// those recorded before cutoff whose session row is absent, has been terminal
+// since before cutoff, or is non-terminal and names another pod.
 type ReservationReclaimer interface {
 	ReclaimSlotReservations(ctx context.Context, cutoff time.Time) (int, error)
 }

@@ -159,8 +159,9 @@ func TestRecordSlotReservationIsCounted(t *testing.T) {
 }
 
 // spec: §12.4, §4.6.1 (Orphaned SandboxClaim detection) — the reclaim
-// deletes a record older than the cutoff whose session row is absent or
-// terminal since before the cutoff, and keeps every other record.
+// deletes a record older than the cutoff whose session row is absent,
+// terminal since before the cutoff, or non-terminal on another pod, and keeps
+// every other record.
 // diagnosis: the reclaim deleted a record that still counts a live
 // reservation (an under-count) or kept an abandoned one forever.
 func TestReclaimSlotReservations(t *testing.T) {
@@ -169,7 +170,7 @@ func TestReclaimSlotReservations(t *testing.T) {
 	s := memstore.NewWithClock(func() time.Time { return clock })
 	ctx := context.Background()
 	cutoff := now.Add(-15 * time.Minute)
-	for _, id := range []string{"absent-old", "live-old", "term-old", "term-recent", "term-nostamp"} {
+	for _, id := range []string{"absent-old", "live-old", "bound-old", "moved-old", "term-old", "term-recent", "term-nostamp"} {
 		if _, err := s.RecordSlotReservation(ctx, "pod-1", id); err != nil {
 			t.Fatal(err)
 		}
@@ -179,20 +180,22 @@ func TestReclaimSlotReservations(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = s.Create(ctx, sessionstore.Session{ID: "live-old", TenantID: "acme", State: session.StateCreated})
+	_ = s.Create(ctx, sessionstore.Session{ID: "bound-old", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-1"})
+	_ = s.Create(ctx, sessionstore.Session{ID: "moved-old", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-2"})
 	_ = s.Create(ctx, sessionstore.Session{ID: "term-old", TenantID: "acme", State: session.StateFailed, TerminatedAt: cutoff.Add(-time.Minute)})
 	_ = s.Create(ctx, sessionstore.Session{ID: "term-recent", TenantID: "acme", State: session.StateFailed, TerminatedAt: cutoff.Add(time.Minute)})
 	_ = s.Create(ctx, sessionstore.Session{ID: "term-nostamp", TenantID: "acme", State: session.StateFailed})
 
 	n, err := s.ReclaimSlotReservations(ctx, cutoff)
-	if err != nil || n != 2 {
-		t.Fatalf("ReclaimSlotReservations = (%d, %v), want (2, nil): absent-old and term-old", n, err)
+	if err != nil || n != 3 {
+		t.Fatalf("ReclaimSlotReservations = (%d, %v), want (3, nil): absent-old, moved-old, and term-old", n, err)
 	}
-	// Four records remain: the gate at bound 5 admits one more, at bound 4 none.
-	if _, ok, _ := s.ReserveSlotUnderLock(ctx, "pod-1", "probe", 4); ok {
-		t.Error("gate admitted at bound 4 with four kept records")
+	// Five occupants remain: the gate at bound 6 admits one more, at bound 5 none.
+	if _, ok, _ := s.ReserveSlotUnderLock(ctx, "pod-1", "probe", 5); ok {
+		t.Error("gate admitted at bound 5 with five kept records")
 	}
-	if _, ok, _ := s.ReserveSlotUnderLock(ctx, "pod-1", "probe", 5); !ok {
-		t.Error("gate refused at bound 5 with four kept records")
+	if _, ok, _ := s.ReserveSlotUnderLock(ctx, "pod-1", "probe", 6); !ok {
+		t.Error("gate refused at bound 6 with five kept records")
 	}
 }
 
