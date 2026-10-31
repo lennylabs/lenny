@@ -529,3 +529,32 @@ func TestServedDocumentUploadRoutesReturnOpaqueUploadRef(t *testing.T) {
 		t.Errorf("UploadResponse.uploadRef description %q names the internal URI scheme a client must not interpret", desc)
 	}
 }
+
+// spec: §10.2 (Session ownership) rules 1 and 2; §15.1 (REST API).
+// diagnosis: a failure here means the served OpenAPI document again lets a
+// client name a session's owner. CreateSessionRequest and DeriveRequest
+// must declare no userId property, because the owner is the creating
+// principal's subject or the source session's owner and the server ignores
+// a body userId; a client or SDK generated from a document that declares
+// it would offer an input with no effect. Session keeps userId, because it
+// reports the owner. Edit components.schemas in
+// pkg/gateway/externalapi/openapi/openapi.json.
+func TestServedDocumentCarriesNoOwnerInput_spec_10_2(t *testing.T) {
+	doc := decodeServedSessionDocument(t)
+	for _, name := range []string{"CreateSessionRequest", "DeriveRequest"} {
+		schema, ok := doc.Components.Schemas[name]
+		if !ok {
+			t.Fatalf("served document has no %s schema, so the owner-input check reads nothing", name)
+		}
+		if _, ok := schema.Properties["userId"]; ok {
+			t.Errorf("%s declares a userId property", name)
+		}
+	}
+	session, ok := doc.Components.Schemas["Session"]
+	if !ok {
+		t.Fatal("served document has no Session schema")
+	}
+	if _, ok := session.Properties["userId"]; !ok {
+		t.Error("Session lost its userId property, which reports the owner")
+	}
+}

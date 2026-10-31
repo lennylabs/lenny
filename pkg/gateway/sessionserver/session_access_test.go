@@ -27,6 +27,9 @@ const (
 	// sessionReader is a tenant custom role that grants the read bypass
 	// alongside the session permissions a user holds.
 	sessionReader = "session-reader"
+	// sessionScorer is a tenant custom role that grants only the §10.7
+	// eval-submission permission.
+	sessionScorer = "session-scorer"
 )
 
 // accessCaller is one principal of the ownership tests. A nil principal
@@ -40,38 +43,54 @@ func principalOf(subject string, roles ...pkgauth.Role) *authmw.Principal {
 	return &authmw.Principal{Subject: subject, TenantID: "acme", Roles: roles}
 }
 
-// accessServer builds a session server over a store holding alice's
-// running session sess_alice and bob's sess_bob in tenant acme, plus
-// carol's sess_carol in tenant globex, with the session-reader custom role
-// registered for acme. multiTenant mirrors the gateway's --multi-tenant
-// flag.
+// accessServer builds a session server over a store holding the
+// seedAccessRows rows, with the session-reader custom role registered for
+// acme. multiTenant mirrors the gateway's --multi-tenant flag.
 func accessServer(t *testing.T, multiTenant bool) http.Handler {
 	t.Helper()
 	store := memstore.New()
+	seedAccessRows(t, store)
+	return sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader: true,
+		MultiTenant:     multiTenant,
+		CustomRoles:     accessRoles(t),
+	}).Handler()
+}
+
+// seedAccessRows writes alice's running session sess_alice and bob's
+// sess_bob in tenant acme, plus carol's sess_carol and alice's
+// sess_alice_globex in tenant globex.
+func seedAccessRows(t *testing.T, store sessionstore.Store) {
+	t.Helper()
 	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	for _, row := range []sessionstore.Session{
 		{ID: "sess_alice", TenantID: "acme", UserID: accessAlice, State: session.StateRunning, CreatedAt: now, UpdatedAt: now},
 		{ID: "sess_bob", TenantID: "acme", UserID: accessBob, State: session.StateRunning, CreatedAt: now.Add(time.Second), UpdatedAt: now},
 		{ID: "sess_carol", TenantID: "globex", UserID: accessCarol, State: session.StateRunning, CreatedAt: now, UpdatedAt: now},
+		{ID: "sess_alice_globex", TenantID: "globex", UserID: accessAlice, State: session.StateRunning, CreatedAt: now.Add(time.Second), UpdatedAt: now},
 	} {
 		if err := store.Create(context.Background(), row); err != nil {
 			t.Fatalf("seed %s: %v", row.ID, err)
 		}
 	}
+}
+
+// accessRoles returns a custom-role store holding acme's session-reader
+// role and its sessionScorer role, which grants only session:eval:write.
+func accessRoles(t *testing.T) customrolestore.Store {
+	t.Helper()
 	roles := customrolestore.NewMemory()
-	if err := roles.Create(context.Background(), customrolestore.CustomRole{
-		TenantID: "acme", Name: sessionReader,
-		Permissions: []pkgauth.Permission{
+	for _, role := range []customrolestore.CustomRole{
+		{TenantID: "acme", Name: sessionReader, Permissions: []pkgauth.Permission{
 			pkgauth.PermReadTenantSessions, pkgauth.PermReadOwnSessions, pkgauth.PermManageOwnSessions,
-		},
-	}); err != nil {
-		t.Fatalf("seed custom role: %v", err)
+		}},
+		{TenantID: "acme", Name: sessionScorer, Permissions: []pkgauth.Permission{pkgauth.PermSessionEvalWrite}},
+	} {
+		if err := roles.Create(context.Background(), role); err != nil {
+			t.Fatalf("seed custom role %s: %v", role.Name, err)
+		}
 	}
-	return sessionserver.New(store, sessionserver.Options{
-		DevTenantHeader: true,
-		MultiTenant:     multiTenant,
-		CustomRoles:     roles,
-	}).Handler()
+	return roles
 }
 
 func accessRequest(t *testing.T, h http.Handler, c accessCaller, method, path string) *httptest.ResponseRecorder {
@@ -173,9 +192,12 @@ func TestSessionListIsOwnerScoped_spec_10_2(t *testing.T) {
 		{caller: accessCaller{"bob/tenant-viewer", principalOf(accessBob, pkgauth.RoleTenantViewer)}, status: http.StatusOK, ids: []string{"sess_alice", "sess_bob"}},
 		{caller: accessCaller{"bob/tenant-admin", principalOf(accessBob, pkgauth.RoleTenantAdmin)}, status: http.StatusOK, ids: []string{"sess_alice", "sess_bob"}},
 		{caller: accessCaller{"bob/custom session-reader", principalOf(accessBob, pkgauth.Role(sessionReader))}, status: http.StatusOK, ids: []string{"sess_alice", "sess_bob"}},
-		{caller: accessCaller{"bob/platform-admin ?tenant=globex", principalOf(accessBob, pkgauth.RolePlatformAdmin)}, query: "?tenant=globex", status: http.StatusOK, ids: []string{"sess_carol"}},
+		{caller: accessCaller{"bob/platform-admin ?tenant=globex", principalOf(accessBob, pkgauth.RolePlatformAdmin)}, query: "?tenant=globex", status: http.StatusOK, ids: []string{"sess_alice_globex", "sess_carol"}},
+		{caller: accessCaller{"bob/platform-admin own tenant", principalOf(accessBob, pkgauth.RolePlatformAdmin)}, status: http.StatusOK, ids: []string{"sess_alice", "sess_bob"}},
+		{caller: accessCaller{"bob/user ?tenant=globex", principalOf(accessBob, pkgauth.RoleUser)}, query: "?tenant=globex", status: http.StatusOK, ids: []string{"sess_bob"}},
 		{caller: accessCaller{"no principal", nil}, status: http.StatusUnauthorized},
 		{caller: accessCaller{"empty subject with roles", principalOf("", pkgauth.RoleTenantAdmin)}, status: http.StatusUnauthorized},
+		{caller: accessCaller{"empty subject role-less", principalOf("")}, status: http.StatusUnauthorized},
 	}
 	for _, tc := range cases {
 		t.Run(tc.caller.name, func(t *testing.T) {

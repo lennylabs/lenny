@@ -359,9 +359,10 @@ type TreeCycleEvent struct {
 // interception and lands in the same `created` state with the same
 // envelope the REST surface returns.
 //
-// A nil SessionCreator falls back to the legacy direct-store create used
-// by the minimal in-process gateway that wires no session server (and by
-// the mcptools unit suite). Production wires the real service.
+// A nil SessionCreator fails lenny/create_session closed with
+// INTERNAL_ERROR and writes no row, because the service layer is the only
+// create path that binds the owner from the principal (§10.2 Session
+// ownership rule 1).
 //
 // spec: §15.2.1 rule 1. F-15.2.4.
 type SessionCreator interface {
@@ -442,8 +443,8 @@ type Deps struct {
 	// SessionCreator is the §15.2.1 rule-1 shared session-creation
 	// service. When set, lenny/create_session routes through it so the
 	// MCP and REST surfaces run identical validation and return identical
-	// envelopes. Optional — a nil creator selects the legacy direct-store
-	// create path. spec: §15.2.1 rule 1. F-15.2.4.
+	// envelopes. A nil creator refuses every create. spec: §15.2.1 rule 1;
+	// §10.2 (Session ownership). F-15.2.4.
 	SessionCreator SessionCreator
 
 	// SessionService is the §15.2.1 rule-1 shared service layer the

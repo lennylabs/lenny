@@ -33,6 +33,7 @@ type ownershipFixture struct {
 	srv          *mcp.Server
 	store        sessionstore.Store
 	interactions interactionstore.Store
+	memory       memorystore.Store
 }
 
 const (
@@ -44,11 +45,20 @@ const (
 
 func newOwnershipFixture(t *testing.T, svc mcptools.SessionService) ownershipFixture {
 	t.Helper()
+	return newOwnershipFixtureWith(t, func(sessionstore.Store) mcptools.SessionService { return svc }, nil)
+}
+
+// newOwnershipFixtureWith builds the fixture with the session service
+// svcFor returns over the fixture's store, and applies mod to the
+// dependencies before registration.
+func newOwnershipFixtureWith(t *testing.T, svcFor func(sessionstore.Store) mcptools.SessionService, mod func(*mcptools.Deps)) ownershipFixture {
+	t.Helper()
 	store := memstore.New()
 	interactions := interactionstore.NewMemory()
+	memory := memorystore.NewInMemory(0, nil)
 	srv := mcp.NewServer()
-	mcptools.Register(srv, mcptools.Deps{
-		SessionService:      svc,
+	deps := mcptools.Deps{
+		SessionService:      svcFor(store),
 		DevTenantFallback:   true,
 		Store:               store,
 		Executor:            executor.NewEchoExecutor(),
@@ -58,14 +68,18 @@ func newOwnershipFixture(t *testing.T, svc mcptools.SessionService) ownershipFix
 		RequestInputTimeout: time.Second,
 		Interactions:        interactions,
 		ElicitationTimeout:  time.Second,
-		Memory:              memorystore.NewInMemory(0, nil),
+		Memory:              memory,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
 		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:   func() string { return "id_gen" },
 		TenantID: "acme",
-	})
+	}
+	if mod != nil {
+		mod(&deps)
+	}
+	mcptools.Register(srv, deps)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	for id, owner := range map[string]string{aliceSession: ownerprincipal.Alice, bobSession: bobSubject} {
 		if err := store.Create(context.Background(), sessionstore.Session{
@@ -81,14 +95,21 @@ func newOwnershipFixture(t *testing.T, svc mcptools.SessionService) ownershipFix
 			t.Fatalf("seed elicitation on %s: %v", id, err)
 		}
 	}
-	return ownershipFixture{srv: srv, store: store, interactions: interactions}
+	return ownershipFixture{srv: srv, store: store, interactions: interactions, memory: memory}
 }
 
 // dispatchAs runs one tool call under a principal with subject and returns
 // the tool error envelope, or nil on success.
 func (f ownershipFixture) dispatchAs(t *testing.T, subject, tool, args string) *mcp.ToolError {
 	t.Helper()
-	ctx := authmw.WithPrincipal(context.Background(), authmw.Principal{Subject: subject, TenantID: "acme"})
+	return f.dispatchPrincipal(t, authmw.Principal{Subject: subject, TenantID: "acme"}, tool, args)
+}
+
+// dispatchPrincipal runs one tool call under p and returns the tool error
+// envelope, or nil on success.
+func (f ownershipFixture) dispatchPrincipal(t *testing.T, p authmw.Principal, tool, args string) *mcp.ToolError {
+	t.Helper()
+	ctx := authmw.WithPrincipal(context.Background(), p)
 	res, ok, err := f.srv.DispatchTool(ctx, tool, json.RawMessage(args))
 	if !ok {
 		t.Fatalf("tool %q not registered", tool)
