@@ -4460,6 +4460,11 @@ notes pointing at their successors.
     `toolapprove:` replies to the existing elicitation and tool-use service calls and refuses a non-owner.
 - Not filed: none. Every listed defect is filed.
 
+- [ ] **Proposal 0112** (`proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/`): approved
+  2026-10-31. Credential Secrets live in a dedicated namespace that the Token Service reads namespace-wide; a
+  platform admin registers an existing Secret by `secretRef`, or a tenant admin submits the value through the admin
+  API and the gateway writes the Secret. Proposal 0111 cites it and lands after it. Implementation next.
+
 **Defects filed from proposal 0112's unstaged-defect list (2026-10-31).** Proposal 0112 (credential Secrets in a
 dedicated namespace, approved 2026-10-31, implementation pending) lists defects in the shipped tree that it does
 not stage. No existing OPEN BUILD-GAPS entry covered any of them, so each is filed as a new entry. Each was
