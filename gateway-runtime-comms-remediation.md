@@ -3459,7 +3459,11 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   `delegation/service.go`, `mcptools_register.go`, `derive.go`, `replay.go`, and
   `docs/operator-guide/security.md` with them at different symbols or sections, and whichever lands second
   rebases textually. If the A/B split fallback is taken, this entry is rewritten to name the open part. Its
-  unstaged defects are filed below, in the block for proposal 0110. The next change-proposal run is proposal
+  unstaged defects are filed below, in the block for proposal 0110. Position (2026-10-31): implemented whole on
+  `impl/0110-session-owner` after 0108's implementation merged, so the A/B split fallback was not taken. The
+  spec edits are `3e2325c01` to `b35dfc0fc`, and the code, tests, and docs are `a9434a2c8` to `5048ad21c`. Its
+  records step closed F-15.1.55, F-10.2.30, and F-15.1.54 in BUILD-GAPS and annotated each unstaged-defect
+  entry below in place; F-15.1.64 is recorded as the successor of closed F-15.1.32. The next change-proposal run is proposal
   0077, re-derived, below, drafting as 0111.
 - [ ] **Proposal 0077, re-derived** (Draft; owner decision 2026-10-28): pre-materialize workspace content on a
   warm pod, starting with massive git repositories, and extensible to other content later. The owner wants the
@@ -4403,11 +4407,11 @@ than filing a duplicate. F-10.1.45 was already closed and needed no record.
   (`fix/direct-batch-2`); its entry carries a note. Every other listed defect is filed or annotated.
 
 **Defects filed from proposal 0110's unstaged-defect list (2026-10-29).** Proposal 0110 (session-owner
-authorization, approved 2026-10-29, merge `05ed531a5`, implementation pending) lists defects in the shipped
+authorization, approved 2026-10-29, merge `05ed531a5`, implemented 2026-10-31) lists defects in the shipped
 tree that it does not stage. Its REC-1 files them at implementation; they are filed now, because no defect is
 dropped, and each new BUILD-GAPS entry says 0110's REC-1 updates the entry rather than filing a duplicate. Each
-was re-confirmed against the tree at `05ed531a5`. 0110's REC-1 closes F-15.1.55, F-10.2.30, and F-15.1.54,
-whose owner lines now name proposal 0110 with their checklist steps. The closed F-10.2.4 and F-15.1.32 carry
+was re-confirmed against the tree at `05ed531a5`, and again at `5048ad21c` by 0110's records step, which
+annotated each entry and left it OPEN. 0110's implementation closed F-15.1.55, F-10.2.30, and F-15.1.54. The closed F-10.2.4 and F-15.1.32 carry
 notes pointing at their successors.
 
 - Proposal routing, security.
