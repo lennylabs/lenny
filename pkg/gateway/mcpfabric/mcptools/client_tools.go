@@ -252,7 +252,7 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 		switch {
 		case in.SessionID == "":
 			return mcp.ToolResult{}, missingSessionID()
-		case in.UploadToken == "":
+		case strings.TrimSpace(in.UploadToken) == "":
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"uploadToken is required", map[string]any{"field": "uploadToken"})
 		case in.ContentBase64 == "":
