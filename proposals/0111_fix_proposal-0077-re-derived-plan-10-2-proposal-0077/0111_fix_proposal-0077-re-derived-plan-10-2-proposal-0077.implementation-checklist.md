@@ -34,11 +34,11 @@ External prerequisites: proposal 0112 lands first (summary Decision 22). Plan st
       Tiers 0, 1, 3, 5. Depends on: S5, S6
 - [ ] **S15 · code** — CODE-2. The `gitRepository` entry through the CRD, `runtimestore`, the flag, and the decoder, the `podIdentityEnforced` predicate, and the url predicate.
       Tiers 0, 1, 2, 3. Depends on: S1, S2, S4
-- [ ] **S16 · code** — CODE-7. The `git-https` provider, host binding, `lenny/vcs_token`, and the key parameter on the VCS Secret reader.
+- [ ] **S16 · code** — CODE-7 and TEST-1 items 23 to 26. The `git-https` provider, host binding, `lenny/vcs_token`, and the key parameter on the VCS Secret reader.
       Tiers 0, 1, 3, 4, 9. Depends on: S9
 - [ ] **S17 · code** — CODE-8. The pool owner record, its admission, resolution, and the tenant-delete dependent.
       Tiers 0, 1, 2, 4, 9. Depends on: S2, S10, S15
-- [ ] **S18 · code** — CODE-9. The restore lineage record and its claim-register row.
+- [ ] **S18 · code** — CODE-9 and TEST-1 item 34. The restore lineage record and its claim-register row.
       Tiers 0, 1, 4. Depends on: S3, S4, S11, S17
 - [ ] **S19 · code** — CODE-3. The proto, the git child runner, the mirror, the handler, the stream interceptors, the metrics, and the chart.
       Tiers 0, 1, 3, 4, 7a, 9, 11. Depends on: S2, S3, S4, S5, S6, S7, S8, S9, S11, S12, S13, S14, S15, S16, S17, S18
@@ -52,5 +52,5 @@ External prerequisites: proposal 0112 lands first (summary Decision 22). Plan st
       Tiers 0, 11. Depends on: S1, S2, S3, S4, S6, S7, S8, S9, S10, S12, S19, S20
 - [ ] **S24 · docs** — REC-1. The defect filings.
       Tiers 0. Depends on: —
-- [ ] **S25 · test** — TEST-1. The case list across the reached tiers, with the private rows at tiers 3 and 4 and the Kind private rows as recorded skips naming R14.
+- [ ] **S25 · test** — TEST-1, less the items S16 and S18 land. The case list across the reached tiers, with the private rows at tiers 3 and 4 and the Kind private rows as recorded skips naming R14.
       Tiers 0, 1, 2, 3, 4, 5, 7a, 8, 9, 11. Depends on: S14, S15, S16, S17, S18, S19, S20, S21, S22, S23
