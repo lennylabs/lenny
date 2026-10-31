@@ -269,3 +269,67 @@ func TestOpenResponsesNilSessionAccessIsNative404_spec_10_2(t *testing.T) {
 		t.Errorf("refused continuation caused side effects: before %+v, after %+v", before, after)
 	}
 }
+
+// TestOpenResponsesNoSubjectIsUnauthorizedWithOrWithoutPrevious_spec_10_2
+// pins the session-create refusal for a request with no principal subject:
+// POST /v1/responses with no principal, or with a principal whose Subject is
+// empty, answers the native 401 UNAUTHORIZED envelope whether or not its body
+// names the owner's completed response as previous_response_id, and binds,
+// writes, dispatches, and forwards nothing. Before the handler refused the
+// request ahead of resolution, a continuation with no subject failed the
+// ownership read and answered the native 404 instead.
+//
+// spec: §10.2 (Session ownership) rule 3; §15 (Open Responses conversation
+// sessions)
+func TestOpenResponsesNoSubjectIsUnauthorizedWithOrWithoutPrevious_spec_10_2(t *testing.T) {
+	principals := []struct {
+		name string
+		ctx  func(context.Context) context.Context
+	}{
+		{name: "no principal", ctx: func(c context.Context) context.Context { return c }},
+		{name: "empty subject", ctx: func(c context.Context) context.Context {
+			return authmw.WithPrincipal(c, authmw.Principal{TenantID: "acme", Roles: []auth.Role{auth.RoleUser}})
+		}},
+	}
+	for _, p := range principals {
+		for _, withPrev := range []bool{false, true} {
+			name := p.name + "/first turn"
+			if withPrev {
+				name = p.name + "/continuation"
+			}
+			t.Run(name, func(t *testing.T) {
+				f := newConvFixture(t, convOptions{hold: true})
+				head := f.mustTurn(t, "", "one")
+				before := f.sideEffects()
+				body := map[string]any{"model": "echo", "input": "two"}
+				if withPrev {
+					body["previous_response_id"] = head
+				}
+				buf, _ := json.Marshal(body)
+				req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(buf))
+				req = req.WithContext(p.ctx(req.Context()))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("X-Lenny-Tenant-ID", "acme")
+				rr := httptest.NewRecorder()
+				f.h.Handler().ServeHTTP(rr, req)
+
+				if rr.Code != http.StatusUnauthorized {
+					t.Fatalf("status = %d, want 401; body=%s", rr.Code, rr.Body.String())
+				}
+				var env translator.OpenAIError
+				if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+					t.Fatalf("401 body is not the OpenAI error envelope: %v; body=%s", err, rr.Body.String())
+				}
+				if env.Error.Code != "UNAUTHORIZED" {
+					t.Errorf("error.code = %q, want UNAUTHORIZED", env.Error.Code)
+				}
+				if after := f.sideEffects(); after != before {
+					t.Errorf("refused request caused side effects: before %+v, after %+v", before, after)
+				}
+				if _, err := f.inner.Get(context.Background(), "acme", "sess_2"); !errors.Is(err, sessionstore.ErrNotFound) {
+					t.Errorf("store.Get(sess_2) = %v, want ErrNotFound (no session written)", err)
+				}
+			})
+		}
+	}
+}

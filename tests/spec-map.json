@@ -5700,6 +5700,7 @@
         "pkg/gateway/environment/translator/open_responses_ownership_test.go",
         "tests/tier4_integration/open_responses_held_session_test.go",
         "tests/tier9_security/open_responses_warm_user_test.go",
+        "tests/tier9_security/open_responses_no_subject_test.go",
         "tests/tier3_contract/rest_sessions/openapi_document_test.go::TestServedDocumentOpenResponsesByIDHasNoDeleteOperation",
         "tests/tier4_integration/open_responses_idle_suspension_test.go::TestIdleSuspendedResponsesSessionContinuesCold_spec_15",
         "tests/tier5_e2e_kind/open_responses_idle_restamp_test.go::TestWarmResponsesTurnsKeepTheHeldSessionRunningPastTheIdleBound_spec_15",

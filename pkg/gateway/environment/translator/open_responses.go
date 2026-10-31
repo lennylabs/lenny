@@ -345,8 +345,9 @@ var errWarmLost = errors.New("open responses: warm conditions no longer hold")
 // spec: §15 (Open Responses conversation sessions).
 var errGenerationAdvanced = errors.New("open responses: recovery generation advanced")
 
-// handleCreate serves POST /v1/responses in a fixed order: resolve, then
-// forward, then reserve, then dispatch. It resolves previous_response_id
+// handleCreate serves POST /v1/responses in a fixed order: authenticate,
+// resolve, then forward, then reserve, then dispatch. A request with no
+// principal subject answers 401 before anything else. It resolves previous_response_id
 // before any store write, bind, or forward, so an unresolvable id answers the
 // native 404 with no side effect. A continuation that meets the warm
 // conditions, and every request that arrived forwarded from another replica,
@@ -365,6 +366,9 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 	}
 	t, ok := h.parseTurn(w, r)
 	if !ok {
+		return
+	}
+	if !requireSubject(w, r) {
 		return
 	}
 	if t.req.PreviousResponseID == "" {
@@ -430,6 +434,23 @@ func (h *OpenResponsesHandler) parseTurn(w http.ResponseWriter, r *http.Request)
 	}
 	t.now = h.clock()
 	return t, true
+}
+
+// requireSubject refuses a session-create request whose principal is absent
+// or carries an empty Subject with the native 401 UNAUTHORIZED envelope the
+// binder answers, and reports whether the request may proceed. Every
+// POST /v1/responses creates a session, a continuation included, so the
+// refusal precedes previous_response_id resolution: a request with no subject
+// answers 401 whether or not it names a previous response, and never reaches
+// the ownership check's 404.
+// spec: §10.2 (Session ownership) rule 3; §15 (Open Responses conversation
+// sessions).
+func requireSubject(w http.ResponseWriter, r *http.Request) bool {
+	if _, err := principalOwner(r.Context()); err != nil {
+		writeSingleShotError(w, err)
+		return false
+	}
+	return true
 }
 
 // writeResolveError maps a previous_response_id resolution failure to the

@@ -1160,6 +1160,7 @@ func TestOpenResponsesResolutionPrecedesClaim_spec_15(t *testing.T) {
 		head := f.mustTurn(t, "", "one")
 		buf, _ := json.Marshal(map[string]any{"model": "echo", "input": "x", "previous_response_id": head})
 		req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(buf))
+		req = req.WithContext(ownerprincipal.Context(req.Context(), convOwner))
 		req.Header.Set("X-Lenny-Tenant-ID", "globex")
 		rr := httptest.NewRecorder()
 		f.h.Handler().ServeHTTP(rr, req)

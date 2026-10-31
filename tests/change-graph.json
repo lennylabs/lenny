@@ -1389,7 +1389,7 @@
       "e2e_kind": ["tests/tier5_e2e_kind/openai_conformance_test.go", "tests/tier5_e2e_kind/open_responses_idle_restamp_test.go"],
       "load_local": ["tests/tier7a_load_local/scenarios/singleshot_admission_ordering/...", "tests/tier7a_load_local/open_responses_conversation_invariant_test.go", "tests/tier7a_load_local/open_responses_replica_lag_test.go"],
       "chaos": ["tests/tier8_chaos/open_responses_chaos_test.go"],
-      "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go", "tests/tier9_security/open_responses_isolation_erasure_test.go", "tests/tier9_security/open_responses_warm_user_test.go", "tests/tier9_security/open_responses_held_resolution_test.go"]
+      "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go", "tests/tier9_security/open_responses_isolation_erasure_test.go", "tests/tier9_security/open_responses_warm_user_test.go", "tests/tier9_security/open_responses_no_subject_test.go", "tests/tier9_security/open_responses_held_resolution_test.go"]
     },
     "pkg/gateway/environment/tenantstore/tenantstoretest": {
       "unit": ["pkg/gateway/environment/tenantstore/...", "cmd/lenny-gateway/..."],
