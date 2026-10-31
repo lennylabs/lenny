@@ -178,7 +178,7 @@ func (c *Counter) listedPods(ctx context.Context, clockSet bool) (map[string]boo
 	}
 	pods, err := c.source.ListPodsWithActiveSlots(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("slotcounter: recovery rebuild: list pods with active slots: %w", err)
+		return nil, fmt.Errorf("slotcounter: recovery rebuild: list pods with active slots: %w: %w", errSlotSourceRead, err)
 	}
 	for _, pod := range pods {
 		if pod != "" {

@@ -204,12 +204,18 @@ func (c *Counter) stampOutage() {
 	c.outageMu.Unlock()
 }
 
+// errSlotSourceRead marks a failed Postgres read of the SlotSource. The
+// rehydration and the recovery rebuild reach isRedisUnavailable with both
+// Redis errors and these, and a dropped Postgres connection reads as a network
+// error or an EOF, so the mark keeps it from being taken for a Redis outage.
+var errSlotSourceRead = errors.New("slot source read failed")
+
 // isRedisUnavailable reports whether err is a Redis-connectivity failure
 // (a network or pool error) rather than a Redis-Nil miss or a Lua script
 // error. A Redis outage routes slot admission to the §12.4 Postgres
 // fallback; any other error is a genuine failure that propagates.
 func isRedisUnavailable(err error) bool {
-	if err == nil || errors.Is(err, redis.Nil) {
+	if err == nil || errors.Is(err, redis.Nil) || errors.Is(err, errSlotSourceRead) {
 		return false
 	}
 	// A context cancellation or deadline is the caller's signal, not a Redis

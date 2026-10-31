@@ -546,7 +546,7 @@ func (c *Counter) rehydrate(ctx context.Context, podID, extra string) (bool, err
 
 	ids, err := c.source.GetActiveSlotsByPod(ctx, podID)
 	if err != nil {
-		return false, fmt.Errorf("slotcounter: rehydrate %s from source: %w", podID, err)
+		return false, fmt.Errorf("slotcounter: rehydrate %s: %w: %w", podID, errSlotSourceRead, err)
 	}
 	if err := c.seed(ctx, podID, ids, extra); err != nil {
 		return false, err

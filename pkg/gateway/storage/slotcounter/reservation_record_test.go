@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
 	"time"
 
@@ -278,6 +279,28 @@ func TestReserveAdmittedDuringRecoveryFailsClosedWithoutARecord_spec_12_4(t *tes
 	}
 	if got, err := cl.SIsMember(ctx, "lenny:pod:{pod-1}:active_slots", "b").Result(); err != nil || got {
 		t.Errorf("member b present = %v (%v), want it removed", got, err)
+	}
+}
+
+// spec: §12.4 (Redis failure behavior), §5.2 (Post-recovery rehydration
+// atomicity).
+// diagnosis: a Postgres connection dropped during a rehydration, with Redis
+// healthy, was classified as a Redis outage, so the reservation left Redis
+// for the gate and the outage clock started.
+func TestPostgresEOFDuringRehydrationIsNotARedisOutage_spec_12_4(t *testing.T) {
+	src := newFakeSource()
+	src.setErr(io.EOF)
+	fb := newFakeFallback()
+	c, _, _ := newCounterNoSource(t, slotcounter.WithFallbackSource(fb), slotcounter.WithSlotSource(src))
+	_, _, err := c.Reserve(context.Background(), "pod-1", "s", 2)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("Reserve = %v, want the source's error", err)
+	}
+	if n := fb.callCount("pod-1"); n != 0 {
+		t.Errorf("the gate ran %d times with Redis reachable, want 0", n)
+	}
+	if fb.hasRecord("pod-1", "s") {
+		t.Error("the failed reservation left its record")
 	}
 }
 
