@@ -349,6 +349,7 @@ Gateway commands:
   admin credential-pools revoke-credential --pool <name> --credential <id> [--reason <r>]   Emergency-revoke one credential (§24.5, §4.9)
   admin credential-pools revoke-pool --pool <name> [--reason <r>]   Emergency-revoke all credentials in a pool (§24.5, §4.9)
   admin credential-pools re-enable --pool <name> --credential <id> [--reason <r>]   Re-enable a revoked credential (§24.5, §4.9)
+  admin credential-pools list-unreferenced-secrets [--namespace <ns>]   List credentials-namespace Secrets that no pool references, through the current kubeconfig context (§24.5, §4.9)
   admin sessions get <id>               Investigate a session's state, metadata, and assigned pod (§24.11)
   admin sessions force-terminate <id> [--reason <text>]
                                         Force a stuck session to failed and release its pod (§24.11)
@@ -1892,15 +1893,18 @@ func cmdExternalAdapters(ctx context.Context, c *ctl.Client, args []string, stdo
 }
 
 // cmdCredentialPools implements the §24.5 credential-management group:
-// the eight `lenny-ctl admin credential-pools …` subcommands, each
-// mapping 1:1 to a §15.1 `/v1/admin/credential-pools` route (§24 preamble). All commands accept `--tenant <id>`, sent as the `?tenantId=`
-// query a platform-admin uses to target a tenant's pools.
+// the `lenny-ctl admin credential-pools …` subcommands. Each one maps 1:1
+// to a §15.1 `/v1/admin/credential-pools` route (§24 preamble) and accepts
+// `--tenant <id>`, sent as the `?tenantId=` query a platform-admin uses to
+// target a tenant's pools. list-unreferenced-secrets is the exception: it
+// walks every tenant and also reads Secret metadata through the current
+// kubeconfig context (§24 thin-client exceptions).
 //
-// spec: §24.5 rows 1-8; §15.1.
+// spec: §24.5; §15.1.
 func cmdCredentialPools(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: credential-pools requires a subcommand "+
-			"(list|get|add-credential|update-credential|remove-credential|revoke-credential|revoke-pool|re-enable)")
+			"(list|get|add-credential|update-credential|remove-credential|revoke-credential|revoke-pool|re-enable|list-unreferenced-secrets)")
 		return 2
 	}
 	// tenantQuery renders the optional ?tenantId= suffix from --tenant.
@@ -2034,6 +2038,8 @@ func cmdCredentialPools(ctx context.Context, c *ctl.Client, args []string, stdou
 			return 1
 		}
 		printJSON(stdout, out)
+	case "list-unreferenced-secrets":
+		return cmdListUnreferencedSecrets(ctx, c, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "lenny-ctl: unknown credential-pools subcommand %q\n", args[0])
 		return 2

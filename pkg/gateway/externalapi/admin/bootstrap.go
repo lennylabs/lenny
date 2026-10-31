@@ -66,7 +66,7 @@ type BootstrapRequest struct {
 	Runtimes           []RuntimePayload          `json:"runtimes,omitempty"`
 	Users              []UserPayload             `json:"users,omitempty"`
 	Pools              []PoolPayload             `json:"pools,omitempty"`
-	CredentialPools    []CredentialPoolPayload   `json:"credentialPools,omitempty"`
+	CredentialPools    []CredentialPoolRequest   `json:"credentialPools,omitempty"`
 	DelegationPolicies []DelegationPolicyPayload `json:"delegationPolicies,omitempty"`
 	Environments       []EnvironmentPayload      `json:"environments,omitempty"`
 }
@@ -350,9 +350,10 @@ func resolveExisting(conflicts, securityCritical []string, force bool) (action, 
 //
 // spec: §4.9 — credential pools are part of the Helm
 // bootstrap seed surface, not only the live admin API.
-func (r *Router) upsertCredentialPools(req *http.Request, in []CredentialPoolPayload, opts bootstrapOptions) BootstrapSection {
+func (r *Router) upsertCredentialPools(req *http.Request, in []CredentialPoolRequest, opts bootstrapOptions) BootstrapSection {
 	out := BootstrapSection{}
-	for i, p := range in {
+	for i, raw := range in {
+		p := raw.CredentialPoolPayload
 		tenant := p.TenantID
 		if tenant == "" {
 			out.add(i, p.Name, actionError, seedValidationCode, "tenantId is required", nil)
@@ -367,8 +368,28 @@ func (r *Router) upsertCredentialPools(req *http.Request, in []CredentialPoolPay
 			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
 			continue
 		}
+		// spec: §4.9 (Credential values submitted through the admin API)
+		// rule 1 — the seed reports secretData as an error on the entry.
+		p, err := raw.poolPayload()
+		if err != nil {
+			out.add(i, raw.Name, actionError, seedValidationCode, err.Error(), nil)
+			continue
+		}
+		// spec: §4.9 — the seed stores every ref canonical and reports a
+		// ref Secret references rule 1 refuses on this entry. The seed is
+		// exempt from the registration rule and runs no probe.
+		if err := r.canonicalizeSecretRefs(p.Credentials); err != nil {
+			out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
+			continue
+		}
 		existing, err := r.credentialPools.Get(req.Context(), tenant, p.Name)
 		if errors.Is(err, credentialpoolstore.ErrNotFound) {
+			// spec: §4.9 — Secret references rule 3: a pool that does
+			// not exist carries no Lenny-written ref.
+			if err := checkReservedSecretRefs(nil, p.Credentials); err != nil {
+				out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
+				continue
+			}
 			if !opts.dryRun {
 				pool := credentialpoolstore.CredentialPool{
 					TenantID:                   tenant,
@@ -403,32 +424,90 @@ func (r *Router) upsertCredentialPools(req *http.Request, in []CredentialPoolPay
 		}
 		conflicts := credentialPoolConflicts(existing, p)
 		action, code, doUpdate := resolveExisting(conflicts, nil, opts.forceUpdate)
-		if doUpdate && !opts.dryRun {
-			_, err = r.credentialPools.Update(req.Context(), tenant, p.Name, func(pool *credentialpoolstore.CredentialPool) error {
-				pool.Provider = p.Provider
-				pool.Credentials = toCredentials(p.Credentials)
-				pool.AssignmentStrategy = p.AssignmentStrategy
-				pool.MaxConcurrentSessions = p.MaxConcurrentSessions
-				pool.CooldownOnRateLimitSeconds = p.CooldownOnRateLimitSeconds
-				pool.LeaseTTLSeconds = p.LeaseTTLSeconds
-				pool.RenewBeforeBufferSeconds = p.RenewBeforeBufferSeconds
-				pool.HostPatterns = p.HostPatterns
-				pool.DeliveryMode = p.DeliveryMode
-				pool.ProxyDialect = p.ProxyDialect
-				pool.ProxyEndpoint = p.ProxyEndpoint
-				pool.CacheScope = p.CacheScope
-				pool.CachePolicy = toCachePolicy(p.CachePolicy)
-				pool.DeletedAt = time.Time{}
-				return nil
-			})
-			if err != nil {
-				out.add(i, p.Name, actionError, seedStoreErrorCode, err.Error(), nil)
+		if !doUpdate || opts.dryRun {
+			// spec: §4.9 — Secret references rule 3 against the read row
+			// when the seed writes nothing.
+			if err := checkReservedSecretRefs(existing.Credentials, p.Credentials); err != nil {
+				out.add(i, p.Name, actionError, seedValidationCode, err.Error(), nil)
+				continue
+			}
+		}
+		if doUpdate {
+			if err := r.forceUpdateSeededPool(req.Context(), existing, p, opts.dryRun); err != nil {
+				out.add(i, p.Name, actionError, seedEntryErrorCode(err), err.Error(), nil)
 				continue
 			}
 		}
 		out.add(i, p.Name, action, code, "", conflicts)
 	}
 	return out
+}
+
+// forceUpdateSeededPool applies a seed entry under --force-update. Under
+// dryRun it plans the update against the unlocked read existing, refusing
+// it as the write would be refused when it drops a Lenny-written ref and
+// no writer is wired, and changes nothing. Otherwise it runs, against the
+// locked row, the reserved-prefix rule, the update, the explicit Validate,
+// and the Delete of each dropped Lenny-written ref, the Deletes last. The
+// forced update revives a soft-deleted pool, so it has no active check.
+//
+// spec: §4.9 (Credential Storage Topology) — Secret references rule 3,
+// Credential values submitted through the admin API rules 3 to 6; §17.6.
+func (r *Router) forceUpdateSeededPool(ctx context.Context, existing credentialpoolstore.CredentialPool, p CredentialPoolPayload, dryRun bool) error {
+	apply := func(pool *credentialpoolstore.CredentialPool) { applySeedCredentialPool(pool, p) }
+	ops := &secretOps{}
+	if dryRun {
+		if err := r.planMutation(&existing, ops, apply); err != nil {
+			return err
+		}
+		return r.checkWriterFor(ops)
+	}
+	_, err := r.credentialPools.Update(ctx, existing.TenantID, existing.Name, func(pool *credentialpoolstore.CredentialPool) error {
+		ops.reset()
+		if err := checkReservedSecretRefs(pool.Credentials, p.Credentials); err != nil {
+			return err
+		}
+		if err := r.planMutation(pool, ops, apply); err != nil {
+			return err
+		}
+		return r.applySecretOps(ctx, ops)
+	})
+	return err
+}
+
+// applySeedCredentialPool replaces every seeded field of pool with the
+// entry's value and clears DeletedAt, as a --force-update seed does.
+func applySeedCredentialPool(pool *credentialpoolstore.CredentialPool, p CredentialPoolPayload) {
+	pool.Provider = p.Provider
+	pool.Credentials = toCredentials(p.Credentials)
+	pool.AssignmentStrategy = p.AssignmentStrategy
+	pool.MaxConcurrentSessions = p.MaxConcurrentSessions
+	pool.CooldownOnRateLimitSeconds = p.CooldownOnRateLimitSeconds
+	pool.LeaseTTLSeconds = p.LeaseTTLSeconds
+	pool.RenewBeforeBufferSeconds = p.RenewBeforeBufferSeconds
+	pool.HostPatterns = p.HostPatterns
+	pool.DeliveryMode = p.DeliveryMode
+	pool.ProxyDialect = p.ProxyDialect
+	pool.ProxyEndpoint = p.ProxyEndpoint
+	pool.CacheScope = p.CacheScope
+	pool.CachePolicy = toCachePolicy(p.CachePolicy)
+	pool.DeletedAt = time.Time{}
+}
+
+// seedEntryErrorCode returns the seed entry code for a credential-pool
+// update failure: seedValidationCode for a 400 secretRef check refusal the
+// mutate closure returned, and seedStoreErrorCode for every other failure,
+// including the no-writer refusal and a failed Secret operation.
+//
+// spec: §4.9 (Credential Storage Topology) — the seed reports a ref rule 1
+// or rule 3 refuses, a missing writer, and a failed Put or Delete as an
+// error on that pool entry; §17.6.
+func seedEntryErrorCode(err error) string {
+	var aw *adminWriteError
+	if errors.As(err, &aw) && aw.status == http.StatusBadRequest {
+		return seedValidationCode
+	}
+	return seedStoreErrorCode
 }
 
 // bootstrapT4KMSProbe runs the §12.5 admin-time KMS availability
@@ -985,7 +1064,8 @@ func runtimeConflicts(existing runtimestore.Runtime, p RuntimePayload) (conflict
 // credentialPoolConflicts returns the seed-specified credential-pool
 // fields whose values differ from the stored row (§17.6). The
 // credential-pool update mutator replaces every field, so all seeded
-// scalars are compared.
+// scalars are compared. p's secretRefs are canonical by the time it is
+// called, so a seeded ref in bare form equals the stored canonical ref.
 func credentialPoolConflicts(existing credentialpoolstore.CredentialPool, p CredentialPoolPayload) []string {
 	var c []string
 	if p.Provider != "" && existing.Provider != p.Provider {

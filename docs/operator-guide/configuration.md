@@ -257,7 +257,7 @@ credentialPools:
     provider: anthropic_direct
     credentials:
       - id: key-1
-        secretRef: lenny-system/anthropic-key
+        secretRef: anthropic-key
 ```
 
 ---
@@ -381,15 +381,62 @@ credentialPools:
     leaseTTLSeconds: 3600
     credentials:
       - id: key-1
-        secretRef: lenny-system/anthropic-key-1
+        secretRef: anthropic-key-1
       - id: key-2
-        secretRef: lenny-system/anthropic-key-2
+        secretRef: anthropic-key-2
     fallbackChain:
       - provider: aws_bedrock
         poolRef: bedrock-fallback
 ```
 
 **`proxyDialect`** is required when `deliveryMode: proxy`. It must be one of the dialects declared in the bound Runtime's `credentialCapabilities.proxyDialect` list. Admission rejects mismatches with `422 INVALID_POOL_PROXY_DIALECT`. The gateway handles upstream provider translation inside its own process — the agent pod speaks the declared dialect regardless of which upstream provider the gateway ultimately calls. For providers outside the gateway's built-in set, or for deployers who want to route through a shared team gateway, see [external LLM proxy](external-llm-proxy.md).
+
+### Credential Secrets
+
+Each credential's value lives in its own Kubernetes Secret in the credentials namespace. The Helm value `credentials.namespace` names that namespace (default `lenny-credentials`), and the chart creates it. [Credentials Namespace](namespace-and-isolation.md#credentials-namespace) describes its access rules.
+
+A credential enters a pool by value, by reference, or by role. Adding by value is the standard path for a `tenant-admin`, because it needs no Kubernetes access.
+
+| Method | Caller | Request | Rotation |
+|---|---|---|---|
+| By value | `tenant-admin` for its own tenant, or `platform-admin` | `POST /v1/admin/credential-pools/{name}/credentials` carrying `secretData`. The gateway writes the Secret. | `PUT /v1/admin/credential-pools/{name}/credentials/{credId}` carrying `secretData` overwrites the Secret. |
+| By reference | `platform-admin`, or the bootstrap seed in Helm values | Create the Secret in the credentials namespace, then submit its name as `secretRef`. | Update the Secret. No pool update is required. |
+| By role | `tenant-admin` for its own tenant, or `platform-admin` | `roleArn` on the same endpoint. | The entry stores the role ARN and no credential value. |
+
+The following request adds a credential by value:
+
+```
+POST /v1/admin/credential-pools/anthropic-production/credentials
+{"id": "key-3", "secretData": {"apiKey": "sk-ant-..."}}
+```
+
+The following commands create a Secret and add it by reference:
+
+```bash
+kubectl create secret generic anthropic-key-3 \
+  -n lenny-credentials \
+  --from-literal=apiKey="sk-ant-..."
+
+lenny-ctl admin credential-pools add-credential \
+  --pool anthropic-production --provider anthropic_direct \
+  --id key-3 --secret-ref anthropic-key-3
+```
+
+The keys of a Secret, and of `secretData`, are the provider's key fields. A key the provider does not read leaves that provider's read failing closed.
+
+| Provider | Secret keys |
+|---|---|
+| `anthropic_direct` | `apiKey` |
+| `aws_bedrock` (role) | `roleArn` |
+| `aws_bedrock` (access keys) | `accessKeyId` and `secretAccessKey` |
+| `vertex_ai` | `serviceAccountJson` |
+| `azure_openai` (API key) | `apiKey` |
+| `azure_openai` (Azure AD) | `clientId`, `clientSecret`, and `tenantId` |
+| `github` | `token` |
+
+A `secretRef` is either `<name>` or `<credentials.namespace>/<name>`, and the gateway stores it in the second form. Names that begin with `lenny-cred-` are reserved for Secrets the gateway writes. The gateway probes each newly introduced `secretRef` through the Token Service before it commits the write, so a missing Secret is refused at registration. The bootstrap seed runs no probe: a Secret may be created after the bootstrap Job runs, and a read of a Secret that does not yet exist fails closed. The [Admin API](../api/admin.md#credential-write-rules) lists the refusals.
+
+The Token Service reads a Secret on every use and caches no value, so the next read after a rotation returns the new value. Active leases keep the previously materialized credential until they expire. To force them onto the new value, revoke the credential as described in the [credential-revocation runbook](../runbooks/credential-revocation.md).
 
 ### Delivery Modes
 

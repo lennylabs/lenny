@@ -49,6 +49,15 @@ platform:
 mtls:
   enabled: false
 
+# kindnet evaluates egress NetworkPolicy after the DNAT rewrite, so the
+# chart's kube-apiserver rules match the apiserver endpoint on the `kind`
+# Docker bridge rather than the Service ClusterIP. This is the CIDR
+# apiserver-egress.yaml admits for every other lenny-system pod. That manifest
+# excludes the Token Service, so the chart's allow-token-service rule alone
+# admits the §13.2.4 Token Service dial on this cluster. The preflight
+# ClusterIP-in-CIDR check does not run here because preflight.enabled is false.
+kubeApiServerCIDR: "172.16.0.0/12"
+
 controller:
   # Run a single WarmPoolController replica on the e2e cluster. The chart
   # default is 2 (a leader plus a hot standby for production HA), but on a

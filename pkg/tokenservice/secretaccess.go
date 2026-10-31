@@ -4,37 +4,37 @@ package tokenservice
 
 import "context"
 
-// SecretAccessVerdict is the §4.9 admin-time RBAC-probe outcome the
-// Token Service returns for a named Kubernetes Secret.
+// SecretAccessVerdict is the outcome of one §4.9 Token Service read of a
+// credential Secret.
 //
-// spec: spec/04_system-components.md §4.9.
+// spec: §4.9 Token Service secret resolution.
 type SecretAccessVerdict int
 
 const (
-	// SecretAccessAllowed — the Token Service ServiceAccount can get the
-	// Secret and the Secret exists.
+	// SecretAccessAllowed: the get returned the Secret and, on a keyed
+	// read, the named key holds a non-empty value.
 	SecretAccessAllowed SecretAccessVerdict = iota
-	// SecretAccessDenied — the SelfSubjectAccessReview denied the get
-	// verb on the Secret (the resourceName is not in the Token Service
-	// Role).
+	// SecretAccessDenied: the get returned Forbidden (the chart Role is
+	// absent).
 	SecretAccessDenied
-	// SecretAccessNotFound — the get verb is allowed but the Secret
-	// object does not exist.
+	// SecretAccessNotFound: the Secret does not exist in the credentials
+	// namespace, or a keyed read named a key that is missing or empty.
 	SecretAccessNotFound
 )
 
-// SecretAccessProber answers whether the Token Service's own
-// ServiceAccount can read a named Kubernetes Secret. The k8s-backed
-// implementation lives in pkg/tokenservice/secretprobe; the gRPC server
-// depends only on this interface so the core package stays free of a
-// client-go dependency and the probe is unit-testable with a fake.
+// SecretAccessProber reads one credential Secret in the Token Service's
+// configured credentials namespace. The k8s-backed implementation lives in
+// pkg/tokenservice/secretprobe; the gRPC server depends only on this
+// interface so the core package stays free of a client-go dependency and
+// the read is unit-testable with a fake.
 //
-// The probe is Token-Service-owned per §4.9: the gateway never
-// impersonates the Token Service ServiceAccount nor performs the review
-// under its own identity. A definitive ALLOWED/DENIED/NOT_FOUND is
-// returned as a verdict with a nil error; any non-deterministic failure
-// (API timeout, transport error) is returned as a non-nil error so the
-// RPC maps it to codes.Unavailable and the caller never fails open.
+// A definitive ALLOWED, DENIED, or NOT_FOUND is returned as a verdict with
+// a nil error. Any other failure is returned as a non-nil error, which the
+// RPC maps to codes.Unavailable so the caller never fails open. When key
+// is non-empty and the verdict is ALLOWED, the returned bytes are that
+// key's value; an unkeyed read never returns a value.
+//
+// spec: §4.9 Token Service secret resolution.
 type SecretAccessProber interface {
-	ProbeSecretAccess(ctx context.Context, namespace, name string) (SecretAccessVerdict, error)
+	ProbeSecretAccess(ctx context.Context, name, key string) (SecretAccessVerdict, []byte, error)
 }

@@ -4,8 +4,8 @@
 // session creation and at workspace staging. It binds the gitClone URL
 // host to one of the tenant's §4.9 VCS credential pools
 // (credentialpoolstore.ResolveVCSPool), selects an active credential,
-// and reads the live token from the credential's Kubernetes Secret. The
-// gateway uses the returned token to run `git ls-remote` (ref pinning)
+// and reads the live token from the credential's Secret through the Token
+// Service. The gateway uses the returned token to run `git ls-remote` (ref pinning)
 // and the clone on its own network path, so the runtime pod never sees
 // the raw credential, per §14 and §4.9.
 //
@@ -63,27 +63,35 @@ type PoolLister interface {
 	List(ctx context.Context, tenantID string, filter credentialpoolstore.ListFilter) ([]credentialpoolstore.CredentialPool, error)
 }
 
-// SecretReader resolves a credential's Kubernetes Secret reference to its
-// live token value. connectorsecret.KubeResolver satisfies it
-// structurally (its Resolve reads a `namespace/name[/key]` Secret), so
-// the gateway reuses the same Secret-reading seam it wires for connector
-// client secrets.
+// SecretReader resolves a credential's Secret reference to its live token
+// value. The reader receives the canonical credentials-namespace ref the
+// pool row stores. In production it is the Token Service keyed read: the
+// gateway parses the ref, asks the Token Service for the Secret's `token`
+// key over the ProbeSecretAccess RPC, and holds no Secret read of its own.
+// Each call is one uncached read. A missing Secret, a refused read, or a
+// ref outside the credentials namespace returns an error wrapping
+// ErrNoUsableCredential. Any other failure, such as the Token Service being
+// unreachable, returns an error that does not wrap it, which callers treat
+// as a transient failed read rather than a configuration failure.
+//
+// spec: §4.9 (Token Service secret resolution), §14.
 type SecretReader interface {
 	Resolve(ctx context.Context, ref string) (string, error)
 }
 
 // ErrNoUsableCredential reports that the bound VCS pool carries no
-// active (non-revoked) credential with a Secret reference. The §15.1
+// active (non-revoked) credential with a Secret reference, or that the
+// selected credential's Secret is missing, refused, or empty. The §15.1
 // surface treats it as a non-retryable configuration failure.
 var ErrNoUsableCredential = errors.New("vcscred: VCS credential pool has no usable credential")
 
 // StoreResolver is the production Resolver: it lists the tenant's pools,
 // binds the gitClone host to one VCS pool, and reads the token from the
-// selected credential's Secret.
+// selected credential's Secret through the SecretReader.
 type StoreResolver struct {
 	// Pools lists the tenant's §4.9 credential pools.
 	Pools PoolLister
-	// Secrets reads a credential's token from its Kubernetes Secret.
+	// Secrets reads a credential's token from its Secret.
 	Secrets SecretReader
 }
 

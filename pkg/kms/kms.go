@@ -5,9 +5,9 @@
 // encryption-key (KEK) wrap and unwrap for envelope encryption, and
 // asymmetric ES256 signing for Lenny-issued JWTs.
 //
-// The §4 / §12.9 envelope model. T4 Restricted data, such as OAuth
-// refresh tokens, user-supplied API keys, and credential pool secrets, is
-// stored under AES-256-GCM envelope encryption. Each record carries its
+// The §4 / §12.9 envelope model. T4 Restricted data held in Postgres, such
+// as OAuth refresh tokens and user-supplied API keys, is stored under
+// AES-256-GCM envelope encryption. Each record carries its
 // own random 32-byte data-encryption-key (DEK). The DEK is wrapped by a
 // KEK that lives in KMS, and only the wrapped DEK is stored alongside the
 // ciphertext. To read a record the holder asks KMS to unwrap the DEK,

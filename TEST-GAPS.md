@@ -2172,6 +2172,14 @@ The §7.2 surface has substantial tier-1 unit coverage in `pkg/gateway/session/s
 - **Dependencies:** none.
 - **Resolution:** `awaitResumeExit` waits until the row has left both `resume_pending` and `resuming`, and steps the clock only while the row is `resume_pending`, so a slow attempt does not run down the resuming budget. The product is unchanged. The cells passed 30 of 30 runs under load (2 parallel processes on two cores, cut off at the 570-second limit of the run with no failure). A heavier run, 3 processes on the same cores with 3 spinners and a host load of 60, never showed the `pre-state` failure, but it failed 3 runs on `etcdserver: request timed out` from a starved envtest control plane, which is a separate condition.
 
+### - [ ] T-7.2.17 — `TestRequestInputPublishesElicitationRequestEvent_spec_7_2` reads the event history before the handler publishes [Low] — OPEN
+- **Spec/Doc:** §7.2 (Interactive Session Model).
+- **Existing tests:** `pkg/gateway/mcpfabric/mcptools/mcptools_test.go::TestRequestInputPublishesElicitationRequestEvent_spec_7_2`.
+- **Evidence:** A full unit tier run on 2026-10-31 failed with `event history has 0 events, want 1`. The test passed 5 consecutive runs alone and 300 consecutive runs under `-race`. In `pkg/gateway/mcpfabric/mcptools/mcptools_register.go` the handler registers the wait in `beginInputWait` and publishes `elicitation_request` afterwards, while the test reads `bus.History` as soon as `waitPending` sees the registration.
+- **Gap:** The test asserts an order the handler does not guarantee, so it fails when the handler goroutine is descheduled between the two steps.
+- **Dependencies:** none.
+- **Suggested test:** Poll `bus.History` until the event appears or a bounded wait expires, in place of the single read after `waitPending`.
+
 ## §7.3 Retry and Resume <a id="t-7.3"></a>
 **Spec file:** `spec/07_session-lifecycle.md`
 **Reviewed:** 2026-07-06

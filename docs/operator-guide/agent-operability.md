@@ -249,8 +249,8 @@ Every action tool respects the [safety envelope](#the-safety-envelope) below.
 | `lenny_credential_pool_create` | `POST /v1/admin/credential-pools` | Create a credential pool |
 | `lenny_credential_pool_update` | `PUT /v1/admin/credential-pools/{name}` | Update a credential pool |
 | `lenny_credential_pool_delete` | `DELETE /v1/admin/credential-pools/{name}` | Delete a credential pool (destructive) |
-| `lenny_credential_add` | `POST /v1/admin/credential-pools/{name}/credentials` | Add a credential |
-| `lenny_credential_retire` | `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke` | Retire (revoke) a pool credential. Pool credential rotation is performed via revoke + add. |
+| `lenny_credential_add` | `POST /v1/admin/credential-pools/{name}/credentials` | Add a credential to a pool by `secretRef`, `roleArn`, or `secretData` ([Credential Secrets](configuration.md#credential-secrets)) |
+| `lenny_credential_retire` | `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke` | Retire (revoke) a pool credential. Pool credential rotation follows [Credential Secrets](configuration.md#credential-secrets). |
 | `lenny_runtime_register` | `POST /v1/admin/runtimes` | Register a runtime |
 | `lenny_runtime_update` | `PUT /v1/admin/runtimes/{name}` | Update a runtime |
 | `lenny_runtime_retire` | `DELETE /v1/admin/runtimes/{name}` | Retire a runtime |

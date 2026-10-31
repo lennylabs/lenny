@@ -66,18 +66,19 @@ type TokenServiceClient interface {
 	// RevokeCredentials releases a lease and drops the credential's
 	// session-slot accounting. The lease becomes invalid immediately.
 	RevokeCredentials(ctx context.Context, in *RevokeCredentialsRequest, opts ...grpc.CallOption) (*RevokeCredentialsResponse, error)
-	// ProbeSecretAccess answers whether the Token Service's own
-	// ServiceAccount can read a named Kubernetes Secret. The gateway's
-	// credential-pool admin handlers call it before persisting a pool
-	// that references a new secretRef: the Token Service runs a
-	// SelfSubjectAccessReview under its own identity (and, on ALLOWED, a
-	// get on the named Secret to confirm the object exists) and returns
-	// one of {ALLOWED, DENIED, NOT_FOUND}. The probe is Token-Service-
-	// owned so the gateway never impersonates the Token Service SA. A
-	// DENIED/NOT_FOUND verdict maps to 422 CREDENTIAL_SECRET_RBAC_MISSING
-	// at the admin handler; a transport or non-deterministic failure maps
-	// to 503 CREDENTIAL_PROBE_UNAVAILABLE and the write is rejected
-	// (never fail open). spec: §4.9.
+	// ProbeSecretAccess reads one credential Secret in the Token Service's
+	// configured credentials namespace with a single uncached get. The
+	// gateway's credential-pool admin handlers call it with no key as the
+	// admin-time probe before persisting a pool that introduces a
+	// secretRef, and the gateway's keyed reads call it with a key to
+	// receive that data key's value. The read is Token-Service-owned, so
+	// the gateway never impersonates the Token Service ServiceAccount and
+	// holds no get on the credentials namespace. A DENIED or NOT_FOUND
+	// verdict maps to 422 CREDENTIAL_SECRET_RBAC_MISSING at the admin
+	// handler; any other failure is returned as codes.Unavailable, which
+	// the admin handler maps to 503 CREDENTIAL_PROBE_UNAVAILABLE, and no
+	// earlier value is served. A keyed call is a credential-sensitive RPC
+	// under §16.4. spec: §4.9 Token Service secret resolution.
 	ProbeSecretAccess(ctx context.Context, in *ProbeSecretAccessRequest, opts ...grpc.CallOption) (*ProbeSecretAccessResponse, error)
 }
 
@@ -152,18 +153,19 @@ type TokenServiceServer interface {
 	// RevokeCredentials releases a lease and drops the credential's
 	// session-slot accounting. The lease becomes invalid immediately.
 	RevokeCredentials(context.Context, *RevokeCredentialsRequest) (*RevokeCredentialsResponse, error)
-	// ProbeSecretAccess answers whether the Token Service's own
-	// ServiceAccount can read a named Kubernetes Secret. The gateway's
-	// credential-pool admin handlers call it before persisting a pool
-	// that references a new secretRef: the Token Service runs a
-	// SelfSubjectAccessReview under its own identity (and, on ALLOWED, a
-	// get on the named Secret to confirm the object exists) and returns
-	// one of {ALLOWED, DENIED, NOT_FOUND}. The probe is Token-Service-
-	// owned so the gateway never impersonates the Token Service SA. A
-	// DENIED/NOT_FOUND verdict maps to 422 CREDENTIAL_SECRET_RBAC_MISSING
-	// at the admin handler; a transport or non-deterministic failure maps
-	// to 503 CREDENTIAL_PROBE_UNAVAILABLE and the write is rejected
-	// (never fail open). spec: §4.9.
+	// ProbeSecretAccess reads one credential Secret in the Token Service's
+	// configured credentials namespace with a single uncached get. The
+	// gateway's credential-pool admin handlers call it with no key as the
+	// admin-time probe before persisting a pool that introduces a
+	// secretRef, and the gateway's keyed reads call it with a key to
+	// receive that data key's value. The read is Token-Service-owned, so
+	// the gateway never impersonates the Token Service ServiceAccount and
+	// holds no get on the credentials namespace. A DENIED or NOT_FOUND
+	// verdict maps to 422 CREDENTIAL_SECRET_RBAC_MISSING at the admin
+	// handler; any other failure is returned as codes.Unavailable, which
+	// the admin handler maps to 503 CREDENTIAL_PROBE_UNAVAILABLE, and no
+	// earlier value is served. A keyed call is a credential-sensitive RPC
+	// under §16.4. spec: §4.9 Token Service secret resolution.
 	ProbeSecretAccess(context.Context, *ProbeSecretAccessRequest) (*ProbeSecretAccessResponse, error)
 }
 

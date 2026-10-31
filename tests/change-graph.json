@@ -155,6 +155,9 @@
     "tests/tier2_component/tenantsalt/": {
       "component": ["tests/tier2_component/tenantsalt/..."]
     },
+    "tests/tier2_component/secretprobe/": {
+      "component": ["tests/tier2_component/secretprobe/..."]
+    },
     "tests/tier2_component/tokensigning/": {
       "component": ["tests/tier2_component/tokensigning/..."]
     },
@@ -329,6 +332,15 @@
     "tests/tier3_contract/tokenservice_release/": {
       "contract": ["tests/tier3_contract/tokenservice_release/..."]
     },
+    "tests/tier3_contract/tokenservice_secret_read/": {
+      "contract": ["tests/tier3_contract/tokenservice_secret_read/..."]
+    },
+    "tests/tier3_contract/vcs_credential_read/": {
+      "contract": ["tests/tier3_contract/vcs_credential_read/..."]
+    },
+    "tests/tier3_contract/admin_credential_pool_codes/": {
+      "contract": ["tests/tier3_contract/admin_credential_pool_codes/..."]
+    },
     "tests/tier3_contract/workspaceplan/": {
       "contract": ["tests/tier3_contract/workspaceplan/..."]
     },
@@ -399,6 +411,12 @@
       "component": ["tests/tier2_component/translators/..."],
       "contract": ["tests/tier3_contract/rest_openai_responses/...", "tests/tier3_contract/multiprotocol_journey/..."],
       "load_local": ["tests/tier7a_load_local/open_responses_replica_lag_test.go"]
+    },
+    "tests/testinfra/credsecretfake/": {
+      "unit": ["cmd/lenny-gateway/...", "pkg/gateway/externalapi/admin/..."],
+      "integration": ["tests/tier4_integration/credential_pool_tenant_erasure_pg_test.go"],
+      "chaos": ["tests/tier8_chaos/credential_tenant_erasure_chaos_test.go"],
+      "security": ["tests/tier9_security/credential_tenant_erasure_isolation_test.go"]
     },
     "tests/testinfra/tcpfault/": {
       "unit": ["tests/testinfra/tcpfault/..."],
@@ -615,8 +633,9 @@
     "pkg/gateway/externalapi/admin": {
       "unit": ["pkg/gateway/externalapi/admin/..."],
       "component": ["tests/tier2_component/gateway_subsystems/admin_plane_test.go"],
-      "contract": ["tests/tier3_contract/gateway_ops/...", "tests/tier3_contract/rest_pools/..."],
-      "integration": ["tests/tier4_integration/admin_bootstrap_test.go"]
+      "contract": ["tests/tier3_contract/gateway_ops/...", "tests/tier3_contract/rest_pools/...", "tests/tier3_contract/admin_credential_pool_codes/..."],
+      "integration": ["tests/tier4_integration/admin_bootstrap_test.go", "tests/tier4_integration/credential_pool_secret_write_pg_test.go"],
+      "security": ["tests/tier9_security/credential_secret_ref_cross_tenant_test.go", "tests/tier9_security/credential_secret_data_value_test.go"]
     },
     "pkg/gateway/externalapi/openapi": {
       "unit": ["pkg/gateway/externalapi/openapi/..."],
@@ -846,10 +865,10 @@
     "pkg/gateway/sessionserver": {
       "unit": ["pkg/gateway/sessionserver/...", "tests/testinfra/lifecyclefence/..."],
       "component": ["tests/tier2_component/leases/composite_holder_pgstore_test.go"],
-      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/multiprotocol_journey/...", "tests/tier3_contract/rest_circuitbreaker/...", "tests/tier3_contract/holderforward/..."],
+      "contract": ["tests/tier3_contract/rest_sessions/...", "tests/tier3_contract/multiprotocol_journey/...", "tests/tier3_contract/rest_circuitbreaker/...", "tests/tier3_contract/holderforward/...", "tests/tier3_contract/vcs_credential_read/..."],
       "integration": ["tests/tier4_integration/gateway_require_auth_test.go", "tests/tier4_integration/holder_forward_responses_test.go"],
       "chaos": ["tests/tier8_chaos/jwt_keyset_chaos_test.go"],
-      "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go"],
+      "security": ["tests/tier9_security/unauthenticated_tenant_access_test.go", "tests/tier9_security/vcs_credential_read_failclosed_test.go"],
       "e2e_kind": ["tests/tier5_e2e_kind/checkpoint_resume_test.go"]
     },
     "pkg/gateway/callercheck": {
@@ -896,7 +915,7 @@
     "pkg/workspaceplan": {
       "unit": ["pkg/workspaceplan/..."],
       "component": ["tests/tier2_component/workspace_plan/..."],
-      "contract": ["tests/tier3_contract/workspaceplan/..."]
+      "contract": ["tests/tier3_contract/workspaceplan/...", "tests/tier3_contract/vcs_credential_read/..."]
     },
     "pkg/checkpoint": {
       "unit": ["pkg/checkpoint/..."],
@@ -1192,6 +1211,10 @@
       ],
       "conformance": ["tests/tier10_conformance/..."]
     },
+    "schemas/lenny-tokenservice.proto": {
+      "unit": ["pkg/tokenservice/..."],
+      "contract": ["tests/tier3_contract/tokenservice_secret_read/..."]
+    },
     "schemas/lenny-interceptor.proto": {
       "static": ["tests/tier0_static/schemas_test.go"],
       "contract": ["tests/tier3_contract/interceptor_proto/..."]
@@ -1228,8 +1251,9 @@
     },
     "pkg/tokenservice": {
       "unit": ["pkg/tokenservice/..."],
-      "component": ["tests/tier2_component/stores/tokencache_test.go"],
-      "contract": ["tests/tier3_contract/oauth_token/..."]
+      "component": ["tests/tier2_component/stores/tokencache_test.go", "tests/tier2_component/secretprobe/..."],
+      "contract": ["tests/tier3_contract/oauth_token/...", "tests/tier3_contract/tokenservice_secret_read/..."],
+      "security": ["tests/tier9_security/tokenservice_secret_read_redaction_test.go"]
     },
     "cmd/lenny-test": {
       "static": ["tests/tier0_static/..."],
@@ -1296,10 +1320,12 @@
         "tests/tier5_e2e_kind/network_policy_test.go",
         "tests/tier5_e2e_kind/bootstrap_first_install_test.go",
         "tests/tier5_e2e_kind/lenny_ops_first_deploy_test.go",
-        "tests/tier5_e2e_kind/airgap_registry_mirror_test.go"
+        "tests/tier5_e2e_kind/airgap_registry_mirror_test.go",
+        "tests/tier5_e2e_kind/credentials_namespace_test.go"
       ],
       "security": [
-        "tests/tier9_security/ops_agent_pod_boundary_test.go"
+        "tests/tier9_security/ops_agent_pod_boundary_test.go",
+        "tests/tier9_security/credentials_namespace_live_test.go"
       ]
     },
     "cmd/runtimes/echo/": {

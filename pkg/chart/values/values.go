@@ -65,53 +65,53 @@ type Root struct {
 	// lenny.seededIsolationProfile helper maps it to the §5.3 profile
 	// (baseline→standard, sandboxed→sandboxed, hypervisor→microvm).
 	// spec: §17.9.1.
-	IsolationProfile           string     `json:"isolationProfile,omitempty" desc:"Isolation-profile composition dimension (baseline, sandboxed, or hypervisor): sets the default RuntimeClass for seeded runtimes."`
-	ComplianceProfile          string     `json:"complianceProfile,omitempty"`
-	ObjectStorage              Object     `json:"objectStorage,omitempty"`
-	MinIO                      Object     `json:"minio,omitempty"`
-	GC                         Object     `json:"gc,omitempty"`
-	KMS                        KMS        `json:"kms,omitempty" open:"true"`
-	Environment                string     `json:"environment,omitempty" desc:"Target environment (local, dev, staging, or prod): prod is production mode, which turns on every production gate in every Lenny binary; staging is not production mode. Also sets alert thresholds, warm-pool sizes, and log verbosity (§17.6 question phase, §17.9.1)."`
-	Monitoring                 Monitoring `json:"monitoring,omitempty" open:"true"`
-	SLO                        Object     `json:"slo,omitempty"`
-	Observability              Object     `json:"observability,omitempty"`
-	Tracing                    Object     `json:"tracing,omitempty"`
-	PgBouncer                  Object     `json:"pgbouncer,omitempty"`
-	Postgres                   Object     `json:"postgres,omitempty"`
-	StoreRouter                Object     `json:"storeRouter,omitempty"`
-	EventBus                   Object     `json:"eventBus,omitempty"`
-	Billing                    Object     `json:"billing,omitempty"`
-	Audit                      Object     `json:"audit,omitempty"`
-	Features                   Object     `json:"features,omitempty"`
-	ImageVerification          Object     `json:"imageVerification,omitempty"`
-	Platform                   Object     `json:"platform,omitempty"`
-	Tenancy                    Object     `json:"tenancy,omitempty"`
-	Auth                       Auth       `json:"auth,omitempty" open:"true"`
-	Global                     Global     `json:"global,omitempty"`
-	MTLS                       Object     `json:"mtls,omitempty"`
-	CertManager                Object     `json:"certmanager,omitempty"`
-	Adapter                    Object     `json:"adapter,omitempty"`
-	Sandbox                    Object     `json:"sandbox,omitempty"`
-	RuntimeClasses             Object     `json:"runtimeClasses,omitempty"`
-	Gateway                    Object     `json:"gateway,omitempty"`
-	Delegation                 Object     `json:"delegation,omitempty"`
-	Autoscaling                Object     `json:"autoscaling,omitempty"`
-	Playground                 Playground `json:"playground,omitempty"`
-	Memory                     Object     `json:"memory,omitempty"`
-	ReferenceRuntimes          Object     `json:"referenceRuntimes,omitempty"`
-	Ops                        Object     `json:"ops,omitempty"`
-	Security                   Object     `json:"security,omitempty"`
-	AcceptFeatureFlagDowngrade Object     `json:"acceptFeatureFlagDowngrade,omitempty"`
-	DeploymentAudit            Object     `json:"deploymentAudit,omitempty"`
-	CapacityPlanning           Object     `json:"capacityPlanning,omitempty"`
-	ResourceGovernance         Object     `json:"resourceGovernance,omitempty"`
-	Credentials                Object     `json:"credentials,omitempty"`
-	EtcdEncryption             Object     `json:"etcdEncryption,omitempty"`
-	Preflight                  Object     `json:"preflight,omitempty"`
-	Migrate                    Object     `json:"migrate,omitempty"`
-	Storage                    Object     `json:"storage,omitempty"`
-	Backups                    Object     `json:"backups,omitempty"`
-	Bootstrap                  Object     `json:"bootstrap,omitempty"`
+	IsolationProfile           string      `json:"isolationProfile,omitempty" desc:"Isolation-profile composition dimension (baseline, sandboxed, or hypervisor): sets the default RuntimeClass for seeded runtimes."`
+	ComplianceProfile          string      `json:"complianceProfile,omitempty"`
+	ObjectStorage              Object      `json:"objectStorage,omitempty"`
+	MinIO                      Object      `json:"minio,omitempty"`
+	GC                         Object      `json:"gc,omitempty"`
+	KMS                        KMS         `json:"kms,omitempty" open:"true"`
+	Environment                string      `json:"environment,omitempty" desc:"Target environment (local, dev, staging, or prod): prod is production mode, which turns on every production gate in every Lenny binary; staging is not production mode. Also sets alert thresholds, warm-pool sizes, and log verbosity (§17.6 question phase, §17.9.1)."`
+	Monitoring                 Monitoring  `json:"monitoring,omitempty" open:"true"`
+	SLO                        Object      `json:"slo,omitempty"`
+	Observability              Object      `json:"observability,omitempty"`
+	Tracing                    Object      `json:"tracing,omitempty"`
+	PgBouncer                  Object      `json:"pgbouncer,omitempty"`
+	Postgres                   Object      `json:"postgres,omitempty"`
+	StoreRouter                Object      `json:"storeRouter,omitempty"`
+	EventBus                   Object      `json:"eventBus,omitempty"`
+	Billing                    Object      `json:"billing,omitempty"`
+	Audit                      Object      `json:"audit,omitempty"`
+	Features                   Object      `json:"features,omitempty"`
+	ImageVerification          Object      `json:"imageVerification,omitempty"`
+	Platform                   Object      `json:"platform,omitempty"`
+	Tenancy                    Object      `json:"tenancy,omitempty"`
+	Auth                       Auth        `json:"auth,omitempty" open:"true"`
+	Global                     Global      `json:"global,omitempty"`
+	MTLS                       Object      `json:"mtls,omitempty"`
+	CertManager                Object      `json:"certmanager,omitempty"`
+	Adapter                    Object      `json:"adapter,omitempty"`
+	Sandbox                    Object      `json:"sandbox,omitempty"`
+	RuntimeClasses             Object      `json:"runtimeClasses,omitempty"`
+	Gateway                    Object      `json:"gateway,omitempty"`
+	Delegation                 Object      `json:"delegation,omitempty"`
+	Autoscaling                Object      `json:"autoscaling,omitempty"`
+	Playground                 Playground  `json:"playground,omitempty"`
+	Memory                     Object      `json:"memory,omitempty"`
+	ReferenceRuntimes          Object      `json:"referenceRuntimes,omitempty"`
+	Ops                        Object      `json:"ops,omitempty"`
+	Security                   Object      `json:"security,omitempty"`
+	AcceptFeatureFlagDowngrade Object      `json:"acceptFeatureFlagDowngrade,omitempty"`
+	DeploymentAudit            Object      `json:"deploymentAudit,omitempty"`
+	CapacityPlanning           Object      `json:"capacityPlanning,omitempty"`
+	ResourceGovernance         Object      `json:"resourceGovernance,omitempty"`
+	Credentials                Credentials `json:"credentials,omitempty" open:"true"`
+	EtcdEncryption             Object      `json:"etcdEncryption,omitempty"`
+	Preflight                  Object      `json:"preflight,omitempty"`
+	Migrate                    Object      `json:"migrate,omitempty"`
+	Storage                    Object      `json:"storage,omitempty"`
+	Backups                    Object      `json:"backups,omitempty"`
+	Bootstrap                  Object      `json:"bootstrap,omitempty"`
 
 	// Isolation is the removed isolation block, whose runtimeClassNames
 	// map was a second values key for the RuntimeClass name of a profile.
@@ -195,6 +195,15 @@ type KMS struct {
 	// SignQuotaPerSecond is the provider's asymmetric Sign quota for the
 	// account and region. spec: §17.8.2.
 	SignQuotaPerSecond int `json:"signQuotaPerSecond,omitempty" min:"1" desc:"§17.8.2 provider asymmetric KMS Sign quota per second. No default; required when kms.provider is not local."`
+}
+
+// Credentials models the credentials chart section. Namespace is the only
+// key the schema constrains; the section stays open for its other keys.
+type Credentials struct {
+	// Namespace is a DNS label because it becomes a Namespace name. The
+	// pattern also refuses the empty string, which would leave the Token
+	// Service and the gateway with no credentials namespace. spec: §4.9.
+	Namespace string `json:"namespace,omitempty" pattern:"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" maxLength:"63" desc:"§4.9 credentials namespace: the dedicated namespace that holds credential Secrets only. Must differ from the release namespace and every agentNamespaces entry."`
 }
 
 // Playground models the §27 web-playground chart values. The section is

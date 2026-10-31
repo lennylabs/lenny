@@ -11,6 +11,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore/failover"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention"
@@ -27,12 +28,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
+	"github.com/lennylabs/lenny/tests/testinfra/credsecretfake"
 )
 
 // inMemoryEraserWiring returns a gateway wiring holding the in-memory
@@ -182,6 +185,116 @@ func TestCountlessAdaptsErrorOnlyErasers_spec_12_8(t *testing.T) {
 	}
 	if _, err := countless(func(context.Context, string) error { return boom })(context.Background(), "acme"); !errors.Is(err, boom) {
 		t.Fatalf("countless error = %v, want boom", err)
+	}
+}
+
+// TestTenantPhase4DeletesLennyWrittenSecrets_spec_12_8 runs the gateway's
+// Phase 4 sequence with the credential Secret writer wired and asserts the
+// credential_pool entry issues the tenant's delete-collection after the pool
+// rows are gone, removing an orphan no row names, while another tenant's
+// Secret and rows stay. A failed delete-collection aborts Phase 4 at the
+// credential_pool entry so the job retries the phase, and the retry
+// completes.
+//
+// spec: §12.8 (Compliance Interfaces), §4.9 (Credential Storage Topology)
+func TestTenantPhase4DeletesLennyWrittenSecrets_spec_12_8(t *testing.T) {
+	ctx := context.Background()
+	w := inMemoryEraserWiring()
+	seedTenants(t, w.tenants, "acme", "globex")
+	pools := credentialpoolstore.NewMemory()
+	acmeName := credential.ManagedSecretName("acme", "p1", "key-1")
+	globexName := credential.ManagedSecretName("globex", "p1", "key-1")
+	orphan := credential.ManagedSecretName("acme", "removed", "key-1")
+	for tenant, name := range map[string]string{"acme": acmeName, "globex": globexName} {
+		if err := pools.Create(ctx, credentialpoolstore.CredentialPool{
+			TenantID: tenant, Name: "p1", Provider: "anthropic_direct",
+			Credentials: []credentialpoolstore.Credential{{ID: "key-1", SecretRef: credential.CanonicalSecretRef(credential.DefaultNamespace, name)}},
+		}); err != nil {
+			t.Fatalf("seed pool %s: %v", tenant, err)
+		}
+	}
+	ns := credsecretfake.New()
+	ns.Seed(acmeName, "acme")
+	ns.Seed(orphan, "acme")
+	ns.Seed(globexName, "globex")
+	apiDown := errors.New("kube-apiserver unavailable")
+	ns.BeforeDeleteTenant(func(context.Context, string) error { return apiDown })
+	w.credentialSecretWriter = ns
+	w.credentialsNamespace = credential.DefaultNamespace
+
+	phase4 := &tenantEraser{erasers: w.buildTenantErasers(nil, nil, pools, nil)}
+	counts, err := phase4.DeleteByTenant(ctx, "acme")
+	if !errors.Is(err, apiDown) || !strings.Contains(err.Error(), "credential_pool") {
+		t.Fatalf("Phase 4 error = %v, want the delete-collection failure named at credential_pool", err)
+	}
+	if _, ok := counts["runtime_tenant_access"]; ok {
+		t.Fatal("Phase 4 ran past the failed credential_pool entry")
+	}
+	if !ns.Has(acmeName) || !ns.Has(orphan) {
+		t.Fatal("a failed delete-collection removed a Secret")
+	}
+
+	ns.BeforeDeleteTenant(nil)
+	counts, err = phase4.DeleteByTenant(ctx, "acme")
+	if err != nil {
+		t.Fatalf("retried Phase 4: %v", err)
+	}
+	if _, ok := counts["credential_pool"]; !ok {
+		t.Fatalf("receipt counts = %v, want a credential_pool entry", counts)
+	}
+	if ns.Has(acmeName) || ns.Has(orphan) {
+		t.Fatalf("acme Secrets left after Phase 4: %v", ns.Names())
+	}
+	if !ns.Has(globexName) {
+		t.Fatal("globex Secret deleted by acme's Phase 4")
+	}
+	if _, err := pools.Get(ctx, "globex", "p1"); err != nil {
+		t.Fatalf("globex pool row must survive: %v", err)
+	}
+	if got := ns.Calls(); len(got) != 2 || got[0] != "deleteTenant acme" || got[1] != "deleteTenant acme" {
+		t.Fatalf("writer calls = %v, want two delete-collections for acme and no per-reference Delete", got)
+	}
+}
+
+// TestTenantPhase4WithoutWriterRefusesSoftDeletedWrittenRef_spec_4_9 runs
+// the gateway's Phase 4 sequence with no credential Secret writer over a
+// tenant whose only Lenny-written reference sits on a soft-deleted pool,
+// and asserts Phase 4 fails at the credential_pool entry with the row kept,
+// while a tenant with operator references only completes.
+//
+// spec: §4.9 (Credential Storage Topology) — Credential values submitted
+// through the admin API rule 6; §12.8 (Compliance Interfaces)
+func TestTenantPhase4WithoutWriterRefusesSoftDeletedWrittenRef_spec_4_9(t *testing.T) {
+	ctx := context.Background()
+	w := inMemoryEraserWiring()
+	seedTenants(t, w.tenants, "acme", "globex")
+	w.credentialsNamespace = credential.DefaultNamespace
+	pools := credentialpoolstore.NewMemory()
+	seed := func(tenant, ref string) {
+		if err := pools.Create(ctx, credentialpoolstore.CredentialPool{
+			TenantID: tenant, Name: "p1", Provider: "anthropic_direct",
+			Credentials: []credentialpoolstore.Credential{{ID: "key-1", SecretRef: ref}},
+		}); err != nil {
+			t.Fatalf("seed pool %s: %v", tenant, err)
+		}
+	}
+	seed("acme", credential.CanonicalSecretRef(credential.DefaultNamespace, credential.ManagedSecretName("acme", "p1", "key-1")))
+	if err := pools.SoftDelete(ctx, "acme", "p1", time.Now()); err != nil {
+		t.Fatalf("soft-delete: %v", err)
+	}
+	seed("globex", credential.CanonicalSecretRef(credential.DefaultNamespace, "operator-made"))
+
+	phase4 := &tenantEraser{erasers: w.buildTenantErasers(nil, nil, pools, nil)}
+	_, err := phase4.DeleteByTenant(ctx, "acme")
+	if !errors.Is(err, admin.ErrLennyWrittenRefWithoutWriter) || !strings.Contains(err.Error(), "credential_pool") {
+		t.Fatalf("Phase 4 error = %v, want ErrLennyWrittenRefWithoutWriter at credential_pool", err)
+	}
+	rows, err := pools.List(ctx, "acme", credentialpoolstore.ListFilter{IncludeDeleted: true})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("acme rows after refusal = (%d, %v), want the soft-deleted row kept", len(rows), err)
+	}
+	if _, err := phase4.DeleteByTenant(ctx, "globex"); err != nil {
+		t.Fatalf("Phase 4 for a tenant with operator references only: %v", err)
 	}
 }
 

@@ -6,12 +6,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -47,9 +54,11 @@ type pinStubResolver struct {
 	shas     map[string]string
 	err      error
 	lastCred workspaceplan.VCSCredential
+	calls    int
 }
 
 func (r *pinStubResolver) Resolve(_ context.Context, src workspaceplan.GitClone, cred workspaceplan.VCSCredential) (string, error) {
+	r.calls++
 	r.lastCred = cred
 	if r.err != nil {
 		return "", r.err
@@ -166,7 +175,7 @@ func TestCreateThreadsVCSCredentialToResolver(t *testing.T) {
 // clone time.
 func TestCreateVCSCredentialFailureIsUnresolvable(t *testing.T) {
 	stub := &pinStubResolver{shas: map[string]string{"main": pinSHA}}
-	creds := &stubVCSCreds{err: errors.New("pool exhausted")}
+	creds := &stubVCSCreds{err: fmt.Errorf("%w: pool exhausted", vcscred.ErrNoUsableCredential)}
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
 		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_vcs_fail" },
@@ -184,6 +193,77 @@ func TestCreateVCSCredentialFailureIsUnresolvable(t *testing.T) {
 	}
 	if stub.lastCred.Token != "" {
 		t.Error("ls-remote resolver was called despite a credential failure")
+	}
+}
+
+// spec: §4.9 (Token Service secret resolution), §15.1 (Error codes), §14 —
+// plan binding classifies the credential read. A read the Token Service
+// could not answer (gRPC Unavailable, or an open breaker) fails closed with
+// the TRANSIENT category as 503 GIT_CLONE_REF_RESOLVE_TRANSIENT with reason
+// network_error, and a missing or refused credential is 422
+// GIT_CLONE_REF_UNRESOLVABLE with reason auth_failed. The 503 case fails
+// against a binding that relabels every credential failure as auth_failed.
+func TestCreateVCSCredentialReadClassification(t *testing.T) {
+	cases := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+		wantReason string
+	}{
+		{
+			name:       "token service unavailable",
+			err:        fmt.Errorf("vcscred: read token: %w", status.Error(codes.Unavailable, "token service down")),
+			wantStatus: http.StatusServiceUnavailable, wantCode: "GIT_CLONE_REF_RESOLVE_TRANSIENT", wantReason: "network_error",
+		},
+		{
+			name:       "breaker open",
+			err:        fmt.Errorf("vcscred: read token: %w", subsystem.ErrCircuitOpen),
+			wantStatus: http.StatusServiceUnavailable, wantCode: "GIT_CLONE_REF_RESOLVE_TRANSIENT", wantReason: "network_error",
+		},
+		{
+			name:       "no usable credential",
+			err:        fmt.Errorf("vcscred: read token: %w", vcscred.ErrNoUsableCredential),
+			wantStatus: http.StatusUnprocessableEntity, wantCode: "GIT_CLONE_REF_UNRESOLVABLE", wantReason: "auth_failed",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &pinStubResolver{shas: map[string]string{"main": pinSHA}}
+			srv := sessionserver.New(memstore.New(), sessionserver.Options{
+				DevTenantHeader: true,
+				IDFunc:          func() string { return "sess_vcs_read" },
+				RefResolver:     stub,
+				VCSCredentials:  &stubVCSCreds{err: tc.err},
+			})
+			rr := createRequest(t, ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice), sessionserver.CreateSessionRequest{
+				RuntimeRef: "echo", WorkspacePlan: gitCloneAuthPlanJSON("github.com", "main"),
+			})
+			if rr.Code != tc.wantStatus {
+				t.Fatalf("status %d, want %d; body %s", rr.Code, tc.wantStatus, rr.Body.String())
+			}
+			var body struct {
+				Error struct {
+					Code    string         `json:"code"`
+					Details map[string]any `json:"details"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode body %s: %v", rr.Body.String(), err)
+			}
+			if body.Error.Code != tc.wantCode {
+				t.Errorf("code = %q, want %q", body.Error.Code, tc.wantCode)
+			}
+			if got := body.Error.Details["reason"]; got != tc.wantReason {
+				t.Errorf("details.reason = %v, want %q", got, tc.wantReason)
+			}
+			if got := body.Error.Details["sourceIndex"]; got != float64(0) {
+				t.Errorf("details.sourceIndex = %v, want 0", got)
+			}
+			if stub.calls != 0 {
+				t.Errorf("ls-remote resolver called %d times after a credential failure, want 0", stub.calls)
+			}
+		})
 	}
 }
 

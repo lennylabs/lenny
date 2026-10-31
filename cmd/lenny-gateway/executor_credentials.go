@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
@@ -116,6 +117,10 @@ func (w *gatewayWiring) buildExecutorAndCredentials() {
 		// Service link is present; the probe is Token-Service-owned and
 		// has no meaning without that link.
 		secretProber admin.SecretAccessProber
+		// §4.9 Lenny-written credential Secret writer. Set only when the
+		// Token Service link is present; without it the admin writes that
+		// need a Secret operation are refused (rule 6).
+		secretWriter admin.CredentialSecretWriter
 	)
 	// §4.3 per-subsystem circuit breaker for Token Service
 	// calls. A degraded Token Service trips this breaker open after
@@ -142,7 +147,15 @@ func (w *gatewayWiring) buildExecutorAndCredentials() {
 		// §4.9: the admin credential-pool handlers probe Token
 		// Service Secret-read access over this same mTLS link before
 		// persisting a new secretRef.
-		secretProber = &tokenServiceSecretProber{stub: tokensv1.NewTokenServiceClient(conn)}
+		secretProber = newTokenServiceSecretProber(tokensv1.NewTokenServiceClient(conn), f.resolvedCredentialsNamespace())
+		// §4.9: the gateway is the only writer of Lenny-written credential
+		// Secrets, wired beside the prober because both serve the same
+		// Token-Service-backed credential path.
+		// The writer is non-nil on every path through here, so a gateway with
+		// a Token Service and no cluster client refuses a Secret write with
+		// 503 rather than as if no Token Service were configured (§4.9 rules
+		// 5 and 6).
+		secretWriter = buildCredentialSecretWriter(ctrl.GetConfig, f.resolvedCredentialsNamespace(), defaultCredentialSecretTimeout)
 		log.Printf("lenny-gateway: §4.3 credential materialization via lenny-token-service at %s", *tokenServiceAddr)
 	} else {
 		inProcessAssign = credassign.New(llmLeases, credCache)
@@ -159,6 +172,8 @@ func (w *gatewayWiring) buildExecutorAndCredentials() {
 	w.inProcessAssign = inProcessAssign
 	w.tokenServiceConn = tokenServiceConn
 	w.secretProber = secretProber
+	w.credentialSecretWriter = secretWriter
+	w.credentialsNamespace = f.resolvedCredentialsNamespace()
 	w.tokenServiceSubsystem = tokenServiceSubsystem
 }
 

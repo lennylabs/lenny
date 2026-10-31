@@ -9,6 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/delegation/recovery"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingretention"
@@ -219,6 +220,7 @@ type gatewayFlags struct {
 	holderForwardAdvertiseAddr                    *string
 	holderForwardListenAddr                       *string
 	tokenServiceAddr                              *string
+	credentialsNamespace                          *string
 	tokenServiceHTTPURL                           *string
 	tokenServiceCert                              *string
 	tokenServiceKey                               *string
@@ -403,6 +405,18 @@ func parseFlags() *gatewayFlags {
 	f.registerOpsFlags()
 	flag.Parse()
 	return f
+}
+
+// resolvedCredentialsNamespace returns the §4.9 credentials namespace the
+// --credentials-namespace flag selects. envOr defaults only an empty
+// environment variable, so an explicit empty flag value still reaches
+// here; credential.ResolveNamespace maps it to credential.DefaultNamespace.
+// The composition root passes this one value to both the admin Router and
+// the Token Service Secret prober.
+//
+// spec: §4.9 (Credential Storage Topology), §17.6 (Packaging and Installation).
+func (f *gatewayFlags) resolvedCredentialsNamespace() string {
+	return credential.ResolveNamespace(*f.credentialsNamespace)
 }
 
 // registerCoreFlags registers the core listener, auth, OIDC, dev-mode, Postgres, Redis, and scatter-gather flags.
@@ -931,6 +945,8 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"§10.3 NET-072 bind address of the CH-HOLDERFORWARD listener, which serves requests forwarded by peer replicas over mTLS with the gateway replica certificate (--adapter-tls-cert, --adapter-tls-key, --adapter-ca). Default :50054.")
 	f.tokenServiceAddr = flag.String("token-service-grpc-addr", os.Getenv("LENNY_TOKEN_SERVICE_GRPC_ADDR"),
 		"§4.3 lenny-token-service gRPC address (host:port). When set, the gateway materializes every §4.9 credential lease over mTLS against the Token Service instead of running pkg/credential.MintLease in-process, enforcing the §4.3 'gateway has no KMS decrypt rights' boundary. Empty falls back to the in-process credassign.Service for dev mode and self-contained tests.")
+	f.credentialsNamespace = flag.String("credentials-namespace", envOr("LENNY_CREDENTIALS_NAMESPACE", credential.DefaultNamespace),
+		"§4.9 credentials namespace: the namespace that holds credential Secrets. The admin credential-pool handlers and the bootstrap seed accept a secretRef only as <name> or <credentials-namespace>/<name> and store it in the canonical <credentials-namespace>/<name> form, and the Token Service probe is sent the parsed Secret name. The chart sets it from credentials.namespace. Default lenny-credentials.")
 	f.tokenServiceHTTPURL = flag.String("token-service-http-url", os.Getenv("LENNY_TOKEN_SERVICE_HTTP_URL"),
 		"§4.3 lenny-token-service HTTP token-exchange URL (scheme://host:port). When set, the gateway reverse-proxies /v1/oauth/* to the Token Service so the §13.3 canonical endpoint is served by the actual minter. Empty disables the /v1/oauth/ surface on the gateway entirely; deployments that wire a Token Service binary MUST set this to keep /v1/oauth/token reachable.")
 	f.tokenServiceCert = flag.String("token-service-tls-cert", os.Getenv("LENNY_TOKEN_SERVICE_TLS_CERT"),

@@ -107,9 +107,9 @@ func adminToolCatalog() []me.AuthorizedTool {
 		{Tool: "admin.revoke_pool_tenant_access", Scope: "tools:pool:write", Category: "pool-management", MinRole: auth.RolePlatformAdmin, Description: "Revoke a tenant's access to a pool"},
 		{Tool: "admin.bootstrap", Scope: "tools:bootstrap:write", Category: "platform-management", MinRole: auth.RolePlatformAdmin, Description: "Apply seed configuration (upsert)"},
 		// spec: §24.5 / §15.1 — credential-pool admin
-		// operations. The CRUD and per-credential management ops are gated
-		// on the §10.2 manage_credential_pools permission (held by
-		// tenant-admin); re-enable is platform-admin per §15.1.
+		// operations. Every op, re-enable included, is gated on the §10.2
+		// manage_credential_pools permission, so each takes the
+		// tenant-admin minimum role the §24.5 rows give.
 		// The catalog mirrors the OpenAPI x-lenny-mcp-tool declarations so a
 		// §25.14 agent discovers every mounted credential-pool route.
 		{Tool: "admin.create_credential_pool", Scope: "tools:credential_pool:write", Category: "policy-management", MinRole: auth.RoleTenantAdmin, Description: "Create a credential pool"},
@@ -122,6 +122,6 @@ func adminToolCatalog() []me.AuthorizedTool {
 		{Tool: "admin.remove_pool_credential", Scope: "tools:credential_pool:write", Category: "policy-management", MinRole: auth.RoleTenantAdmin, Description: "Remove a credential from a pool"},
 		{Tool: "admin.revoke_pool_credential", Scope: "tools:credential_pool:write", Category: "policy-management", MinRole: auth.RoleTenantAdmin, Description: "Emergency-revoke a single pool credential"},
 		{Tool: "admin.revoke_credential_pool", Scope: "tools:credential_pool:write", Category: "policy-management", MinRole: auth.RoleTenantAdmin, Description: "Emergency-revoke all credentials in a pool"},
-		{Tool: "admin.re_enable_pool_credential", Scope: "tools:credential_pool:write", Category: "policy-management", MinRole: auth.RolePlatformAdmin, Description: "Re-enable a previously revoked pool credential"},
+		{Tool: "admin.re_enable_pool_credential", Scope: "tools:credential_pool:write", Category: "policy-management", MinRole: auth.RoleTenantAdmin, Description: "Re-enable a previously revoked pool credential"},
 	}
 }

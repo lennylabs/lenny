@@ -1587,7 +1587,7 @@ New providers are added by implementing the `CredentialProvider` interface — n
 
 #### Credential Pool
 
-An admin-managed, **tenant-scoped** set of credentials for a given provider. Each `CredentialPool` belongs to exactly one tenant; the `CredentialPoolStore` tables carry a `tenant_id` column and are covered by the same RLS policies as all other tenant-scoped tables (see [Section 4.2](#42-session-manager)). A `tenant-admin` can create, update, and delete credential pools for their own tenant via the admin API. A `platform-admin` can manage credential pools across all tenants. Cross-tenant credential pool access is impossible by construction — RLS enforces this at the database level, and the gateway validates `tenant_id` on every pool operation.
+An admin-managed, **tenant-scoped** set of credentials for a given provider. Each `CredentialPool` belongs to exactly one tenant; the `CredentialPoolStore` tables carry a `tenant_id` column and are covered by the same RLS policies as all other tenant-scoped tables (see [Section 4.2](#42-session-manager)). A `tenant-admin` can create, update, and delete credential pools for their own tenant via the admin API. A `platform-admin` can manage credential pools across all tenants. Introducing a `secretRef` into a pool requires `platform-admin` ([Credential Storage Topology](#credential-storage-topology) **Registering a Secret by reference.**). Cross-tenant credential pool access is impossible by construction — RLS enforces this at the database level, and the gateway validates `tenant_id` on every pool operation.
 
 Deployers register pools via configuration:
 
@@ -1597,9 +1597,9 @@ credentialPools:
     provider: anthropic_direct
     credentials:
       - id: key-1
-        secretRef: lenny-system/anthropic-key-1 # K8s Secret reference
+        secretRef: anthropic-key-1 # Secret in the credentials namespace
       - id: key-2
-        secretRef: lenny-system/anthropic-key-2
+        secretRef: anthropic-key-2
     assignmentStrategy: least-loaded # least-loaded | round-robin | sticky-until-failure
     maxConcurrentSessions: 10 # per credential
     cooldownOnRateLimit: 60s
@@ -1620,7 +1620,7 @@ credentialPools:
     hostPatterns: ["github.com"] # VCS-pool-only; required for gitClone URL→pool routing
     credentials:
       - id: app-1
-        secretRef: lenny-system/github-app-1
+        secretRef: github-app-1
     assignmentStrategy: least-loaded
     maxConcurrentSessions: 20
 ```
@@ -1645,15 +1645,21 @@ Pool sizing scales with tier — at Tier 3, deployers may need hundreds to over 
 
 #### Credential Storage Topology
 
-API keys referenced by `secretRef` are stored as Kubernetes Secrets. The topology and KMS key hierarchy are defined here.
+Credential material is stored as Kubernetes Secrets in the credentials namespace. A Secret enters a pool by reference (`secretRef`), or the gateway writes it from a value submitted through the admin API (`secretData`). The topology, the namespace, and the KMS key hierarchy are defined here.
 
-**Secret-per-credential topology.** Each credential entry in a `CredentialPool` uses a **separate Kubernetes Secret**. For example, a pool with 3 credentials has 3 Secrets: `lenny-system/anthropic-key-1`, `lenny-system/anthropic-key-2`, `lenny-system/anthropic-key-3`. This topology is required (not optional) for the following reasons:
+**Secret-per-credential topology.** Each credential entry in a `CredentialPool` uses a **separate Kubernetes Secret**. For example, a pool with 3 credentials has 3 Secrets in the credentials namespace: `anthropic-key-1`, `anthropic-key-2`, and `anthropic-key-3`. This topology is required (not optional) for the following reasons:
 
 1. **Revocation granularity.** Emergency revocation of a single compromised credential (`POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke`) invalidates only the specific `secretRef` Secret. Shared-Secret topologies would require re-keying all credentials in the pool on a single credential compromise.
-2. **RBAC granularity.** The Token Service's ServiceAccount has `get` permission scoped to specific Secret names (via `ResourceNames`), not `get` on all Secrets in `lenny-system`. This prevents a compromised Token Service from reading unrelated Secrets.
+2. **Ownership granularity.** Each credential's Secret is created, rotated, and deleted on its own. The Token Service reads the credentials namespace through a namespace-wide `get` (**Credentials namespace.** below), and tenant isolation is enforced where references enter a pool (**Secret references.** and **Registering a Secret by reference.** below).
 3. **Secret rotation isolation.** Rotating one credential does not touch the Secrets for others in the pool, enabling zero-downtime rotation (new Secret created, pool entry updated, old Secret deleted after lease drain).
 
-**Naming convention.** Credential Secrets must follow the pattern `lenny-{pool-name}-{credential-id}` in the `lenny-system` namespace. The Helm chart creates Secrets for bootstrap credentials; operationally-added credentials are created by the operator and referenced via `secretRef`. The Token Service validates on startup that all `secretRef` values referenced in the database are accessible via its RBAC grants.
+**Secret references.** A `secretRef` names one Secret in the credentials namespace. Every component that accepts, stores, probes, or reads a reference applies these rules.
+
+1. A `secretRef` is either `<name>` or `<credentials namespace>/<name>`, where `<name>` is a DNS-1123 subdomain name. Any other reference is refused with `400 VALIDATION_ERROR` and `details.field: "secretRef"`.
+2. The gateway converts every reference to the canonical form `<credentials namespace>/<name>` before rule 3 or **Registering a Secret by reference.** compares it, and stores it in that form, on the admin API and on the bootstrap seed. The bootstrap seed reports a reference that rule 1 or rule 3 refuses as an error on that pool entry.
+3. Secret names that begin with `lenny-cred-` are reserved for Secrets the gateway writes (**Credential values submitted through the admin API.** below). A submitted reference with that prefix is accepted only when the stored entry with the same credential id in the same pool already carries the identical reference. Any other reference with that prefix is refused with `400 VALIDATION_ERROR` and `details.field: "secretRef"`.
+
+**Registering a Secret by reference.** A write whose request submits a `secretRef` the pool does not already carry introduces that reference, and is accepted only from a caller holding the `platform-admin` role or from the bootstrap seed (`POST /v1/admin/bootstrap`). Any other caller receives `403 FORBIDDEN`, including a custom role that holds the `manage_credential_pools` permission. The admin paths that can introduce a `secretRef` are pool creation (`POST /v1/admin/credential-pools`), pool update (`PUT /v1/admin/credential-pools/{name}`), credential addition (`POST /v1/admin/credential-pools/{name}/credentials`), and credential update (`PUT /v1/admin/credential-pools/{name}/credentials/{credId}`). A reference the pool already carries on any entry is not an introduction. The gateway decides the introduced set against the pool row it holds locked for the write, so a reference that a concurrent write removed counts as introduced. **Secret references.** rule 1 applies before this check and rule 3 after it, and a write receives the code of the first check that refuses it.
 
 **Secret shape.** Each credential Secret has one or more `data` keys whose names are the provider's canonical key fields:
 
@@ -1665,6 +1671,9 @@ API keys referenced by `secretRef` are stored as Kubernetes Secrets. The topolog
 | `vertex_ai` | `serviceAccountJson` | GCP service account JSON |
 | `azure_openai` (API key) | `apiKey` | Azure OpenAI API key |
 | `azure_openai` (Azure AD) | `clientId`, `clientSecret`, and `tenantId` | Azure AD service principal credentials (three keys in one Secret); Token Service uses these to request short-lived AD access tokens |
+| `github` | `token` | GitHub App installation access token or personal access token |
+
+A Secret the gateway writes from `secretData` holds exactly the keys the request supplies. A key the provider does not read leaves that provider's read failing closed ([Credential Lifecycle and Secret Management](#credential-lifecycle-and-secret-management) **Token Service secret resolution.**).
 
 **Encryption at rest — KMS key hierarchy.** Kubernetes Secrets are stored in etcd. Without etcd encryption, Secrets are readable in plaintext from etcd snapshots or backups. The required configuration depends on deployment topology:
 
@@ -1677,26 +1686,70 @@ API keys referenced by `secretRef` are stored as Kubernetes Secrets. The topolog
 
 The preflight Job emits a non-blocking warning when etcd Secret encryption cannot be verified (see [Section 17.6](17_deployment-topology.md#176-packaging-and-installation)). Operators are responsible for verifying encryption is active before storing production credentials.
 
-**RBAC for the Token Service.** The Token Service's ServiceAccount must have the following minimum RBAC to read credential Secrets:
+**Credentials namespace.** Credential Secrets live in a dedicated namespace that the Helm value `credentials.namespace` names (default `lenny-credentials`). The namespace holds credential Secrets only, and keeping other Secrets out of it is an operator obligation. The chart renders the namespace under these rules.
+
+1. The Namespace carries the `helm.sh/resource-policy: keep` annotation, so `helm uninstall` leaves the namespace and its Secrets in place.
+2. A ResourceQuota with `pods: "0"` refuses every pod in the namespace, so no workload mounts a credential Secret.
+3. The Role `lenny-token-service-credentials` grants the `lenny-token-service` ServiceAccount `get` on `secrets` in the namespace, with no `resourceNames`, `list`, or `watch`.
+4. The Role `lenny-gateway-credential-writer` grants the `lenny-gateway` ServiceAccount `create`, `update`, `delete`, and `deletecollection` on `secrets` in the namespace, with no `get`, `list`, `watch`, or `patch`. The gateway reads a stored value for VCS tokens ([Section 14](14_workspace-plan-schema.md)) through the Token Service keyed read ([Credential Lifecycle and Secret Management](#credential-lifecycle-and-secret-management) **Token Service secret resolution.**), for a reference taken from a pool in the caller's tenant.
+5. The rule 3 and rule 4 Roles and their RoleBindings render only when `tokenService.enabled` is true. The Namespace and the ResourceQuota render in every profile.
+6. The chart refuses to render when `credentials.namespace` equals the release namespace or names an `agentNamespaces` entry.
+7. No other Lenny ServiceAccount holds a verb on `secrets` in the namespace. The quota refuses pods, including those that the controller's cluster-wide pod grant could create.
+8. The Token Service reaches the kube-apiserver under the `lenny-system` default-deny through the egress rule in [Section 13.2.4](13_security-model.md#1324-lenny-system-namespace-networkpolicies). No NetworkPolicy is rendered in the credentials namespace, because no pod runs there.
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: lenny-token-service-secrets
-  namespace: lenny-system
+  name: lenny-token-service-credentials
+  namespace: lenny-credentials  # credentials.namespace
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get"]
-    resourceNames: []  # populated by Helm template from credentialPool secretRef list
 ```
 
-The `resourceNames` list is populated at install time from all `secretRef` values declared in bootstrap configuration. Operationally-added credentials require a manual RBAC patch or a re-run of the `helm upgrade` with updated values. `lenny-ctl admin credential-pools add-credential` includes a step that emits the required RBAC patch command.
+**Credential values submitted through the admin API.** A caller holding the `manage_credential_pools` permission for the pool's tenant adds or replaces a credential's value by sending `secretData` on credential addition (`POST /v1/admin/credential-pools/{name}/credentials`) or credential update (`PUT /v1/admin/credential-pools/{name}/credentials/{credId}`). `secretData` is an object whose keys are the provider's Secret keys (**Secret shape.** above) and whose values are strings. A Secret the gateway writes under these rules is a Lenny-written Secret.
 
-**Admin-time RBAC live-probe (required).** Because the Token Service's `resourceNames` grants are populated only at install time, any admin path that writes a new `secretRef` value can reference a Secret that is not yet in the Token Service's allowed `resourceNames` list. Without a fail-fast check, the pool row is persisted in Postgres and the missing grant surfaces only at lease-materialization time as `CREDENTIAL_POOL_EXHAUSTED` — indistinguishable from a transient pool-exhaustion event by clients, and blocking every session the new credential was intended to unblock. To close this gap, the admin handlers for **all three paths that can introduce a new `secretRef`** — pool creation (`POST /v1/admin/credential-pools`, iterated over every entry in `credentials[].secretRef`), credential addition (`POST /v1/admin/credential-pools/{name}/credentials`), and credential update (`PUT /v1/admin/credential-pools/{name}/credentials/{credId}` when the update changes `secretRef`) — MUST execute a live-probe that verifies the Token Service's own ServiceAccount can `get` each referenced Secret before committing the write. The probe is **Token-Service-owned**: the gateway-hosted admin handler MUST call a Token-Service-exposed internal probe endpoint over the existing gateway↔Token-Service mTLS link, and the Token Service answers by invoking its own `SelfSubjectAccessReview` (and, on `ALLOWED`, a `get` on the named Secret to confirm the object exists) under its own ServiceAccount, returning one of `{ALLOWED, DENIED, NOT_FOUND}`. Two implementation paths are **explicitly forbidden**: (a) the gateway impersonating the Token Service SA via `TokenRequest` or the `Impersonate-*` Kubernetes API headers — the gateway's own ServiceAccount MUST NOT hold `serviceaccounts/token` or `impersonate` verbs on the Token Service SA, and the install-time RBAC bundle MUST NOT grant either (a preflight check rejects Helm values that would produce such a grant); and (b) the gateway performing a `SelfSubjectAccessReview` under its own ServiceAccount — the gateway's RBAC differs from the Token Service's, so such a probe is semantically meaningless and MUST NOT be used as a substitute. Error mapping: a Token Service response of `DENIED` or `NOT_FOUND` maps to `422 CREDENTIAL_SECRET_RBAC_MISSING` (category: `PERMANENT`); the error body names the missing `resourceName`(s) (for pool creation, the full list of failing Secrets is returned so the operator can patch RBAC in a single round-trip), and the response `details` field includes the exact `kubectl` / Helm RBAC patch command that `lenny-ctl admin credential-pools add-credential` would emit so the operator can apply the grant and retry. A probe transport failure (Token Service unreachable, mTLS handshake failure, upstream Kubernetes API timeout, or any non-deterministic error that prevents the Token Service from returning a definitive `ALLOWED`/`DENIED`/`NOT_FOUND` verdict) maps to `503 CREDENTIAL_PROBE_UNAVAILABLE` (category: `TRANSIENT`) and the admin write is rejected — the handler MUST NOT fail open by persisting the CR change when the probe could not be evaluated. This distinct 5xx code lets operators discriminate a denied probe (fix RBAC) from a failed probe (fix Token Service reachability) without either case silently allowing an unprobed `secretRef` to land in Postgres. The probe is skipped for bootstrap-seeded pools (`POST /v1/admin/bootstrap` and `bootstrap.credentialPools` in Helm values) because the bootstrap path renders the RBAC `resourceNames` list from the same values block atomically. This converts a latent runtime failure into an admin-time failure with a clear remediation step, and guarantees that a `tenant-admin` who lacks rights to patch the Token Service RBAC Role cannot succeed in creating a pool whose Secrets are unreadable.
+1. A body carries at most one of `secretRef`, `secretData`, and `roleArn`, and a body with more than one is refused with `400 VALIDATION_ERROR`. Pool creation and pool update refuse `secretData` with `400 VALIDATION_ERROR`, and the bootstrap seed reports it as an error on that pool entry. A `secretData` with no keys, or whose data Kubernetes Secret validation refuses, is refused with `400 VALIDATION_ERROR` and `details.field: "secretData"`.
+2. The gateway writes the Secret in the credentials namespace under the name `lenny-cred-` followed by the first 40 hexadecimal characters of SHA-256 over the tenant id, the pool name, and the credential id joined by NUL bytes, and stores the canonical reference to it on the entry. The Secret carries the annotations `lenny.dev/tenant-id`, `lenny.dev/credential-pool`, and `lenny.dev/credential-id`, and the label `lenny.dev/tenant-hash` set to the first 40 hexadecimal characters of SHA-256 over the tenant id, by which tenant deletion finds it ([Section 12.8](12_storage-architecture.md#128-compliance-interfaces)).
+3. Each operation in the table below performs the Secret operation the table gives, in addition to its row change. A dropped reference is a Lenny-written reference that the pool row carries before the write and does not carry after it. A Put creates the Secret, or replaces its data when the Secret exists. A Delete of an absent Secret succeeds.
 
-**Large pool Secret management (Tier 3).** At Tier 3 with hundreds of credentials, managing individual Secrets via `helm upgrade` on every credential addition becomes impractical. For Tier 3 deployments, operators should use an external secrets manager (AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault) with the External Secrets Operator (`external-secrets.io`) to synchronize secrets into Kubernetes Secrets automatically. The `secretRef` in `CredentialPool` always points to a Kubernetes Secret — the External Secrets Operator handles the synchronization from the external source. This preserves the Secret-per-credential topology while eliminating manual Helm updates.
+   | Operation | Secret operation |
+   |:--|:--|
+   | Credential addition or credential update carrying `secretData` | Put of the Secret that rule 2 names for the entry. On an entry that already carries that reference, the Put overwrites the value in place. |
+   | Pool deletion | Delete of each Lenny-written reference the pool carries |
+   | Tenant deletion, in Phase 4 after the `CredentialPoolStore` deletion ([Section 12.8](12_storage-architecture.md#128-compliance-interfaces)) | One delete-collection of every Secret in the credentials namespace whose `lenny.dev/tenant-hash` label matches the tenant |
+   | Credential revocation, pool revocation, and re-enable | None |
+   | Every other write to a pool, including credential removal, pool update, a credential update without `secretData`, and a bootstrap seed update applied with `--force-update` ([Section 17.6](17_deployment-topology.md#176-packaging-and-installation)) | Delete of each dropped reference |
+
+4. The gateway performs each Put and Delete while it holds the pool row lock for the write, after every check of the request has passed, as the last step before the row change commits. Pool deletion performs its Deletes and the soft delete under one row lock. Credential addition and credential update against a soft-deleted pool return `404 RESOURCE_NOT_FOUND` and perform no Secret operation.
+5. Outcomes of a Secret operation:
+   - A request refused with a 4xx performs no Secret operation.
+   - A `dryRun` request performs no Secret operation ([Section 15.1](15_external-api-surface.md#151-rest-api) **`dryRun` query parameter.**), and rule 6 refuses it as it would refuse the write.
+   - A failed Put or Delete refuses the write with `503 SERVICE_UNAVAILABLE` ([Section 15.1](15_external-api-surface.md#151-rest-api)), and the row does not change. On the bootstrap seed the failure is an error on that pool entry.
+   - A failed delete-collection fails tenant deletion Phase 4. The job stays at Phase 4 and retries the phase.
+   - The gateway takes no compensating action, and the row lock does not order a Secret operation that the kube-apiserver applies after the transaction holding the lock has ended, as on a gateway crash or a Postgres failover. A Lenny-written Secret and the committed rows can therefore disagree in the ways this table gives.
+
+   | State | Reads | Convergence |
+   |:--|:--|:--|
+   | An orphan: a Lenny-written Secret that no entry references | **Secret references.** rule 3 keeps every pool from referencing it, and only the Token Service can read it. | A later Put for the same tenant, pool, and credential id overwrites it and commits a reference to it. A tenant-deletion delete-collection that runs after the orphan is created deletes it. An orphan created after that delete-collection stays in the credentials namespace. |
+   | An entry references an absent Lenny-written Secret | Every read fails closed with `NOT_FOUND` ([Credential Lifecycle and Secret Management](#credential-lifecycle-and-secret-management) **Token Service secret resolution.** rule 3). | A later Put for the entry recreates the Secret, and a later write that drops the reference completes, because a Delete of an absent Secret succeeds. |
+   | An entry's Secret holds a value other than the last one a committed write submitted for the entry | Each read returns what the Secret holds. | A later Put for the entry overwrites the value. |
+
+6. When no Token Service is configured, the gateway has no Secret writer. A write for which rule 3 gives at least one Put or Delete is refused with `422 TOKEN_SERVICE_NOT_CONFIGURED` ([Section 15.1](15_external-api-surface.md#151-rest-api)) at the point rule 4 places that operation, and it changes nothing. On the bootstrap seed the refusal is an error on that pool entry. Before the `CredentialPoolStore` deletion, tenant deletion Phase 4 fails and retries while any pool of the tenant, including a soft-deleted pool, carries a Lenny-written reference. For a tenant with none, Phase 4 proceeds without the delete-collection, and a Lenny-written Secret that no stored reference names stays in the credentials namespace.
+7. No response carries a submitted value. The two endpoints carry secret material when the body holds `secretData`. They are excluded from HTTP access log payload capture, OpenTelemetry span attributes, and request/response logging middleware, the same treatment as `POST /v1/credentials` ([Pre-Authorized Credential Flow](#pre-authorized-credential-flow)). Only the pool name, credential id, canonical `secretRef`, and outcome are logged or audited.
+8. The value is encrypted at rest by the etcd encryption that **Encryption at rest — KMS key hierarchy.** above requires, the same layer that protects an operator-created Secret. The `TokenStore` holds user-scoped credentials ([Pre-Authorized Credential Flow](#pre-authorized-credential-flow)) and stores no value submitted through this path.
+
+**Admin-time Secret probe (required).** Before it commits a write that introduces a `secretRef` (**Registering a Secret by reference.** above), the admin handler probes each introduced reference with an unkeyed Token Service call ([Credential Lifecycle and Secret Management](#credential-lifecycle-and-secret-management) **Token Service secret resolution.**). A caller that **Registering a Secret by reference.** refuses receives its `403` with no probe call. No probe call is made for a reference that **Secret references.** rule 3 refuses.
+
+1. A `DENIED` or `NOT_FOUND` verdict for any reference refuses the write with `422 CREDENTIAL_SECRET_RBAC_MISSING`.
+2. A call that returns no verdict refuses the write with `503 CREDENTIAL_PROBE_UNAVAILABLE`, and the handler persists nothing. The handler MUST NOT fail open.
+3. The probe is Token-Service-owned. The gateway MUST NOT impersonate the Token Service ServiceAccount through `TokenRequest` or the `Impersonate-*` Kubernetes API headers, its ServiceAccount MUST NOT hold `serviceaccounts/token` or `impersonate` verbs on the Token Service ServiceAccount, and the install-time RBAC bundle MUST NOT grant either (a preflight check rejects Helm values that would produce such a grant). The gateway MUST NOT substitute a `SelfSubjectAccessReview` under its own ServiceAccount.
+4. The bootstrap seed runs no probe, because its Secrets may be created after the `lenny-bootstrap` Job ([Credential Lifecycle and Secret Management](#credential-lifecycle-and-secret-management) **GitOps pattern.**).
+5. When no Token Service is configured, no probe runs.
+
+**Large pool Secret management (Tier 3).** At Tier 3 with hundreds of credentials, operators should use an external secrets manager (AWS Secrets Manager, GCP Secret Manager, or HashiCorp Vault) with the External Secrets Operator (`external-secrets.io`) to synchronize Secrets into the credentials namespace. A `platform-admin` registers each synchronized Secret by `secretRef` once. Adding a Secret needs no `helm upgrade` and no RBAC change.
 
 #### Pre-Claim Credential Availability Check
 
@@ -2161,7 +2214,7 @@ This guarantees that a gateway replica restart immediately after either a pool-c
 
 **Integration test.** `TestUserCredentialRevocationDenyListProxy` asserts that an in-flight proxy request presenting a user-backed lease whose `credential_ref` was just revoked via `POST /v1/credentials/{credential_ref}/revoke` is rejected with `CREDENTIAL_REVOKED` before any upstream call is made — exercising both the pub/sub propagation path (on the replica that received the revoke) and the startup rebuild path (on a replica restarted immediately after the revoke).
 
-**Emergency revocation runbook:** See [Section 17.7](17_deployment-topology.md#177-operational-runbooks) (operational runbooks). Steps: (1) identify the compromised credential ID from audit logs (`credential.leased` events showing `credentialId`); (2) call the revocation endpoint; (3) verify `leasesTerminated` count matches expected active sessions; (4) confirm the `CredentialCompromised` alert clears within 60s (indicating revocation propagation succeeded, meaning every active lease against the credential has reached a deny-list entry or been terminated in direct mode); (5) add a replacement credential to the pool via `PUT /v1/admin/credential-pools/{name}`; (6) rotate the underlying secret (Kubernetes Secret or external secrets manager) before re-enabling the credential ID. **Direct mode additional step:** For pools using `deliveryMode: direct`, step 6 is not optional — it is the only action that prevents continued use of the materialized key by an attacker who already extracted it from a pod. Rotate or delete the key at the provider before re-enabling it; updating only the Kubernetes Secret is insufficient until the provider-side key is also invalidated.
+**Emergency revocation runbook:** See [Section 17.7](17_deployment-topology.md#177-operational-runbooks) (operational runbooks). Steps: (1) identify the compromised credential ID from audit logs (`credential.leased` events showing `credentialId`); (2) call the revocation endpoint; (3) verify `leasesTerminated` count matches expected active sessions; (4) confirm the `CredentialCompromised` alert clears within 60s (indicating revocation propagation succeeded, meaning every active lease against the credential has reached a deny-list entry or been terminated in direct mode); (5) add a replacement credential to the pool via `POST /v1/admin/credential-pools/{name}/credentials`; (6) rotate the underlying secret (a Kubernetes Secret, an external secrets manager, or a credential update carrying `secretData`) before re-enabling the credential ID. **Direct mode additional step:** For pools using `deliveryMode: direct`, step 6 is not optional — it is the only action that prevents continued use of the materialized key by an attacker who already extracted it from a pod. Rotate or delete the key at the provider before re-enabling it; updating only the Kubernetes Secret is insufficient until the provider-side key is also invalidated.
 
 #### Security Boundaries
 
@@ -2175,28 +2228,34 @@ This guarantees that a gateway replica restart immediately after either a pool-c
 
 Credential pools span two planes: the **pool definition** (admin-API-managed, stored in Postgres) and the **credential material** (Kubernetes Secrets, referenced by `secretRef`). This is by design — secret material belongs in Kubernetes Secrets (where it benefits from encryption-at-rest, RBAC, and external-secrets-operator integration), while pool configuration (assignment strategy, concurrency limits, policies) belongs in the admin API. Operators must understand the lifecycle for both halves.
 
-> **Production requirement — etcd encryption at rest for Secrets.** Kubernetes does **not** encrypt Secret data in etcd by default. Anyone with etcd access (backup tapes, compromised etcd node, etcd snapshot) sees all Secret values — including credential pool API keys — in plaintext. Production deployments **must** enable the Kubernetes `EncryptionConfiguration` resource with an `aescbc`, `aesgcm`, or `kms` provider for the `secrets` resource type. Cloud-managed Kubernetes services (EKS, GKE, AKS) offer envelope encryption via their respective KMS integrations (AWS KMS, GCP Cloud KMS, Azure Key Vault) and should be configured to use them. Self-managed clusters must configure `EncryptionConfiguration` in the API server manifest and verify encryption by running `etcdctl get /registry/secrets/lenny-system/<secret-name> | hexdump` — the output should be ciphertext, not readable JSON. The `lenny-preflight` Job emits a non-blocking warning for this check (see [Section 17.6](17_deployment-topology.md#176-packaging-and-installation)), since programmatic verification requires etcd access that the preflight Job may not have.
+> **Production requirement — etcd encryption at rest for Secrets.** Kubernetes does **not** encrypt Secret data in etcd by default. Anyone with etcd access (backup tapes, compromised etcd node, etcd snapshot) sees all Secret values — including credential pool API keys — in plaintext. Production deployments **must** enable the Kubernetes `EncryptionConfiguration` resource with an `aescbc`, `aesgcm`, or `kms` provider for the `secrets` resource type. Cloud-managed Kubernetes services (EKS, GKE, AKS) offer envelope encryption via their respective KMS integrations (AWS KMS, GCP Cloud KMS, Azure Key Vault) and should be configured to use them. Self-managed clusters must configure `EncryptionConfiguration` in the API server manifest and verify encryption by running `etcdctl get /registry/secrets/<credentials namespace>/<secret-name> | hexdump` — the output should be ciphertext, not readable JSON. The `lenny-preflight` Job emits a non-blocking warning for this check (see [Section 17.6](17_deployment-topology.md#176-packaging-and-installation)), since programmatic verification requires etcd access that the preflight Job may not have.
 
 **Initial setup workflow:**
 
-1. **Create Kubernetes Secrets** containing credential material (API keys, service account keys, etc.) in the `lenny-system` namespace.
-2. **Register the credential pool** via the admin API (`POST /v1/admin/credential-pools`) or via the bootstrap seed (`bootstrap.credentialPools` in Helm values). The pool definition references the Secrets by `secretRef`.
-3. The `lenny-bootstrap` Job ([Section 17.6](17_deployment-topology.md#176-packaging-and-installation)) seeds pool definitions but does **not** create Kubernetes Secrets — Secrets must exist before the bootstrap Job runs, or the Token Service will log errors for unresolvable `secretRef` entries and mark those credentials as `unavailable` in the pool.
+1. **Create the credential Secrets** in the credentials namespace for the credentials a pool registers by `secretRef`.
+2. **Register the credential pool** via the admin API (`POST /v1/admin/credential-pools`) or via the bootstrap seed (`bootstrap.credentialPools` in Helm values). The pool definition references those Secrets by `secretRef`, and a credential added by value is submitted with `secretData` after the pool exists ([Credential Storage Topology](#credential-storage-topology) **Registering a Secret by reference.** and **Credential values submitted through the admin API.**).
+3. The `lenny-bootstrap` Job ([Section 17.6](17_deployment-topology.md#176-packaging-and-installation)) seeds pool definitions and does not create Secrets. A Secret may be created after the Job runs, and a read of a Secret that does not yet exist fails closed.
 
-**Token Service secret resolution.** The Token Service uses a Kubernetes **informer** (watch) on Secrets in the `lenny-system` namespace. When a Secret referenced by a credential pool is created, updated, or deleted, the Token Service detects the change within its informer resync interval (default: 30 seconds, configurable via `tokenService.secretResyncInterval` Helm value). No explicit reload or admin API call is required after updating a Secret — the Token Service picks up the new value automatically. The metric `lenny_token_service_secret_reloads_total` (counter, labeled by secret name and outcome: `success`, `not_found`, `parse_error`) tracks secret resolution events.
+**Token Service secret resolution.** Every Token Service read of a credential Secret follows these rules. The `ProbeSecretAccess` call on the gateway↔Token-Service mTLS link carries the admin-time probe ([Credential Storage Topology](#credential-storage-topology) **Admin-time Secret probe (required).**) and the gateway's keyed reads.
+
+1. The Token Service reads only the credentials namespace ([Credential Storage Topology](#credential-storage-topology) **Credentials namespace.**), and a `ProbeSecretAccess` request names a Secret by name alone.
+2. Each read performs one `get`, and no Secret cache serves it. An update to a Secret takes effect on the next read.
+3. NotFound returns `NOT_FOUND`, and so does a missing or empty key on a call that names a key. Forbidden returns `DENIED`. Any other failure fails that read with a `TRANSIENT`-category error, and no earlier value is served.
+4. A call that names a key returns that key's value with `ALLOWED`. A call that names no key returns the verdict alone and never a value.
+5. A call that names a key is a credential-sensitive RPC ([Section 16.4](16_observability.md#164-logging)). Each read is counted in `lenny_token_service_secret_reloads_total` by outcome ([Section 16.1](16_observability.md#161-metrics)).
 
 **Credential rotation workflow:**
 
-1. **Update the Kubernetes Secret** with the new credential material (e.g., `kubectl create secret generic anthropic-key-1 --from-literal=api-key=sk-ant-new... --dry-run=client -o yaml | kubectl apply -f -`).
-2. The Token Service detects the Secret change via its informer within 30 seconds.
-3. **No pool definition update is required** — the `secretRef` has not changed, only the Secret's content.
+1. **Update the Kubernetes Secret** with the new credential material (e.g., `kubectl create secret generic anthropic-key-1 -n <credentials namespace> --from-literal=api-key=sk-ant-new... --dry-run=client -o yaml | kubectl apply -f -`).
+2. The next read returns the new value.
+3. **No pool definition update is required** — the `secretRef` has not changed, only the Secret's content. A credential added by value is rotated with `PUT /v1/admin/credential-pools/{name}/credentials/{credId}` carrying `secretData`.
 4. New credential leases issued after the Secret update use the new material. Existing active leases continue using the previously materialized credentials until they expire naturally (governed by lease TTL). If immediate rotation of active sessions is required, use the emergency revocation endpoint (`POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke`) to force all active leases to re-acquire credentials with the updated material.
 
 **GitOps pattern.** For teams using GitOps (ArgoCD/Flux) with external secret management:
 
 - **Kubernetes Secrets** are managed by `external-secrets-operator` (ESO), `sealed-secrets`, or a similar controller that syncs secret material from an external vault (AWS Secrets Manager, HashiCorp Vault, GCP Secret Manager, etc.). These are standard Kubernetes resources managed through the GitOps pipeline.
 - **Credential pool definitions** are managed via the `bootstrap.credentialPools` section in Helm values, committed to Git alongside other Helm values. The `lenny-bootstrap` Job applies them idempotently on every `helm upgrade` / ArgoCD sync.
-- **Ordering:** ESO / sealed-secrets controllers must populate the Secrets **before** the Token Service starts resolving them. In ArgoCD, use sync-wave ordering (e.g., `ExternalSecret` at sync-wave `-3`, Lenny chart at sync-wave `0`). The Token Service tolerates temporarily missing Secrets (credentials are marked `unavailable` and re-resolved on the next informer event), so brief ordering races during initial deployment are self-healing.
+- **Ordering:** Secret-sync resources (`ExternalSecret`, `SealedSecret`) live in the credentials namespace and sync after the Lenny chart, which creates that namespace. In ArgoCD, use sync-wave ordering (e.g., Lenny chart at sync-wave `0`, `ExternalSecret` at sync-wave `1`). The Token Service tolerates temporarily missing Secrets (a read fails closed until the Secret exists and succeeds on the first read after it is created).
 
 #### 4.9.1 KMS Key Rotation Procedure
 

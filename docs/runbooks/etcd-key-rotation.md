@@ -77,7 +77,7 @@ kubectl -n kube-system exec <etcd-pod> -- sh -c '
     --cacert=/etc/kubernetes/pki/etcd/ca.crt \
     --cert=/etc/kubernetes/pki/etcd/server.crt \
     --key=/etc/kubernetes/pki/etcd/server.key \
-    get /registry/secrets/lenny-system/ --prefix --keys-only' | head
+    get /registry/secrets/<credentials.namespace>/ --prefix --keys-only' | head
 ```
 
 A value that begins with `k8s:enc:aescbc:v1:` confirms encryption is active. A value that begins with `k8s:enc:identity:` or with plaintext `{` confirms the Secret is not yet encrypted under aescbc and must be rewritten (Remediation Step 4 covers the rewrite).
@@ -197,7 +197,7 @@ kubectl -n kube-system exec <etcd-pod> -- sh -c '
     --cacert=/etc/kubernetes/pki/etcd/ca.crt \
     --cert=/etc/kubernetes/pki/etcd/server.crt \
     --key=/etc/kubernetes/pki/etcd/server.key \
-    get /registry/secrets/lenny-system/<a-known-secret>'
+    get /registry/secrets/<credentials.namespace>/<a-known-secret>'
 ```
 
 The raw value must begin with `k8s:enc:aescbc:v1:key2:` and must not contain the plaintext Secret data. If the prefix still names `key1`, the rewrite in Remediation Step 4 did not cover that namespace; rerun it before removing the old key.

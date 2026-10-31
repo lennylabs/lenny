@@ -128,7 +128,7 @@ func TestGatewayReaderRunningStateAgainstLiveGatewayE2E(t *testing.T) {
 				"name":     "anthropic",
 				"provider": "anthropic_direct",
 				"credentials": []map[string]any{
-					{"id": "key-1", "secretRef": "lenny-system/anthropic-key-1"},
+					{"id": "key-1", "secretRef": "anthropic-key-1"},
 				},
 			},
 		},

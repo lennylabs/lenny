@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 )
 
@@ -40,6 +41,8 @@ type tokenServiceFlags struct {
 	tlsKey          *string
 	tlsCA           *string
 	secretNamespace *string
+	clusterQPS      *float64
+	clusterBurst    *int
 
 	// §17.9.3 Redis topology and §12.4 Cache/Pub-Sub concern. The chart
 	// renders the same connection the gateway uses, so the Token Service
@@ -89,6 +92,7 @@ func parseFlags() *tokenServiceFlags {
 	f := &tokenServiceFlags{}
 	f.registerListenerFlags()
 	f.registerIssuerAndStateFlags()
+	f.registerClusterClientFlags()
 	f.registerRedisFlags()
 	f.registerIdPFlags()
 	f.registerRateLimitFlags()
@@ -110,8 +114,7 @@ func (f *tokenServiceFlags) registerListenerFlags() {
 }
 
 // registerIssuerAndStateFlags registers the issuer claim, the §13.3
-// write-before-issue Postgres DSN, and the §4.9 RBAC live-probe secret
-// namespace. spec: §13.3, §4.9.
+// write-before-issue Postgres DSN, and the §4.9 credentials namespace. spec: §13.3, §4.9.
 func (f *tokenServiceFlags) registerIssuerAndStateFlags() {
 	f.issuer = flag.String("issuer", "https://lenny.dev.local/token",
 		"iss claim stamped on issued tokens. Override via LENNY_TOKEN_ISSUER.")
@@ -120,13 +123,35 @@ func (f *tokenServiceFlags) registerIssuerAndStateFlags() {
 	}
 	f.postgresDSN = flag.String("postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
 		"Postgres connection string. When set, the §13.3 write-before-issue path persists issued-token metadata to the issued_tokens table and writes `token.exchanged` audit rows to audit_log under the §11.7 per-tenant advisory lock. When empty, the Token Service runs without durable issued-token or audit state (dev mode).")
-	// §4.9 admin-time RBAC live-probe namespace. The probe's
-	// SelfSubjectAccessReview and Secret get target this namespace, where
-	// credentialPool secretRef Secrets are mounted. Defaults to the
-	// Token Service's own namespace (POD_NAMESPACE, set by the downward
-	// API), falling back to lenny-system.
-	f.secretNamespace = flag.String("secret-namespace", envOr("POD_NAMESPACE", "lenny-system"),
-		"namespace the §4.9 RBAC live-probe checks for credentialPool secretRef Secrets.")
+	// §4.9 credentials namespace. Every Token Service credential Secret
+	// read (the admin-time probe and the gateway's keyed reads) is one get
+	// in this namespace, and no request can name another. The default and
+	// the environment override match the gateway's --credentials-namespace,
+	// so the two binaries agree without the chart's argument.
+	f.secretNamespace = flag.String("secret-namespace", envOr("LENNY_CREDENTIALS_NAMESPACE", credential.DefaultNamespace),
+		"credentials namespace the §4.9 Token Service credential Secret reads target. The chart sets it from credentials.namespace. Override via LENNY_CREDENTIALS_NAMESPACE.")
+}
+
+// resolvedSecretNamespace returns the §4.9 credentials namespace the
+// --secret-namespace flag selects. envOr defaults only an empty environment
+// variable, so an explicit empty flag value still reaches here;
+// credential.ResolveNamespace maps it to credential.DefaultNamespace.
+//
+// spec: §4.9 (Credential Storage Topology), §17.6 (Packaging and Installation).
+func (f *tokenServiceFlags) resolvedSecretNamespace() string {
+	return credential.ResolveNamespace(*f.secretNamespace)
+}
+
+// registerClusterClientFlags registers the client-go rate limit for the
+// Token Service's Kubernetes client. Every gateway credential read is one
+// get through this client, so client-go's default of 5 QPS would throttle
+// it; the defaults match the gateway's flags of the same names.
+// spec: §4.9 Token Service secret resolution.
+func (f *tokenServiceFlags) registerClusterClientFlags() {
+	f.clusterQPS = flag.Float64("cluster-qps", envFloat("LENNY_CLUSTER_QPS", 100),
+		"client-go QPS for the Kubernetes client the Token Service reads credential Secrets through. Override via LENNY_CLUSTER_QPS.")
+	f.clusterBurst = flag.Int("cluster-burst", envInt("LENNY_CLUSTER_BURST", 200),
+		"client-go burst (token-bucket size) for the Kubernetes client. Pairs with --cluster-qps. Override via LENNY_CLUSTER_BURST.")
 }
 
 // registerIdPFlags registers the upstream OIDC IdP whose ID tokens §13.3

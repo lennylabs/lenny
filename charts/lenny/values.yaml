@@ -3904,6 +3904,13 @@ resourceGovernance:
 # credentials carries the §11.3 / §4.9 operator-tunable knobs for the
 # credential-leasing path. F-11.3.20.
 credentials:
+  # namespace names the §4.9 credentials namespace, which holds credential
+  # Secrets only. The chart renders it with helm.sh/resource-policy: keep
+  # and a pods: "0" ResourceQuota, grants the Token Service get and the
+  # gateway its write verbs there, and passes the name to both binaries.
+  # The render fails when this equals the release namespace or names an
+  # agentNamespaces entry (§17.6).
+  namespace: lenny-credentials
   # expiryWarningLeadSeconds — §11.3. When a tracked credential
   # lease is within this window of its ExpiresAt, the gateway emits a
   # structured warning log line so deployers see impending lease expiry
@@ -4401,12 +4408,12 @@ bootstrap:
   # as the only built-in VCS provider.
   #
   # Disabled by default because it requires an operator-supplied
-  # Kubernetes Secret holding a GitHub App installation token or a
-  # personal access token (the gateway reads the value via the
-  # credential's secretRef). To activate: create the Secret, then set
-  # enabled: true and secretRef to its name. When enabled with an empty
-  # secretRef, the chart fails the render rather than seeding a pool with
-  # no credential.
+  # Kubernetes Secret in credentials.namespace holding a GitHub App
+  # installation token or a personal access token (the gateway reads the
+  # value through the Token Service by the credential's secretRef). To
+  # activate: create the Secret, then set enabled: true and secretRef to
+  # its name. When enabled with an empty secretRef, the chart fails the
+  # render rather than seeding a pool with no credential.
   defaultGithubVcsPool:
     enabled: false
     # tenantId the pool is registered under. For a local-profile install
@@ -4418,7 +4425,7 @@ bootstrap:
     # GitHub Enterprise hosts (e.g. "*.ghe.acme.com") as needed.
     hostPatterns:
       - github.com
-    # secretRef names the Kubernetes Secret (in the gateway namespace)
-    # holding the token. Required when enabled.
+    # secretRef names the Kubernetes Secret holding the token, as a bare
+    # name or as <credentials.namespace>/<name>. Required when enabled.
     secretRef: ""
     credentialId: github-app

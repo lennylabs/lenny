@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -70,17 +71,18 @@ func (w *tokenServiceWiring) buildGRPCSurface() {
 	tsGRPC := tokenservice.NewGRPCServer(assignSvc, leases)
 	tsGRPC.SetAuditor(w.auditor)
 	tsGRPC.SetMetrics(w.metricsEmitter)
-	// §4.9 admin-time RBAC live-probe. Wire the
+	// §4.9 Token Service credential Secret reads. Wire the
 	// Kubernetes-backed prober when the Token Service runs in-cluster.
 	// Out of cluster (local dev) the prober is left unset; the
 	// ProbeSecretAccess RPC then returns codes.Unavailable so the gateway
-	// admin handler maps it to 503 CREDENTIAL_PROBE_UNAVAILABLE and never
-	// fails open.
-	if clientset, kerr := inClusterClientset(); kerr != nil {
-		log.Printf("lenny-token-service: §4.9 RBAC live-probe disabled (no in-cluster Kubernetes client: %v)", kerr)
+	// admin handler maps it to 503 CREDENTIAL_PROBE_UNAVAILABLE and every
+	// keyed read fails closed.
+	if clientset, kerr := inClusterClientset(*w.f.clusterQPS, *w.f.clusterBurst); kerr != nil {
+		log.Printf("lenny-token-service: §4.9 credential Secret reads disabled (no in-cluster Kubernetes client: %v)", kerr)
 	} else {
-		tsGRPC.SetSecretAccessProber(secretprobe.New(clientset, *w.f.secretNamespace))
-		log.Printf("lenny-token-service: §4.9 RBAC live-probe active in namespace %q", *w.f.secretNamespace)
+		secretNamespace := w.f.resolvedSecretNamespace()
+		tsGRPC.SetSecretAccessProber(secretprobe.New(clientset, secretNamespace))
+		log.Printf("lenny-token-service: §4.9 credential Secret reads active in namespace %q", secretNamespace)
 	}
 
 	if *w.f.grpcAddr == "" {
@@ -110,7 +112,13 @@ func (w *tokenServiceWiring) buildGRPCSurface() {
 	// SPIFFE ID and log it for audit. The unary interceptor
 	// surfaces the value through the context so handler-level
 	// audit emits can include it.
-	opts = append(opts, grpc.UnaryInterceptor(spiffeAuditInterceptor()))
+	// §16.4: a keyed ProbeSecretAccess call carries a credential value in
+	// its response, so the redaction interceptor records only the RPC
+	// name, the Secret name, and the outcome for it.
+	opts = append(opts, grpc.ChainUnaryInterceptor(
+		spiffeAuditInterceptor(),
+		tokenservice.CredentialRedactionInterceptor(slog.Default()),
+	))
 	w.grpcSrv = grpc.NewServer(opts...)
 	tokensv1.RegisterTokenServiceServer(w.grpcSrv, tsGRPC)
 }
