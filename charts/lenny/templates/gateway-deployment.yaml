@@ -457,7 +457,7 @@ spec:
           args:
             - --addr=:{{ .Values.gateway.internalPort }}
             - --grpc-addr=:{{ .Values.gateway.grpcPort }}
-            # §4.9 "Secret references and registration.": the namespace every
+            # §4.9 **Secret references.** rule 2: the namespace every
             # credential secretRef is canonicalized into. It renders in every
             # profile because the admin handlers parse refs with or without a
             # Token Service.
