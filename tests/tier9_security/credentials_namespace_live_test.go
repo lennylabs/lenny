@@ -8,7 +8,9 @@
 // `kubectl auth can-i --as` issues a SubjectAccessReview per ServiceAccount
 // and verb, a real pod create meets the ResourceQuota, and the admin probe
 // and the keyed read cross the lenny-system default-deny on the
-// policy-enforcing CNI. The access check follows controller_rbac_test.go.
+// policy-enforcing CNI, where the chart's allow-token-service rule is the only
+// policy admitting the kube-apiserver dial. The access check follows
+// controller_rbac_test.go.
 //
 // spec: §4.9 (Credential Storage Topology: Credentials namespace), §13.2.4,
 // §16.4 (Credential-sensitive RPCs).
@@ -22,10 +24,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
@@ -54,7 +61,7 @@ func credNSCanI(t *testing.T, c *kind.Cluster, sa, verb string) bool {
 	return fields[0] == "yes"
 }
 
-// spec: §4.9 (Credentials namespace rules 3, 4, and 5)
+// spec: §4.9 (Credentials namespace rules 3, 4, and 7)
 // diagnosis: a chart-installed authorization decision differs from the §4.9
 // matrix. A Token Service list or watch allows an enumeration and a cached
 // read. A gateway get lets the gateway read values the Token Service alone
@@ -165,14 +172,72 @@ func credNSTenant(ctx context.Context, t *testing.T, d *sessiondriver.Driver) st
 	return tenant
 }
 
+// credNSGetJSON decodes the JSON stdout of `kubectl get <args> -o json`. Only
+// stdout is read so a kubectl warning cannot corrupt the document.
+func credNSGetJSON(t *testing.T, c *kind.Cluster, out any, args ...string) {
+	t.Helper()
+	raw, err := c.Kubectl(append(append([]string{"get"}, args...), "-o", "json")...).Output()
+	if err != nil {
+		t.Fatalf("kubectl get %v: %v", args, err)
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		t.Fatalf("decode kubectl get %v: %v", args, err)
+	}
+}
+
+// credNSRequireChartEgressOnly fails unless the lenny-system default-deny is
+// installed and allow-token-service is the only policy admitting the Token
+// Service to every kube-apiserver endpoint. A successful dial proves the rule
+// only under that condition.
+func credNSRequireChartEgressOnly(t *testing.T, c *kind.Cluster) {
+	t.Helper()
+	var policies networkingv1.NetworkPolicyList
+	credNSGetJSON(t, c, &policies, "networkpolicies", "-n", lennySystemNS)
+	if !slices.ContainsFunc(policies.Items, func(p networkingv1.NetworkPolicy) bool {
+		return kind.IsEgressDefaultDeny(&p)
+	}) {
+		t.Fatalf("§13.2.4: %s has no default-deny egress policy", lennySystemNS)
+	}
+	var pods corev1.PodList
+	credNSGetJSON(t, c, &pods, "pods", "-n", lennySystemNS, "-l", "lenny.dev/component=token-service")
+	if len(pods.Items) == 0 {
+		t.Fatal("no Token Service pod is installed")
+	}
+	var endpoints corev1.Endpoints
+	credNSGetJSON(t, c, &endpoints, "endpoints", "kubernetes", "-n", "default")
+	checked := 0
+	for _, subset := range endpoints.Subsets {
+		for _, address := range subset.Addresses {
+			for _, port := range subset.Ports {
+				got, err := kind.EgressAdmitters(policies.Items, pods.Items[0].Labels, net.ParseIP(address.IP), port.Port)
+				if err != nil {
+					t.Fatalf("evaluate policies: %v", err)
+				}
+				if !slices.Equal(got, []string{"allow-token-service"}) {
+					t.Fatalf("§13.2.4: policies admitting the Token Service to %s:%d = %v, want allow-token-service alone",
+						address.IP, port.Port, got)
+				}
+				checked++
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("the kubernetes Endpoints object lists no address")
+	}
+}
+
 // spec: §13.2.4 (Token Service kube-apiserver egress), §4.9 (admin-time Secret
 // probe)
-// diagnosis: 503 CREDENTIAL_PROBE_UNAVAILABLE means the Token Service could
-// not reach the kube-apiserver under the lenny-system default-deny, so
-// allow-token-service lost its kubeApiServerCIDR egress rule. The 422 is a
-// definitive NOT_FOUND verdict, which only a completed get returns.
+// diagnosis: the admitter check names the chart rule as the only path, so a
+// failure there means allow-token-service lost its kubeApiServerCIDR rule, the
+// default-deny is gone, the cluster predates tests/testinfra/kind/e2e-values.yaml
+// (rerun install.sh), or apiserver-egress.yaml selects the Token Service again.
+// With the check passing, a 503 CREDENTIAL_PROBE_UNAVAILABLE means the CNI
+// dropped the dial that the chart rule admits. The 422 is a definitive
+// NOT_FOUND verdict, which only a completed get returns.
 func TestTokenServiceProbeReachesKubeAPIServerUnderDefaultDeny_spec_13_2_4(t *testing.T) {
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 30 * time.Second})
+	credNSRequireChartEgressOnly(t, d.Cluster())
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	tenant := credNSTenant(ctx, t, d)

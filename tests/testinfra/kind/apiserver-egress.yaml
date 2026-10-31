@@ -36,9 +36,13 @@
 # traffic is permitted.
 #
 # Scope. The podSelector matches every lenny-system pod
-# (app.kubernetes.io/name: lenny); the policy only ADDS apiserver egress
-# (NetworkPolicies are additive), so it cannot tighten any component. The
-# CIDR is the Kind bridge subnet; on a real cluster the apiserver endpoint
+# (app.kubernetes.io/name: lenny) except the Token Service; the policy only
+# ADDS apiserver egress (NetworkPolicies are additive), so it cannot tighten
+# any component. The Token Service is excluded so the kubeApiServerCIDR rule
+# of the chart's allow-token-service is the only path that admits its §13.2.4
+# kube-apiserver dial, which is what the tier-9 egress test exercises:
+# e2e-values.yaml sets kubeApiServerCIDR to the CIDR below for that reason.
+# The CIDR is the Kind bridge subnet; on a real cluster the apiserver endpoint
 # is reachable through the chart's service-CIDR ipBlock and this manifest
 # is not applied. This is a test-infra-only object applied by install.sh,
 # so it does not alter the production chart rendering.
@@ -54,6 +58,10 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: lenny
+    matchExpressions:
+      - key: lenny.dev/component
+        operator: NotIn
+        values: [token-service]
   egress:
     # kube-apiserver on the Kind node CIDR (post-DNAT target of the
     # kubernetes Service ClusterIP). 443 is the Service port; 6443 is the

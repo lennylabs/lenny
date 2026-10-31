@@ -1768,7 +1768,7 @@ fi
 # postgres.dsn is set, which the e2e overlay sets), so no test-infra
 # PSC-egress manifest is applied here. On Kind the apiserver dial additionally
 # needs the post-DNAT node-CIDR egress that allow-lenny-system-apiserver-egress
-# below admits for every lenny-system pod, and the PSC reaches the in-cluster
+# below admits for every lenny-system pod but the Token Service, and the PSC reaches the in-cluster
 # Postgres datastore through allow-egress-to-e2e-datastores in datastores.yaml.
 
 # Admit lenny-system egress to the Kind kube-apiserver. kindnet evaluates
@@ -1777,8 +1777,10 @@ fi
 # Service ClusterIP) does not match the apiserver's real endpoint on the
 # `kind` Docker bridge network (172.18.0.0/16). Without this the gateway's
 # per-session SandboxClaim write times out and POST /v1/sessions/start
-# returns 503 SESSION_CREATION_FAILED. The manifest is test-infra-only, so
-# it does not alter the production chart rendering.
+# returns 503 SESSION_CREATION_FAILED. The manifest excludes the Token
+# Service, whose kube-apiserver egress the chart's allow-token-service admits
+# through the kubeApiServerCIDR in e2e-values.yaml. The manifest is
+# test-infra-only, so it does not alter the production chart rendering.
 log "applying the kube-apiserver egress NetworkPolicy"
 kc apply -f "${APISERVER_EGRESS_MANIFEST}"
 
