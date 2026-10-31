@@ -88,6 +88,9 @@ func clientset() *fake.Clientset {
 
 // TestProbeSecretAccessWireValue pins which responses carry field 2.
 //
+// spec: §4.9 (Credential Lifecycle and Secret Management, Token Service secret
+// resolution), §28.7 (lenny-tokenservice.proto).
+//
 // diagnosis: a value on an unkeyed or non-ALLOWED response means
 // GRPCServer.ProbeSecretAccess forwards the prober's bytes without checking
 // the key and the verdict; a missing value on the keyed ALLOWED case means the
@@ -121,6 +124,9 @@ func TestProbeSecretAccessWireValue(t *testing.T) {
 // TestProbeSecretAccessWireDenied pins that a DENIED response carries no
 // value.
 //
+// spec: §4.9 (Credential Lifecycle and Secret Management, Token Service secret
+// resolution), §28.7 (lenny-tokenservice.proto).
+//
 // diagnosis: a value here means the server forwards bytes on a non-ALLOWED
 // verdict; a non-DENIED verdict means Forbidden is no longer mapped.
 func TestProbeSecretAccessWireDenied(t *testing.T) {
@@ -140,6 +146,9 @@ func TestProbeSecretAccessWireDenied(t *testing.T) {
 
 // TestProbeSecretAccessWireUnavailable pins that a failed read crosses the
 // wire as codes.Unavailable with the value absent from the status.
+//
+// spec: §4.9 (Credential Lifecycle and Secret Management, Token Service secret
+// resolution), §28.7 (lenny-tokenservice.proto).
 //
 // diagnosis: a code other than Unavailable breaks the gateway's 503
 // CREDENTIAL_PROBE_UNAVAILABLE mapping; the value in the message is a §16.4
@@ -163,6 +172,9 @@ func TestProbeSecretAccessWireUnavailable(t *testing.T) {
 // a Secret by name alone. The descriptor declares no field 2, and a request
 // whose encoding still carries field 2 naming another namespace reads only the
 // configured credentials namespace.
+//
+// spec: §4.9 (Credential Lifecycle and Secret Management, Token Service secret
+// resolution), §28.7 (lenny-tokenservice.proto).
 //
 // diagnosis: a declared field 2 means the reserved range was dropped from
 // lenny-tokenservice.proto; ALLOWED with a value on the encoded case means the

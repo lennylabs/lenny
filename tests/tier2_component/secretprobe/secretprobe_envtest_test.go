@@ -105,6 +105,9 @@ func (f *apiFixture) putSecret(t *testing.T, ns, name string, data map[string][]
 // TestTokenServiceSecretReadAgainstAPIServer pins the read verdicts, values,
 // namespace confinement, Forbidden mapping, and the absence of a cache.
 //
+// spec: §4.9 (Credential Lifecycle and Secret Management, Token Service secret
+// resolution).
+//
 // diagnosis: a wrong verdict on a keyed case points at the key handling in
 // secretprobe.ProbeSecretAccess; DENIED where NOT_FOUND is expected on the
 // other-namespace case means the prober read outside its configured namespace;

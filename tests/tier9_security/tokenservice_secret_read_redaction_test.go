@@ -45,6 +45,9 @@ const redactionSecretValue = "ghp_tier9_redaction_canary_7f3a"
 // TestTokenServiceKeyedReadRedaction_spec_16_4 drives a keyed read end to end
 // and inspects every recorded log line and span attribute.
 //
+// spec: §16.4 (Credential-sensitive RPCs), §4.9 (Credential Lifecycle and
+// Secret Management, Token Service secret resolution rule 5).
+//
 // diagnosis: the value in the log means CredentialRedactionInterceptor (or a
 // logger added ahead of it) records the response; the value in a span means an
 // attribute carries payload; a missing secret_name or outcome means the
