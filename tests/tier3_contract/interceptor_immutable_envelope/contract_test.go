@@ -81,6 +81,12 @@ func (genericRejectInterceptor) Intercept(context.Context, interceptor.Request) 
 // asserts on the wire keys the client actually receives).
 func serveCreateStart(t *testing.T, ic interceptor.Interceptor) (int, map[string]any) {
 	t.Helper()
+	return serveCreateRoute(t, "/v1/sessions/start", ic)
+}
+
+// serveCreateRoute is serveCreateStart for the creation route at path.
+func serveCreateRoute(t *testing.T, path string, ic interceptor.Interceptor) (int, map[string]any) {
+	t.Helper()
 	chain := interceptor.NewChain()
 	if err := chain.Register(interceptor.PhasePreRoute, ic); err != nil {
 		t.Fatalf("register interceptor: %v", err)
@@ -93,7 +99,7 @@ func serveCreateStart(t *testing.T, ic interceptor.Interceptor) (int, map[string
 	if err != nil {
 		t.Fatalf("marshal request: %v", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/sessions/start", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, ts.URL+path, bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
@@ -248,4 +254,42 @@ func violatedFieldsContain(v any, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestRouteChainEnvelopesOnBothCreateRoutes pins that POST /v1/sessions writes
+// the same §15.1 envelopes for a PreRoute outcome as POST /v1/sessions/start.
+//
+// spec: 15.1 (INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION and INTERCEPTOR_REJECTED catalog rows), 4.8 (Gateway Policy Engine)
+//
+// diagnosis: the creation routes disagree on the §4.8 route-chain wire
+// contract, or POST /v1/sessions stopped running the PreRoute chain, so a
+// client sees a different error for the same policy depending on the route.
+func TestRouteChainEnvelopesOnBothCreateRoutes(t *testing.T) {
+	cases := []struct {
+		name       string
+		ic         interceptor.Interceptor
+		wantStatus int
+		wantCode   string
+	}{
+		{"immutable-field", tenantRewriteInterceptor{}, http.StatusBadRequest, immutableCode},
+		{"generic-reject", genericRejectInterceptor{}, http.StatusForbidden, "INTERCEPTOR_REJECTED"},
+	}
+	for _, tc := range cases {
+		for _, path := range []string{"/v1/sessions", "/v1/sessions/start"} {
+			t.Run(tc.name+path, func(t *testing.T) {
+				status, env := serveCreateRoute(t, path, tc.ic)
+				if status != tc.wantStatus {
+					t.Fatalf("HTTP status = %d, want %d: %v", status, tc.wantStatus, env)
+				}
+				obj := errorObject(t, env)
+				if got := obj["code"]; got != tc.wantCode {
+					t.Errorf("error.code = %v, want %s", got, tc.wantCode)
+				}
+				details, _ := obj["details"].(map[string]any)
+				if got := details["phase"]; got != string(interceptor.PhasePreRoute) {
+					t.Errorf("details.phase = %v, want PreRoute", got)
+				}
+			})
+		}
+	}
 }

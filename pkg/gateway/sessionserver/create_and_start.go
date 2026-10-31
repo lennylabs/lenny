@@ -5,12 +5,10 @@ package sessionserver
 import (
 	"encoding/json"
 	"errors"
-	"math"
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
@@ -261,25 +259,11 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	if !planOK {
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
-	// §4.8 PreRoute (below the ExperimentRouter pivot): run the PreRoute
-	// interceptors with priority < 300 over the TaskSpec after
-	// authentication and before runtime selection. A REJECT blocks the
-	// create; a MODIFY may rewrite runtime hints (the requested runtime)
-	// but not the authenticated identity, which the chain enforces. This
-	// segment runs before routeExperiment so a priority 101–299 MODIFY of
-	// the runtime hint affects which variant the ExperimentRouter assigns
-	// (spec: §4.8).
-	preRoute, ok := s.runRouteChainRange(w, r, interceptor.PhasePreRoute, routeTaskSpec{
-		TenantID:         tenantID,
-		UserID:           owner,
-		RequestedRuntime: req.RuntimeRef,
-	}, math.MinInt32, ExperimentRouterPriority)
+	// spec: §4.8 — the PreRoute segment below the ExperimentRouter pivot; the
+	// two-step create path runs the same segment.
+	runtimeRef, ok := s.preRouteBeforeExperiment(w, r, tenantID, owner, req.RuntimeRef)
 	if !ok {
 		return sessionstore.Session{}, createAndStartBuild{}, false
-	}
-	runtimeRef := req.RuntimeRef
-	if preRoute.RequestedRuntime != "" {
-		runtimeRef = preRoute.RequestedRuntime
 	}
 
 	// spec: §7.1 — resolve the pool-derived isolation level
@@ -342,31 +326,10 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	if !s.routeExperiment(w, r, &row) {
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
-	// §4.8 PreRoute (at or above the ExperimentRouter pivot): run the
-	// PreRoute interceptors with priority ≥ 300 after experiment routing,
-	// so an external interceptor at priority ≥ 300 orders after the
-	// ExperimentRouter built-in per the §4.8 line-12 ascending-priority
-	// rule. It sees the experiment-assigned runtime as the requested
-	// runtime; a runtime-hint MODIFY here gets the final say on the
-	// runtime before runtime selection completes, with the isolation
-	// level re-resolved so executionMode/scrubPolicy stay consistent.
-	afterRoute, ok := s.runRouteChainRange(w, r, interceptor.PhasePreRoute, routeTaskSpec{
-		TenantID:         tenantID,
-		UserID:           owner,
-		RequestedRuntime: row.RuntimeRef,
-	}, ExperimentRouterPriority, math.MaxInt32)
-	if !ok {
+	// spec: §4.8 — the PreRoute segment at or above the ExperimentRouter
+	// pivot; the two-step create path runs the same segment.
+	if !s.preRouteAfterExperiment(w, r, &row, effProf, req.Pool) {
 		return sessionstore.Session{}, createAndStartBuild{}, false
-	}
-	if afterRoute.RequestedRuntime != "" && afterRoute.RequestedRuntime != row.RuntimeRef {
-		row.RuntimeRef = afterRoute.RequestedRuntime
-		// spec: §7.1 — re-resolve against the effective
-		// requested profile so a pinned pool's own profile still governs after
-		// a runtime-hint MODIFY. F-CS2 (0018).
-		afterLevel := s.resolveIsolationLevel(r.Context(), row.RuntimeRef, effProf, req.Pool)
-		row.ExecutionMode = afterLevel.ExecutionMode
-		row.ScrubPolicy = afterLevel.ScrubPolicy
-		row.ConversationContinuity = afterLevel.ConversationContinuity
 	}
 	// spec: §7.5 Setup Commands (Command policy); §5.1 — the client's
 	// setup commands are checked against the setupCommandPolicy of the
@@ -387,15 +350,9 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
-	// §4.8 PostRoute: run the interceptor chain after runtime selection
-	// with the resolved runtime metadata. A REJECT blocks the create; a
-	// MODIFY may rewrite runtime-specific parameters but not the resolved
-	// runtime or credential assignment, which the chain enforces.
-	if _, ok := s.runRouteChain(w, r, interceptor.PhasePostRoute, routeTaskSpec{
-		TenantID:            tenantID,
-		UserID:              owner,
-		ResolvedRuntimeName: row.RuntimeRef,
-	}); !ok {
+	// spec: §4.8 — the PostRoute chain; the two-step create path runs the
+	// same chain.
+	if !s.postRouteAfterSelection(w, r, &row) {
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 

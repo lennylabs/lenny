@@ -182,16 +182,16 @@ func TestCreateAndStartServiceCarriesRetryAfterOnPoolExhaustion(t *testing.T) {
 	// envelope with a Retry-After header.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 	)
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-cas-exhausted" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
 	_, svcErr := srv.CreateAndStartService(ownerCtx(context.Background()), "acme", sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
@@ -1524,18 +1524,18 @@ func TestCreateClaimsPodAndPersistsBinding_spec_7_1_4(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-create-claim" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
 	rr := postSessionStep(t, asOwner(srv.Handler()), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{
@@ -1571,7 +1571,7 @@ func TestCreateClaimsPodAndPersistsBinding_spec_7_1_4(t *testing.T) {
 	// spec: §4.6.1 — the per-pod SandboxClaim exists in `bound` after the
 	// create-time claim, so the pod is reserved through the upload window.
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err != nil {
 		t.Fatalf("get per-pod claim after create: %v", err)
 	}
 	if claim.Status.Phase != string(claimstate.Bound) {
@@ -1598,17 +1598,17 @@ func TestCreateLeavesNoRowOnPoolExhaustion_spec_7_1_28(t *testing.T) {
 	// Postgres, the fallback), so the create-time claim returns ErrNoIdlePod.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 	)
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-create-exhausted" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
 	rr := postSessionStep(t, asOwner(srv.Handler()), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{RuntimeRef: "echo"}))
@@ -1651,18 +1651,18 @@ func TestCreateServiceModeIsClaimless_spec_5_2(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("svc-pool", "svc-tmpl"),
-		podBindServiceTemplate("svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("svc-sbx-1", "svc-pool", "10.244.3.9"),
+		podBindWarmPool(t, "svc-pool", "svc-tmpl"),
+		podBindServiceTemplate(t, "svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "svc-sbx-1", "svc-pool", "10.244.3.9"),
 	)
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-create-svc" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Pools:                   podBindServicePool(t, "svc-pool", "svc-runtime", 8),
 	})
 
@@ -1684,7 +1684,7 @@ func TestCreateServiceModeIsClaimless_spec_5_2(t *testing.T) {
 
 	// The idle Sandbox is untouched: no per-pod claim was created at create.
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-svc-sbx-1"}, &claim); !apierrors.IsNotFound(err) {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-svc-sbx-1"}, &claim); !apierrors.IsNotFound(err) {
 		t.Errorf("service-mode create created/looked up claim-svc-sbx-1 (err=%v); want NotFound (claimless)", err)
 	}
 }
@@ -1702,18 +1702,18 @@ func TestCreateRollsBackClaimOnPersistFailure_spec_7_1_28(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-rb", "echo-pool", "10.244.2.6"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-rb", "echo-pool", "10.244.2.6"),
 	)
 	store := &createRejectingStore{Store: memstore.New()}
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-create-rb" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
 	rr := postSessionStep(t, asOwner(srv.Handler()), "/v1/sessions", mustJSON(sessionserver.CreateSessionRequest{RuntimeRef: "echo"}))
@@ -1724,7 +1724,7 @@ func TestCreateRollsBackClaimOnPersistFailure_spec_7_1_28(t *testing.T) {
 	// spec: §7.1 — the create-time claim is rolled back: the per-pod
 	// SandboxClaim is deleted, returning the pod to the pool.
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-rb"}, &claim); !apierrors.IsNotFound(err) {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-rb"}, &claim); !apierrors.IsNotFound(err) {
 		t.Errorf("per-pod claim after a rolled-back create (err=%v); want NotFound (claim released)", err)
 	}
 }
@@ -1746,18 +1746,18 @@ func TestTerminateCreatedSessionReleasesClaimedPod_spec_15_1(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-term-created" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
 	// Create claims the warm pod and persists the §4.6 binding; the session is
@@ -1770,7 +1770,7 @@ func TestTerminateCreatedSessionReleasesClaimedPod_spec_15_1(t *testing.T) {
 	}
 	// The create-time claim is present in `bound` before the terminate.
 	var bound lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &bound); err != nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &bound); err != nil {
 		t.Fatalf("get per-pod claim after create: %v", err)
 	}
 	if bound.Status.Phase != string(claimstate.Bound) {
@@ -1789,7 +1789,7 @@ func TestTerminateCreatedSessionReleasesClaimedPod_spec_15_1(t *testing.T) {
 	// spec: §15.1 — the terminate released the claimed pod: the per-pod
 	// SandboxClaim is deleted, returning the pod to the pool.
 	var after lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &after); !apierrors.IsNotFound(err) {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &after); !apierrors.IsNotFound(err) {
 		t.Errorf("per-pod claim after terminate (err=%v); want NotFound (pod released to the pool)", err)
 	}
 }
