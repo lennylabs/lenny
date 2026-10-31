@@ -31,8 +31,8 @@ type fakeFallback struct {
 	recordErr error // when set, RecordSlotReservation returns this error
 	// recordCalls counts RecordSlotReservation calls per session.
 	recordCalls map[string]int
-	podLockMu sync.Mutex
-	podLocks  map[string]*sync.Mutex
+	podLockMu   sync.Mutex
+	podLocks    map[string]*sync.Mutex
 }
 
 func newFakeFallback() *fakeFallback {
