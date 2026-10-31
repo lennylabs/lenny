@@ -8566,7 +8566,7 @@ Proposal 0017 ("re-architect §17.4 Embedded Mode to run the full production sta
 **Reviewed:** 2026-07-06
 
 
-### - [ ] T-17.4.47 — The subprocess readiness check counts a zombie process as owning its address, so a process that lost its port can be handed back as ready [Low] — OPEN
+### - [ ] T-17.4.49 — The subprocess readiness check counts a zombie process as owning its address, so a process that lost its port can be handed back as ready [Low] — OPEN
 - **Spec/Doc:** TESTING.md §12.4 Tier 4 — Integration; TESTING.md §17.10 Flake budget; T-17.4.40.
 - **Existing tests:** `TestOpsHarnessRestartsOnAnOccupiedAddress` in `tests/tier4_integration/subprocess_port_retry_test.go`; `TestHeldNamesTheHolderOfALoopbackListener` in `tests/testinfra/ports/subprocess_test.go`.
 - **Evidence:** A scoped tier-4 run on 2026-10-31 (`--tier integration --since 3cb3523f6`, 891 tests) failed `TestOpsHarnessRestartsOnAnOccupiedAddress` with "the process kept the occupied address", and five consecutive runs of the test alone passed. T-17.4.40 made `ports.Held` answer `HolderOther` when `/proc/<pid>/fd` no longer exists, which covers a reaped process. An exited process that is not yet reaped is a zombie, and reading its `/proc/<pid>/fd` fails with `EACCES` (checked on this host with a forked child that exits unreaped). `Held` maps that error to `HolderUnknown`, and `ports.Ready` treats `HolderUnknown` as ready, so `waitReady` accepts the occupier's answer inside the window between the exit and the `cmd.Wait` reap.
