@@ -78,10 +78,10 @@ func adminRequest(t *testing.T, d *sessiondriver.Driver, tenant, method, path st
 	return res.StatusCode, raw
 }
 
-// sweepStaleLifecycleTenants deletes every tenant under the test prefix
-// that an earlier run left behind. It is best-effort: a failure is logged
+// sweepStaleTenants deletes every tenant under prefix that an earlier run
+// left behind. It is best-effort: a failure is logged
 // and never fails the run.
-func sweepStaleLifecycleTenants(t *testing.T, d *sessiondriver.Driver) {
+func sweepStaleTenants(t *testing.T, d *sessiondriver.Driver, prefix string) {
 	t.Helper()
 	code, raw := adminRequest(t, d, "platform", http.MethodGet, "/v1/admin/tenants", nil)
 	if code != http.StatusOK {
@@ -98,7 +98,7 @@ func sweepStaleLifecycleTenants(t *testing.T, d *sessiondriver.Driver) {
 		return
 	}
 	for _, tn := range list.Items {
-		if !strings.HasPrefix(tn.ID, lifecycleDrainTenantPrefix) {
+		if !strings.HasPrefix(tn.ID, prefix) {
 			continue
 		}
 		_, _ = adminRequest(t, d, "platform", http.MethodPost, "/v1/admin/tenants/"+tn.ID+"/resume", nil)
@@ -317,7 +317,7 @@ func twoReplicaDrivers(t *testing.T, c *kind.Cluster) (a, b *sessiondriver.Drive
 	t.Cleanup(a.Close)
 	b = sessiondriver.NewKeptForTarget(t, "pod/"+pods[1])
 	t.Cleanup(b.Close)
-	sweepStaleLifecycleTenants(t, b)
+	sweepStaleTenants(t, b, lifecycleDrainTenantPrefix)
 	tenant = fmt.Sprintf("%s%d", lifecycleDrainTenantPrefix, time.Now().UnixNano())
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()

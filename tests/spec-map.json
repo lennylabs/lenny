@@ -1392,6 +1392,8 @@
         "tests/tier3_contract/admin_credential_pool_codes/admin_credential_pool_codes_test.go",
         "tests/tier9_security/credential_secret_ref_cross_tenant_test.go",
         "tests/tier9_security/credential_secret_data_value_test.go",
+        "tests/tier9_security/credentials_namespace_live_test.go",
+        "tests/tier5_e2e_kind/credentials_namespace_test.go",
         "tests/tier4_integration/credential_pool_secret_write_pg_test.go",
         "tests/tier7a_load_local/credential_pool_secret_write_interleaving_test.go",
         "tests/tier8_chaos/credential_secret_write_residue_test.go",

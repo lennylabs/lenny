@@ -1284,10 +1284,12 @@
         "tests/tier5_e2e_kind/network_policy_test.go",
         "tests/tier5_e2e_kind/bootstrap_first_install_test.go",
         "tests/tier5_e2e_kind/lenny_ops_first_deploy_test.go",
-        "tests/tier5_e2e_kind/airgap_registry_mirror_test.go"
+        "tests/tier5_e2e_kind/airgap_registry_mirror_test.go",
+        "tests/tier5_e2e_kind/credentials_namespace_test.go"
       ],
       "security": [
-        "tests/tier9_security/ops_agent_pod_boundary_test.go"
+        "tests/tier9_security/ops_agent_pod_boundary_test.go",
+        "tests/tier9_security/credentials_namespace_live_test.go"
       ]
     },
     "cmd/runtimes/echo/": {
