@@ -85,3 +85,73 @@ The implementor owns this file. It stays empty until an implementation records a
 **Why.** The gateway runs `git ls-remote` and `git fetch` in process, and the gateway image is `gcr.io/distroless/static:nonroot`, which has no `git` binary. Every plan binding of a `gitClone` source on the deployed image therefore ends in `503 GIT_CLONE_REF_RESOLVE_TRANSIENT` with reason `network_error`. The kind install also has no HTTPS Git server the gateway trusts, and `allow-gateway-egress` excepts private ranges. Changing the image base is outside this proposal.
 
 **What a later reader would otherwise get wrong.** A reader of the TEST-1 tier 5 bullet would take an authenticated clone on kind as verified. It is not, and the missing `git` binary affects every `gitClone` on a deployed gateway, public repositories included.
+
+## Proposed: The tier 5 authenticated gitClone subtest skips on F-14.1.37
+
+**Status:** proposed
+
+**Reported by:** step S22 (TEST-1: cross-tier tests). This report covers the same bullet as the earlier entry "The tier 5 authenticated gitClone stops at the Token Service read" and adds the expected error code and the finding that now tracks the defect.
+
+**What the proposal says.** The TEST-1 tier 5 bullet in the non-spec changes states that a `secretData` add followed by an authenticated `gitClone` succeeds.
+
+**What landed instead.** `TestSecretDataCredentialReadThroughTokenServiceAtGitCloneBinding_spec_4_9` in `tests/tier5_e2e_kind/credentials_namespace_test.go` stops at the Token Service keyed read and expects `GIT_CLONE_REF_RESOLVE_TRANSIENT`. Its `authenticated clone` subtest skips with the reason `blocked: F-14.1.37`.
+
+**Why.** The gateway image is distroless and has no `git` binary, so every `gitClone` `ls-remote` and `fetch` fails with `network_error`. The kind install has no trusted HTTPS Git fixture. Changing the image is outside this proposal, and the finding text left the bullet for a human to decide. `BUILD-GAPS.md` tracks the defect as F-14.1.37.
+
+**What a later reader would otherwise get wrong.** A reader of the TEST-1 tier 5 bullet would take an authenticated clone on kind as verified. The test verifies the Token Service keyed read only, and the clone itself stays unverified until F-14.1.37 closes.
+
+## Proposed: The new finding is F-4.9.45, and this step filed no unstaged-defect entries
+
+**Status:** proposed
+
+**Reported by:** step S24 (REC-1: BUILD-GAPS records).
+
+**What the proposal says.** REC-1 in the non-spec changes files the new finding under the next free F-4.9.N id, F-4.9.42 at drafting, and files each entry of the summary's unstaged-defects list as an open finding.
+
+**What landed instead.** The finding is F-4.9.45 in `BUILD-GAPS.md`, placed after F-4.9.44. Step S24 filed no unstaged-defect entries.
+
+**Why.** F-4.9.42, F-4.9.43, and F-4.9.44 were already taken, and F-4.9.45 was absent from every local and remote ref checked at landing. The step task states that the unstaged-defect entries were already filed in merge `b3a35f1f0`, so filing them again would duplicate them. The step did not check each of those entries individually.
+
+**What a later reader would otherwise get wrong.** A reader of REC-1 would look for the new finding under F-4.9.42 and find a different finding. A reader would also take step S24 as the step that filed the unstaged-defect entries. The record that those entries were filed in merge `b3a35f1f0` comes from the step task, and step S24 did not confirm it entry by entry.
+
+## Proposed: Commit f6fe7c6f8 keeps proposal change ids in its message
+
+**Status:** proposed
+
+**Reported by:** the design-conformance review.
+
+**What the proposal says.** The non-spec changes and the spec changes define `SPEC-1`, `SPEC-2`, and `SPEC-3` as staging labels of the proposal document.
+
+**What landed instead.** The subject and body of commit `f6fe7c6f8` carry those labels where the sibling spec commits name the section and the behavior.
+
+**Why.** Committed history is not rewritten, so the message stands. No such label appears in the code, comments, test names, `BUILD-GAPS.md`, docs, or spec text.
+
+**What a later reader would otherwise get wrong.** A reader of first-parent history would look for `SPEC-1` in the specification. The commit lands the §4.9 credentials namespace, `secretRef` rules, `secretData` path, and per-read Token Service resolution.
+
+## Proposed: A gateway with a Token Service and no cluster client holds a failing writer
+
+**Status:** proposed
+
+**Reported by:** the design-conformance review.
+
+**What the proposal says.** The design wires the writer and the read adapter only when the Token Service address is configured, and it does not state what happens when that gateway has no cluster client.
+
+**What landed instead.** The address alone gates the writer. When no cluster config or clientset can be built, the gateway logs the cause, keeps serving, and holds a writer whose every operation fails. An admin write that needs a Secret operation answers `503 SERVICE_UNAVAILABLE` under rule 5. Tenant deletion Phase 4 fails and retries, including for a tenant with no Lenny-written reference, because the writer is non-nil and the delete-collection runs on every Phase 4. The cluster config is resolved once at startup, so recovery requires a restart.
+
+**Why.** A startup failure adds a precondition the design does not state, and a nil writer would report `TOKEN_SERVICE_NOT_CONFIGURED` for a configured Token Service, which rule 6 forbids.
+
+**What a later reader would otherwise get wrong.** A reader of rule 6 would expect tenant deletion on such a gateway to proceed for a tenant with no Lenny-written reference. That branch applies only to a gateway with no Token Service.
+
+## Proposed: The Token Service reads LENNY_CREDENTIALS_NAMESPACE
+
+**Status:** proposed
+
+**Reported by:** the design-conformance review.
+
+**What the proposal says.** The proposal names the `--secret-namespace` flag and the Helm value `credentials.namespace`, and it does not name an environment override for the Token Service.
+
+**What landed instead.** `--secret-namespace` defaults to `LENNY_CREDENTIALS_NAMESPACE` and then to `credential.DefaultNamespace`, and the `POD_NAMESPACE` fallback is gone.
+
+**Why.** The gateway's `--credentials-namespace` flag has the same override. Without it, an operator who sets the variable would move the gateway alone and the two binaries would target different namespaces.
+
+**What a later reader would otherwise get wrong.** A reader of the flag declaration would take the environment override for a proposal requirement. It exists only to keep the two binaries on one namespace.
