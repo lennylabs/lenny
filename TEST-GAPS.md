@@ -8543,6 +8543,14 @@ Proposal 0017 ("re-architect §17.4 Embedded Mode to run the full production sta
 - **Dependencies:** none.
 - **Resolution:** `install.sh` captures the list into a variable before it matches, so `grep` closes no pipe. The stub now writes one line at a time with a 50 ms pause, which makes the old pipeline fail on every run: restoring it failed the subtest 5 of 5 times. The test then passed 100 of 100 runs under load.
 
+### - [x] T-17.4.48 — Embedded Postgres fixtures use hand-chosen fixed ports, and three ports are shared by two packages [Medium] — RESOLVED (branch fix/unit-flakes)
+- **Spec/Doc:** TESTING.md §17.10 (Flake budget); `tests/testinfra/ports`, which states that §17.4 forbids port hardcoding.
+- **Existing tests:** `pkg/ops/upgradeservice/pgstore/pgstore_test.go` and the other embedded Postgres store tests.
+- **Evidence:** The four `pkg/ops/upgradeservice/pgstore` tests failed in a full unit tier of 2026-10-31 with `process already listening on port 15523`. `pkg/ops/baselinestore/pgstore_test.go` names the same port, and `go test` runs packages in parallel. Running the two test binaries at once reproduced the failure on the first attempt, with baselinestore losing the race that time: three of its tests failed with the same message. Ports 15534 and 15547 are each shared by two packages in the same way, and every fixed port also collides across worktrees on one host.
+- **Gap:** A package fails whenever another package or worktree holds its port.
+- **Dependencies:** none.
+- **Resolution:** All fourteen fixed ports are now `Port: 0`, which `embpg` resolves to a free port at Start. The tier-0 `tests/tier0_static/embedded_postgres_port_test.go::TestEmbeddedPostgresPortsAreEphemeral_spec_17_10` refuses a literal port and failed against the previous tree. One narrow window remains: `embpg.freePort` closes its listener before Postgres binds, so another process can take the port in between. That window was not observed and has no retry. The two packages then ran at once with `-count=30`: baselinestore passed all 90 tests, and upgradeservice ran 90 of its 120 tests with no failure before the 560-second limit of the run ended it, with no port collision in either.
+
 ## §17.5 Cloud Portability <a id="t-17.5"></a>
 **Spec file:** `spec/17_deployment-topology.md`
 **Reviewed:** 2026-07-06

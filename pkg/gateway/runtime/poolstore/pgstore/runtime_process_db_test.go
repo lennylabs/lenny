@@ -36,7 +36,7 @@ func TestRuntimeProcessSessionPolicyPgRoundTrip_spec_5_2(t *testing.T) {
 	}
 	pg := embpostgres.New(embpostgres.Config{
 		DataDir:      t.TempDir(),
-		Port:         15549,
+		Port:         0,
 		Database:     "lenny",
 		Username:     "lenny",
 		Password:     "lenny",
