@@ -31,6 +31,7 @@ func newResponsesHandler(t *testing.T) (*translator.OpenResponsesHandler, sessio
 	store := memstore.New()
 	h := translator.NewOpenResponsesHandler(store, executor.NewEchoExecutor(), translator.OpenResponsesOptions{
 		HolderForwarder: responsesstub.LocalForwarder{},
+		SessionAccess:   ownerprincipal.SessionAccess{},
 		Terminal:        responsesstub.ReleasingTerminal{Exec: nil, Store: store},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
@@ -261,7 +262,7 @@ func seedResponses(t *testing.T, store sessionstore.Store, tenant, id, parent st
 		responses = append(responses, sessionstore.ConversationResponse{CreatedAt: now, Completed: c})
 	}
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		ID: id, TenantID: tenant, UserID: ownerprincipal.Alice, State: session.StateRunning, RuntimeRef: "echo",
 		ContinuationParentID: parent, Responses: responses, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed %s: %v", id, err)
@@ -271,6 +272,7 @@ func seedResponses(t *testing.T, store sessionstore.Store, tenant, id, parent st
 func getResponse(t *testing.T, h *translator.OpenResponsesHandler, tenant, id string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses/"+id, nil)
+	req = req.WithContext(ownerprincipal.Context(req.Context(), ownerprincipal.Alice))
 	req.Header.Set("X-Lenny-Tenant-ID", tenant)
 	rr := httptest.NewRecorder()
 	h.Handler().ServeHTTP(rr, req)
@@ -375,6 +377,7 @@ func newContinuityHandler(t *testing.T, exec executor.Executor, ts transcriptsto
 	var n int
 	h := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
 		HolderForwarder: responsesstub.LocalForwarder{},
+		SessionAccess:   ownerprincipal.SessionAccess{},
 		Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: store},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
@@ -534,7 +537,7 @@ func TestOpenResponsesContinuationEmptyTranscript_spec_15(t *testing.T) {
 	// A referenced response row that exists but has no recorded transcript.
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: "resp_seed", TenantID: "acme", State: session.StateCompleted,
+		ID: "resp_seed", TenantID: "acme", UserID: ownerprincipal.Alice, State: session.StateCompleted,
 		RuntimeRef: "echo", CreatedAt: now, UpdatedAt: now,
 		Responses: []sessionstore.ConversationResponse{{CreatedAt: now, Completed: true}},
 	}); err != nil {
@@ -580,6 +583,7 @@ func TestOpenResponsesRecordsChainRootTurn_spec_15_1(t *testing.T) {
 	failStore := memstore.New()
 	failH := translator.NewOpenResponsesHandler(failStore, failExec, translator.OpenResponsesOptions{
 		HolderForwarder: responsesstub.LocalForwarder{},
+		SessionAccess:   ownerprincipal.SessionAccess{},
 		Terminal:        responsesstub.ReleasingTerminal{Exec: failExec, Store: failStore},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
@@ -689,6 +693,7 @@ func TestOpenResponsesCommitsOneCompletedFirstResponse_spec_15(t *testing.T) {
 	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	h := translator.NewOpenResponsesHandler(store, &captureExecutor{}, translator.OpenResponsesOptions{
 		HolderForwarder:  responsesstub.LocalForwarder{},
+		SessionAccess:    ownerprincipal.SessionAccess{},
 		Terminal:         responsesstub.ReleasingTerminal{Exec: nil, Store: store},
 		DevTenantHeader:  true,
 		Clock:            func() time.Time { return created },
@@ -746,6 +751,7 @@ func TestOpenResponsesCommitFailureIs500_spec_15(t *testing.T) {
 	exec := &dispositionExecutor{}
 	h := translator.NewOpenResponsesHandler(updateFailStore{Store: inner}, exec, translator.OpenResponsesOptions{
 		HolderForwarder: responsesstub.LocalForwarder{},
+		SessionAccess:   ownerprincipal.SessionAccess{},
 		Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: updateFailStore{Store: inner}},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
@@ -793,6 +799,7 @@ func TestOpenResponsesContinuationResolveErrorIs500_spec_15(t *testing.T) {
 	var n int
 	h := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
 		HolderForwarder: responsesstub.LocalForwarder{},
+		SessionAccess:   ownerprincipal.SessionAccess{},
 		Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: store},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
@@ -853,6 +860,7 @@ func TestOpenResponsesGetEchoesLineage_spec_15(t *testing.T) {
 func getPreviousResponseID(t *testing.T, h *translator.OpenResponsesHandler, id string) string {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/v1/responses/"+id, nil)
+	req = req.WithContext(ownerprincipal.Context(req.Context(), ownerprincipal.Alice))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
 	h.Handler().ServeHTTP(rr, req)

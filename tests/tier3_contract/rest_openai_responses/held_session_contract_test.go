@@ -54,7 +54,8 @@ func (refusingForwarder) ForwardResponsesTurn(w http.ResponseWriter, _ *http.Req
 func (refusingForwarder) Forwarded(context.Context) bool { return false }
 
 // newHeldServer serves the Open Responses translator with a holding binder
-// and the given forwarder. The forwarder is required; responsesstub.LocalForwarder
+// and the given forwarder, under alice's principal, with a session access
+// predicate that grants the row's owner. The forwarder is required; responsesstub.LocalForwarder
 // is the single-process default that serves every turn locally.
 func newHeldServer(t *testing.T, exec executor.Executor, fwd translator.HolderForwarder) *httptest.Server {
 	t.Helper()
@@ -65,8 +66,9 @@ func newHeldServer(t *testing.T, exec executor.Executor, fwd translator.HolderFo
 		SingleShotBinder: holdingBinder{store: store},
 		Transcripts:      transcriptstore.NewMemory(),
 		HolderForwarder:  fwd,
+		SessionAccess:    ownerprincipal.SessionAccess{},
 	})
-	srv := httptest.NewServer(h.Handler())
+	srv := httptest.NewServer(ownerprincipal.Wrap(h.Handler(), ownerprincipal.Alice))
 	t.Cleanup(srv.Close)
 	return srv
 }

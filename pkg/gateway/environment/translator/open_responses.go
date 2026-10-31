@@ -233,6 +233,16 @@ type OpenResponsesOptions struct {
 	// spec: §15 (Open Responses conversation sessions); §7.2.
 	Terminal SessionTerminal
 
+	// SessionAccess decides whether the request principal may read the
+	// session a response id names. GET /v1/responses/{id}, the resolution of
+	// previous_response_id, and every hop of a cold continuation's lineage
+	// walk ask it, and a session it refuses answers as an unknown id does.
+	// The gateway wires the session server. A nil SessionAccess refuses
+	// every session, so a wiring that omits it serves no continuation.
+	// spec: §10.2 (Session ownership); §15 (Open Responses conversation
+	// sessions).
+	SessionAccess SessionAccess
+
 	// DevTenantHeader, when true, lets a request with no authenticated
 	// principal name its tenant through the X-Lenny-Tenant-ID dev header
 	// and resolves a request with neither to `default`. The gateway sets
@@ -291,6 +301,7 @@ func NewOpenResponsesHandler(store sessionstore.Store, exec executor.Executor, o
 			sessions:           store,
 			transcripts:        opts.Transcripts,
 			primaryReadTimeout: opts.PrimaryReadTimeout,
+			access:             opts.SessionAccess,
 		},
 		devTenantHeader: opts.DevTenantHeader,
 	}
@@ -318,6 +329,7 @@ type responsesTurn struct {
 	body       []byte
 	msgs       []executor.Message
 	tenantID   string
+	subject    string
 	envScope   string
 	runtimeRef string
 	now        time.Time
@@ -408,6 +420,7 @@ func (h *OpenResponsesHandler) parseTurn(w http.ResponseWriter, r *http.Request)
 		return responsesTurn{}, false
 	}
 	t.tenantID = tenantID
+	t.subject = principalSubject(r.Context())
 	// spec: §10.6 — a model named "environments/{name}/{model}"
 	// scopes the implicit session to the named environment; the bare
 	// model is the runtime reference. F-10.6.11.
@@ -436,10 +449,13 @@ func writeResolveError(w http.ResponseWriter, err error) {
 // warmEligible reports whether a continuation of response n on row meets the
 // warm conditions: the session is running, response n is its newest response
 // and has completed, the session's recovery_generation equals the value
-// recorded for response n, and the request asks for the user, runtime, and
-// environment the creating request asked for. The runtime comparison reads
+// recorded for response n, the request principal is the session's owner, and
+// the request asks for the runtime and environment the creating request asked
+// for. The adapter's `user` request field plays no part: a principal that may
+// read another user's session continues it cold, on a session it owns. The runtime comparison reads
 // RequestedRuntimeRef, never RuntimeRef, which session creation rewrites.
-// spec: §15 (Open Responses conversation sessions).
+// spec: §15 (Open Responses conversation sessions); §10.2 (Session
+// ownership).
 func warmEligible(row sessionstore.Session, n int, t responsesTurn) bool {
 	if row.State != session.StateRunning || n != len(row.Responses) || n < 1 {
 		return false
@@ -447,7 +463,7 @@ func warmEligible(row sessionstore.Session, n int, t responsesTurn) bool {
 	head := row.Responses[n-1]
 	return head.Completed &&
 		row.RecoveryGeneration == head.RecoveryGeneration &&
-		row.UserID == t.req.User &&
+		t.subject != "" && row.UserID == t.subject &&
 		row.RequestedRuntimeRef == t.runtimeRef &&
 		row.Environment == t.envScope
 }

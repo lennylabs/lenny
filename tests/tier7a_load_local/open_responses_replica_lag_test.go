@@ -128,6 +128,7 @@ func TestOpenResponsesContinuationSurvivesReplicaLag_spec_15(t *testing.T) {
 		SingleShotBinder: binder,
 		Transcripts:      transcriptstore.NewMemory(),
 		HolderForwarder:  responsesstub.LocalForwarder{},
+		SessionAccess:    ownerprincipal.SessionAccess{},
 		Terminal:         responsesstub.ReleasingTerminal{Exec: exec, Store: store},
 		DevTenantHeader:  true,
 	}).Handler()
@@ -196,6 +197,7 @@ func TestOpenResponsesColdLineageSurvivesReplicaLag_spec_15(t *testing.T) {
 		SingleShotBinder: &lagBinder{store: store, coldOnly: true},
 		Transcripts:      transcriptstore.NewMemory(),
 		HolderForwarder:  responsesstub.LocalForwarder{},
+		SessionAccess:    ownerprincipal.SessionAccess{},
 		Terminal:         responsesstub.ReleasingTerminal{Store: store},
 		DevTenantHeader:  true,
 	}).Handler()

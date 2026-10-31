@@ -70,9 +70,10 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 	// session whose turn failed through the session server's terminal claim
 	// and post-terminal hook. Both are always wired: the session server
 	// answers local when it coordinates every session and not-delivered when
-	// no forward client exists.
+	// no forward client exists. The session server's ownership predicate
+	// decides which sessions a response id may resolve to.
 	// spec: §15 (Open Responses conversation sessions); §29.3 (Interactive
-	// message send) Forwarding.
+	// message send) Forwarding; §10.2 (Session ownership).
 	singleShotBinder := sessionSingleShotBinder{srv: sessionSrv, runtimes: w.runtimes, capOverrides: w.capOverrides}
 	openaiHandler := translator.NewOpenAIChatHandler(w.sessions, w.exec, translator.OpenAIChatOptions{Clock: clockinject.Now, SingleShotBinder: singleShotBinder, DevTenantHeader: *w.f.devMode})
 	responsesHandler := translator.NewOpenResponsesHandler(w.sessions, w.exec, translator.OpenResponsesOptions{
@@ -81,6 +82,7 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 		Transcripts:        w.transcripts,
 		HolderForwarder:    sessionHolderForwarder{srv: sessionSrv},
 		Terminal:           sessionSrv,
+		SessionAccess:      sessionSrv,
 		DevTenantHeader:    *w.f.devMode,
 		PrimaryReadTimeout: *w.f.sessionPrimaryReadTimeout,
 	})

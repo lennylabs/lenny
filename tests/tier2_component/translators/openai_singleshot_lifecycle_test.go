@@ -1150,13 +1150,15 @@ func TestHeldResponsesSessionFailedWarmTurnDrainsTheInbox_spec_15(t *testing.T) 
 		SingleShotBinder: ssSingleShotBinder{srv: srv, hold: true},
 		DefaultRuntime:   "echo",
 		Terminal:         srv,
+		SessionAccess:    srv,
 	})
 	post := func(prev string) *httptest.ResponseRecorder {
-		// The held row's owner is the creating principal's subject, so the
-		// body names that subject as its user: the continuation then asks
-		// for the user the row records and stays warm-eligible.
+		// Every turn runs under alice's principal. The held row's owner is
+		// the creating principal's subject, so the continuation's principal
+		// is the owner, which resolves the response through the session
+		// server's ownership predicate and keeps the turn warm-eligible.
 		// spec: §15 (Open Responses conversation sessions), §10.2 (Session ownership).
-		body := map[string]any{"model": "echo", "input": "hello", "user": ownerprincipal.Alice}
+		body := map[string]any{"model": "echo", "input": "hello"}
 		if prev != "" {
 			body["previous_response_id"] = prev
 		}

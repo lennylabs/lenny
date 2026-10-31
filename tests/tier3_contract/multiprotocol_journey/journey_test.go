@@ -127,6 +127,7 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 	respHandler := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
 		HolderForwarder: responsesstub.LocalForwarder{},
 		Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: store},
+		SessionAccess:   restHandler,
 		DevTenantHeader: true,
 		Clock:           clock,
 		IDFunc:          func() string { return idSeed },

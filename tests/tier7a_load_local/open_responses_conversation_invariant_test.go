@@ -35,11 +35,14 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
 )
@@ -327,21 +330,36 @@ func newORInvWorld(t *testing.T) *orInvWorld {
 		Transcripts:      w.recorder,
 		HolderForwarder:  responsesstub.LocalForwarder{},
 		Terminal:         w.terminal,
+		SessionAccess:    sessionserver.New(store, sessionserver.Options{}),
 		DevTenantHeader:  true,
 	}).Handler()
 	return w
 }
 
-// post sends one turn as the principal whose subject is user, with user
-// as the request's user field, and returns the status and the response id.
-func (w *orInvWorld) post(user, prev, input string) (int, string) {
-	body := map[string]any{"model": orInvRuntimeRef, "input": input, "user": user}
+// orInvOwner is the principal every driver turn runs under, the owner of
+// every session the driver creates.
+var orInvOwner = authmw.Principal{Subject: orInvUser}
+
+// orInvAuditor returns the principal of the i-th audit continuation: a
+// tenant-admin that may read every session of the tenant and owns none of
+// the driver's, so its continuation always runs cold on a session it owns.
+//
+// spec: §10.2 (Session ownership) rule 4; §15 (Open Responses conversation
+// sessions).
+func orInvAuditor(i int) authmw.Principal {
+	return authmw.Principal{Subject: "auditor-" + strconv.Itoa(i), TenantID: orInvTenant, Roles: []auth.Role{auth.RoleTenantAdmin}}
+}
+
+// post sends one turn as principal p and returns the status and the
+// response id.
+func (w *orInvWorld) post(p authmw.Principal, prev, input string) (int, string) {
+	body := map[string]any{"model": orInvRuntimeRef, "input": input}
 	if prev != "" {
 		body["previous_response_id"] = prev
 	}
 	raw, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(raw))
-	req = req.WithContext(ownerprincipal.Context(req.Context(), user))
+	req = req.WithContext(authmw.WithPrincipal(req.Context(), p))
 	req.Header.Set("X-Lenny-Tenant-ID", orInvTenant)
 	rr := httptest.NewRecorder()
 	w.handler.ServeHTTP(rr, req)
@@ -368,7 +386,7 @@ func (w *orInvWorld) turn(prev string, fault orInvFault) {
 	if fault != orInvNoFault {
 		w.rt.setFault(k, fault)
 	}
-	code, id := w.post(orInvUser, prev, "in-"+strconv.Itoa(k))
+	code, id := w.post(orInvOwner, prev, "in-"+strconv.Itoa(k))
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	switch code {
@@ -567,12 +585,13 @@ func (w *orInvWorld) expected(id string) []string {
 }
 
 // audit reads each completed response's conversation context through a cold
-// continuation by another user and returns every violated invariant.
+// continuation by a tenant-admin auditor that may read the session but does
+// not own it, and returns every violated invariant.
 func (w *orInvWorld) audit() []string {
 	out := append([]string(nil), w.violations...)
 	for i, id := range w.completed {
 		sid, _ := orInvSplit(id)
-		code, next := w.post("auditor-"+strconv.Itoa(i), id, "chk-"+strconv.Itoa(i))
+		code, next := w.post(orInvAuditor(i), id, "chk-"+strconv.Itoa(i))
 		if w.erased[sid] {
 			if code != http.StatusNotFound {
 				out = append(out, fmt.Sprintf("continuation of %s on an erased session answered %d, want 404", id, code))

@@ -35,6 +35,7 @@ func newIdentityServer(t *testing.T, ts transcriptstore.Store) *httptest.Server 
 	h := translator.NewOpenResponsesHandler(memstore.New(), executor.NewEchoExecutor(), translator.OpenResponsesOptions{
 		HolderForwarder: responsesstub.LocalForwarder{},
 		Terminal:        responsesstub.ReleasingTerminal{Exec: nil, Store: nil},
+		SessionAccess:   ownerprincipal.SessionAccess{},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		Transcripts:     ts,

@@ -51,6 +51,7 @@ func newHeldORFixture(t *testing.T) (*orFixture, *orHoldingBinder, *orCountingFo
 	f.handler = translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
 		HolderForwarder:  fwd,
 		Terminal:         responsesstub.ReleasingTerminal{Exec: exec, Store: store},
+		SessionAccess:    orSessionAccess(store),
 		DevTenantHeader:  true,
 		SingleShotBinder: binder,
 		Transcripts:      f.transcripts,

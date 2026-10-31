@@ -26,9 +26,11 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
@@ -73,11 +75,20 @@ func newORFixture(t *testing.T) *orFixture {
 	f.handler = translator.NewOpenResponsesHandler(f.sessions, f.exec, translator.OpenResponsesOptions{
 		HolderForwarder: responsesstub.LocalForwarder{},
 		Terminal:        responsesstub.ReleasingTerminal{Exec: f.exec, Store: f.sessions},
+		SessionAccess:   orSessionAccess(f.sessions),
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		Transcripts:     f.transcripts,
 	}).Handler()
 	return f
+}
+
+// orSessionAccess returns the session server's §10.2 ownership predicate
+// over store, the predicate the gateway wires into the Open Responses
+// handler.
+// spec: §10.2 (Session ownership) rules 4 and 7.
+func orSessionAccess(store sessionstore.Store) translator.SessionAccess {
+	return sessionserver.New(store, sessionserver.Options{})
 }
 
 func (f *orFixture) do(t *testing.T, method, path, tenant string, body any) (int, []byte) {
@@ -90,12 +101,18 @@ func (f *orFixture) do(t *testing.T, method, path, tenant string, body any) (int
 // spec: §10.2 (Session ownership) rule 1.
 func (f *orFixture) doAs(t *testing.T, subject, method, path, tenant string, body any) (int, []byte) {
 	t.Helper()
+	return f.doAsPrincipal(t, authmw.Principal{Subject: subject}, method, path, tenant, body)
+}
+
+// doAsPrincipal sends one request as the authenticated principal p.
+func (f *orFixture) doAsPrincipal(t *testing.T, p authmw.Principal, method, path, tenant string, body any) (int, []byte) {
+	t.Helper()
 	var buf []byte
 	if body != nil {
 		buf, _ = json.Marshal(body)
 	}
 	req := httptest.NewRequest(method, path, bytes.NewReader(buf))
-	req = req.WithContext(ownerprincipal.Context(req.Context(), subject))
+	req = req.WithContext(authmw.WithPrincipal(req.Context(), p))
 	req.Header.Set("X-Lenny-Tenant-ID", tenant)
 	rr := httptest.NewRecorder()
 	f.handler.ServeHTTP(rr, req)

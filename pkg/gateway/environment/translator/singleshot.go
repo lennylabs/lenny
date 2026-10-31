@@ -91,6 +91,21 @@ type SessionTerminal interface {
 		signals func(context.Context, sessionstore.Session)) sessionstore.Session
 }
 
+// SessionAccess decides whether the principal on ctx may read (act == false)
+// or act on (act == true) a session row. The Open Responses handler asks it
+// for a read of every session a response id names, so a response of a
+// session the caller may not read answers exactly as an unknown id does.
+//
+// The interface is defined at the consumer because the translator cannot
+// import pkg/gateway/sessionserver; the gateway wiring binds it to the
+// session server's SessionAccessible.
+//
+// spec: §10.2 (Session ownership) rules 4, 5, and 7; §15 (Open Responses
+// conversation sessions).
+type SessionAccess interface {
+	SessionAccessible(ctx context.Context, row sessionstore.Session, act bool) bool
+}
+
 // SingleShotSpec carries the adapter-resolved fields the binder maps into
 // a sessionserver create-and-start request. It carries no lineage pointer:
 // the create-and-start reuse surface has no parent field, and setting the
@@ -127,14 +142,21 @@ type SingleShotError struct {
 
 func (e *SingleShotError) Error() string { return e.Code + ": " + e.Message }
 
+// principalSubject returns the Subject of the authenticated principal on
+// ctx, or "" when ctx carries none.
+func principalSubject(ctx context.Context) string {
+	p, _ := authmw.FromContext(ctx)
+	return p.Subject
+}
+
 // principalOwner returns the Subject of the authenticated principal on ctx,
 // the owner of a session the request creates. A missing principal or an
 // empty Subject is the 401 UNAUTHORIZED *SingleShotError.
 //
 // spec: §10.2 (Session ownership) rules 1 and 3.
 func principalOwner(ctx context.Context) (string, error) {
-	if p, ok := authmw.FromContext(ctx); ok && p.Subject != "" {
-		return p.Subject, nil
+	if subject := principalSubject(ctx); subject != "" {
+		return subject, nil
 	}
 	return "", &SingleShotError{
 		HTTPStatus: http.StatusUnauthorized,

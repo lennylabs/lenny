@@ -18,11 +18,14 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
@@ -325,6 +328,7 @@ func newConvFixture(t *testing.T, o convOptions) *convFixture {
 		SingleShotBinder: f.binder,
 		Transcripts:      f.ts,
 		HolderForwarder:  f.forwarder,
+		SessionAccess:    sessionserver.New(inner, sessionserver.Options{}),
 		Terminal:         f.terminal,
 		ReleaseTimeout:   time.Second,
 	})
@@ -527,17 +531,27 @@ func TestOpenResponsesSessionNotHeldIsReleased_spec_15(t *testing.T) {
 	}
 }
 
+// tenantAdminBob is a principal that may read every session of its tenant
+// through the built-in tenant-admin role and owns none of alice's sessions.
+var tenantAdminBob = authmw.Principal{Subject: "bob", TenantID: "acme", Roles: []auth.Role{auth.RoleTenantAdmin}}
+
 // TestOpenResponsesWarmConditionsGoCold_spec_15 breaks each warm condition in
 // turn and asserts the continuation of S.1 goes cold: a second bind, a new
-// session whose ContinuationParentID is S.1, and a dispatch that carries the
-// rehydrated conversation ahead of the new input.
+// session whose ContinuationParentID is S.1 and whose owner is the caller,
+// and a dispatch to that new session that carries the rehydrated
+// conversation ahead of the new input. The owner condition is broken by a
+// tenant-admin that may read alice's session but does not own it, so its
+// continuation runs on a session it owns and alice's held pod receives no
+// dispatch.
 //
-// spec: §15 (Open Responses conversation sessions)
+// spec: §15 (Open Responses conversation sessions); §10.2 (Session
+// ownership)
 func TestOpenResponsesWarmConditionsGoCold_spec_15(t *testing.T) {
 	cases := []struct {
 		name     string
 		breakRow func(*sessionstore.Session)
 		body     map[string]any
+		caller   *authmw.Principal
 	}{
 		{name: "suspended", breakRow: func(s *sessionstore.Session) { s.State = session.StateSuspended }},
 		{name: "resume_pending", breakRow: func(s *sessionstore.Session) { s.State = session.StateResumePending }},
@@ -550,7 +564,7 @@ func TestOpenResponsesWarmConditionsGoCold_spec_15(t *testing.T) {
 			s.Responses = append(s.Responses, sessionstore.ConversationResponse{})
 		}},
 		{name: "recovery generation advanced", breakRow: func(s *sessionstore.Session) { s.RecoveryGeneration++ }},
-		{name: "different user", body: map[string]any{"model": "echo", "user": "bob"}},
+		{name: "principal is not the owner", caller: &tenantAdminBob},
 		{name: "different runtime", body: map[string]any{"model": "other", "user": "alice"}},
 		{name: "different environment", body: map[string]any{"model": "environments/prod/echo", "user": "alice"}},
 	}
@@ -567,17 +581,28 @@ func TestOpenResponsesWarmConditionsGoCold_spec_15(t *testing.T) {
 			}
 			body["input"] = "two"
 			body["previous_response_id"] = head
-			rr := f.post(t, context.Background(), body)
+			ctx, wantOwner := context.Background(), convOwner
+			if tc.caller != nil {
+				ctx, wantOwner = authmw.WithPrincipal(ctx, *tc.caller), tc.caller.Subject
+			}
+			rr := f.post(t, ctx, body)
 			if rr.Code != http.StatusOK {
 				t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
 			}
 			if f.binder.count() != 2 {
 				t.Fatalf("binds = %d, want 2 (cold)", f.binder.count())
 			}
-			if row := f.row(t, "sess_2"); row.ContinuationParentID != head {
+			row := f.row(t, "sess_2")
+			if row.ContinuationParentID != head {
 				t.Errorf("cold session parent = %q, want %q", row.ContinuationParentID, head)
 			}
+			if row.UserID != wantOwner {
+				t.Errorf("cold session owner = %q, want the caller %q", row.UserID, wantOwner)
+			}
 			cold := f.exec.call(t, 1)
+			if cold.sessionID != "sess_2" {
+				t.Errorf("cold dispatch went to %q, want the new session sess_2", cold.sessionID)
+			}
 			assertMessages(t, cold.msgs, []executor.Message{
 				{Role: "user", Content: "one"}, {Role: "assistant", Content: "reply1"}, {Role: "user", Content: "two"},
 			})
@@ -585,6 +610,32 @@ func TestOpenResponsesWarmConditionsGoCold_spec_15(t *testing.T) {
 				t.Errorf("forwarder calls = %d, want 0 on an unforwarded cold continuation", f.forwarder.count())
 			}
 		})
+	}
+}
+
+// TestOpenResponsesWarmIgnoresTheUserField_spec_10_2 pins that the owner
+// condition reads the request principal rather than the adapter's `user`
+// field: the owner continuing its held session with a `user` different from
+// the one its creating request sent is served warm on the held session, with
+// no further bind.
+//
+// spec: §15 (Open Responses conversation sessions); §10.2 (Session
+// ownership) rule 1
+func TestOpenResponsesWarmIgnoresTheUserField_spec_10_2(t *testing.T) {
+	f := newConvFixture(t, convOptions{hold: true})
+	head := f.mustTurn(t, "", "one")
+	before := f.binder.count()
+	rr := f.post(t, context.Background(), map[string]any{
+		"model": "echo", "input": "two", "user": "somebody-else", "previous_response_id": head,
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+	}
+	if binds := f.binder.count() - before; binds != 0 {
+		t.Fatalf("continuation binds = %d, want 0 (warm)", binds)
+	}
+	if warm := f.exec.call(t, 1); warm.sessionID != "sess_1" {
+		t.Errorf("warm dispatch went to %q, want the held session sess_1", warm.sessionID)
 	}
 }
 
@@ -1151,6 +1202,7 @@ func TestOpenResponsesResolutionReadsThePrimary_spec_15(t *testing.T) {
 				})
 			}
 			req := httptest.NewRequest(http.MethodGet, "/v1/responses/"+third, nil)
+			req = req.WithContext(ownerprincipal.Context(req.Context(), convOwner))
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
 			rr := httptest.NewRecorder()
 			f.h.Handler().ServeHTTP(rr, req)

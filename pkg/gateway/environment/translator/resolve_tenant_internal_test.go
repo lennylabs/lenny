@@ -66,6 +66,7 @@ func TestAdaptersRefuseUnauthenticatedOutsideDevMode(t *testing.T) {
 	chat := NewOpenAIChatHandler(store, exec, OpenAIChatOptions{}).Handler()
 	responses := NewOpenResponsesHandler(store, exec, OpenResponsesOptions{
 		HolderForwarder: responsesstub.LocalForwarder{},
+		SessionAccess:   ownerAccess{},
 		Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: store},
 	}).Handler()
 	for _, c := range []struct {
