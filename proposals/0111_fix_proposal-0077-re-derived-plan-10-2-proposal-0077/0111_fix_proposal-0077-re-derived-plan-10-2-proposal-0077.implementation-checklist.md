@@ -2,7 +2,7 @@
 
 ## Implementation checklist
 
-External prerequisites: proposal 0112 lands first (summary Decision 22). Plan step R14 (agent-pod mTLS client identity) is a recorded prerequisite for private-store serving to take effect in a deployment and does not block landing 0111 (summary Decision 25). Until R14 lands, S22's Kind private rows are recorded skips naming R14, and the change that lands R14 or the first change after it lifts them.
+External prerequisites: proposal 0112 lands first (summary Decision 22). Plan step R14 (agent-pod mTLS client identity) is a recorded prerequisite for private-store serving to take effect in a deployment and does not block landing 0111 (summary Decision 25).
 
 - [ ] **S1 · spec** — SPEC-1. The §5.1 example edits and the merge-table rule.
       Tiers 0, 11. Depends on: —
@@ -29,7 +29,7 @@ External prerequisites: proposal 0112 lands first (summary Decision 22). Plan st
 - [ ] **S12 · test** — INFRA-1. The gating spike and its recorded results.
       Tiers 0, 7a. Depends on: S3
 - [ ] **S13 · code** — CODE-1. `Dockerfile.git`, the pipeline entries, and the BUILD-GAPS filing.
-      Tiers 0, 1, 5. Depends on: S4, S5
+      Tiers 0, 1, 3, 5. Depends on: S4, S5
 - [ ] **S14 · code** — CODE-2. The `gitRepository` entry through the CRD, `runtimestore`, the flag, and the decoder, and the `podIdentityEnforced` predicate.
       Tiers 0, 1, 2, 3. Depends on: S1, S2
 - [ ] **S15 · code** — CODE-7. The `git-https` provider, host binding, `lenny/vcs_token`, and the key parameter on the VCS Secret reader.
@@ -46,9 +46,9 @@ External prerequisites: proposal 0112 lands first (summary Decision 22). Plan st
       Tiers 0, 1, 3, 4. Depends on: S2, S3, S4, S5, S6, S7, S16, S18, S19
 - [ ] **S21 · code** — CODE-6. The capture copy and restore completion.
       Tiers 0, 1, 4. Depends on: S3, S4, S5, S20
-- [ ] **S22 · test** — TEST-1. The case list across the reached tiers, with the private rows at tiers 3 and 4 and the Kind private rows as recorded skips naming R14.
-      Tiers 0, 1, 2, 3, 4, 5, 7a, 9, 11. Depends on: S13, S14, S15, S16, S17, S18, S19, S20, S21, S24
+- [ ] **S22 · docs** — DOCS-1. The pages that mirror the staged spec edits.
+      Tiers 0, 11. Depends on: S1, S2, S3, S5, S6, S7, S8, S9, S11, S18, S19
 - [ ] **S23 · docs** — REC-1. The defect filings.
       Tiers 0. Depends on: —
-- [ ] **S24 · docs** — DOCS-1. The pages that mirror the staged spec edits.
-      Tiers 0, 11. Depends on: S1, S2, S3, S5, S6, S7, S8, S9, S11, S18, S19
+- [ ] **S24 · test** — TEST-1. The case list across the reached tiers, with the private rows at tiers 3 and 4 and the Kind private rows as recorded skips naming R14.
+      Tiers 0, 1, 2, 3, 4, 5, 7a, 8, 9, 11. Depends on: S13, S14, S15, S16, S17, S18, S19, S20, S21, S22

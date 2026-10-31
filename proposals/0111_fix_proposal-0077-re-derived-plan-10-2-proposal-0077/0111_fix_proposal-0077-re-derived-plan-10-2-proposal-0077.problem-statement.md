@@ -30,8 +30,8 @@ Other open design points the run must decide:
 - **Cache refresh cadence.**
 - **Working-tree checkout cost** for very large trees: sparse checkout or a reused tree.
 - **Disk sizing** and the failure mode when the cache volume is full. The sharedAssets precedent is an emptyDir bounded by node-local ephemeral storage.
-- **Interaction with proposal 0086.** Proposal 0086 is Approved and not yet implemented. It binds and pins the plan at creation or finalize, composes runtime `workspaceDefaults` into the bound plan, and states that setup runs per session after materialization, worded to admit a later warm-time mode. The current spec still pins `resolvedCommitSha` "at session creation" (§14, §15.1). Proposal 0111 is drafted against 0086's post-landing wording ("when the plan binds").
-- **The §14 per-slot scope note.** §14 says that the pool model relies on plan uniformity "to pre-warm pods with a single workspace template". No pool-level workspace template exists in the spec or the code. The run reconciles that sentence with the repository template.
+- **Interaction with proposal 0086.** Proposal 0086 is Implemented. It binds and pins the plan at creation or finalize, composes runtime `workspaceDefaults` into the bound plan, and states that setup runs per session after materialization, worded to admit a later warm-time mode. The spec pins `resolvedCommitSha` "when the plan binds" (§14, §15.1).
+- **The §14 per-slot scope note.** Proposal 0086 deleted this note, which said that the pool model relies on plan uniformity "to pre-warm pods with a single workspace template". No pool-level workspace template exists in the spec or the code.
 - **Observability:** cache hit, delta size, and fallback metrics.
 
 The plan asks for a spike measuring delta-plus-checkout against a cold clone on a large repository. Stage it as a non-spec test-infra deliverable with its pass criterion, rather than running it during drafting.
@@ -49,9 +49,9 @@ Optional cut: if the owner accepts public repositories only for the first versio
 - (verified) Workspace size cap: `spec/04_system-components.md:273` (`workspaceSizeLimitBytes`, default 512Mi, emptyDir sizeLimit, checkpoint skipped over the limit).
 - (verified) sharedAssets precedent: `spec/06_warm-pod-model.md:406`; `spec/05_runtime-registry-and-pool-model.md:107-110,226`; `pkg/controller/sandbox/podspec/sidecar.go:47` (read-only mount); `pkg/adapter/warmlayout.go:130-158` (adapter materializes only the inline set; `type: artifact` exists in the spec only).
 - (verified) No warm credential and tenant pinning: `spec/06_warm-pod-model.md:15,26`; `spec/05_runtime-registry-and-pool-model.md:456-457` (`lenny.dev/tenant-id` set at first assignment).
-- (verified) `resolvedCommitSha` pin timing today: `spec/14_workspace-plan-schema.md:102,104`; `spec/15_external-api-surface.md:624`.
-- (verified) Proposal 0086 status Approved, implemented-date blank (`proposal-status.mjs`); its summary and spec changes state per-session setup timing worded to admit a warm-time mode.
-- (verified) Per-slot scope note: `spec/14_workspace-plan-schema.md:5`.
+- (verified) `resolvedCommitSha` pin timing today: `spec/14_workspace-plan-schema.md:90,92`; `spec/15_external-api-surface.md:705`.
+- (verified) Proposal 0086 status Implemented (`proposal-status.mjs`); its summary and spec changes state per-session setup timing worded to admit a warm-time mode.
+- (verified) Per-slot scope note: absent from `spec/14_workspace-plan-schema.md`, because 0086 SPEC-1 Edit (e) deleted it.
 - (corrected) The original pointer "pkg/adapter (gitClone materialization)" is wrong: no gitClone materialization exists in `pkg/adapter`. The clone lives in `pkg/gateway/provisioning/gitref` and `pkg/gateway/podlifecycle/podsession`.
 
 ## Who observes it
@@ -71,8 +71,8 @@ A session whose repository exceeds 10,000 files or 256 MiB decompressed fails wi
 - No landed or approved proposal, spec mechanism, or code path pre-materializes workspace or git content on a warm pod. A search for alternates, `clone --shared`, `--reference`, bare object store, and git cache across `proposals/`, `spec/`, `docs/`, `pkg/`, `BUILD-GAPS.md`, and `TEST-GAPS.md` matched only 0077, 0111, the plan, and unrelated code.
 - Draft 0077 is the only earlier capture and stages nothing. 0111 supersedes it.
 - sharedAssets (§6.4) is the precedent for the read-only warm-time volume. The code carries only inline file specs passed base64 on `--shared-assets`. Warm-time artifact delivery is specified but unimplemented, so it is missing code this proposal builds or depends on.
-- Proposal 0086 (Approved, not implemented) leaves a hook for a warm-time setup mode and changes the pin timing to "when the plan binds". Setup pre-running is out of 0111's first version, so the setup hook is not needed yet.
-- The §14 per-slot scope note asserts pre-warming "with a single workspace template", which nothing implements.
+- Proposal 0086 (Implemented) left a hook for a warm-time setup mode and changed the pin timing to "when the plan binds". Setup pre-running is out of 0111's first version, so the setup hook is not needed yet.
+- The §14 per-slot scope note, which 0086 deleted, asserted pre-warming "with a single workspace template", which nothing implements.
 - Deployer-side alternatives exist without a platform change: a runtime image with the repository baked in, and parking pre-started sessions in `suspended` (bounded by `maxSuspendedPodHoldSeconds`). The owner chose to build the capability anyway.
 - No open BUILD-GAPS or TEST-GAPS finding covers pre-materialization. F-5.1.23 (owned by 0086) only asks that setup timing stay a default. §21 defers SSH `gitClone` and does not mention a warm cache.
 
@@ -84,14 +84,13 @@ A session whose repository exceeds 10,000 files or 256 MiB decompressed fails wi
   - Refuted, central to the design: the statement assumed the pod may run git against remote content. §13.4 and the adapter's F-7.4.1 guard forbid pod binaries from decompressing untrusted input, and a git fetch unpacks remote-supplied zlib packfiles. Either pack retrieval moves to the gateway or §13.4 is relaxed for this path.
   - Holds: sharedAssets is a read-only emptyDir filled by the adapter at warm time; its size is bounded by node-local ephemeral storage.
   - Holds: a warm pod holds no credential lease.
-  - Holds: `resolvedCommitSha` is pinned at session creation and replay clones the pinned SHA.
+  - Holds: `resolvedCommitSha` is pinned when the plan binds and replay clones the pinned SHA.
   - Holds: per-slot repositories fit the slot model; the scrub names no other volume; the default non-recycling pool serves one session per pod.
-  - Holds: 0086 is Approved with the described contract; the plan entry and legacy 0077 exist as described.
+  - Holds: 0086 is Implemented with the described contract; the plan entry and legacy 0077 exist as described.
 - **evidence lens (revise).**
   - Verified: plan entry, legacy capture, sharedAssets precedent, no warm credential lease, gateway clone path, and §5.2 scrub pointer.
-  - Caveat: 0086 is Approved but not implemented, so "pin at bind" is the pending contract and the current spec still says "at session creation".
   - Corrected: the code pointer "pkg/adapter (gitClone materialization)" drifted; the clone lives in the gateway. The design moves git network access into the pod for the first time, so the per-session fetch's credential and network path and the gateway-clone boundary are decisions the run must make.
-- **prior-art lens (stands).** Nothing pre-materializes git content on a warm pod; 0077 is an unconverged draft. sharedAssets is a precedent for the volume and mount only, with inline files in code. The §14 gateway-clone sentence constrains the design. 0086 leaves a hook and changes the pin wording. The §14 per-slot scope note is aspirational and needs reconciling. No open gap finding covers the capability.
+- **prior-art lens (stands).** Nothing pre-materializes git content on a warm pod; 0077 is an unconverged draft. sharedAssets is a precedent for the volume and mount only, with inline files in code. The §14 gateway-clone sentence constrains the design. 0086 left a hook, changed the pin wording, and deleted the §14 per-slot scope note. No open gap finding covers the capability.
 - **scope lens (revise).** One proposal: the settled pieces depend on each other, and the spike is correctly a non-spec deliverable. Load-bearing: the statement omitted the in-pod git network path, which applies to public repositories too and to both the warm fill and the session delta. Load-bearing: default egress blocks any git host, so the network and credential path is the central decision. Private-repository tenancy is its own open point and the seam for an optional public-only first version. "Extensible to other content" is bounded as a non-goal with an extension point. Where the template lives is a detail within the proposal.
 - **impact lens (revise).** The gap is real: every bind, resume, and restore clones cold with no cache. Load-bearing: for very large repositories the consequence is a failed session (archive validators of 256 MiB and 10,000 entries, a 5-minute clone timeout, the 512Mi workspace cap, skipped checkpoints), so the design must decide whether a cached clone bypasses the archive path. Load-bearing: pod egress for the warm fill, the delta, and the fallback is unaddressed. Checkpoint and restore of an alternates-backed repository on a pod lacking the cache is an unnamed consequence. Small-repository users are unaffected; the impact falls on owner-prioritized large-repository deployers.
 - **alternatives lens (revise).** Deployer-side alternatives (baked image, suspended sessions) exist but the owner chose to build the capability. Load-bearing: in-pod fetches reverse §14, F-7.4.1, and default egress, including at session time. Load-bearing: the smallest change that keeps the owner's direction keeps network I/O and credentials on the gateway, which delivers the store at warm time and the pack delta at session time while the pod runs only local git operations. Load-bearing: warm pods are tenant-unpinned, so private repositories are a tenancy question first; the first version can limit caching to public repositories or single-tenant pools. Warm-time sharedAssets artifact delivery is unimplemented. The 0086 interaction is contained and reopens nothing in 0086.
