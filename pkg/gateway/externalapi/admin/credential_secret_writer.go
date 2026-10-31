@@ -56,6 +56,43 @@ type SecretOwner struct {
 	CredentialID string
 }
 
+// unavailableCredentialSecretWriter is the writer of a gateway that has a
+// Token Service but no cluster client. Every operation fails, so a write
+// that needs a Secret operation takes the rule 5 503 and tenant deletion
+// Phase 4 fails and retries. A nil writer would instead report that no Token
+// Service is configured, which rule 6 reserves for exactly that condition.
+//
+// spec: §4.9 (Credential Storage Topology) — Credential values submitted
+// through the admin API rules 5 and 6.
+type unavailableCredentialSecretWriter struct {
+	cause error
+}
+
+// NewUnavailableCredentialSecretWriter returns a CredentialSecretWriter
+// whose every operation fails with an error wrapping cause.
+func NewUnavailableCredentialSecretWriter(cause error) CredentialSecretWriter {
+	return &unavailableCredentialSecretWriter{cause: cause}
+}
+
+// Put implements CredentialSecretWriter.
+func (w *unavailableCredentialSecretWriter) Put(context.Context, string, SecretOwner, map[string]string) error {
+	return w.err()
+}
+
+// Delete implements CredentialSecretWriter.
+func (w *unavailableCredentialSecretWriter) Delete(context.Context, string) error {
+	return w.err()
+}
+
+// DeleteTenant implements CredentialSecretWriter.
+func (w *unavailableCredentialSecretWriter) DeleteTenant(context.Context, string) error {
+	return w.err()
+}
+
+func (w *unavailableCredentialSecretWriter) err() error {
+	return fmt.Errorf("credential Secret writer unavailable: %w", w.cause)
+}
+
 // WithCredentialSecretWriter wires the Lenny-written Secret writer onto the
 // Router. Without it, a write that needs a Secret operation is refused with
 // 422 TOKEN_SERVICE_NOT_CONFIGURED and changes nothing.

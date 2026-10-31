@@ -1396,6 +1396,7 @@
         "tests/tier5_e2e_kind/credentials_namespace_test.go",
         "tests/tier4_integration/credential_pool_secret_write_pg_test.go",
         "tests/tier7a_load_local/credential_pool_secret_write_interleaving_test.go",
+        "tests/tier7a_load_local/credential_secret_writer_unavailable_test.go",
         "tests/tier8_chaos/credential_secret_write_residue_test.go",
         "tests/tier4_integration/credential_pool_tenant_erasure_pg_test.go",
         "tests/tier8_chaos/credential_tenant_erasure_chaos_test.go",

@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -134,14 +135,25 @@ func managedSecret(name string, meta admin.SecretOwner, data map[string]string) 
 // namespace over the cluster config getConfig resolves. The caller builds it
 // only when a Token Service is configured, so a nil writer, and with it 422
 // TOKEN_SERVICE_NOT_CONFIGURED, means exactly that no Token Service is
-// configured. A cluster config or clientset that cannot be built is
-// therefore returned as an error for the caller to stop startup on, rather
-// than degrading a gateway that has a Token Service into the no-writer
-// state.
+// configured. A cluster config or clientset that cannot be built therefore
+// yields a non-nil writer whose every operation fails: the gateway keeps
+// serving, an admin write that needs a Secret operation is refused with 503
+// SERVICE_UNAVAILABLE, and tenant deletion Phase 4 fails and retries.
 //
 // spec: §4.9 (Credential Storage Topology) — Credential values submitted
-// through the admin API rule 6.
-func buildCredentialSecretWriter(getConfig func() (*rest.Config, error), namespace string, timeout time.Duration) (admin.CredentialSecretWriter, error) {
+// through the admin API rules 5 and 6.
+func buildCredentialSecretWriter(getConfig func() (*rest.Config, error), namespace string, timeout time.Duration) admin.CredentialSecretWriter {
+	w, err := newClusterCredentialSecretWriter(getConfig, namespace, timeout)
+	if err != nil {
+		log.Printf("lenny-gateway: §4.9 credential Secret writes unavailable: %v", err)
+		return admin.NewUnavailableCredentialSecretWriter(err)
+	}
+	return w
+}
+
+// newClusterCredentialSecretWriter builds the client-go writer over the
+// cluster config getConfig resolves.
+func newClusterCredentialSecretWriter(getConfig func() (*rest.Config, error), namespace string, timeout time.Duration) (*kubeCredentialSecretWriter, error) {
 	cfg, err := getConfig()
 	if err != nil {
 		return nil, fmt.Errorf("resolve cluster config for the credential Secret writer: %w", err)

@@ -918,3 +918,23 @@ func TestBootstrapSeedSecretOperations_spec_4_9(t *testing.T) {
 // stringify renders an audit event, its detail values included, for a
 // substring search.
 func stringify(ev admin.AuditEvent) string { return fmt.Sprintf("%+v", ev) }
+
+// diagnosis: a failure means a Token Service gateway without a cluster client
+// answers a Secret write with something other than the rule 5 503, or the
+// writer's cause reached the response.
+// spec: §4.9 (Credential Storage Topology) — Credential values submitted
+// through the admin API rules 5 and 6
+func TestUnavailableCredentialSecretWriterFailsEveryOperation_spec_4_9(t *testing.T) {
+	cause := errors.New("no kubeconfig")
+	w := admin.NewUnavailableCredentialSecretWriter(cause)
+	ctx := context.Background()
+	for op, err := range map[string]error{
+		"Put":          w.Put(ctx, "s", admin.SecretOwner{}, nil),
+		"Delete":       w.Delete(ctx, "s"),
+		"DeleteTenant": w.DeleteTenant(ctx, "acme"),
+	} {
+		if !errors.Is(err, cause) {
+			t.Errorf("%s err = %v, want one wrapping the cause", op, err)
+		}
+	}
+}

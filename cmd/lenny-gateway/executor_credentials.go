@@ -151,13 +151,11 @@ func (w *gatewayWiring) buildExecutorAndCredentials() {
 		// §4.9: the gateway is the only writer of Lenny-written credential
 		// Secrets, wired beside the prober because both serve the same
 		// Token-Service-backed credential path.
-		// A gateway with a Token Service but no buildable cluster client
-		// stops here rather than refusing writes as if no Token Service
-		// were configured (§4.9 rule 6).
-		secretWriter, err = buildCredentialSecretWriter(ctrl.GetConfig, f.resolvedCredentialsNamespace(), defaultCredentialSecretTimeout)
-		if err != nil {
-			log.Fatalf("lenny-gateway: §4.9 credential Secret writer: %v", err)
-		}
+		// The writer is non-nil on every path through here, so a gateway with
+		// a Token Service and no cluster client refuses a Secret write with
+		// 503 rather than as if no Token Service were configured (§4.9 rules
+		// 5 and 6).
+		secretWriter = buildCredentialSecretWriter(ctrl.GetConfig, f.resolvedCredentialsNamespace(), defaultCredentialSecretTimeout)
 		log.Printf("lenny-gateway: §4.3 credential materialization via lenny-token-service at %s", *tokenServiceAddr)
 	} else {
 		inProcessAssign = credassign.New(llmLeases, credCache)

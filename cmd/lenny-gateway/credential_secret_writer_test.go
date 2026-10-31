@@ -258,13 +258,14 @@ func TestCredentialSecretWriterTimeoutIsNotAnOperatorFlag_spec_4_9(t *testing.T)
 	}
 }
 
+// diagnosis: a failure means a Token Service gateway without a usable
+// cluster client no longer gets a failing writer. A nil writer reports
+// TOKEN_SERVICE_NOT_CONFIGURED for a configured Token Service, and a returned
+// error stops the gateway at startup, which the design does not require of a
+// Token Service address.
 // spec: §4.9 (Credential Storage Topology) — Credential values submitted
-// through the admin API rule 6: the gateway has no Secret writer only when
-// no Token Service is configured. A Token-Service gateway whose cluster
-// config or clientset cannot be built gets an error to stop startup on,
-// never a nil writer that would refuse admin writes as
-// TOKEN_SERVICE_NOT_CONFIGURED.
-func TestBuildCredentialSecretWriterFailsRatherThanReturningNil_spec_4_9(t *testing.T) {
+// through the admin API rules 5 and 6
+func TestBuildCredentialSecretWriterFailsEveryOperationWithoutClusterClient_spec_4_9(t *testing.T) {
 	cases := []struct {
 		name      string
 		getConfig func() (*rest.Config, error)
@@ -285,24 +286,29 @@ func TestBuildCredentialSecretWriterFailsRatherThanReturningNil_spec_4_9(t *test
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			w, err := buildCredentialSecretWriter(tc.getConfig, writerTestNS, 0)
-			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("err = %v, want an error containing %q", err, tc.wantErr)
+			w := buildCredentialSecretWriter(tc.getConfig, writerTestNS, 0)
+			if w == nil {
+				t.Fatal("writer = nil, want a non-nil failing writer so rule 6 stays true")
 			}
-			if w != nil {
-				t.Fatalf("writer = %T, want nil alongside the error", w)
+			ctx := context.Background()
+			ops := map[string]error{
+				"Put":          w.Put(ctx, "s", admin.SecretOwner{}, nil),
+				"Delete":       w.Delete(ctx, "s"),
+				"DeleteTenant": w.DeleteTenant(ctx, "acme"),
+			}
+			for op, err := range ops {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("%s err = %v, want an error containing %q", op, err, tc.wantErr)
+				}
 			}
 		})
 	}
-	t.Run("resolvable cluster config yields a writer", func(t *testing.T) {
-		w, err := buildCredentialSecretWriter(func() (*rest.Config, error) {
+	t.Run("resolvable cluster config yields the client-go writer", func(t *testing.T) {
+		w := buildCredentialSecretWriter(func() (*rest.Config, error) {
 			return &rest.Config{Host: "https://kube.invalid"}, nil
 		}, writerTestNS, 0)
-		if err != nil {
-			t.Fatalf("err = %v, want nil", err)
-		}
-		if w == nil {
-			t.Fatal("writer = nil, want a writer when the cluster config resolves")
+		if _, ok := w.(*kubeCredentialSecretWriter); !ok {
+			t.Fatalf("writer = %T, want *kubeCredentialSecretWriter", w)
 		}
 	})
 }
