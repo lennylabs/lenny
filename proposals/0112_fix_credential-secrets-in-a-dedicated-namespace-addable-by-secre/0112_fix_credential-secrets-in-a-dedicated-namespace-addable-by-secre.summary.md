@@ -37,10 +37,10 @@
 - `pgstore.Update` calls `credentialpoolstore.Validate` after the closure returns. A Secret `Put` or `Delete` must follow an explicit `Validate` call inside the closure, or a `400` rolls back a row whose Secret is already gone (CODE-4 step 4).
 - `newSecretRefs` diffs the pool-wide set and ignores credential ids. The reserved-prefix check must run per id (CODE-3 step 6).
 - Pool DELETE checks `If-Match` against an unlocked `Get`, and `SoftDelete` is a separate statement; the `Update` SELECT does not filter `deleted_at`, so an add can land on a soft-deleted pool today (CODE-4 steps 4 and 6).
+- The seed's force-update closure clears `DeletedAt`, reviving a soft-deleted pool, and `upsertCredentialPools` maps every closure error to `seedStoreErrorCode`. See the forced-seed rows and note 2 of the Design **Admin credential write pipeline.** in the non-spec changes.
 - The gateway holds no `get`. The client-go writer must create, then update with an empty `resourceVersion` on `AlreadyExists`; a helper that reads first fails with Forbidden (CODE-4 step 3).
 - `credential_pool_rbac_probe_test.go` asserts the `remediation` key, and `install_prereqs_test.go` asserts the exact etcdctl string. Both change with the spec (CODE-3, CODE-7, SPEC-10 (c)).
 - §16.1 and `docs/reference/metrics.md` must change together with `promemit.go` (SPEC-8, DOCS-1, CODE-2).
-- The rendered-RBAC guard must assert that no other grant on `secrets` applies in the credentials namespace. Asserting that no other ServiceAccount holds any verb there fails on the controller's cluster-wide pod grant (CHART-1 step 5).
 - Envtest does not exercise chart-installed RBAC. The denial, quota, and egress claims are checked in tier 9 with `kubectl auth can-i --as` against the installed chart (TEST-1).
 
 ## Goals
@@ -72,7 +72,7 @@
 - Keeping the SelfSubjectAccessReview in the probe. Under a namespace-wide `get` it is redundant, and Forbidden on the `Get` already yields `DENIED`.
 - Keeping the probe request `namespace` override with mismatch refusal. Deleting the field is narrower and removes the cross-namespace existence oracle.
 - A ValidatingAdmissionPolicy or webhook that keeps the namespace credential-only. It adds an availability dependency, and the quota, the chart, and the documented obligation cover the exposure paths.
-- A preflight check over RoleBindings in the credentials namespace, or a preflight quota check. It cannot judge cluster-wide bindings, and the preflight Job holds no SAR grant. The API server enforces the quota, and a helm-unittest pins the rendered RBAC.
+- A preflight check over RoleBindings in the credentials namespace, or a preflight quota check. It cannot judge cluster-wide bindings, and the preflight Job holds no SAR grant. The API server enforces the quota, and the rendered-RBAC guard pins the rendered RBAC (CHART-1 step 6).
 - A NetworkPolicy in the credentials namespace. No pod runs there, and NetworkPolicy governs pod traffic only.
 - Quota entries for services and persistentvolumeclaims. `pods: "0"` already prevents any workload from mounting a Secret.
 - Granting the Token Service `list` or `watch` to keep the informer. An informer serves cached values, which item 6 forbids.
@@ -96,11 +96,15 @@
 
 ## Open decisions for human to make
 
-None.
+- **Pool DELETE on a pool that is already soft-deleted.**
+  - Option A (staged in CODE-4 step 6): the P4 row guard ends the request with `204`, no Secret operation, and the row unchanged. This keeps the idempotence `SoftDelete` has today, and a repeat DELETE with no writer wired succeeds.
+  - Option B: the locked operation runs the row again. It re-issues a `Delete` for each Lenny-written ref the row still carries, resets `DeletedAt`, and bumps the version, so a repeat DELETE converges a Secret that a late-applied operation recreated. Every repeat changes the ETag and the deletion timestamp, and with no writer wired it returns `422 TOKEN_SERVICE_NOT_CONFIGURED` for a pool that carries Lenny-written refs.
+  - The status file's open finding on a soft-deleted pool that keeps its Lenny-written references with no Token Service configured bears on this choice.
 
 ## Defects in the shipped tree that this proposal does not stage
 
 - **Credential update does not enforce `If-Match`.** §15.1 says `PUT /v1/admin/credential-pools/{name}/credentials/{credId}` requires `If-Match`, and `handleUpdateCredentialEntry` in `pkg/gateway/externalapi/admin/credential_pools.go` never calls `enforceIfMatch`. It stays out of scope because the locked-row checks in CODE-3 do not depend on it.
+- **Credential removal ignores `If-Match`.** §15.1 says a `DELETE` validates `If-Match` when the header is present, and `handleRemoveCredential` in `pkg/gateway/externalapi/admin/credential_pools.go` never reads it. It stays out of scope because the locked-row checks in CODE-4 do not depend on it.
 - **No preflight check rejects impersonation grants.** §4.9 says a preflight check rejects Helm values that would grant the gateway `serviceaccounts/token` or `impersonate` on the Token Service ServiceAccount, and no such check exists in `pkg/preflight` or the chart. SPEC-2 (g) keeps the sentence unchanged because the probe redesign does not touch it.
 - **kube-apiserver port drift.** §13.2.4 rows name TCP 443 for kube-apiserver egress, and the chart renders the `kubeApiServerPorts` list (443 and 6443). SPEC-6 follows the existing phrasing and leaves the drift for a separate change.
 - **Webhook and controller kube-apiserver egress rows.** The §13.2.4 Admission Webhooks row grants no kube-apiserver egress, and the controller row names kube-apiserver without `kubeApiServerCIDR`. The chart's `allow-admission-webhooks`, `allow-controller-egress`, and `allow-pool-scaling-controller-egress` in `system-network-policies.yaml` all render a `kubeApiServerCIDR` rule. SPEC-6 leaves those rows for a separate change.
@@ -133,14 +137,14 @@ None.
 - SPEC-13 — spec/28_communication-channels.md — §28.7 `lenny-tokenservice.proto` register row.
 - SPEC-14 — spec/18_build-sequence.md — §18.38 uninstall runbook residual item.
 - CODE-1 — pkg/credential/secretref.go — `ParseSecretRef` and Lenny-written name helpers.
-- CODE-2 — schemas/lenny-tokenservice.proto, pkg/tokenservice, cmd/lenny-token-service — keyed, Get-only `ProbeSecretAccess`, metric, and redaction.
+- CODE-2 — schemas/lenny-tokenservice.proto, pkg/tokenservice, cmd/lenny-token-service — keyed, Get-only `ProbeSecretAccess`, metric, redaction, and the Token Service client QPS and burst flags.
 - CODE-3 — pkg/gateway/externalapi/admin, cmd/lenny-gateway — canonical refs, registration and prefix checks, single 422 key.
 - CODE-4 — pkg/gateway/externalapi/admin, pkg/gateway/externalapi/errorclassify, pkg/gateway/externalapi/openapi, pkg/ops/mcp, cmd/lenny-gateway — `secretData` write path, Lenny-written Secret operations, the no-writer error mapping, and the re-enable role.
 - CODE-5 — cmd/lenny-gateway/tenant_erasers.go — erasure deletes Lenny-written Secrets after `DeleteByTenant`.
 - CODE-6 — cmd/lenny-gateway, pkg/gateway/provisioning/vcscred — VCS reader through the Token Service keyed read.
 - CODE-7 — pkg/preflight/install_prereqs.go — etcd encryption warning text.
 - CODE-8 — pkg/ctlcli — `lenny-ctl` listing of unreferenced credentials-namespace Secrets.
-- CHART-1 — charts/lenny, pkg/chart/values, tests/tier1_unit/rbac — credentials namespace, quota, Roles, guard, egress, and flags.
+- CHART-1 — charts/lenny, pkg/chart/values, tests/tier0_static — credentials namespace, quota, Roles, guard, egress, and flags.
 - TEST-1 — tests/tier3_contract, tests/tier5_e2e_kind, tests/tier9_security — cross-tier tests.
 - DOCS-1 — docs/ — operator, API, metrics, and runbook docs.
 - REC-1 — BUILD-GAPS.md — new F-4.9 finding and unstaged defects.
