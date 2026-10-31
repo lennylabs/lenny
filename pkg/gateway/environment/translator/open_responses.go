@@ -3,9 +3,11 @@
 package translator
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -168,6 +170,8 @@ type OpenResponsesHandler struct {
 	binder         SingleShotBinder
 	releaseTimeout time.Duration
 	cont           *continuity
+	forwarder      HolderForwarder
+	terminal       SessionTerminal
 	// devTenantHeader mirrors OpenResponsesOptions.DevTenantHeader.
 	devTenantHeader bool
 }
@@ -180,9 +184,12 @@ type OpenResponsesOptions struct {
 
 	// SingleShotBinder runs the shared create-and-start service that
 	// claims a warm pod, launches the runtime, and registers the pod
-	// binding for each request. Pass nil to fall back to the no-op binder
-	// (the §17.4 in-memory mode and the in-process unit tests).
-	// spec: §15 built-in adapter single-shot compute model.
+	// binding for each turn served cold, and reports whether the created
+	// session is held after a turn that succeeds. Pass nil to fall back to
+	// the no-op binder, which never holds a session (the §17.4 in-memory
+	// mode and the in-process unit tests).
+	// spec: §15 built-in adapter single-shot compute model; §15 (Open
+	// Responses conversation sessions).
 	SingleShotBinder SingleShotBinder
 
 	// ReleaseTimeout bounds the detached context the deferred pod release
@@ -190,13 +197,41 @@ type OpenResponsesOptions struct {
 	// Operator-tunable.
 	ReleaseTimeout time.Duration
 
+	// PrimaryReadTimeout bounds the primary read of the session row a
+	// response id names. A value at or below zero selects
+	// sessionstore.DefaultPrimaryReadTimeout. The gateway sets it from
+	// --session-primary-read-timeout.
+	// spec: §15 (Open Responses conversation sessions); §12.3 (Postgres HA
+	// Requirements).
+	PrimaryReadTimeout time.Duration
+
 	// Transcripts is the §15.1 transcript registry the adapter records each
-	// completed turn into and walks on a continuation to rehydrate the prior
-	// conversation onto the freshly-claimed pod. Pass nil to disable
-	// continuity (the §17.4 in-memory mode and the in-process unit tests):
-	// rehydrate then returns empty prior history and record is a no-op.
-	// spec: §15 built-in adapter single-shot compute model.
+	// turn into and reads on a cold continuation to rehydrate the
+	// conversation context onto the freshly-claimed pod. Pass nil only in
+	// the in-process unit tests: record then appends nothing and returns end
+	// sequence 0, and rehydrate still resolves previous_response_id
+	// fail-closed against the session store but contributes no entries.
+	// spec: §15 (Open Responses conversation sessions).
 	Transcripts transcriptstore.Store
+
+	// HolderForwarder forwards a warm turn to the coordinating replica of
+	// the session that holds its pod, and reports whether a request arrived
+	// forwarded. It is required: the gateway wires the session server's
+	// forwarder, which reports a turn local on the replica that coordinates
+	// the session, and NewOpenResponsesHandler panics on nil. There is no
+	// local stand-in, so a wiring that omits it fails at construction
+	// rather than serving forwarded or off-holder turns locally.
+	// spec: §29.3 (Interactive message send) Forwarding.
+	HolderForwarder HolderForwarder
+
+	// Terminal opens a session's terminal claim and runs its post-terminal
+	// hook when a turn fails and the handler ends the session. It is
+	// required: the gateway wires the session server, and
+	// NewOpenResponsesHandler panics on nil, so a failed held session is
+	// never ended outside its terminal claim or without the post-terminal
+	// hook.
+	// spec: §15 (Open Responses conversation sessions); §7.2.
+	Terminal SessionTerminal
 
 	// DevTenantHeader, when true, lets a request with no authenticated
 	// principal name its tenant through the X-Lenny-Tenant-ID dev header
@@ -208,8 +243,18 @@ type OpenResponsesOptions struct {
 	DevTenantHeader bool
 }
 
-// NewOpenResponsesHandler returns a configured handler.
+// NewOpenResponsesHandler returns a configured handler. It panics when
+// opts.HolderForwarder or opts.Terminal is nil, because both are always wired
+// and the handler has no mode that runs without them.
+// spec: §15 (Open Responses conversation sessions); §29.3 (Interactive
+// message send) Forwarding.
 func NewOpenResponsesHandler(store sessionstore.Store, exec executor.Executor, opts OpenResponsesOptions) *OpenResponsesHandler {
+	if opts.HolderForwarder == nil {
+		panic("translator: NewOpenResponsesHandler: OpenResponsesOptions.HolderForwarder is required")
+	}
+	if opts.Terminal == nil {
+		panic("translator: NewOpenResponsesHandler: OpenResponsesOptions.Terminal is required")
+	}
 	clock := opts.Clock
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
@@ -237,22 +282,27 @@ func NewOpenResponsesHandler(store sessionstore.Store, exec executor.Executor, o
 		defaultRuntime: rt,
 		binder:         binder,
 		releaseTimeout: releaseTimeout,
-		// The continuity helper is nil-tolerant on its transcripts backing: a
-		// nil Transcripts store makes rehydrate a no-op returning empty prior
-		// history and record a no-op, preserving the in-memory and unit path.
-		// spec: §15 built-in adapter single-shot compute model.
-		cont:            &continuity{sessions: store, transcripts: opts.Transcripts},
+		forwarder:      opts.HolderForwarder,
+		terminal:       opts.Terminal,
+		// The continuity helper tolerates a nil transcripts backing; response
+		// resolution always reads the session store.
+		// spec: §15 (Open Responses conversation sessions).
+		cont: &continuity{
+			sessions:           store,
+			transcripts:        opts.Transcripts,
+			primaryReadTimeout: opts.PrimaryReadTimeout,
+		},
 		devTenantHeader: opts.DevTenantHeader,
 	}
 }
 
 // Handler returns the http.Handler routing /v1/responses.
 //
-// The adapter serves create and read only. Each response is backed by the
-// implicit per-request session record that audit and billing rely on, so no
-// route deletes it; a DELETE on /v1/responses/{id} reaches the ServeMux's
-// method mismatch and answers 405 with an Allow header naming GET.
-// spec: §15 (Built-in adapter single-shot compute model), §15.1 (REST API)
+// The adapter serves create and read only. Each response is a record on its
+// conversation session's row, which audit and billing rely on, so no route
+// deletes it; a DELETE on /v1/responses/{id} reaches the ServeMux's method
+// mismatch and answers 405 with an Allow header naming GET.
+// spec: §15 (Open Responses conversation sessions), §15.1 (REST API)
 func (h *OpenResponsesHandler) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/responses", h.handleCreate)
@@ -260,137 +310,405 @@ func (h *OpenResponsesHandler) Handler() http.Handler {
 	return mux
 }
 
+// responsesTurn is one parsed POST /v1/responses request: the decoded body,
+// the raw body a forward relays, the normalized input, the caller's tenant,
+// and the environment and runtime ref the model names.
+type responsesTurn struct {
+	req        OpenResponsesRequest
+	body       []byte
+	msgs       []executor.Message
+	tenantID   string
+	envScope   string
+	runtimeRef string
+	now        time.Time
+}
+
+// errWarmLost marks a reservation whose re-check under the row lock failed a
+// warm condition. The mutator writes nothing and the turn goes cold.
+// spec: §15 (Open Responses conversation sessions).
+var errWarmLost = errors.New("open responses: warm conditions no longer hold")
+
+// errGenerationAdvanced marks a completion write whose session's
+// recovery_generation is no longer the value captured for the turn.
+// spec: §15 (Open Responses conversation sessions).
+var errGenerationAdvanced = errors.New("open responses: recovery generation advanced")
+
+// handleCreate serves POST /v1/responses in a fixed order: resolve, then
+// forward, then reserve, then dispatch. It resolves previous_response_id
+// before any store write, bind, or forward, so an unresolvable id answers the
+// native 404 with no side effect. A continuation that meets the warm
+// conditions, and every request that arrived forwarded from another replica,
+// goes to the holder forwarder, which serves it at the coordinating replica
+// or refuses it with the native 409; neither falls through to a local path.
+// A local warm-eligible turn runs on the held session, and every other turn,
+// including a warm turn that loses its reservation or whose dispatch the
+// executor refuses before delivery, runs cold on a new session.
+// spec: §15 (Open Responses conversation sessions); §29.3 (Interactive
+// message send) Forwarding.
 func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if h.exec == nil {
 		writeOpenAIError(w, http.StatusServiceUnavailable, "server_error",
 			"gateway has no executor wired")
 		return
 	}
-	body := http.MaxBytesReader(w, r.Body, 1<<20)
-	defer body.Close()
-
-	var req OpenResponsesRequest
-	if err := json.NewDecoder(body).Decode(&req); err != nil {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
-			"request body is not valid JSON: "+err.Error())
+	t, ok := h.parseTurn(w, r)
+	if !ok {
 		return
 	}
-	if req.Input == nil {
+	if t.req.PreviousResponseID == "" {
+		h.serveCold(w, r, t, nil)
+		return
+	}
+	row, n, err := h.cont.resolve(r.Context(), t.tenantID, t.req.PreviousResponseID)
+	if err != nil {
+		writeResolveError(w, err)
+		return
+	}
+	warm := warmEligible(row, n, t)
+	if warm || h.forwarder.Forwarded(r.Context()) {
+		if !h.forwarder.ForwardResponsesTurn(w, r, row, t.body, writeTargetNotReady) {
+			return
+		}
+	}
+	if warm && h.serveWarm(w, r, t, row, n) {
+		return
+	}
+	h.serveCold(w, r, t, &row)
+}
+
+// parseTurn reads and validates the request body and resolves the caller's
+// tenant and the runtime the model names. It writes the native 400 or 401
+// and reports false on a request it rejects.
+func (h *OpenResponsesHandler) parseTurn(w http.ResponseWriter, r *http.Request) (responsesTurn, bool) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
+			"request body could not be read: "+err.Error())
+		return responsesTurn{}, false
+	}
+	t := responsesTurn{body: body}
+	if err := json.Unmarshal(body, &t.req); err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
+			"request body is not valid JSON: "+err.Error())
+		return responsesTurn{}, false
+	}
+	if t.req.Input == nil {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error",
 			"input is required")
-		return
+		return responsesTurn{}, false
+	}
+	t.msgs, err = normalizeInput(t.req.Input)
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		return responsesTurn{}, false
 	}
 	tenantID, ok := resolveTenant(r, h.devTenantHeader)
 	if !ok {
 		writeUnauthenticated(w)
-		return
+		return responsesTurn{}, false
 	}
+	t.tenantID = tenantID
 	// spec: §10.6 — a model named "environments/{name}/{model}"
 	// scopes the implicit session to the named environment; the bare
 	// model is the runtime reference. F-10.6.11.
-	envScope, runtimeRef := splitEnvModel(req.Model)
-	if runtimeRef == "" {
-		runtimeRef = h.defaultRuntime
+	t.envScope, t.runtimeRef = splitEnvModel(t.req.Model)
+	if t.runtimeRef == "" {
+		t.runtimeRef = h.defaultRuntime
 	}
-	now := h.clock()
+	t.now = h.clock()
+	return t, true
+}
 
-	// Claim a warm pod, launch the runtime, and register the binding
-	// through the shared §15.2.1 create-and-start service. The single-shot
-	// path does not thread previous_response_id into the row's
-	// ParentSessionID: that field is owned by the §8.2/§8.6 delegated-child
-	// lease machinery and the delegation-tree orphan-cleanup sweep, and
-	// setting it would misclassify the ephemeral single-shot session as a
-	// delegated child. The continuation lineage is persisted separately in
-	// ContinuationParentID on completion, so GET echoes it without tripping
-	// the delegation semantics.
-	// spec: §15 built-in adapter single-shot compute model; §8.2 delegated-child lease; §7.1 atomicity.
-	sessionID, err := h.binder.BindSingleShot(r.Context(), SingleShotSpec{
-		TenantID:    tenantID,
-		UserID:      req.User,
-		RuntimeRef:  runtimeRef,
-		Environment: envScope,
+// writeResolveError maps a previous_response_id resolution failure to the
+// native 404 for an id that names no completed response of the caller's
+// tenant, and to a native 500 for any other store error.
+// spec: §15 (Open Responses conversation sessions); §4.2 session-store tenant isolation.
+func writeResolveError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errContinuationNotFound) {
+		writeOpenAIError(w, http.StatusNotFound, "not_found_error",
+			"previous_response_id not found")
+		return
+	}
+	writeOpenAIError(w, http.StatusInternalServerError, "server_error",
+		fmt.Sprintf("continuation resolution failed: %v", err))
+}
+
+// warmEligible reports whether a continuation of response n on row meets the
+// warm conditions: the session is running, response n is its newest response
+// and has completed, the session's recovery_generation equals the value
+// recorded for response n, and the request asks for the user, runtime, and
+// environment the creating request asked for. The runtime comparison reads
+// RequestedRuntimeRef, never RuntimeRef, which session creation rewrites.
+// spec: §15 (Open Responses conversation sessions).
+func warmEligible(row sessionstore.Session, n int, t responsesTurn) bool {
+	if row.State != session.StateRunning || n != len(row.Responses) || n < 1 {
+		return false
+	}
+	head := row.Responses[n-1]
+	return head.Completed &&
+		row.RecoveryGeneration == head.RecoveryGeneration &&
+		row.UserID == t.req.User &&
+		row.RequestedRuntimeRef == t.runtimeRef &&
+		row.Environment == t.envScope
+}
+
+// serveWarm runs a continuation of response n on the held session row. It
+// reserves ordinal n+1 in one write that re-checks the warm conditions under
+// the row lock and captures the session's recovery_generation, sends only
+// the new input, records the turn, and completes the response in one write
+// conditioned on the captured generation. It reports false, having written
+// nothing to the client, when the turn goes cold instead: the reservation
+// lost its re-check, or the executor refused the dispatch before any input
+// reached the runtime. A reserved response is never withdrawn. Every failure
+// after input may have reached the runtime ends the session and answers the
+// native 500.
+// spec: §15 (Open Responses conversation sessions).
+func (h *OpenResponsesHandler) serveWarm(w http.ResponseWriter, r *http.Request, t responsesTurn, row sessionstore.Session, n int) bool {
+	ctx := r.Context()
+	resGen, err := h.reserve(ctx, t, row.ID, n)
+	if err != nil {
+		return false
+	}
+	sendResp, err := h.exec.Send(ctx, row.ID, t.msgs)
+	if notDelivered(err) {
+		return false
+	}
+	if err != nil {
+		h.failTurn(w, r, t.tenantID, row.ID, fmt.Errorf("executor failure: %w", err))
+		return true
+	}
+	endSeq, err := h.cont.record(ctx, t.tenantID, row.ID, t.msgs, sendResp.Parts)
+	if err != nil {
+		h.failTurn(w, r, t.tenantID, row.ID, fmt.Errorf("transcript record failed: %w", err))
+		return true
+	}
+	if err := h.commitWarm(ctx, t.tenantID, row.ID, n+1, resGen, endSeq); err != nil {
+		h.failTurn(w, r, t.tenantID, row.ID, fmt.Errorf("response completion failed: %w", err))
+		return true
+	}
+	writeResponsesTurn(w, t, formatResponseID(row.ID, n+1), sendResp.Parts)
+	return true
+}
+
+// notDelivered reports whether a Send error means no input reached the
+// runtime: the replica holds no binding for the session, or the adapter
+// refused the batch as sealed before delivering any of it.
+// spec: §15 (Open Responses conversation sessions); §4.7.1 Session seal.
+func notDelivered(err error) bool {
+	if errors.Is(err, executor.ErrNotBound) {
+		return true
+	}
+	var sealed *executor.SealedError
+	return errors.As(err, &sealed) && sealed.Delivered == 0
+}
+
+// reserve appends the not-completed record of ordinal n+1 to the session in
+// one write whose mutator re-checks the warm conditions on the locked row,
+// and returns the recovery_generation the record captured. A failed re-check
+// returns errWarmLost and writes nothing.
+// spec: §15 (Open Responses conversation sessions).
+func (h *OpenResponsesHandler) reserve(ctx context.Context, t responsesTurn, sessionID string, n int) (int64, error) {
+	var resGen int64
+	_, err := h.store.Update(ctx, t.tenantID, sessionID, func(s *sessionstore.Session) error {
+		if !warmEligible(*s, n, t) {
+			return errWarmLost
+		}
+		resGen = s.RecoveryGeneration
+		s.Responses = append(s.Responses, sessionstore.ConversationResponse{
+			CreatedAt:          t.now,
+			RecoveryGeneration: resGen,
+		})
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("reserve response %d on session %s: %w", n+1, sessionID, err)
+	}
+	return resGen, nil
+}
+
+// commitWarm completes the reserved response ordinal in one write that takes
+// effect only while the session's recovery_generation equals resGen. It never
+// rewrites the record's RecoveryGeneration.
+// spec: §15 (Open Responses conversation sessions).
+func (h *OpenResponsesHandler) commitWarm(ctx context.Context, tenantID, sessionID string, ordinal int, resGen int64, endSeq uint64) error {
+	_, err := h.store.Update(ctx, tenantID, sessionID, func(s *sessionstore.Session) error {
+		if s.RecoveryGeneration != resGen {
+			return errGenerationAdvanced
+		}
+		if ordinal > len(s.Responses) {
+			return fmt.Errorf("response %d is not reserved", ordinal)
+		}
+		s.Responses[ordinal-1].EndSeq = endSeq
+		s.Responses[ordinal-1].Completed = true
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("commit response %d on session %s: %w", ordinal, sessionID, err)
+	}
+	return nil
+}
+
+// serveCold runs a turn on a new session. On a continuation of response
+// head it assembles the conversation context before the bind, so a lineage
+// that no longer resolves answers without claiming a pod. It binds through
+// the shared create-and-start service, sends the context ahead of the new
+// input, records the turn, and completes the session's first response in one
+// write conditioned on the recovery_generation at bind, recording the
+// continuation parent and the requested runtime. A session the binder does
+// not hold is written completed in that same write and released with the
+// completed disposition; a held session stays running with its pod and
+// lease. Every failure after the bind ends the session through
+// endHeldSession, the only release on a failed exit, and answers the native
+// 500.
+//
+// The single-shot path never threads previous_response_id into
+// ParentSessionID, which the §8.2/§8.6 delegated-child lease machinery and
+// the delegation-tree orphan-cleanup sweep own; the lineage is
+// ContinuationParentID.
+// spec: §15 (Open Responses conversation sessions); §15 (Built-in adapter
+// single-shot compute model); §7.1 atomicity; §8.2 delegated-child lease.
+func (h *OpenResponsesHandler) serveCold(w http.ResponseWriter, r *http.Request, t responsesTurn, head *sessionstore.Session) {
+	ctx := r.Context()
+	var prior []executor.Message
+	if head != nil {
+		var err error
+		if prior, err = h.cont.rehydrate(ctx, t.tenantID, t.req.PreviousResponseID); err != nil {
+			writeResolveError(w, err)
+			return
+		}
+	}
+	b, err := h.binder.BindSingleShot(ctx, SingleShotSpec{
+		TenantID:    t.tenantID,
+		UserID:      t.req.User,
+		RuntimeRef:  t.runtimeRef,
+		Environment: t.envScope,
 	})
 	if err != nil {
 		writeSingleShotError(w, err)
 		return
 	}
-
-	// Release the claimed pod and its §4.9 lease on every exit path,
-	// recording the §6.2 terminal disposition on a detached, timeout-bounded
-	// context so the drain survives a request-context timeout or client
-	// disconnect. disp flips to completed only after a successful dispatch
-	// and completion update.
-	// spec: §15 built-in adapter single-shot compute model; §6.2 release.
-	disp := executor.DispositionFailed
-	defer releaseSingleShot(r.Context(), singleShotRelease{exec: h.exec, store: h.store, clock: h.clock, timeout: h.releaseTimeout}, tenantID, sessionID, &disp)
-
-	msgs, err := normalizeInput(req.Input)
+	sendResp, err := h.exec.Send(ctx, b.SessionID, append(prior, t.msgs...))
 	if err != nil {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", err.Error())
+		h.failTurn(w, r, t.tenantID, b.SessionID, fmt.Errorf("executor failure: %w", err))
 		return
 	}
-
-	// On a continuation, resolve previous_response_id fail-closed and walk its
-	// continuation chain to assemble the prior conversation. The freshly
-	// claimed pod has empty runtime memory, so the prior turns are prepended
-	// ahead of the new turn within the one dispatch below; the runtime then
-	// continues the conversation. An unknown or cross-tenant id maps to a
-	// native 404 with no dispatch (the deferred release still drains the pod).
-	// spec: §15 built-in adapter single-shot compute model; §4.2 session-store tenant isolation.
-	var prior []executor.Message
-	if req.PreviousResponseID != "" {
-		prior, err = h.cont.rehydrate(r.Context(), tenantID, req.PreviousResponseID)
-		if err != nil {
-			if errors.Is(err, errContinuationNotFound) {
-				writeOpenAIError(w, http.StatusNotFound, "not_found_error",
-					"previous_response_id not found")
-				return
-			}
-			writeOpenAIError(w, http.StatusInternalServerError, "server_error",
-				fmt.Sprintf("continuation resolution failed: %v", err))
-			return
-		}
-	}
-
-	sendResp, err := h.exec.Send(r.Context(), sessionID, append(prior, msgs...))
+	endSeq, err := h.cont.record(ctx, t.tenantID, b.SessionID, t.msgs, sendResp.Parts)
 	if err != nil {
-		writeOpenAIError(w, http.StatusInternalServerError, "server_error",
-			fmt.Sprintf("executor failure: %v", err))
+		h.failTurn(w, r, t.tenantID, b.SessionID, fmt.Errorf("transcript record failed: %w", err))
 		return
 	}
-	out := sendResp.Parts
-
-	// spec: §7.2, §8.8 — the completion records the Terminated fact in its
-	// own write. It runs no post-terminal hook: the handler's deferred
-	// single-shot release releases the executor.
 	completedAt := h.clock()
-	_, _ = h.store.Update(r.Context(), tenantID, sessionID, func(s *sessionstore.Session) error {
+	// completed reports whether this commit applied the completed terminal
+	// write. It is reset on every mutator run so a retried mutator reports
+	// only its own outcome.
+	completed := false
+	_, err = h.store.Update(ctx, t.tenantID, b.SessionID, func(s *sessionstore.Session) error {
+		completed = false
+		if s.RecoveryGeneration != b.RecoveryGeneration {
+			return errGenerationAdvanced
+		}
+		s.Responses = []sessionstore.ConversationResponse{{
+			CreatedAt:          t.now,
+			EndSeq:             endSeq,
+			RecoveryGeneration: b.RecoveryGeneration,
+			Completed:          true,
+		}}
+		s.ContinuationParentID = t.req.PreviousResponseID
+		s.RequestedRuntimeRef = t.runtimeRef
+		if b.Hold || session.IsTerminal(s.State) {
+			return nil
+		}
+		// spec: §7.2, §8.8 — the completion records the Terminated fact in
+		// its own write. It runs no post-terminal hook: the release below
+		// releases the executor.
 		from := s.State
 		s.State = session.StateCompleted
 		sessionstore.MarkTerminated(s, from, completedAt)
-		// Persist the continuation lineage only for a continuation; chain-root
-		// rows stay clean so GET echoes an empty previous_response_id.
-		// spec: §15 built-in adapter single-shot compute model.
-		if req.PreviousResponseID != "" {
-			s.ContinuationParentID = req.PreviousResponseID
-		}
+		completed = true
 		return nil
 	})
-	disp = executor.DispositionCompleted
-
-	// Record this response's own turn (the new input plus its assistant
-	// output, excluding the rehydrated prior conversation, which stays in the
-	// ancestors' own buckets) on its own session id, unconditionally including
-	// a chain-root turn, so a later continuation can rehydrate it. Best-effort,
-	// matching the canonical §15.1 transcript-write path.
-	// spec: §15.1 session transcript best-effort write.
-	h.cont.record(r.Context(), tenantID, sessionID, msgs, out)
-
-	if req.Stream {
-		writeOpenResponsesStream(w, sessionID, req.PreviousResponseID, now, out)
+	if err != nil {
+		h.failTurn(w, r, t.tenantID, b.SessionID,
+			fmt.Errorf("response completion failed on session %s: %w", b.SessionID, err))
 		return
 	}
-	resp := buildOpenResponsesResponse(sessionID, runtimeRef, req.PreviousResponseID, now, out)
+	// A row another writer already ended was released by that writer's
+	// post-terminal hook, so the handler releases only a session whose
+	// completion it wrote itself; a second release would release the pod
+	// twice, under a disposition that contradicts the row.
+	// spec: §15 (Open Responses conversation sessions); §6.2 release.
+	if completed {
+		disp := executor.DispositionCompleted
+		releaseSingleShot(ctx, h.release(), t.tenantID, b.SessionID, &disp)
+	}
+	writeResponsesTurn(w, t, formatResponseID(b.SessionID, 1), sendResp.Parts)
+}
+
+// failTurn ends the session of a turn that failed after its input may have
+// reached the runtime and answers the native 500. The response stays not
+// completed.
+// spec: §15 (Open Responses conversation sessions).
+func (h *OpenResponsesHandler) failTurn(w http.ResponseWriter, r *http.Request, tenantID, sessionID string, cause error) {
+	h.endHeldSession(r.Context(), tenantID, sessionID)
+	writeOpenAIError(w, http.StatusInternalServerError, "server_error", cause.Error())
+}
+
+// endHeldSession ends a session whose turn failed with the failed
+// disposition, releasing its pod and lease before the response returns. It
+// holds the session's terminal claim for its whole run and writes failed in
+// one Update that is superseded on a row another writer already ended. The
+// write and the hook run on a context detached from the request and bounded
+// by the release timeout, so a client disconnect does not abandon them. On
+// an applied write it runs the post-terminal hook inline, which releases the
+// pod and lease. A superseded write leaves the release to the writer that
+// ended the row. Any other write error runs no hook, so it releases the
+// executor binding with the failed disposition itself, once. That includes a
+// write that finds no row: a §12.8 erasure that deleted the row releases the
+// binding only when its CH-BINDRELEASE publish reaches this replica, and a
+// lost publish is not redelivered, so this release is the local backstop. When
+// the publish did arrive, the executor no longer holds the binding and its
+// idempotent Release makes this call a no-op.
+// spec: §15 (Open Responses conversation sessions); §7.2 (Interactive
+// Session Model); §6.2 release.
+func (h *OpenResponsesHandler) endHeldSession(reqCtx context.Context, tenantID, sessionID string) {
+	end := h.terminal.BeginTerminal(sessionID)
+	defer end()
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(reqCtx), h.releaseTimeout)
+	defer cancel()
+	var from session.State
+	updated, err := h.store.Update(ctx, tenantID, sessionID, func(s *sessionstore.Session) error {
+		if session.IsTerminal(s.State) {
+			return sessionstore.ErrSuperseded
+		}
+		from = s.State
+		s.State = session.StateFailed
+		sessionstore.MarkTerminated(s, from, h.clock())
+		return nil
+	})
+	switch {
+	case err == nil:
+		h.terminal.AfterTerminalWrite(ctx, from, updated, nil)
+	case errors.Is(err, sessionstore.ErrSuperseded):
+	default:
+		disp := executor.DispositionFailed
+		releaseSingleShot(ctx, h.release(), tenantID, sessionID, &disp)
+	}
+}
+
+// release returns the executor, store, clock, and timeout a single-shot
+// release runs with.
+func (h *OpenResponsesHandler) release() singleShotRelease {
+	return singleShotRelease{exec: h.exec, store: h.store, clock: h.clock, timeout: h.releaseTimeout}
+}
+
+// writeResponsesTurn writes a completed turn's response with id, in the
+// streaming form when the request asked for it.
+func writeResponsesTurn(w http.ResponseWriter, t responsesTurn, id string, out []executor.MessagePart) {
+	if t.req.Stream {
+		writeOpenResponsesStream(w, id, t.req.PreviousResponseID, t.now, out)
+		return
+	}
+	resp := buildOpenResponsesResponse(id, t.runtimeRef, t.req.PreviousResponseID, t.now, out)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
@@ -454,42 +772,39 @@ func writeOpenResponsesStream(w http.ResponseWriter, id, prev string, now time.T
 	})
 }
 
+// handleGet answers GET /v1/responses/{id} with a completed response of a
+// session in the caller's tenant. The id resolves through the same step a
+// continuation's previous_response_id resolves through, so an id that names
+// no completed response the caller can read (malformed, unknown,
+// cross-tenant, past the newest ordinal, or not completed) answers the
+// native 404. previous_response_id echoes the preceding ordinal on the same
+// session, or, for ordinal 1, the response the session's first turn
+// continued from.
+// spec: §15 (Open Responses conversation sessions); §4.2 (session-store
+// tenant isolation).
 func (h *OpenResponsesHandler) handleGet(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := resolveTenant(r, h.devTenantHeader)
 	if !ok {
 		writeUnauthenticated(w)
 		return
 	}
-	id := r.PathValue("id")
-	row, err := h.store.Get(r.Context(), tenantID, id)
+	row, n, err := h.cont.resolve(r.Context(), tenantID, r.PathValue("id"))
 	if err != nil {
-		if errors.Is(err, sessionstore.ErrNotFound) {
+		if errors.Is(err, errContinuationNotFound) {
 			writeOpenAIError(w, http.StatusNotFound, "not_found_error", "response not found")
 			return
 		}
 		writeOpenAIError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
-	// Minimal envelope — the gateway does not yet persist the raw
-	// model output, so the response carries metadata only.
-	resp := OpenResponsesResponse{
-		ID:                 row.ID,
-		Object:             "response",
-		CreatedAt:          row.CreatedAt.Unix(),
-		Status:             mapStateToResponsesStatus(row.State),
-		Model:              row.RuntimeRef,
-		PreviousResponseID: row.ContinuationParentID,
-		Output:             nil,
-		Error:              nil,
-		IncompleteDetails:  nil,
-		Instructions:       nil,
-		Tools:              []OpenResponsesTool{},
-		ParallelToolCalls:  true,
-		Metadata:           map[string]string{},
-		ToolChoice:         "auto",
-		Temperature:        1,
-		TopP:               1,
+	prev := row.ContinuationParentID
+	if n > 1 {
+		prev = formatResponseID(row.ID, n-1)
 	}
+	// The gateway does not persist the raw model output, so the response
+	// carries metadata only.
+	resp := buildOpenResponsesResponse(formatResponseID(row.ID, n), row.RuntimeRef, prev,
+		row.Responses[n-1].CreatedAt, nil)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
@@ -564,21 +879,4 @@ func buildOpenResponsesResponse(id, model, prev string, now time.Time, out []exe
 		resp.Output = append(resp.Output, item)
 	}
 	return resp
-}
-
-func mapStateToResponsesStatus(s session.State) string {
-	switch s {
-	case session.StateCompleted:
-		return "completed"
-	case session.StateFailed:
-		return "failed"
-	case session.StateCancelled:
-		return "cancelled"
-	// spec: §7.2 (Session state machine) — input_required is a sub-state of
-	// running and maps as running does.
-	case session.StateRunning, session.StateInputRequired, session.StateStarting:
-		return "in_progress"
-	default:
-		return "queued"
-	}
 }

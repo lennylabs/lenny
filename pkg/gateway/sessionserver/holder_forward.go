@@ -146,8 +146,9 @@ const (
 	// inReplyTo. A forward that is not delivered fails closed.
 	ForwardKindMessage
 	// ForwardKindMessageNoReplyTo is a message request in which no message
-	// carries inReplyTo. A forward that is not delivered is held by the
-	// caller in the session DLQ (§29.3 Forwarding rule 6).
+	// carries inReplyTo. A forward that is not delivered to a running or
+	// input_required session is held by the caller in the session DLQ, and
+	// otherwise fails closed (§29.3 Forwarding rule 6; HoldsUndelivered).
 	ForwardKindMessageNoReplyTo
 	// ForwardKindInterrupt is an interrupt.
 	ForwardKindInterrupt
@@ -155,6 +156,10 @@ const (
 	ForwardKindUpload
 	// ForwardKindResume is a held-pod resume.
 	ForwardKindResume
+	// ForwardKindResponsesTurn is an Open Responses warm turn on a held
+	// conversation session. A refusal is written in the adapter's native
+	// envelope by the caller's renderer.
+	ForwardKindResponsesTurn
 )
 
 // ForwardOutcome is the result of a forward attempt.
@@ -216,6 +221,7 @@ var forwardStates = map[ForwardKind]stateSet{
 	ForwardKindInterrupt:        messageForwardStates,
 	ForwardKindUpload:           {session.StateRunning: true},
 	ForwardKindResume:           {session.StateSuspended: true},
+	ForwardKindResponsesTurn:    {session.StateRunning: true},
 }
 
 // forwardGated reports whether row is in a state for which a §29.3 row of
@@ -252,21 +258,20 @@ func Forwarded(ctx context.Context) bool {
 // forwardTarget decides where a request of kind on row runs. It returns
 // ForwardLocal when this replica serves it, ForwardNotDelivered when the
 // coordinator cannot be reached, and otherwise the coordinator's address with
-// forwardDial.
+// forwardDial. The rule-5 check of a forwarded request runs ahead of the
+// state gate for every kind: the row the listener re-reads can have left the
+// kind's forward states since the sender read it, and a replica that does
+// not hold REG-COORDLEASE performs no effect whatever the row's state.
 //
-// spec: §29.3 (Interactive message send) Forwarding rules 1, 5, and 6,
-// §10.1.1 (Stateless Replicas and Per-Session Coordination) Replica address
+// spec: §29.3 (Interactive message send) Forwarding rules 1, 4, 5, and 6,
+// §10.1.1 (Stateless Replicas and Per-Session Coordination) Replica address,
+// §15 (Open Responses conversation sessions)
 func (s *Server) forwardTarget(ctx context.Context, row sessionstore.Session, kind ForwardKind) (string, ForwardOutcome) {
+	if Forwarded(ctx) {
+		return "", s.forwardedTarget(ctx, row)
+	}
 	if !s.forwardGated(row, kind) {
 		return "", ForwardLocal
-	}
-	if Forwarded(ctx) {
-		// Rule 5: a forwarded request runs only on the holder and is
-		// never forwarded again.
-		if s.coordinatesSession(ctx, row.TenantID, row.ID) {
-			return "", ForwardLocal
-		}
-		return "", ForwardNotDelivered
 	}
 	if s.coordinatesEverySession() {
 		return "", ForwardLocal
@@ -285,54 +290,110 @@ func (s *Server) forwardTarget(ctx context.Context, row sessionstore.Session, ki
 	return addr, forwardDial
 }
 
+// forwardedTarget applies §29.3 Forwarding rule 5 to a forwarded request: it
+// runs only on the holder and is never forwarded again.
+func (s *Server) forwardedTarget(ctx context.Context, row sessionstore.Session) ForwardOutcome {
+	if s.coordinatesSession(ctx, row.TenantID, row.ID) {
+		return ForwardLocal
+	}
+	return ForwardNotDelivered
+}
+
+// refuseFunc writes a not-delivered or unknown forward refusal carrying the
+// session's current state in a caller's own envelope.
+type refuseFunc func(w http.ResponseWriter, currentState string)
+
 // forwardToHolder forwards the request r on row to the session's
 // coordinating replica when a §29.3 row of kind requires it, and writes the
 // coordinator's response, or the refusal, to w. body is the request body:
 // the bytes the caller already read, or the unread r.Body. A caller that
 // receives any outcome other than ForwardLocal returns at once, except on
-// ForwardNotDelivered for ForwardKindMessageNoReplyTo, where nothing was
-// written and the caller holds the message.
+// ForwardNotDelivered for a message HoldsUndelivered admits, where nothing
+// was written and the caller holds the message.
 //
 // spec: §29.3 (Interactive message send) Forwarding, §10.1.1 (Stateless
 // Replicas and Per-Session Coordination) Replica address
 func (s *Server) forwardToHolder(w http.ResponseWriter, r *http.Request, row sessionstore.Session, kind ForwardKind, body io.Reader) ForwardOutcome {
+	return s.forwardToHolderWith(w, r, row, kind, body, nil)
+}
+
+// forwardToHolderWith is forwardToHolder with the refusal renderer refuse,
+// which refuseForward uses for ForwardKindResponsesTurn. refuse is called
+// only before any byte of the coordinator's response is written.
+func (s *Server) forwardToHolderWith(w http.ResponseWriter, r *http.Request, row sessionstore.Session, kind ForwardKind, body io.Reader, refuse refuseFunc) ForwardOutcome {
 	ctx := r.Context()
 	addr, outcome := s.forwardTarget(ctx, row, kind)
 	if outcome != forwardDial {
 		if outcome == ForwardNotDelivered {
-			s.refuseForward(w, ctx, row, kind, outcome)
+			s.refuseForward(w, ctx, row, kind, outcome, refuse)
 		}
 		return outcome
 	}
 	req, err := newForwardRequest(ctx, r.Method, "https://"+addr+r.URL.RequestURI(), body, r.ContentLength, r.Header)
 	if err != nil {
-		s.refuseForward(w, ctx, row, kind, ForwardNotDelivered)
+		s.refuseForward(w, ctx, row, kind, ForwardNotDelivered, refuse)
 		return ForwardNotDelivered
 	}
 	resp, outcome := s.sendForward(req)
 	if outcome != ForwardDelivered {
-		s.refuseForward(w, ctx, row, kind, outcome)
+		s.refuseForward(w, ctx, row, kind, outcome, refuse)
 		return outcome
 	}
 	defer func() { _ = resp.Body.Close() }()
 	return copyForwardResponse(ctx, w, resp)
 }
 
+// ForwardResponsesTurn forwards an Open Responses warm turn on row to the
+// session's coordinating replica. The caller calls it on every warm-eligible
+// request and on every forwarded one: forwardTarget applies §29.3
+// Forwarding rule 4 (never dials again) and rule 5 (ForwardNotDelivered
+// when this replica does not hold REG-COORDLEASE, whatever the row's
+// state). refuse writes a not-delivered or unknown refusal, and is called
+// only before any byte of the coordinator's response is written; a
+// coordinator body that fails after its status is relayed stays truncated,
+// as copyForwardResponse leaves it. The caller returns on every outcome
+// other than ForwardLocal. body is the request body the caller already read.
+//
+// spec: §29.3 (Interactive message send) Forwarding; §15 (Open Responses
+// conversation sessions)
+func (s *Server) ForwardResponsesTurn(w http.ResponseWriter, r *http.Request, row sessionstore.Session, body []byte, refuse func(w http.ResponseWriter, currentState string)) ForwardOutcome {
+	return s.forwardToHolderWith(w, r, row, ForwardKindResponsesTurn, bytes.NewReader(body), refuse)
+}
+
 // refuseForward answers a forward that was not delivered or whose outcome is
 // unknown with 409 TARGET_NOT_READY carrying currentState, and keeps the
-// refusal out of the §11.5 idempotency cache. A not-delivered message with
-// no inReplyTo is left to its caller, which holds it.
+// refusal out of the §11.5 idempotency cache. A not-delivered message that
+// HoldsUndelivered admits is left to its caller, which holds it. An Open
+// Responses turn is refused through the caller's refuse, which writes the
+// adapter's native envelope.
 //
 // spec: §29.3 (Interactive message send) Forwarding rules 6 and 7, §11.5
-// (Idempotency) Mechanism
-func (s *Server) refuseForward(w http.ResponseWriter, ctx context.Context, row sessionstore.Session, kind ForwardKind, outcome ForwardOutcome) {
-	if outcome == ForwardNotDelivered && kind == ForwardKindMessageNoReplyTo {
+// (Idempotency) Mechanism, §15 (Open Responses conversation sessions)
+func (s *Server) refuseForward(w http.ResponseWriter, ctx context.Context, row sessionstore.Session, kind ForwardKind, outcome ForwardOutcome, refuse refuseFunc) {
+	if outcome == ForwardNotDelivered && HoldsUndelivered(row, kind) {
 		return
 	}
 	idemmw.DoNotStore(ctx)
+	if kind == ForwardKindResponsesTurn && refuse != nil {
+		refuse(w, string(row.State))
+		return
+	}
 	s.writeError(w, http.StatusConflict, "TARGET_NOT_READY",
 		"the session's coordinating gateway replica could not be reached; retry the request",
 		map[string]any{"currentState": string(row.State)})
+}
+
+// HoldsUndelivered reports whether a request of kind on row whose forward is
+// not delivered is held in the session's DLQ rather than refused: a message
+// batch carrying no inReplyTo to a running or input_required session. Every
+// other not-delivered request fails closed with TARGET_NOT_READY. The row
+// state matters on a replica that re-read the row after the sender did, such
+// as a forward listener applying rule 5 to a session that has left the
+// message forward states.
+//
+// spec: §29.3 (Interactive message send) Forwarding rules 5 and 6
+func HoldsUndelivered(row sessionstore.Session, kind ForwardKind) bool {
+	return kind == ForwardKindMessageNoReplyTo && messageForwardStates[row.State]
 }
 
 // forwardRequestHeaders are the client headers a forwarded request carries
@@ -513,9 +574,9 @@ const maxForwardedToolResponse = 16 << 20
 // returns the coordinator's result or error as the calling handler's own. It
 // writes nothing. The returned error is nil or a *mcp.ToolError:
 //
-//  1. ForwardLocal, and ForwardNotDelivered for ForwardKindMessageNoReplyTo,
-//     return a zero result and a nil error; the caller runs its local path
-//     or holds the message.
+//  1. ForwardLocal, and ForwardNotDelivered for a message HoldsUndelivered
+//     admits, return a zero result and a nil error; the caller runs its
+//     local path or holds the message.
 //  2. A forward that is not delivered or whose outcome is unknown returns
 //     the tool error TARGET_NOT_READY carrying currentState.
 //  3. A delivered result whose isError is false returns that result.
@@ -533,7 +594,7 @@ func (s *Server) ForwardToolCall(ctx context.Context, row sessionstore.Session, 
 	switch {
 	case outcome == ForwardLocal:
 		return mcp.ToolResult{}, ForwardLocal, nil
-	case outcome == ForwardNotDelivered && kind == ForwardKindMessageNoReplyTo:
+	case outcome == ForwardNotDelivered && HoldsUndelivered(row, kind):
 		return mcp.ToolResult{}, ForwardNotDelivered, nil
 	case outcome != forwardDial:
 		return mcp.ToolResult{}, outcome, RefuseToolForward(ctx, row)
@@ -544,7 +605,7 @@ func (s *Server) ForwardToolCall(ctx context.Context, row sessionstore.Session, 
 	}
 	resp, outcome := s.sendForward(req)
 	if outcome != ForwardDelivered {
-		if outcome == ForwardNotDelivered && kind == ForwardKindMessageNoReplyTo {
+		if outcome == ForwardNotDelivered && HoldsUndelivered(row, kind) {
 			return mcp.ToolResult{}, ForwardNotDelivered, nil
 		}
 		return mcp.ToolResult{}, outcome, RefuseToolForward(ctx, row)

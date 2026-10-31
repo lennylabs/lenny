@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
+
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -84,6 +86,8 @@ func TestSingleShotReleaseRecordsTheRelease_spec_7_1(t *testing.T) {
 				case "responses":
 					id = "resp_rm"
 					h = translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
+						HolderForwarder: responsesstub.LocalForwarder{},
+						Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: store},
 						DevTenantHeader: true, Clock: clock, IDFunc: func() string { return id },
 					}).Handler()
 					if rr := respPost(t, h, map[string]any{"model": "echo", "input": "hello"}); rr.Code != http.StatusOK {

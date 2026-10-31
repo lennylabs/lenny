@@ -28,6 +28,9 @@ class _StubHandler(http.server.BaseHTTPRequestHandler):
         with server.lock:  # type: ignore[attr-defined]
             counts = server.counts  # type: ignore[attr-defined]
             counts[self.path] = counts.get(self.path, 0) + 1
+            server.tokens[self.path] = self.headers.get(  # type: ignore[attr-defined]
+                "X-Lenny-Upload-Token", ""
+            )
         mode = server.mode  # type: ignore[attr-defined]
         if mode == "drop":
             self.connection.shutdown(socket.SHUT_RDWR)
@@ -59,6 +62,7 @@ def _serve(mode: str, code: str = "STARTING_FAILED") -> http.server.HTTPServer:
     server.mode = mode  # type: ignore[attr-defined]
     server.code = code  # type: ignore[attr-defined]
     server.counts = {}  # type: ignore[attr-defined]
+    server.tokens = {}  # type: ignore[attr-defined]
     server.lock = threading.Lock()  # type: ignore[attr-defined]
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
@@ -100,8 +104,47 @@ class StartSingleAttemptTest(unittest.TestCase):
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         with self.assertRaises(lenny.APIError):
-            _client(server, 3).finalize("sess_1")
+            _client(server, 3).finalize("sess_1", "tok-1")
         self.assertEqual(server.counts.get("/v1/sessions/sess_1/finalize"), 3)
+
+
+class FinalizeUploadTokenTest(unittest.TestCase):
+    """spec: section 7.4 (Upload Safety, Upload authorization), section 15.6.
+
+    Every finalize request carries the section 7.1 uploadToken in the
+    X-Lenny-Upload-Token header, and an empty token is refused before any
+    request is sent.
+    """
+
+    def test_finalize_sends_upload_token(self) -> None:
+        server = _serve("error", code="SESSION_CREATION_FAILED")
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        with self.assertRaises(lenny.APIError):
+            _client(server, 1).finalize("sess_1", "tok-7")
+        self.assertEqual(
+            server.tokens.get("/v1/sessions/sess_1/finalize"), "tok-7"
+        )
+
+    def test_finalize_keeps_idempotency_key_with_token(self) -> None:
+        server = _serve("error", code="SESSION_CREATION_FAILED")
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        with self.assertRaises(lenny.APIError):
+            _client(server, 1).finalize(
+                "sess_1", "tok-8", lenny.RequestOptions(idempotency_key="k1")
+            )
+        self.assertEqual(
+            server.tokens.get("/v1/sessions/sess_1/finalize"), "tok-8"
+        )
+
+    def test_finalize_refuses_an_empty_token(self) -> None:
+        server = _serve("error")
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        with self.assertRaises(ValueError):
+            _client(server, 1).finalize("sess_1", "")
+        self.assertIsNone(server.counts.get("/v1/sessions/sess_1/finalize"))
 
 
 if __name__ == "__main__":

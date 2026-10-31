@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
@@ -38,6 +39,9 @@ func TestSessionLifecycleAgainstRealGateway(t *testing.T) {
 	base := gw.BaseURL()
 	client := http.DefaultClient
 
+	// uploadToken is the §7.1 token the create response returns; the
+	// finalize request carries it (§7.4 Upload authorization).
+	uploadToken := ""
 	post := func(path string, body any) *http.Response {
 		t.Helper()
 		var reader io.Reader
@@ -48,6 +52,9 @@ func TestSessionLifecycleAgainstRealGateway(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPost, base+path, reader)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		if uploadToken != "" && strings.HasSuffix(path, "/finalize") {
+			req.Header.Set("X-Lenny-Upload-Token", uploadToken)
+		}
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("POST %s: %v", path, err)
@@ -81,6 +88,10 @@ func TestSessionLifecycleAgainstRealGateway(t *testing.T) {
 	id, _ := body["id"].(string)
 	if id == "" {
 		t.Fatalf("missing session id")
+	}
+	uploadToken, _ = body["uploadToken"].(string)
+	if uploadToken == "" {
+		t.Fatalf("create response carries no uploadToken: %v", body)
 	}
 
 	// Drive through the happy path.

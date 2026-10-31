@@ -102,7 +102,7 @@ func TestFinalizeStillRetriesUnderThePolicy_spec_15_6(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, err := c.Finalize(context.Background(), "sess_1"); err == nil {
+	if _, err := c.Finalize(context.Background(), "sess_1", "tok-1"); err == nil {
 		t.Fatal("Finalize = nil error, want the 503")
 	}
 	if got := atomic.LoadInt32(&calls); got != 3 {

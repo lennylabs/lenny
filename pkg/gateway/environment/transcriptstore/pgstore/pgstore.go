@@ -38,18 +38,23 @@ var _ transcriptstore.Store = (*Store)(nil)
 // Append adds entries to a session's transcript, assigning each the
 // next per-session monotonic seq. The session row must already exist
 // (session_messages.session_id is a foreign key to sessions.id).
-func (s *Store) Append(ctx context.Context, tenantID, sessionID string, entries ...transcriptstore.Entry) error {
+//
+// It returns the last seq it assigned, and only once the transaction has
+// committed, so a caller never records an end sequence for entries that
+// were rolled back. A failed transaction returns 0 with the error.
+// spec: §15.1 (REST API), §15 (Open Responses conversation sessions)
+func (s *Store) Append(ctx context.Context, tenantID, sessionID string, entries ...transcriptstore.Entry) (uint64, error) {
 	if len(entries) == 0 {
-		return nil
+		return 0, nil
 	}
-	return pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+	var maxSeq int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		// Serialize appends to this session so concurrent writers
 		// allocate disjoint seq values.
 		if _, err := tx.Exec(ctx,
 			`SELECT pg_advisory_xact_lock(hashtext($1))`, "transcript:"+sessionID); err != nil {
 			return err
 		}
-		var maxSeq int64
 		if err := tx.QueryRow(ctx,
 			`SELECT COALESCE(MAX(seq), 0) FROM session_messages
 			 WHERE session_id = $1::uuid AND tenant_id = $2`,
@@ -78,6 +83,10 @@ func (s *Store) Append(ctx context.Context, tenantID, sessionID string, entries 
 		}
 		return nil
 	})
+	if err != nil {
+		return 0, err
+	}
+	return uint64(maxSeq), nil
 }
 
 // Get returns the full ordered transcript for a session, or

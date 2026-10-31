@@ -300,6 +300,9 @@ type Replica struct {
 	// public is the replica's public path: the session handler mux and
 	// /mcp behind the auth middleware.
 	public http.Handler
+	// responses is the handler POST /v1/responses reaches on the replica's
+	// public path and its forward listener, set by SetResponsesHandler.
+	responses atomic.Pointer[http.Handler]
 
 	mu      sync.Mutex
 	crashed bool
@@ -592,20 +595,39 @@ func (h *Harness) replicaMCPDeps(r *Replica) mcptools.Deps {
 }
 
 // serveReplica builds the replica's MCP surface, its public path, and its
-// forward listener over one inner mux that routes /mcp to the MCP surface
-// and every other path to the session server.
+// forward listener over one inner mux that routes /mcp to the MCP surface,
+// POST /v1/responses to the replica's responses handler, and every other
+// path to the session server.
 //
 // spec: §29.3 (Interactive message send) Forwarding rules 2, 3, and 4,
-// §10.3 (mTLS PKI) NET-072
+// §10.3 (mTLS PKI) NET-072, §15 (Open Responses conversation sessions)
 func (h *Harness) serveReplica(r *Replica) {
 	r.MCP = mcp.NewServer()
 	mcptools.Register(r.MCP, h.replicaMCPDeps(r))
 	inner := http.NewServeMux()
 	inner.Handle("/mcp", r.MCP.Handler())
+	inner.HandleFunc("POST /v1/responses", r.serveResponses)
 	inner.Handle("/", r.Server.Handler())
 	r.public = authmw.Wrap(inner, harnessAuthOptions)
 	r.forward.serve(sessionserver.HolderForwardServerTLS(h.reloader, h.pki.CAPool),
 		sessionserver.NewHolderForwardHandler(inner, harnessAuthOptions, h.Inner))
+}
+
+// SetResponsesHandler sets the handler POST /v1/responses reaches on the
+// replica, on its public path and on its forward listener as the gateway's
+// listener mounts it. Until it is set the route answers 404.
+func (r *Replica) SetResponsesHandler(handler http.Handler) {
+	r.responses.Store(&handler)
+}
+
+// serveResponses dispatches POST /v1/responses to the replica's responses
+// handler.
+func (r *Replica) serveResponses(w http.ResponseWriter, req *http.Request) {
+	if handler := r.responses.Load(); handler != nil {
+		(*handler).ServeHTTP(w, req)
+		return
+	}
+	http.NotFound(w, req)
 }
 
 // SetForwardRefuse makes the replica's forward listener close each accepted

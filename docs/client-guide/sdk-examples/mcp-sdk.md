@@ -285,6 +285,7 @@ async function createSessionStepByStep(
     name: "finalize_workspace",
     arguments: {
       sessionId,
+      uploadToken,
       workspacePlan: {
         schemaVersion: 1,
         sources: [{ type: "uploadFile", path: "main.ts", uploadRef }],
@@ -1138,6 +1139,7 @@ async def create_session_stepwise(
         "finalize_workspace",
         arguments={
             "sessionId": session_id,
+            "uploadToken": upload_token,
             "workspacePlan": {
                 "schemaVersion": 1,
                 "sources": [

@@ -757,12 +757,18 @@
         "operationId": "postV1SessionsByIdFinalize",
         "summary": "Finalize workspace",
         "security": [{ "BearerAuth": [] }],
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "X-Lenny-Upload-Token", "in": "header", "required": true, "schema": { "type": "string" } }
+        ],
         "requestBody": { "required": false, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FinalizeRequest" } } } },
         "responses": {
           "200": { "description": "OK" },
           "400": { "description": "VALIDATION_ERROR (plan_already_set, invalid_upload_ref, upload_ref_foreign_session, malformed body) / WORKSPACE_PLAN_INVALID", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "401": { "description": "UPLOAD_TOKEN_INVALID / UPLOAD_TOKEN_EXPIRED", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "403": { "description": "UPLOAD_TOKEN_MISMATCH", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "409": { "description": "Invalid state transition" },
+          "410": { "description": "UPLOAD_TOKEN_CONSUMED", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "422": { "description": "GIT_CLONE_AUTH_UNSUPPORTED_HOST / GIT_CLONE_AUTH_HOST_AMBIGUOUS / GIT_CLONE_REF_UNRESOLVABLE", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
           "503": { "description": "GIT_CLONE_REF_RESOLVE_TRANSIENT / SERVICE_UNAVAILABLE", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
         }

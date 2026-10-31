@@ -104,7 +104,7 @@ func TestAllStores_DurableAcrossRestart_spec_17_4_199(t *testing.T) {
 	if err := a.sessions.Create(ctx, sessionstore.Session{ID: "s1", TenantID: "acme", UserID: "alice@acme.com", RuntimeRef: "echo"}); err != nil {
 		t.Fatalf("session create: %v", err)
 	}
-	if err := a.transcripts.Append(ctx, "acme", "s1", transcriptstore.Entry{Role: "user", Content: "hello"}); err != nil {
+	if _, err := a.transcripts.Append(ctx, "acme", "s1", transcriptstore.Entry{Role: "user", Content: "hello"}); err != nil {
 		t.Fatalf("transcript append: %v", err)
 	}
 	if err := a.connectors.Create(ctx, connectorstore.Connector{TenantID: "acme", ID: "github", MCPServerURL: "https://mcp.example.com/sse"}); err != nil {

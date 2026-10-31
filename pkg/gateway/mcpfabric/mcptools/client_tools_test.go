@@ -284,11 +284,11 @@ func catalogInputSchema(t *testing.T, srv *mcp.Server, name string) json.RawMess
 
 // TestFinalizeWorkspaceInputSchemaDeclaresWorkspacePlan_spec_15_2_1 asserts the
 // lenny/finalize_workspace tool advertises the optional workspacePlan it
-// forwards as the REST finalize body: sessionId is the only required
-// property, and workspacePlan is typed ["object","null"]. The other
-// per-session POST tools keep the session-id-only schema.
+// forwards as the REST finalize body: sessionId and the §7.4 uploadToken are
+// the required properties, and workspacePlan is typed ["object","null"]. The
+// other per-session POST tools keep the session-id-only schema.
 //
-// spec: 15.2.1 (REST/MCP Consistency Contract), 14.1 (WorkspacePlan Schema Versioning)
+// spec: 15.2.1 (REST/MCP Consistency Contract), 14.1 (WorkspacePlan Schema Versioning), 7.4 (Upload Safety, Upload authorization)
 func TestFinalizeWorkspaceInputSchemaDeclaresWorkspacePlan_spec_15_2_1(t *testing.T) {
 	srv := newClientToolsMCP(t, &fakeService{})
 
@@ -299,8 +299,11 @@ func TestFinalizeWorkspaceInputSchemaDeclaresWorkspacePlan_spec_15_2_1(t *testin
 	if got.Type != "object" {
 		t.Errorf("schema type = %q, want object", got.Type)
 	}
-	if len(got.Required) != 1 || got.Required[0] != "sessionId" {
-		t.Errorf("required = %v, want [sessionId] (workspacePlan stays optional)", got.Required)
+	if len(got.Required) != 2 || got.Required[0] != "sessionId" || got.Required[1] != "uploadToken" {
+		t.Errorf("required = %v, want [sessionId uploadToken] (workspacePlan stays optional)", got.Required)
+	}
+	if _, ok := got.Properties["uploadToken"]; !ok {
+		t.Errorf("finalize_workspace input schema does not declare uploadToken")
 	}
 	plan, ok := got.Properties["workspacePlan"]
 	if !ok {
@@ -325,6 +328,9 @@ func TestFinalizeWorkspaceInputSchemaDeclaresWorkspacePlan_spec_15_2_1(t *testin
 		if _, ok := other.Properties["workspacePlan"]; ok {
 			t.Errorf("%s input schema declares workspacePlan; only finalize_workspace binds a plan", name)
 		}
+		if _, ok := other.Properties["uploadToken"]; ok {
+			t.Errorf("%s input schema declares uploadToken; only finalize_workspace and upload_files take it", name)
+		}
 	}
 }
 
@@ -337,7 +343,7 @@ func TestFinalizeWorkspaceForwardsWorkspacePlan_spec_15_2_1(t *testing.T) {
 	svc := &fakeService{result: sessionserver.ServiceResult{Status: 200, Body: []byte(`{"state":"ready"}`)}}
 	srv := newClientToolsMCP(t, svc)
 
-	args := `{"sessionId":"s1","workspacePlan":{"schemaVersion":1,"sources":[{"type":"uploadFile","path":"a.txt","uploadRef":"ref-1"}]}}`
+	args := `{"sessionId":"s1","uploadToken":"tok-9","workspacePlan":{"schemaVersion":1,"sources":[{"type":"uploadFile","path":"a.txt","uploadRef":"ref-1"}]}}`
 	if _, err := dispatch(t, srv, "lenny/finalize_workspace", args); err != nil {
 		t.Fatalf("finalize_workspace: %v", err)
 	}
@@ -346,6 +352,7 @@ func TestFinalizeWorkspaceForwardsWorkspacePlan_spec_15_2_1(t *testing.T) {
 	}
 	var body struct {
 		SessionID     *string        `json:"sessionId"`
+		UploadToken   *string        `json:"uploadToken"`
 		WorkspacePlan map[string]any `json:"workspacePlan"`
 	}
 	if err := json.Unmarshal(svc.body, &body); err != nil {
@@ -354,7 +361,63 @@ func TestFinalizeWorkspaceForwardsWorkspacePlan_spec_15_2_1(t *testing.T) {
 	if body.SessionID != nil {
 		t.Errorf("forwarded body still carries sessionId: %s", svc.body)
 	}
+	if body.UploadToken != nil {
+		t.Errorf("forwarded body still carries uploadToken: %s", svc.body)
+	}
+	if got := svc.headers["X-Lenny-Upload-Token"]; got != "tok-9" {
+		t.Errorf("upload token header = %q, want tok-9", got)
+	}
 	if body.WorkspacePlan == nil || body.WorkspacePlan["sources"] == nil {
 		t.Errorf("forwarded body lost workspacePlan: %s", svc.body)
+	}
+}
+
+// TestFinalizeWorkspaceCarriesUploadToken_spec_7_4 asserts the
+// lenny/finalize_workspace tool forwards the uploadToken argument in the
+// X-Lenny-Upload-Token header the REST finalize verifies, sends no body for
+// a plan-less call, and refuses a call whose uploadToken is absent, empty,
+// or not a string with VALIDATION_ERROR before any REST call.
+//
+// spec: 7.4 (Upload Safety, Upload authorization), 15.2.1 (REST/MCP Consistency Contract)
+func TestFinalizeWorkspaceCarriesUploadToken_spec_7_4(t *testing.T) {
+	cases := []struct {
+		name      string
+		args      string
+		wantErr   string
+		wantToken string
+		wantBody  bool
+	}{
+		{name: "token without plan", args: `{"sessionId":"s1","uploadToken":"tok-1"}`, wantToken: "tok-1"},
+		{name: "token with plan", args: `{"sessionId":"s1","uploadToken":"tok-2","workspacePlan":{"schemaVersion":1,"sources":[]}}`, wantToken: "tok-2", wantBody: true},
+		{name: "token absent", args: `{"sessionId":"s1"}`, wantErr: "VALIDATION_ERROR"},
+		{name: "token empty", args: `{"sessionId":"s1","uploadToken":""}`, wantErr: "VALIDATION_ERROR"},
+		{name: "token blank", args: `{"sessionId":"s1","uploadToken":"   "}`, wantErr: "VALIDATION_ERROR"},
+		{name: "token not a string", args: `{"sessionId":"s1","uploadToken":7}`, wantErr: "VALIDATION_ERROR"},
+		{name: "session absent", args: `{"uploadToken":"tok-3"}`, wantErr: "VALIDATION_ERROR"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &fakeService{result: sessionserver.ServiceResult{Status: 200, Body: []byte(`{"state":"ready"}`)}}
+			srv := newClientToolsMCP(t, svc)
+			res, err := dispatch(t, srv, "lenny/finalize_workspace", tc.args)
+			if tc.wantErr != "" {
+				if code := errorCode(t, res); code != tc.wantErr {
+					t.Fatalf("error code = %q, want %s", code, tc.wantErr)
+				}
+				if svc.method != "" {
+					t.Errorf("refused call reached the REST route %s %s", svc.method, svc.target)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("finalize_workspace: %v", err)
+			}
+			if got := svc.headers["X-Lenny-Upload-Token"]; got != tc.wantToken {
+				t.Errorf("upload token header = %q, want %q", got, tc.wantToken)
+			}
+			if (len(svc.body) > 0) != tc.wantBody {
+				t.Errorf("forwarded body = %q, want body present = %v", svc.body, tc.wantBody)
+			}
+		})
 	}
 }

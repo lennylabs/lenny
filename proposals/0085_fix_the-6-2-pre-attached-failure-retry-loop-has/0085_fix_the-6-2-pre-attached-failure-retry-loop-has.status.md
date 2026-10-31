@@ -2,15 +2,15 @@
 proposal: 0085_fix_the-6-2-pre-attached-failure-retry-loop-has
 title: The §6.2 pre-attached retry loop has no stop condition for a terminal session
 kind: fix
-status: Approved
+status: Implemented
 drafted-date: 2026-09-27
 drafted-by: change-proposal
 reviewed-date: 2026-10-29
 reviewed-by: jaf
 approved-date: 2026-10-29
 approved-by: jaf
-implemented-date: 
-implemented-by: 
+implemented-date: 2026-10-31
+implemented-by: jaf
 ---
 
 ## Review history

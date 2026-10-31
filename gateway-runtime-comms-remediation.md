@@ -3384,7 +3384,8 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   `impl/0086-plan-binding` merges into this branch.
 - [x] **Proposal 0085**
   (`proposals/0085_fix_the-6-2-pre-attached-failure-retry-loop-has/`): approved 2026-10-29, merge
-  `f5151ba18`. It confines the §6.2 pre-attached failure retry to the `POST /v1/sessions/start` creation unit,
+  `f5151ba18`; implemented 2026-10-31 (commits `8cec66acf`, `b3df750df`, `5e8993886`; the first run with the
+  code-review and security-review quality phase, which found nothing). It confines the §6.2 pre-attached failure retry to the `POST /v1/sessions/start` creation unit,
   the one request that has persisted no session row, so finalize and delegated-child materialization make one
   attempt and need no stop condition for a session that ends mid-setup. It changes no production behavior. Its
   implementation is small: the staged spec edits in §6.2, §15.1, §4.7, §29.2, and §28.5.3, comment corrections
@@ -3410,7 +3411,13 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   `memstore` and `pgstore`) and `terminal_writer_inventory_test.go`, names `serveCold` in place of
   `handleCreate` among 0107 CODE-3's hookless writers, and gives `endHeldSession` the dispatch of the CODE-3
   `lenny/cancel_session` row. Its unstaged defects are filed below, in the block for proposal 0108. The next
-  change-proposal run is the snapshot-restore proposal below, drafting as 0109.
+  change-proposal run is the snapshot-restore proposal below, drafting as 0109. Implemented (proposal 0108) on
+  `impl/0108-conversation-session`, cut from this branch at `ca11cddf9`, with the spec edits from `69a894763`
+  and the code, tests, and docs through `30b511f44`. The implementation was finalized on 2026-10-30: the
+  proposal status is Implemented, its deviations are accepted or resolved, and the legacy 0061 draft is marked
+  superseded. It closes no filed finding and fixed none of the defects in the block for proposal 0108 below as
+  a side effect. F-29.3.4 and 0110's Open Responses steps (S5, S10, S11, and S12) are unblocked once
+  `impl/0108-conversation-session` merges into this branch. 0108 is implemented once that branch merges.
 - [x] **Snapshot restore at bind (F-7.1.34 restore half, High, with F-7.1.33)**
   (`proposals/0109_fix_a-derived-or-replayed-session-starts-without-its-source/`): approved 2026-10-29 as
   proposal 0109, merge `bad91fe31`. A derived or replayed session's copied snapshot is restored at its first
@@ -3480,6 +3487,16 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   including the create response's `uploadToken` and the owner's action responses that 0110's not-found rule
   hides. The proposal binds the record to the authenticated subject and states what a second principal
   receives, on REST and on the MCP per-tool path. It does not depend on 0110's implementation.
+- [ ] **Warm-time shared-asset fill (F-6.4.19 Medium, F-6.4.20 Medium)** (new proposal, queued 2026-10-30 after
+  0111 and after the idempotent-replay proposal above, which is a security item): a Runtime's `type: artifact`
+  `sharedAssets` entries never reach `/workspace/shared/`, and inline entries ride the adapter's
+  `--shared-assets` command-line argument, which caps them near 90 KiB in total. The proposal reuses 0111's
+  warm-time fill path: the adapter fills the read-only `/workspace/shared/` store before READY, streaming each
+  asset from the gateway or from a presigned GET, under size bounds and a fill deadline, with metrics, and a
+  fill that fails keeps the pod out of READY. It states one `sharedAssets` schema across the admin API and the
+  `Runtime` CRD and how the registry value reaches the pod builder, moves inline content off the command line,
+  and states a size limit and the `/workspace/shared/` volume sizing. It follows 0111 because it reuses 0111's
+  fill path and store. The block "Filed 2026-10-30 (shared assets)" below lists both findings.
 
 - [ ] **P2b** (section P2 above): after 0085.
 
@@ -4185,13 +4202,26 @@ refiled: the §15.1 `/upload` precondition row admitting `running` is annotated 
 D2), which stays with the upload route proposal.
 
 - Direct-fix queue, after 0086's implementation, which edits the same files.
-  - [ ] **F-7.4.21** (Medium): `handleFinalize` does not verify the `uploadToken`, while §7.4 requires every
-    finalize request to carry it. Verify it before the precondition check, as `admitUpload` does.
-  - [ ] **F-7.5.15** (Medium): `enforceSetupCommandPolicy` admits a plan on every runtime read error. Answer a
+  - [x] **F-7.4.21** (Medium): `handleFinalize` does not verify the `uploadToken`, while §7.4 requires every
+    finalize request to carry it. Verify it before the precondition check, as `admitUpload` does. Closed
+    2026-10-31 by direct fix on `fix/finalize-policy-forward`: the token is verified before the row is read,
+    and the SDKs, the CLI, the playground, and `lenny/finalize_workspace` send it. Filed from the fix:
+    F-15.1.69.
+  - [ ] **F-15.1.69** (Low, filed from F-7.4.21): `UPLOAD_TOKEN_INVALID` has no §15.1 catalog row, so MCP
+    classifies it as transient and retryable while REST answers it as permanent. Needs a catalog row through
+    the proposal pipeline, then the `errorclassify` entry.
+  - [x] **F-7.5.15** (Medium): `enforceSetupCommandPolicy` admits a plan on every runtime read error. Answer a
     transient read with `503 SERVICE_UNAVAILABLE`, as 0086's defaults composition does, after 0086's S14.
-  - [ ] **F-7.5.16** (Medium): at creation the setup-command policy is read from the requested runtime rather
+    Closed 2026-10-31 by direct fix on `fix/finalize-policy-forward`: the read classifies a failure as the
+    composition does, and a plan with no setup commands reads nothing.
+  - [x] **F-7.5.16** (Medium): at creation the setup-command policy is read from the requested runtime rather
     than the routed one. Run the check against the runtime the row records after routing; if that needs an
-    ordering the specification does not state, it goes to a proposal.
+    ordering the specification does not state, it goes to a proposal. Closed 2026-10-31 by direct fix on
+    `fix/finalize-policy-forward`: both create routes check `row.RuntimeRef` after routing and immediately
+    before the defaults composition, the position §14.1 rule 1 states. Filed from the fix: F-4.8.25.
+  - [ ] **F-4.8.25** (Medium, filed from F-7.5.16): `POST /v1/sessions` runs no §4.8 PreRoute or PostRoute
+    chain, while create-and-start runs both around the ExperimentRouter. Direct fix after proposal 0110,
+    which edits the create path.
   - [x] **F-16.1.8** (Medium): `lenny_warmpool_warmup_failure_total` has no warm-up emitter and only the
     `error_type` label, so `PoolScaleoutBlockedByQuota` never fires. The Sandbox reconciler now emits
     `image_pull_error`, `resource_quota_exceeded`, and `node_pressure` with the §16.1 labels, once per
@@ -4298,18 +4328,25 @@ for 0085's RECORDS-1, so the §6.2 entry below takes F-6.2.33.
   delegated child's `created → running` edge is F-7.2.45, already filed.
 
 **Defects filed from proposal 0108's unstaged-defect list (2026-10-29).** Proposal 0108 (proposal 0061
-re-derived, approved 2026-10-29, merge `4e5a94071`, implementation pending) lists defects in the shipped tree
+re-derived, approved 2026-10-29, merge `4e5a94071`, implementation finalized 2026-10-30 on
+`impl/0108-conversation-session`) lists defects in the shipped tree
 that it does not stage. It has no records deliverable and closes no filed finding, so no Owner line moves to
 it, and the listed defects are filed now, because no defect is dropped. Each was re-confirmed against the tree
 at `4e5a94071`. Each new or annotated BUILD-GAPS entry says 0108's implementor updates the entry rather than
 filing a duplicate.
 
 - Direct-fix queue, after 0108's implementation, whose CODE-3 edits `forwardTarget`.
-  - [ ] **F-29.3.4** (Medium): a forwarded request whose re-read row is outside its kind's forward states
+  - [x] **F-29.3.4** (Medium): a forwarded request whose re-read row is outside its kind's forward states
     runs locally at a replica that may not hold `REG-COORDLEASE`, because `forwardTarget` tests the state gate
     before the §29.3 **Forwarding.** rule-5 branch. The fix applies the rule-5 branch first for every kind and
     makes the REST and MCP not-delivered DLQ hold conditional on a `running` or `input_required` row, as
     rule 6 states. 0108 reorders the branch for its own kind only.
+    Unblocked once `impl/0108-conversation-session` merges (note dated 2026-10-30 in its BUILD-GAPS entry).
+    Closed 2026-10-31 by direct fix on `fix/finalize-policy-forward`: `forwardTarget` applies rule 5 first for
+    every kind, and `HoldsUndelivered` gates the REST and MCP DLQ hold. Filed from the fix: F-29.3.5.
+  - [ ] **F-29.3.5** (Low, filed from F-29.3.4): a forward listener that does not hold the lease answers a
+    route's `INVALID_STATE_TRANSITION` when the re-read row fails the route precondition, where rule 5 names
+    `TARGET_NOT_READY`. Needs the order of rule 5 and the precondition check decided first.
 - Proposal routing: a session-owner authorization proposal (new, unwritten), after 0108's implementation,
   which rewrites the Open Responses read and resolution paths. This proposal is 0110 (approved 2026-10-29,
   merge `05ed531a5`), whose REC-1 closes all three entries below. Only its Open Responses steps wait for
@@ -4663,6 +4700,29 @@ that left a recycle-pool pod claimed under `TestPodLifecycle` (T-17.4.42). Four 
 - [x] **T-17.4.45** (Low): the tier-8 and tier-9 `kubectl run --attach` psql helpers can read an empty result
   when kubectl loses the pod's output. Fixed on `fix/f-25-9-21`: the end-marker retry now lives in
   `tests/testinfra/kind/psql.go`, and the tier-5, tier-8, and tier-9 helpers delegate to it.
+
+**Filed 2026-10-30 (shared assets).** A check of the §6.4 `/workspace/shared/` population against the tree at
+`34c66d26d` found that F-6.4.3 built the volume, the CRD field, and the inline path only. Both findings route to
+the warm-time shared-asset fill proposal in "Queue after P4b" above, queued after 0111.
+
+- [ ] **F-6.4.19** (Medium): `type: artifact` shared assets are never materialized. The admin API validates and
+  stores them in the migration 0075 `shared_assets` column, but nothing carries the registry value to the pod
+  builder, which reads the `Runtime` CRD, and the CRD schema has no `type`, `ref`, or `destPath` property. An
+  artifact entry registered through the admin API is dropped silently and warm-up succeeds; on the CRD it is
+  rejected for the missing `path`, or written as an empty file when a `path` is added.
+- [ ] **F-6.4.20** (Medium): inline shared assets travel base64-encoded in one adapter command-line argument, so
+  `MAX_ARG_STRLEN` caps a Runtime's inline set near 90 KiB in total and a larger set fails at container start
+  with `E2BIG`. §6.4 and §5.1 state no size limit, transport, or volume size.
+
+**Filed 2026-10-31 (recurring flakes).** Branch `fix/recurring-flakes` from `e4f0eedd9` fixed the test
+infrastructure behind T-12.3.13 and T-17.7.12 and traced T-12.4.13 and T-12.4.14 to a product race.
+
+- [ ] **F-12.4.38** (High): the §12.4 Redis-outage slot gate `ReserveSlotUnderLock` releases its per-pod
+  advisory lock before the admission is recorded anywhere the next gated count reads, because the occupancy
+  is written only when the session row's `pod_assignment` is persisted on bind. Concurrent admissions on one
+  pod during a Redis outage therefore overrun `maxConcurrentSessions`. `TestReserveSlotUnderLock` is the
+  acceptance test and stays red under load until the fix lands. A direct fix if the occupancy record needs
+  no §12.4 or §5.2 text, otherwise a small proposal. Independent of the R-steps.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 

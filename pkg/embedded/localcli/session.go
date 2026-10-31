@@ -393,7 +393,7 @@ func createSessionWithWorkspace(ctx context.Context, client *lenny.Client, f ses
 	if err != nil {
 		return "", err
 	}
-	if _, err := client.FinalizeWorkspace(ctx, id, plan); err != nil {
+	if _, err := client.FinalizeWorkspace(ctx, id, token, plan); err != nil {
 		return "", err
 	}
 	if _, err := client.Start(ctx, id); err != nil {

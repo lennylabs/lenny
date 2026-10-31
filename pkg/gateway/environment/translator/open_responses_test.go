@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
@@ -27,6 +29,8 @@ func newResponsesHandler(t *testing.T) (*translator.OpenResponsesHandler, sessio
 	t.Helper()
 	store := memstore.New()
 	h := translator.NewOpenResponsesHandler(store, executor.NewEchoExecutor(), translator.OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{Exec: nil, Store: store},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:          func() string { return "resp_1" },
@@ -56,7 +60,7 @@ func TestOpenResponsesHappyPath(t *testing.T) {
 	}
 	var resp translator.OpenResponsesResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
-	if resp.ID != "resp_1" || resp.Object != "response" {
+	if resp.ID != "resp_1.1" || resp.Object != "response" {
 		t.Errorf("envelope: %+v", resp)
 	}
 	if resp.Status != "completed" {
@@ -71,6 +75,9 @@ func TestOpenResponsesHappyPath(t *testing.T) {
 	row, _ := store.Get(context.Background(), "acme", "resp_1")
 	if row.State != session.StateCompleted {
 		t.Errorf("session state: %q", row.State)
+	}
+	if len(row.Responses) != 1 || !row.Responses[0].Completed {
+		t.Errorf("session responses: %+v, want one completed record", row.Responses)
 	}
 }
 
@@ -120,44 +127,158 @@ func TestOpenResponsesStreamEmitsTypedEvents(t *testing.T) {
 			t.Errorf("stream body missing %q; body:\n%s", want, body)
 		}
 	}
+	// Both typed envelope events carry the response id <session>.1.
+	for _, ev := range []string{"response.created", "response.completed"} {
+		if id := streamEventResponseID(t, body, ev); id != "resp_1.1" {
+			t.Errorf("%s response id = %q, want resp_1.1", ev, id)
+		}
+	}
 }
 
+// streamEventResponseID returns response.id from the data line of the named
+// SSE event in body.
+func streamEventResponseID(t *testing.T, body, event string) string {
+	t.Helper()
+	marker := "event: " + event + "\ndata: "
+	i := strings.Index(body, marker)
+	if i < 0 {
+		t.Fatalf("stream has no %s event: %s", event, body)
+	}
+	line := body[i+len(marker):]
+	line = line[:strings.IndexByte(line, '\n')]
+	var payload struct {
+		Response struct {
+			ID string `json:"id"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal([]byte(line), &payload); err != nil {
+		t.Fatalf("decode %s data %q: %v", event, line, err)
+	}
+	return payload.Response.ID
+}
+
+// TestOpenResponsesGet pins GET /v1/responses/{id} on a completed response:
+// 200 with status completed, the response id echoed, and the model.
+//
+// spec: §15 (Open Responses conversation sessions)
 func TestOpenResponsesGet(t *testing.T) {
 	h, store := newResponsesHandler(t)
-	_ = store.Create(context.Background(), sessionstore.Session{
-		ID: "resp_1", TenantID: "acme", State: session.StateCompleted,
-		RuntimeRef: "echo",
-		CreatedAt:  time.Now(), UpdatedAt: time.Now(),
-	})
-	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_1", nil)
-	req.Header.Set("X-Lenny-Tenant-ID", "acme")
-	rr := httptest.NewRecorder()
-	h.Handler().ServeHTTP(rr, req)
+	seedResponses(t, store, "acme", "resp_1", "", true)
+	rr := getResponse(t, h, "acme", "resp_1.1")
 	if rr.Code != http.StatusOK {
-		t.Fatalf("status: %d", rr.Code)
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
 	var resp translator.OpenResponsesResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
-	if resp.Status != "completed" || resp.Model != "echo" {
+	if resp.ID != "resp_1.1" || resp.Status != "completed" || resp.Model != "echo" {
 		t.Errorf("resp: %+v", resp)
 	}
 }
 
+// TestOpenResponsesGetMissing pins the native 404 for an unknown response,
+// both in the response-id form and as a bare session id.
+//
+// spec: §15 (Open Responses conversation sessions)
 func TestOpenResponsesGetMissing(t *testing.T) {
-	h, _ := newResponsesHandler(t)
-	req := httptest.NewRequest(http.MethodGet, "/v1/responses/missing", nil)
-	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	h, store := newResponsesHandler(t)
+	seedResponses(t, store, "acme", "resp_1", "", true)
+	for _, id := range []string{"missing.1", "missing", "resp_1"} {
+		if rr := getResponse(t, h, "acme", id); rr.Code != http.StatusNotFound {
+			t.Errorf("GET %s: %d, want 404", id, rr.Code)
+		}
+	}
+}
+
+// TestOpenResponsesGetAnswersCompletedResponsesOnly_spec_15 pins the GET
+// contract over each kind of id: a completed response answers 200 with its
+// id and previous_response_id (the preceding ordinal on the same session, or
+// for ordinal 1 the response the session's first turn continued from), and
+// an id that names no completed response of the caller's tenant (not
+// completed, past the newest ordinal, unknown, cross-tenant, malformed, or a
+// non-canonical leading-zero spelling of an issued id) answers the native 404
+// not_found_error.
+//
+// spec: §15 (Open Responses conversation sessions); §4.2 (session-store
+// tenant isolation)
+func TestOpenResponsesGetAnswersCompletedResponsesOnly_spec_15(t *testing.T) {
+	h, store := newResponsesHandler(t)
+	seedResponses(t, store, "acme", "S", "P.4", true, true, false)
+	seedResponses(t, store, "globex", "G", "", true)
+
+	for _, tc := range []struct {
+		id       string
+		wantCode int
+		wantPrev string
+	}{
+		{id: "S.1", wantCode: http.StatusOK, wantPrev: "P.4"},
+		{id: "S.2", wantCode: http.StatusOK, wantPrev: "S.1"},
+		{id: "S.3", wantCode: http.StatusNotFound},
+		{id: "S.4", wantCode: http.StatusNotFound},
+		{id: "unknown.1", wantCode: http.StatusNotFound},
+		{id: "G.1", wantCode: http.StatusNotFound},
+		{id: "S.0", wantCode: http.StatusNotFound},
+		{id: "S.one", wantCode: http.StatusNotFound},
+		{id: "S", wantCode: http.StatusNotFound},
+		{id: "S.01", wantCode: http.StatusNotFound},
+		{id: "S.02", wantCode: http.StatusNotFound},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			rr := getResponse(t, h, "acme", tc.id)
+			if rr.Code != tc.wantCode {
+				t.Fatalf("GET %s: %d, want %d; body=%s", tc.id, rr.Code, tc.wantCode, rr.Body.String())
+			}
+			if tc.wantCode == http.StatusNotFound {
+				var env struct {
+					Error struct {
+						Type string `json:"type"`
+					} `json:"error"`
+				}
+				_ = json.Unmarshal(rr.Body.Bytes(), &env)
+				if env.Error.Type != "not_found_error" {
+					t.Errorf("GET %s error.type = %q, want not_found_error", tc.id, env.Error.Type)
+				}
+				return
+			}
+			var resp translator.OpenResponsesResponse
+			_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+			if resp.ID != tc.id || resp.Status != "completed" || resp.PreviousResponseID != tc.wantPrev {
+				t.Errorf("GET %s = id %q status %q previous %q, want id %q completed previous %q",
+					tc.id, resp.ID, resp.Status, resp.PreviousResponseID, tc.id, tc.wantPrev)
+			}
+		})
+	}
+}
+
+// seedResponses creates session id in tenant with one response record per
+// completed flag and the given first-turn continuation parent.
+func seedResponses(t *testing.T, store sessionstore.Store, tenant, id, parent string, completed ...bool) {
+	t.Helper()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var responses []sessionstore.ConversationResponse
+	for _, c := range completed {
+		responses = append(responses, sessionstore.ConversationResponse{CreatedAt: now, Completed: c})
+	}
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		ContinuationParentID: parent, Responses: responses, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed %s: %v", id, err)
+	}
+}
+
+func getResponse(t *testing.T, h *translator.OpenResponsesHandler, tenant, id string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/v1/responses/"+id, nil)
+	req.Header.Set("X-Lenny-Tenant-ID", tenant)
 	rr := httptest.NewRecorder()
 	h.Handler().ServeHTTP(rr, req)
-	if rr.Code != http.StatusNotFound {
-		t.Errorf("missing: %d", rr.Code)
-	}
+	return rr
 }
 
 // TestOpenResponsesDelete pins that the adapter serves no delete operation: a
 // DELETE on /v1/responses/{id} answers 405 with an Allow header naming GET, and
-// the implicit per-request session record behind the response survives it.
-// spec: §15 (Built-in adapter single-shot compute model), §15.1 (REST API)
+// the conversation session record behind the response survives it.
+// spec: §15 (Open Responses conversation sessions), §15.1 (REST API)
 func TestOpenResponsesDelete(t *testing.T) {
 	h, store := newResponsesHandler(t)
 	if err := store.Create(context.Background(), sessionstore.Session{
@@ -251,6 +372,8 @@ func newContinuityHandler(t *testing.T, exec executor.Executor, ts transcriptsto
 	store := memstore.New()
 	var n int
 	h := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: store},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:          func() string { n++; return fmt.Sprintf("resp_%d", n) },
@@ -295,7 +418,7 @@ func TestOpenResponsesContinuationUnknownIDFailsClosed_spec_15(t *testing.T) {
 	rr := respPostTenant(t, h.Handler(), "acme", map[string]any{
 		"model":                "echo",
 		"input":                "hi",
-		"previous_response_id": "resp_missing",
+		"previous_response_id": "resp_missing.1",
 	})
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status: got %d want 404; body=%s", rr.Code, rr.Body.String())
@@ -321,9 +444,9 @@ func TestOpenResponsesContinuationCrossTenantFailsClosed_spec_4_2(t *testing.T) 
 		t.Fatalf("seed globex: %d, body=%s", rr.Code, rr.Body.String())
 	}
 	callsBefore := len(exec.calls)
-	// acme references globex's resp_1: cross-tenant, must fail closed.
+	// acme references globex's resp_1.1: cross-tenant, must fail closed.
 	rr := respPostTenant(t, h.Handler(), "acme", map[string]any{
-		"model": "echo", "input": "hi", "previous_response_id": "resp_1",
+		"model": "echo", "input": "hi", "previous_response_id": "resp_1.1",
 	})
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("cross-tenant status: got %d want 404; body=%s", rr.Code, rr.Body.String())
@@ -333,13 +456,13 @@ func TestOpenResponsesContinuationCrossTenantFailsClosed_spec_4_2(t *testing.T) 
 	}
 }
 
-// TestOpenResponsesChainWalkPrependsPriorConversation pins the full-history
-// replay: across a three-turn chain the continuation's dispatch receives the
-// prior conversation prepended ahead of the new turn in chronological order
-// (root first), assembled by walking the ContinuationParentID chain across the
-// per-response single-turn buckets, and each bucket holds only its own turn
-// (no copy-forward).
-// spec: §15 (server-side previous_response_id continuation, full-history replay).
+// TestOpenResponsesChainWalkPrependsPriorConversation pins the cold
+// continuation's conversation context: across a three-turn lineage the
+// dispatch receives the prior conversation prepended ahead of the new input in
+// chronological order, assembled by walking ContinuationParentID across the
+// sessions' transcripts, and each session's transcript holds only its own
+// turns (no copy-forward).
+// spec: §15 (Open Responses conversation sessions).
 func TestOpenResponsesChainWalkPrependsPriorConversation_spec_15(t *testing.T) {
 	exec := &captureExecutor{}
 	ts := transcriptstore.NewMemory()
@@ -353,7 +476,7 @@ func TestOpenResponsesChainWalkPrependsPriorConversation_spec_15(t *testing.T) {
 	}
 	// Turn 2: continuation off resp_1.
 	if rr := respPostTenant(t, h.Handler(), "acme", map[string]any{
-		"model": "echo", "input": "two", "previous_response_id": "resp_1",
+		"model": "echo", "input": "two", "previous_response_id": "resp_1.1",
 	}); rr.Code != http.StatusOK {
 		t.Fatalf("turn2: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -364,7 +487,7 @@ func TestOpenResponsesChainWalkPrependsPriorConversation_spec_15(t *testing.T) {
 	})
 	// Turn 3: continuation off resp_2 rehydrates the full two-turn history.
 	if rr := respPostTenant(t, h.Handler(), "acme", map[string]any{
-		"model": "echo", "input": "three", "previous_response_id": "resp_2",
+		"model": "echo", "input": "three", "previous_response_id": "resp_2.1",
 	}); rr.Code != http.StatusOK {
 		t.Fatalf("turn3: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -397,9 +520,10 @@ func TestOpenResponsesChainWalkPrependsPriorConversation_spec_15(t *testing.T) {
 }
 
 // TestOpenResponsesContinuationEmptyTranscript pins that a continuation whose
-// referenced response exists but recorded no transcript dispatches with an
-// empty prior history (no prepend) and returns 200, rather than a 404.
-// spec: §15 (continuation resolution); transcriptstore ErrNotFound tolerated.
+// referenced response completed but whose session has no transcript (erased
+// under a surviving row) dispatches with an empty prior history and returns
+// 200, rather than a 404.
+// spec: §15 (Open Responses conversation sessions); §12.8 (erasure).
 func TestOpenResponsesContinuationEmptyTranscript_spec_15(t *testing.T) {
 	exec := &captureExecutor{}
 	ts := transcriptstore.NewMemory()
@@ -409,11 +533,12 @@ func TestOpenResponsesContinuationEmptyTranscript_spec_15(t *testing.T) {
 	if err := store.Create(context.Background(), sessionstore.Session{
 		ID: "resp_seed", TenantID: "acme", State: session.StateCompleted,
 		RuntimeRef: "echo", CreatedAt: now, UpdatedAt: now,
+		Responses: []sessionstore.ConversationResponse{{CreatedAt: now, Completed: true}},
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	rr := respPostTenant(t, h.Handler(), "acme", map[string]any{
-		"model": "echo", "input": "hi", "previous_response_id": "resp_seed",
+		"model": "echo", "input": "hi", "previous_response_id": "resp_seed.1",
 	})
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: got %d want 200; body=%s", rr.Code, rr.Body.String())
@@ -423,13 +548,15 @@ func TestOpenResponsesContinuationEmptyTranscript_spec_15(t *testing.T) {
 	})
 }
 
-// TestOpenResponsesRecordsChainRootTurn pins that a chain-root turn carrying
-// no previous_response_id is still recorded on its own session id (so a later
-// continuation can rehydrate it), and that a best-effort transcript append
-// failure does not fail the response (it still returns 200).
-// spec: §15 (continuation lineage persisted); §15.1 (best-effort transcript write).
+// TestOpenResponsesRecordsChainRootTurn pins that a turn carrying no
+// previous_response_id is recorded on its own session, so a later
+// continuation can rehydrate it, and that the record is required: a
+// transcript append failure answers a native 500, leaves the session with no
+// completed response, and releases the pod with the failed disposition,
+// rather than returning a 200 for a response no later continuation could
+// rehydrate.
+// spec: §15 (Open Responses conversation sessions); §15.1 (session transcript).
 func TestOpenResponsesRecordsChainRootTurn_spec_15_1(t *testing.T) {
-	// Chain-root turn is recorded.
 	exec := &captureExecutor{}
 	ts := transcriptstore.NewMemory()
 	h, _ := newContinuityHandler(t, exec, ts)
@@ -443,40 +570,201 @@ func TestOpenResponsesRecordsChainRootTurn_spec_15_1(t *testing.T) {
 		t.Fatalf("chain-root turn not recorded: %v", err)
 	}
 	if len(entries) != 2 || entries[0].Content != "one" || entries[1].Content != "reply1" {
-		t.Errorf("chain-root bucket: %+v", entries)
+		t.Errorf("chain-root transcript: %+v", entries)
 	}
 
-	// Best-effort append failure still returns 200.
-	failExec := &captureExecutor{}
+	failExec := &dispositionExecutor{}
 	failStore := memstore.New()
-	var n int
 	failH := translator.NewOpenResponsesHandler(failStore, failExec, translator.OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{Exec: failExec, Store: failStore},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:          func() string { n++; return fmt.Sprintf("resp_%d", n) },
+		IDFunc:          func() string { return "resp_fail" },
 		Transcripts:     appendFailTranscripts{Store: transcriptstore.NewMemory()},
 	})
 	rr := respPostTenant(t, failH.Handler(), "acme", map[string]any{
 		"model": "echo", "input": "one",
 	})
-	if rr.Code != http.StatusOK {
-		t.Fatalf("append-failure response: got %d want 200; body=%s", rr.Code, rr.Body.String())
+	assertTurnFailed(t, rr, failStore, failExec, "resp_fail")
+}
+
+// assertTurnFailed checks the outcome of a turn whose record or completion
+// write failed: a native 500 server_error, no completed response on the
+// session, and one executor release with the failed disposition.
+func assertTurnFailed(t *testing.T, rr *httptest.ResponseRecorder, store sessionstore.Store,
+	exec *dispositionExecutor, sessionID string,
+) {
+	t.Helper()
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("status: got %d want 500; body=%s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Error struct {
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &env)
+	if env.Error.Type != "server_error" {
+		t.Errorf("error.type = %q, want server_error", env.Error.Type)
+	}
+	row, err := store.Get(context.Background(), "acme", sessionID)
+	if err != nil {
+		t.Fatalf("read row: %v", err)
+	}
+	for _, r := range row.Responses {
+		if r.Completed {
+			t.Errorf("a failed turn left a completed response: %+v", row.Responses)
+		}
+	}
+	if row.State == session.StateCompleted {
+		t.Errorf("a failed turn wrote the completed state")
+	}
+	if got := exec.dispositions(); len(got) != 1 || got[0] != executor.DispositionFailed {
+		t.Errorf("executor releases = %v, want one DispositionFailed", got)
 	}
 }
 
+// dispositionExecutor is the echo executor with a SessionReleaser that
+// records the disposition of each release.
+type dispositionExecutor struct {
+	mu    sync.Mutex
+	disps []executor.Disposition
+}
+
+func (d *dispositionExecutor) Send(ctx context.Context, id string, m []executor.Message) (executor.Response, error) {
+	return executor.NewEchoExecutor().Send(ctx, id, m)
+}
+
+func (d *dispositionExecutor) Close(context.Context, string) error { return nil }
+
+func (d *dispositionExecutor) Release(_ context.Context, _ string, disp executor.Disposition) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.disps = append(d.disps, disp)
+	return nil
+}
+
+func (d *dispositionExecutor) dispositions() []executor.Disposition {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]executor.Disposition(nil), d.disps...)
+}
+
+// genBinder creates the session row as the no-op binder does, with a
+// non-zero recovery generation, so a test can tell the generation the
+// completion write captured from the zero value.
+type genBinder struct {
+	store sessionstore.Store
+	id    string
+	gen   int64
+}
+
+func (b genBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (translator.SingleShotBinding, error) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	return translator.SingleShotBinding{SessionID: b.id, RecoveryGeneration: b.gen}, b.store.Create(ctx, sessionstore.Session{
+		ID: b.id, TenantID: spec.TenantID, UserID: spec.UserID, RuntimeRef: spec.RuntimeRef,
+		State: session.StateRunning, RecoveryGeneration: b.gen, CreatedAt: now, UpdatedAt: now,
+	})
+}
+
+// TestOpenResponsesCommitsOneCompletedFirstResponse_spec_15 pins the
+// completion write of a turn that creates its session: the row carries
+// exactly one response record, ordinal 1, completed, whose end sequence is
+// the Seq of the last transcript entry the turn appended and whose recovery
+// generation is the row's, and the answer's id is <session>.1.
+//
+// spec: §15 (Open Responses conversation sessions)
+func TestOpenResponsesCommitsOneCompletedFirstResponse_spec_15(t *testing.T) {
+	store := memstore.New()
+	ts := transcriptstore.NewMemory()
+	// An entry already on the session's transcript makes the end sequence
+	// differ from the turn's own entry count.
+	if _, err := ts.Append(context.Background(), "acme", "sess_commit", transcriptstore.Entry{Role: "user", Content: "earlier"}); err != nil {
+		t.Fatal(err)
+	}
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	h := translator.NewOpenResponsesHandler(store, &captureExecutor{}, translator.OpenResponsesOptions{
+		HolderForwarder:  responsesstub.LocalForwarder{},
+		Terminal:         responsesstub.ReleasingTerminal{Exec: nil, Store: store},
+		DevTenantHeader:  true,
+		Clock:            func() time.Time { return created },
+		SingleShotBinder: genBinder{store: store, id: "sess_commit", gen: 3},
+		Transcripts:      ts,
+	})
+	rr := respPostTenant(t, h.Handler(), "acme", map[string]any{"model": "echo", "input": "hello"})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp translator.OpenResponsesResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.ID != "sess_commit.1" {
+		t.Errorf("response id = %q, want sess_commit.1", resp.ID)
+	}
+
+	entries, err := ts.Get(context.Background(), "acme", "sess_commit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastSeq := entries[len(entries)-1].Seq
+	row, err := store.Get(context.Background(), "acme", "sess_commit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(row.Responses) != 1 {
+		t.Fatalf("responses = %+v, want exactly one record", row.Responses)
+	}
+	got := row.Responses[0]
+	if !got.Completed || got.EndSeq != lastSeq || got.RecoveryGeneration != 3 || !got.CreatedAt.Equal(created) {
+		t.Errorf("record = %+v, want completed with EndSeq %d, RecoveryGeneration 3, CreatedAt %v", got, lastSeq, created)
+	}
+	if lastSeq != 3 {
+		t.Errorf("last appended Seq = %d, want 3 (one earlier entry plus the turn's two)", lastSeq)
+	}
+}
+
+// updateFailStore fails every Update, so the completion write of a turn
+// fails after the transcript record succeeded.
+type updateFailStore struct {
+	sessionstore.Store
+}
+
+func (updateFailStore) Update(context.Context, string, string, func(*sessionstore.Session) error) (sessionstore.Session, error) {
+	return sessionstore.Session{}, errors.New("session store unavailable")
+}
+
+// TestOpenResponsesCommitFailureIs500_spec_15 pins that a failed completion
+// write answers a native 500 rather than returning a response whose record
+// was never committed, and releases the pod with the failed disposition.
+//
+// spec: §15 (Open Responses conversation sessions)
+func TestOpenResponsesCommitFailureIs500_spec_15(t *testing.T) {
+	inner := memstore.New()
+	exec := &dispositionExecutor{}
+	h := translator.NewOpenResponsesHandler(updateFailStore{Store: inner}, exec, translator.OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: updateFailStore{Store: inner}},
+		DevTenantHeader: true,
+		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:          func() string { return "sess_nocommit" },
+		Transcripts:     transcriptstore.NewMemory(),
+	})
+	rr := respPostTenant(t, h.Handler(), "acme", map[string]any{"model": "echo", "input": "hello"})
+	assertTurnFailed(t, rr, inner, exec, "sess_nocommit")
+}
+
 // appendFailTranscripts is a transcript store whose Append always fails, used
-// to exercise the best-effort record path: a transcript write failure must not
-// fail the response.
+// to exercise the required record: a transcript write failure fails the turn.
 type appendFailTranscripts struct {
 	transcriptstore.Store
 }
 
-func (a appendFailTranscripts) Append(context.Context, string, string, ...transcriptstore.Entry) error {
-	return errors.New("transcript append failed")
+func (a appendFailTranscripts) Append(context.Context, string, string, ...transcriptstore.Entry) (uint64, error) {
+	return 0, errors.New("transcript append failed")
 }
 
-// getFailStore wraps a session store and makes Get return a non-ErrNotFound
-// infrastructure error, so a continuation's resolve maps to a 500 rather than
+// getFailStore wraps a session store and makes Get and GetPrimary return a
+// non-ErrNotFound infrastructure error, so a continuation's resolve maps to a 500 rather than
 // a fail-closed 404 (which is reserved for unknown or cross-tenant ids).
 type getFailStore struct {
 	sessionstore.Store
@@ -487,23 +775,29 @@ func (g getFailStore) Get(context.Context, string, string) (sessionstore.Session
 	return sessionstore.Session{}, g.err
 }
 
+func (g getFailStore) GetPrimary(context.Context, string, string) (sessionstore.Session, error) {
+	return sessionstore.Session{}, g.err
+}
+
 // TestOpenResponsesContinuationResolveErrorIs500 pins that an infrastructure
 // error resolving previous_response_id (a non-ErrNotFound session-store
 // failure) surfaces as a native 500 server_error with no dispatch, distinct
 // from the fail-closed 404 an unknown or cross-tenant id yields.
-// spec: §15 (continuation resolution).
+// spec: §15 (Open Responses conversation sessions).
 func TestOpenResponsesContinuationResolveErrorIs500_spec_15(t *testing.T) {
 	exec := &captureExecutor{}
 	store := getFailStore{Store: memstore.New(), err: errors.New("session store unavailable")}
 	var n int
 	h := translator.NewOpenResponsesHandler(store, exec, translator.OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: store},
 		DevTenantHeader: true,
 		Clock:           func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:          func() string { n++; return fmt.Sprintf("resp_%d", n) },
 		Transcripts:     transcriptstore.NewMemory(),
 	})
 	rr := respPostTenant(t, h.Handler(), "acme", map[string]any{
-		"model": "echo", "input": "hi", "previous_response_id": "resp_prev",
+		"model": "echo", "input": "hi", "previous_response_id": "resp_prev.1",
 	})
 	if rr.Code != http.StatusInternalServerError {
 		t.Fatalf("status: got %d want 500; body=%s", rr.Code, rr.Body.String())
@@ -516,9 +810,8 @@ func TestOpenResponsesContinuationResolveErrorIs500_spec_15(t *testing.T) {
 // TestOpenResponsesGetEchoesLineage pins that a continuation persists
 // ContinuationParentID on its session row so GET /v1/responses/{id} echoes the
 // originating previous_response_id, and that a chain-root response persists an
-// empty ContinuationParentID and echoes empty. This replaces the earlier
-// marker test that pinned the deferred behavior (empty GET echo).
-// spec: §15 (continuation lineage persisted, GET echo).
+// empty ContinuationParentID and echoes empty.
+// spec: §15 (Open Responses conversation sessions).
 func TestOpenResponsesGetEchoesLineage_spec_15(t *testing.T) {
 	exec := &captureExecutor{}
 	h, store := newContinuityHandler(t, exec, transcriptstore.NewMemory())
@@ -529,9 +822,9 @@ func TestOpenResponsesGetEchoesLineage_spec_15(t *testing.T) {
 	}); rr.Code != http.StatusOK {
 		t.Fatalf("root: %d, body=%s", rr.Code, rr.Body.String())
 	}
-	// Continuation off resp_1.
+	// Continuation off resp_1.1.
 	if rr := respPostTenant(t, h.Handler(), "acme", map[string]any{
-		"model": "echo", "input": "two", "previous_response_id": "resp_1",
+		"model": "echo", "input": "two", "previous_response_id": "resp_1.1",
 	}); rr.Code != http.StatusOK {
 		t.Fatalf("continuation: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -541,16 +834,16 @@ func TestOpenResponsesGetEchoesLineage_spec_15(t *testing.T) {
 		t.Errorf("chain-root ContinuationParentID: got %q, want empty", rootRow.ContinuationParentID)
 	}
 	contRow, _ := store.Get(context.Background(), "acme", "resp_2")
-	if contRow.ContinuationParentID != "resp_1" {
-		t.Errorf("continuation ContinuationParentID: got %q, want %q", contRow.ContinuationParentID, "resp_1")
+	if contRow.ContinuationParentID != "resp_1.1" {
+		t.Errorf("continuation ContinuationParentID: got %q, want %q", contRow.ContinuationParentID, "resp_1.1")
 	}
 
-	// GET echoes the persisted lineage; a chain-root row echoes empty.
-	if got := getPreviousResponseID(t, h, "resp_2"); got != "resp_1" {
-		t.Errorf("GET resp_2 previous_response_id: got %q, want %q", got, "resp_1")
+	// GET echoes the persisted lineage; a chain-root response echoes empty.
+	if got := getPreviousResponseID(t, h, "resp_2.1"); got != "resp_1.1" {
+		t.Errorf("GET resp_2.1 previous_response_id: got %q, want %q", got, "resp_1.1")
 	}
-	if got := getPreviousResponseID(t, h, "resp_1"); got != "" {
-		t.Errorf("GET resp_1 previous_response_id: got %q, want empty", got)
+	if got := getPreviousResponseID(t, h, "resp_1.1"); got != "" {
+		t.Errorf("GET resp_1.1 previous_response_id: got %q, want empty", got)
 	}
 }
 
@@ -568,25 +861,24 @@ func getPreviousResponseID(t *testing.T, h *translator.OpenResponsesHandler, id 
 	return got.PreviousResponseID
 }
 
-// TestOpenResponsesInputRequiredIsInProgress_spec_7_2 pins that a response
-// whose session waits in input_required, a §7.2 sub-state of running, reports
-// in_progress as a running one does.
+// TestOpenResponsesGetInProgressTurnIs404_spec_15 pins that GET answers
+// completed responses only: a session waiting in input_required, a §7.2
+// sub-state of running, whose turn has not completed has no completed record
+// at that ordinal, so GET answers the native 404 rather than in_progress, and
+// a bare session id is not a response id.
 //
-// spec: §7.2 (Session state machine), §15 (Built-in adapter single-shot
-// compute model)
-func TestOpenResponsesInputRequiredIsInProgress_spec_7_2(t *testing.T) {
+// spec: §15 (Open Responses conversation sessions), §7.2 (Session state machine)
+func TestOpenResponsesGetInProgressTurnIs404_spec_15(t *testing.T) {
 	h, store := newResponsesHandler(t)
+	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		ID: "resp_wait", TenantID: "acme", State: session.StateInputRequired,
-		RuntimeRef: "echo", CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		RuntimeRef: "echo", CreatedAt: now, UpdatedAt: now,
+		Responses: []sessionstore.ConversationResponse{{CreatedAt: now}},
 	})
-	req := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_wait", nil)
-	req.Header.Set("X-Lenny-Tenant-ID", "acme")
-	rr := httptest.NewRecorder()
-	h.Handler().ServeHTTP(rr, req)
-	var resp translator.OpenResponsesResponse
-	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
-	if rr.Code != http.StatusOK || resp.Status != "in_progress" {
-		t.Errorf("status = %d %q, want 200 in_progress", rr.Code, resp.Status)
+	for _, id := range []string{"resp_wait.1", "resp_wait"} {
+		if rr := getResponse(t, h, "acme", id); rr.Code != http.StatusNotFound {
+			t.Errorf("GET %s = %d, want 404 for a turn with no completed record", id, rr.Code)
+		}
 	}
 }

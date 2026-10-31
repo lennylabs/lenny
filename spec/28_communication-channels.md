@@ -706,7 +706,7 @@ The adapter writes one `heartbeat` per interval for each session, from the write
 | `Shutdown` that removes an entry whose session did not reach `running`, or that removes no entry | None | Before the record, or with no record | The removal's decision under the registry critical section |
 | `DemoteSDK` while the session of the registry's entry is `running` | `session_end` | After the rule-8 record and before the pre-connected SDK is torn down and the entry is removed | The decision, made under the slot serialization while the entry stands |
 | `DemoteSDK` while no session is `running` | None | Not applicable | The decision the row above makes |
-| `DemoteSDK` whose wait for the slot serialization outlasts its request's deadline | None | Not applicable | The request fails before the decision and tears nothing down. A gateway caller then fails the pod and claims a replacement ([§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract), `ConfigureWorkspace` row), and the connection that carries the session ends with the pod, as the Pod exit row states |
+| `DemoteSDK` whose wait for the slot serialization outlasts its request's deadline | None | Not applicable | The request fails before the decision and tears nothing down. A gateway caller then fails the pod ([§4.7.1](04_system-components.md#471-role-and-gateway-rpc-contract), `ConfigureWorkspace` row), and the connection that carries the session ends with the pod, as the Pod exit row states |
 | Coordinator hold timeout, sidecar model ([§10.1](10_gateway-internals.md#101-horizontal-scaling)) | None | Not applicable | The pod-scope teardown ends the connection before the termination removes any entry |
 | Coordinator hold timeout, embedded model | None | Not applicable | The termination's close of the session ends the session's loop |
 | Interrupt, clean or hard | None | Not applicable | The session does not end |
@@ -1507,7 +1507,7 @@ with the endpoint stated in its card describes the connection.
 - **Messages.** The forwarded request and its response, as
   [§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 2 states, in the
   request and response formats of the route forwarded
-  ([§15.1](15_external-api-surface.md#151-rest-api), [§15.2](15_external-api-surface.md#152-mcp-api)).
+  ([§15](15_external-api-surface.md#15-external-api-surface), [§15.1](15_external-api-surface.md#151-rest-api), [§15.2](15_external-api-surface.md#152-mcp-api)).
 - **Preconditions.** [§29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.**
   rule 1 states when a replica forwards, and rules 3 and 4 state what the coordinator applies to a forwarded
   request. A replica forwards only when it holds the gateway replica certificate material
