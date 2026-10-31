@@ -253,6 +253,34 @@ func TestReservationRecordAroundAKnownOutage_spec_12_4(t *testing.T) {
 	}
 }
 
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
+// diagnosis: a reservation the script admitted during an outage's recovery
+// could not write its record and was admitted anyway, so a gate started by
+// the next Redis drop could not count it and admitted past the bound.
+func TestReserveAdmittedDuringRecoveryFailsClosedWithoutARecord_spec_12_4(t *testing.T) {
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	fb := newFakeFallback()
+	cl := fastClient(t, mr)
+	c := slotcounter.New(cl, slotcounter.WithFallbackSource(fb))
+	mr.Close()
+	if _, _, err := c.Reserve(ctx, "pod-1", "a", 4); err != nil {
+		t.Fatalf("Reserve a: %v", err)
+	}
+	if err := mr.Restart(); err != nil {
+		t.Fatal(err)
+	}
+	fb.mu.Lock()
+	fb.recordErr = errors.New("postgres unavailable")
+	fb.mu.Unlock()
+	if _, _, err := c.Reserve(ctx, "pod-1", "b", 4); !errors.Is(err, slotcounter.ErrFailClosed) {
+		t.Fatalf("Reserve b = %v, want ErrFailClosed", err)
+	}
+	if got, err := cl.SIsMember(ctx, "lenny:pod:{pod-1}:active_slots", "b").Result(); err != nil || got {
+		t.Errorf("member b present = %v (%v), want it removed", got, err)
+	}
+}
+
 // spec: §12.4 (Redis failure behavior).
 // diagnosis: a Counter with no FallbackSource tried to write a record.
 func TestReserveWithoutFallbackWritesNoRecord_spec_12_4(t *testing.T) {

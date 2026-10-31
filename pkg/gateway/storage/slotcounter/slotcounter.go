@@ -354,7 +354,7 @@ var errEmptySessionID = errors.New("slotcounter: session identifier is required"
 // reservation's discovery of the outage, the gate counts the record, which
 // over-counts the pod and never under-counts it. A reservation the Redis
 // script admits while an outage is still being recovered records itself
-// after the script. A record that the cleanup fails to delete over-counts
+// after the script, and fails closed when it cannot. A record that the cleanup fails to delete over-counts
 // the pod until the slot release or the stale-slot reaper deletes it.
 //
 // spec: §5.2 (Slot assignment atomicity, Post-recovery rehydration
@@ -403,16 +403,26 @@ func (c *Counter) toGate(ctx context.Context, r *reservation, rehydrated bool) (
 
 // admitted finishes a reservation the Redis script admitted: one that wrote
 // no record before the script, because an outage was known, records itself
-// now. A failed write is logged and leaves the Redis set as the only count
-// of the reservation until its row names the pod.
-func (c *Counter) admitted(ctx context.Context, r *reservation) {
-	if r.recorded || c.fallback == nil {
-		return
+// now, on a context detached from the caller's cancellation. A record that
+// cannot be written fails the reservation closed as recordReservation does
+// before the script: the member is removed, because a later gate could not
+// count the admission, and the caller holds no slot to release.
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
+func (c *Counter) admitted(ctx context.Context, r *reservation) error {
+	if r.recorded {
+		return nil
 	}
-	if _, err := c.fallback.RecordSlotReservation(ctx, r.podID, r.sessionID); err != nil {
-		slog.WarnContext(ctx, "slotcounter: record slot reservation after the script failed",
-			"pod", r.podID, "session_id", r.sessionID, "error", err)
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reservationCleanupTimeout)
+	defer cancel()
+	_, err := c.recordReservation(dctx, r.podID, r.sessionID)
+	if err == nil {
+		return nil
 	}
+	if _, _, _, relErr := c.release(dctx, r.podID, r.sessionID, false); relErr != nil {
+		slog.WarnContext(ctx, "slotcounter: remove a member whose record failed; the member over-counts the pod",
+			"pod", r.podID, "session_id", r.sessionID, "error", relErr)
+	}
+	return err
 }
 
 // reserve runs the recovery rebuild when one is due, then the reservation
@@ -442,7 +452,9 @@ func (c *Counter) reserve(ctx context.Context, r *reservation) (count int32, reh
 		}
 		switch {
 		case res >= 1:
-			c.admitted(ctx, r)
+			if err := c.admitted(ctx, r); err != nil {
+				return 0, rehydrated, err
+			}
 			return int32(res), rehydrated, nil
 		case res == resultExhausted:
 			return 0, rehydrated, ErrSlotsExhausted
