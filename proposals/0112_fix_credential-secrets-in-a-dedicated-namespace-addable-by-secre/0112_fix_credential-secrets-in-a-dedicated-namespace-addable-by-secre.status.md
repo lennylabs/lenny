@@ -2,15 +2,15 @@
 proposal: 0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre
 title: Credential Secrets in a dedicated namespace, addable by reference or through the admin API
 kind: fix
-status: Approved
+status: Implemented
 drafted-date: 2026-10-30
 drafted-by: change-proposal
 reviewed-date: 
 reviewed-by: 
 approved-date: 2026-10-31
 approved-by: jaf
-implemented-date: 
-implemented-by: 
+implemented-date: 2026-10-31
+implemented-by: jaf
 ---
 
 ## Review history
