@@ -276,6 +276,47 @@ func TestPinCommitSHAsCredentialErrorIsAuthFailed(t *testing.T) {
 	}
 }
 
+// spec: §14 (gitClone ref resolution), §4.9 (Token Service secret
+// resolution) — a *ResolveError the credential function returns keeps its
+// reason, and PinCommitSHAs fills the source index, URL, and ref of the
+// source that failed. The second source of a two-source plan discriminates
+// a fill that leaves SourceIndex at zero, and the network_error reason
+// discriminates a wrapper that relabels every credential failure as
+// auth_failed.
+func TestPinCommitSHAsCredentialResolveErrorKeepsReasonAndNamesSecondSource(t *testing.T) {
+	second := workspaceplan.GitClone{
+		URL:  "https://github.com/acme/private.git",
+		Ref:  "release",
+		Auth: &workspaceplan.GitCloneAuth{Mode: "credential-lease", LeaseScope: "vcs.github.read"},
+	}
+	plan := gitClonePlan(workspaceplan.GitClone{URL: "https://github.com/acme/public.git", Ref: "main"}, second)
+	fake := &fakeResolver{shas: map[string]string{"main": shaA, "release": shaB}}
+	cause := errors.New("token service unavailable")
+	credFn := func(_ context.Context, gc workspaceplan.GitClone) (workspaceplan.VCSCredential, error) {
+		if gc.Auth == nil {
+			return workspaceplan.VCSCredential{}, nil
+		}
+		return workspaceplan.VCSCredential{}, &workspaceplan.ResolveError{Reason: workspaceplan.ResolveNetworkError, Err: cause}
+	}
+	err := workspaceplan.PinCommitSHAs(context.Background(), plan, fake, credFn)
+	var re *workspaceplan.ResolveError
+	if !errors.As(err, &re) {
+		t.Fatalf("error = %v, want *ResolveError", err)
+	}
+	if re.Reason != workspaceplan.ResolveNetworkError || !re.Reason.Transient() {
+		t.Errorf("Reason = %q, want the credential function's network_error", re.Reason)
+	}
+	if re.SourceIndex != 1 || re.URL != second.URL || re.Ref != second.Ref {
+		t.Errorf("source = (%d, %q, %q), want (1, %q, %q)", re.SourceIndex, re.URL, re.Ref, second.URL, second.Ref)
+	}
+	if !errors.Is(err, cause) {
+		t.Errorf("error %v does not wrap the credential cause", err)
+	}
+	if fake.calls != 1 {
+		t.Errorf("resolver calls = %d, want 1 (the public first source only)", fake.calls)
+	}
+}
+
 func TestParseLeaseScope(t *testing.T) {
 	cases := []struct {
 		scope    string

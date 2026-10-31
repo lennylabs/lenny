@@ -1387,6 +1387,8 @@
         "tests/tier2_component/secretprobe/secretprobe_envtest_test.go",
         "tests/tier3_contract/tokenservice_secret_read/tokenservice_secret_read_test.go",
         "tests/tier9_security/tokenservice_secret_read_redaction_test.go",
+        "tests/tier3_contract/vcs_credential_read/vcs_credential_read_test.go",
+        "tests/tier9_security/vcs_credential_read_failclosed_test.go",
         "tests/tier3_contract/admin_credential_pool_codes/admin_credential_pool_codes_test.go",
         "tests/tier9_security/credential_secret_ref_cross_tenant_test.go",
         "tests/tier9_security/credential_secret_data_value_test.go",

@@ -12,13 +12,18 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 )
 
@@ -200,4 +205,186 @@ func postCredentialPool(t *testing.T, h http.Handler, ref string) *httptest.Resp
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr
+}
+
+// keyedResp is a keyed ProbeSecretAccess response carrying value.
+func keyedResp(v tokensv1.Verdict, value string) *tokensv1.ProbeSecretAccessResponse {
+	return &tokensv1.ProbeSecretAccessResponse{Verdict: v, Value: []byte(value)}
+}
+
+// freshTokenServiceSubsystem returns a token_service subsystem with a
+// closed breaker at the default threshold, as the composition root builds it.
+func freshTokenServiceSubsystem() *subsystem.Subsystem {
+	return &subsystem.Subsystem{Name: "token_service", Breaker: &subsystem.Breaker{}}
+}
+
+// spec: §4.9 (Token Service secret resolution), §14 — the VCS reader maps
+// each keyed verdict. ALLOWED returns the value, NOT_FOUND and DENIED wrap
+// vcscred.ErrNoUsableCredential with no value, and the request carries the
+// parsed Secret name and the key `token` alone.
+func TestTokenServiceVCSReader_KeyedVerdicts(t *testing.T) {
+	cases := []struct {
+		name      string
+		resp      *tokensv1.ProbeSecretAccessResponse
+		wantToken string
+		wantNoUse bool
+	}{
+		{"allowed", keyedResp(tokensv1.Verdict_VERDICT_ALLOWED, "ghs_abc123"), "ghs_abc123", false},
+		{"not_found", keyedResp(tokensv1.Verdict_VERDICT_NOT_FOUND, ""), "", true},
+		{"denied", keyedResp(tokensv1.Verdict_VERDICT_DENIED, ""), "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &fakeTokenServiceClient{resp: tc.resp}
+			r := newTokenServiceVCSReader(stub, testCredNS, freshTokenServiceSubsystem())
+			got, err := r.Resolve(context.Background(), testCredNS+"/gh-token")
+			if tc.wantNoUse {
+				if !errors.Is(err, vcscred.ErrNoUsableCredential) {
+					t.Fatalf("Resolve error = %v, want ErrNoUsableCredential", err)
+				}
+			} else if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			if got != tc.wantToken {
+				t.Fatalf("token = %q, want %q", got, tc.wantToken)
+			}
+			if stub.calls != 1 || stub.got != "gh-token" || stub.key != "token" {
+				t.Fatalf("calls=%d name=%q key=%q, want 1 gh-token token", stub.calls, stub.got, stub.key)
+			}
+		})
+	}
+}
+
+// spec: §4.9 (Credential Storage Topology, Token Service secret resolution)
+// — a stored ref the parser refuses, such as the release-namespace
+// lenny-system/gh-token, yields ErrNoUsableCredential with no RPC made, so
+// the gateway never asks the Token Service for a Secret outside the
+// credentials namespace.
+func TestTokenServiceVCSReader_RefusedRefIsNoUsableCredentialWithNoRPC(t *testing.T) {
+	for _, ref := range []string{"lenny-system/gh-token", "a/b/c", "Not_A_Name", ""} {
+		t.Run(ref, func(t *testing.T) {
+			stub := &fakeTokenServiceClient{resp: keyedResp(tokensv1.Verdict_VERDICT_ALLOWED, "ghs_abc123")}
+			r := newTokenServiceVCSReader(stub, testCredNS, freshTokenServiceSubsystem())
+			got, err := r.Resolve(context.Background(), ref)
+			if !errors.Is(err, vcscred.ErrNoUsableCredential) {
+				t.Fatalf("Resolve(%q) error = %v, want ErrNoUsableCredential", ref, err)
+			}
+			if got != "" || stub.calls != 0 {
+				t.Fatalf("Resolve(%q) token=%q calls=%d, want empty and 0", ref, got, stub.calls)
+			}
+		})
+	}
+}
+
+// spec: §4.9 (Token Service secret resolution) rule 3, §4.3 — a gRPC error
+// fails the read closed: no token, an error that does not wrap
+// ErrNoUsableCredential (so the tool path answers INTERNAL_ERROR and plan
+// binding answers the transient code), and no retry. An unspecified verdict
+// is indeterminate in the same way.
+func TestTokenServiceVCSReader_TransientFailsClosed(t *testing.T) {
+	cases := []struct {
+		name string
+		stub *fakeTokenServiceClient
+	}{
+		{"unavailable", &fakeTokenServiceClient{err: status.Error(codes.Unavailable, "token service down")}},
+		{"unspecified", &fakeTokenServiceClient{resp: keyedResp(tokensv1.Verdict_VERDICT_UNSPECIFIED, "stale")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newTokenServiceVCSReader(tc.stub, testCredNS, freshTokenServiceSubsystem())
+			got, err := r.Resolve(context.Background(), "gh-token")
+			if err == nil || errors.Is(err, vcscred.ErrNoUsableCredential) {
+				t.Fatalf("Resolve error = %v, want a transient error that is not ErrNoUsableCredential", err)
+			}
+			if got != "" {
+				t.Fatalf("token = %q, want none", got)
+			}
+			if tc.stub.calls != 1 {
+				t.Fatalf("RPC calls = %d, want 1 (no retry)", tc.stub.calls)
+			}
+		})
+	}
+	stub := &fakeTokenServiceClient{err: status.Error(codes.Unavailable, "token service down")}
+	_, err := newTokenServiceVCSReader(stub, testCredNS, nil).Resolve(context.Background(), "gh-token")
+	if status.Code(errors.Unwrap(err)) != codes.Unavailable {
+		t.Fatalf("Resolve error = %v, want the wrapped gRPC Unavailable", err)
+	}
+}
+
+// spec: §4.3, §4.9 (Token Service secret resolution) — the keyed read runs
+// inside Do on the token_service subsystem. After DefaultFailureThreshold
+// consecutive Unavailable results the breaker opens and the next Resolve
+// returns an error and no token with no RPC made. Definitive NOT_FOUND and
+// DENIED verdicts never count as breaker failures. The no-RPC assertion
+// fails against a reader that calls the stub outside the breaker.
+func TestTokenServiceVCSReader_BreakerOpensOnUnavailableOnly(t *testing.T) {
+	t.Run("unavailable opens", func(t *testing.T) {
+		sub := freshTokenServiceSubsystem()
+		stub := &fakeTokenServiceClient{err: status.Error(codes.Unavailable, "token service down")}
+		r := newTokenServiceVCSReader(stub, testCredNS, sub)
+		for i := 0; i < subsystem.DefaultFailureThreshold; i++ {
+			if _, err := r.Resolve(context.Background(), "gh-token"); err == nil {
+				t.Fatalf("call %d: want error", i)
+			}
+		}
+		stub.err, stub.resp = nil, keyedResp(tokensv1.Verdict_VERDICT_ALLOWED, "ghs_abc123")
+		got, err := r.Resolve(context.Background(), "gh-token")
+		if !errors.Is(err, subsystem.ErrCircuitOpen) || got != "" {
+			t.Fatalf("Resolve after threshold = (%q, %v), want no token and ErrCircuitOpen", got, err)
+		}
+		if errors.Is(err, vcscred.ErrNoUsableCredential) {
+			t.Fatalf("open breaker error %v must not read as a missing credential", err)
+		}
+		if stub.calls != subsystem.DefaultFailureThreshold {
+			t.Fatalf("RPC calls = %d, want %d (none once open)", stub.calls, subsystem.DefaultFailureThreshold)
+		}
+	})
+	for _, v := range []tokensv1.Verdict{tokensv1.Verdict_VERDICT_NOT_FOUND, tokensv1.Verdict_VERDICT_DENIED} {
+		t.Run(v.String()+" does not open", func(t *testing.T) {
+			sub := freshTokenServiceSubsystem()
+			stub := &fakeTokenServiceClient{resp: keyedResp(v, "")}
+			r := newTokenServiceVCSReader(stub, testCredNS, sub)
+			for i := 0; i < 2*subsystem.DefaultFailureThreshold; i++ {
+				if _, err := r.Resolve(context.Background(), "gh-token"); !errors.Is(err, vcscred.ErrNoUsableCredential) {
+					t.Fatalf("call %d: error = %v, want ErrNoUsableCredential", i, err)
+				}
+			}
+			if sub.State() != subsystem.StateClosed {
+				t.Fatalf("breaker state = %v, want closed", sub.State())
+			}
+			if stub.calls != 2*subsystem.DefaultFailureThreshold {
+				t.Fatalf("RPC calls = %d, want %d", stub.calls, 2*subsystem.DefaultFailureThreshold)
+			}
+		})
+	}
+}
+
+// spec: §4.9 (Token Service secret resolution), §14 — the composition root
+// wires the VCS resolver only over the Token Service link. With no link it
+// is nil (an authenticated gitClone fails with "no resolver wired"), and
+// with one its SecretReader is the Token Service keyed read gated by the
+// shared token_service subsystem in the credentials namespace.
+func TestBuildVCSResolver_TokenServiceOnly(t *testing.T) {
+	pools := credentialpoolstore.NewMemory()
+	if r := buildVCSResolver(nil, pools, testCredNS, freshTokenServiceSubsystem()); r != nil {
+		t.Fatalf("buildVCSResolver(nil conn) = %#v, want nil", r)
+	}
+	conn, err := grpc.NewClient("passthrough:///token-service", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("grpc.NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	sub := freshTokenServiceSubsystem()
+	r := buildVCSResolver(conn, pools, testCredNS, sub)
+	sr, ok := r.(*vcscred.StoreResolver)
+	if !ok {
+		t.Fatalf("buildVCSResolver = %T, want *vcscred.StoreResolver", r)
+	}
+	reader, ok := sr.Secrets.(*tokenServiceSecretProber)
+	if !ok {
+		t.Fatalf("SecretReader = %T, want the Token Service keyed read", sr.Secrets)
+	}
+	if reader.credNS != testCredNS || reader.tokenService != sub || reader.stub == nil {
+		t.Fatalf("reader = %+v, want namespace %q and the shared subsystem", reader, testCredNS)
+	}
 }

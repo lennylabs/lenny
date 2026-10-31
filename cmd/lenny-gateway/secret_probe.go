@@ -7,12 +7,14 @@ import (
 	"fmt"
 
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 )
 
 // tokenServiceSecretProber is the gateway side of the §4.9 admin-time
-// Secret probe. It calls the Token Service ProbeSecretAccess RPC over the
+// Secret probe and of the gateway's VCS token read (Resolve). It calls the Token Service ProbeSecretAccess RPC over the
 // gateway↔Token-Service mTLS link with an unkeyed request and maps the wire
 // verdict onto the admin verdict the credential-pool handlers consume.
 //
@@ -33,6 +35,10 @@ type tokenServiceSecretProber struct {
 	stub tokensv1.TokenServiceClient
 	// credNS is the resolved --credentials-namespace value.
 	credNS string
+	// tokenService is the §4.3 token_service subsystem that gates the VCS
+	// keyed read (Resolve). Nil leaves the read ungated. The admin probe
+	// does not use it.
+	tokenService *subsystem.Subsystem
 }
 
 // newTokenServiceSecretProber returns a prober over stub that parses each
@@ -46,7 +52,79 @@ func newTokenServiceSecretProber(stub tokensv1.TokenServiceClient, credNS string
 	return &tokenServiceSecretProber{stub: stub, credNS: credNS}
 }
 
-var _ admin.SecretAccessProber = (*tokenServiceSecretProber)(nil)
+// newTokenServiceVCSReader returns the gateway VCS SecretReader over stub:
+// the same adapter as the admin prober, with the keyed read gated by the
+// token_service subsystem the §4.3 credential-assignment client shares.
+//
+// spec: §4.9 (Token Service secret resolution), §14.
+func newTokenServiceVCSReader(stub tokensv1.TokenServiceClient, credNS string, tokenService *subsystem.Subsystem) *tokenServiceSecretProber {
+	return &tokenServiceSecretProber{stub: stub, credNS: credNS, tokenService: tokenService}
+}
+
+// vcsTokenKey is the Secret key the github provider's token is stored
+// under (§4.9 Secret shape).
+const vcsTokenKey = "token"
+
+var (
+	_ admin.SecretAccessProber = (*tokenServiceSecretProber)(nil)
+	_ vcscred.SecretReader     = (*tokenServiceSecretProber)(nil)
+)
+
+// Resolve is the gateway's VCS token read. It parses the stored ref with
+// credential.ParseSecretRef against the credentials namespace and asks the
+// Token Service for the Secret's `token` key with one ProbeSecretAccess
+// call, which the Token Service answers from one uncached get.
+//
+// ALLOWED returns the value. NOT_FOUND, DENIED, and a ref the parser
+// refuses wrap vcscred.ErrNoUsableCredential, the parse refusal with no RPC
+// made. A gRPC error or an open breaker is returned wrapped, with no retry
+// and no earlier value served, so the read fails closed and the caller
+// surfaces the TRANSIENT category.
+//
+// The RPC alone runs inside Do on the token_service subsystem, so an open
+// breaker refuses with no RPC made. The closure returns only the gRPC
+// error, so a definitive verdict, NOT_FOUND and DENIED included, counts as
+// a breaker success rather than a failure.
+//
+// spec: §4.9 (Token Service secret resolution), §4.3, §14.
+func (p *tokenServiceSecretProber) Resolve(ctx context.Context, ref string) (string, error) {
+	name, err := credential.ParseSecretRef(ref, p.credNS)
+	if err != nil {
+		return "", fmt.Errorf("%w: secretRef refused: %w", vcscred.ErrNoUsableCredential, err)
+	}
+	var resp *tokensv1.ProbeSecretAccessResponse
+	call := func(ctx context.Context) error {
+		r, err := p.stub.ProbeSecretAccess(ctx, &tokensv1.ProbeSecretAccessRequest{SecretName: name, Key: vcsTokenKey})
+		resp = r
+		return err
+	}
+	if p.tokenService != nil {
+		err = p.tokenService.Do(ctx, call)
+	} else {
+		err = call(ctx)
+	}
+	if err != nil {
+		return "", fmt.Errorf("read VCS token Secret %q through the Token Service: %w", name, err)
+	}
+	return vcsTokenFromVerdict(resp, name)
+}
+
+// vcsTokenFromVerdict maps a keyed ProbeSecretAccess response onto the
+// SecretReader result. An unspecified verdict is not a definitive answer,
+// so it fails the read as indeterminate rather than as a missing
+// credential.
+func vcsTokenFromVerdict(resp *tokensv1.ProbeSecretAccessResponse, name string) (string, error) {
+	switch resp.GetVerdict() {
+	case tokensv1.Verdict_VERDICT_ALLOWED:
+		return string(resp.GetValue()), nil
+	case tokensv1.Verdict_VERDICT_NOT_FOUND:
+		return "", fmt.Errorf("%w: Secret %q or its %s key not found", vcscred.ErrNoUsableCredential, name, vcsTokenKey)
+	case tokensv1.Verdict_VERDICT_DENIED:
+		return "", fmt.Errorf("%w: Token Service read of Secret %q denied", vcscred.ErrNoUsableCredential, name)
+	default:
+		return "", fmt.Errorf("the Token Service returned unspecified secret-access verdict for Secret %q", name)
+	}
+}
 
 func (p *tokenServiceSecretProber) ProbeSecretAccess(ctx context.Context, secretRef string) (admin.SecretProbeVerdict, error) {
 	name, err := credential.ParseSecretRef(secretRef, p.credNS)
