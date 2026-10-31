@@ -23,6 +23,7 @@ type workspaceGateway struct {
 	calls         []string
 	uploadToken   string
 	gotToken      string
+	finalizeToken string
 	uploadGzip    bool
 	finalizePlan  string
 	startedID     string
@@ -61,6 +62,7 @@ func newWorkspaceGateway(t *testing.T) (*httptest.Server, *workspaceGateway) {
 		body, _ := io.ReadAll(r.Body)
 		g.mu.Lock()
 		g.finalizePlan = string(body)
+		g.finalizeToken = r.Header.Get("X-Lenny-Upload-Token")
 		g.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"sess_ws","state":"ready"}`))
@@ -106,7 +108,7 @@ func (g *workspaceGateway) order() []string {
 // `session new --workspace <dir>` staging flow and confirms the CLI tars
 // the workspace, uploads it with the upload token, binds the plan at
 // finalize, starts the session, and delivers the prompt — in that order.
-// spec: §26.2; §24.17. F-24.17.4 / F-26.2.4.
+// spec: §26.2; §24.17; §7.4 (Upload Safety, Upload authorization). F-24.17.4 / F-26.2.4.
 func TestSessionNewWorkspaceStagesAndStarts_spec_26_2(t *testing.T) {
 	srv, g := newWorkspaceGateway(t)
 	dir := t.TempDir()
@@ -134,6 +136,11 @@ func TestSessionNewWorkspaceStagesAndStarts_spec_26_2(t *testing.T) {
 	}
 	if g.gotToken != "up-tok" {
 		t.Errorf("upload token = %q, want up-tok", g.gotToken)
+	}
+	// spec: §7.4 Upload Safety (Upload authorization) — the finalize request
+	// carries the same uploadToken the upload used.
+	if g.finalizeToken != "up-tok" {
+		t.Errorf("finalize upload token = %q, want up-tok", g.finalizeToken)
 	}
 	if !g.uploadGzip {
 		t.Error("upload body was not gzip-compressed")

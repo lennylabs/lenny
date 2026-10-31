@@ -53,6 +53,14 @@ type Options struct {
 	// get_session_logs) names it here. A name that is not an optional query
 	// parameter of the operation fails the generation.
 	OptionalQuery []string
+	// Header names header parameters the tool accepts as arguments. The
+	// generator leaves header parameters out by default, because most carry
+	// transport metadata the MCP session supplies (tenant, idempotency). A
+	// tool whose REST operation requires a caller-held header value, such as
+	// the §7.1 uploadToken that every finalize request carries, names it
+	// here and usually renames it through Params. A name that is not a
+	// header parameter of the operation fails the generation.
+	Header []string
 }
 
 // ParamOptions adjusts one OpenAPI parameter's MCP argument.
@@ -108,6 +116,10 @@ func DefaultOverlaps() []OverlapSpec {
 // the `sessionId` argument the per-session MCP tools take.
 var sessionIDParam = ParamOptions{Name: "sessionId", Description: "The target session id."}
 
+// uploadTokenParam renames the X-Lenny-Upload-Token header parameter to the
+// `uploadToken` argument the MCP tools take, matching lenny/upload_files.
+var uploadTokenParam = ParamOptions{Name: "uploadToken", Description: "The §7.1 uploadToken returned by create_session."}
+
 // perSessionOverlaps lists the per-session MCP tools whose REST counterpart
 // is a `/v1/sessions/{id}/...` operation. Each renames the `id` path
 // parameter to `sessionId`; the tool handler strips `sessionId` from the
@@ -119,7 +131,22 @@ func perSessionOverlaps() []OverlapSpec {
 	byID := Options{Params: map[string]ParamOptions{"id": sessionIDParam}}
 	return []OverlapSpec{
 		{ToolName: "lenny/start_session", OperationID: "postV1SessionsByIdStart", Options: byID},
-		{ToolName: "lenny/finalize_workspace", OperationID: "postV1SessionsByIdFinalize", Options: byID},
+		{
+			ToolName:    "lenny/finalize_workspace",
+			OperationID: "postV1SessionsByIdFinalize",
+			Options: Options{
+				// spec: §7.4 Upload Safety (Upload authorization) — every
+				// finalize request carries the §7.1 uploadToken, which the
+				// REST operation takes in the X-Lenny-Upload-Token header.
+				// The tool takes it as the `uploadToken` argument, as
+				// lenny/upload_files does, and forwards it in that header.
+				Params: map[string]ParamOptions{
+					"id":                   sessionIDParam,
+					"X-Lenny-Upload-Token": uploadTokenParam,
+				},
+				Header: []string{"X-Lenny-Upload-Token"},
+			},
+		},
 		{ToolName: "lenny/terminate_session", OperationID: "postV1SessionsByIdTerminate", Options: byID},
 		{ToolName: "lenny/resume_session", OperationID: "postV1SessionsByIdResume", Options: byID},
 		{ToolName: "lenny/interrupt_session", OperationID: "postV1SessionsByIdInterrupt", Options: byID},
@@ -207,8 +234,14 @@ func BuildToolInputSchema(rawDoc []byte, operationID string, opts Options) (json
 	for _, name := range opts.OptionalQuery {
 		optionalQuery[name] = true
 	}
+	header := map[string]bool{}
+	for _, name := range opts.Header {
+		header[name] = true
+	}
 	for _, p := range op.Parameters {
-		included := p.In == "path" || (p.In == "query" && (p.Required || optionalQuery[p.Name]))
+		included := p.In == "path" ||
+			(p.In == "query" && (p.Required || optionalQuery[p.Name])) ||
+			(p.In == "header" && header[p.Name])
 		if !included {
 			continue
 		}
@@ -334,6 +367,12 @@ func checkParamOptions(op operation, opts Options) error {
 		p, ok := declared[name]
 		if !ok || p.In != "query" || p.Required {
 			return fmt.Errorf("optional query parameter %q is not an optional query parameter of the operation", name)
+		}
+	}
+	for _, name := range opts.Header {
+		p, ok := declared[name]
+		if !ok || p.In != "header" {
+			return fmt.Errorf("header parameter %q is not a header parameter of the operation", name)
 		}
 	}
 	return nil

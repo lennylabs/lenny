@@ -4202,13 +4202,26 @@ refiled: the §15.1 `/upload` precondition row admitting `running` is annotated 
 D2), which stays with the upload route proposal.
 
 - Direct-fix queue, after 0086's implementation, which edits the same files.
-  - [ ] **F-7.4.21** (Medium): `handleFinalize` does not verify the `uploadToken`, while §7.4 requires every
-    finalize request to carry it. Verify it before the precondition check, as `admitUpload` does.
-  - [ ] **F-7.5.15** (Medium): `enforceSetupCommandPolicy` admits a plan on every runtime read error. Answer a
+  - [x] **F-7.4.21** (Medium): `handleFinalize` does not verify the `uploadToken`, while §7.4 requires every
+    finalize request to carry it. Verify it before the precondition check, as `admitUpload` does. Closed
+    2026-10-31 by direct fix on `fix/finalize-policy-forward`: the token is verified before the row is read,
+    and the SDKs, the CLI, the playground, and `lenny/finalize_workspace` send it. Filed from the fix:
+    F-15.1.69.
+  - [ ] **F-15.1.69** (Low, filed from F-7.4.21): `UPLOAD_TOKEN_INVALID` has no §15.1 catalog row, so MCP
+    classifies it as transient and retryable while REST answers it as permanent. Needs a catalog row through
+    the proposal pipeline, then the `errorclassify` entry.
+  - [x] **F-7.5.15** (Medium): `enforceSetupCommandPolicy` admits a plan on every runtime read error. Answer a
     transient read with `503 SERVICE_UNAVAILABLE`, as 0086's defaults composition does, after 0086's S14.
-  - [ ] **F-7.5.16** (Medium): at creation the setup-command policy is read from the requested runtime rather
+    Closed 2026-10-31 by direct fix on `fix/finalize-policy-forward`: the read classifies a failure as the
+    composition does, and a plan with no setup commands reads nothing.
+  - [x] **F-7.5.16** (Medium): at creation the setup-command policy is read from the requested runtime rather
     than the routed one. Run the check against the runtime the row records after routing; if that needs an
-    ordering the specification does not state, it goes to a proposal.
+    ordering the specification does not state, it goes to a proposal. Closed 2026-10-31 by direct fix on
+    `fix/finalize-policy-forward`: both create routes check `row.RuntimeRef` after routing and immediately
+    before the defaults composition, the position §14.1 rule 1 states. Filed from the fix: F-4.8.25.
+  - [ ] **F-4.8.25** (Medium, filed from F-7.5.16): `POST /v1/sessions` runs no §4.8 PreRoute or PostRoute
+    chain, while create-and-start runs both around the ExperimentRouter. Direct fix after proposal 0110,
+    which edits the create path.
   - [x] **F-16.1.8** (Medium): `lenny_warmpool_warmup_failure_total` has no warm-up emitter and only the
     `error_type` label, so `PoolScaleoutBlockedByQuota` never fires. The Sandbox reconciler now emits
     `image_pull_error`, `resource_quota_exceeded`, and `node_pressure` with the §16.1 labels, once per
@@ -4323,12 +4336,17 @@ at `4e5a94071`. Each new or annotated BUILD-GAPS entry says 0108's implementor u
 filing a duplicate.
 
 - Direct-fix queue, after 0108's implementation, whose CODE-3 edits `forwardTarget`.
-  - [ ] **F-29.3.4** (Medium): a forwarded request whose re-read row is outside its kind's forward states
+  - [x] **F-29.3.4** (Medium): a forwarded request whose re-read row is outside its kind's forward states
     runs locally at a replica that may not hold `REG-COORDLEASE`, because `forwardTarget` tests the state gate
     before the §29.3 **Forwarding.** rule-5 branch. The fix applies the rule-5 branch first for every kind and
     makes the REST and MCP not-delivered DLQ hold conditional on a `running` or `input_required` row, as
     rule 6 states. 0108 reorders the branch for its own kind only.
     Unblocked once `impl/0108-conversation-session` merges (note dated 2026-10-30 in its BUILD-GAPS entry).
+    Closed 2026-10-31 by direct fix on `fix/finalize-policy-forward`: `forwardTarget` applies rule 5 first for
+    every kind, and `HoldsUndelivered` gates the REST and MCP DLQ hold. Filed from the fix: F-29.3.5.
+  - [ ] **F-29.3.5** (Low, filed from F-29.3.4): a forward listener that does not hold the lease answers a
+    route's `INVALID_STATE_TRANSITION` when the re-read row fails the route precondition, where rule 5 names
+    `TARGET_NOT_READY`. Needs the order of rule 5 and the precondition check decided first.
 - Proposal routing: a session-owner authorization proposal (new, unwritten), after 0108's implementation,
   which rewrites the Open Responses read and resolution paths. This proposal is 0110 (approved 2026-10-29,
   merge `05ed531a5`), whose REC-1 closes all three entries below. Only its Open Responses steps wait for

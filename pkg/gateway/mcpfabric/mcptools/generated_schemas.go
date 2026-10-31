@@ -18,7 +18,7 @@ var GeneratedCreateSessionInputSchema = json.RawMessage(`{"properties":{"environ
 
 // GeneratedFinalizeWorkspaceInputSchema is generated from the OpenAPI operation "postV1SessionsByIdFinalize"
 // (MCP tool "lenny/finalize_workspace"). spec: §15.2.1 rule 4.
-var GeneratedFinalizeWorkspaceInputSchema = json.RawMessage(`{"properties":{"sessionId":{"description":"The target session id.","type":"string"},"workspacePlan":{"additionalProperties":true,"description":"WorkspacePlan bound at finalize when the session's CreateSessionRequest carried none (§14.1 Plan binding).","type":["object","null"]}},"required":["sessionId"],"type":"object"}`)
+var GeneratedFinalizeWorkspaceInputSchema = json.RawMessage(`{"properties":{"sessionId":{"description":"The target session id.","type":"string"},"uploadToken":{"description":"The §7.1 uploadToken returned by create_session.","type":"string"},"workspacePlan":{"additionalProperties":true,"description":"WorkspacePlan bound at finalize when the session's CreateSessionRequest carried none (§14.1 Plan binding).","type":["object","null"]}},"required":["sessionId","uploadToken"],"type":"object"}`)
 
 // GeneratedGetSessionLogsInputSchema is generated from the OpenAPI operation "getV1SessionsByIdLogs"
 // (MCP tool "lenny/get_session_logs"). spec: §15.2.1 rule 4.

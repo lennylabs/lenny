@@ -2542,6 +2542,7 @@
         "tests/testinfra/lifecycleharness/trace_test.go",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3",
         "tests/tier4_integration/concurrent_slot_release_test.go::TestAbandonedCreatedRowTimesOutAndReleasesItsSlot_spec_5_2",
+        "tests/tier4_integration/holder_forward_reread_test.go::TestForwardedRequestWhoseRowLeftTheForwardStatesIsRefusedAtANonHolder_spec_29_3",
         "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderMessageToRunningIsDeliveredByTheCoordinator_spec_29_3",
         "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderMessageToInputRequiredIsBufferedOrHeld_spec_29_3",
         "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderHeldPodResumeIsWrittenByTheCoordinator_spec_29_3",
@@ -2776,6 +2777,9 @@
       "title": "Upload Safety",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "pkg/gateway/sessionserver/finalize_upload_token_test.go",
+        "tests/tier3_contract/rest_mcp_consistency/finalize_upload_token_parity_test.go::TestFinalizeUploadTokenRESTMCPParity_spec_7_4",
+        "tests/tier9_security/finalize_upload_token_test.go::TestFinalizeRefusesForeignAndReplayedUploadTokens_spec_7_4",
         "pkg/adapter/bindattempt_test.go",
         "pkg/adapter/reclaim_admitted_section_test.go",
         "pkg/upload/...",
@@ -2799,6 +2803,8 @@
       "title": "Setup Commands",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "pkg/gateway/sessionserver/setup_policy_routed_internal_test.go",
+        "pkg/gateway/sessionserver/setup_policy_failclosed_internal_test.go",
         "tests/tier8_chaos/workspace_defaults_outage_test.go::TestWorkspaceDefaultsPostgresOutageFailsClosed_spec_14_1",
         "pkg/adapter/workspace/setup_test.go",
         "pkg/adapter/staging_test.go",
@@ -5904,6 +5910,7 @@
       "title": "REST/MCP Consistency Contract",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "pkg/gateway/mcpfabric/mcpschemagen/mcpschemagen_header_test.go",
         "tests/tier3_contract/rest_mcp_consistency/resume_interrupt_parity_test.go::TestInterruptToolAndRESTRefuseInputRequired_spec_15_2_1",
         "tests/tier3_contract/rest_mcp_consistency/finalize_workspace_schema_test.go::TestFinalizeWorkspaceAdvertisesWorkspacePlan_spec_15_2_1",
         "pkg/gateway/mcpfabric/mcptools/client_tools_test.go::TestFinalizeWorkspaceInputSchemaDeclaresWorkspacePlan_spec_15_2_1",
@@ -8501,7 +8508,7 @@
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardedResponsesTurnAtANonHolderIsNotDeliveredInAnyState_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardedResponsesTurnAtTheHolderRunsLocally_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_test.go::TestUnforwardedResponsesTurn_spec_29_3",
-        "pkg/gateway/sessionserver/holder_forward_test.go::TestOtherKindsKeepTheStateGateAheadOfTheForwardedCheck_spec_29_3",
+        "pkg/gateway/sessionserver/holder_forward_test.go::TestForwardedRequestAppliesRuleFiveAheadOfTheStateGate_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_test.go::TestResponsesTurnForwardStatesAreRunningOnly_spec_29_3",
         "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestForwardedCreateAndStartKeepsTheAdmissionRateLimit_spec_29_3",
         "cmd/lenny-gateway/holder_forward_wiring_test.go::TestHolderForwardInnerRoutesOnlyTheResponsesCreate_spec_29_3",

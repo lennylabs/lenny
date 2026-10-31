@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -1556,7 +1557,7 @@ func noDialClient(dials *atomic.Int64) *http.Client {
 // turn reaching a replica that does not hold REG-COORDLEASE is not delivered
 // whatever the row's state, refused once through the caller's renderer in
 // the native envelope, and kept out of the §11.5 cache. The suspended row
-// discriminates: under the state gate every other kind applies first, that
+// discriminates: under a state gate applied ahead of the rule-5 check, that
 // row would run locally at a non-holder.
 //
 // spec: 29.3 (Interactive message send) Forwarding rules 4-7, 11.5 (Idempotency), 15 (Open Responses conversation sessions)
@@ -1728,18 +1729,113 @@ func midBodyResetter() http.Handler {
 	})
 }
 
-// TestOtherKindsKeepTheStateGateAheadOfTheForwardedCheck_spec_29_3 pins that
-// only the Open Responses kind moves the rule-5 check ahead of the state
-// gate: a forwarded interrupt on a suspended row at a non-holder still runs
-// locally.
+// allForwardKinds lists every forwarding kind.
+var allForwardKinds = []ForwardKind{
+	ForwardKindTerminate, ForwardKindMessage, ForwardKindMessageNoReplyTo, ForwardKindInterrupt,
+	ForwardKindUpload, ForwardKindResume, ForwardKindResponsesTurn,
+}
+
+// TestForwardedRequestAppliesRuleFiveAheadOfTheStateGate_spec_29_3 pins
+// §29.3 Forwarding rule 5 for every kind and every row state: a forwarded
+// request at a replica that does not hold REG-COORDLEASE performs no effect
+// and takes the not-delivered outcome, whether or not the re-read row is in
+// the kind's forward states, and at the holder it runs locally without a
+// dial. A not-delivered request is refused with 409 TARGET_NOT_READY carrying
+// the row's state, except a message without inReplyTo to a running or
+// input_required session, which is left to its caller to hold (rule 6).
 //
-// spec: 29.3 (Interactive message send) Forwarding rule 5
-func TestOtherKindsKeepTheStateGateAheadOfTheForwardedCheck_spec_29_3(t *testing.T) {
-	s := forwardServer(leasesHeldBy("gw-b.00@127.0.0.1:1"), "gw-a.00@10.0.0.1:1", nil)
-	row := forwardRow()
-	row.State = session.StateSuspended
-	if got := s.forwardToHolder(httptest.NewRecorder(), clientRequest(WithForwarded(context.Background()), "{}"), row, ForwardKindInterrupt, nil); got != ForwardLocal {
-		t.Fatalf("outcome = %v, want ForwardLocal", got)
+// spec: 29.3 (Interactive message send) Forwarding rules 4, 5, and 6, 10.1.1 (Stateless Replicas and Per-Session Coordination)
+func TestForwardedRequestAppliesRuleFiveAheadOfTheStateGate_spec_29_3(t *testing.T) {
+	for _, kind := range allForwardKinds {
+		for _, state := range session.AllStates() {
+			for _, holder := range []bool{false, true} {
+				name := fmt.Sprintf("kind-%d/%s/holder=%v", kind, state, holder)
+				t.Run(name, func(t *testing.T) {
+					var dials atomic.Int64
+					leaseHolder := "gw-b.00@127.0.0.1:1"
+					if holder {
+						leaseHolder = "gw-a.00@10.0.0.1:1"
+					}
+					s := forwardServer(leasesHeldBy(leaseHolder), "gw-a.00@10.0.0.1:1", noDialClient(&dials))
+					row := forwardRow()
+					row.State = state
+					ctx := idemmw.WithGate(WithForwarded(context.Background()))
+					rec := httptest.NewRecorder()
+					got := s.forwardToHolder(rec, clientRequest(ctx, "{}"), row, kind, nil)
+					if dials.Load() != 0 {
+						t.Errorf("dials = %d, want 0: a forwarded request is never forwarded again", dials.Load())
+					}
+					if holder {
+						if got != ForwardLocal || rec.Body.Len() != 0 {
+							t.Fatalf("outcome = %v body %q, want ForwardLocal with nothing written", got, rec.Body.String())
+						}
+						return
+					}
+					if got != ForwardNotDelivered {
+						t.Fatalf("outcome = %v, want ForwardNotDelivered", got)
+					}
+					if HoldsUndelivered(row, kind) {
+						if rec.Body.Len() != 0 {
+							t.Errorf("wrote %q, want nothing so the caller holds the message", rec.Body.String())
+						}
+						return
+					}
+					assertTargetNotReady(t, rec, string(state))
+					if !idemmw.NotStored(ctx) {
+						t.Error("the refusal was left storable (§11.5)")
+					}
+				})
+			}
+		}
+	}
+}
+
+// TestHoldsUndeliveredOnlyAMessageWithoutInReplyToToALiveSession_spec_29_3
+// pins the §29.3 Forwarding rule 6 hold predicate over every kind and state.
+//
+// spec: 29.3 (Interactive message send) Forwarding rule 6
+func TestHoldsUndeliveredOnlyAMessageWithoutInReplyToToALiveSession_spec_29_3(t *testing.T) {
+	for _, kind := range allForwardKinds {
+		for _, state := range session.AllStates() {
+			want := kind == ForwardKindMessageNoReplyTo &&
+				(state == session.StateRunning || state == session.StateInputRequired)
+			if got := HoldsUndelivered(sessionstore.Session{State: state}, kind); got != want {
+				t.Errorf("HoldsUndelivered(%s, kind %d) = %v, want %v", state, kind, got, want)
+			}
+		}
+	}
+}
+
+// TestForwardToolCallRefusesAnUnholdableUndeliveredMessage_spec_29_3 pins
+// the MCP half of rule 6: a forwarded send_message without inReplyTo at a
+// non-holder returns no error for a running or input_required row, so the
+// caller holds it, and TARGET_NOT_READY for a row in any other state.
+//
+// spec: 29.3 (Interactive message send) Forwarding rules 5 and 6, 15.2.1 (REST/MCP Consistency Contract)
+func TestForwardToolCallRefusesAnUnholdableUndeliveredMessage_spec_29_3(t *testing.T) {
+	for _, state := range session.AllStates() {
+		t.Run(string(state), func(t *testing.T) {
+			var dials atomic.Int64
+			s := forwardServer(leasesHeldBy("gw-b.00@127.0.0.1:1"), "gw-a.00@10.0.0.1:1", noDialClient(&dials))
+			row := forwardRow()
+			row.State = state
+			ctx := idemmw.WithGate(WithForwarded(context.Background()))
+			_, outcome, err := s.ForwardToolCall(ctx, row, ForwardKindMessageNoReplyTo, "lenny/send_message", json.RawMessage(`{}`))
+			if outcome != ForwardNotDelivered {
+				t.Fatalf("outcome = %v, want ForwardNotDelivered", outcome)
+			}
+			hold := state == session.StateRunning || state == session.StateInputRequired
+			if hold {
+				if err != nil {
+					t.Errorf("err = %v, want nil so the caller holds the message", err)
+				}
+				return
+			}
+			var te *mcp.ToolError
+			if !errors.As(err, &te) || te.Code != "TARGET_NOT_READY" || te.Details["currentState"] != string(state) {
+				t.Errorf("err = %v, want TARGET_NOT_READY with currentState %q", err, state)
+			}
+		})
 	}
 }
 
