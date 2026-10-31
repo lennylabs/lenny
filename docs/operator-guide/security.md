@@ -388,7 +388,7 @@ The `DedicatedDNSUnavailable` critical alert fires when all dedicated CoreDNS re
 | `tenant-admin` | Per-tenant | Full access scoped to own tenant; user management, quotas, credential pools, legal holds |
 | `tenant-viewer` | Per-tenant | Read-only access to own tenant's sessions, runtimes, pools, usage, configuration |
 | `billing-viewer` | Per-tenant | Read-only access to usage and metering data for own tenant; no session content |
-| `user` | Per-tenant | Create and manage own sessions; no access to other users' sessions without explicit grant |
+| `user` | Per-tenant | Create and manage own sessions; read other users' sessions only through a custom role a tenant-admin assigns |
 
 ### Kubernetes RBAC
 

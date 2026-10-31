@@ -138,7 +138,6 @@ func main() {
 
 	created, err := client.CreateSession(ctx, lenny.CreateSessionRequest{
 		RuntimeRef: "chat",
-		UserID:     "alice@acme.com",
 	}, lenny.WithIdempotencyKey("alice-session-2026-05-19-001"))
 	if err != nil {
 		log.Fatal(err)
