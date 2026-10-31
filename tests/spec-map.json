@@ -2802,6 +2802,7 @@
       "title": "Setup Commands",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
+        "pkg/gateway/sessionserver/setup_policy_failclosed_internal_test.go",
         "tests/tier8_chaos/workspace_defaults_outage_test.go::TestWorkspaceDefaultsPostgresOutageFailsClosed_spec_14_1",
         "pkg/adapter/workspace/setup_test.go",
         "pkg/adapter/staging_test.go",

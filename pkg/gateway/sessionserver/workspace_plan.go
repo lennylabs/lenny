@@ -277,18 +277,26 @@ func (s *Server) writeRefResolveError(w http.ResponseWriter, err error) {
 // callers that already write the error to the response carry the same
 // reason string via the WORKSPACE_PLAN_INVALID envelope.
 //
-// spec: §5.1, §7.5 — F-7.5.1 / F-7.5.5.
+// The runtime read fails closed, as the workspaceDefaults composition does
+// for the same runtime: a runtime with no registry entry has no policy and
+// admits the plan, a transient store error answers the retryable 503
+// SERVICE_UNAVAILABLE with Retry-After, and a derived runtime whose base
+// cannot be read answers INTERNAL_ERROR. A plan with no setup commands
+// passes every policy, so it reads nothing and cannot fail on the read.
+//
+// spec: §5.1, §7.5 (Command policy) — F-7.5.1 / F-7.5.5; §14.1 WorkspacePlan
+// Schema Versioning (Runtime workspace defaults, rule 4) — F-7.5.15.
 func (s *Server) enforceSetupCommandPolicy(w http.ResponseWriter, r *http.Request,
 	runtimeRef string, plan workspaceplan.Plan,
 ) bool {
-	if s.runtimes == nil || runtimeRef == "" {
+	if s.runtimes == nil || runtimeRef == "" || len(plan.SetupCommands) == 0 {
 		return true
 	}
-	rt, err := runtimestore.Resolve(r.Context(), s.runtimes, runtimeRef)
-	if err != nil {
-		// A missing or unresolvable runtime is surfaced by the §7.1
-		// session-creation path's own validation; enforceSetupCommandPolicy
-		// stays out of that error envelope and just admits the request.
+	rt, registered, ok := s.resolvePolicyRuntime(r.Context(), w, runtimeRef)
+	if !ok {
+		return false
+	}
+	if !registered {
 		return true
 	}
 	policy := rt.SetupCommandPolicy
@@ -334,6 +342,49 @@ func (s *Server) enforceSetupCommandPolicy(w http.ResponseWriter, r *http.Reques
 		return false
 	}
 	return true
+}
+
+// resolvePolicyRuntime reads the effective (base-then-derived merged)
+// runtime whose setupCommandPolicy a binding plan is checked against. It
+// returns registered=false when the runtime has no registry entry, and
+// ok=false, with the response written, on any other read failure: a
+// transient store error answers 503 SERVICE_UNAVAILABLE with Retry-After,
+// and a derived runtime whose base is missing answers INTERNAL_ERROR. The
+// classification matches ComposeWorkspaceDefaults, so the policy check and
+// the defaults composition refuse the same request for the same read.
+//
+// spec: §7.5 Setup Commands (Command policy); §14.1 WorkspacePlan Schema
+// Versioning (Runtime workspace defaults, rule 4).
+func (s *Server) resolvePolicyRuntime(ctx context.Context, w http.ResponseWriter, runtimeRef string) (runtimestore.Runtime, bool, bool) {
+	if _, err := s.runtimes.Get(ctx, runtimeRef); err != nil {
+		if errors.Is(err, runtimestore.ErrNotFound) {
+			return runtimestore.Runtime{}, false, true
+		}
+		s.writeSetupPolicyLookupError(w, runtimeRef, err, true)
+		return runtimestore.Runtime{}, false, false
+	}
+	rt, err := runtimestore.Resolve(ctx, s.runtimes, runtimeRef)
+	if err != nil {
+		s.writeSetupPolicyLookupError(w, runtimeRef, err, !errors.Is(err, runtimestore.ErrNotFound))
+		return runtimestore.Runtime{}, false, false
+	}
+	return rt, true, true
+}
+
+// writeSetupPolicyLookupError writes the response for a runtime read that
+// the setupCommandPolicy check could not complete. A transient failure is
+// the retryable 503 SERVICE_UNAVAILABLE with Retry-After; a definite one,
+// such as a derived runtime whose base is missing, is INTERNAL_ERROR.
+func (s *Server) writeSetupPolicyLookupError(w http.ResponseWriter, runtimeRef string, err error, transient bool) {
+	log.Printf("sessionserver: read setupCommandPolicy of runtime %q: %v", runtimeRef, err)
+	if transient {
+		w.Header().Set("Retry-After", strconv.Itoa(serviceUnavailableRetryAfterSeconds))
+		s.writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE",
+			"the runtime setupCommandPolicy is transiently unavailable; retry", nil)
+		return
+	}
+	s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+		"could not read the runtime setupCommandPolicy: "+err.Error(), nil)
 }
 
 // writeWorkspacePlanError translates a workspaceplan.ValidationError

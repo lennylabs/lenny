@@ -4209,8 +4209,10 @@ D2), which stays with the upload route proposal.
   - [ ] **F-15.1.69** (Low, filed from F-7.4.21): `UPLOAD_TOKEN_INVALID` has no §15.1 catalog row, so MCP
     classifies it as transient and retryable while REST answers it as permanent. Needs a catalog row through
     the proposal pipeline, then the `errorclassify` entry.
-  - [ ] **F-7.5.15** (Medium): `enforceSetupCommandPolicy` admits a plan on every runtime read error. Answer a
+  - [x] **F-7.5.15** (Medium): `enforceSetupCommandPolicy` admits a plan on every runtime read error. Answer a
     transient read with `503 SERVICE_UNAVAILABLE`, as 0086's defaults composition does, after 0086's S14.
+    Closed 2026-10-31 by direct fix on `fix/finalize-policy-forward`: the read classifies a failure as the
+    composition does, and a plan with no setup commands reads nothing.
   - [ ] **F-7.5.16** (Medium): at creation the setup-command policy is read from the requested runtime rather
     than the routed one. Run the check against the runtime the row records after routing; if that needs an
     ordering the specification does not state, it goes to a proposal.
