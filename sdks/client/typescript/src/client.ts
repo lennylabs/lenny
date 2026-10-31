@@ -79,9 +79,6 @@ export interface ClientOptions {
 }
 
 /**
- * Per-call options threaded through a single request.
- */
-/**
  * UploadTokenRequestOptions carries the §7.1 uploadToken that finalize
  * sends in the X-Lenny-Upload-Token header. It is internal: no public
  * option exposes the token, because it belongs to the finalize call alone.
@@ -90,6 +87,9 @@ interface UploadTokenRequestOptions extends RequestOptions {
   uploadToken?: string;
 }
 
+/**
+ * Per-call options threaded through a single request.
+ */
 export interface RequestOptions {
   /**
    * Attaches an Idempotency-Key header to the request. The §11.5

@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 
@@ -54,6 +56,9 @@ func TestReserveRecordsTheReservationOnTheRedisPath_spec_12_4(t *testing.T) {
 			}
 			if fb.callCount("pod-1") != 0 {
 				t.Errorf("the gate ran %d times while Redis was reachable, want 0", fb.callCount("pod-1"))
+			}
+			if !fb.recordHadDeadline {
+				t.Error("the record write ran with no deadline")
 			}
 		})
 	}
@@ -118,9 +123,12 @@ func TestFallbackReserveRecordsOnlyAdmissions_spec_12_4(t *testing.T) {
 }
 
 // spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
-// diagnosis: a release left the session's record, so the gate kept
+// §6.2 (leaked slot semantics).
+// diagnosis: a clean release left the session's record, so the gate kept
 // counting a slot the session no longer holds after its post-terminal
-// window, or a release refused because Redis is down kept the record.
+// window, or a clean release refused because Redis is down kept the record;
+// or a leaked release deleted the record, so the gate admitted beside a
+// runtime that may still be running.
 func TestReleaseDeletesTheRecord_spec_12_4(t *testing.T) {
 	for _, leaked := range []bool{false, true} {
 		t.Run(fmt.Sprintf("leaked %v redis up", leaked), func(t *testing.T) {
@@ -133,11 +141,25 @@ func TestReleaseDeletesTheRecord_spec_12_4(t *testing.T) {
 			if _, _, _, err := c.Release(ctx, "pod-1", "s", leaked); err != nil {
 				t.Fatalf("Release: %v", err)
 			}
-			if fb.hasRecord("pod-1", "s") {
-				t.Error("record present after the release")
+			if got := fb.hasRecord("pod-1", "s"); got != leaked {
+				t.Errorf("record present = %v after the release, want %v", got, leaked)
 			}
 		})
 	}
+	t.Run("leaked release with redis down keeps the record", func(t *testing.T) {
+		fb := newFakeFallback()
+		c := downedCounter(t, slotcounter.WithFallbackSource(fb))
+		ctx := context.Background()
+		if _, _, err := c.Reserve(ctx, "pod-1", "s", 2); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, _, err := c.Release(ctx, "pod-1", "s", true); err == nil {
+			t.Fatal("Release with Redis down returned no error")
+		}
+		if !fb.hasRecord("pod-1", "s") {
+			t.Error("a leaked release deleted the record, so the gate stops counting the leaked slot")
+		}
+	})
 	t.Run("redis down", func(t *testing.T) {
 		fb := newFakeFallback()
 		c := downedCounter(t, slotcounter.WithFallbackSource(fb))
@@ -165,6 +187,26 @@ func TestReleaseDeletesTheRecord_spec_12_4(t *testing.T) {
 			t.Error("record present after a release on a cancelled context")
 		}
 	})
+}
+
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
+// diagnosis: the record's deletion in a release can spend the caller's whole
+// budget on a stalled Postgres, so the occupancy-zero disposition that
+// follows the release runs on an expired context and the claim stays bound.
+func TestReleaseBoundsTheRecordDeletionBelowItsCallersBudget_spec_12_4(t *testing.T) {
+	fb := newFakeFallback()
+	c, _, _ := newCounterNoSource(t, slotcounter.WithFallbackSource(fb))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, _, err := c.Reserve(ctx, "pod-1", "s", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := c.Release(ctx, "pod-1", "s", false); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if fb.deleteBudget <= 0 || fb.deleteBudget > 2*time.Second {
+		t.Errorf("the deletion had %v, want a bound well below the caller's 5s", fb.deleteBudget)
+	}
 }
 
 // spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
@@ -212,6 +254,56 @@ func TestReservationRecordAroundAKnownOutage_spec_12_4(t *testing.T) {
 	}
 	if !fb.hasRecord("pod-1", "d") {
 		t.Error("d, admitted by the script during the recovery, has no record")
+	}
+}
+
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
+// diagnosis: a reservation the script admitted during an outage's recovery
+// could not write its record and was admitted anyway, so a gate started by
+// the next Redis drop could not count it and admitted past the bound.
+func TestReserveAdmittedDuringRecoveryFailsClosedWithoutARecord_spec_12_4(t *testing.T) {
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	fb := newFakeFallback()
+	cl := fastClient(t, mr)
+	c := slotcounter.New(cl, slotcounter.WithFallbackSource(fb))
+	mr.Close()
+	if _, _, err := c.Reserve(ctx, "pod-1", "a", 4); err != nil {
+		t.Fatalf("Reserve a: %v", err)
+	}
+	if err := mr.Restart(); err != nil {
+		t.Fatal(err)
+	}
+	fb.mu.Lock()
+	fb.recordErr = errors.New("postgres unavailable")
+	fb.mu.Unlock()
+	if _, _, err := c.Reserve(ctx, "pod-1", "b", 4); !errors.Is(err, slotcounter.ErrFailClosed) {
+		t.Fatalf("Reserve b = %v, want ErrFailClosed", err)
+	}
+	if got, err := cl.SIsMember(ctx, "lenny:pod:{pod-1}:active_slots", "b").Result(); err != nil || got {
+		t.Errorf("member b present = %v (%v), want it removed", got, err)
+	}
+}
+
+// spec: §12.4 (Redis failure behavior), §5.2 (Post-recovery rehydration
+// atomicity).
+// diagnosis: a Postgres connection dropped during a rehydration, with Redis
+// healthy, was classified as a Redis outage, so the reservation left Redis
+// for the gate and the outage clock started.
+func TestPostgresEOFDuringRehydrationIsNotARedisOutage_spec_12_4(t *testing.T) {
+	src := newFakeSource()
+	src.setErr(io.EOF)
+	fb := newFakeFallback()
+	c, _, _ := newCounterNoSource(t, slotcounter.WithFallbackSource(fb), slotcounter.WithSlotSource(src))
+	_, _, err := c.Reserve(context.Background(), "pod-1", "s", 2)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("Reserve = %v, want the source's error", err)
+	}
+	if n := fb.callCount("pod-1"); n != 0 {
+		t.Errorf("the gate ran %d times with Redis reachable, want 0", n)
+	}
+	if fb.hasRecord("pod-1", "s") {
+		t.Error("the failed reservation left its record")
 	}
 }
 

@@ -354,7 +354,7 @@ var errEmptySessionID = errors.New("slotcounter: session identifier is required"
 // reservation's discovery of the outage, the gate counts the record, which
 // over-counts the pod and never under-counts it. A reservation the Redis
 // script admits while an outage is still being recovered records itself
-// after the script. A record that the cleanup fails to delete over-counts
+// after the script, and fails closed when it cannot. A record that the cleanup fails to delete over-counts
 // the pod until the slot release or the stale-slot reaper deletes it.
 //
 // spec: §5.2 (Slot assignment atomicity, Post-recovery rehydration
@@ -375,7 +375,7 @@ func (c *Counter) Reserve(ctx context.Context, podID, sessionID string, maxConcu
 	}
 	count, rehydrated, err = c.reserve(ctx, &r)
 	if err != nil && r.inserted {
-		c.dropReservation(ctx, podID, sessionID)
+		c.dropReservation(ctx, podID, sessionID, reservationCleanupTimeout)
 	}
 	return count, rehydrated, err
 }
@@ -395,7 +395,7 @@ type reservation struct {
 // still deciding.
 func (c *Counter) toGate(ctx context.Context, r *reservation, rehydrated bool) (int32, bool, error) {
 	if r.inserted {
-		c.dropReservation(ctx, r.podID, r.sessionID)
+		c.dropReservation(ctx, r.podID, r.sessionID, reservationCleanupTimeout)
 		r.inserted = false
 	}
 	return c.fallbackReserve(ctx, r.podID, r.sessionID, r.maxConcurrent, rehydrated)
@@ -403,16 +403,26 @@ func (c *Counter) toGate(ctx context.Context, r *reservation, rehydrated bool) (
 
 // admitted finishes a reservation the Redis script admitted: one that wrote
 // no record before the script, because an outage was known, records itself
-// now. A failed write is logged and leaves the Redis set as the only count
-// of the reservation until its row names the pod.
-func (c *Counter) admitted(ctx context.Context, r *reservation) {
-	if r.recorded || c.fallback == nil {
-		return
+// now, on a context detached from the caller's cancellation. A record that
+// cannot be written fails the reservation closed as recordReservation does
+// before the script: the member is removed, because a later gate could not
+// count the admission, and the caller holds no slot to release.
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
+func (c *Counter) admitted(ctx context.Context, r *reservation) error {
+	if r.recorded {
+		return nil
 	}
-	if _, err := c.fallback.RecordSlotReservation(ctx, r.podID, r.sessionID); err != nil {
-		slog.WarnContext(ctx, "slotcounter: record slot reservation after the script failed",
-			"pod", r.podID, "session_id", r.sessionID, "error", err)
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reservationCleanupTimeout)
+	defer cancel()
+	_, err := c.recordReservation(dctx, r.podID, r.sessionID)
+	if err == nil {
+		return nil
 	}
+	if _, _, _, relErr := c.release(dctx, r.podID, r.sessionID, false); relErr != nil {
+		slog.WarnContext(ctx, "slotcounter: remove a member whose record failed; the member over-counts the pod",
+			"pod", r.podID, "session_id", r.sessionID, "error", relErr)
+	}
+	return err
 }
 
 // reserve runs the recovery rebuild when one is due, then the reservation
@@ -442,7 +452,9 @@ func (c *Counter) reserve(ctx context.Context, r *reservation) (count int32, reh
 		}
 		switch {
 		case res >= 1:
-			c.admitted(ctx, r)
+			if err := c.admitted(ctx, r); err != nil {
+				return 0, rehydrated, err
+			}
 			return int32(res), rehydrated, nil
 		case res == resultExhausted:
 			return 0, rehydrated, ErrSlotsExhausted
@@ -534,7 +546,7 @@ func (c *Counter) rehydrate(ctx context.Context, podID, extra string) (bool, err
 
 	ids, err := c.source.GetActiveSlotsByPod(ctx, podID)
 	if err != nil {
-		return false, fmt.Errorf("slotcounter: rehydrate %s from source: %w", podID, err)
+		return false, fmt.Errorf("slotcounter: rehydrate %s: %w: %w", podID, errSlotSourceRead, err)
 	}
 	if err := c.seed(ctx, podID, ids, extra); err != nil {
 		return false, err
@@ -627,6 +639,9 @@ func lockToken() (string, error) {
 // (§6.2). The caller runs the occupancy-zero disposition only when the
 // release is clean, removed is true, and remaining is zero.
 //
+// A clean release deletes the session's reservation record whatever the
+// Redis release reports. A leaked release keeps it.
+//
 // A release that finds the rehydrated flag absent rehydrates the set first,
 // adding its own member to the seed, and then removes it, so it reports
 // removed and rehydrated. While an outage is being recovered, Release runs
@@ -642,12 +657,15 @@ func (c *Counter) Release(ctx context.Context, podID, sessionID string, leaked b
 		return false, 0, false, fmt.Errorf("slotcounter: release %s: %w", podID, errEmptySessionID)
 	}
 	removed, remaining, rehydrated, err = c.release(ctx, podID, sessionID, leaked)
-	// spec: §12.4 — the release ends the reservation's Postgres record on
-	// every outcome. A Redis release that failed leaves the Redis member
-	// counted; the §12.4 gate keeps counting the session through its row's
-	// post-terminal window, as it does for a session whose reservation
-	// predates the record.
-	c.dropReservation(ctx, podID, sessionID)
+	// spec: §12.4 — a clean release ends the reservation's Postgres record
+	// even when the Redis release failed: the session has left the slot, so
+	// only the Redis member over-counts. A leaked release keeps the record,
+	// because §6.2 keeps a leaked slot counted and the record may be the only
+	// thing the §12.4 gate can count when no row names the pod. The
+	// stale-slot reaper reclaims a leaked release's record.
+	if !leaked {
+		c.dropReservation(ctx, podID, sessionID, reservationReleaseTimeout)
+	}
 	if err != nil {
 		if leaked {
 			c.record(entryLeaked, podID, sessionID)

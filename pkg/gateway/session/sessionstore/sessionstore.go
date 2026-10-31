@@ -1229,14 +1229,16 @@ type Store interface {
 	DeleteSlotReservation(ctx context.Context, podID, sessionID string) error
 
 	// ReclaimSlotReservations deletes, across tenants, the slot reservations
-	// recorded before cutoff whose session row is absent, or is terminal
-	// with a terminated_at before cutoff, and returns how many it deleted.
+	// recorded before cutoff whose session row is absent, is terminal with a
+	// terminated_at before cutoff, or is non-terminal and names another pod,
+	// and returns how many it deleted.
 	// The stale-slot reaper runs it with cutoff at claimOrphanTimeout ago,
 	// the age after which §4.6.1 treats a claim with no session row as
 	// orphaned and §5.2 bounds every window in which work of an ended
 	// session can still act on its slot. A record whose session row is
-	// non-terminal, or terminal for less than the cutoff, is kept, so an
-	// unreclaimed record over-counts its pod and never under-counts it.
+	// non-terminal and names the record's pod or no pod, or terminal for
+	// less than the cutoff, is kept, so an unreclaimed record over-counts
+	// its pod and never under-counts it.
 	// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment
 	// atomicity), §4.6.1 (Orphaned SandboxClaim detection).
 	ReclaimSlotReservations(ctx context.Context, cutoff time.Time) (int, error)
