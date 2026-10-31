@@ -3705,6 +3705,7 @@
         "pkg/gateway/sessionserver/session_owner_binding_test.go",
         "pkg/gateway/sessionserver/session_access_test.go",
         "pkg/gateway/sessionserver/session_access_read_internal_test.go",
+        "tests/tier4_integration/checkpoint_chunk_helpers_test.go",
         "tests/tier3_contract/rest_sessions/session_ownership_contract_test.go::TestSessionOwnershipOnTheWire_spec_10_2",
         "tests/tier9_security/session_owner_binding_test.go::TestCreateCannotChooseItsOwner_spec_10_2",
         "tests/tier3_contract/rest_auth/auth_test.go::TestDevHeaderCreateWithoutSubjectReturns401",
