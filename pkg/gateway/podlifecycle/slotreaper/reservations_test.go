@@ -18,13 +18,15 @@ import (
 // fakeReclaimer records each ReclaimSlotReservations cutoff and returns a
 // configured count or error.
 type fakeReclaimer struct {
-	cutoffs []time.Time
-	n       int
-	err     error
+	cutoffs     []time.Time
+	n           int
+	err         error
+	hadDeadline bool
 }
 
-func (f *fakeReclaimer) ReclaimSlotReservations(_ context.Context, cutoff time.Time) (int, error) {
+func (f *fakeReclaimer) ReclaimSlotReservations(ctx context.Context, cutoff time.Time) (int, error) {
 	f.cutoffs = append(f.cutoffs, cutoff)
+	_, f.hadDeadline = ctx.Deadline()
 	return f.n, f.err
 }
 
@@ -77,6 +79,41 @@ func TestReaperReclaimsAbandonedReservations_spec_12_4(t *testing.T) {
 			}
 		})
 	}
+}
+
+// spec: §12.4 (Redis failure behavior), §4.6.1 (Orphaned SandboxClaim
+// detection).
+//
+// The reclaim runs under a deadline, so a stalled delete cannot hold the
+// leader's pass, and a pass whose pod listing fails still logs what it
+// reclaimed.
+func TestReaperBoundsAndReportsTheReclaim_spec_12_4(t *testing.T) {
+	w := newWorld()
+	rec := &fakeReclaimer{n: 3}
+	var logs bytes.Buffer
+	r, err := slotreaper.New(slotreaper.Config{
+		Pods: failingLister{}, Members: w, Sessions: w, Releaser: w, Reservations: rec,
+		Rate: 50, Interval: time.Minute, TerminalAge: terminalAge,
+		Limiter: &countingLimiter{},
+		Logger:  slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Pass(context.Background())
+	if !rec.hadDeadline {
+		t.Error("the reclaim ran with no deadline")
+	}
+	if !strings.Contains(logs.String(), "reservations_reclaimed=3") {
+		t.Errorf("logs = %q, want the reclaimed count", logs.String())
+	}
+}
+
+// failingLister is a PodLister whose listing fails.
+type failingLister struct{}
+
+func (failingLister) ListPodsWithActiveSlots(context.Context) ([]string, error) {
+	return nil, errors.New("postgres unavailable")
 }
 
 // spec: §12.4 (Redis failure behavior).

@@ -3699,7 +3699,7 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
       §8.2 calls the exchange an in-process Token Service call while the Token Service runs as its own
       Deployment, and how the gateway authenticates as that internal caller;
     - how the child token is delivered to the child pod.
-  - [ ] **Shared gateway key-source proposal** (not yet written): **F-7.1.31** (Medium), the per-process
+  - [ ] **Shared gateway key-source proposal** (not yet written): **F-7.1.31** (High since 2026-10-31: every finalize now verifies the token, so a finalize on a replica other than the minter is refused; next change-proposal after 0111), the per-process
     `uploadToken` key ring and consumed-token tracker, and **F-27.3.16** (Medium), the per-process playground
     OIDC state-cookie key (rerouted here 2026-10-27, because a direct-fix attempt found no key source with
     spec text: the playground session cookie is opaque, no mounted chart Secret covers this use, the spec
@@ -4351,6 +4351,12 @@ filing a duplicate.
   - [ ] **F-29.3.5** (Low, filed from F-29.3.4): a forward listener that does not hold the lease answers a
     route's `INVALID_STATE_TRANSITION` when the re-read row fails the route precondition, where rule 5 names
     `TARGET_NOT_READY`. Needs the order of rule 5 and the precondition check decided first.
+  - [ ] **F-11.5.27** (Medium, filed from the F-7.4.21 review): finalize's `uploadToken` check runs behind the
+    §11.5 idempotency middleware, so a token refusal is replayed and a stored success replays with no token.
+    Needs §11.5 to state both. Routed with F-11.5.26.
+  - [ ] **F-12.4.39** (Medium, filed from the F-12.4.38 review): `slot_reservations` has no specification
+    statement, and the Redis path gained a Postgres transaction per reservation. Routed with the F-5.2.55
+    second residue.
 - Proposal routing: a session-owner authorization proposal (new, unwritten), after 0108's implementation,
   which rewrites the Open Responses read and resolution paths. This proposal is 0110 (approved 2026-10-29,
   merge `05ed531a5`), whose REC-1 closes all three entries below. Only its Open Responses steps wait for

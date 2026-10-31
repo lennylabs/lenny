@@ -651,8 +651,9 @@ func (s *Store) DeleteSlotReservation(_ context.Context, podID, sessionID string
 }
 
 // ReclaimSlotReservations implements Store: it deletes the reservation
-// records older than cutoff whose session row is absent or has been
-// terminal since before cutoff, with the predicate the Postgres store uses.
+// records older than cutoff whose session row is absent, has been terminal
+// since before cutoff, or is non-terminal and names another pod, with the
+// predicate the Postgres store uses.
 // spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity),
 // §4.6.1 (Orphaned SandboxClaim detection).
 func (s *Store) ReclaimSlotReservations(_ context.Context, cutoff time.Time) (int, error) {
@@ -661,7 +662,7 @@ func (s *Store) ReclaimSlotReservations(_ context.Context, cutoff time.Time) (in
 	deleted := 0
 	for pod, byPod := range s.slotReservations {
 		for id, at := range byPod {
-			if !at.Before(cutoff) || s.reservationSessionLive(id, cutoff) {
+			if !at.Before(cutoff) || s.reservationSessionLive(pod, id, cutoff) {
 				continue
 			}
 			delete(byPod, id)
@@ -674,15 +675,19 @@ func (s *Store) ReclaimSlotReservations(_ context.Context, cutoff time.Time) (in
 	return deleted, nil
 }
 
-// reservationSessionLive reports whether a reservation's session row keeps
-// the reservation: the row exists and is non-terminal, has no terminal
-// time, or became terminal at or after cutoff. The caller holds mu.
-func (s *Store) reservationSessionLive(id string, cutoff time.Time) bool {
+// reservationSessionLive reports whether a reservation on pod keeps its
+// session row's claim on it: the row is non-terminal and names pod or no pod,
+// or it is terminal with no terminal time or a terminal time at or after
+// cutoff. The caller holds mu.
+func (s *Store) reservationSessionLive(pod, id string, cutoff time.Time) bool {
 	row, ok := s.sessions[id]
 	if !ok {
 		return false
 	}
-	return !session.IsTerminal(row.State) || row.TerminatedAt.IsZero() || !row.TerminatedAt.Before(cutoff)
+	if !session.IsTerminal(row.State) {
+		return row.PodAssignment == "" || row.PodAssignment == pod
+	}
+	return row.TerminatedAt.IsZero() || !row.TerminatedAt.Before(cutoff)
 }
 
 // podLock returns the per-pod mutex for the §12.4 fallback gate, creating

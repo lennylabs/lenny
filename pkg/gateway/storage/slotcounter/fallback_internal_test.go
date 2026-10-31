@@ -56,6 +56,8 @@ func TestIsRedisUnavailableClassifiesConnectivityFailures_spec_12_4(t *testing.T
 		{"broken pipe fragment is an outage", errors.New("write tcp: broken pipe"), true},
 		{"a connection closed mid-command (io.EOF) is an outage", io.EOF, true},
 		{"wrapped io.ErrUnexpectedEOF is an outage", fmt.Errorf("read: %w", io.ErrUnexpectedEOF), true},
+		{"a dropped Postgres read (EOF) is not a Redis outage", fmt.Errorf("x: %w: %w", errSlotSourceRead, io.EOF), false},
+		{"a refused Postgres read is not a Redis outage", fmt.Errorf("x: %w: %w", errSlotSourceRead, syscall.ECONNREFUSED), false},
 		{"a Lua script error propagates", errors.New("ERR Error running script: bad slot"), false},
 	}
 	for _, tc := range cases {

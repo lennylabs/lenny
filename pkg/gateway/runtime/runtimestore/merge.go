@@ -18,6 +18,12 @@ func Resolve(ctx context.Context, s Store, name string) (Runtime, error) {
 	if err != nil {
 		return Runtime{}, err
 	}
+	return mergeBase(ctx, s, name, rt)
+}
+
+// mergeBase returns rt, the entry registered under name, merged over its base
+// when it is derived.
+func mergeBase(ctx context.Context, s Store, name string, rt Runtime) (Runtime, error) {
 	if !rt.IsDerived() {
 		return rt, nil
 	}

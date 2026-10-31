@@ -255,8 +255,9 @@ func TestReserveSlotUnderLock(t *testing.T) {
 // detection).
 // diagnosis: ReclaimSlotReservations deleted a record that still counts a
 // reservation in progress (an under-count that reopens the F-12.4.38
-// overrun), or kept a record whose create ended without a row or whose
-// session ended long ago (a permanent over-count).
+// overrun), or kept a record whose create ended without a row, whose
+// session ended long ago, or whose live session now names another pod (a
+// permanent over-count).
 func TestReclaimSlotReservations(t *testing.T) {
 	t.Parallel()
 	store, pg := startStore(t)
@@ -289,7 +290,7 @@ func TestReclaimSlotReservations(t *testing.T) {
 
 	absentOld, absentNew := newUUID(t), newUUID(t)
 	liveOld, termOld, termRecent := newUUID(t), newUUID(t), newUUID(t)
-	boundOld := newUUID(t)
+	boundOld, movedOld := newUUID(t), newUUID(t)
 	record(absentOld, old)
 	record(absentNew, now)
 	record(liveOld, old)
@@ -300,13 +301,15 @@ func TestReclaimSlotReservations(t *testing.T) {
 	terminal(termRecent, session.StateCancelled, now)
 	record(boundOld, old)
 	mustCreateSlotSession(t, ctx, store, tenant, pod, boundOld, session.StateRunning)
+	record(movedOld, old)
+	mustCreateSlotSession(t, ctx, store, tenant, pod+"-next", movedOld, session.StateRunning)
 
 	n, err := store.ReclaimSlotReservations(ctx, cutoff)
 	if err != nil {
 		t.Fatalf("ReclaimSlotReservations: %v", err)
 	}
-	if n != 2 {
-		t.Errorf("reclaimed %d records, want 2 (the absent and the long-terminal session)", n)
+	if n != 3 {
+		t.Errorf("reclaimed %d records, want 3 (the absent, the long-terminal, and the moved session)", n)
 	}
 	kept := reservationIDs(t, ctx, pg, pod)
 	for _, id := range []string{absentNew, liveOld, termRecent, boundOld} {
@@ -314,7 +317,7 @@ func TestReclaimSlotReservations(t *testing.T) {
 			t.Errorf("record %s was reclaimed, want kept", id)
 		}
 	}
-	for _, id := range []string{absentOld, termOld} {
+	for _, id := range []string{absentOld, termOld, movedOld} {
 		if kept[id] {
 			t.Errorf("record %s was kept, want reclaimed", id)
 		}

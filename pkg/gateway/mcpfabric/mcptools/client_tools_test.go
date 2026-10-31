@@ -268,6 +268,23 @@ func TestUploadFilesTokenHeader_spec_15_2_3(t *testing.T) {
 	}
 }
 
+// TestUploadFilesRefusesABlankToken_spec_7_4 pins upload_files to the check
+// lenny/finalize_workspace applies: a blank uploadToken fails validation
+// without reaching the REST route.
+//
+// spec: 7.4 (Upload Safety, Upload authorization), 15.2.1 (RESTMCP Consistency
+// Contract)
+func TestUploadFilesRefusesABlankToken_spec_7_4(t *testing.T) {
+	svc := &fakeService{result: sessionserver.ServiceResult{Status: 201, Body: []byte(`{}`)}}
+	srv := newClientToolsMCP(t, svc)
+	content := base64.StdEncoding.EncodeToString([]byte("hello"))
+	args := `{"sessionId":"s1","uploadToken":"   ","contentBase64":"` + content + `"}`
+	_, _ = dispatch(t, srv, "lenny/upload_files", args)
+	if svc.target != "" {
+		t.Errorf("the blank token reached %s", svc.target)
+	}
+}
+
 // finalizeSchema is the decoded subset of the lenny/finalize_workspace
 // input schema the finalize assertions read.
 type finalizeSchema struct {
