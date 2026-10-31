@@ -5,9 +5,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
@@ -30,6 +32,12 @@ import (
 // propagated so the admin handler maps it to 503
 // CREDENTIAL_PROBE_UNAVAILABLE and never fails open.
 //
+// Every RPC runs under timeout through secretAccess. The deadline covers a
+// Token Service that accepted the call and never answers, which the Token
+// Service's own Secret read deadline cannot, because a frozen process does
+// not enforce it. A hang therefore ends as a gRPC DeadlineExceeded, the same
+// no-verdict error as any other failed call.
+//
 // spec: §4.9 (Credential Storage Topology).
 type tokenServiceSecretProber struct {
 	stub tokensv1.TokenServiceClient
@@ -39,6 +47,10 @@ type tokenServiceSecretProber struct {
 	// keyed read (Resolve). Nil leaves the read ungated. The admin probe
 	// does not use it.
 	tokenService *subsystem.Subsystem
+	// timeout bounds each ProbeSecretAccess call. It is fixed at
+	// credassign.DefaultClientTimeout, the bound on every other gateway call
+	// on this link, and tests shorten it.
+	timeout time.Duration
 }
 
 // newTokenServiceSecretProber returns a prober over stub that parses each
@@ -49,7 +61,7 @@ type tokenServiceSecretProber struct {
 //
 // spec: §4.9 (Credential Storage Topology).
 func newTokenServiceSecretProber(stub tokensv1.TokenServiceClient, credNS string) *tokenServiceSecretProber {
-	return &tokenServiceSecretProber{stub: stub, credNS: credNS}
+	return &tokenServiceSecretProber{stub: stub, credNS: credNS, timeout: credassign.DefaultClientTimeout}
 }
 
 // newTokenServiceVCSReader returns the gateway VCS SecretReader over stub:
@@ -58,7 +70,7 @@ func newTokenServiceSecretProber(stub tokensv1.TokenServiceClient, credNS string
 //
 // spec: §4.9 (Token Service secret resolution), §14.
 func newTokenServiceVCSReader(stub tokensv1.TokenServiceClient, credNS string, tokenService *subsystem.Subsystem) *tokenServiceSecretProber {
-	return &tokenServiceSecretProber{stub: stub, credNS: credNS, tokenService: tokenService}
+	return &tokenServiceSecretProber{stub: stub, credNS: credNS, tokenService: tokenService, timeout: credassign.DefaultClientTimeout}
 }
 
 // vcsTokenKey is the Secret key the github provider's token is stored
@@ -69,6 +81,19 @@ var (
 	_ admin.SecretAccessProber = (*tokenServiceSecretProber)(nil)
 	_ vcscred.SecretReader     = (*tokenServiceSecretProber)(nil)
 )
+
+// secretAccess issues one ProbeSecretAccess call under the prober's deadline.
+// The admin probe runs inside the pool row's transaction and a VCS read gates
+// session creation, so a call with no deadline would hold the row lock, or
+// leave the token_service breaker unfed, for as long as the Token Service
+// stays silent.
+//
+// spec: §4.9 (Credential Storage Topology, Token Service secret resolution).
+func (p *tokenServiceSecretProber) secretAccess(ctx context.Context, req *tokensv1.ProbeSecretAccessRequest) (*tokensv1.ProbeSecretAccessResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, p.timeout)
+	defer cancel()
+	return p.stub.ProbeSecretAccess(ctx, req)
+}
 
 // Resolve is the gateway's VCS token read. It parses the stored ref with
 // credential.ParseSecretRef against the credentials namespace and asks the
@@ -84,7 +109,9 @@ var (
 // The RPC alone runs inside Do on the token_service subsystem, so an open
 // breaker refuses with no RPC made. The closure returns only the gRPC
 // error, so a definitive verdict, NOT_FOUND and DENIED included, counts as
-// a breaker success rather than a failure.
+// a breaker success rather than a failure. A silent Token Service ends at the
+// call deadline, so the hang reaches the caller as the TRANSIENT category and
+// counts as a breaker failure.
 //
 // spec: §4.9 (Token Service secret resolution), §4.3, §14.
 func (p *tokenServiceSecretProber) Resolve(ctx context.Context, ref string) (string, error) {
@@ -94,7 +121,7 @@ func (p *tokenServiceSecretProber) Resolve(ctx context.Context, ref string) (str
 	}
 	var resp *tokensv1.ProbeSecretAccessResponse
 	call := func(ctx context.Context) error {
-		r, err := p.stub.ProbeSecretAccess(ctx, &tokensv1.ProbeSecretAccessRequest{SecretName: name, Key: vcsTokenKey})
+		r, err := p.secretAccess(ctx, &tokensv1.ProbeSecretAccessRequest{SecretName: name, Key: vcsTokenKey})
 		resp = r
 		return err
 	}
@@ -131,7 +158,7 @@ func (p *tokenServiceSecretProber) ProbeSecretAccess(ctx context.Context, secret
 	if err != nil {
 		return 0, fmt.Errorf("probe secretRef: %w", err)
 	}
-	resp, err := p.stub.ProbeSecretAccess(ctx, &tokensv1.ProbeSecretAccessRequest{SecretName: name})
+	resp, err := p.secretAccess(ctx, &tokensv1.ProbeSecretAccessRequest{SecretName: name})
 	if err != nil {
 		return 0, err
 	}
