@@ -29,12 +29,14 @@ type fakeFallback struct {
 	// deletes, keyed by pod and session.
 	records   map[[2]string]bool
 	recordErr error // when set, RecordSlotReservation returns this error
+	// recordCalls counts RecordSlotReservation calls per session.
+	recordCalls map[string]int
 	podLockMu sync.Mutex
 	podLocks  map[string]*sync.Mutex
 }
 
 func newFakeFallback() *fakeFallback {
-	return &fakeFallback{active: map[string]int32{}, calls: map[string]int{}, podLocks: map[string]*sync.Mutex{}, records: map[[2]string]bool{}}
+	return &fakeFallback{active: map[string]int32{}, calls: map[string]int{}, podLocks: map[string]*sync.Mutex{}, records: map[[2]string]bool{}, recordCalls: map[string]int{}}
 }
 
 func (f *fakeFallback) podLock(podID string) *sync.Mutex {
@@ -51,6 +53,7 @@ func (f *fakeFallback) podLock(podID string) *sync.Mutex {
 func (f *fakeFallback) RecordSlotReservation(_ context.Context, podID, sessionID string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.recordCalls[sessionID]++
 	if f.recordErr != nil {
 		return false, f.recordErr
 	}
@@ -75,7 +78,19 @@ func (f *fakeFallback) hasRecord(podID, sessionID string) bool {
 	return f.records[[2]string{podID, sessionID}]
 }
 
-func (f *fakeFallback) ReserveSlotUnderLock(_ context.Context, podID, _ string, maxConcurrent int32) (int32, bool, error) {
+// ReserveSlotUnderLock gates on the per-pod count and, as the stores do,
+// records the admitted session's reservation in the same locked step.
+func (f *fakeFallback) ReserveSlotUnderLock(ctx context.Context, podID, sessionID string, maxConcurrent int32) (int32, bool, error) {
+	count, ok, err := f.gate(podID, maxConcurrent)
+	if ok {
+		f.mu.Lock()
+		f.records[[2]string{podID, sessionID}] = true
+		f.mu.Unlock()
+	}
+	return count, ok, err
+}
+
+func (f *fakeFallback) gate(podID string, maxConcurrent int32) (int32, bool, error) {
 	lock := f.podLock(podID)
 	lock.Lock()
 	defer lock.Unlock()

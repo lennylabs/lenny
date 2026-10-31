@@ -43,6 +43,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -334,15 +335,27 @@ var errEmptySessionID = errors.New("slotcounter: session identifier is required"
 // unreachable takes the §12.4 fallback; one that fails for any other reason
 // fails closed.
 //
-// With a FallbackSource wired, Reserve first records the reservation in
-// Postgres (FallbackSource.RecordSlotReservation), then runs the Redis
-// script or the §12.4 gate, and deletes the record it inserted when the
-// reservation fails. The record makes a reservation the Redis set admitted
-// visible to a §12.4 gate that a later Redis outage starts, before the
-// session row names the pod, so the two paths count the same reservations.
-// A record that the cleanup fails to delete over-counts the pod until the
-// slot release or the stale-slot reaper deletes it. A record that cannot be
-// written fails the reservation closed.
+// With a FallbackSource wired and no outage known to this Counter, Reserve
+// first records the reservation in Postgres
+// (FallbackSource.RecordSlotReservation), then runs the Redis script, and
+// deletes the record it inserted when the reservation fails. The record
+// makes a reservation the Redis set admitted visible to a §12.4 gate that a
+// later Redis outage starts, before the session row names the pod, so the
+// two paths count the same reservations. A record that cannot be written
+// fails the reservation closed.
+//
+// A reservation bound for the §12.4 gate carries no record of its own into
+// it: the gate counts every other session's record, so records written
+// outside the lock by reservations still deciding would refuse admissions
+// the gate has room for. Reserve therefore writes no record first while an
+// outage is known, and deletes the record it inserted before it falls back
+// when Redis turns out to be unreachable; the gate records the admission
+// under its lock. Between a Redis-path record's insert and that
+// reservation's discovery of the outage, the gate counts the record, which
+// over-counts the pod and never under-counts it. A reservation the Redis
+// script admits while an outage is still being recovered records itself
+// after the script. A record that the cleanup fails to delete over-counts
+// the pod until the slot release or the stale-slot reaper deletes it.
 //
 // spec: §5.2 (Slot assignment atomicity, Post-recovery rehydration
 // atomicity), §12.4 (Redis failure behavior).
@@ -353,25 +366,64 @@ func (c *Counter) Reserve(ctx context.Context, podID, sessionID string, maxConcu
 	if maxConcurrent < 1 {
 		return 0, false, fmt.Errorf("slotcounter: maxConcurrent must be >= 1, got %d", maxConcurrent)
 	}
-	inserted, err := c.recordReservation(ctx, podID, sessionID)
-	if err != nil {
-		return 0, false, err
+	r := reservation{podID: podID, sessionID: sessionID, maxConcurrent: maxConcurrent}
+	if !c.outageKnown() {
+		r.recorded = true
+		if r.inserted, err = c.recordReservation(ctx, podID, sessionID); err != nil {
+			return 0, false, err
+		}
 	}
-	count, rehydrated, err = c.reserve(ctx, podID, sessionID, maxConcurrent)
-	if err != nil && inserted {
+	count, rehydrated, err = c.reserve(ctx, &r)
+	if err != nil && r.inserted {
 		c.dropReservation(ctx, podID, sessionID)
 	}
 	return count, rehydrated, err
 }
 
+// reservation is one Reserve call's arguments and the state of its
+// Postgres record: recorded when Reserve wrote the record before the
+// script, and inserted when that write created the record.
+type reservation struct {
+	podID, sessionID   string
+	maxConcurrent      int32
+	recorded, inserted bool
+}
+
+// toGate takes the §12.4 fallback for r. It first deletes the record r
+// inserted before the script, so the gate records the admission under its
+// lock and no other reservation's gate count sees a record of r while r is
+// still deciding.
+func (c *Counter) toGate(ctx context.Context, r *reservation, rehydrated bool) (int32, bool, error) {
+	if r.inserted {
+		c.dropReservation(ctx, r.podID, r.sessionID)
+		r.inserted = false
+	}
+	return c.fallbackReserve(ctx, r.podID, r.sessionID, r.maxConcurrent, rehydrated)
+}
+
+// admitted finishes a reservation the Redis script admitted: one that wrote
+// no record before the script, because an outage was known, records itself
+// now. A failed write is logged and leaves the Redis set as the only count
+// of the reservation until its row names the pod.
+func (c *Counter) admitted(ctx context.Context, r *reservation) {
+	if r.recorded || c.fallback == nil {
+		return
+	}
+	if _, err := c.fallback.RecordSlotReservation(ctx, r.podID, r.sessionID); err != nil {
+		slog.WarnContext(ctx, "slotcounter: record slot reservation after the script failed",
+			"pod", r.podID, "session_id", r.sessionID, "error", err)
+	}
+}
+
 // reserve runs the recovery rebuild when one is due, then the reservation
 // script, rehydrating on the sentinel and taking the §12.4 fallback when
 // Redis is unreachable.
-func (c *Counter) reserve(ctx context.Context, podID, sessionID string, maxConcurrent int32) (count int32, rehydrated bool, err error) {
+func (c *Counter) reserve(ctx context.Context, r *reservation) (count int32, rehydrated bool, err error) {
+	podID, sessionID, maxConcurrent := r.podID, r.sessionID, r.maxConcurrent
 	if c.needsRebuild() {
 		if rbErr := c.rebuildAfterOutage(ctx); rbErr != nil {
 			if isRedisUnavailable(rbErr) {
-				return c.fallbackReserve(ctx, podID, sessionID, maxConcurrent, false)
+				return c.toGate(ctx, r, false)
 			}
 			return 0, false, fmt.Errorf("slotcounter: reserve %s: recovery rebuild: %w: %w", podID, ErrFailClosed, rbErr)
 		}
@@ -384,12 +436,13 @@ func (c *Counter) reserve(ctx context.Context, podID, sessionID string, maxConcu
 				// spec: §12.4 — Redis is unreachable. Gate capacity
 				// on the Postgres fallback under a per-pod advisory lock,
 				// failing closed only after the bounded outage window.
-				return c.fallbackReserve(ctx, podID, sessionID, maxConcurrent, rehydrated)
+				return c.toGate(ctx, r, rehydrated)
 			}
 			return 0, rehydrated, fmt.Errorf("slotcounter: reserve %s: %w", podID, runErr)
 		}
 		switch {
 		case res >= 1:
+			c.admitted(ctx, r)
 			return int32(res), rehydrated, nil
 		case res == resultExhausted:
 			return 0, rehydrated, ErrSlotsExhausted
@@ -397,7 +450,7 @@ func (c *Counter) reserve(ctx context.Context, podID, sessionID string, maxConcu
 			did, rErr := c.rehydrate(ctx, podID, "")
 			if rErr != nil {
 				if isRedisUnavailable(rErr) {
-					return c.fallbackReserve(ctx, podID, sessionID, maxConcurrent, rehydrated)
+					return c.toGate(ctx, r, rehydrated)
 				}
 				return 0, rehydrated, rErr
 			}

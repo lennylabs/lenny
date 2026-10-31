@@ -500,15 +500,26 @@ func TestRedisRestartLosingTheSlotSets_spec_5_2(t *testing.T) {
 		if _, admitted, err := c.store.ReserveSlotUnderLock(ctx, pod, newChaosUUID(t), 1); err != nil || admitted {
 			t.Errorf("outage gate at the cap = (admitted %v, %v), want refused", admitted, err)
 		}
+		// The release deletes s's reservation record (F-12.4.38) before the
+		// release is recorded on the row, as Counter.Release does.
+		if err := c.store.DeleteSlotReservation(ctx, pod, s); err != nil {
+			t.Fatalf("delete the reservation record: %v", err)
+		}
 		if err := sessionstore.RecordPodRelease(ctx, c.store, "acme", s, time.Now()); err != nil {
 			t.Fatalf("record the release: %v", err)
 		}
 		c.restartLosingData(t)
-		if _, _, err := counter.Reserve(ctx, pod, newChaosUUID(t), 1); err != nil {
+		next := newChaosUUID(t)
+		if _, _, err := counter.Reserve(ctx, pod, next, 1); err != nil {
 			t.Errorf("reservation after the recorded release = %v, want admitted", err)
 		}
-		if _, admitted, err := c.store.ReserveSlotUnderLock(ctx, pod, newChaosUUID(t), 1); err != nil || !admitted {
-			t.Errorf("outage gate after the recorded release = (admitted %v, %v), want admitted", admitted, err)
+		// The gate counts next's reservation record (F-12.4.38), so it
+		// admits next again and refuses any other session at the cap.
+		if _, admitted, err := c.store.ReserveSlotUnderLock(ctx, pod, next, 1); err != nil || !admitted {
+			t.Errorf("outage gate for next after the recorded release = (admitted %v, %v), want admitted", admitted, err)
+		}
+		if _, admitted, err := c.store.ReserveSlotUnderLock(ctx, pod, newChaosUUID(t), 1); err != nil || admitted {
+			t.Errorf("outage gate for another session beside next = (admitted %v, %v), want refused", admitted, err)
 		}
 	})
 

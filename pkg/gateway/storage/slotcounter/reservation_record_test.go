@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
+
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 )
 
@@ -163,6 +165,54 @@ func TestReleaseDeletesTheRecord_spec_12_4(t *testing.T) {
 			t.Error("record present after a release on a cancelled context")
 		}
 	})
+}
+
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
+// diagnosis: a reservation bound for the §12.4 gate carried a record
+// written outside the gate's lock, so concurrent reservations still
+// deciding counted each other and refused admissions the gate had room for;
+// or a reservation the Redis script admitted while an outage was being
+// recovered left no record.
+func TestReservationRecordAroundAKnownOutage_spec_12_4(t *testing.T) {
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	fb := newFakeFallback()
+	c := slotcounter.New(fastClient(t, mr), slotcounter.WithFallbackSource(fb))
+
+	// Redis becomes unreachable: the first reservation writes its record,
+	// finds Redis down, deletes that record, and the gate records it again
+	// under its lock.
+	mr.Close()
+	if _, _, err := c.Reserve(ctx, "pod-1", "a", 4); err != nil {
+		t.Fatalf("Reserve a: %v", err)
+	}
+	if !fb.hasRecord("pod-1", "a") || fb.callCount("pod-1") != 1 {
+		t.Fatalf("a: record %v, gate calls %d; want the gate's record", fb.hasRecord("pod-1", "a"), fb.callCount("pod-1"))
+	}
+	// The outage is known now: b writes no record before the gate.
+	if _, _, err := c.Reserve(ctx, "pod-1", "b", 4); err != nil {
+		t.Fatalf("Reserve b: %v", err)
+	}
+	if fb.recordCalls["b"] != 0 {
+		t.Errorf("b wrote %d records outside the gate during a known outage, want 0", fb.recordCalls["b"])
+	}
+	if !fb.hasRecord("pod-1", "b") {
+		t.Error("the gate's admission of b left no record")
+	}
+	// Redis returns. The outage is still known until the rebuild ends, so
+	// d writes no record first and records itself after the script admits.
+	if err := mr.Restart(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.Reserve(ctx, "pod-1", "d", 4); err != nil {
+		t.Fatalf("Reserve d: %v", err)
+	}
+	if fb.callCount("pod-1") != 2 {
+		t.Errorf("gate calls = %d, want 2: d ran on the Redis script", fb.callCount("pod-1"))
+	}
+	if !fb.hasRecord("pod-1", "d") {
+		t.Error("d, admitted by the script during the recovery, has no record")
+	}
 }
 
 // spec: §12.4 (Redis failure behavior).
