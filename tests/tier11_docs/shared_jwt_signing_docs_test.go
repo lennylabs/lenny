@@ -129,7 +129,7 @@ func TestReaderDocsStateSharedES256SigningKey_spec_10_2(t *testing.T) {
 		},
 		{
 			page:     "operator-guide/security.md",
-			row:      "| `lenny-gateway` |",
+			row:      "| `lenny-gateway` | `lenny-system` |",
 			contains: []string{"`Sign` and `GetPublicKey`"},
 		},
 		{
