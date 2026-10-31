@@ -4714,6 +4714,16 @@ the warm-time shared-asset fill proposal in "Queue after P4b" above, queued afte
   `MAX_ARG_STRLEN` caps a Runtime's inline set near 90 KiB in total and a larger set fails at container start
   with `E2BIG`. §6.4 and §5.1 state no size limit, transport, or volume size.
 
+**Filed 2026-10-31 (recurring flakes).** Branch `fix/recurring-flakes` from `e4f0eedd9` fixed the test
+infrastructure behind T-12.3.13 and T-17.7.12 and traced T-12.4.13 and T-12.4.14 to a product race.
+
+- [ ] **F-12.4.38** (High): the §12.4 Redis-outage slot gate `ReserveSlotUnderLock` releases its per-pod
+  advisory lock before the admission is recorded anywhere the next gated count reads, because the occupancy
+  is written only when the session row's `pod_assignment` is persisted on bind. Concurrent admissions on one
+  pod during a Redis outage therefore overrun `maxConcurrentSessions`. `TestReserveSlotUnderLock` is the
+  acceptance test and stays red under load until the fix lands. A direct fix if the occupancy record needs
+  no §12.4 or §5.2 text, otherwise a small proposal. Independent of the R-steps.
+
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
 - [ ] **`type: mcp` supervision.** 0087 supervises only `type: agent` sidecar runtimes (D-SCOPE). A
