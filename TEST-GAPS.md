@@ -3825,6 +3825,14 @@ The §9.4 MemoryStore has strong tier2 component coverage against a real Postgre
 - **Dependencies:** none — buildable today.
 - **Suggested test:** Update `tests/spec-map.json` §10.1 `tests` to replace the `tests/tier2_component/coordination/...` glob with the actual handoff/barrier tests once T-10.1.1/T-10.1.5 land, and add the partial-manifest store contract, the dual-store chaos test, the Helm autoscaling render, the CRD validator, the preStop unit suite, the `pkg/gateway/coordination/barrier` package, the hold-state interceptor suite, and the orphan-session reconciler test so the map reflects both current coverage and remaining intent.
 
+### - [x] T-10.1.13 — `TestPodDispatcherSendHoldsUntilWindow_spec_10_1_169` assumes the client's end of the window closes first [Low] — RESOLVED (branch fix/unit-flakes)
+- **Spec/Doc:** §10.1.7 preStop Hook Drain (the checkpoint flush step); §10.1.8.
+- **Existing tests:** `pkg/gateway/coordination/barrier/wiring_test.go`.
+- **Evidence:** The failing run of 2026-10-31 reported `wiring_test.go:106: Send returned an ack with no gateway-driven stream` at host load 27. `CheckpointBarrier` in `pkg/adapter/coordination.go` returns a success response when its context ends, so the RPC ends on whichever side's timer is served first. This failure was not reproduced by load: 640 runs at 8 parallel processes on two cores passed. The path was reproduced deterministically by giving the handler a deadline shorter than the client's, which returns the ack on every run.
+- **Gap:** The test asserted one of two outcomes the code can produce. The two outcomes differ in the gateway, which BUILD-GAPS F-10.1.46 records.
+- **Dependencies:** none.
+- **Resolution:** The test accepts the deadline or an ack, and for both asserts that the barrier held for the window and that no checkpoint ref was returned. `TestPodDispatcherSendAckAtTheAdapterWindow_spec_10_1_169` drives the ack path on every run. Both passed 120 of 120 runs under load (`-count=30` in 4 parallel processes).
+
 ## §10.2 Authentication <a id="t-10.2"></a>
 **Spec file:** `spec/10_gateway-internals.md`
 **Reviewed:** 2026-07-06
