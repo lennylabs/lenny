@@ -16,7 +16,9 @@
 // regression test that asserts the corrected outcome (not just line
 // coverage); and a final cross-step design-conformance
 // review of the cumulative diff catches anything the per-step reviews could
-// not see, fixing any divergence before returning.
+// not see, fixing any divergence before returning. A quality review then runs
+// the code-review and security-review skills once over the same diff and fixes
+// what they find, before the post-review re-verification.
 // It does NOT verify the spec is applied or close findings — the
 // implement-proposal parent does that around this call.
 //
@@ -414,6 +416,7 @@ const ARG_CLASS = {
   maxDeadAttempts: "forward",
   maxVerifyRounds: "forward",
   maxReviewRounds: "forward",
+  qualityReview: "forward",
   maxReplans: "forward",
   replanEvery: "forward",
   replanStruggleAttempts: "forward",
@@ -3302,6 +3305,97 @@ if (green) {
   log("Build not green; skipping design-conformance review");
 }
 
+// Quality review: the `code-review` and `security-review` skills, run once over
+// the cumulative diff after the design-conformance review converges. The design
+// review checks the code against the proposal; these check it for bugs and
+// security defects the proposal never named. They run once on the whole change
+// rather than per step, because both skills fan out over large diffs and a
+// per-step pass would repeat the same reading for every step. Their findings get
+// one fix pass, pinned by regression tests, and the post-review re-verification
+// below re-runs the tiers. Opt out with `qualityReview: false`.
+const QUALITY_REVIEWS = [
+  {
+    key: "code-review",
+    skill: "code-review",
+    args: "high " + baseRef + "..HEAD",
+    fallback:
+      "a correctness review of the diff: logic errors, wrong conditions, unhandled errors, races, resource leaks, " +
+      "nil dereferences, and broken edge cases",
+  },
+  {
+    key: "security-review",
+    skill: "security-review",
+    args: baseRef + "..HEAD",
+    fallback:
+      "a security review of the diff: authentication and authorization bypasses, tenant-isolation breaks, " +
+      "injection, path traversal, secret or credential exposure in logs or responses, unsafe defaults, and " +
+      "fail-open error handling",
+  },
+];
+
+let qualityFindings = [];
+let qualityRan = false;
+if (green && reviewClean && input.qualityReview !== false) {
+  phase("Quality review");
+  qualityRan = true;
+  const qualityResults = await parallel(
+    QUALITY_REVIEWS.map((q) => () =>
+      agentTry(
+        READ_ONLY_NOTE +
+          "\n\nRun the `" +
+          q.skill +
+          "` skill over this proposal's cumulative implementation diff in " +
+          repo +
+          ": invoke the Skill tool with skill `" +
+          q.skill +
+          "` and args `" +
+          q.args +
+          "`. Report findings only; do not pass --fix and do not edit anything. If the Skill tool or the skill " +
+          "is unavailable to you, perform " +
+          q.fallback +
+          " yourself over `git diff " +
+          baseRef +
+          "..HEAD`, and begin the first finding's title with `[fallback]` so the record shows which ran.\n\n" +
+          "Report only defects in code this diff adds or changes, each one concrete: a reachable input or state " +
+          "that produces a wrong result, a crash, or an exposure. Leave out style preferences and anything the " +
+          "proposal at " +
+          proposal +
+          " explicitly decided. Map each finding onto the schema: `where` is file:line, `divergence` is the " +
+          "defect and the scenario that triggers it, and `fix` is the change that removes it.",
+        { schema: REVIEW, label: "quality:" + q.key, phase: "Quality review" },
+      ),
+    ),
+  );
+  qualityFindings = qualityResults.filter(Boolean).flatMap((r) => r.findings);
+  log(
+    "Quality review: " +
+      qualityFindings.length +
+      " finding(s) from " +
+      qualityResults.filter(Boolean).length +
+      " of " +
+      QUALITY_REVIEWS.length +
+      " skill review(s)",
+  );
+  if (qualityFindings.length > 0) {
+    reviewFixApplied = true;
+    await agentTry(
+      "Fix the code-review and security-review findings in the implementation of the proposal at " +
+        proposal +
+        ".\n\nWork in " +
+        repo +
+        ". The proposal's spec edits are applied; do not edit spec/. Check each finding against the code first. " +
+        "Fix every finding that holds, and add a regression test that fails against the pre-fix code for each " +
+        "fix with a runtime effect, at the tier the defect lives in, annotated `// spec:`. A finding that does " +
+        "not hold, or whose fix would contradict the proposal's design, is not fixed: record why in the commit " +
+        "message. Commit your fixes.\n\n" +
+        RULES +
+        "\n\nFindings to check and fix:\n" +
+        JSON.stringify(qualityFindings, null, 2),
+      { label: "quality-fix", phase: "Quality review" },
+    );
+  }
+}
+
 // A review fix can perturb tests; re-confirm green once whenever the review
 // applied any fix, so the returned green reflects the post-fix tree. Gating on
 // reviewFixApplied (not on outstanding findings) is the point: a review that
@@ -3429,6 +3523,9 @@ return {
   reviewClean,
   reviewRounds: reviewRound,
   reviewFindings: reviewClean ? [] : lastReviewFindings,
+  // The code-review and security-review skill findings, fixed in one pass
+  // before the post-review re-verification.
+  qualityReview: { ran: qualityRan, findings: qualityFindings },
   verifyRounds: vround,
   changedLineCoverage: verify ? verify.changedLineCoverage : undefined,
   failures: verify ? verify.failures || [] : ["final verification did not run"],

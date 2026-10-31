@@ -276,10 +276,12 @@ func (s *Server) recordPodClaimFailure(err error) {
 // FailedPrecondition: a crashed pod surfaced as Unavailable or
 // DeadlineExceeded, a wrapped or non-status cause that status.Code reports
 // as Unknown, and Internal/Aborted/ResourceExhausted) is a transient
-// setup-window transport failure that §6.2 recovers on a fresh pod, so it
-// keeps the retryable 503 fallback + Retry-After.
+// setup-window transport failure, so it keeps the retryable 503 fallback +
+// Retry-After for a client retry. The §6.2 pre-attached retry Scope decides
+// whether the gateway first retries it on a fresh pod (unbuilt: BUILD-GAPS
+// F-6.2.32).
 // spec: §7.3 (setup_command_failed non-retryable), §15.1 (SETUP_COMMAND_FAILED),
-// §6.2 (transient setup failure retried on a fresh pod).
+// §6.2 (pre-attached retry Scope).
 func (s *Server) writeSetupCommandError(
 	w http.ResponseWriter, setupFail *podsession.SetupCommandFailure, fallbackCode, fallbackMsg string, err error,
 ) {

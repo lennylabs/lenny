@@ -202,13 +202,6 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 	if !planOK {
 		return sessionstore.Session{}, createBuild{}, false
 	}
-	// spec: §7.5 / §5.1 — runtime setupCommandPolicy.maxCommands
-	// is a per-session cap the gateway enforces before pod claim so a
-	// buggy or malicious client cannot DoS the setup phase. F-7.5.5.
-	if !s.enforceSetupCommandPolicy(w, r, req.RuntimeRef, parsedPlan) {
-		return sessionstore.Session{}, createBuild{}, false
-	}
-
 	// spec: §7.3 — validate the client-supplied retry
 	// policy before any side effect, then clamp against the deployer
 	// caps so the persisted value is the effective upper bound. A nil
@@ -305,12 +298,20 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 	if !s.routeExperiment(w, r, &row) {
 		return sessionstore.Session{}, createBuild{}, false
 	}
+	// spec: §7.5 Setup Commands (Command policy); §5.1 — the client's
+	// setup commands are checked against the setupCommandPolicy of the
+	// session's runtime, the one routing selected (row.RuntimeRef), before
+	// pod claim, so a buggy or malicious client cannot DoS the setup phase
+	// or run a command that runtime's policy forbids. The check sees only
+	// the client's commands, because the defaults compose below. F-7.5.5,
+	// F-7.5.16.
+	if !s.enforceSetupCommandPolicy(w, r, row.RuntimeRef, parsedPlan) {
+		return sessionstore.Session{}, createBuild{}, false
+	}
 	// spec: §14.1 WorkspacePlan Schema Versioning (Runtime workspace
 	// defaults) — a plan that binds here carries the routed runtime's
-	// workspaceDefaults ahead of its own entries. The setupCommandPolicy
-	// check above saw only the client's commands (§7.5 Command policy). A
-	// create without a plan binds nothing, so its defaults compose at
-	// finalize.
+	// workspaceDefaults ahead of its own entries. A create without a plan
+	// binds nothing, so its defaults compose at finalize.
 	if len(planJSON) > 0 {
 		parsedPlan, row.WorkspacePlan, ok = s.composeRuntimeDefaults(w, r, row.RuntimeRef, parsedPlan, planJSON)
 		if !ok {

@@ -106,7 +106,19 @@ func (s *slowAncestorStore) ListAbsentSessions(context.Context, []string) ([]str
 	panic("unused")
 }
 
-func (s *slowAncestorStore) ReserveSlotUnderLock(context.Context, string, int32) (int32, bool, error) {
+func (s *slowAncestorStore) ReserveSlotUnderLock(context.Context, string, string, int32) (int32, bool, error) {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) RecordSlotReservation(context.Context, string, string) (bool, error) {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) DeleteSlotReservation(context.Context, string, string) error {
+	panic("unused")
+}
+
+func (s *slowAncestorStore) ReclaimSlotReservations(context.Context, time.Time) (int, error) {
 	panic("unused")
 }
 

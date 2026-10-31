@@ -54,6 +54,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	"github.com/lennylabs/lenny/sdks/client/go/lenny"
 	"github.com/lennylabs/lenny/tests/testinfra/mcpcreate"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
@@ -143,7 +144,15 @@ func buildGoHelper(t *testing.T) string {
 // t.Cleanup closes it.
 func newGateway(t *testing.T) *httptest.Server {
 	t.Helper()
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
+	// spec: §7.1 (uploadToken), §7.4 (Upload authorization) — the gateway
+	// mints and verifies the uploadToken as production does, so the SDK's
+	// finalize round trip carries the token the create response returned.
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("sdk-contract")})
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		DevTenantHeader:     true,
+		UploadTokenIssuer:   uploadtoken.NewIssuer(ring, nil),
+		UploadTokenVerifier: uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), nil),
+	})
 	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 	return ts
@@ -196,6 +205,7 @@ func TestGoClientWireFormatRoundTrip(t *testing.T) {
 		t.Fatalf("create_session failed: %v", create.Error)
 	}
 	id := resultString(t, create, "id")
+	uploadToken := resultString(t, create, "upload_token")
 	if got := create.Result["state"]; got != "created" {
 		t.Errorf("create state: want created, got %v", got)
 	}
@@ -224,7 +234,9 @@ func TestGoClientWireFormatRoundTrip(t *testing.T) {
 		{"interrupt", "suspended"},
 		{"terminate", "completed"},
 	} {
-		resp := send(t, h, harness.Command{Op: step.op, Args: map[string]any{"id": id}})
+		// spec: §7.4 (Upload authorization) — finalize carries the
+		// uploadToken the create op returned; the other ops ignore it.
+		resp := send(t, h, harness.Command{Op: step.op, Args: map[string]any{"id": id, "upload_token": uploadToken}})
 		if !resp.OK {
 			t.Fatalf("%s failed: %v", step.op, resp.Error)
 		}

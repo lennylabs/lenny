@@ -160,11 +160,17 @@ func TestStreamingReconnectResumesExactlyFromCursor(t *testing.T) {
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all")
 	base := gw.BaseURL()
 
+	// uploadToken is the §7.1 token the create response returns; the
+	// finalize request carries it (§7.4 Upload authorization).
+	uploadToken := ""
 	post := func(path string) *http.Response {
 		t.Helper()
 		req, _ := http.NewRequest(http.MethodPost, base+path, nil)
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
 		req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
+		if strings.HasSuffix(path, "/finalize") {
+			req.Header.Set("X-Lenny-Upload-Token", uploadToken)
+		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("POST %s: %v", path, err)
@@ -199,12 +205,14 @@ func TestStreamingReconnectResumesExactlyFromCursor(t *testing.T) {
 		t.Fatalf("create session: want 201, got %d (body %s)", createResp.StatusCode, createBody)
 	}
 	var created struct {
-		ID string `json:"id"`
+		ID          string `json:"id"`
+		UploadToken string `json:"uploadToken"`
 	}
 	if err := json.Unmarshal(createBody, &created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
 	id := created.ID
+	uploadToken = created.UploadToken
 	if id == "" {
 		t.Fatalf("missing session id")
 	}

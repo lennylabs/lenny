@@ -156,6 +156,7 @@ func TestInFlightUploadAbortedByFinalize_spec_7_4_16(t *testing.T) {
 
 	finReq := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_upload/finalize", nil)
 	finReq.Header.Set("X-Lenny-Tenant-ID", "acme")
+	finReq.Header.Set("X-Lenny-Upload-Token", tok)
 	finRR := httptest.NewRecorder()
 	asOwner(srv.Handler()).ServeHTTP(finRR, finReq)
 	if finRR.Code != http.StatusOK {
@@ -209,6 +210,7 @@ func TestUploadRegisteredAfterFinalizeImmediatelyAborts_spec_7_4_16(t *testing.T
 	// Finalize first.
 	finReq := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_upload/finalize", nil)
 	finReq.Header.Set("X-Lenny-Tenant-ID", "acme")
+	finReq.Header.Set("X-Lenny-Upload-Token", tok)
 	finRR := httptest.NewRecorder()
 	asOwner(srv.Handler()).ServeHTTP(finRR, finReq)
 	if finRR.Code != http.StatusOK {

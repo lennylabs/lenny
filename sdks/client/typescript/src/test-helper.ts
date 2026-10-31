@@ -139,7 +139,7 @@ class Helper {
       case 'delete_session':
         return this.opDeleteSession(cmd.args);
       case 'finalize':
-        return this.opTransition(cmd.args, (c, id) => c.finalize(id));
+        return this.opTransition(cmd.args, (c, id) => c.finalize(id, stringArg(cmd.args, 'upload_token')));
       case 'start':
         return this.opTransition(cmd.args, (c, id) => c.start(id));
       case 'interrupt':

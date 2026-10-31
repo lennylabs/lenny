@@ -144,7 +144,7 @@ func main() {
 	}
 	fmt.Printf("created %s in state %s\n", created.ID, created.State)
 
-	if _, err := client.Finalize(ctx, created.ID); err != nil {
+	if _, err := client.Finalize(ctx, created.ID, created.UploadToken); err != nil {
 		log.Fatal(err)
 	}
 	started, err := client.Start(ctx, created.ID)

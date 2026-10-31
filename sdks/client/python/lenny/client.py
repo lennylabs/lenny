@@ -72,6 +72,21 @@ class RequestOptions:
         self.idempotency_key: str = idempotency_key
 
 
+class _UploadTokenOptions(RequestOptions):
+    """Request options that also carry the section 7.1 ``uploadToken``.
+
+    ``finalize`` builds one so the token reaches the
+    ``X-Lenny-Upload-Token`` header; no public option exposes it, because
+    the token belongs to the finalize call alone.
+    """
+
+    def __init__(
+        self, upload_token: str, base: Optional[RequestOptions] = None
+    ) -> None:
+        super().__init__(base.idempotency_key if base else "")
+        self.upload_token: str = upload_token
+
+
 class Client:
     """Synchronous section 15.1 REST gateway client.
 
@@ -267,13 +282,26 @@ class Client:
         return self._transition("DELETE", session_id, "", options)
 
     def finalize(
-        self, session_id: str, options: Optional[RequestOptions] = None
+        self,
+        session_id: str,
+        upload_token: str,
+        options: Optional[RequestOptions] = None,
     ) -> Session:
         """Call ``POST /v1/sessions/{id}/finalize``.
 
-        It transitions a created session to ready.
+        It transitions a created session to ready. ``upload_token`` is the
+        section 7.1 token the create response returned; every finalize
+        request carries it in the ``X-Lenny-Upload-Token`` header
+        (section 7.4 Upload authorization).
         """
-        return self._transition("POST", session_id, "finalize", options)
+        if not upload_token:
+            raise ValueError("lenny: finalize requires an upload token")
+        return self._transition(
+            "POST",
+            session_id,
+            "finalize",
+            _UploadTokenOptions(upload_token, options),
+        )
 
     def start(
         self, session_id: str, options: Optional[RequestOptions] = None
@@ -559,6 +587,9 @@ class Client:
             headers["Content-Type"] = "application/json"
         if options and options.idempotency_key:
             headers["Idempotency-Key"] = options.idempotency_key
+        upload_token = getattr(options, "upload_token", "")
+        if upload_token:
+            headers["X-Lenny-Upload-Token"] = upload_token
         if self._tenant_id:
             headers["X-Lenny-Tenant-ID"] = self._tenant_id
         if self._auth is not None:
@@ -691,10 +722,15 @@ class AsyncClient:
         return await self._run(self._sync.delete_session, session_id, options)
 
     async def finalize(
-        self, session_id: str, options: Optional[RequestOptions] = None
+        self,
+        session_id: str,
+        upload_token: str,
+        options: Optional[RequestOptions] = None,
     ) -> Session:
         """Await ``POST /v1/sessions/{id}/finalize``."""
-        return await self._run(self._sync.finalize, session_id, options)
+        return await self._run(
+            self._sync.finalize, session_id, upload_token, options
+        )
 
     async def start(
         self, session_id: str, options: Optional[RequestOptions] = None

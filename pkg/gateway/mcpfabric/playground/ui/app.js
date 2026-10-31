@@ -653,10 +653,13 @@
               format: fmt.format,
             }],
           };
+          // spec: §7.4 Upload authorization: every finalize request
+          // carries the §7.1 uploadToken from the create response.
           return fetch("/v1/sessions/" + encodeURIComponent(sessionId) + "/finalize", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
+              "X-Lenny-Upload-Token": uploadToken,
               Authorization: "Bearer " + bearer,
             },
             credentials: "same-origin",

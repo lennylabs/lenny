@@ -13,8 +13,8 @@ import (
 )
 
 // uploadTokenHeader carries the §7.1 session-scoped upload token the
-// gateway issued in the create response. Every /upload and /upload-archive
-// request must present it.
+// gateway issued in the create response. Every /upload, /upload-archive,
+// and /finalize request must present it (§7.4 Upload authorization).
 const uploadTokenHeader = "X-Lenny-Upload-Token"
 
 // contentHashHeader carries the §7.4 optional client-computed
@@ -118,19 +118,23 @@ func (c *Client) UploadFile(ctx context.Context, sessionID, uploadToken string, 
 // (via UploadArchive or UploadFile). The gateway validates the plan and,
 // during finalize, materializes its sources, including the uploads it
 // names; the call returns once the session is ready. Pass a nil plan for
-// a no-plan finalize (equivalent to Finalize).
+// a no-plan finalize (equivalent to Finalize). uploadToken is the §7.1
+// token from the create response, which every finalize request carries.
 //
-// spec: §14.1 WorkspacePlan Schema Versioning (Plan binding); §7.1 Normal Flow; §26.2.
-func (c *Client) FinalizeWorkspace(ctx context.Context, id string, plan json.RawMessage, opts ...RequestOption) (*Session, error) {
+// spec: §14.1 WorkspacePlan Schema Versioning (Plan binding); §7.1 Normal Flow; §7.4 Upload Safety (Upload authorization); §26.2.
+func (c *Client) FinalizeWorkspace(ctx context.Context, id, uploadToken string, plan json.RawMessage, opts ...RequestOption) (*Session, error) {
 	if len(plan) == 0 {
-		return c.Finalize(ctx, id, opts...)
+		return c.Finalize(ctx, id, uploadToken, opts...)
+	}
+	if uploadToken == "" {
+		return nil, fmt.Errorf("lenny: FinalizeWorkspace requires an upload token")
 	}
 	body := struct {
 		WorkspacePlan json.RawMessage `json:"workspacePlan"`
 	}{WorkspacePlan: plan}
 	var out Session
 	path := "/v1/sessions/" + url.PathEscape(id) + "/finalize"
-	if err := c.do(ctx, http.MethodPost, path, body, &out, opts...); err != nil {
+	if err := c.do(ctx, http.MethodPost, path, body, &out, withUploadToken(uploadToken, opts)...); err != nil {
 		return nil, err
 	}
 	return &out, nil

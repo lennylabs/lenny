@@ -98,7 +98,9 @@ func TestFinalizePlanBindRejectionParity(t *testing.T) {
 			}
 			rest := decodeRESTError(t, raw)
 			mcpRes := decodeMCPError(t, mcpCall(t, tsMCP.URL+"/mcp", "lenny/finalize_workspace", map[string]any{
-				"sessionId": id, "workspacePlan": uploadPlan,
+				// The consistency servers wire no upload-token verifier, so
+				// any non-empty token reaches the plan-bind check.
+				"sessionId": id, "uploadToken": "tok-parity", "workspacePlan": uploadPlan,
 			}))
 
 			if rest.Code != "VALIDATION_ERROR" {

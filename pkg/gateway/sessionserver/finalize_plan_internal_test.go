@@ -60,6 +60,15 @@ func sessionScopedRef(t *testing.T, sessionID string) string {
 
 func postFinalize(t *testing.T, srv *Server, id, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	return postFinalizeWithToken(t, srv, id, body, "")
+}
+
+// postFinalizeWithToken is postFinalize carrying the §7.1 uploadToken in the
+// X-Lenny-Upload-Token header when token is non-empty. A server wired with
+// an upload-token verifier refuses a finalize request without it (§7.4
+// Upload authorization).
+func postFinalizeWithToken(t *testing.T, srv *Server, id, body, token string) *httptest.ResponseRecorder {
+	t.Helper()
 	var r *http.Request
 	if body == "" {
 		r = httptest.NewRequest(http.MethodPost, "/v1/sessions/"+id+"/finalize", nil)
@@ -68,6 +77,9 @@ func postFinalize(t *testing.T, srv *Server, id, body string) *httptest.Response
 		r.Header.Set("Content-Type", "application/json")
 	}
 	r.Header.Set("X-Lenny-Tenant-ID", "default")
+	if token != "" {
+		r.Header.Set("X-Lenny-Upload-Token", token)
+	}
 	rr := httptest.NewRecorder()
 	asOwner(srv.Handler()).ServeHTTP(rr, r)
 	return rr

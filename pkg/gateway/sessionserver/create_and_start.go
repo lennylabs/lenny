@@ -261,13 +261,6 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	if !planOK {
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
-	// spec: §7.5 / §5.1 — runtime setupCommandPolicy.maxCommands
-	// cap, enforced at the create-and-start ingress for parity with the
-	// two-step create path. F-7.5.5.
-	if !s.enforceSetupCommandPolicy(w, r, req.RuntimeRef, parsedPlan) {
-		return sessionstore.Session{}, createAndStartBuild{}, false
-	}
-
 	// §4.8 PreRoute (below the ExperimentRouter pivot): run the PreRoute
 	// interceptors with priority < 300 over the TaskSpec after
 	// authentication and before runtime selection. A REJECT blocks the
@@ -375,13 +368,21 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 		row.ScrubPolicy = afterLevel.ScrubPolicy
 		row.ConversationContinuity = afterLevel.ConversationContinuity
 	}
+	// spec: §7.5 Setup Commands (Command policy); §5.1 — the client's
+	// setup commands are checked against the setupCommandPolicy of the
+	// runtime the §4.8 PreRoute chains and the §10.7 ExperimentRouter
+	// selected (row.RuntimeRef), the runtime whose workspaceDefaults compose
+	// below, for parity with the two-step create path. The check sees only
+	// the client's commands. F-7.5.5, F-7.5.16.
+	if !s.enforceSetupCommandPolicy(w, r, row.RuntimeRef, parsedPlan) {
+		return sessionstore.Session{}, createAndStartBuild{}, false
+	}
 	// spec: §14.1 WorkspacePlan Schema Versioning (Runtime workspace
 	// defaults) — create-and-start always binds a plan, the empty plan when
 	// the request carries none, so the runtime that routing selected
 	// composes its workspaceDefaults here. claimAtCreate and startOnPod read
 	// build.parsedPlan, so the composed plan replaces it as well as the row's
-	// stored JSON. The setupCommandPolicy check above saw only the client's
-	// commands (§7.5 Command policy).
+	// stored JSON.
 	parsedPlan, row.WorkspacePlan, ok = s.composeRuntimeDefaults(w, r, row.RuntimeRef, parsedPlan, row.WorkspacePlan)
 	if !ok {
 		return sessionstore.Session{}, createAndStartBuild{}, false

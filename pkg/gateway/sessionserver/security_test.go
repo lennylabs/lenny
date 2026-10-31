@@ -126,6 +126,7 @@ func TestFinalizeConsumesUploadToken(t *testing.T) {
 	// 3. Finalize — closes the upload window.
 	req = httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_X/finalize", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set("X-Lenny-Upload-Token", tok)
 	rr = httptest.NewRecorder()
 	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {

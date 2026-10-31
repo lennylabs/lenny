@@ -494,8 +494,20 @@ func (c *countingStore) ListAbsentSessions(ctx context.Context, ids []string) ([
 	return c.inner.ListAbsentSessions(ctx, ids)
 }
 
-func (c *countingStore) ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (int32, bool, error) {
-	return c.inner.ReserveSlotUnderLock(ctx, podID, maxConcurrent)
+func (c *countingStore) ReserveSlotUnderLock(ctx context.Context, podID, sessionID string, maxConcurrent int32) (int32, bool, error) {
+	return c.inner.ReserveSlotUnderLock(ctx, podID, sessionID, maxConcurrent)
+}
+
+func (c *countingStore) RecordSlotReservation(ctx context.Context, podID, sessionID string) (bool, error) {
+	return c.inner.RecordSlotReservation(ctx, podID, sessionID)
+}
+
+func (c *countingStore) DeleteSlotReservation(ctx context.Context, podID, sessionID string) error {
+	return c.inner.DeleteSlotReservation(ctx, podID, sessionID)
+}
+
+func (c *countingStore) ReclaimSlotReservations(ctx context.Context, cutoff time.Time) (int, error) {
+	return c.inner.ReclaimSlotReservations(ctx, cutoff)
 }
 
 func (c *countingStore) PoolDrainStats(ctx context.Context, poolRef string) (int, time.Time, error) {

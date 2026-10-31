@@ -192,6 +192,7 @@ func TestTypeScriptClientWireFormat(t *testing.T) {
 		t.Fatalf("create_session failed: %v", create.Error)
 	}
 	id := resultString(t, create, "id")
+	uploadToken := resultString(t, create, "upload_token")
 	if got := create.Result["state"]; got != "created" {
 		t.Errorf("create state: want created, got %v", got)
 	}
@@ -220,7 +221,9 @@ func TestTypeScriptClientWireFormat(t *testing.T) {
 		{"interrupt", "suspended"},
 		{"terminate", "completed"},
 	} {
-		resp := send(t, h, harness.Command{Op: step.op, Args: map[string]any{"id": id}})
+		// spec: §7.4 (Upload authorization) — finalize carries the
+		// uploadToken the create op returned; the other ops ignore it.
+		resp := send(t, h, harness.Command{Op: step.op, Args: map[string]any{"id": id, "upload_token": uploadToken}})
 		if !resp.OK {
 			t.Fatalf("%s failed: %v", step.op, resp.Error)
 		}

@@ -16,10 +16,12 @@ package sessionserver_test
 // finalize handler's own.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"sync"
 	"testing"
@@ -185,7 +187,10 @@ func (s *raceLifecycleSink) count(eventTypes ...string) int {
 var terminalAuditTypes = []string{"session.completed", "session.failed", "session.cancelled", "session.expired"}
 
 // raceTracker is an uploadtoken.ConsumedTracker whose MarkConsumed records the
-// row State it observes and reports the digest as already consumed.
+// row State it observes and reports the digest as already consumed. Its
+// IsConsumed reports false, so the §7.4 uploadToken check at admission
+// passes and the consume failure models a digest another writer invalidated
+// between the check and the post-ready consume.
 type raceTracker struct {
 	mu    sync.Mutex
 	store sessionstore.Store
@@ -201,7 +206,7 @@ func (c *raceTracker) MarkConsumed(string, time.Time) error {
 	return uploadtoken.ErrConsumed
 }
 
-func (*raceTracker) IsConsumed(string) bool { return true }
+func (*raceTracker) IsConsumed(string) bool { return false }
 
 // raceOptions selects the fixture variants a case needs.
 type raceOptions struct {
@@ -217,13 +222,16 @@ type raceOptions struct {
 // adapter over bufconn, a real podsession.Binder with a recording credential
 // assigner, and a hookStore over a memstore.
 type raceFixture struct {
-	h        http.Handler
-	inner    *memstore.Store
-	hooks    *hookStore
-	cluster  client.Client
-	assigner *recordingLeaseAssigner
-	bus      *sessionevents.Bus
-	audit    *raceLifecycleSink
+	h http.Handler
+	// uploadToken is the §7.1 token finalize sends, minted for
+	// raceSessionID when the fixture wires an upload-token verifier.
+	uploadToken string
+	inner       *memstore.Store
+	hooks       *hookStore
+	cluster     client.Client
+	assigner    *recordingLeaseAssigner
+	bus         *sessionevents.Bus
+	audit       *raceLifecycleSink
 }
 
 // failAssignCredentialsInterceptor fails the adapter's AssignCredentials RPC
@@ -279,13 +287,20 @@ func newRaceFixture(t *testing.T, opt raceOptions) *raceFixture {
 		Events:                  bus,
 		LifecycleAuditSink:      audit,
 	}
+	var uploadToken string
 	if opt.tracker != nil {
 		opt.tracker.store = inner
-		opts.UploadTokenVerifier = uploadtoken.NewVerifier(nil, opt.tracker, nil)
+		ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("race")})
+		opts.UploadTokenVerifier = uploadtoken.NewVerifier(ring, opt.tracker, nil)
+		tok, err := uploadtoken.NewIssuer(ring, nil).Issue(raceSessionID, time.Hour)
+		if err != nil {
+			t.Fatalf("issue upload token: %v", err)
+		}
+		uploadToken = tok
 	}
 	srv := sessionserver.New(hooks, opts)
 	return &raceFixture{
-		h: asOwner(srv.Handler()), inner: inner, hooks: hooks, cluster: cluster,
+		h: asOwner(srv.Handler()), uploadToken: uploadToken, inner: inner, hooks: hooks, cluster: cluster,
 		assigner: assigner, bus: bus, audit: audit,
 	}
 }
@@ -342,7 +357,15 @@ func (f *raceFixture) create(t *testing.T, plan json.RawMessage) {
 // finalize runs POST /v1/sessions/{id}/finalize with body (nil for none).
 func (f *raceFixture) finalize(t *testing.T, body []byte) (int, []byte) {
 	t.Helper()
-	rr := postSessionStep(t, f.h, "/v1/sessions/"+raceSessionID+"/finalize", body)
+	if f.uploadToken == "" {
+		rr := postSessionStep(t, f.h, "/v1/sessions/"+raceSessionID+"/finalize", body)
+		return rr.Code, rr.Body.Bytes()
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+raceSessionID+"/finalize", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set("X-Lenny-Upload-Token", f.uploadToken)
+	rr := httptest.NewRecorder()
+	f.h.ServeHTTP(rr, req)
 	return rr.Code, rr.Body.Bytes()
 }
 

@@ -15,10 +15,13 @@ import (
 // The generated schemas must advertise the same arguments, types, required
 // set, and descriptions, so a client sees no change beyond the
 // finalize_workspace workspacePlan description, which now comes from the
-// OpenAPI FinalizeRequest component.
+// OpenAPI FinalizeRequest component. priorFinalize also carries the required
+// uploadToken argument the generated schema takes from the finalize
+// operation's X-Lenny-Upload-Token header parameter (§7.4 Upload
+// authorization), described as lenny/upload_files describes it.
 const (
 	priorSessionIDOnly = `{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string","description":"The target session id."}}}`
-	priorFinalize      = `{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string","description":"The target session id."},"workspacePlan":{"type":["object","null"],"additionalProperties":true,"description":"Optional §14 WorkspacePlan bound at finalize when the session was created without one."}}}`
+	priorFinalize      = `{"type":"object","required":["sessionId","uploadToken"],"properties":{"sessionId":{"type":"string","description":"The target session id."},"uploadToken":{"type":"string","description":"The §7.1 uploadToken returned by create_session."},"workspacePlan":{"type":["object","null"],"additionalProperties":true,"description":"Optional §14 WorkspacePlan bound at finalize when the session was created without one."}}}`
 	// priorLogs had no description on sessionId; the generated schema
 	// carries the shared session id description the other tools use.
 	priorLogs = `{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string","description":"The target session id."},"since":{"type":"string","description":"RFC3339 lower bound; only log lines at or after this time are returned."},"limit":{"type":"integer","description":"Maximum number of log lines to return."}}}`

@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"strings"
 	"syscall"
@@ -43,16 +45,64 @@ var ErrFailClosed = errors.New("slotcounter: redis outage fallback failed closed
 // with Redis still unavailable ... slot admission fails closed").
 const DefaultPostgresFallbackMaxWindow = 60 * time.Second
 
-// FallbackSource is the §12.4 Redis-outage capacity gate. When Redis is
-// unreachable the Counter routes intra-pod slot admission to this source,
-// which serializes the count-and-decide under a per-pod Postgres advisory
-// lock so two concurrent admissions cannot both observe the same free slot.
-// The production implementation is the Postgres-backed SessionStore. A nil
-// fallback disables the gate: a Redis outage then fails closed immediately
-// rather than degrading to Postgres latency.
+// FallbackSource is the §12.4 Redis-outage capacity gate and the durable
+// record of slot reservations it counts. When Redis is unreachable the
+// Counter routes intra-pod slot admission to ReserveSlotUnderLock, which
+// counts the pod's holders and reservations, decides, and records the
+// admitted session's reservation under a per-pod Postgres advisory lock, so
+// two concurrent admissions cannot both observe the same free slot. While
+// Redis is reachable the Counter records each reservation with
+// RecordSlotReservation before its script runs, and every release deletes
+// the record with DeleteSlotReservation, so the gate counts a reservation
+// whichever path admitted it. The production implementation is the
+// Postgres-backed SessionStore. A nil fallback disables the gate and the
+// record: a Redis outage then fails closed immediately rather than
+// degrading to Postgres latency.
 // spec: §12.4 (durable fallback for every Redis-backed role); §12.4; §5.2.
 type FallbackSource interface {
-	ReserveSlotUnderLock(ctx context.Context, podID string, maxConcurrent int32) (count int32, admitted bool, err error)
+	ReserveSlotUnderLock(ctx context.Context, podID, sessionID string, maxConcurrent int32) (count int32, admitted bool, err error)
+	RecordSlotReservation(ctx context.Context, podID, sessionID string) (inserted bool, err error)
+	DeleteSlotReservation(ctx context.Context, podID, sessionID string) error
+}
+
+// reservationCleanupTimeout bounds the deletion of a reservation record
+// after a failed reservation or a release. The deletion runs on a context
+// detached from the caller's cancellation, so a cancelled create still
+// removes the record it wrote; a deletion that does not finish leaves a
+// record that over-counts until the stale-slot reaper reclaims it.
+const reservationCleanupTimeout = 5 * time.Second
+
+// recordReservation writes sessionID's reservation record on podID before
+// the reservation runs, and reports whether it inserted one. With no
+// fallback wired it records nothing. A failed write fails the reservation
+// closed: the gate could not count a reservation whose record is missing.
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
+func (c *Counter) recordReservation(ctx context.Context, podID, sessionID string) (bool, error) {
+	if c.fallback == nil {
+		return false, nil
+	}
+	inserted, err := c.fallback.RecordSlotReservation(ctx, podID, sessionID)
+	if err != nil {
+		return false, fmt.Errorf("slotcounter: reserve %s: record reservation: %w: %w", podID, ErrFailClosed, err)
+	}
+	return inserted, nil
+}
+
+// dropReservation deletes sessionID's reservation record on podID, on a
+// context detached from the caller's cancellation and bounded by
+// reservationCleanupTimeout. A failure is logged and left to the stale-slot
+// reaper: the record over-counts the pod until then.
+// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity).
+func (c *Counter) dropReservation(ctx context.Context, podID, sessionID string) {
+	if c.fallback == nil {
+		return
+	}
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reservationCleanupTimeout)
+	defer cancel()
+	if err := c.fallback.DeleteSlotReservation(dctx, podID, sessionID); err != nil {
+		slog.WarnContext(ctx, "slotcounter: delete slot reservation record failed; the stale-slot reaper reclaims it",
+			"pod", podID, "session_id", sessionID, "error", err)
+	}
 }
 
 // WithFallbackSource wires the §12.4 Redis-outage capacity gate (the
@@ -111,7 +161,7 @@ func (c *Counter) fallbackReserve(ctx context.Context, podID, sessionID string, 
 	if exceeded {
 		return 0, rehydrated, fmt.Errorf("slotcounter: reserve %s: outage window exceeded: %w", podID, ErrFailClosed)
 	}
-	count, admitted, err := c.fallback.ReserveSlotUnderLock(ctx, podID, maxConcurrent)
+	count, admitted, err := c.fallback.ReserveSlotUnderLock(ctx, podID, sessionID, maxConcurrent)
 	if err != nil {
 		// Postgres is also unavailable during the Redis outage: dual-store
 		// outage fails closed immediately.
@@ -165,6 +215,13 @@ func isRedisUnavailable(err error) bool {
 		return true
 	}
 	if errors.Is(err, redis.ErrClosed) || errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	// A server that stops while a command is in flight closes the
+	// connection, and go-redis returns the read's io.EOF unwrapped. A script
+	// that ran before the connection closed leaves its member in the set,
+	// which over-counts the pod after the outage and never under-counts it.
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
 	// go-redis wraps dial and pool exhaustion failures in messages the
