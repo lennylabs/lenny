@@ -52,10 +52,10 @@ func TestInterruptRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 	})
 
 	cluster := podBindClient(t, &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{Name: "sbx-att", Namespace: podTestNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "sbx-att", Namespace: testNS(t)},
 		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.1"},
 	})
-	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
+	binder := &podsession.Binder{Client: cluster, Namespace: testNS(t)}
 	_, adapter := suspendStubAdapter(t, adapterv1.InterruptResponse_STATUS_ACKNOWLEDGED)
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{
@@ -115,10 +115,10 @@ func TestInterruptTimeoutRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 	})
 
 	cluster := podBindClient(t, &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{Name: "sbx-to", Namespace: podTestNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "sbx-to", Namespace: testNS(t)},
 		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.2"},
 	})
-	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
+	binder := &podsession.Binder{Client: cluster, Namespace: testNS(t)}
 	_, adapter := suspendStubAdapter(t, adapterv1.InterruptResponse_STATUS_INTERRUPT_TIMEOUT)
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{
@@ -169,10 +169,10 @@ func TestInterruptBusyLeavesRowRunning_spec_7_2(t *testing.T) {
 	})
 
 	cluster := podBindClient(t, &lennyv1.Sandbox{
-		ObjectMeta: metav1.ObjectMeta{Name: "sbx-bz", Namespace: podTestNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "sbx-bz", Namespace: testNS(t)},
 		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.3"},
 	})
-	binder := &podsession.Binder{Client: cluster, Namespace: podTestNS}
+	binder := &podsession.Binder{Client: cluster, Namespace: testNS(t)}
 	_, adapter := suspendStubAdapter(t, adapterv1.InterruptResponse_STATUS_BUSY)
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{
@@ -246,7 +246,7 @@ func TestInterruptSuspendNoBindingStampsRow_spec_7_2(t *testing.T) {
 func getSandbox(t *testing.T, c client.Client, name string) lennyv1.Sandbox {
 	t.Helper()
 	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: name}, &sb); err != nil {
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: name}, &sb); err != nil {
 		t.Fatalf("get sandbox %s: %v", name, err)
 	}
 	return sb

@@ -51,13 +51,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/pkg/upload"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // spec: §15.1 — POST /v1/sessions/start places the session on a §5 warm
 // pod when the gateway is wired with a §4.7 pod binder.
-
-const podTestNS = "lenny-agents"
 
 // podBindRuntime satisfies adapter.RuntimeProcess for the bufconn
 // adapter the start path drives through StartSession.
@@ -103,16 +100,18 @@ func podBindClient(t *testing.T, objs ...client.Object) client.Client {
 // activeSlots/tenantId. Keeping the seed under the rightful manager
 // avoids cross-manager conflicts on the live reconcile.
 //
-// Each call boots a private kube-apiserver and etcd, which costs about eight
-// seconds under -race and dominates this package's run time. The tests that
-// call it (directly or through a fixture) share no other mutable state, so
-// they, and their per-case subtests, call t.Parallel; run serially the
-// package exceeded go test's default ten-minute timeout. A new test that
-// boots a cluster here should do the same unless it touches process-wide
-// state (t.Setenv, the default slog logger, a global metrics registry).
+// Every call reaches the one control plane this package binary shares
+// (sharedEnv) and isolates the test in its own namespace (testNS). A fixture
+// names the namespace of the test that builds it, so a table entry built by a
+// parent for a subtest's client fails here rather than seeding another test's
+// namespace. The tests that call this helper (directly or through a fixture)
+// share no other mutable state, so they, and their per-case subtests, call
+// t.Parallel. A new test that builds a cluster here does the same unless it
+// touches process-wide state (t.Setenv, the default slog logger, a global
+// metrics registry).
 func podBindEnvtestClient(t *testing.T, objs ...client.Object) client.Client {
 	t.Helper()
-	env := envtest.Start(t)
+	env := sharedEnv.Start(t)
 	s := podBindScheme(t)
 	if err := corev1.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme corev1: %v", err)
@@ -122,12 +121,11 @@ func podBindEnvtestClient(t *testing.T, objs ...client.Object) client.Client {
 		t.Fatalf("client.New: %v", err)
 	}
 	ctx := context.Background()
-	if err := c.Create(ctx, &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: podTestNS},
-	}); err != nil && !apierrors.IsAlreadyExists(err) {
-		t.Fatalf("create namespace %s: %v", podTestNS, err)
-	}
+	ns := testNamespaces.Create(t, c)
 	for _, o := range objs {
+		if got := o.GetNamespace(); got != "" && got != ns {
+			t.Fatalf("fixture %T %s is in namespace %q, want this test's %q", o, o.GetName(), got, ns)
+		}
 		var (
 			sbStatus  lennyv1.SandboxStatus
 			seedAfter func()
@@ -166,25 +164,25 @@ func podBindEnvtestClient(t *testing.T, objs ...client.Object) client.Client {
 	return c
 }
 
-func podBindWarmPool(name, templateRef string) *lennyv1.SandboxWarmPool {
+func podBindWarmPool(t *testing.T, name, templateRef string) *lennyv1.SandboxWarmPool {
 	return &lennyv1.SandboxWarmPool{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: podTestNS},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS(t)},
 		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: templateRef, MinWarm: 1, MaxWarm: 5},
 	}
 }
 
-func podBindTemplate(name, runtimeRef, isolationProfile string) *lennyv1.SandboxTemplate {
+func podBindTemplate(t *testing.T, name, runtimeRef, isolationProfile string) *lennyv1.SandboxTemplate {
 	return &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: podTestNS},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS(t)},
 		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: runtimeRef, IsolationProfile: isolationProfile},
 	}
 }
 
-func podBindIdleSandbox(name, pool, podIP string) *lennyv1.Sandbox {
+func podBindIdleSandbox(t *testing.T, name, pool, podIP string) *lennyv1.Sandbox {
 	return &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: podTestNS,
+			Namespace: testNS(t),
 			Labels:    map[string]string{warmpool.LabelPool: pool},
 		},
 		Status: lennyv1.SandboxStatus{Phase: "idle", PodIP: podIP},
@@ -210,10 +208,10 @@ func podBindAdapterDialer(t *testing.T, srv *adapter.Server, opts ...grpc.Server
 	}
 }
 
-func podBindBinder(c client.Client, dial func(string) (*adapterclient.Client, error)) *podsession.Binder {
+func podBindBinder(t *testing.T, c client.Client, dial func(string) (*adapterclient.Client, error)) *podsession.Binder {
 	return &podsession.Binder{
 		Client:           c,
-		Namespace:        podTestNS,
+		Namespace:        testNS(t),
 		AdapterPort:      50051,
 		AcceptedVersions: []string{adapter.ProtocolVersionV1},
 		DialAdapter:      dial,
@@ -229,12 +227,12 @@ func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
@@ -243,7 +241,7 @@ func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo"})
@@ -273,7 +271,7 @@ func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
 	// The session reaching `running` is a session-model state on the Postgres
 	// session row, not a CRD phase.
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err != nil {
 		t.Fatalf("get per-pod claim: %v", err)
 	}
 	if claim.Status.Phase != string(claimstate.Bound) {
@@ -312,11 +310,11 @@ func TestCombinedStartRunsCredentialPreCheckOnce_spec_7_1(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	ctx := context.Background()
 	tenants := tenantstore.NewMemory()
@@ -353,7 +351,7 @@ func TestCombinedStartRunsCredentialPreCheckOnce_spec_7_1(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Tenants:                 tenants,
 		Runtimes:                runtimes,
 		CredentialPools:         credPools,
@@ -397,11 +395,11 @@ func TestCombinedStartEndToEndIncludesPodClaim_spec_6_3_348(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	var (
 		phaseObs map[string]float64
@@ -415,7 +413,7 @@ func TestCombinedStartEndToEndIncludesPodClaim_spec_6_3_348(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		ObserveStartupPhase: func(phase, _ string, seconds float64) {
 			phaseObs[phase] = seconds
 		},
@@ -476,12 +474,12 @@ func TestSessionStartLeavesNoRowOnClaimFailure_spec_7_1_4(t *testing.T) {
 	// runtime no warm pool covers.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
@@ -490,7 +488,7 @@ func TestSessionStartLeavesNoRowOnClaimFailure_spec_7_1_4(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "no-such-runtime"})
@@ -528,12 +526,12 @@ func podBindServer(t *testing.T, id string) (*sessionserver.Server, *podsession.
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
 		DevTenantHeader:         true,
@@ -541,7 +539,7 @@ func podBindServer(t *testing.T, id string) (*sessionserver.Server, *podsession.
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 	return srv, registry, cluster, wsRoot
 }
@@ -604,7 +602,7 @@ func TestTwoStepStartPlacesSessionOnWarmPod(t *testing.T) {
 	// Sandbox.status; the session's running state lives on the Postgres
 	// session row).
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err != nil {
 		t.Fatalf("get per-pod claim: %v", err)
 	}
 	if claim.Status.Phase != string(claimstate.Bound) {
@@ -640,11 +638,11 @@ func TestTwoStepStartRunsNoCredentialWork_spec_15_1(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	ctx := context.Background()
 	tenants := tenantstore.NewMemory()
@@ -681,7 +679,7 @@ func TestTwoStepStartRunsNoCredentialWork_spec_15_1(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Tenants:                 tenants,
 		Runtimes:                runtimes,
 		CredentialPools:         credPools,
@@ -798,16 +796,16 @@ func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
-	sbx := podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5")
+	sbx := podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5")
 	sbx.Spec.IsolationProfile = string(isolation.ProfileSandboxed)
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 		sbx,
 	)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 	store := memstore.New()
 	// spec: §16.1 (Metrics) — the setup_command_failed count carries the
 	// pool and runtime_class of the pod the setup ran on. F-16.1.9.
@@ -818,7 +816,7 @@ func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		IncWarmpoolWarmupFailure: func(pool, runtimeClass, errorType string) {
 			warmupLabels = append(warmupLabels, [3]string{pool, runtimeClass, errorType})
 		},
@@ -839,7 +837,7 @@ func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 	}
 	// The pod was claimed at /create: its per-pod claim exists.
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err != nil {
 		t.Fatalf("per-pod claim missing after create: %v", err)
 	}
 
@@ -886,7 +884,7 @@ func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 	}
 	// The claimed pod was reclaimed: the per-pod SandboxClaim is deleted (the
 	// §6.2 pre-attached disposition), so no pod leaks past the failed finalize.
-	err = cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim)
+	err = cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim)
 	if err == nil {
 		t.Errorf("per-pod claim still present after the failed finalize; the pod was not reclaimed")
 	}
@@ -938,12 +936,12 @@ func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	// Stage an over-limit uploadArchive blob under this session's
 	// tenant+session prefix so the finalize ref-ownership check admits it and
@@ -969,7 +967,7 @@ func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 	h := asOwner(srv.Handler())
 
@@ -981,7 +979,7 @@ func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
 	}
 	// The pod was claimed at /create.
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err != nil {
 		t.Fatalf("per-pod claim missing after create: %v", err)
 	}
 
@@ -1027,7 +1025,7 @@ func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
 	if row.State != session.StateFailed {
 		t.Errorf("state = %q, want failed after the over-limit archive rejection", row.State)
 	}
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err == nil {
 		t.Errorf("per-pod claim still present after the rejected finalize; the pod was not reclaimed")
 	}
 }
@@ -1133,14 +1131,14 @@ func runFinalizeMaterializationFailureCase(t *testing.T, tc finalizeMaterializat
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	registry := podsession.NewRegistry()
 	// The binder claims through the counter; every read below stays on cluster.
 	counter := &claimCreateCounter{Client: cluster}
-	binder := podBindBinder(counter, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, counter, podBindAdapterDialer(t, adapterSrv))
 	// An empty store: no case stages a blob.
 	binder.Blobs = blobstore.NewMemoryStore(nil)
 	ref := blobstore.URI{
@@ -1158,7 +1156,7 @@ func runFinalizeMaterializationFailureCase(t *testing.T, tc finalizeMaterializat
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 	h := asOwner(srv.Handler())
 
@@ -1170,7 +1168,7 @@ func runFinalizeMaterializationFailureCase(t *testing.T, tc finalizeMaterializat
 	}
 	// The pod was claimed at /create.
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err != nil {
 		t.Fatalf("per-pod claim missing after create: %v", err)
 	}
 	if n := counter.creates.Load(); n != 1 {
@@ -1214,7 +1212,7 @@ func runFinalizeMaterializationFailureCase(t *testing.T, tc finalizeMaterializat
 	if row.State != session.StateFailed {
 		t.Errorf("state = %q, want failed after the materialization failure", row.State)
 	}
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err == nil {
 		t.Errorf("per-pod claim still present after the failed finalize; the pod was not reclaimed")
 	}
 	// The discriminating assertion: a re-claim that also failed and reclaimed
@@ -1244,11 +1242,11 @@ func TestFinalizeCredentialMismatchReclaimsPod_spec_7_3(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	ctx := context.Background()
 	tenants := tenantstore.NewMemory()
@@ -1285,7 +1283,7 @@ func TestFinalizeCredentialMismatchReclaimsPod_spec_7_3(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Tenants:                 tenants,
 		Runtimes:                runtimes,
 		CredentialPools:         credPools,
@@ -1300,7 +1298,7 @@ func TestFinalizeCredentialMismatchReclaimsPod_spec_7_3(t *testing.T) {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
 	}
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(ctx, client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+	if err := cluster.Get(ctx, client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err != nil {
 		t.Fatalf("per-pod claim missing after create: %v", err)
 	}
 
@@ -1334,7 +1332,7 @@ func TestFinalizeCredentialMismatchReclaimsPod_spec_7_3(t *testing.T) {
 	// The create-time pod was reclaimed: the per-pod SandboxClaim is deleted,
 	// even though the binder's prepare phase never ran (the mismatch was a
 	// pre-Prepare resolution failure).
-	if err := cluster.Get(ctx, client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
+	if err := cluster.Get(ctx, client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err == nil {
 		t.Errorf("per-pod claim still present after the failed finalize; the create-time pod was not reclaimed")
 	}
 }
@@ -1423,11 +1421,11 @@ func TestFinalizePostCredentialWriteFailureRevokesLease_spec_7_1(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 	assigner := &recordingLeaseAssigner{}
 	binder.Credentials = assigner
 
@@ -1466,7 +1464,7 @@ func TestFinalizePostCredentialWriteFailureRevokesLease_spec_7_1(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Tenants:                 tenants,
 		Runtimes:                runtimes,
 		CredentialPools:         credPools,
@@ -1496,7 +1494,7 @@ func TestFinalizePostCredentialWriteFailureRevokesLease_spec_7_1(t *testing.T) {
 	}
 	// The claimed pod was reclaimed: the per-pod SandboxClaim is deleted.
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(ctx, client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
+	if err := cluster.Get(ctx, client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err == nil {
 		t.Errorf("per-pod claim still present after the Gap-2 finalize failure; the create-time pod was not reclaimed")
 	}
 	// The row reaches the terminal failed state rather than stranding in finalizing.
@@ -1549,12 +1547,12 @@ func podResumeServer(t *testing.T, id string) (*sessionserver.Server, *memstore.
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
@@ -1563,7 +1561,7 @@ func podResumeServer(t *testing.T, id string) (*sessionserver.Server, *memstore.
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 	return srv, store, registry, cluster
 }
@@ -1621,7 +1619,7 @@ func TestResumePlacesAwaitingSessionOnFreshPod(t *testing.T) {
 	// The gateway no longer writes Sandbox.status; the resumed pod's
 	// acquisition is recorded on the per-pod claim's `bound` binding state.
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err != nil {
 		t.Fatalf("get per-pod claim: %v", err)
 	}
 	if claim.Status.Phase != string(claimstate.Bound) {
@@ -1712,7 +1710,7 @@ func TestResumeRebuildsWithStalePodAssignmentClaimsFreshPod(t *testing.T) {
 
 	// The fresh pod's claim is bound; the dead pod was never touched.
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err != nil {
 		t.Fatalf("get per-pod claim for the freshly claimed pod: %v", err)
 	}
 	if claim.Status.Phase != string(claimstate.Bound) {
@@ -1803,18 +1801,18 @@ func TestResumeOfChildWithNoPoolNeitherFailsNorArchives_spec_7_3(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	store := memstore.New()
 	archive := treearchive.NewMemory()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		TreeArchive:             archive,
 	})
 
@@ -1854,12 +1852,12 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-persist", "echo-pool", "10.244.2.9"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-persist", "echo-pool", "10.244.2.9"),
 	)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
@@ -1868,7 +1866,7 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
 	body, _ := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo"})
@@ -1914,11 +1912,11 @@ func TestResumeKeepsPendingOnTransientPoolExhaustion(t *testing.T) {
 	// retryable response).
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 	)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
@@ -1926,7 +1924,7 @@ func TestResumeKeepsPendingOnTransientPoolExhaustion(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
 	seedAwaitingSession(t, store, sessionstore.Session{
@@ -1971,17 +1969,17 @@ func TestResumePassesRecoveryGenerationAndSizeHintsToAdapter(t *testing.T) {
 	// WorkspaceSizeLimitBytes on the template is the §4.4 / §10.1
 	// per-pod hard cap; the resume path forwards it to the adapter.
 	limit := int64(64 * 1024 * 1024)
-	tmpl := podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed))
+	tmpl := podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed))
 	tmpl.Spec.WorkspaceSizeLimitBytes = &limit
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
 		tmpl,
-		podBindIdleSandbox("sbx-rg", "echo-pool", "10.244.4.5"),
+		podBindIdleSandbox(t, "sbx-rg", "echo-pool", "10.244.4.5"),
 	)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
@@ -1990,7 +1988,7 @@ func TestResumePassesRecoveryGenerationAndSizeHintsToAdapter(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
 	// Seed with a non-zero RecoveryGeneration so the gateway re-delivers
@@ -2093,11 +2091,11 @@ func TestSessionStartQueuesUntilPodFrees(t *testing.T) {
 	// exhausts both the claim path and (absent Postgres) the fallback.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 	)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
@@ -2106,7 +2104,7 @@ func TestSessionStartQueuesUntilPodFrees(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Pools:                   poolBindQueuePool(t, "echo-pool", "echo", 30),
 		QueuePollInterval:       20 * time.Millisecond,
 	})
@@ -2115,7 +2113,7 @@ func TestSessionStartQueuesUntilPodFrees(t *testing.T) {
 	// acquisition and succeeds within the wait bound.
 	go func() {
 		time.Sleep(120 * time.Millisecond)
-		idle := podBindIdleSandbox("sbx-late", "echo-pool", "10.244.2.7")
+		idle := podBindIdleSandbox(t, "sbx-late", "echo-pool", "10.244.2.7")
 		idle.Status = lennyv1.SandboxStatus{}
 		if err := cluster.Create(context.Background(), idle); err != nil {
 			t.Errorf("create late idle sandbox: %v", err)
@@ -2125,7 +2123,7 @@ func TestSessionStartQueuesUntilPodFrees(t *testing.T) {
 		u.SetAPIVersion(lennyv1.GroupVersion.String())
 		u.SetKind("Sandbox")
 		u.SetName("sbx-late")
-		u.SetNamespace(podTestNS)
+		u.SetNamespace(testNS(t))
 		_ = unstructured.SetNestedField(u.Object, map[string]interface{}{
 			"phase": "idle", "podIP": "10.244.2.7",
 		}, "status")
@@ -2170,11 +2168,11 @@ func TestSessionStartQueueTimeoutReturnsExhausted(t *testing.T) {
 	// bound and returns WARM_POOL_EXHAUSTED.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 	)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	store := memstore.New()
 	var timeouts int32
@@ -2184,7 +2182,7 @@ func TestSessionStartQueueTimeoutReturnsExhausted(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Pools:                   poolBindQueuePool(t, "echo-pool", "echo", 1),
 		QueuePollInterval:       20 * time.Millisecond,
 		IncPodClaimTimeout:      func(string) { atomic.AddInt32(&timeouts, 1) },
@@ -2231,11 +2229,11 @@ func TestSessionStartRejectFailsImmediately(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 	)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	store := memstore.New()
 	// A reject pool never enters the per-pool claim FIFO, so the §16.1
@@ -2251,7 +2249,7 @@ func TestSessionStartRejectFailsImmediately(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		QueuePollInterval:       20 * time.Millisecond,
 		SetPodClaimQueueDepth:   func(string, int) { atomic.AddInt32(&enqueued, 1) },
 	})
@@ -2277,8 +2275,8 @@ func TestSessionStartRejectFailsImmediately(t *testing.T) {
 // SandboxTemplate whose §5.2 executionMode is `service`, so ResolvePool
 // reports a service-mode match and the start path takes the claimless
 // routing branch.
-func podBindServiceTemplate(name, runtimeRef, isolationProfile string) *lennyv1.SandboxTemplate {
-	tmpl := podBindTemplate(name, runtimeRef, isolationProfile)
+func podBindServiceTemplate(t *testing.T, name, runtimeRef, isolationProfile string) *lennyv1.SandboxTemplate {
+	tmpl := podBindTemplate(t, name, runtimeRef, isolationProfile)
 	tmpl.Spec.ExecutionMode = string(runtimestore.ExecutionModeService)
 	return tmpl
 }
@@ -2317,12 +2315,12 @@ func TestServiceModeStartIsClaimless_spec_5_2(t *testing.T) {
 	// one idle Sandbox. The claimless path must leave that Sandbox unclaimed.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("svc-pool", "svc-tmpl"),
-		podBindServiceTemplate("svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("svc-sbx-1", "svc-pool", "10.244.3.9"),
+		podBindWarmPool(t, "svc-pool", "svc-tmpl"),
+		podBindServiceTemplate(t, "svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "svc-sbx-1", "svc-pool", "10.244.3.9"),
 	)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
@@ -2331,7 +2329,7 @@ func TestServiceModeStartIsClaimless_spec_5_2(t *testing.T) {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Pools:                   podBindServicePool(t, "svc-pool", "svc-runtime", 8),
 	})
 
@@ -2355,14 +2353,14 @@ func TestServiceModeStartIsClaimless_spec_5_2(t *testing.T) {
 	// per-pod claim the session-claim path would have created (`claim-svc-sbx-1`)
 	// must be absent.
 	var claim lennyv1.SandboxClaim
-	err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-svc-sbx-1"}, &claim)
+	err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-svc-sbx-1"}, &claim)
 	if !apierrors.IsNotFound(err) {
 		t.Errorf("service-mode start created/looked up claim-svc-sbx-1 (err=%v); want NotFound (claimless)", err)
 	}
 
 	// The idle Sandbox is untouched: still idle, no occupancy projected.
 	var sbx lennyv1.Sandbox
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "svc-sbx-1"}, &sbx); err != nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "svc-sbx-1"}, &sbx); err != nil {
 		t.Fatalf("get service-mode idle sandbox: %v", err)
 	}
 	if sbx.Status.Phase != "idle" {

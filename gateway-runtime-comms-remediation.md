@@ -4551,8 +4551,10 @@ other test in that binary.
     package. Filed from the T-17.4.26 fix (2026-10-27). Fixed in `1edca69df`: the package shares one control
     plane and each test gets its own namespace. The package fell from 237.4 s to 19.4 s. The slowest measured
     unit-tier package is now `pkg/gateway/sessionserver` (T-17.4.27, 198.9 s).
-  - [ ] **T-17.4.27** (Medium): `pkg/gateway/sessionserver` starts a private control plane per test in
+  - [x] **T-17.4.27** (Medium): `pkg/gateway/sessionserver` starts a private control plane per test in
     parallel, and under load one start failed the unit tier with "resource quota evaluation timed out".
+    Fixed on `fix/route-chain-create`: the package shares one control plane and each test gets its own
+    namespace. The package passes in about 105 s, against 198.9 s and 164.4 s recorded at higher load.
   - [x] **T-17.4.23** (Low): `pkg/embedded/stack` starts a control plane in each of 19 tests (127.4 s).
     Fixed in `2a0c51c4a` with no product change: tests whose code takes the namespace, or whose manifest
     the test supplies, use per-test namespaces, and each object at a product-fixed namespace and name has

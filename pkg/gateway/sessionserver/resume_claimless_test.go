@@ -37,9 +37,9 @@ func TestServiceModeSuspendedSessionResumesToRunning_spec_7_3(t *testing.T) {
 	adapterSrv.Runtime = &podBindRuntime{}
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("svc-pool", "svc-tmpl"),
-		podBindServiceTemplate("svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("svc-sbx-1", "svc-pool", "10.244.3.9"),
+		podBindWarmPool(t, "svc-pool", "svc-tmpl"),
+		podBindServiceTemplate(t, "svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "svc-sbx-1", "svc-pool", "10.244.3.9"),
 	)
 	counter := &attemptCounter{}
 	store := memstore.New()
@@ -47,9 +47,9 @@ func TestServiceModeSuspendedSessionResumesToRunning_spec_7_3(t *testing.T) {
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-svc-1" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Pools:                   podBindServicePool(t, "svc-pool", "svc-runtime", 8),
 		IncSessionResumeAttempt: counter.record,
 	})
