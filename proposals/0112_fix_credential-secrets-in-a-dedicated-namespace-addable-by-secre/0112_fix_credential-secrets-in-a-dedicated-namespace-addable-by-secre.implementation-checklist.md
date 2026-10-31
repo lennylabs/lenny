@@ -33,11 +33,11 @@
 - [ ] **S15 · code** — CODE-3. Lands canonical refs, the registration and prefix checks, and the single 422 key in the admin handlers and bootstrap.
       Tiers 0, 1, 3, 4, 9. Depends on: S1, S3, S5, S13, S14
 - [ ] **S16 · code** — CODE-4. Lands the `secretData` write path, the Lenny-written Secret operations, and the re-enable role.
-      Tiers 0, 1, 2, 3, 4, 7a, 8, 9. Depends on: S1, S5, S15
+      Tiers 0, 1, 2, 3, 4, 7a, 8, 9. Depends on: S1, S5, S9, S15
 - [ ] **S17 · code** — CODE-5. Lands the tenant-erasure Secret deletion.
       Tiers 0, 1, 4, 8, 9. Depends on: S1, S7, S13, S16
 - [ ] **S18 · code** — CODE-6. Lands the Token-Service-backed VCS reader.
-      Tiers 0, 1, 3, 9. Depends on: S1, S13, S14
+      Tiers 0, 1, 3, 9. Depends on: S1, S5, S13, S14, S15
 - [ ] **S19 · code** — CODE-7. Lands the preflight warning text.
       Tiers 0, 1. Depends on: S1, S8
 - [ ] **S20 · code** — CODE-8. Lands the `lenny-ctl` unreferenced-Secret listing.

@@ -357,6 +357,12 @@ Requires the `manage_credential_pools` permission (`tenant-admin` for its own te
  It is also returned by an admin credential-pool write under [Section 4.9](04_system-components.md#49-credential-leasing-service) **Credential values submitted through the admin API.** rule 5.
 ```
 
+(k) In the error catalog row that begins "| `GIT_CLONE_REF_RESOLVE_TRANSIENT`", insert the following directly after "remote-host timeout)." and before " The request is retryable without modification.":
+
+```markdown
+ It is also returned when the Token Service keyed read of the source's VCS credential fails with a `TRANSIENT`-category error ([Section 4.9](04_system-components.md#49-credential-leasing-service) **Token Service secret resolution.** rule 3).
+```
+
 ### SPEC-8 · spec/16_observability.md § 16.1 Metrics and § 16.4 Logging
 
 (a) In §16.1, replace the metric row that begins "| Token Service secret reloads (`lenny_token_service_secret_reloads_total`" with the following row. The row stays one physical line.

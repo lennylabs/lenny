@@ -29,7 +29,7 @@
 - The namespace is guarded by the keep annotation, the `pods: "0"` quota, a render guard against the release and agent namespaces, and a documented operator obligation, which a `platform-admin` checks with an operator-run `lenny-ctl` listing under their own Kubernetes credentials (SPEC-11, CODE-8), so no Lenny component gains `list` on the namespace. The quota is the control that closes pod mounts, because the controller ClusterRole grants pod creation cluster-wide.
 - Variant B values sit under the existing etcd KMS envelope encryption. The `TokenStore` is not used, because it is user-scoped and pool credentials keep one read path by `secretRef`.
 - The §24.5 credential-pool endpoint rows take their minimum roles from the §10.2 **Manage credential pools** row (SPEC-11).
-- The VCS read error keeps surfacing as `INTERNAL_ERROR`, which §15.1 already classifies `TRANSIENT` and retryable, so no tool-error mapping changes.
+- A VCS read failure other than a missing or refused credential keeps an existing `TRANSIENT` §15.1 code and adds none: `INTERNAL_ERROR` on the tool and clone paths, and `GIT_CLONE_REF_RESOLVE_TRANSIENT` with reason `network_error` at plan binding, whose §15.1 row SPEC-7 (k) widens (CODE-6 step 3).
 - With no writer wired, the lifecycle fails closed (SPEC-2 **Credential values submitted through the admin API.** rule 6). Committing a row without its Secret operation would leave a Secret that no later write names, and erasing the rows would delete the only record that names it.
 
 **Watch out for.**
@@ -141,7 +141,7 @@
 - CODE-3 — pkg/gateway/externalapi/admin, cmd/lenny-gateway — canonical refs, registration and prefix checks, single 422 key.
 - CODE-4 — pkg/gateway/externalapi/admin, pkg/gateway/externalapi/errorclassify, pkg/gateway/externalapi/openapi, pkg/ops/mcp, cmd/lenny-gateway — `secretData` write path, Lenny-written Secret operations, the no-writer error mapping, and the re-enable role.
 - CODE-5 — cmd/lenny-gateway/tenant_erasers.go — erasure deletes Lenny-written Secrets after `DeleteByTenant`.
-- CODE-6 — cmd/lenny-gateway, pkg/gateway/provisioning/vcscred — VCS reader through the Token Service keyed read.
+- CODE-6 — cmd/lenny-gateway, pkg/gateway/provisioning/vcscred, pkg/gateway/sessionserver, pkg/workspaceplan — VCS reader through the Token Service keyed read and its plan-binding error classification.
 - CODE-7 — pkg/preflight/install_prereqs.go — etcd encryption warning text.
 - CODE-8 — pkg/ctlcli — `lenny-ctl` listing of unreferenced credentials-namespace Secrets.
 - CHART-1 — charts/lenny, pkg/chart/values, tests/tier0_static — credentials namespace, quota, Roles, guard, egress, and flags.
