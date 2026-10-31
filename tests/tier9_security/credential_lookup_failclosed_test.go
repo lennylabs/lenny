@@ -140,10 +140,14 @@ func (l *lookupOutageLedger) forSession(id string) int {
 
 // spec: §4.9 (Pre-Claim Credential Availability Check), §7.1 (Atomicity of
 // session creation), §8.2 (delegated-child materialization), §13
-// (credential delivery)
+// (credential delivery), §14.1 (WorkspacePlan Schema Versioning, Runtime
+// workspace defaults rule 4), §15.1 (REST API, Error code catalog)
 // diagnosis: a session whose tenant credentialPolicy or runtime cannot be
 // read must not start: the top-level start answers the retryable
-// SESSION_CREATION_FAILED and the delegated child fails its delegate_task
+// SERVICE_UNAVAILABLE with Retry-After, because the runtime is first read
+// when the request binds its workspace plan and §14.1 rule 4 fails a
+// transient runtime-store error there with that code, and the delegated
+// child fails its delegate_task
 // call, each with no lease delivered, no pod claimed, and no running row.
 // A refusal that delivered a lease or claimed a pod, or a session that ran
 // during the outage, means the pre-claim resolution failed open and a
@@ -232,8 +236,14 @@ func TestCredentialLookupOutageFailsClosed(t *testing.T) {
 			} `json:"error"`
 		}
 		_ = json.Unmarshal(rr.Body.Bytes(), &env)
-		if env.Error.Code != "SESSION_CREATION_FAILED" || !env.Error.Retryable {
-			t.Errorf("answer = %s retryable=%v, want retryable SESSION_CREATION_FAILED", env.Error.Code, env.Error.Retryable)
+		// §14.1 Runtime workspace defaults rule 4: the start binds its plan,
+		// the plan binding reads the runtime first, and a transient
+		// runtime-store error there fails with SERVICE_UNAVAILABLE (§15.1).
+		if env.Error.Code != "SERVICE_UNAVAILABLE" || !env.Error.Retryable {
+			t.Errorf("answer = %s retryable=%v, want retryable SERVICE_UNAVAILABLE", env.Error.Code, env.Error.Retryable)
+		}
+		if rr.Header().Get("Retry-After") == "" {
+			t.Errorf("the refused start carries no Retry-After header; §15.1 sets it on SERVICE_UNAVAILABLE")
 		}
 		if got := ledger.count() - before; got != 0 {
 			t.Fatalf("the refused start delivered %d leases, want 0", got)

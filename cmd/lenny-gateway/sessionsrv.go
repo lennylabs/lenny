@@ -250,7 +250,10 @@ func (w *gatewayWiring) buildSessionServer(
 		EvalPerSessionPerMinute: *evalRLPerSessionPerMin,
 		EvalPerTenantPerMinute:  *evalRLPerTenantPerMin,
 		DefaultIsolationProfile: isolation.Profile(*defaultIsolationProfile),
-		DevMode:                 *devMode,
+		// spec: §17.5, §16.1 — label runtime_class with the controller's
+		// RuntimeClass names (F-16.1.10).
+		RuntimeClassNameOverrides: w.runtimeClassOverrides(),
+		DevMode:                   *devMode,
 		// spec: §10.2 — only a dev-mode gateway lets a request with no
 		// principal name its tenant through X-Lenny-Tenant-ID; outside dev
 		// mode the tenant comes from the verified bearer alone. F-10.2.21.
@@ -446,7 +449,8 @@ func (w *gatewayWiring) buildSessionServer(
 		// each reservation detection under the tree root's pool.
 		IncDelegationBudgetKeysExpired: gwMetrics.IncDelegationBudgetKeysExpired,
 		// spec: §16.1, §7.3 — F-7.5.9. Increment the
-		// lenny_warmpool_warmup_failure_total{error_type=setup_command_failed}
+		// lenny_warmpool_warmup_failure_total{pool, runtime_class,
+		// error_type=setup_command_failed}
 		// counter when a §7.5 setup command fails on the warm-pool side
 		// of a bind.
 		IncWarmpoolWarmupFailure: gwMetrics.IncWarmpoolWarmupFailure,

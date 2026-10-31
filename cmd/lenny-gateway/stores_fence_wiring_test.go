@@ -43,7 +43,7 @@ func TestMemoryPostureSessionStoreFencesAndCopies_spec_12_8(t *testing.T) {
 	if err := w.tenants.Create(ctx, tenantstore.Tenant{ID: "acme"}); err != nil {
 		t.Fatalf("seed tenant: %v", err)
 	}
-	if err := w.transcripts.Append(ctx, "acme", "sess_src",
+	if _, err := w.transcripts.Append(ctx, "acme", "sess_src",
 		transcriptstore.Entry{Role: "user", Content: "first"},
 		transcriptstore.Entry{Role: "assistant", Content: "second"}); err != nil {
 		t.Fatalf("seed transcript: %v", err)

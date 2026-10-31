@@ -26,26 +26,33 @@ func (c *captureSetupAudit) EmitSessionLifecycle(_ context.Context, ev SessionLi
 	c.events = append(c.events, ev)
 }
 
+// spec: 7.5 (Setup Commands), 7.3 (Retry and Resume), 16.1 (Metrics) — the
+// counter carries the pool and runtime_class labels §16.1 lists. F-16.1.9.
 func TestRecordSetupCommandFailedFiresMetricAndAudit(t *testing.T) {
 	var (
-		gotErrorType string
-		sink         captureSetupAudit
+		gotPool, gotRuntimeClass, gotErrorType string
+		sink                                   captureSetupAudit
 	)
 	s := &Server{
-		clock:                    func() time.Time { return time.Unix(0, 0) },
-		incWarmpoolWarmupFailure: func(et string) { gotErrorType = et },
-		lifecycleAudit:           &sink,
+		clock: func() time.Time { return time.Unix(0, 0) },
+		incWarmpoolWarmupFailure: func(pool, rc, et string) {
+			gotPool, gotRuntimeClass, gotErrorType = pool, rc, et
+		},
+		lifecycleAudit: &sink,
 	}
 	s.recordSetupCommandFailed(&podsession.SetupCommandFailure{
-		Pod:   "sbx-abc",
-		Cause: errors.New("rpc: FailedPrecondition"),
+		Pod:          "sbx-abc",
+		Pool:         "acme-pool",
+		RuntimeClass: "gvisor",
+		Cause:        errors.New("rpc: FailedPrecondition"),
 		Outputs: []*adapterv1.SetupCommandOutput{
 			{Cmd: "echo ok", ExitCode: 0},
 			{Cmd: "exit 7", ExitCode: 7, Stderr: "command failed"},
 		},
 	})
-	if gotErrorType != "setup_command_failed" {
-		t.Errorf("metric error_type = %q, want setup_command_failed", gotErrorType)
+	if gotPool != "acme-pool" || gotRuntimeClass != "gvisor" || gotErrorType != "setup_command_failed" {
+		t.Errorf("metric labels = (%q, %q, %q), want (acme-pool, gvisor, setup_command_failed)",
+			gotPool, gotRuntimeClass, gotErrorType)
 	}
 	if len(sink.events) != 1 {
 		t.Fatalf("audit events len = %d, want 1", len(sink.events))

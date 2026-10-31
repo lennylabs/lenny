@@ -43,6 +43,8 @@ const (
 // error.")
 // spec: §15.1 (REST API): the Open Responses adapter serves no delete
 // operation on /v1/responses/{id}.
+// spec: §15 (Open Responses conversation sessions): GET /v1/responses/{id}
+// answers a completed response of the caller's tenant by its <session>.<n> id.
 // diagnosis: a cross-tenant GET of an Open Responses resource, or a
 // cross-tenant REST read of a session created through POST
 // /v1/chat/completions, that returns anything other than the
@@ -139,8 +141,10 @@ func testOpenResponsesCrossTenant(t *testing.T, base string) {
 		t.Fatalf("create Open Responses resource for %s: status %d, body=%v", crossTenantOwner, status, created)
 	}
 	id, _ := created["id"].(string)
-	if id == "" {
-		t.Fatalf("Open Responses create response carried no id: %v", created)
+	// The response id is <session>.1: the first turn of the session the
+	// POST created.
+	if dot := strings.LastIndex(id, "."); dot <= 0 || id[dot+1:] != "1" {
+		t.Fatalf("Open Responses create response id %q is not <session>.1: %v", id, created)
 	}
 
 	// Cross-tenant GET must reject, not leak the owner's resource.
@@ -175,6 +179,9 @@ func testOpenResponsesCrossTenant(t *testing.T, base string) {
 	}
 	if gotID, _ := ownerBody["id"].(string); gotID != id {
 		t.Errorf("owner's Open Responses resource id after the cross-tenant read and the DELETE: got %q, want %q", gotID, id)
+	}
+	if st, _ := ownerBody["status"].(string); st != "completed" {
+		t.Errorf("owner's GET of its own response: status %q, want completed", st)
 	}
 }
 

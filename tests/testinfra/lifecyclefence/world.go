@@ -198,7 +198,7 @@ func (w *World) seedSource(t testing.TB, user string) {
 		t.Fatalf("seed source of %s: %v", user, err)
 	}
 	for j := 0; j < sourceEntries; j++ {
-		if err := w.S.Transcripts.Append(ctx, w.Tenant, src.ID, transcriptstore.Entry{Role: "user", Content: fmt.Sprintf("m%d", j)}); err != nil {
+		if _, err := w.S.Transcripts.Append(ctx, w.Tenant, src.ID, transcriptstore.Entry{Role: "user", Content: fmt.Sprintf("m%d", j)}); err != nil {
 			t.Fatalf("seed transcript of %s: %v", user, err)
 		}
 	}

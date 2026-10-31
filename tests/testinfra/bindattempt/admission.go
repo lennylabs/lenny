@@ -21,7 +21,11 @@ import (
 // PairingRule drives rule 1. A non-mid-session request carrying an empty
 // bind_attempt and a mid-session request carrying a non-empty one are each
 // answered INVALID_ARGUMENT, and the adapter creates, resolves, stamps and
-// changes nothing, whether or not it holds an entry for the slot.
+// changes nothing, whether or not it holds an entry for the slot. The
+// "FinalizeWorkspace mid-session with restore_chunks" case sends an empty
+// bind_attempt, so only the restore half of the rule refuses it: a
+// mid-session request never carries restore_chunks (§7.1 Derive restore
+// semantics).
 func PairingRule(t *testing.T, transport Transport) {
 	malformed := []struct {
 		name string
@@ -41,6 +45,10 @@ func PairingRule(t *testing.T, transport Transport) {
 		}},
 		{"FinalizeWorkspace mid-session with a token", func(ctx context.Context, p Pod) error {
 			_, err := p.FinalizeWorkspace(ctx, finalizeReq(alice, TokenB, true))
+			return err
+		}},
+		{"FinalizeWorkspace mid-session with restore_chunks", func(ctx context.Context, p Pod) error {
+			_, err := p.FinalizeWorkspace(ctx, restoreFinalizeReq(alice))
 			return err
 		}},
 		{"RunSetup without a token", func(ctx context.Context, p Pod) error {

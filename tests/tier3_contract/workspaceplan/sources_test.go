@@ -568,3 +568,54 @@ func TestParserSkipsUnknownSourceType(t *testing.T) {
 		t.Errorf("warning JSON missing code: %s", out)
 	}
 }
+
+// publishedUploadRefDescription is the description the published
+// WorkspacePlan schema carries on every uploadRef field.
+const publishedUploadRefDescription = "Opaque uploadRef returned by POST /v1/sessions/{id}/upload or /upload-archive for the session the plan binds to."
+
+// spec: §14 (Workspace Plan Schema, uploadRef field note), §14.1
+// (WorkspacePlan Schema Versioning, Plan binding).
+// diagnosis: a failure here means the published WorkspacePlan schema
+// again tells a client an uploadRef is a lenny-blob:// URI or an upload
+// id, leaves an upload source's uploadRef undescribed, or places plan
+// binding and ref resolution at session creation or pod claim. A plan
+// names only the opaque uploadRef the session's own upload returned, the
+// plan may bind at finalize, and gitClone.ref resolves when the plan
+// binds. Restore the descriptions in schemas/workspaceplan-v1.json.
+func TestPublishedSchemaDescribesOpaqueUploadRefAndBindTime(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "schemas", "workspaceplan-v1.json"))
+	if err != nil {
+		t.Fatalf("read schemas/workspaceplan-v1.json: %v", err)
+	}
+	var schema struct {
+		Description string `json:"description"`
+		Defs        map[string]struct {
+			Properties map[string]struct {
+				Description string `json:"description"`
+			} `json:"properties"`
+		} `json:"$defs"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("decode schemas/workspaceplan-v1.json: %v", err)
+	}
+
+	for _, source := range []string{"uploadFile", "uploadArchive"} {
+		def, ok := schema.Defs[source]
+		if !ok {
+			t.Errorf("published schema has no $defs.%s", source)
+			continue
+		}
+		if got := def.Properties["uploadRef"].Description; got != publishedUploadRefDescription {
+			t.Errorf("$defs.%s.uploadRef description = %q, want %q", source, got, publishedUploadRefDescription)
+		}
+	}
+
+	ref := schema.Defs["gitClone"].Properties["ref"].Description
+	if !strings.Contains(ref, "when the plan binds") || strings.Contains(ref, "at session creation") {
+		t.Errorf("$defs.gitClone.ref description = %q, want resolution when the plan binds", ref)
+	}
+	if strings.Contains(schema.Description, "pod claim time") ||
+		!strings.Contains(schema.Description, "the finalize request body's workspacePlan") {
+		t.Errorf("top-level description = %q, want both plan carriers and no pod-claim timing", schema.Description)
+	}
+}

@@ -29,6 +29,8 @@ Metric labels and trace attributes follow the [OpenTelemetry semantic convention
 
 Lenny-specific labels that have no OTel convention retain their domain-specific names: `tenant_id`, `pool`, `runtime_class`, `provider`. A `reason` label is used only for lifecycle/operational classifications (e.g., pod retirement triggers); error classifications use `error_type`.
 
+The `runtime_class` label carries the Kubernetes RuntimeClass name that the pod's isolation profile maps to. When the chart value `runtimeClasses.profiles.<profile>.name` renames the RuntimeClass of a profile, for example `runtimeClasses.profiles.sandboxed.name: runsc` on a cluster that publishes gVisor as `runsc`, the gateway and the controller both label their series with the renamed value, so a query grouped by `runtime_class` sees one series per class. The [RuntimeClass names](namespace-and-isolation#runtimeclass-names) section lists every component that reads the value.
+
 See the full attribute table in [SPEC §16.1.1](../../spec/16_observability.md#1611-attribute-naming).
 
 ### Gateway Metrics
@@ -64,10 +66,10 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `lenny_warmpool_idle_pods` | Gauge | Pods in `idle` state ready to be claimed; idle pods pinned to a tenant are excluded |
 | `lenny_warmpool_pod_startup_duration_seconds` | Histogram | Pod creation to `idle` state |
 | `lenny_warmpool_replenishment_rate` | Gauge | Pods/min entering `idle` state |
-| `lenny_warmpool_warmup_failure_total` | Counter | Pods failing to reach `idle` (by `error_type`: `image_pull_error`, `setup_command_failed`, `resource_quota_exceeded`, `node_pressure`) |
+| `lenny_warmpool_warmup_failure_total` | Counter | Warm-up and setup failures by `pool`, `runtime_class`, and `error_type`. The `image_pull_error`, `resource_quota_exceeded`, and `node_pressure` error types count a pod that fails to reach `idle` during warm-up, and `setup_command_failed` counts a session whose setup commands fail |
 | `lenny_warmpool_cold_start_total` | Counter | Sessions served from cold pods |
 | `lenny_warmpool_claims_total` | Counter | Warm pod claims |
-| `lenny_warmpool_sdk_demotions_total` | Counter | SDK-warm pods demoted before assignment |
+| `lenny_warmpool_sdk_demotions_total` | Counter | SDK-warm pods demoted to pod-warm |
 | `lenny_warmpool_idle_pod_minutes` | Counter | Cumulative idle pod-minutes (cost tracking) |
 
 ### Token Service Metrics

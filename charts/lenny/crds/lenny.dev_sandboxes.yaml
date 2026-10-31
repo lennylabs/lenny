@@ -305,17 +305,6 @@ spec:
                   - whenUnsatisfiable
                   type: object
                 type: array
-              workspacePlan:
-                description: |-
-                  WorkspacePlan is the §14 WorkspacePlan a §12.6 CreatePod pod was
-                  created with. spec: §12.6 — the PodSpec carries the
-                  WorkspacePlan. It is empty for a warm pod (the WarmPoolController
-                  creates pods without a session, so the plan is materialized at
-                  session claim); the gateway-created-pod path (Tier 4+) stamps the
-                  resolved plan so the pod expresses the workspace it was created
-                  for. The schema is preserved as-is rather than re-declared here so
-                  a §14 schema revision does not require a CRD change.
-                x-kubernetes-preserve-unknown-fields: true
             required:
             - poolRef
             - runtimeRef

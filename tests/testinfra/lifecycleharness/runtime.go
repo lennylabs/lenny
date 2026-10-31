@@ -128,6 +128,13 @@ func (r *RecordingRuntime) Start(_ context.Context, sessionID string) error {
 	return nil
 }
 
+// Started returns the sessions the runtime started, in start order.
+func (r *RecordingRuntime) Started() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.started...)
+}
+
 // FailNextStart makes the next Start return err, so the launch a gateway
 // runs on the pod fails inside the binder.
 func (r *RecordingRuntime) FailNextStart(err error) {

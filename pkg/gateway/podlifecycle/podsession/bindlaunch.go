@@ -19,8 +19,9 @@ import (
 // (ConfigureWorkspace, for a still-SDK-warm pod), and verifies the §5.1
 // observed integration level. On success the caller owns the returned live
 // adapter connection. A launch failure reclaims the pod (and any lease
-// assigned at Prepare) via failPhase and is returned so the gateway retries
-// on a fresh pod. spec: §4.4 (proposal), §6.1, §5.1.
+// assigned at Prepare) via failPhase and is returned to the caller, whose
+// policy decides whether to re-claim a fresh pod. spec: §4.4 (proposal),
+// §6.1, §5.1, §6.2 (pre-attached retry Scope), §7.3.
 //
 // Launch mints no §4.7.1 bind attempt token: neither StartSession nor
 // ConfigureWorkspace carries one, and the start confirms instead that the

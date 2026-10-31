@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // newScrubReportService builds the §4.7 ScrubReporter that backs the
@@ -32,7 +33,7 @@ import (
 // spec: §4.7 (ReportSessionScrub/ReportPodScrub), §5.2 (scrub model,
 // combined failed+leaked threshold), §6.2 (host-node schedulability
 // retire), §16.1 (recycle metrics).
-func newScrubReportService(cl client.Client, counters recycle.CounterStore, pools poolstore.Store, runtimes runtimestore.Store, metrics recycle.RetirementMetricsSink, slotHealth *slothealth.Tracker, agentNamespace string, holdTTL time.Duration, holds recycle.HoldRegistrar, boundary *recycle.RecycleBoundaryCoordinator, now func() time.Time) (leasecontrol.ScrubReportService, error) {
+func newScrubReportService(cl client.Client, counters recycle.CounterStore, pools poolstore.Store, runtimes runtimestore.Store, runtimeClassOverrides map[isolation.Profile]string, metrics recycle.RetirementMetricsSink, slotHealth *slothealth.Tracker, agentNamespace string, holdTTL time.Duration, holds recycle.HoldRegistrar, boundary *recycle.RecycleBoundaryCoordinator, now func() time.Time) (leasecontrol.ScrubReportService, error) {
 	ledger, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{
 		Tracker:   slotHealth,
 		Client:    cl,
@@ -48,18 +49,22 @@ func newScrubReportService(cl client.Client, counters recycle.CounterStore, pool
 		Namespace: agentNamespace,
 		Pools:     pools,
 		Runtimes:  runtimes,
-		Metrics:   metrics,
-		Now:       now,
+		// §17.5 / §16.1: the retirement counter's runtime_class uses the
+		// controller's RuntimeClass names (F-16.1.10).
+		RuntimeClassNameOverrides: runtimeClassOverrides,
+		Metrics:                   metrics,
+		Now:                       now,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build session-count retirer: %w", err)
 	}
 	inspector, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
-		Client:    cl,
-		Namespace: agentNamespace,
-		Pools:     pools,
-		Runtimes:  runtimes,
-		Now:       now,
+		Client:                    cl,
+		Namespace:                 agentNamespace,
+		Pools:                     pools,
+		Runtimes:                  runtimes,
+		RuntimeClassNameOverrides: runtimeClassOverrides,
+		Now:                       now,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build pod inspector: %w", err)

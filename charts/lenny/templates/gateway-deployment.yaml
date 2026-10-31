@@ -715,6 +715,12 @@ spec:
             {{- with .Values.sandbox.defaultIsolationProfile }}
             - --default-isolation-profile={{ . }}
             {{- end }}
+            {{- /* spec: §17.5, §16.1 — the per-profile RuntimeClass name
+                   overrides the controller also receives, so the gateway's
+                   runtime_class labels name the RuntimeClass the controller
+                   stamps on each pod. F-16.1.10. Both read
+                   runtimeClasses.profiles.<profile>.name. F-17.5.11. */}}
+            {{- include "lenny.runtimeClassNameArgs" . | nindent 12 }}
             {{- if .Values.global.devMode }}
             - --dev-mode
             # §12.4 requires Redis AUTH; a dev install backed by a plaintext

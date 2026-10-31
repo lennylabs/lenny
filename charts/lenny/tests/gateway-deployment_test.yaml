@@ -3859,6 +3859,86 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --platform-admin-service-accounts=system:serviceaccount:NAMESPACE:lenny-ops-sa
 
+  # spec: §17.5, §16.1, §5.3 / F-16.1.10, F-17.5.11 — the per-profile
+  # RuntimeClass name flags render from runtimeClasses.profiles.<profile>.name
+  # through the shared lenny.runtimeClassNameArgs helper, which the controller
+  # also includes. runtimeClasses.profiles is the only values key for the
+  # name, so the controller, the gateway, the lenny-pod-security webhook, the
+  # Kyverno policy, and the preflight read one set of values.
+  - it: renders the default RuntimeClass name of every profile from runtimeClasses.profiles
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --standard-runtime-class=runc
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --sandboxed-runtime-class=gvisor
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --microvm-runtime-class=kata
+  - it: renders every RuntimeClass name under a full runtimeClasses.profiles override
+    set:
+      runtimeClasses.profiles.standard.name: crun
+      runtimeClasses.profiles.sandboxed.name: runsc
+      runtimeClasses.profiles.microvm.name: kata-qemu
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --standard-runtime-class=crun
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --sandboxed-runtime-class=runsc
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --microvm-runtime-class=kata-qemu
+  - it: keeps the default names of the profiles a partial override leaves unset
+    set:
+      runtimeClasses.profiles.sandboxed.name: runsc
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --sandboxed-runtime-class=runsc
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --standard-runtime-class=runc
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --microvm-runtime-class=kata
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --sandboxed-runtime-class=gvisor
+  - it: renders the RuntimeClass name of a profile that is not enabled
+    set:
+      runtimeClasses.profiles.microvm.enabled: false
+      runtimeClasses.profiles.microvm.name: kata-fc
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --microvm-runtime-class=kata-fc
+  - it: renders no flag for a profile whose name is empty
+    set:
+      runtimeClasses.profiles.microvm.name: ""
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].args[?(@ =~ /^--microvm-runtime-class/)]
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --sandboxed-runtime-class=gvisor
 
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment

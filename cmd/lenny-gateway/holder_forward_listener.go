@@ -71,26 +71,33 @@ func loadCAPool(path string) (*x509.CertPool, error) {
 }
 
 // buildHolderForwardServer builds the CH-HOLDERFORWARD listener over the
-// session handler mux and the /mcp handler the REST listener serves, behind
-// the REST listener's auth options. It runs after the HTTP surface is built.
+// session handler mux, the /mcp handler, and the Open Responses handler the
+// REST listener serves, behind the REST listener's auth options. It runs
+// after the HTTP surface is built.
 //
 // spec: §29.3 (Interactive message send) Forwarding rules 3 and 4, §10.3
-// (mTLS PKI) NET-072
+// (mTLS PKI) NET-072, §15 (Open Responses conversation sessions)
 func (w *gatewayWiring) buildHolderForwardServer(sessionSrv *sessionserver.Server, mcpSrv *mcp.Server) {
 	if w.holderForwardTLS == nil {
 		return
 	}
 	w.holderForwardSrv = newHolderForwardServer(*w.f.holderForwardListenAddr, w.holderForwardTLS,
-		holderForwardInner(sessionSrv.Handler(), mcpSrv.Handler()), w.restAuthOpts, w.sessions)
+		holderForwardInner(sessionSrv.Handler(), mcpSrv.Handler(), w.responsesHandler.Handler()), w.restAuthOpts, w.sessions)
 }
 
-// holderForwardInner routes the session paths to the session handler and
-// /mcp to the MCP handler, the two surfaces a forward reaches.
-func holderForwardInner(sessions, mcpHandler http.Handler) http.Handler {
+// holderForwardInner routes the session paths to the session handler, /mcp
+// to the MCP handler, and an Open Responses warm turn to the responses
+// handler, the surfaces a forward reaches. GET /v1/responses/{id} reads
+// stores only and is never forwarded, so it is not mounted.
+//
+// spec: §29.3 (Interactive message send) Forwarding, §15 (Open Responses
+// conversation sessions)
+func holderForwardInner(sessions, mcpHandler, responses http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/v1/sessions", sessions)
 	mux.Handle("/v1/sessions/", sessions)
 	mux.Handle("/mcp", mcpHandler)
+	mux.Handle("POST /v1/responses", responses)
 	return mux
 }
 

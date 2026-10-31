@@ -101,8 +101,17 @@ type ArchivePolicy struct {
 // the platform default §13.4 archive policy (symlinks rejected). It is
 // a shorthand for MaterializeWithPolicy with an empty ArchivePolicy.
 func Materialize(root, stagingDir string, sources []*adapterv1.WorkspaceSource) ([]Warning, error) {
-	return MaterializeWithPolicy(root, stagingDir, sources, ArchivePolicy{WorkspaceRoot: root})
+	return MaterializeWithPolicy(root, stagingDir, sources, ArchivePolicy{WorkspaceRoot: root}, nil)
 }
+
+// Seed lays a starting tree into the empty build tree before the plan's
+// sources are materialized over it. The build tree is discarded when it
+// returns an error, so the workspace root is left untouched.
+//
+// spec: §7.1 (Derive restore semantics); §5.1 — a derived or replayed
+// session's restored snapshot is the first tier of the materialization
+// order, and the sources apply over it.
+type Seed func(buildDir string) error
 
 const (
 	// promotionStagingName is the §7.4 /workspace/staging build
@@ -154,7 +163,12 @@ const (
 // Non-fatal advisory warnings (per-entry strip-components skips,
 // future §14 warning codes) are appended to the returned slice rather
 // than aborting materialization, per §7.4. spec: §7.4; §7.4; §13.4 — F-7.4.4, F-7.4.15.
-func MaterializeWithPolicy(root, stagingDir string, sources []*adapterv1.WorkspaceSource, archive ArchivePolicy) ([]Warning, error) {
+//
+// seed, when non-nil, populates the build tree before the first source,
+// so the sources apply over the seeded tree under the §14.1
+// last-writer-wins rule. A nil seed starts from an empty build tree.
+// spec: §7.1 (Derive restore semantics).
+func MaterializeWithPolicy(root, stagingDir string, sources []*adapterv1.WorkspaceSource, archive ArchivePolicy, seed Seed) ([]Warning, error) {
 	root = filepath.Clean(root)
 	if archive.WorkspaceRoot == "" {
 		archive.WorkspaceRoot = root
@@ -165,7 +179,7 @@ func MaterializeWithPolicy(root, stagingDir string, sources []*adapterv1.Workspa
 	// intended final root (archive.WorkspaceRoot) at extraction time; the
 	// definitive check runs against root after promotion.
 	buildDir := promotionBuildDir(root, stagingDir)
-	warnings, err := buildResolvedTree(buildDir, stagingDir, sources, archive)
+	warnings, err := buildResolvedTree(buildDir, stagingDir, sources, archive, seed)
 	if err != nil {
 		return warnings, err
 	}
@@ -206,7 +220,9 @@ func MaterializeOverlayWithPolicy(root, stagingDir string, sources []*adapterv1.
 		archive.WorkspaceRoot = root
 	}
 	buildDir := promotionBuildDir(root, stagingDir)
-	warnings, err := buildResolvedTree(buildDir, stagingDir, sources, archive)
+	// spec: §4.7.1 rule 1 — a mid-session request never carries a restore,
+	// so the overlay never seeds its build tree.
+	warnings, err := buildResolvedTree(buildDir, stagingDir, sources, archive, nil)
 	if err != nil {
 		return warnings, err
 	}
@@ -237,12 +253,24 @@ func MaterializeOverlayWithPolicy(root, stagingDir string, sources []*adapterv1.
 // caller's workspace root is never touched (§7.4). It is the
 // shared first half of both the whole-tree promotion (MaterializeWithPolicy)
 // and the mid-session overlay (MaterializeOverlayWithPolicy). spec: §7.4; §14 — F-7.4.6, F-7.4.12, F-14.1.9.
-func buildResolvedTree(buildDir, stagingDir string, sources []*adapterv1.WorkspaceSource, archive ArchivePolicy) ([]Warning, error) {
+//
+// A non-nil seed runs after buildDir is cleared and recreated and before
+// the first source, so clearing never erases the seeded tree. Seeded paths
+// are not entered in the collision map, because the §14 collision
+// warning's index fields name only sources entries. spec: §7.1 (Derive
+// restore semantics).
+func buildResolvedTree(buildDir, stagingDir string, sources []*adapterv1.WorkspaceSource, archive ArchivePolicy, seed Seed) ([]Warning, error) {
 	if err := os.RemoveAll(buildDir); err != nil {
 		return nil, fmt.Errorf("clear workspace staging %q: %w", buildDir, err)
 	}
 	if err := os.MkdirAll(buildDir, promotionStagingMode); err != nil {
 		return nil, fmt.Errorf("create workspace staging %q: %w", buildDir, err)
+	}
+	if seed != nil {
+		if err := seed(buildDir); err != nil {
+			_ = os.RemoveAll(buildDir)
+			return nil, fmt.Errorf("seed workspace staging %q: %w", buildDir, err)
+		}
 	}
 
 	var warnings []Warning

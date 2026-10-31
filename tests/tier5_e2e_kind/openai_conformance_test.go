@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -174,22 +175,29 @@ func TestOpenAIChatCompletionsConformsToPublishedSchemaOnDeployedGateway(t *test
 // `/v1/responses`, protocol "Open Responses Specification", status V1;
 // "OpenResponsesAdapter covers both Open Responses-compliant clients
 // and OpenAI Responses API clients ... OpenAI's Responses API is a
-// proper superset of Open Responses."; "Built-in adapter single-shot
-// compute model": the request claims a warm pod, dispatches the turn,
-// and releases the pod within one HTTP call), 15.2.1 (REST/MCP
-// Consistency Contract: the shared session-creation service through
-// which the implicit single-shot session runs)
+// proper superset of Open Responses."), 15 (Open Responses conversation
+// sessions: the request creates a session through the shared
+// session-creation service, a response id is the session id, a `.`, and
+// the turn's ordinal, and a session whose continuity is "platform" on a
+// multi_turn runtime with injection supported stays running and keeps its
+// pod after the turn), 15.2.1 (REST/MCP Consistency Contract: the shared
+// session-creation service the conversation session runs through)
 // diagnosis: a failure here means the deployed gateway's /v1/responses
 // adapter is unreachable through its real HTTP listener and auth
-// middleware, cannot bind a warm pod through the single-shot
-// session-creation path on the standard chart's PodExecutor wiring, or
-// its non-streaming response no longer validates against OpenAI's own
-// published Response object schema. As with the Chat Completions test
-// above, the tier-3 contract suite
+// middleware, cannot bind a warm pod through the shared session-creation
+// path on the standard chart's PodExecutor wiring, its non-streaming
+// response no longer validates against OpenAI's own published Response
+// object schema, its response id is not `<session>.1`, or the backing
+// session was released after the turn although the cluster's
+// echo-runtime-sidecar runtime is a multi_turn session-mode runtime with
+// injection supported, so the session must stay running on its pod. As
+// with the Chat Completions test above, the tier-3 contract suite
 // (tests/tier3_contract/rest_openai_responses) pins the same schema but
-// only in-process against an EchoExecutor; this test is the only one
-// that exercises the adapter as mounted on the real gateway binary and
-// bound to a real pod.
+// only in-process against an EchoExecutor; this test is the only one that
+// exercises the adapter as mounted on the real gateway binary and bound to
+// a real pod. A released session points at the hold decision in
+// cmd/lenny-gateway/credentialsurface.go or at serveCold in
+// pkg/gateway/environment/translator/open_responses.go.
 func TestOpenAIResponsesConformsToPublishedSchemaOnDeployedGateway(t *testing.T) {
 	d := sessiondriver.New(t)
 
@@ -212,6 +220,32 @@ func TestOpenAIResponsesConformsToPublishedSchemaOnDeployedGateway(t *testing.T)
 	if err := sch.Validate(instance); err != nil {
 		t.Errorf("the deployed gateway's /v1/responses response does not validate against "+
 			"the published OpenAI Responses schema: %v", err)
+	}
+
+	var decoded struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("decode response id: %v", err)
+	}
+	sessionID, ordinal, ok := strings.Cut(decoded.ID, ".")
+	if !ok || sessionID == "" || ordinal != "1" {
+		t.Fatalf("response id %q, want <session>.1", decoded.ID)
+	}
+	// The held session keeps its pod until the timers end it; terminate it so
+	// the run does not hold a warm pod past the test.
+	t.Cleanup(func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer ccancel()
+		_ = d.Terminate(cctx, tenant, sessionID)
+	})
+	sess, err := d.GetSession(ctx, tenant, sessionID)
+	if err != nil {
+		t.Fatalf("read the backing session %s: %v", sessionID, err)
+	}
+	if sess.State != "running" || sess.PodAssignment == "" {
+		t.Errorf("backing session after the response: state %q pod %q, want running and bound to a pod (held)",
+			sess.State, sess.PodAssignment)
 	}
 }
 

@@ -101,6 +101,25 @@ func efScaleRedis(t *testing.T, c *kind.Cluster, n int) {
 	}
 }
 
+// efRestoreRedis is the cleanup of a test that scaled Redis to zero. It
+// scales the Deployment back to n replicas and waits for the rollout to
+// complete, so the test that runs next does not find a control-plane
+// Deployment unready and skip at kind.InstallLenny. A rollout that does not
+// complete in time is logged rather than failed, because the cleanup runs
+// after the test's own verdict.
+func efRestoreRedis(t *testing.T, c *kind.Cluster, n int) {
+	t.Helper()
+	if out, err := c.KubectlOut(t, "-n", t5SystemNS, "scale", "deployment/"+efRedisDeployment,
+		"--replicas="+strconv.Itoa(n)); err != nil {
+		t.Logf("cleanup: cannot scale %s back to %d: %v\n%s", efRedisDeployment, n, err, out)
+		return
+	}
+	if out, err := c.KubectlOut(t, "-n", t5SystemNS, "rollout", "status",
+		"deployment/"+efRedisDeployment, "--timeout=120s"); err != nil {
+		t.Logf("cleanup: %s did not roll back out after restore: %v\n%s", efRedisDeployment, err, out)
+	}
+}
+
 // efPollActualSource issues one authenticated GET /v1/admin/events against
 // the port-forwarded lenny-ops surface and returns the HTTP status and the
 // degradation envelope's actualSource ("" when no envelope is attached, the
@@ -329,7 +348,7 @@ func TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey(t *testing.T) {
 	// Cleanup restores it and waits for the surface to recover.
 	original := dccReplicaCount(t, c, efRedisDeployment)
 	efScaleRedis(t, c, 0)
-	t.Cleanup(func() { efScaleRedis(t, c, original) })
+	t.Cleanup(func() { efRestoreRedis(t, c, original) })
 
 	// The deployed lenny-ops must observe Redis unreachable and switch its
 	// read surface to the gateway-buffer fan-out over the headless Service,
@@ -424,7 +443,7 @@ func TestEventStreamPollDuringRedisOutageServesGatewayOriginatedEvents(t *testin
 
 	original := dccReplicaCount(t, c, efRedisDeployment)
 	efScaleRedis(t, c, 0)
-	t.Cleanup(func() { efScaleRedis(t, c, original) })
+	t.Cleanup(func() { efRestoreRedis(t, c, original) })
 
 	if !efWaitActualSource(t, baseURL, "gateway-buffer", 90*time.Second) {
 		t.Fatalf("§25.5 read surface did not switch to the gateway-buffer fan-out during a real Redis " +

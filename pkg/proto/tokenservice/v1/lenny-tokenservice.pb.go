@@ -881,23 +881,26 @@ func file_lenny_tokenservice_proto_rawDescGZIP() []byte {
 	return file_lenny_tokenservice_proto_rawDescData
 }
 
-var file_lenny_tokenservice_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_lenny_tokenservice_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
-var file_lenny_tokenservice_proto_goTypes = []any{
-	(Verdict)(0),                      // 0: lenny.tokenservice.v1.Verdict
-	(*AssignCredentialsRequest)(nil),  // 1: lenny.tokenservice.v1.AssignCredentialsRequest
-	(*AssignCredentialsResponse)(nil), // 2: lenny.tokenservice.v1.AssignCredentialsResponse
-	(*RotateCredentialsRequest)(nil),  // 3: lenny.tokenservice.v1.RotateCredentialsRequest
-	(*RotateCredentialsResponse)(nil), // 4: lenny.tokenservice.v1.RotateCredentialsResponse
-	(*RevokeCredentialsRequest)(nil),  // 5: lenny.tokenservice.v1.RevokeCredentialsRequest
-	(*RevokeCredentialsResponse)(nil), // 6: lenny.tokenservice.v1.RevokeCredentialsResponse
-	(*ProbeSecretAccessRequest)(nil),  // 7: lenny.tokenservice.v1.ProbeSecretAccessRequest
-	(*ProbeSecretAccessResponse)(nil), // 8: lenny.tokenservice.v1.ProbeSecretAccessResponse
-	(*CredentialLease)(nil),           // 9: lenny.tokenservice.v1.CredentialLease
-	nil,                               // 10: lenny.tokenservice.v1.AssignCredentialsResponse.LeasesEntry
-	nil,                               // 11: lenny.tokenservice.v1.CredentialLease.MaterializedConfigEntry
-	(*timestamppb.Timestamp)(nil),     // 12: google.protobuf.Timestamp
-}
+var (
+	file_lenny_tokenservice_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+	file_lenny_tokenservice_proto_msgTypes  = make([]protoimpl.MessageInfo, 11)
+	file_lenny_tokenservice_proto_goTypes   = []any{
+		Verdict(0),                        // 0: lenny.tokenservice.v1.Verdict
+		(*AssignCredentialsRequest)(nil),  // 1: lenny.tokenservice.v1.AssignCredentialsRequest
+		(*AssignCredentialsResponse)(nil), // 2: lenny.tokenservice.v1.AssignCredentialsResponse
+		(*RotateCredentialsRequest)(nil),  // 3: lenny.tokenservice.v1.RotateCredentialsRequest
+		(*RotateCredentialsResponse)(nil), // 4: lenny.tokenservice.v1.RotateCredentialsResponse
+		(*RevokeCredentialsRequest)(nil),  // 5: lenny.tokenservice.v1.RevokeCredentialsRequest
+		(*RevokeCredentialsResponse)(nil), // 6: lenny.tokenservice.v1.RevokeCredentialsResponse
+		(*ProbeSecretAccessRequest)(nil),  // 7: lenny.tokenservice.v1.ProbeSecretAccessRequest
+		(*ProbeSecretAccessResponse)(nil), // 8: lenny.tokenservice.v1.ProbeSecretAccessResponse
+		(*CredentialLease)(nil),           // 9: lenny.tokenservice.v1.CredentialLease
+		nil,                               // 10: lenny.tokenservice.v1.AssignCredentialsResponse.LeasesEntry
+		nil,                               // 11: lenny.tokenservice.v1.CredentialLease.MaterializedConfigEntry
+		(*timestamppb.Timestamp)(nil),     // 12: google.protobuf.Timestamp
+	}
+)
+
 var file_lenny_tokenservice_proto_depIdxs = []int32{
 	10, // 0: lenny.tokenservice.v1.AssignCredentialsResponse.leases:type_name -> lenny.tokenservice.v1.AssignCredentialsResponse.LeasesEntry
 	9,  // 1: lenny.tokenservice.v1.RotateCredentialsResponse.lease:type_name -> lenny.tokenservice.v1.CredentialLease

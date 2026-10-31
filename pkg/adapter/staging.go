@@ -184,6 +184,12 @@ func (s *Server) resolvePrepareStagingDir(sessionID string, r slotResolve) (stri
 // and atomically promotes it onto that slot's current tree so the runtime
 // never observes a partial workspace.
 // spec: §7.4 — F-7.4.12.
+//
+// A request carrying restore_chunks seeds the build tree with the
+// workspace tree of the derived or replayed session's starting snapshot
+// before the sources are materialized over it. A restore failure answers
+// UNAVAILABLE, discards the build tree, and leaves the current tree
+// untouched. spec: §7.1 (Derive restore semantics); §4.7.1.
 func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeWorkspaceRequest) (*adapterv1.FinalizeWorkspaceResponse, error) {
 	// spec: §16.3 — `session.finalize_workspace` is emitted by the
 	// Pod. The span covers the workspace-plan materialization the adapter
@@ -209,6 +215,10 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 	// request's fields before the registry is read.
 	midSession := req.GetMidSession()
 	if verr := validateBindFields(req.GetBindAttempt(), midSession); verr != nil {
+		spanErr = tracing.CategorizeError(verr, tracing.CategoryPermanent)
+		return nil, verr
+	}
+	if verr := validateRestorePairing(req.GetRestoreChunks(), midSession); verr != nil {
 		spanErr = tracing.CategorizeError(verr, tracing.CategoryPermanent)
 		return nil, verr
 	}
@@ -302,9 +312,16 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 			sources, archive)
 	} else {
 		warnings, err = workspace.MaterializeWithPolicy(workspaceRoot, stagingDir,
-			sources, archive)
+			sources, archive, s.restoreSeed(ctx, req.GetRestoreChunks()))
 	}
-	if err != nil {
+	switch {
+	case errors.Is(err, errRestore):
+		// spec: §7.1 (Derive restore semantics) — every restore failure is
+		// an ordinary failed bind, answered with one transient status the
+		// gateway's bind path retries on fresh capabilities.
+		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
+		return nil, status.Errorf(codes.Unavailable, "restore workspace snapshot: %v", err)
+	case err != nil:
 		// §16.3: a plan the adapter cannot materialize (invalid source,
 		// containment violation) is PERMANENT.
 		spanErr = tracing.CategorizeError(err, tracing.CategoryPermanent)
@@ -359,6 +376,49 @@ func (s *Server) FinalizeWorkspace(ctx context.Context, req *adapterv1.FinalizeW
 		resp.WorkspacePlanWarnings = append(resp.WorkspacePlanWarnings, pw)
 	}
 	return resp, nil
+}
+
+// errRestore marks a failure to seed the build tree from the starting
+// snapshot's chunks: a chunk fetch or body-read error, gzip or tar
+// corruption, an escaping entry path or symlink target, an unsupported
+// entry type, or the extraction size cap. FinalizeWorkspace answers it
+// UNAVAILABLE. spec: §7.1 (Derive restore semantics).
+var errRestore = errors.New("snapshot restore failed")
+
+// validateRestorePairing refuses a mid-session request that carries
+// restore_chunks with INVALID_ARGUMENT, before any slot entry is created,
+// resolved, or stamped. Only a derived or replayed session's first bind
+// restores a snapshot. spec: §4.7.1 rule 1.
+func validateRestorePairing(restore []*adapterv1.ChunkGrant, midSession bool) error {
+	if midSession && len(restore) > 0 {
+		return status.Error(codes.InvalidArgument,
+			"a mid_session request must not carry restore_chunks")
+	}
+	return nil
+}
+
+// restoreSeed returns the build-tree seed that extracts the starting
+// snapshot's workspace tree from restore, or nil when restore is empty.
+// Only the workspace root is named, so the bundle's /sessions tree is
+// skipped. Every error the seed returns wraps errRestore.
+// spec: §7.1 (Derive restore semantics).
+func (s *Server) restoreSeed(ctx context.Context, restore []*adapterv1.ChunkGrant) workspace.Seed {
+	if len(restore) == 0 {
+		return nil
+	}
+	return func(buildDir string) error {
+		if s.CheckpointTransport == nil {
+			return fmt.Errorf("%w: adapter is not configured with a checkpoint transport", errRestore)
+		}
+		roots := []workspace.NamedRoot{{Prefix: workspace.WorkspacePrefix, Root: buildDir}}
+		stream := s.chunkStream(ctx, restore)
+		_, err := workspace.ExtractTree(roots, stream)
+		_ = stream.Close()
+		if err != nil {
+			return fmt.Errorf("%w: %w", errRestore, err)
+		}
+		return nil
+	}
 }
 
 // signalFilesUpdated tells the runtime that a mid-session upload promoted

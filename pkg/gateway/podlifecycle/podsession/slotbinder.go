@@ -26,6 +26,10 @@ import (
 type SlotBindRequest struct {
 	// Pool is the SandboxWarmPool to claim a slot from.
 	Pool string
+	// IsolationProfile is the §5.3 profile the pool's pods run under. The
+	// binder maps it to the RuntimeClass that labels a setup-command
+	// failure's §16.1 lenny_warmpool_warmup_failure_total count.
+	IsolationProfile string
 	// SessionID is the §15.1 session being started. It is also the
 	// slot's SlotID.
 	SessionID string
@@ -119,6 +123,13 @@ type SlotBindRequest struct {
 	// no-op, which is the create and start paths. spec: §7.3 (Retry and
 	// Resume).
 	OnClaimed func(context.Context) error
+	// RestoreChunks mints the presigned GET capabilities for the session's
+	// starting snapshot. nil means no restore. The Binder calls it at most once
+	// per bind attempt, after stageWorkspace and immediately before
+	// FinalizeWorkspace, because the capabilities expire after
+	// checkpointCapabilityTTLSeconds. The result is never logged or persisted.
+	// spec: §7.1 (Derive restore semantics).
+	RestoreChunks func(context.Context) ([]adapterclient.ChunkGrant, error)
 	// CoordinationGeneration is the session's coordination_generation the
 	// binding attempt holds, recorded on every lease the attempt mints. The
 	// resume driver sets it to its entry generation; every other caller
@@ -373,7 +384,16 @@ func (b *Binder) materializeSlotStages(ctx context.Context, req SlotBindRequest,
 		return nil, nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
 			fmt.Errorf("podsession: stage slot workspace on pod %s: %w", sandboxName, err))
 	}
-	warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, bindAttempt, false)
+	// spec: §7.1 (Derive restore semantics) — the restore capabilities are
+	// minted at the moment of use, so they are still valid when the adapter
+	// fetches them, and a failure to mint them fails the bind with no fallback.
+	restore, err := mintRestoreChunks(ctx, req.RestoreChunks)
+	if err != nil {
+		b.recordSlotFailure(slotFailureWorkspaceFinalize, req.Pool, sandboxName)
+		return nil, nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
+			fmt.Errorf("podsession: resolve slot workspace restore on pod %s: %w", sandboxName, err))
+	}
+	warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, restore, bindAttempt, false)
 	if err != nil {
 		b.recordSlotFailure(slotFailureWorkspaceFinalize, req.Pool, sandboxName)
 		return nil, nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
@@ -384,7 +404,10 @@ func (b *Binder) materializeSlotStages(ctx context.Context, req SlotBindRequest,
 	if err != nil {
 		b.recordSlotFailure(slotFailureSetup, req.Pool, sandboxName)
 		return nil, nil, b.slotBindError(sandboxName, slotID, slotFailureSetup,
-			&SetupCommandFailure{Pod: sandboxName, Cause: err, Outputs: setupOutputs})
+			&SetupCommandFailure{
+				Pod: sandboxName, Pool: req.Pool, RuntimeClass: b.runtimeClassLabel(req.IsolationProfile),
+				Cause: err, Outputs: setupOutputs,
+			})
 	}
 
 	minted, err := b.assignSlotCredentials(ctx, cl, req, bindAttempt)

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
+
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -62,7 +64,10 @@ func TestAdaptersRefuseUnauthenticatedOutsideDevMode(t *testing.T) {
 	store := memstore.New()
 	exec := executor.NewEchoExecutor()
 	chat := NewOpenAIChatHandler(store, exec, OpenAIChatOptions{}).Handler()
-	responses := NewOpenResponsesHandler(store, exec, OpenResponsesOptions{}).Handler()
+	responses := NewOpenResponsesHandler(store, exec, OpenResponsesOptions{
+		HolderForwarder: responsesstub.LocalForwarder{},
+		Terminal:        responsesstub.ReleasingTerminal{Exec: exec, Store: store},
+	}).Handler()
 	for _, c := range []struct {
 		name string
 		h    http.Handler

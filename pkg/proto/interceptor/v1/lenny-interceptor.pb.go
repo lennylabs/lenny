@@ -293,14 +293,17 @@ func file_lenny_interceptor_proto_rawDescGZIP() []byte {
 	return file_lenny_interceptor_proto_rawDescData
 }
 
-var file_lenny_interceptor_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_lenny_interceptor_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
-var file_lenny_interceptor_proto_goTypes = []any{
-	(InterceptResponse_Action)(0), // 0: lenny.interceptor.v1.InterceptResponse.Action
-	(*InterceptRequest)(nil),      // 1: lenny.interceptor.v1.InterceptRequest
-	(*InterceptResponse)(nil),     // 2: lenny.interceptor.v1.InterceptResponse
-	nil,                           // 3: lenny.interceptor.v1.InterceptRequest.MetadataEntry
-}
+var (
+	file_lenny_interceptor_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+	file_lenny_interceptor_proto_msgTypes  = make([]protoimpl.MessageInfo, 3)
+	file_lenny_interceptor_proto_goTypes   = []any{
+		InterceptResponse_Action(0), // 0: lenny.interceptor.v1.InterceptResponse.Action
+		(*InterceptRequest)(nil),    // 1: lenny.interceptor.v1.InterceptRequest
+		(*InterceptResponse)(nil),   // 2: lenny.interceptor.v1.InterceptResponse
+		nil,                         // 3: lenny.interceptor.v1.InterceptRequest.MetadataEntry
+	}
+)
+
 var file_lenny_interceptor_proto_depIdxs = []int32{
 	3, // 0: lenny.interceptor.v1.InterceptRequest.metadata:type_name -> lenny.interceptor.v1.InterceptRequest.MetadataEntry
 	0, // 1: lenny.interceptor.v1.InterceptResponse.action:type_name -> lenny.interceptor.v1.InterceptResponse.Action

@@ -72,6 +72,17 @@ func (c *rpcCounter) count(fullMethod string) int {
 	return c.counts[fullMethod]
 }
 
+// total returns the calls recorded across every method.
+func (c *rpcCounter) total() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, v := range c.counts {
+		n += v
+	}
+	return n
+}
+
 // serverOptions returns the chained unary and stream interceptors that record
 // every RPC before the adapter handles it. The chained form composes with the
 // interceptors adapter.NewGRPCServer installs itself.

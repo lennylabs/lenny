@@ -120,18 +120,20 @@ func (p probeInterceptor) Intercept(context.Context, interceptor.Request) (inter
 // runs the shared §15.2.1 service, and maps a typed *ServiceError into a
 // *translator.SingleShotError. Driving the load through the same consumer
 // interface the built-in adapters call keeps this scenario on the real path.
+// Every create here is denied, so the binding's hold decision is never
+// reached and the adapter reports none.
 type singleShotBinder struct{ srv *sessionserver.Server }
 
 var _ translator.SingleShotBinder = singleShotBinder{}
 
-func (b singleShotBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (string, error) {
+func (b singleShotBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (translator.SingleShotBinding, error) {
 	resp, serr := b.srv.CreateAndStartService(ctx, spec.TenantID, sessionserver.CreateSessionRequest{
 		RuntimeRef:  spec.RuntimeRef,
 		UserID:      spec.UserID,
 		Environment: spec.Environment,
 	})
 	if serr != nil {
-		return "", &translator.SingleShotError{
+		return translator.SingleShotBinding{}, &translator.SingleShotError{
 			HTTPStatus:        serr.HTTPStatus,
 			Code:              serr.Code,
 			Message:           serr.Message,
@@ -139,7 +141,7 @@ func (b singleShotBinder) BindSingleShot(ctx context.Context, spec translator.Si
 			Retryable:         serr.Retryable,
 		}
 	}
-	return resp.ID, nil
+	return translator.SingleShotBinding{SessionID: resp.ID, RecoveryGeneration: resp.RecoveryGeneration}, nil
 }
 
 func (s *Scenario) Name() string { return name }

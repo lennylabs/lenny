@@ -20,7 +20,16 @@ import (
 // §15.2.1 rule-4 "structural consistency by construction" check.
 func committedSchemas() map[string]json.RawMessage {
 	return map[string]json.RawMessage{
-		"lenny/create_session": mcptools.GeneratedCreateSessionInputSchema,
+		"lenny/create_session":     mcptools.GeneratedCreateSessionInputSchema,
+		"lenny/start_session":      mcptools.GeneratedStartSessionInputSchema,
+		"lenny/finalize_workspace": mcptools.GeneratedFinalizeWorkspaceInputSchema,
+		"lenny/terminate_session":  mcptools.GeneratedTerminateSessionInputSchema,
+		"lenny/resume_session":     mcptools.GeneratedResumeSessionInputSchema,
+		"lenny/interrupt_session":  mcptools.GeneratedInterruptSessionInputSchema,
+		"lenny/get_session_status": mcptools.GeneratedGetSessionStatusInputSchema,
+		"lenny/list_artifacts":     mcptools.GeneratedListArtifactsInputSchema,
+		"lenny/get_token_usage":    mcptools.GeneratedGetTokenUsageInputSchema,
+		"lenny/get_session_logs":   mcptools.GeneratedGetSessionLogsInputSchema,
 	}
 }
 

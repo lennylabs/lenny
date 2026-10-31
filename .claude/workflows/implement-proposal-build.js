@@ -16,7 +16,9 @@
 // regression test that asserts the corrected outcome (not just line
 // coverage); and a final cross-step design-conformance
 // review of the cumulative diff catches anything the per-step reviews could
-// not see, fixing any divergence before returning.
+// not see, fixing any divergence before returning. A quality review then runs
+// the code-review and security-review skills once over the same diff and fixes
+// what they find, before the post-review re-verification.
 // It does NOT verify the spec is applied or close findings — the
 // implement-proposal parent does that around this call.
 //
@@ -336,7 +338,7 @@ const RULES =
   "\n\nNO PROPOSAL-INTERNAL IDENTIFIERS IN CODE, COMMENTS, TESTS, OR COMMIT MESSAGES: the proposal's own scaffolding labels name parts of the proposal document, not the shipped system, and mean nothing to someone reading the code later. NEVER write any of them into source, comments (including test-file comments and test names), or a git commit message: its change/section ids (e.g. `S1`, `S-A1`, `C-A2`, `CODE-A`, `CODE-D/D2`, `SPEC-D`), decision ids (e.g. `D1`, `D8`, `D9`, `RES-1`), review pass numbers (e.g. `Pass 7`), or a step/item/section number that exists only in the proposal's own numbering. Reference a DURABLE source instead: cite the spec section with the `// spec: §X.Y` convention, or describe the behavior directly. A numbered step or section the SPEC itself defines (for example a `step 7` inside a §N.M procedure that the spec numbers) IS a spec reference and may be cited by that number; the proposal's own build-sequence or change-list step (`step 3`, `S4`, `CODE-A`) is not — cite the spec section it implements instead. For a commit message, name the behavior and the spec section; the proposal file path (`proposals/NNNN_...md`) or the BUILD-GAPS finding id may be included for traceability, but never the internal change/decision/pass/step labels. This holds even when `git log -5` shows prior commits that used such labels: match the repository's format and tense, not that leak." +
   PREFLIGHT_NOTE +
   "\n\nPER-STEP VERIFICATION — must TEST the step, avoid the 180s no-progress watchdog, AND stay MEMORY-SAFE on a 16GB host (running heavy tests in the background or concurrently accumulates orphaned processes and OOM-crashes the whole machine, including this build). DO test every step; do NOT skip tests. Follow ALL of these: (1) DEFAULT to scoped FOREGROUND verification — NEVER use `run_in_background` for `go test`/`lenny-test`/envtest/integration/e2e UNLESS the tier is a single long-running command that will exceed the 180s watchdog without emitting output (see rule (6) for that case only); never more than one heavy job alive at once. (2) SCOPE every command to the changed packages, never the whole repo: `go build ./<changed-pkg>/...`, `go vet ./<changed-pkg>/...`, `golangci-lint run ./<changed-pkg>/...`, `go test ./<changed-pkg>/... -count=1 -p 2`. Scoped runs finish well under 180s (no watchdog stall) AND keep memory bounded; do NOT pipe through `| tail`/`| head` (let output stream). (3) For a tier-2 envtest package the step changes, run it FOREGROUND and SCOPED to that one package only (`go test ./<changed-envtest-pkg>/... -count=1 -p 1` with `KUBEBUILDER_ASSETS` set) so only ONE etcd+kube-apiserver pair is alive at a time; immediately after it returns, reap strays with `pkill -f kubebuilder-envtest 2>/dev/null` before continuing. (4) NEVER run `go test -race ./...` over the whole repo — the race detector uses ~10x memory; if you need `-race`, run it scoped to the one changed package only. (5) NEVER run whole-repo `lenny-test --max-tier unit`/`static` per step. A pre-existing whole-repo failure unrelated to this step's changed packages is not this step's failure. (6) LONG-SILENT TIER EXCEPTION: if and only if a single tier command will genuinely run longer than ~150s without emitting any output (a rare case for full component or integration tiers), you may launch it with `run_in_background: true` to a log file. In that case, poll for completion using the READ TOOL (read the log file path returned by the Bash tool) — do NOT use a Bash `tail -f`/`until` loop. A Bash poll loop depends on the task `.output` file remaining on disk; if the 180s watchdog kills the foreground Bash wrapper, the harness deletes that `.output` file and the poll loop hangs forever. The Read tool bypasses the task-output mechanism and reads the log file directly, making it immune to harness cleanup." +
-  "\n\nBRANCH SAFETY (critical): you MUST stay on the current feature branch and commit ONLY to it. NEVER run `git checkout <branch-or-commit>`, `git switch`, `git reset --hard`, or `git branch -f` — switching the checkout has caused build commits to land on the wrong branch (a real, damaging failure). To inspect a historical commit or the pre-implementation baseline, use `git diff <SHA>..HEAD`, `git diff <SHA> -- <path>`, or `git show <SHA>:<path>`, which read history WITHOUT changing the working tree. Immediately before every `git commit`, confirm `git rev-parse --abbrev-ref HEAD` prints the feature branch (not `HEAD`/detached, and never `impl/v1-initial` or any base branch); if it does not, `git checkout <feature-branch>` to return before committing.";
+  "\n\nBRANCH SAFETY (critical): you MUST stay on the current feature branch and commit ONLY to it. NEVER run `git checkout <branch-or-commit>`, `git switch`, `git reset --hard`, or `git branch -f` — switching the checkout has caused build commits to land on the wrong branch (a real, damaging failure). To inspect a historical commit or the pre-implementation baseline, use `git diff <SHA>..HEAD`, `git diff <SHA> -- <path>`, or `git show <SHA>:<path>`, which read history WITHOUT changing the working tree. Immediately before every `git commit`, confirm `git rev-parse --abbrev-ref HEAD` prints the feature branch (not `HEAD`/detached, and never `main` or any base branch); if it does not, `git checkout <feature-branch>` to return before committing.";
 
 // The proposal's Summary is the one section every agent in this phase reads. It
 // carries the top-level changes, the decisions that are closed, and the traps, so
@@ -414,6 +416,7 @@ const ARG_CLASS = {
   maxDeadAttempts: "forward",
   maxVerifyRounds: "forward",
   maxReviewRounds: "forward",
+  qualityReview: "forward",
   maxReplans: "forward",
   replanEvery: "forward",
   replanStruggleAttempts: "forward",
@@ -3302,6 +3305,97 @@ if (green) {
   log("Build not green; skipping design-conformance review");
 }
 
+// Quality review: the `code-review` and `security-review` skills, run once over
+// the cumulative diff after the design-conformance review converges. The design
+// review checks the code against the proposal; these check it for bugs and
+// security defects the proposal never named. They run once on the whole change
+// rather than per step, because both skills fan out over large diffs and a
+// per-step pass would repeat the same reading for every step. Their findings get
+// one fix pass, pinned by regression tests, and the post-review re-verification
+// below re-runs the tiers. Opt out with `qualityReview: false`.
+const QUALITY_REVIEWS = [
+  {
+    key: "code-review",
+    skill: "code-review",
+    args: "high " + baseRef + "..HEAD",
+    fallback:
+      "a correctness review of the diff: logic errors, wrong conditions, unhandled errors, races, resource leaks, " +
+      "nil dereferences, and broken edge cases",
+  },
+  {
+    key: "security-review",
+    skill: "security-review",
+    args: baseRef + "..HEAD",
+    fallback:
+      "a security review of the diff: authentication and authorization bypasses, tenant-isolation breaks, " +
+      "injection, path traversal, secret or credential exposure in logs or responses, unsafe defaults, and " +
+      "fail-open error handling",
+  },
+];
+
+let qualityFindings = [];
+let qualityRan = false;
+if (green && reviewClean && input.qualityReview !== false) {
+  phase("Quality review");
+  qualityRan = true;
+  const qualityResults = await parallel(
+    QUALITY_REVIEWS.map((q) => () =>
+      agentTry(
+        READ_ONLY_NOTE +
+          "\n\nRun the `" +
+          q.skill +
+          "` skill over this proposal's cumulative implementation diff in " +
+          repo +
+          ": invoke the Skill tool with skill `" +
+          q.skill +
+          "` and args `" +
+          q.args +
+          "`. Report findings only; do not pass --fix and do not edit anything. If the Skill tool or the skill " +
+          "is unavailable to you, perform " +
+          q.fallback +
+          " yourself over `git diff " +
+          baseRef +
+          "..HEAD`, and begin the first finding's title with `[fallback]` so the record shows which ran.\n\n" +
+          "Report only defects in code this diff adds or changes, each one concrete: a reachable input or state " +
+          "that produces a wrong result, a crash, or an exposure. Leave out style preferences and anything the " +
+          "proposal at " +
+          proposal +
+          " explicitly decided. Map each finding onto the schema: `where` is file:line, `divergence` is the " +
+          "defect and the scenario that triggers it, and `fix` is the change that removes it.",
+        { schema: REVIEW, label: "quality:" + q.key, phase: "Quality review" },
+      ),
+    ),
+  );
+  qualityFindings = qualityResults.filter(Boolean).flatMap((r) => r.findings);
+  log(
+    "Quality review: " +
+      qualityFindings.length +
+      " finding(s) from " +
+      qualityResults.filter(Boolean).length +
+      " of " +
+      QUALITY_REVIEWS.length +
+      " skill review(s)",
+  );
+  if (qualityFindings.length > 0) {
+    reviewFixApplied = true;
+    await agentTry(
+      "Fix the code-review and security-review findings in the implementation of the proposal at " +
+        proposal +
+        ".\n\nWork in " +
+        repo +
+        ". The proposal's spec edits are applied; do not edit spec/. Check each finding against the code first. " +
+        "Fix every finding that holds, and add a regression test that fails against the pre-fix code for each " +
+        "fix with a runtime effect, at the tier the defect lives in, annotated `// spec:`. A finding that does " +
+        "not hold, or whose fix would contradict the proposal's design, is not fixed: record why in the commit " +
+        "message. Commit your fixes.\n\n" +
+        RULES +
+        "\n\nFindings to check and fix:\n" +
+        JSON.stringify(qualityFindings, null, 2),
+      { label: "quality-fix", phase: "Quality review" },
+    );
+  }
+}
+
 // A review fix can perturb tests; re-confirm green once whenever the review
 // applied any fix, so the returned green reflects the post-fix tree. Gating on
 // reviewFixApplied (not on outstanding findings) is the point: a review that
@@ -3429,6 +3523,9 @@ return {
   reviewClean,
   reviewRounds: reviewRound,
   reviewFindings: reviewClean ? [] : lastReviewFindings,
+  // The code-review and security-review skill findings, fixed in one pass
+  // before the post-review re-verification.
+  qualityReview: { ran: qualityRan, findings: qualityFindings },
   verifyRounds: vround,
   changedLineCoverage: verify ? verify.changedLineCoverage : undefined,
   failures: verify ? verify.failures || [] : ["final verification did not run"],

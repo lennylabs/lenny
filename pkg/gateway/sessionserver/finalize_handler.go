@@ -84,6 +84,9 @@ func transitionReady(row *sessionstore.Session) { row.State = session.StateReady
 // pod binder) finalizes by the plain created → finalizing → ready
 // transition with no pod work.
 //
+// The §7.4 uploadToken check runs first, before the session row is read,
+// with the same verifier and error envelope as admitUpload.
+//
 // spec: §7.1 steps 11-13; §7.1 step 23 (lease release); §7.4; §15.1
 // (finalize precondition, State-mutating endpoint preconditions); §6.2
 // (finalize timeout); §7.2 (terminal states); §4.9 (finalize lease
@@ -91,6 +94,18 @@ func transitionReady(row *sessionstore.Session) { row.State = session.StateReady
 func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
 	id := r.PathValue("id")
+	// spec: §7.4 Upload Safety (Upload authorization); §7.1 Normal Flow
+	// (uploadToken format and security properties). Every finalize request
+	// carries the uploadToken issued at session creation. It is verified
+	// against the path's session id before the row is read or written, so a
+	// request without a valid token (missing, malformed, signed under no
+	// ring key, expired, bound to another session, or already consumed by a
+	// prior finalize) reads no session state, binds no plan, and runs no pod
+	// work. The check and its error envelope are the ones admitUpload uses.
+	if err := s.verifyUploadToken(r, id); err != nil {
+		s.writeUploadTokenError(w, err)
+		return
+	}
 	row, err := s.store.Get(r.Context(), tenantID, id)
 	if err != nil {
 		if errors.Is(err, sessionstore.ErrNotFound) {
@@ -107,12 +122,11 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		s.writePreconditionError(w, err)
 		return
 	}
-	// spec: §7.1 step 11 (FinalizeWorkspace); §26.2 — the
-	// §14 WorkspacePlan referencing this session's staged uploadArchive
-	// blob is bound here in the decomposed create → upload → finalize
-	// flow, because the create-time plan is immutable and cannot name an
-	// uploadRef minted only after the session exists. A no-body finalize
-	// keeps the existing plan (or empty workspace). F-24.17.4 / F-26.2.4.
+	// spec: §14.1 WorkspacePlan Schema Versioning (Plan binding); §7.1
+	// Normal Flow — a session created without a plan binds the plan the
+	// finalize body carries, or the empty plan when the body carries none,
+	// composed with the runtime's workspaceDefaults. A session that already
+	// has a plan keeps it.
 	planJSON, planWarnings, hasPlan, planOK := s.resolveFinalizePlan(w, r, tenantID, row)
 	if !planOK {
 		return

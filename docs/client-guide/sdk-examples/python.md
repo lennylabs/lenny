@@ -129,7 +129,7 @@ def main() -> None:
     )
     print(f"created {created.session.id} in state {created.session.state}")
 
-    client.finalize(created.session.id)
+    client.finalize(created.session.id, created.upload_token)
     started = client.start(created.session.id)
     print(f"session {started.id} is {started.state}")
 

@@ -680,7 +680,7 @@ func TestStaticAssetCacheHeaders(t *testing.T) {
 // the §7.1 uploadToken, bind it into a §14 uploadArchive plan at finalize,
 // and start the session. There is no JS test runner, so this checks the
 // served bundle carries the functional surface the finding requires.
-// spec: §27.4 item 2 (workspace plan upload / drag-drop tarball).
+// spec: §27.4 item 2 (workspace plan upload / drag-drop tarball), §7.4 (Upload Safety, Upload authorization).
 func TestAppJSWorkspaceUploadWiring_spec_27_4_2(t *testing.T) {
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
 		Signer:   jwtsign.HMAC(devSigner()),
@@ -718,6 +718,20 @@ func TestAppJSWorkspaceUploadWiring_spec_27_4_2(t *testing.T) {
 		if !strings.Contains(js, want) {
 			t.Errorf("app.js missing workspace-upload wiring substring %q", want)
 		}
+	}
+	// spec: §7.4 Upload Safety (Upload authorization): the finalize request
+	// carries the uploadToken as well, so the header appears inside the
+	// finalize fetch's options rather than only on the upload.
+	fin := strings.Index(js, `"/finalize", {`)
+	if fin < 0 {
+		t.Fatalf("app.js has no finalize fetch")
+	}
+	finOpts := js[fin:]
+	if end := strings.Index(finOpts, "body:"); end >= 0 {
+		finOpts = finOpts[:end]
+	}
+	if !strings.Contains(finOpts, `"X-Lenny-Upload-Token": uploadToken`) {
+		t.Errorf("app.js finalize fetch does not send the X-Lenny-Upload-Token header:\n%s", finOpts)
 	}
 	// The drop must not be a no-op: the bare-input-only state the finding
 	// flagged is gone once a drop handler sets the selected file.

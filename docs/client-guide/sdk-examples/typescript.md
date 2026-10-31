@@ -123,7 +123,7 @@ async function main(): Promise<void> {
   );
   console.log(`created ${created.id} in state ${created.state}`);
 
-  await client.finalize(created.id);
+  await client.finalize(created.id, created.uploadToken);
   const started = await client.start(created.id);
   console.log(`session ${started.id} is ${started.state}`);
 

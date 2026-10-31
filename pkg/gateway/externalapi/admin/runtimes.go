@@ -20,6 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
 // applyGeneratedCard regenerates the §5.1 A2A agent card from the
@@ -531,8 +532,9 @@ func validateDefaultPoolConfig(c *runtimestore.DefaultPoolConfig) error {
 }
 
 // validateWorkspaceDefaults checks a §5.1 workspaceDefaults block: each
-// file entry declares a destination Path, and each setup command is
-// non-empty with a non-negative timeout.
+// file entry declares a destination Path and composes into a valid §14
+// inlineFile source with no ref, and each setup command is non-empty with a
+// non-negative timeout.
 func validateWorkspaceDefaults(w *runtimestore.WorkspaceDefaults) error {
 	if w == nil {
 		return nil
@@ -549,6 +551,13 @@ func validateWorkspaceDefaults(w *runtimestore.WorkspaceDefaults) error {
 		if c.TimeoutSeconds < 0 {
 			return errors.New("workspaceDefaults.setupCommands timeoutSeconds must not be negative")
 		}
+	}
+	// spec: §5.1 Derived Runtime Instantiation; §14.1 WorkspacePlan Schema
+	// Versioning (Runtime workspace defaults) — every default file is a
+	// valid §14 inlineFile source with inline content, so composing the
+	// block into a plan at bind cannot fail on a registered runtime.
+	if _, _, err := w.ComposeInto(workspaceplan.Plan{}); err != nil {
+		return fmt.Errorf("workspaceDefaults: %w", err)
 	}
 	return nil
 }

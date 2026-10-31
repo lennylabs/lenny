@@ -132,11 +132,11 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 | `lenny_warmpool_reserved_pods` | Gauge | `pool` | Pods whose occupancy claim is in the `reserved` hold window, excluded from idle inventory. | Reserved-hold-window monitoring. |
 | `lenny_warmpool_pod_startup_duration_seconds` | Histogram | `pool`, `isolation_profile` | Time from pod creation to `idle` state. | `WarmPoolReplenishmentSlow` alert. |
 | `lenny_warmpool_replenishment_rate` | Gauge | `pool` | Pods per minute entering `idle` state. | Operational monitoring. |
-| `lenny_warmpool_warmup_failure_total` | Counter | `pool`, `runtime_class`, `error_type` | Pods failing to reach `idle` during warm-up. Error types: `image_pull_error`, `setup_command_failed`, `resource_quota_exceeded`, `node_pressure`. | `WarmPoolReplenishmentFailing` alert. |
+| `lenny_warmpool_warmup_failure_total` | Counter | `pool`, `runtime_class`, `error_type` | Warm-up and setup failures. The `image_pull_error`, `resource_quota_exceeded`, and `node_pressure` error types count a pod that fails to reach `idle` during warm-up. The `setup_command_failed` error type counts a session whose setup commands fail. | `WarmPoolReplenishmentFailing` alert. |
 | `lenny_warmpool_cold_start_total` | Counter | `pool` | Sessions served from cold pod or exhausted pool. | Operational monitoring. |
 | `lenny_warmpool_fill_duration_seconds` | Histogram | `pool` | Time from pool creation to reaching `minWarm` ready pods. | Operational monitoring. |
 | `lenny_warmpool_claims_total` | Counter | `pool`, `runtime_class` | Warm pod transitions from `idle` to `claimed`. | SDK-warm demotion rate computation. |
-| `lenny_warmpool_sdk_demotions_total` | Counter | `pool`, `runtime_class` | SDK-warm pod demoted to pod-warm before assignment. | SDK-warm circuit-breaker threshold. |
+| `lenny_warmpool_sdk_demotions_total` | Counter | `pool`, `runtime_class` | SDK-warm pod demoted to pod-warm. | SDK-warm circuit-breaker threshold. |
 | `lenny_warmpool_idle_pod_minutes` | Counter | `pool`, `resource_class` | Cumulative idle pod-minutes. | `WarmPoolIdleCostHigh` alert; warm pool cost estimation. |
 | `lenny_warmpool_sdk_connect_timeout_total` | Counter | `pool` | SDK warm connection establishment timeouts. | `SDKConnectTimeout` alert. |
 | `lenny_pool_bootstrap_mode` | Gauge | `pool` | 1 = bootstrap scaling active, 0 = formula-driven. | `PoolBootstrapMode` alert. |

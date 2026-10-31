@@ -14,11 +14,15 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	transcriptpg "github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
+	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
 // seedSession creates a session row so a transcript can reference it
@@ -49,7 +53,7 @@ func seedContinuationTurn(t *testing.T, ctx context.Context, sess *sessionpg.Sto
 	}); err != nil {
 		t.Fatalf("seed continuation turn: %v", err)
 	}
-	if err := store.Append(ctx, tenant, id, entries...); err != nil {
+	if _, err := store.Append(ctx, tenant, id, entries...); err != nil {
 		t.Fatalf("seed continuation transcript: %v", err)
 	}
 	return id
@@ -74,7 +78,7 @@ func TestTranscriptStoreContract(t *testing.T) {
 	t.Run("append and get round-trip", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		sid := seedSession(t, ctx, sess, tenant)
-		if err := store.Append(
+		if _, err := store.Append(
 			ctx, tenant, sid,
 			entry("user", "hello"),
 			entry("assistant", "hi there"),
@@ -106,10 +110,10 @@ func TestTranscriptStoreContract(t *testing.T) {
 	t.Run("append assigns continuing monotonic seq", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		sid := seedSession(t, ctx, sess, tenant)
-		if err := store.Append(ctx, tenant, sid, entry("user", "a"), entry("user", "b")); err != nil {
+		if _, err := store.Append(ctx, tenant, sid, entry("user", "a"), entry("user", "b")); err != nil {
 			t.Fatalf("first Append: %v", err)
 		}
-		if err := store.Append(ctx, tenant, sid, entry("user", "c"), entry("user", "d")); err != nil {
+		if _, err := store.Append(ctx, tenant, sid, entry("user", "c"), entry("user", "d")); err != nil {
 			t.Fatalf("second Append: %v", err)
 		}
 		got, err := store.Get(ctx, tenant, sid)
@@ -126,7 +130,7 @@ func TestTranscriptStoreContract(t *testing.T) {
 	t.Run("empty append is a no-op", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		sid := seedSession(t, ctx, sess, tenant)
-		if err := store.Append(ctx, tenant, sid); err != nil {
+		if _, err := store.Append(ctx, tenant, sid); err != nil {
 			t.Fatalf("empty Append: %v", err)
 		}
 		if _, err := store.Get(ctx, tenant, sid); !errors.Is(err, transcriptstore.ErrNotFound) {
@@ -145,7 +149,7 @@ func TestTranscriptStoreContract(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		sid := seedSession(t, ctx, sess, tenant)
 		for i := 0; i < 5; i++ {
-			if err := store.Append(ctx, tenant, sid, entry("user", "msg")); err != nil {
+			if _, err := store.Append(ctx, tenant, sid, entry("user", "msg")); err != nil {
 				t.Fatalf("Append %d: %v", i, err)
 			}
 		}
@@ -239,7 +243,7 @@ func TestTranscriptStoreContract(t *testing.T) {
 		owner := freshTenant(t, ctx, pg)
 		intruder := freshTenant(t, ctx, pg)
 		sid := seedSession(t, ctx, sess, owner)
-		if err := store.Append(ctx, owner, sid, entry("user", "secret")); err != nil {
+		if _, err := store.Append(ctx, owner, sid, entry("user", "secret")); err != nil {
 			t.Fatalf("Append: %v", err)
 		}
 		if _, err := store.Get(ctx, intruder, sid); !errors.Is(err, transcriptstore.ErrNotFound) {
@@ -255,7 +259,7 @@ func TestTranscriptStoreContract(t *testing.T) {
 	t.Run("schema_version round-trips and defaults to v1", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		sid := seedSession(t, ctx, sess, tenant)
-		if err := store.Append(
+		if _, err := store.Append(
 			ctx, tenant, sid,
 			entry("user", "defaulted"),
 			transcriptstore.Entry{Role: "assistant", Content: "explicit", SchemaVersion: 2},
@@ -274,6 +278,98 @@ func TestTranscriptStoreContract(t *testing.T) {
 		}
 		if got[1].SchemaVersion != 2 {
 			t.Errorf("entry[1].SchemaVersion = %d, want 2", got[1].SchemaVersion)
+		}
+	})
+}
+
+// storedMaxSeq reads MAX(seq) for a session straight from session_messages
+// under the tenant's scope, independently of the store's own read paths.
+func storedMaxSeq(t *testing.T, ctx context.Context, pg *containers.Postgres, tenant, sid string) uint64 {
+	t.Helper()
+	var maxSeq int64
+	if err := pgtenant.InTx(ctx, pg.Pool, tenant, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx,
+			`SELECT COALESCE(MAX(seq), 0) FROM session_messages WHERE session_id = $1::uuid AND tenant_id = $2`,
+			sid, tenant).Scan(&maxSeq)
+	}); err != nil {
+		t.Fatalf("read MAX(seq): %v", err)
+	}
+	return uint64(maxSeq)
+}
+
+// spec: §15.1 (REST API), §15 (Open Responses conversation sessions)
+// diagnosis: the Postgres transcript store's Append returned a last Seq that
+// differs from the highest seq it committed, or returned a nonzero Seq for a
+// transaction that rolled back. An Open Responses turn records Append's return
+// value as its response's end sequence and later cuts the rehydrate prefix at
+// it, so a wrong value replays the wrong history; check the maxSeq handling in
+// pkg/gateway/environment/transcriptstore/pgstore Append.
+func TestTranscriptStoreAppendReturnsLastSeq(t *testing.T) {
+	t.Parallel()
+	sess, pg := startStore(t)
+	store := transcriptpg.New(pg.Pool)
+	ctx := context.Background()
+
+	t.Run("return equals the stored MAX(seq) across appends", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		sid := seedSession(t, ctx, sess, tenant)
+		for i, batch := range [][]transcriptstore.Entry{
+			{entry("user", "a")},
+			{entry("user", "b"), entry("assistant", "c"), entry("user", "d")},
+			{entry("assistant", "e"), entry("user", "f")},
+		} {
+			got, err := store.Append(ctx, tenant, sid, batch...)
+			if err != nil {
+				t.Fatalf("Append %d: %v", i, err)
+			}
+			if want := storedMaxSeq(t, ctx, pg, tenant, sid); got != want {
+				t.Fatalf("Append %d returned %d, stored MAX(seq) = %d", i, got, want)
+			}
+		}
+		if got := storedMaxSeq(t, ctx, pg, tenant, sid); got != 6 {
+			t.Fatalf("stored MAX(seq) = %d, want 6", got)
+		}
+	})
+
+	t.Run("empty append returns 0", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		sid := seedSession(t, ctx, sess, tenant)
+		if _, err := store.Append(ctx, tenant, sid, entry("user", "a")); err != nil {
+			t.Fatalf("seed Append: %v", err)
+		}
+		if got, err := store.Append(ctx, tenant, sid); err != nil || got != 0 {
+			t.Fatalf("empty Append = (%d, %v), want (0, nil)", got, err)
+		}
+	})
+
+	t.Run("failed transaction mid-batch returns 0 and commits nothing", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		sid := seedSession(t, ctx, sess, tenant)
+		if _, err := store.Append(ctx, tenant, sid, entry("user", "a"), entry("assistant", "b")); err != nil {
+			t.Fatalf("seed Append: %v", err)
+		}
+		// The second entry violates session_messages_role_check after the
+		// first insert has advanced the sequence inside the transaction.
+		got, err := store.Append(ctx, tenant, sid, entry("user", "c"), entry("narrator", "bad role"))
+		if err == nil {
+			t.Fatal("Append with an invalid role succeeded, want an error")
+		}
+		if got != 0 {
+			t.Fatalf("failed Append returned lastSeq %d, want 0", got)
+		}
+		if stored := storedMaxSeq(t, ctx, pg, tenant, sid); stored != 2 {
+			t.Fatalf("stored MAX(seq) after the rolled-back Append = %d, want 2", stored)
+		}
+	})
+
+	t.Run("failed transaction on a missing session row returns 0", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		got, err := store.Append(ctx, tenant, newUUID(t), entry("user", "orphan"))
+		if err == nil {
+			t.Fatal("Append to a session with no row succeeded, want a foreign-key error")
+		}
+		if got != 0 {
+			t.Fatalf("failed Append returned lastSeq %d, want 0", got)
 		}
 	})
 }

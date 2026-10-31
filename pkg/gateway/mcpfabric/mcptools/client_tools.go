@@ -56,12 +56,14 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 
 	// postByID registers a POST tool that targets one session: it requires
 	// a non-empty `sessionId`, strips it from the forwarded body, and POSTs
-	// the remainder to the per-session path.
-	postByID := func(name, description, subpath string) {
+	// the remainder to the per-session path. inputSchema is the advertised
+	// tool input schema, generated from the REST operation with its `id`
+	// path parameter renamed to `sessionId` (§15.2.1 item 4).
+	postByID := func(name, description, subpath string, inputSchema json.RawMessage) {
 		srv.RegisterTool(mcp.Tool{
 			Name:        name,
 			Description: description,
-			InputSchema: sessionIDInputSchema,
+			InputSchema: inputSchema,
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			id, body, err := extractSessionID(args)
 			if err != nil {
@@ -72,11 +74,12 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 	}
 
 	// getByID registers a GET tool that targets one session subresource.
-	getByID := func(name, description, subpath string) {
+	// inputSchema is generated from the REST operation, as for postByID.
+	getByID := func(name, description, subpath string, inputSchema json.RawMessage) {
 		srv.RegisterTool(mcp.Tool{
 			Name:        name,
 			Description: description,
-			InputSchema: sessionIDInputSchema,
+			InputSchema: inputSchema,
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 			id, err := requireSessionID(args)
 			if err != nil {
@@ -98,26 +101,43 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 	})
 
 	// spec: §15.2 — per-session lifecycle transitions.
-	postByID("lenny/start_session", "Start the agent runtime for a created session.", "/start")
-	postByID("lenny/finalize_workspace", "Seal the session workspace and run setup.", "/finalize")
-	postByID("lenny/terminate_session", "End a session gracefully (marks completed).", "/terminate")
-	postByID("lenny/resume_session", "Resume a suspended or paused session.", "/resume")
+	postByID("lenny/start_session", "Start the agent runtime for a created session.", "/start", GeneratedStartSessionInputSchema)
+	// spec: §15.2, §14.1 (Plan binding) — the optional workspacePlan
+	// argument is forwarded as the REST finalize body. §7.4 Upload Safety
+	// (Upload authorization): every finalize request carries the §7.1
+	// uploadToken, so the required uploadToken argument is stripped from
+	// the body and forwarded in the X-Lenny-Upload-Token header the REST
+	// handler verifies, as lenny/upload_files does.
+	srv.RegisterTool(mcp.Tool{
+		Name:        "lenny/finalize_workspace",
+		Description: "Seal the session workspace using its upload token, binding an optional workspace plan, and run setup.",
+		InputSchema: GeneratedFinalizeWorkspaceInputSchema,
+	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
+		id, token, body, err := extractFinalizeArgs(args)
+		if err != nil {
+			return mcp.ToolResult{}, err
+		}
+		return dispatch(ctx, "POST", "/v1/sessions/"+url.PathEscape(id)+"/finalize", body, jsonBody,
+			map[string]string{"X-Lenny-Upload-Token": token})
+	})
+	postByID("lenny/terminate_session", "End a session gracefully (marks completed).", "/terminate", GeneratedTerminateSessionInputSchema)
+	postByID("lenny/resume_session", "Resume a suspended or paused session.", "/resume", GeneratedResumeSessionInputSchema)
 	// spec: §15.2, §15.2.1 (REST/MCP Consistency Contract) — the interrupt
 	// runs the REST POST /v1/sessions/{id}/interrupt route, the one write of
 	// an interrupt into suspended, and answers its session body.
-	postByID("lenny/interrupt_session", "Interrupt the running agent in a session. REST equivalent: POST /v1/sessions/{id}/interrupt.", "/interrupt")
+	postByID("lenny/interrupt_session", "Interrupt the running agent in a session. REST equivalent: POST /v1/sessions/{id}/interrupt.", "/interrupt", GeneratedInterruptSessionInputSchema)
 
 	// spec: §15.2 — per-session reads.
-	getByID("lenny/get_session_status", "Query a session's state (including suspended).", "")
-	getByID("lenny/list_artifacts", "List the artifacts for a session.", "/artifacts")
-	getByID("lenny/get_token_usage", "Get the reconciled token usage for a session.", "/usage")
+	getByID("lenny/get_session_status", "Query a session's state (including suspended).", "", GeneratedGetSessionStatusInputSchema)
+	getByID("lenny/list_artifacts", "List the artifacts for a session.", "/artifacts", GeneratedListArtifactsInputSchema)
+	getByID("lenny/get_token_usage", "Get the reconciled token usage for a session.", "/usage", GeneratedGetTokenUsageInputSchema)
 
 	// spec: §15.2 — get_session_logs (paginated). `since` and
 	// `limit` map to the GET /v1/sessions/{id}/logs query parameters.
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/get_session_logs",
 		Description: "Get a session's logs (paginated).",
-		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string"},"since":{"type":"string","description":"RFC3339 lower bound; only log lines at or after this time are returned."},"limit":{"type":"integer","description":"Maximum number of log lines to return."}}}`),
+		InputSchema: GeneratedGetSessionLogsInputSchema,
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		var in struct {
 			SessionID string `json:"sessionId"`
@@ -253,10 +273,6 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 	})
 }
 
-// sessionIDInputSchema is the shared JSON schema for the per-session
-// lifecycle/read tools that take a single required `sessionId`.
-var sessionIDInputSchema = json.RawMessage(`{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string","description":"The target session id."}}}`)
-
 // unmarshalArgs decodes the tool arguments, mapping a decode failure to
 // the canonical VALIDATION_ERROR envelope. An empty arguments object
 // leaves the target zero-valued.
@@ -319,6 +335,44 @@ func extractSessionID(args json.RawMessage) (string, []byte, error) {
 		return "", nil, errInvalidArgs(err)
 	}
 	return id, body, nil
+}
+
+// extractFinalizeArgs splits the lenny/finalize_workspace arguments into the
+// session id, the §7.1 uploadToken, and the remaining REST finalize body.
+// A missing session id fails as extractSessionID does, and a missing or
+// empty uploadToken fails with VALIDATION_ERROR naming the field, because
+// the REST finalize refuses a request without it (§7.4 Upload
+// authorization).
+func extractFinalizeArgs(args json.RawMessage) (string, string, []byte, error) {
+	id, rest, err := extractSessionID(args)
+	if err != nil {
+		return "", "", nil, err
+	}
+	m := map[string]json.RawMessage{}
+	if len(rest) > 0 {
+		if err := json.Unmarshal(rest, &m); err != nil {
+			return "", "", nil, errInvalidArgs(err)
+		}
+	}
+	var token string
+	if raw, ok := m["uploadToken"]; ok {
+		if err := json.Unmarshal(raw, &token); err != nil {
+			token = ""
+		}
+	}
+	if strings.TrimSpace(token) == "" {
+		return "", "", nil, mcp.NewToolError("VALIDATION_ERROR",
+			"uploadToken is required", map[string]any{"field": "uploadToken"})
+	}
+	delete(m, "uploadToken")
+	if len(m) == 0 {
+		return id, token, nil, nil
+	}
+	body, err := json.Marshal(m)
+	if err != nil {
+		return "", "", nil, errInvalidArgs(err)
+	}
+	return id, token, body, nil
 }
 
 // normalizeBody returns the arguments as a request body, collapsing an

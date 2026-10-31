@@ -1,0 +1,110 @@
+suite: RuntimeClass name single values source (§17.5, F-17.5.11)
+release:
+  name: lenny
+  namespace: lenny-system
+templates:
+  - runtimeclass-name-guard.yaml
+  - controller-deployment.yaml
+  - gateway-deployment.yaml
+  - admission-policies/label-immutability-webhook.yaml
+  - admission-policies/kyverno-pod-security-runtimeclass-policy.yaml
+  - preflight-job.yaml
+tests:
+  # spec: §17.5 (Cloud Portability) — with no isolation key set the guard
+  # renders no object.
+  - it: renders nothing from the guard by default
+    template: runtimeclass-name-guard.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # spec: §17.5 (Cloud Portability) — isolation.runtimeClassNames is
+  # removed; runtimeClasses.profiles.<profile>.name is the only key for the
+  # RuntimeClass name of a profile, so a set isolation key fails the render
+  # and names the replacement.
+  - it: fails the render when isolation.runtimeClassNames is set
+    template: runtimeclass-name-guard.yaml
+    set:
+      isolation.runtimeClassNames.sandboxed: runsc
+    asserts:
+      - failedTemplate:
+          errorPattern: "isolation.runtimeClassNames is removed: set the RuntimeClass name of each profile with runtimeClasses.profiles"
+
+  - it: fails the render when isolation.runtimeClassNames is set to empty values
+    template: runtimeclass-name-guard.yaml
+    set:
+      isolation.runtimeClassNames.standard: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: "runtimeClasses.profiles.<standard\\|sandboxed\\|microvm>.name"
+
+  # spec: §17.5 (Cloud Portability), §17.2 (RuntimeClass-aware admission),
+  # §16.1 (Metrics) — under a partial override every consumer of the
+  # RuntimeClass name of the sandboxed profile names the same class: the
+  # controller stamps it on pods, the gateway labels runtime_class with it,
+  # the webhook and the Kyverno policy recognize it for the gVisor seccomp
+  # relaxation, and the preflight requires it. The profiles the override
+  # leaves unset keep their default names in every consumer.
+  - it: agrees on the RuntimeClass name across the controller, gateway, webhook, Kyverno, and preflight under a partial override
+    set:
+      runtimeClasses.profiles.sandboxed.name: runsc
+      admissionPolicies.kyverno.enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --sandboxed-runtime-class=runsc
+        template: controller-deployment.yaml
+        documentSelector:
+          path: kind
+          value: Deployment
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --microvm-runtime-class=kata
+        template: controller-deployment.yaml
+        documentSelector:
+          path: kind
+          value: Deployment
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --sandboxed-runtime-class=runsc
+        template: gateway-deployment.yaml
+        documentSelector:
+          path: kind
+          value: Deployment
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --microvm-runtime-class=kata
+        template: gateway-deployment.yaml
+        documentSelector:
+          path: kind
+          value: Deployment
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gvisor-runtime-class=runsc
+        template: admission-policies/label-immutability-webhook.yaml
+        documentIndex: 0
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --kata-runtime-class=kata
+        template: admission-policies/label-immutability-webhook.yaml
+        documentIndex: 0
+      - equal:
+          path: spec.rules[1].preconditions.all[0].value
+          value: runsc
+        template: admission-policies/kyverno-pod-security-runtimeclass-policy.yaml
+      - equal:
+          path: spec.rules[2].preconditions.all[0].value
+          value: kata
+        template: admission-policies/kyverno-pod-security-runtimeclass-policy.yaml
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "--required-runtime-classes=sandboxed=runsc"
+        template: preflight-job.yaml
+        documentSelector:
+          path: kind
+          value: Job
+
+# global.spiffeTrustDomain is a required chart value with no default; a
+# placeholder lets the gateway Deployment render in this suite.
+set:
+  global.spiffeTrustDomain: cluster.local

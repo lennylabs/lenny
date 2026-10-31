@@ -23,6 +23,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/usercreds"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
 	"github.com/lennylabs/lenny/pkg/storerouter"
@@ -61,9 +64,26 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 	// wiring (podBinder == nil) the create-and-start composition no-ops the
 	// claim and just persists the row, so the echo path is unchanged.
 	// spec: §15 built-in adapter single-shot compute model.
-	singleShotBinder := sessionSingleShotBinder{srv: sessionSrv}
+	//
+	// The Open Responses handler also forwards a warm turn to the session's
+	// coordinating replica through the session server, and ends a held
+	// session whose turn failed through the session server's terminal claim
+	// and post-terminal hook. Both are always wired: the session server
+	// answers local when it coordinates every session and not-delivered when
+	// no forward client exists.
+	// spec: §15 (Open Responses conversation sessions); §29.3 (Interactive
+	// message send) Forwarding.
+	singleShotBinder := sessionSingleShotBinder{srv: sessionSrv, runtimes: w.runtimes, capOverrides: w.capOverrides}
 	openaiHandler := translator.NewOpenAIChatHandler(w.sessions, w.exec, translator.OpenAIChatOptions{Clock: clockinject.Now, SingleShotBinder: singleShotBinder, DevTenantHeader: *w.f.devMode})
-	responsesHandler := translator.NewOpenResponsesHandler(w.sessions, w.exec, translator.OpenResponsesOptions{Clock: clockinject.Now, SingleShotBinder: singleShotBinder, Transcripts: w.transcripts, DevTenantHeader: *w.f.devMode})
+	responsesHandler := translator.NewOpenResponsesHandler(w.sessions, w.exec, translator.OpenResponsesOptions{
+		Clock:              clockinject.Now,
+		SingleShotBinder:   singleShotBinder,
+		Transcripts:        w.transcripts,
+		HolderForwarder:    sessionHolderForwarder{srv: sessionSrv},
+		Terminal:           sessionSrv,
+		DevTenantHeader:    *w.f.devMode,
+		PrimaryReadTimeout: *w.f.sessionPrimaryReadTimeout,
+	})
 
 	// ----- §4.9 end-user credential registry -----
 	// The Postgres-backed store envelope-encrypts the §12.9 T4 secret
@@ -235,37 +255,93 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 // package that imports both translator and sessionserver, so the consumer
 // interface can bind to the sessionserver implementor without the import
 // cycle a direct sessionserver → translator dependency would create
-// (sessionserver already imports translator).
+// (sessionserver already imports translator). runtimes and capOverrides
+// resolve the created session's runtime, with its tenant's capabilities
+// applied, for the hold decision.
 //
-// spec: §15 built-in adapter single-shot compute model; §15.2.1 rule 1.
+// spec: §15 built-in adapter single-shot compute model; §15.2.1 rule 1; §15
+// (Open Responses conversation sessions).
 type sessionSingleShotBinder struct {
-	srv *sessionserver.Server
+	srv          *sessionserver.Server
+	runtimes     runtimestore.Store
+	capOverrides runtimecapoverride.Store
 }
 
 // BindSingleShot maps the adapter-resolved single-shot spec into a
 // sessionserver create-and-start request, runs it through the shared
 // CreateAndStartService (which applies the §15.2.1 admission gates, claims a
 // warm pod, launches the runtime, and registers the pod binding), and returns
-// the created session id. A typed sessionserver.ServiceError (a warm-pod or
-// slot claim exhaustion, a §4.9 credential pre-check miss, or an
-// admission-gate rejection) is mapped into a *translator.SingleShotError
-// carrying the HTTP status, error code, retryability, and the Retry-After
-// seconds the adapter re-emits verbatim in its native error envelope. The
-// Retry-After seconds are zero for the CREDENTIAL_POOL_EXHAUSTED case, which
-// sets no header.
+// the created session's id, its recovery generation, and whether it is held.
+// A typed sessionserver.ServiceError (a warm-pod or slot claim exhaustion, a
+// §4.9 credential pre-check miss, or an admission-gate rejection) is mapped
+// into a *translator.SingleShotError carrying the HTTP status, error code,
+// retryability, and the Retry-After seconds the adapter re-emits verbatim in
+// its native error envelope. The Retry-After seconds are zero for the
+// CREDENTIAL_POOL_EXHAUSTED case, which sets no header.
 //
 // spec: §15 built-in adapter single-shot compute model; §7.1 create-and-start
-// atomicity; §4.9 CREDENTIAL_POOL_EXHAUSTED.
-func (b sessionSingleShotBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (string, error) {
+// atomicity; §4.9 CREDENTIAL_POOL_EXHAUSTED; §15 (Open Responses conversation
+// sessions).
+func (b sessionSingleShotBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (translator.SingleShotBinding, error) {
 	resp, serr := b.srv.CreateAndStartService(ctx, spec.TenantID, sessionserver.CreateSessionRequest{
 		RuntimeRef:  spec.RuntimeRef,
 		UserID:      spec.UserID,
 		Environment: spec.Environment,
 	})
 	if serr != nil {
-		return "", singleShotErrorFrom(serr)
+		return translator.SingleShotBinding{}, singleShotErrorFrom(serr)
 	}
-	return resp.ID, nil
+	return translator.SingleShotBinding{
+		SessionID:          resp.ID,
+		RecoveryGeneration: resp.RecoveryGeneration,
+		Hold:               b.holds(ctx, spec.TenantID, resp.SessionIsolationLevel.ConversationContinuity, resp.RuntimeRef),
+	}, nil
+}
+
+// holds reports whether a created session is held after a turn that
+// succeeds: its conversationContinuity is "platform" and its runtime, with
+// the session tenant's capabilities applied, declares multi_turn interaction
+// with injection supported. The runtime resolves as the §5.1 injection gate
+// resolves it. An unwired registry, a resolve error, or a not-found holds
+// nothing, so the session is released after its turn.
+//
+// spec: §15 (Open Responses conversation sessions); §5.1 (Runtime); §7.1.
+func (b sessionSingleShotBinder) holds(ctx context.Context, tenantID, continuity, runtimeRef string) bool {
+	if continuity != "platform" || b.runtimes == nil || runtimeRef == "" {
+		return false
+	}
+	rt, err := runtimecapoverride.ResolveForTenant(ctx, b.runtimes, b.capOverrides, tenantID, runtimeRef)
+	if err != nil {
+		return false
+	}
+	return rt.Capabilities != nil &&
+		rt.Capabilities.Interaction == runtimestore.InteractionMultiTurn &&
+		rt.InjectionSupported()
+}
+
+// sessionHolderForwarder adapts *sessionserver.Server to the
+// translator.HolderForwarder consumer interface: a warm Open Responses turn
+// forwards to the session's coordinating replica over CH-HOLDERFORWARD, and
+// is local exactly when the session server reports ForwardLocal.
+//
+// spec: §29.3 (Interactive message send) Forwarding; §15 (Open Responses
+// conversation sessions).
+type sessionHolderForwarder struct {
+	srv *sessionserver.Server
+}
+
+// ForwardResponsesTurn forwards the turn and reports whether this replica
+// serves it.
+func (f sessionHolderForwarder) ForwardResponsesTurn(w http.ResponseWriter, r *http.Request, row sessionstore.Session, body []byte,
+	refuse func(w http.ResponseWriter, currentState string),
+) bool {
+	return f.srv.ForwardResponsesTurn(w, r, row, body, refuse) == sessionserver.ForwardLocal
+}
+
+// Forwarded reports whether the request arrived forwarded from another
+// replica.
+func (sessionHolderForwarder) Forwarded(ctx context.Context) bool {
+	return sessionserver.Forwarded(ctx)
 }
 
 // singleShotErrorFrom maps a sessionserver.ServiceError into the

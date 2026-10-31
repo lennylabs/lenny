@@ -876,9 +876,10 @@ func TestStorageRehydrateReservationTermReadsIdenticallyAcrossSpec(t *testing.T)
 //
 //	table (architecture.md, security.md) or the concepts.md "Gateway-mediated
 //	file delivery" prose have drifted from the amended §13.1 spec rows. §13.1
-//	records that the agent pod PUTs checkpoint chunks to, and on resume GETs
-//	them from, object storage against gateway-minted presigned capabilities —
-//	the one exception to gateway-mediated file delivery. This check anchors on
+//	records that the agent pod PUTs checkpoint chunks to, and on resume and at
+//	a derived or replayed session's first bind GETs them from, object storage
+//	against gateway-minted presigned capabilities, the one exception to
+//	gateway-mediated file delivery. This check anchors on
 //	the spec first (so a docs mirror is measured against the live §13.1 rows,
 //	not a stale re-typed phrase) and then asserts each mirror agrees. A failure
 //	means the §13.1 row that grants the presigned path was removed, or a docs
@@ -895,14 +896,20 @@ func TestCheckpointDocsMirrorsAgreeWithSpec131(t *testing.T) {
 	specTransfer := requireLine(t, s131, "| Checkpoint transfer |")
 	requireAllContain(t, "§13.1 Checkpoint transfer row", specTransfer, []string{
 		"`PUT`s checkpoint chunks",
+		"at a derived or replayed session's first bind",
 		"gateway-minted presigned URLs",
 	})
 
 	// architecture.md and security.md §13.1 table mirrors: the File delivery row
-	// names the checkpoint-chunk exception, matching the amended spec row.
-	tableMirrors := []struct{ page, heading string }{
-		{filepath.Join("docs", "getting-started", "architecture.md"), "Pod security settings"},
-		{filepath.Join("docs", "operator-guide", "security.md"), "Security Context"},
+	// names the checkpoint-chunk exception, matching the amended spec row. The
+	// security.md row names the GET phases, so it must name the first-bind
+	// restore; the architecture.md row names no phase.
+	tableMirrors := []struct {
+		page, heading string
+		namesPhases   bool
+	}{
+		{filepath.Join("docs", "getting-started", "architecture.md"), "Pod security settings", false},
+		{filepath.Join("docs", "operator-guide", "security.md"), "Security Context", true},
 	}
 	for _, m := range tableMirrors {
 		body := readDoc(t, filepath.Join(root, m.page))
@@ -915,6 +922,11 @@ func TestCheckpointDocsMirrorsAgreeWithSpec131(t *testing.T) {
 			"Checkpoint chunk objects are the one exception",
 			"gateway-minted presigned capabilities",
 		})
+		if m.namesPhases {
+			requireAllContain(t, m.page+" §13.1 File delivery row", delivery, []string{
+				"at a derived or replayed session's first bind",
+			})
+		}
 	}
 
 	// concepts.md prose: the file-delivery section states the exception and does
@@ -927,6 +939,7 @@ func TestCheckpointDocsMirrorsAgreeWithSpec131(t *testing.T) {
 	requireAllContain(t, "concepts.md gateway-mediated file delivery prose", delivery, []string{
 		"Checkpoint chunk objects are the one exception",
 		"gateway-minted presigned capability",
+		"at a derived or replayed session's first bind",
 	})
 	requireNoneContain(t, "concepts.md gateway-mediated file delivery prose", delivery, []string{
 		"no direct object store access from pods",

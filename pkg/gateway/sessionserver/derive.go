@@ -8,8 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
@@ -17,9 +18,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/derivelock"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
 // DeriveRequest is the §7.1 / §15.1 POST /v1/sessions/{id}/derive body.
@@ -72,6 +75,11 @@ type DeriveRequest struct {
 // `workspaceSnapshot*` echo per §7.1.
 type DeriveResponse struct {
 	SessionResponse
+
+	// UploadToken is the §7.1 uploadToken the client supplies on every
+	// upload into the derived session until it is finalized, as on a
+	// `POST /v1/sessions` response. Treat as a secret per §7.1.
+	UploadToken string `json:"uploadToken"`
 
 	// WorkspaceSnapshotSource echoes the §7.1 derive response field.
 	WorkspaceSnapshotSource string `json:"workspaceSnapshotSource,omitempty"`
@@ -273,6 +281,27 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve the derived session's runtime. Inherit the source's value
+	// when the request omits it, the same default as
+	// `replayMode: prompt_history`.
+	runtimeRef := req.RuntimeRef
+	if runtimeRef == "" {
+		runtimeRef = source.RuntimeRef
+	}
+	// spec: §7.1 (Derive session semantics) derive rule 2, §14.1
+	// (CreateSessionRequest.pool), §4 (pool_tenant_access) — the derived row
+	// starts in the initial state of a fresh CreateSession and its claim is
+	// pinned to targetPool, so a named targetPool passes the same selection
+	// check as a create-body pool: 400 VALIDATION_ERROR for a pool that does
+	// not exist, is not backed by the runtime, or does not satisfy the target
+	// profile, and 403 FORBIDDEN for a pool the tenant holds no grant on. The
+	// check runs before the downgrade audit event, the reservation, and the
+	// copy, so a rejected pin leaves no trace. A derive that omits targetPool
+	// inherits the source's pool and is not re-validated.
+	if !s.requirePoolSelectable(w, r, tenantID, runtimeRef, string(target), req.TargetPool, "targetPool") {
+		return
+	}
+
 	principal, _ := authmw.FromContext(r.Context())
 	if !isolation.AtLeastAsRestrictive(target, source.IsolationProfile) {
 		// Downgrade requested. Only platform-admin may override.
@@ -308,13 +337,8 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resolve the derived session's runtime / userId. Inherit the
-	// source's values when the request omits them — same default
-	// shape as `replayMode: prompt_history`.
-	runtimeRef := req.RuntimeRef
-	if runtimeRef == "" {
-		runtimeRef = source.RuntimeRef
-	}
+	// Resolve the derived session's userId, inheriting the source's value
+	// when the request omits it.
 	userID := req.UserID
 	if userID == "" {
 		userID = source.UserID
@@ -364,6 +388,7 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:              now,
 		RuntimeRef:             runtimeRef,
 		PoolRef:                pool,
+		Pool:                   req.TargetPool,
 		IsolationProfile:       target,
 		ExecutionMode:          derivedLevel.ExecutionMode,
 		ScrubPolicy:            derivedLevel.ScrubPolicy,
@@ -376,7 +401,33 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 		// parent_workspace_ref below.
 		ParentWorkspaceRef: source.WorkspaceSnapshot.Ref,
 	}
+	// spec: §7.1 (Derive session semantics) derive rule 2, §7.1 (Atomicity
+	// of session creation (steps 2–8)) — the derived row is inserted in the
+	// same initial state as a fresh CreateSession, so it claims its warm pod
+	// (or reserves its slot) before the insert, as POST /v1/sessions does. A
+	// claim failure undoes the copy and the reservation and answers the
+	// create path's claim-failure envelope with no session_id. The claim
+	// runs after the copy so a failed copy holds no pod.
+	createClaim, ok := s.claimDerivedRow(w, r, &derived)
+	if !ok {
+		s.undoDerivedWrites(r.Context(), tenantID, derivedID)
+		return
+	}
+	// spec: §7.1 (Normal Flow) step 8, §7.4 (Upload Safety) — the derived
+	// session goes through the standard upload → finalize → start lifecycle,
+	// so it carries an uploadToken minted and stored in the same atomic unit
+	// as the insert. A mint failure releases the claim, undoes the copy and
+	// the reservation, and answers with no session_id.
+	uploadToken, ok := s.mintUploadToken(w, r, &derived, createClaim, trace.SpanFromContext(r.Context()))
+	if !ok {
+		s.undoDerivedWrites(r.Context(), tenantID, derivedID)
+		return
+	}
 	if err := s.store.CreateReserved(r.Context(), derived); err != nil {
+		// spec: §7.1 (Atomicity of session creation (steps 2–8)) — every
+		// insert failure releases the create-time claim, as the create path
+		// does, so no pod leaks past a response that carries no session_id.
+		s.rollbackClaim(r.Context(), createClaim, derivedID)
 		// spec: §12.8 (Lifecycle fence and drain) — a fence refusal, or a
 		// reservation the owner's erasure ended, undoes the copy, releases
 		// the reservation, and answers 403. Any other insert error keeps
@@ -394,6 +445,7 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 
 	resp := DeriveResponse{
 		SessionResponse:              toResponse(derived),
+		UploadToken:                  uploadToken,
 		WorkspaceSnapshotSource:      string(derived.WorkspaceSnapshot.Source),
 		WorkspaceSnapshotTimestamp:   derived.WorkspaceSnapshot.Timestamp.UTC().Format("2006-01-02T15:04:05.999999999Z07:00"),
 		WorkspaceSnapshotContentHash: derived.WorkspaceSnapshot.ContentHash,
@@ -404,18 +456,31 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// claimDerivedRow runs the create-time claim of claimForNewRow for a row
+// that derive or replay is about to insert. A derived or replayed row binds
+// no workspace plan at create (its plan binds at finalize, and its workspace
+// comes from the copied snapshot at the first bind), so the claim carries an
+// empty plan. The response renders the level from the row, on which the
+// claim stamps the resolved pool's level, so the returned level is unused.
+// On failure it has written the claim-failure envelope and returns ok=false.
+// spec: §7.1 (Derive session semantics) derive rule 2; §7.1 (Derive restore
+// semantics); §15.1 (Session Replay Semantics).
+func (s *Server) claimDerivedRow(w http.ResponseWriter, r *http.Request, row *sessionstore.Session) (*podsession.ClaimResult, bool) {
+	_, claim, ok := s.claimForNewRow(w, r, row, workspaceplan.Plan{}, SessionIsolationLevel{}, trace.SpanFromContext(r.Context()))
+	return claim, ok
+}
+
 // deriveChunkedCheckpoint copies every chunk of the parent's §10.1
 // chunked checkpoint into the derived session's own prefix and writes a
 // derived manifest row, returning the derived session's
 // WorkspaceSnapshot.Ref (the four-segment object-path form
 // /{tenant}/checkpoints/{derived_session}/{derived_checkpoint_id} the
 // snapshot parsers accept, whose last segment is the derived checkpoint_id).
-// It reports handled=true when the parent has a chunked manifest that it
-// acted on, so the caller skips the legacy single-snapshot copy;
-// handled=false leaves the caller on the legacy path (dev mode, a store
-// without Copier, or a checkpoint predating the chunked model). A copy or
-// manifest-write failure returns handled=true with a non-nil error so the
-// caller maps it to the derive error response.
+// The caller has checked that every dependency is wired. A parent ref with
+// no manifest row, or a row with no chunk, returns
+// errSnapshotRefUnresolvable; a missing chunk object returns the store's
+// blobstore.ErrNotFound; any other manifest read, copy, or manifest write
+// failure returns that error.
 //
 // The parent's ref is resolved by its trailing checkpoint_id segment, so
 // both the bare-checkpoint_id and four-segment ref forms name the same
@@ -425,26 +490,26 @@ func (s *Server) handleDerive(w http.ResponseWriter, r *http.Request) {
 // complete via the intent-row model (Put → ConfirmChunk →
 // Finalise(partial=false)).
 //
-// spec: §10.1; §7.1 derive copy semantics; §4.5.
-func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstore.Session, derivedID string, now time.Time) (derivedRef string, handled bool, err error) {
-	if s.checkpointManifests == nil || s.checkpointManifestWriter == nil {
-		return "", false, nil
-	}
-	if _, ok := s.blobs.(blobstore.Copier); !ok || source.WorkspaceSnapshot == nil || source.WorkspaceSnapshot.Ref == "" {
-		return "", false, nil
-	}
+// spec: §10.1; §7.1 (Derive copy semantics); §7.1 (Derive session
+// semantics) derive rule 2; §4.5.
+func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstore.Session, derivedID string, now time.Time) (string, error) {
 	parentCheckpointID := checkpointIDFromSnapshotRef(source.WorkspaceSnapshot.Ref)
 	parentRec, gerr := s.checkpointManifests.Get(ctx, source.TenantID, parentCheckpointID)
-	if gerr != nil || parentRec.ChunkCount <= 0 {
-		// No chunked manifest for this ref: fall through to the legacy path.
-		return "", false, nil
+	if errors.Is(gerr, partialmanifeststore.ErrNotFound) {
+		return "", errSnapshotRefUnresolvable
+	}
+	if gerr != nil {
+		return "", fmt.Errorf("read manifest of checkpoint %s: %w", parentCheckpointID, gerr)
+	}
+	if parentRec.ChunkCount <= 0 {
+		return "", errSnapshotRefUnresolvable
 	}
 	encoding := parentRec.ChunkEncoding
 	if encoding == "" {
 		encoding = partialmanifeststore.ChunkEncodingTarGz
 	}
 	derivedCheckpointID := s.idFn()
-	derivedRef = checkpointSnapshotRef(source.TenantID, derivedID, derivedCheckpointID)
+	derivedRef := checkpointSnapshotRef(source.TenantID, derivedID, derivedCheckpointID)
 
 	// spec: §12.5 ll. 295 — copy each chunk through the tenant-scoped
 	// boundary so both source and destination URIs are validated against
@@ -455,7 +520,7 @@ func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstor
 		srcURI := resumechunks.ChunkObjectURI(source.TenantID, source.ID, parentCheckpointID, uint32(n), encoding)
 		dstURI := resumechunks.ChunkObjectURI(source.TenantID, derivedID, derivedCheckpointID, uint32(n), encoding)
 		if cerr := scoped.Copy(srcURI, dstURI); cerr != nil && !errors.Is(cerr, blobstore.ErrConflict) {
-			return derivedRef, true, cerr
+			return "", cerr
 		}
 	}
 
@@ -477,17 +542,17 @@ func (s *Server) deriveChunkedCheckpoint(ctx context.Context, source sessionstor
 		CreatedAt:                   now,
 	}
 	if perr := s.checkpointManifestWriter.Put(ctx, rec); perr != nil {
-		return derivedRef, true, perr
+		return "", perr
 	}
 	if cerr := s.checkpointManifestWriter.ConfirmChunk(ctx, source.TenantID, derivedCheckpointID,
 		parentRec.ChunkCount-1, parentRec.WorkspaceBytesUploaded); cerr != nil {
-		return derivedRef, true, cerr
+		return "", cerr
 	}
 	if ferr := s.checkpointManifestWriter.Finalise(ctx, source.TenantID, derivedCheckpointID,
 		false, partialmanifeststore.ReasonComplete); ferr != nil {
-		return derivedRef, true, ferr
+		return "", ferr
 	}
-	return derivedRef, true, nil
+	return derivedRef, nil
 }
 
 // checkpointSnapshotRef builds the four-segment object-path form the
@@ -524,57 +589,6 @@ func copySnapshotRef(src *sessionstore.WorkspaceSnapshot, newRef string) *sessio
 		Timestamp:   src.Timestamp,
 		ContentHash: src.ContentHash,
 	}
-}
-
-// parseDeriveURIs builds the blobstore.URI pair the §4.5 ll. 311
-// Copy call needs. The parent's `Ref` may carry either a stored
-// `lenny-blob://...` URI or the historical MinIO path; this helper
-// resolves whichever form is present. Returns ok=false when the
-// reference can't be normalised to a URI in the caller's tenant; the
-// caller then fails the copy closed.
-//
-// spec: §4.5 (Artifact Store); §7.1 (Derive copy semantics).
-func parseDeriveURIs(parentRef, tenantID, sourceSessionID, derivedSessionID string) (src, dst blobstore.URI, ok bool) {
-	if strings.HasPrefix(parentRef, blobstore.Scheme+"://") {
-		parsed, err := blobstore.ParseURI(parentRef)
-		if err != nil {
-			return blobstore.URI{}, blobstore.URI{}, false
-		}
-		src = parsed
-	} else {
-		// Path-style reference (e.g. "/acme/workspace/sess/snap.tar").
-		// Strip the leading slash if present and pull out the part_id.
-		trimmed := strings.TrimPrefix(parentRef, "/")
-		parts := strings.SplitN(trimmed, "/", 4)
-		if len(parts) < 4 {
-			return blobstore.URI{}, blobstore.URI{}, false
-		}
-		src = blobstore.URI{
-			TenantID:   parts[0],
-			ObjectType: blobstore.ObjectType(parts[1]),
-			SessionID:  parts[2],
-			PartID:     parts[3],
-			TTL:        blobstore.DerivedSnapshotTTL,
-		}
-	}
-	if src.TenantID != tenantID {
-		return blobstore.URI{}, blobstore.URI{}, false
-	}
-	dst = src
-	dst.SessionID = derivedSessionID
-	dst.PartID = derivedSnapshotPart(sourceSessionID)
-	if dst.TTL == 0 {
-		dst.TTL = blobstore.DerivedSnapshotTTL
-	}
-	return src, dst, true
-}
-
-// derivedSnapshotPart is the §4.5 part-id stamp on the derived
-// workspace object — a stable identifier so the same source +
-// derived pair always names the same object, making the §7.1
-// derive idempotent under retry.
-func derivedSnapshotPart(sourceSessionID string) string {
-	return "derived-from-" + sourceSessionID
 }
 
 // persistDeriveFailure writes the §7.1 derive rule 2 opt-in

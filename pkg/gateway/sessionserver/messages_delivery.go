@@ -115,11 +115,13 @@ func messageForwardKind(req MessageRequest) ForwardKind {
 // forwardMessageBatch forwards the batch, as the raw bytes the client sent,
 // to the session's coordinating replica when this replica does not
 // coordinate it, and reports whether this replica delivers the batch itself.
-// A batch with no inReplyTo whose forward is not delivered is held in the
-// session's DLQ with the TTL of the §7.2 dead-letter table's recovering-state
-// row and answered with the hold's receipt: queued, dropped with
-// dlq_overflow, TARGET_TERMINAL, or error with inbox_unavailable. Every other
-// outcome other than local delivery has already been answered.
+// A batch with no inReplyTo to a running or input_required session whose
+// forward is not delivered is held in the session's DLQ with the TTL of the
+// §7.2 dead-letter table's recovering-state row and answered with the hold's
+// receipt: queued, dropped with dlq_overflow, TARGET_TERMINAL, or error with
+// inbox_unavailable. Every other outcome other than local delivery,
+// including a not-delivered batch to a session in any other state, has
+// already been answered.
 //
 // spec: §29.3 (Interactive message send) Forwarding rules 1, 6, and 7, §7.2
 // (Message delivery routing — seven paths, path 6)
@@ -129,7 +131,7 @@ func (s *Server) forwardMessageBatch(w http.ResponseWriter, r *http.Request, row
 	case ForwardLocal:
 		return true
 	case ForwardNotDelivered:
-		if kind == ForwardKindMessageNoReplyTo {
+		if HoldsUndelivered(row, kind) {
 			s.holdUndeliveredForward(w, r, row, req)
 		}
 	}
@@ -441,8 +443,8 @@ func (d *restDelivery) rerouteUnbound(row sessionstore.Session, msgs []executor.
 func (d *restDelivery) notCoordinating(row sessionstore.Session, deliverIdx []int) (deliveryOutcome, bool) {
 	s := d.s
 	kind := messageForwardKind(d.req)
-	if kind != ForwardKindMessageNoReplyTo {
-		s.refuseForward(d.w, d.r.Context(), row, kind, ForwardNotDelivered)
+	if !HoldsUndelivered(row, kind) {
+		s.refuseForward(d.w, d.r.Context(), row, kind, ForwardNotDelivered, nil)
 		return deliveryOutcome{}, false
 	}
 	outcome, terminal := s.holdOutcomeWithTTL(d.r.Context(), row, d.req, deliverIdx, s.recoveringDLQTTL(row))
@@ -727,7 +729,7 @@ func (s *Server) recordDeliveredResponse(ctx context.Context, tenantID string, r
 				})
 			}
 		}
-		_ = s.transcripts.Append(ctx, tenantID, row.ID, entries...)
+		_, _ = s.transcripts.Append(ctx, tenantID, row.ID, entries...)
 	}
 
 	// Publish the §15.1 session events so SSE subscribers observe

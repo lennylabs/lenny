@@ -191,19 +191,50 @@ func createdSession(t *testing.T, c *kind.Cluster, probe, gatewayIP string, role
 // that need a pool other than the sidecar echo pool.
 func createdSessionOn(t *testing.T, c *kind.Cluster, probe, gatewayIP string, role t5Role, runtimeRef string) string {
 	t.Helper()
+	id, _ := createdSessionWithToken(t, c, probe, gatewayIP, role, runtimeRef)
+	return id
+}
+
+// createdSessionWithToken is createdSessionOn returning the §7.1
+// uploadToken from the create response as well, which a later finalize
+// carries (§7.4 Upload authorization).
+func createdSessionWithToken(t *testing.T, c *kind.Cluster, probe, gatewayIP string, role t5Role, runtimeRef string) (string, string) {
+	t.Helper()
 	body := fmt.Sprintf(`{"runtimeRef":%q,"userId":%q}`, runtimeRef, role.user)
 	res := t5GatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/sessions", role, body)
 	if res.statusCode != 201 {
 		t.Fatalf("create session: status %d (want 201), body=%s", res.statusCode, res.body)
 	}
 	var created struct {
-		ID string `json:"id"`
+		ID          string `json:"id"`
+		UploadToken string `json:"uploadToken"`
 	}
 	t5DecodeJSON(t, res.body, &created)
 	if created.ID == "" {
 		t.Fatalf("create session returned no id: %s", res.body)
 	}
-	return created.ID
+	return created.ID, created.UploadToken
+}
+
+// finalizeRetry posts /v1/sessions/{id}/finalize carrying the §7.1
+// uploadToken in the X-Lenny-Upload-Token header, retrying a transport
+// failure or a 5xx as t5GatewayRequestRetry does. spec: §7.4 (Upload
+// authorization).
+func finalizeRetry(t *testing.T, c *kind.Cluster, probe, gatewayIP, id, uploadToken string, role t5Role, body string) t5Response {
+	t.Helper()
+	header := []string{"X-Lenny-Upload-Token: " + uploadToken}
+	var last t5Response
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		last = t5GatewayCurl(t, c, probe, gatewayIP, "POST", "/v1/sessions/"+id+"/finalize", role, body, header, false)
+		if last.curlExit == 0 && last.statusCode >= 0 && last.statusCode < 500 {
+			return last
+		}
+		if time.Now().After(deadline) {
+			return last
+		}
+		time.Sleep(2 * time.Second)
+	}
 }
 
 // leaseRowCountForSession returns the number of credential_leases rows whose
@@ -312,7 +343,7 @@ func TestEagerClaimFinalizeMaterializesAgainstWarmPod(t *testing.T) {
 	// before any claim is taken.
 	t5AllowSessionsWithNoEnvironment(t, c, probe, gatewayIP, role.tenant)
 
-	id := createdSession(t, c, probe, gatewayIP, role)
+	id, uploadToken := createdSessionWithToken(t, c, probe, gatewayIP, role, eagerEchoRuntime)
 	t.Cleanup(func() {
 		_ = t5GatewayRequest(t, c, probe, gatewayIP, "POST", "/v1/sessions/"+id+"/terminate", role, "")
 	})
@@ -322,7 +353,7 @@ func TestEagerClaimFinalizeMaterializesAgainstWarmPod(t *testing.T) {
 	// pod and reaches ready.
 	finalizeBody := `{"workspacePlan":{"schemaVersion":1,"sources":[` +
 		`{"type":"inlineFile","path":"CLAUDE.md","content":"# e2e finalized","mode":"0644"}]}}`
-	res := t5GatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/sessions/"+id+"/finalize", role, finalizeBody)
+	res := finalizeRetry(t, c, probe, gatewayIP, id, uploadToken, role, finalizeBody)
 	if res.statusCode != 200 {
 		t.Fatalf("finalize: status %d, want 200; body=%s", res.statusCode, res.body)
 	}
@@ -420,11 +451,11 @@ func TestEagerClaimTerminateReadySessionReleasesPodAndLease(t *testing.T) {
 	t5AllowSessionsWithNoEnvironment(t, c, probe, gatewayIP, role.tenant)
 
 	beforeClaims := claimCount(t, c)
-	id := createdSession(t, c, probe, gatewayIP, role)
+	id, uploadToken := createdSessionWithToken(t, c, probe, gatewayIP, role, eagerEchoRuntime)
 
 	// Finalize so the session reaches ready and the §4.9 lease is assigned at
 	// the finalize barrier.
-	res := t5GatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/sessions/"+id+"/finalize", role, "")
+	res := finalizeRetry(t, c, probe, gatewayIP, id, uploadToken, role, "")
 	if res.statusCode != 200 {
 		t.Fatalf("finalize: status %d, want 200; body=%s", res.statusCode, res.body)
 	}

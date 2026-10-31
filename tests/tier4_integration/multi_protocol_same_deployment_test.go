@@ -297,8 +297,9 @@ func openAIChatCreatePrompt(t *testing.T, base, prompt string) string {
 }
 
 // openResponsesCreatePrompt drives a single POST /v1/responses (the
-// Open Responses create+prompt-in-one) and returns the session id (the
-// translator sets the response id to the session id). The Open
+// Open Responses create+prompt-in-one) and returns the session id: the
+// response id is <session>.<n>, so the session id is the prefix before
+// the last "." and the first turn's ordinal is 1. The Open
 // Responses envelope carries metadata only (no echoed output text by
 // design), so the prompt-acceptance assertion is the 200 status plus the
 // session being readable back through the shared deployment.
@@ -322,10 +323,14 @@ func openResponsesCreatePrompt(t *testing.T, base, prompt string) string {
 	if out.Object != "response" {
 		t.Errorf("Open Responses object: got %q, want response", out.Object)
 	}
-	if out.ID == "" {
-		t.Fatalf("Open Responses envelope carried no id: %s", raw)
+	dot := strings.LastIndex(out.ID, ".")
+	if dot <= 0 {
+		t.Fatalf("Open Responses envelope id %q is not <session>.<n>: %s", out.ID, raw)
 	}
-	return out.ID
+	if n := out.ID[dot+1:]; n != "1" {
+		t.Errorf("Open Responses first response ordinal: got %q, want 1", n)
+	}
+	return out.ID[:dot]
 }
 
 // assertEquivalentErrors triggers the same class of invalid input (a

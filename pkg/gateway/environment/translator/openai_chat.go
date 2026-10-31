@@ -118,6 +118,12 @@ type OpenAIErrorBody struct {
 	Message string `json:"message"`
 	Code    string `json:"code,omitempty"`
 	Param   string `json:"param,omitempty"`
+	// CurrentState carries §29.3's currentState in the native envelope on a
+	// forwarded Open Responses turn the coordinating replica did not serve
+	// (409 TARGET_NOT_READY).
+	// spec: §29.3 (Interactive message send) Forwarding rules 6 and 7; §15
+	// (Open Responses conversation sessions)
+	CurrentState string `json:"current_state,omitempty"`
 }
 
 // OpenAIChatHandler is the §15.1 POST /v1/chat/completions handler.
@@ -255,7 +261,10 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 	// §17.4 in-memory wiring the no-op binder persists the row without
 	// claiming a pod, so the one code path serves both.
 	// spec: §15 built-in adapter single-shot compute model; §7.1 atomicity.
-	sessionID, err := h.binder.BindSingleShot(r.Context(), SingleShotSpec{
+	// The binding's Hold is ignored: a Chat Completions session is released
+	// after its one turn whatever its runtime declares.
+	// spec: §15 (Built-in adapter single-shot compute model).
+	binding, err := h.binder.BindSingleShot(r.Context(), SingleShotSpec{
 		TenantID:    tenantID,
 		UserID:      req.User,
 		RuntimeRef:  runtimeRef,
@@ -265,6 +274,7 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 		writeSingleShotError(w, err)
 		return
 	}
+	sessionID := binding.SessionID
 
 	// Release the claimed pod and its §4.9 lease on every exit path,
 	// recording the §6.2 terminal disposition. disp starts failed and
@@ -451,17 +461,32 @@ func writeOpenAIError(w http.ResponseWriter, status int, typ, message string) {
 // the client, which the plain writeOpenAIError does not carry.
 // spec: §15 built-in adapter single-shot compute model; §7.1 atomicity.
 func writeOpenAIErrorWithCode(w http.ResponseWriter, status int, typ, code, message string, retryAfterSeconds int) {
-	w.Header().Set("Content-Type", "application/json")
 	if retryAfterSeconds > 0 {
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds))
 	}
+	writeOpenAIErrorBody(w, status, OpenAIErrorBody{Type: typ, Message: message, Code: code})
+}
+
+// writeOpenAIErrorBody writes body as the OpenAI-compatible error envelope
+// with status.
+func writeOpenAIErrorBody(w http.ResponseWriter, status int, body OpenAIErrorBody) {
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(OpenAIError{
-		Error: OpenAIErrorBody{
-			Type:    typ,
-			Message: message,
-			Code:    code,
-		},
+	_ = json.NewEncoder(w).Encode(OpenAIError{Error: body})
+}
+
+// writeTargetNotReady writes the native 409 TARGET_NOT_READY for an Open
+// Responses warm turn whose forward to the coordinating replica was not
+// delivered or has an unknown outcome, carrying the session's state as
+// error.current_state.
+// spec: §29.3 (Interactive message send) Forwarding rules 6 and 7; §15 (Open
+// Responses conversation sessions)
+func writeTargetNotReady(w http.ResponseWriter, currentState string) {
+	writeOpenAIErrorBody(w, http.StatusConflict, OpenAIErrorBody{
+		Type:         openAIErrorType(http.StatusConflict),
+		Message:      "the session's coordinating gateway replica could not be reached; retry the request",
+		Code:         "TARGET_NOT_READY",
+		CurrentState: currentState,
 	})
 }
 

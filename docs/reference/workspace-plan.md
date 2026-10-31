@@ -8,7 +8,7 @@ description: Declarative specification for how a session's workspace is prepared
 
 # WorkspacePlan Schema
 
-The `WorkspacePlan` is the declarative specification for how a session's workspace is prepared. It is supplied at session creation (`POST /v1/sessions`) and controls workspace source materialization, setup commands, environment, timeouts, retry behavior, callbacks, credentials, and delegation budgets.
+The `WorkspacePlan` is the declarative specification for how a session's workspace is prepared. Its inner `workspacePlan` object binds once per session: in the session creation request (`POST /v1/sessions` or `POST /v1/sessions/start`), or, when creation carried none, in the body of `POST /v1/sessions/{id}/finalize`. A plan that names uploads binds at finalize, because uploads happen after the session is created. The request envelope controls workspace source materialization, setup commands, environment, timeouts, retry behavior, callbacks, credentials, and delegation budgets.
 
 The canonical, versioned schema is [`spec/14_workspace-plan-schema.md`](https://github.com/lennylabs/lenny/blob/main/spec/14_workspace-plan-schema.md). This page is a reference distillation; for every field's full semantics, defaults, and validation rules, consult the spec.
 
@@ -25,8 +25,6 @@ The canonical, versioned schema is [`spec/14_workspace-plan-schema.md`](https://
     "schemaVersion": 1,
     "sources": [
       { "type": "inlineFile", "path": "CLAUDE.md", "content": "# Project Instructions\n..." },
-      { "type": "uploadFile", "path": "src/main.ts", "uploadRef": "upload_abc123" },
-      { "type": "uploadArchive", "pathPrefix": ".", "uploadRef": "upload_def456", "format": "tar.gz" },
       { "type": "mkdir", "path": "output/" }
     ],
     "setupCommands": [
@@ -42,6 +40,26 @@ The canonical, versioned schema is [`spec/14_workspace-plan-schema.md`](https://
   "delegationLease": { "maxDepth": 2, "maxChildrenTotal": 5 }
 }
 ```
+
+The plan in this creation example carries no upload sources. A plan that names uploads binds in the finalize body, after the uploads return their `uploadRef` values:
+
+```json
+{
+  "workspacePlan": {
+    "schemaVersion": 1,
+    "sources": [
+      { "type": "uploadFile", "path": "src/main.ts", "uploadRef": "<uploadRef>" },
+      { "type": "uploadArchive", "pathPrefix": ".", "uploadRef": "<uploadRef>", "format": "tar.gz" },
+      { "type": "mkdir", "path": "output/" }
+    ],
+    "setupCommands": [
+      { "cmd": "npm ci", "timeoutSeconds": 300 }
+    ]
+  }
+}
+```
+
+Each `<uploadRef>` is the value from the response of `POST /v1/sessions/{id}/upload` or `POST /v1/sessions/{id}/upload-archive` for the same session.
 
 ---
 
@@ -71,12 +89,12 @@ The canonical, versioned schema is [`spec/14_workspace-plan-schema.md`](https://
 | Type | Required fields | Purpose |
 |:-----|:----------------|:--------|
 | `inlineFile` | `path`, `content` | Write literal content (small files, config, instructions) into the workspace. |
-| `uploadFile` | `path`, `uploadRef` | Materialize a single file previously uploaded via `POST /v1/sessions/{id}/upload`. |
-| `uploadArchive` | `pathPrefix`, `uploadRef`, `format` | Extract an uploaded archive (`tar.gz`, `zip`) under `pathPrefix`. |
+| `uploadFile` | `path`, `uploadRef` | Materialize a single file uploaded via `POST /v1/sessions/{id}/upload`. `uploadRef` is the opaque value from the upload response for the same session; pass it verbatim. A plan bound at session creation cannot carry this source. |
+| `uploadArchive` | `pathPrefix`, `uploadRef`, `format` | Extract an archive uploaded via `POST /v1/sessions/{id}/upload-archive` (`tar`, `tar.gz`, or `zip`) under `pathPrefix`. `uploadRef` is the opaque value from the upload response for the same session; pass it verbatim. A plan bound at session creation cannot carry this source. |
 | `mkdir` | `path` | Create an empty directory (useful for output collection). |
-| `gitClone` | `url`, `ref`, `path` | Clone a Git repository at the specified ref into `path`. Optional `depth`, `submodules`, and `auth` (credential reference). The gateway resolves `ref` to a commit SHA at session-creation time and writes it back as `resolvedCommitSha` on the stored source (readable via `GET /v1/sessions/{id}`); ref-resolution failures return `422 GIT_CLONE_REF_UNRESOLVABLE` (auth failure or unknown ref, not retryable) or `503 GIT_CLONE_REF_RESOLVE_TRANSIENT` (transient network failure, retryable). |
+| `gitClone` | `url`, `ref`, `path` | Clone a Git repository at the specified ref into `path`. Optional `depth`, `submodules`, and `auth` (credential reference). The gateway resolves `ref` to a commit SHA when the plan binds, at session creation or at finalize, and writes it back as `resolvedCommitSha` on the stored source (readable via `GET /v1/sessions/{id}`); ref-resolution failures return `422 GIT_CLONE_REF_UNRESOLVABLE` (auth failure or unknown ref, not retryable) or `503 GIT_CLONE_REF_RESOLVE_TRANSIENT` (transient network failure, retryable). |
 
-**File mode (`inlineFile`, `mkdir`).** The optional `mode` field on these sources is a POSIX-style octal string matching the regex `^0[0-7]{3,4}$` (e.g., `"0644"`, `"0755"`). The setuid (`04000`) and setgid (`02000`) bits are prohibited for all source types; the sticky bit (`01000`) is accepted only on `mkdir`. Invalid values are rejected at session creation with `400 VALIDATION_ERROR`.
+**File mode (`inlineFile`, `mkdir`).** The optional `mode` field on these sources is a POSIX-style octal string matching the regex `^0[0-7]{3,4}$` (e.g., `"0644"`, `"0755"`). The setuid (`04000`) and setgid (`02000`) bits are prohibited for all source types; the sticky bit (`01000`) is accepted only on `mkdir`. Invalid values are rejected by the request that binds the plan with `400 VALIDATION_ERROR`.
 
 ---
 
@@ -88,7 +106,8 @@ Terminal session events are delivered as CloudEvents v1.0.2 envelopes signed wit
 
 ## Validation and versioning
 
-- Plans are validated against the registered JSON Schema (`schemaVersion`) at session creation. Invalid plans are rejected with `400 VALIDATION_ERROR`.
+- Plans are validated against the registered JSON Schema (`schemaVersion`) by the request that binds them: `POST /v1/sessions`, `POST /v1/sessions/start`, or the `POST /v1/sessions/{id}/finalize` body. Invalid plans are rejected with `400 WORKSPACE_PLAN_INVALID`.
+- An `uploadRef` that is not an upload reference, or that names another session's upload, is rejected with `400 VALIDATION_ERROR` and `details.reason` set to `invalid_upload_ref` or `upload_ref_foreign_session`.
 - Schema migrations follow the 90-day durable-consumer SLA in Spec §15.5.
 - `runtimeOptions` is validated against the target runtime's schema when registered; otherwise a `RuntimeOptionsUnschematized` warning event is emitted.
 

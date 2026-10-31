@@ -82,6 +82,9 @@ func TestDerivedSessionIsOutsideTheSourceTree_spec_12_6(t *testing.T) {
 		Blobs:                    chunks,
 		CheckpointManifestReader: manifests,
 		CheckpointManifestWriter: manifests,
+		// Derive refuses to copy without the chunk resolver the derived
+		// session's first-bind restore reads.
+		ResumeChunkResolver: chunkResolver(chunks, manifests),
 		IDFunc: func() string {
 			idMu.Lock()
 			defer idMu.Unlock()

@@ -58,7 +58,7 @@ func TestSessionStoreCreateWithTranscript_spec_12_8(t *testing.T) {
 		if err := e.sessions.Create(ctx, src); err != nil {
 			t.Fatalf("seed source: %v", err)
 		}
-		if err := transcripts.Append(ctx, e.tenant, src.ID, entries...); err != nil {
+		if _, err := transcripts.Append(ctx, e.tenant, src.ID, entries...); err != nil {
 			t.Fatalf("seed transcript: %v", err)
 		}
 		return src

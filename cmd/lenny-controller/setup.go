@@ -61,17 +61,12 @@ func (w *controllerWiring) buildManagerSetup() {
 
 	// spec: §17.5 — assemble the §5.3 isolation-profile to
 	// RuntimeClass-name override map. An unset flag leaves the chart-
-	// default literal (runc / gvisor / kata) in place.
-	w.runtimeClassOverrides = map[isolation.Profile]string{}
-	if f.runtimeClassStandard != "" {
-		w.runtimeClassOverrides[isolation.ProfileStandard] = f.runtimeClassStandard
-	}
-	if f.runtimeClassSandboxed != "" {
-		w.runtimeClassOverrides[isolation.ProfileSandboxed] = f.runtimeClassSandboxed
-	}
-	if f.runtimeClassMicrovm != "" {
-		w.runtimeClassOverrides[isolation.ProfileMicrovm] = f.runtimeClassMicrovm
-	}
+	// default literal (runc / gvisor / kata) in place. The gateway builds
+	// its map from the same flags through the same helper, so both label
+	// runtime_class with one name per profile (F-16.1.10).
+	w.runtimeClassOverrides = isolation.RuntimeClassOverrides(
+		f.runtimeClassStandard, f.runtimeClassSandboxed, f.runtimeClassMicrovm,
+	)
 
 	// spec: §5.2 / §6.4 — build the resource-class registry from
 	// the built-in small/medium/large defaults plus any operator overrides,

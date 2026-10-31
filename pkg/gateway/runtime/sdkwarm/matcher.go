@@ -5,9 +5,8 @@
 // it decides whether the gateway must demote a pre-connected SDK-warm pod
 // to pod-warm before the workspace is materialized.
 //
-// spec: §6.1 — "if the workspace plan includes files matching
-// any of these glob patterns, the gateway sets requiresDemotion: true on
-// the ClaimOpts and the adapter calls the DemoteSDK RPC". Patterns follow
+// spec: §6.1 What a Pre-Warmed Pod Looks Like (Demotion on demand);
+// §14.1 WorkspacePlan Schema Versioning (Plan binding). Patterns follow
 // Go path.Match (per segment) extended with `**` (cross-segment), matched
 // case-sensitively against relative workspace paths (§5.1).
 package sdkwarm

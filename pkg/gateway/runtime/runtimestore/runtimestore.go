@@ -840,19 +840,20 @@ func (c *DefaultPoolConfig) Clone() *DefaultPoolConfig {
 }
 
 // WorkspaceFile is one §5.1 workspaceDefaults.files entry: a default
-// workspace file the §14 path materializes into the session's workspace root
-// before client uploads. Small files carry inline Content; large files
-// carry a Ref (a lenny-blob:// reference materialized in its place).
+// workspace file the gateway composes into every session's bound plan as an
+// inlineFile source ahead of the client's sources (§14.1 Runtime workspace
+// defaults). Each entry carries its content inline.
 type WorkspaceFile struct {
 	// Path is the destination path, relative to the session's workspace root.
 	Path string `json:"path"`
 
-	// Content is the inline file content. Empty when the file is
-	// materialized from Ref.
+	// Content is the inline file content.
 	Content string `json:"content,omitempty"`
 
-	// Ref names a large-file reference materialized in place of inline
-	// Content. Empty when Content is inline.
+	// Ref is not a valid field on a workspace default file: registration
+	// rejects an entry that sets it, and ComposeInto fails on a row stored
+	// before that check rather than binding a plan without the file.
+	// spec: §5.1 Derived Runtime Instantiation.
 	Ref string `json:"ref,omitempty"`
 }
 

@@ -315,6 +315,7 @@ var slotAddressCaseFiles = []string{
 	"pkg/gateway/podlifecycle/podsession/one_session_only_test.go",
 	"pkg/gateway/podlifecycle/podsession/postclaim_release_test.go",
 	"pkg/gateway/podlifecycle/podsession/release_retry_internal_test.go",
+	"pkg/gateway/podlifecycle/podsession/restore_bind_test.go",
 	"pkg/gateway/podlifecycle/podsession/resume_slot_reservation_test.go",
 	"pkg/gateway/podlifecycle/podsession/sdkwarm_bind_test.go",
 	"pkg/gateway/podlifecycle/podsession/slot_release_rehydration_test.go",

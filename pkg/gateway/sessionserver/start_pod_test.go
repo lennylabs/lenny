@@ -800,15 +800,20 @@ func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
+	sbx := podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5")
+	sbx.Spec.IsolationProfile = string(isolation.ProfileSandboxed)
 	cluster := podBindClient(
 		t,
 		podBindWarmPool("echo-pool", "echo-tmpl"),
 		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		sbx,
 	)
 	registry := podsession.NewRegistry()
 	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
 	store := memstore.New()
+	// spec: §16.1 (Metrics) — the setup_command_failed count carries the
+	// pool and runtime_class of the pod the setup ran on. F-16.1.9.
+	var warmupLabels [][3]string
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "sess-fin-setupfail" },
@@ -816,6 +821,9 @@ func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 		PodBinder:               binder,
 		PodRegistry:             registry,
 		AgentNamespace:          podTestNS,
+		IncWarmpoolWarmupFailure: func(pool, runtimeClass, errorType string) {
+			warmupLabels = append(warmupLabels, [3]string{pool, runtimeClass, errorType})
+		},
 	})
 	h := srv.Handler()
 
@@ -861,6 +869,9 @@ func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 	}
 	if env.Error.Details["reason"] != "setup_command_failed" {
 		t.Errorf("details.reason = %v, want setup_command_failed", env.Error.Details["reason"])
+	}
+	if want := [][3]string{{"echo-pool", "gvisor", "setup_command_failed"}}; fmt.Sprint(warmupLabels) != fmt.Sprint(want) {
+		t.Errorf("warm-up failure counts = %v, want %v", warmupLabels, want)
 	}
 	// A deterministic non-retryable failure must not invite a retry.
 	if ra := rr.Header().Get("Retry-After"); ra != "" {
@@ -1042,7 +1053,9 @@ type finalizeMaterializationFailureCase struct {
 
 // spec: §6.2 (Pod State Machine, Client visibility), §15.1 (REST API,
 // SESSION_CREATION_FAILED and the finalize precondition note), §7.1 (Normal
-// Flow, the finalize preparation barrier reclaims the create-time pod).
+// Flow, the finalize preparation barrier reclaims the create-time pod), §6.2
+// (Pod State Machine, Pre-attached failure retry policy Scope: a request
+// against a persisted row claims no replacement pod).
 // diagnosis: a workspace-materialization failure at /finalize that is not an
 // archive validator violation must surface the retryable 503
 // SESSION_CREATION_FAILED fallback with Retry-After, transition the row to
@@ -1053,7 +1066,10 @@ type finalizeMaterializationFailureCase struct {
 // means the finalize handler surfaced another envelope for a materialization
 // failure, such as a non-retryable code, INTERNAL_ERROR, or
 // CREDENTIAL_POOL_EXHAUSTED, which contradicts the Client visibility bullet a
-// client relies on to retry, or that the failed finalize leaked its pod.
+// client relies on to retry, or that the failed finalize leaked its pod. A
+// SandboxClaim create count other than one after the failed finalize means
+// /finalize claimed a replacement pod, which the §6.2 Scope bullet forbids for
+// a request against a persisted row.
 func TestFinalizeMaterializationFailureIsRetryableSessionCreationFailed_spec_6_2(t *testing.T) {
 	t.Parallel()
 	cases := []finalizeMaterializationFailureCase{
@@ -1093,9 +1109,26 @@ func TestFinalizeMaterializationFailureIsRetryableSessionCreationFailed_spec_6_2
 	}
 }
 
+// claimCreateCounter wraps the client the binder claims through and counts
+// every SandboxClaim Create attempt, including one that fails with
+// AlreadyExists, so a test can tell a single claim from a re-claim whose
+// outcome leaves no trace in the cluster.
+type claimCreateCounter struct {
+	client.Client
+	creates atomic.Int64
+}
+
+func (c *claimCreateCounter) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+	if _, ok := obj.(*lennyv1.SandboxClaim); ok {
+		c.creates.Add(1)
+	}
+	return c.Client.Create(ctx, obj, opts...)
+}
+
 // runFinalizeMaterializationFailureCase creates a session on a claimed warm
 // pod, finalizes it with the case's plan, and asserts the retryable
-// SESSION_CREATION_FAILED answer, the `failed` row, and the reclaimed pod.
+// SESSION_CREATION_FAILED answer, the `failed` row, the reclaimed pod, and a
+// single SandboxClaim create across both requests.
 func runFinalizeMaterializationFailureCase(t *testing.T, tc finalizeMaterializationFailureCase) {
 	t.Helper()
 	adapterSrv := adapter.New("adapter-test")
@@ -1109,7 +1142,9 @@ func runFinalizeMaterializationFailureCase(t *testing.T, tc finalizeMaterializat
 		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	// The binder claims through the counter; every read below stays on cluster.
+	counter := &claimCreateCounter{Client: cluster}
+	binder := podBindBinder(counter, podBindAdapterDialer(t, adapterSrv))
 	// An empty store: no case stages a blob.
 	binder.Blobs = blobstore.NewMemoryStore(nil)
 	ref := blobstore.URI{
@@ -1142,6 +1177,9 @@ func runFinalizeMaterializationFailureCase(t *testing.T, tc finalizeMaterializat
 	var claim lennyv1.SandboxClaim
 	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err != nil {
 		t.Fatalf("per-pod claim missing after create: %v", err)
+	}
+	if n := counter.creates.Load(); n != 1 {
+		t.Fatalf("SandboxClaim creates after /create = %d, want 1", n)
 	}
 
 	finalizeBody := `{"workspacePlan":` + tc.finalizePlan(ref) + `}`
@@ -1183,6 +1221,11 @@ func runFinalizeMaterializationFailureCase(t *testing.T, tc finalizeMaterializat
 	}
 	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
 		t.Errorf("per-pod claim still present after the failed finalize; the pod was not reclaimed")
+	}
+	// The discriminating assertion: a re-claim that also failed and reclaimed
+	// leaves no claim behind, so only the create count reveals it.
+	if n := counter.creates.Load(); n != 1 {
+		t.Errorf("SandboxClaim creates after the failed /finalize = %d, want 1: /finalize claimed a replacement pod, which §6.2 Scope forbids for a persisted row", n)
 	}
 }
 

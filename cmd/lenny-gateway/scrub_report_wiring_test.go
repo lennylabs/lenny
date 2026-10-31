@@ -411,7 +411,7 @@ func newScrubServiceWithTracker(t *testing.T, cl client.Client, counters *memsto
 	// leaves reserved-claim expiry to the §4.6.1 orphan GC and nil boundary
 	// leaves the missing-report timeout and re-warm completion unwired (the
 	// wiring tests do not exercise the in-process timers).
-	scrubReports, err := newScrubReportService(cl, counters, pools, runtimes, nil, tracker, scrubWiringNS, 0, nil, nil, func() time.Time { return time.Unix(0, 0) })
+	scrubReports, err := newScrubReportService(cl, counters, pools, runtimes, nil, nil, tracker, scrubWiringNS, 0, nil, nil, func() time.Time { return time.Unix(0, 0) })
 	if err != nil {
 		t.Fatalf("newScrubReportService: %v", err)
 	}

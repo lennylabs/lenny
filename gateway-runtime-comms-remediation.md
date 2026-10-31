@@ -2407,6 +2407,8 @@ optional, and it does not make the frozen content correct.
 Status as of 2026-10-03, verified against the working tree. Check an item off in the same change that lands
 it, and name the commit or merge.
 
+**Integration branch (2026-10-30).** This track ran on `proposal-b/gateway-runtime-comms-remediation` until 2026-10-30, when it merged into `impl/v1-initial` (`5b2a067b4`) and then into `main` (`019b200ee`), and both branches were deleted. Commit and merge hashes named in this plan before that date are reachable from `main`. Every branch for the remaining work is cut from `main` and merges back into `main`.
+
 ### 10.1 Remediation steps
 
 **Re-derivation after 0101 (2026-10-28).** Proposal 0101 (merge `9c69b8398`) landed R18, R19, and R21.
@@ -3351,7 +3353,7 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
 
 - [x] **Proposal 0086, widened**
   (`proposals/0086_fix_the-gateway-accepts-a-workspaceplan-in-the-body-of/`): approved 2026-10-28, merge
-  `153a7e23b`. The finalize-time `WorkspacePlan` bind, widened on 2026-10-28 to take BUILD-GAPS F-5.1.23
+  `153a7e23b`; implemented and finalized 2026-10-29 on `impl/0086-plan-binding`. The finalize-time `WorkspacePlan` bind, widened on 2026-10-28 to take BUILD-GAPS F-5.1.23
   (§5.1 places setup at pod warm-up, once per pod, against every other site and the code) and reopened
   F-7.5.3 (runtime `workspaceDefaults` reach no session; F-5.1.6 carries a note). Design: a session binds one
   workspace plan, at creation or at finalize, and the `uploadRef` scope check covers every client-submitted
@@ -3366,9 +3368,24 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   `delegation/service.go`, `finalize.go`, and `create.go`, and whichever of 0086 and 0107 lands second
   locates its targets by symbol and quoted text. Its unstaged defects are filed below, in the block for
   proposal 0086. The next change-proposal run is 0085.
+  Its implementation landed 2026-10-29 on `impl/0086-plan-binding`: spec commits `4ae727ccf` (§14, §4.6, §6.1,
+  §12.6, §15.1, and §16, the plan bind), `309dc0c4d` (§14, §5.1, and §7.5, the runtime workspace defaults),
+  `0f727737b` (§15.1, §15.2, and §15.4), `fe5fee6b4` (§7.1 and §7.4), `d5f9cc32b` (§29), `7b7ba4028` (§24.17 and
+  §26), and `896da7465` (§7.5, §5.1, and §16, per-session setup); code commits `bb638bfa2` (the shared-resolver
+  `uploadRef` scope check), `45ec36db3` (the `lenny/finalize_workspace` input schema), `2749a9c07` (OpenAPI),
+  `006ba0d81`, `ac26246f5`, and `36c1adee0` (comments), and `97d019b7d` (the defaults composer, its callers,
+  and the registration check); docs `a6abc7fee` and `88b570954`; tests `2a4416a22`, `078cc7611`, and tier 8
+  `7c5d6af60` and `aecd89d5f`. The implementation was finalized on 2026-10-29: the proposal status is
+  Implemented, its deviations are accepted (the stale `ClaimOpts.RequiresDemotion` and
+  `PodSpec.WorkspacePlan` sites stay with F-12.6.27 and F-12.6.28 in the direct-fix queue below), and
+  BUILD-GAPS closes F-5.1.23 and F-7.5.3 with resolution notes naming the commits and tests. F-5.1.6 stays
+  closed with a 2026-10-29 note. The direct-fix queue and the proposal routing in the block for proposal 0086
+  below are unchanged, because the implementation fixed none of them as a side effect. 0086 is implemented once
+  `impl/0086-plan-binding` merges into this branch.
 - [x] **Proposal 0085**
   (`proposals/0085_fix_the-6-2-pre-attached-failure-retry-loop-has/`): approved 2026-10-29, merge
-  `f5151ba18`. It confines the §6.2 pre-attached failure retry to the `POST /v1/sessions/start` creation unit,
+  `f5151ba18`; implemented 2026-10-31 (commits `8cec66acf`, `b3df750df`, `5e8993886`; the first run with the
+  code-review and security-review quality phase, which found nothing). It confines the §6.2 pre-attached failure retry to the `POST /v1/sessions/start` creation unit,
   the one request that has persisted no session row, so finalize and delegated-child materialization make one
   attempt and need no stop condition for a session that ends mid-setup. It changes no production behavior. Its
   implementation is small: the staged spec edits in §6.2, §15.1, §4.7, §29.2, and §28.5.3, comment corrections
@@ -3394,7 +3411,13 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   `memstore` and `pgstore`) and `terminal_writer_inventory_test.go`, names `serveCold` in place of
   `handleCreate` among 0107 CODE-3's hookless writers, and gives `endHeldSession` the dispatch of the CODE-3
   `lenny/cancel_session` row. Its unstaged defects are filed below, in the block for proposal 0108. The next
-  change-proposal run is the snapshot-restore proposal below, drafting as 0109.
+  change-proposal run is the snapshot-restore proposal below, drafting as 0109. Implemented (proposal 0108) on
+  `impl/0108-conversation-session`, cut from this branch at `ca11cddf9`, with the spec edits from `69a894763`
+  and the code, tests, and docs through `30b511f44`. The implementation was finalized on 2026-10-30: the
+  proposal status is Implemented, its deviations are accepted or resolved, and the legacy 0061 draft is marked
+  superseded. It closes no filed finding and fixed none of the defects in the block for proposal 0108 below as
+  a side effect. F-29.3.4 and 0110's Open Responses steps (S5, S10, S11, and S12) are unblocked once
+  `impl/0108-conversation-session` merges into this branch. 0108 is implemented once that branch merges.
 - [x] **Snapshot restore at bind (F-7.1.34 restore half, High, with F-7.1.33)**
   (`proposals/0109_fix_a-derived-or-replayed-session-starts-without-its-source/`): approved 2026-10-29 as
   proposal 0109, merge `bad91fe31`. A derived or replayed session's copied snapshot is restored at its first
@@ -3410,14 +3433,35 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   fixes no order against 0107 or 0108; 0107 also edits `derive.go` and `replay.go`, so whichever of 0107 and
   0109 lands second locates its `derive.go` targets by symbol and quoted text, and 0108 shares no code file with it.
   Its unstaged defects are filed below, in the block for proposal 0109. The next change-proposal run is the
-  session-owner authorization proposal below, drafting as 0110.
-- [ ] **Session-owner authorization proposal (new; F-15.1.55 High, F-10.2.30, F-15.1.54)** (queued 2026-10-29
-  after the snapshot-restore proposal and ahead of 0077, because F-15.1.55 lets a built-in adapter client assert
-  the session owner): define the §10.2 per-owner check on `user`-role session reads and the "explicit grant" it
-  promises, bind the adapter session owner to the authenticated principal, and cover `GET /v1/sessions/{id}`,
-  `GET /v1/sessions`, and `GET /v1/responses/{id}`. It may draft before 0108's implementation; its code steps
-  land after 0108's, which edit the Open Responses handlers. It follows 0109 and is the next change-proposal
-  run, drafting as proposal 0110.
+  session-owner authorization proposal below, drafting as 0110. Position (2026-10-30): implemented on
+  `impl/0109-snapshot-restore` after 0086's and 0107's implementations merged, with the spec edits in
+  `7796a11aa` to `d72ed6c96` and the code, tests, and docs in `5af14a3e5` to `990cffb30`. Its records step
+  closed F-7.1.34 (restore half) and F-7.1.33 in BUILD-GAPS, corrected F-7.1.34's stale replay evidence,
+  left F-4.5.21 open, and annotated each unstaged-defect entry below in place. Follow-up commits `b050cedf5`
+  (spec-map credit for the restore cases and removal of the orphaned `blobstore.DerivedSnapshotTTL`) and
+  `fccdd76d2` (the presigned restore URL kept out of object-store errors) landed after the records step. The
+  implementation was finalized on 2026-10-30: the proposal status is Implemented, its deviations are accepted,
+  and the F-7.1.34 and F-7.1.33 resolution notes name the follow-up commits. The implementation fixed none of
+  the direct fixes or routed findings in the block for proposal 0109 below as a side effect. F-7.1.36 and
+  F-15.1.63 are unblocked once `impl/0109-snapshot-restore` merges into this branch, because 0107's
+  implementation has already merged. 0109 is implemented once that branch merges.
+- [x] **Session-owner authorization proposal (F-15.1.55 High, F-10.2.30, F-15.1.54)**
+  (`proposals/0110_fix_session-owner-authorization-plan-10-2-session-owner-authoriz/`): approved 2026-10-29 as
+  proposal 0110, merge `05ed531a5`. A session's owner is the creating principal's subject on every create
+  surface, the adapter `user` field and every other client owner field are never an owner input, session access
+  is scoped to the owner at the sessionserver route wrapper with a `404` to a non-owner, and the §10.2 explicit
+  grant is a custom-role assignment. Its implementation closes F-15.1.55, F-10.2.30, and F-15.1.54, whose
+  BUILD-GAPS owner lines were re-pointed to 0110 with their checklist steps on 2026-10-29. Its three
+  orchestrator decisions are in section 10.3. Implementation order: part A (S1 to S4, S6 to S9, and S13) does
+  not wait for 0108 and may land before 0108's implementation. The steps that touch the Open Responses
+  translator land after 0108's implementation: S5 applies after 0108 S1, S10 after 0108 S8, and S11 after 0108
+  S7, S8, and S10, and S12 and S14 follow them. 0108 lands as staged and its files are not edited. Against
+  0086, 0107, and 0109 there is no semantic dependency: 0110 shares `create_and_start.go`,
+  `delegation/service.go`, `mcptools_register.go`, `derive.go`, `replay.go`, and
+  `docs/operator-guide/security.md` with them at different symbols or sections, and whichever lands second
+  rebases textually. If the A/B split fallback is taken, this entry is rewritten to name the open part. Its
+  unstaged defects are filed below, in the block for proposal 0110. The next change-proposal run is proposal
+  0077, re-derived, below, drafting as 0111.
 - [ ] **Proposal 0077, re-derived** (Draft; owner decision 2026-10-28): pre-materialize workspace content on a
   warm pod, starting with massive git repositories, and extensible to other content later. The owner wants the
   capability built. Settled direction: a pool-level template names a repository and ref; the adapter fills a
@@ -3435,7 +3479,24 @@ change-proposal runs follow P4b (proposal 0107) in this order, one at a time.
   clones over its own path today), the cache surviving the §5.2 recycle scrub as pod state, cache refresh cadence,
   working-tree checkout cost for very large trees (sparse checkout or a reused tree), and disk sizing. A spike that
   measures delta-fetch-plus-checkout against a cold clone on a large repository opens the run. It follows 0086,
-  which settles when a session's plan binds and pins and how runtime `workspaceDefaults` compose with it.
+  which settles when a session's plan binds and pins and how runtime `workspaceDefaults` compose with it. It
+  follows 0110 and is the next change-proposal run, drafting as proposal 0111.
+- [ ] **Idempotent replay bound to the caller (F-11.5.26, High, security)** (new proposal, queued 2026-10-29
+  after 0111): §11.5 replay is keyed by tenant and key and runs before route authorization, so a second
+  principal in the tenant that sends the same key and body receives the first principal's cached response,
+  including the create response's `uploadToken` and the owner's action responses that 0110's not-found rule
+  hides. The proposal binds the record to the authenticated subject and states what a second principal
+  receives, on REST and on the MCP per-tool path. It does not depend on 0110's implementation.
+- [ ] **Warm-time shared-asset fill (F-6.4.19 Medium, F-6.4.20 Medium)** (new proposal, queued 2026-10-30 after
+  0111 and after the idempotent-replay proposal above, which is a security item): a Runtime's `type: artifact`
+  `sharedAssets` entries never reach `/workspace/shared/`, and inline entries ride the adapter's
+  `--shared-assets` command-line argument, which caps them near 90 KiB in total. The proposal reuses 0111's
+  warm-time fill path: the adapter fills the read-only `/workspace/shared/` store before READY, streaming each
+  asset from the gateway or from a presigned GET, under size bounds and a fill deadline, with metrics, and a
+  fill that fails keeps the pod out of READY. It states one `sharedAssets` schema across the admin API and the
+  `Runtime` CRD and how the registry value reaches the pod builder, moves inline content off the command line,
+  and states a size limit and the `/workspace/shared/` volume sizing. It follows 0111 because it reuses 0111's
+  fill path and store. The block "Filed 2026-10-30 (shared assets)" below lists both findings.
 
 - [ ] **P2b** (section P2 above): after 0085.
 
@@ -3994,9 +4055,10 @@ F-10.1.36 was already tracked and keeps its routing. F-5.2.57 and F-7.2.43 named
 stages neither, so F-7.2.43 is queued here and F-5.2.57 is re-routed in the 0100 block above.
 
 - Direct-fix queue, unblocked by 0105's implementation, which edited the same files.
-  - [ ] **F-7.1.34** (High; copy half merged `3be845f0b` 2026-10-29, restore half routed to the snapshot-restore
+  - [x] **F-7.1.34** (High; copy half merged `3be845f0b` 2026-10-29, restore half routed to the snapshot-restore
     proposal queued ahead of 0077): no bind path restores a derived or replayed session's copied workspace snapshot,
-    so the session starts without its source's workspace, and a replay copies no snapshot at all. §7.1 and
+    so the session starts without its source's workspace. (Corrected 2026-10-30: this lead first also said that
+    a replay copies no snapshot at all, which the copy half made untrue.) §7.1 and
     §15.1 already state that the snapshot is the starting workspace. Copy the replay snapshot as derive does,
     carry `WorkspaceSnapshot` through every bind path that binds a `created` row, and restore it before the
     plan's sources. It lands after 0105's implementation, which edits the sessionserver start and finalize
@@ -4006,7 +4068,9 @@ stages neither, so F-7.2.43 is queued here and F-5.2.57 is re-routed in the 0100
     stays open and leaves this queue: it needs an adapter contract change (a chunk field on
     `FinalizeWorkspaceRequest`) that no specification section states, so it moves to F-7.1.33's proposal
     below. F-4.5.24 (Low, direct fix) was filed from the same work. The restore half is owned by proposal 0109
-    (approved 2026-10-29, merge `bad91fe31`), whose REC-1 closes this entry.
+    (approved 2026-10-29, merge `bad91fe31`), whose REC-1 closes this entry. Closed 2026-10-30 by 0109's
+    implementation on `impl/0109-snapshot-restore`: the restore lands on `FinalizeWorkspaceRequest.restore_chunks`
+    at the first bind, before the plan's sources, and fails the bind closed.
   - [x] **F-11.3.45** (Low) and **F-11.3.46** (Low), one fix: every replica sends its own
     `session_expiring_soon` and `DEADLINE_APPROACHING` for a session, because the warning's dedup set is per
     process, and the warning is sent from the listing without a re-read, so it can follow a terminal write.
@@ -4130,7 +4194,7 @@ F-11.2.34.
     §4.9 proxy admission.
 
 **Defects filed from proposal 0086's unstaged-defect list (2026-10-28).** Proposal 0086 (approved
-2026-10-28, merge `153a7e23b`, implementation pending) lists defects in the shipped tree that it does not
+2026-10-28, merge `153a7e23b`, implemented 2026-10-29 on `impl/0086-plan-binding`) lists defects in the shipped tree that it does not
 stage. 0086 carries no REC-1 record item, so they are filed now, ahead of its implementation, because no
 defect is dropped. Each was re-confirmed against the tree at `153a7e23b`, and each new BUILD-GAPS entry says
 0086's implementor updates the entry rather than filing a duplicate. One item was already tracked and is not
@@ -4138,23 +4202,60 @@ refiled: the §15.1 `/upload` precondition row admitting `running` is annotated 
 D2), which stays with the upload route proposal.
 
 - Direct-fix queue, after 0086's implementation, which edits the same files.
-  - [ ] **F-7.4.21** (Medium): `handleFinalize` does not verify the `uploadToken`, while §7.4 requires every
-    finalize request to carry it. Verify it before the precondition check, as `admitUpload` does.
-  - [ ] **F-7.5.15** (Medium): `enforceSetupCommandPolicy` admits a plan on every runtime read error. Answer a
+  - [x] **F-7.4.21** (Medium): `handleFinalize` does not verify the `uploadToken`, while §7.4 requires every
+    finalize request to carry it. Verify it before the precondition check, as `admitUpload` does. Closed
+    2026-10-31 by direct fix on `fix/finalize-policy-forward`: the token is verified before the row is read,
+    and the SDKs, the CLI, the playground, and `lenny/finalize_workspace` send it. Filed from the fix:
+    F-15.1.69.
+  - [ ] **F-15.1.69** (Low, filed from F-7.4.21): `UPLOAD_TOKEN_INVALID` has no §15.1 catalog row, so MCP
+    classifies it as transient and retryable while REST answers it as permanent. Needs a catalog row through
+    the proposal pipeline, then the `errorclassify` entry.
+  - [x] **F-7.5.15** (Medium): `enforceSetupCommandPolicy` admits a plan on every runtime read error. Answer a
     transient read with `503 SERVICE_UNAVAILABLE`, as 0086's defaults composition does, after 0086's S14.
-  - [ ] **F-7.5.16** (Medium): at creation the setup-command policy is read from the requested runtime rather
+    Closed 2026-10-31 by direct fix on `fix/finalize-policy-forward`: the read classifies a failure as the
+    composition does, and a plan with no setup commands reads nothing.
+  - [x] **F-7.5.16** (Medium): at creation the setup-command policy is read from the requested runtime rather
     than the routed one. Run the check against the runtime the row records after routing; if that needs an
-    ordering the specification does not state, it goes to a proposal.
-  - [ ] **F-16.1.8** (Medium): `lenny_warmpool_warmup_failure_total` has no warm-up emitter and only the
-    `error_type` label, so `PoolScaleoutBlockedByQuota` never fires. Emit it from the warm-pool controller
-    with the §16.1 labels, after 0086's S8 and S12.
-  - [ ] **F-15.2.29** (Low): per-session MCP tool schemas are hand-written against §15.2.1 item 4. Add a
-    path-parameter rename option to `mcpschemagen` and generate them.
-  - [ ] **F-12.6.27** and **F-12.6.28** (Low, behavior-free refactors): remove `ClaimOpts.RequiresDemotion`
+    ordering the specification does not state, it goes to a proposal. Closed 2026-10-31 by direct fix on
+    `fix/finalize-policy-forward`: both create routes check `row.RuntimeRef` after routing and immediately
+    before the defaults composition, the position §14.1 rule 1 states. Filed from the fix: F-4.8.25.
+  - [ ] **F-4.8.25** (Medium, filed from F-7.5.16): `POST /v1/sessions` runs no §4.8 PreRoute or PostRoute
+    chain, while create-and-start runs both around the ExperimentRouter. Direct fix after proposal 0110,
+    which edits the create path.
+  - [x] **F-16.1.8** (Medium): `lenny_warmpool_warmup_failure_total` has no warm-up emitter and only the
+    `error_type` label, so `PoolScaleoutBlockedByQuota` never fires. The Sandbox reconciler now emits
+    `image_pull_error`, `resource_quota_exceeded`, and `node_pressure` with the §16.1 labels, once per
+    failing pod (2026-10-30, `cfc1a57c2`).
+  - [x] **F-16.1.9** (Low, filed from F-16.1.8): the gateway's `setup_command_failed` emission lacks `pool`
+    and `runtime_class`. Closed 2026-10-30 by direct fix on `fix/derive-claim-and-setup-labels`:
+    `SetupCommandFailure` carries both from the exclusive and the slot bind, and the gateway counter and hook
+    take `(pool, runtimeClass, errorType)`. Filed from the fix: F-16.1.10.
+  - [x] **F-16.1.10** (Low, filed from F-16.1.9): the gateway maps `runtime_class` with the default profile
+    mapping, while the controller reads the pod's overridden `runtimeClassName`, so the two halves disagree
+    under an `isolation.runtimeClassNames` override. Closed 2026-10-30 by direct fix on
+    `fix/derive-replay-validation`: the gateway takes the controller's override flags from the same chart
+    helper, builds its map with the shared `isolation.RuntimeClassOverrides`, and labels every
+    `runtime_class` series through it. Filed from the fix: F-17.5.11.
+  - [x] **F-17.5.11** (Low, filed from F-16.1.10): the chart names a profile's RuntimeClass in two values keys,
+    `isolation.runtimeClassNames` (controller, gateway) and `runtimeClasses.profiles.*.name` (webhook, Kyverno,
+    preflight), so a partial override splits them. Closed 2026-10-30 by direct fix on `fix/f-17-5-11`:
+    `runtimeClasses.profiles.*.name` is the only key, `lenny.runtimeClassNameArgs` renders the controller and
+    gateway flags from it, and a render guard refuses a set `isolation` key and names the replacement.
+    Filed from the fix: F-15.1.68.
+  - [x] **F-15.1.68** (Low, filed from F-17.5.11): `tests/tier5_e2e_kind/gateway_probe_headers_test.go` has no
+    `tests/spec-map.json` entry, so the static tier's validate-maps check fails on every branch cut from `main`.
+    Map it under §15.1.
+  - [x] **F-15.2.29** (Low): per-session MCP tool schemas are hand-written against §15.2.1 item 4.
+    `mcpschemagen` gained a parameter rename and optional-query option, and the nine per-session tools now
+    advertise generated schemas (2026-10-30, `91254f71b`).
+  - [ ] **F-15.2.31** (Low, filed from F-15.2.29): `create_and_start_session`, `list_sessions`,
+    `download_artifact`, and `upload_files` keep hand-written schemas. Generate the first two kinds directly;
+    the argument mappings of `list_sessions` and `upload_files` need a decision first.
+  - [x] **F-12.6.27** and **F-12.6.28** (Low, behavior-free refactors): remove `ClaimOpts.RequiresDemotion`
     and `PodSpec.WorkspacePlan` with the Sandbox `spec.workspacePlan` field, after 0086's S2 removes both
-    from the specification.
+    from the specification. Removed, with the CRD regenerated (2026-10-30, `a6b951256`, `1b04ad9e2`).
 - Proposal routing.
-  - [ ] Its own proposal, after 0086's implementation: **F-7.1.33** (Medium, the specification does not state
+  - [x] Its own proposal, after 0086's implementation: **F-7.1.33** (Medium, the specification does not state
     how a derived or replayed session's copied snapshot composes with the plan it binds at finalize). The
     missing restore was split out on 2026-10-29 as F-7.1.34, a direct fix in the 0105 direct-fix queue.
     F-4.5.21 can ride with it. F-7.1.34's restore half (High) joins this proposal: the specification names no
@@ -4163,7 +4264,9 @@ D2), which stays with the upload route proposal.
     `resolveResumeChunks`, restored before the plan's sources) along with the colliding-path order. This
     proposal is 0109 (approved 2026-10-29, merge `bad91fe31`), which closes F-7.1.33 and the F-7.1.34 restore
     half at its REC-1 and leaves F-4.5.21 with the text corrections. It mints grants through
-    `Resolver.Resolve` rather than `resolveResumeChunks`, so the restore fails closed.
+    `Resolver.Resolve` rather than `resolveResumeChunks`, so the restore fails closed. Closed 2026-10-30 by
+    0109's implementation: the snapshot is the first tier of the §5.1 materialization order, and the bound
+    plan's `sources` array applies over it under §14.1 last-writer-wins.
   - [x] Direct fix: **F-4.5.24** (Low, the memory and filesystem blob stores expire a copied checkpoint chunk
     at once, because the chunk copy sets no TTL). Done on 2026-10-29 (`fix/direct-batch-2`): a copy whose
     destination names no TTL keeps the source's TTL from the copy's write, on both stores, and the derive and
@@ -4225,20 +4328,29 @@ for 0085's RECORDS-1, so the §6.2 entry below takes F-6.2.33.
   delegated child's `created → running` edge is F-7.2.45, already filed.
 
 **Defects filed from proposal 0108's unstaged-defect list (2026-10-29).** Proposal 0108 (proposal 0061
-re-derived, approved 2026-10-29, merge `4e5a94071`, implementation pending) lists defects in the shipped tree
+re-derived, approved 2026-10-29, merge `4e5a94071`, implementation finalized 2026-10-30 on
+`impl/0108-conversation-session`) lists defects in the shipped tree
 that it does not stage. It has no records deliverable and closes no filed finding, so no Owner line moves to
 it, and the listed defects are filed now, because no defect is dropped. Each was re-confirmed against the tree
 at `4e5a94071`. Each new or annotated BUILD-GAPS entry says 0108's implementor updates the entry rather than
 filing a duplicate.
 
 - Direct-fix queue, after 0108's implementation, whose CODE-3 edits `forwardTarget`.
-  - [ ] **F-29.3.4** (Medium): a forwarded request whose re-read row is outside its kind's forward states
+  - [x] **F-29.3.4** (Medium): a forwarded request whose re-read row is outside its kind's forward states
     runs locally at a replica that may not hold `REG-COORDLEASE`, because `forwardTarget` tests the state gate
     before the §29.3 **Forwarding.** rule-5 branch. The fix applies the rule-5 branch first for every kind and
     makes the REST and MCP not-delivered DLQ hold conditional on a `running` or `input_required` row, as
     rule 6 states. 0108 reorders the branch for its own kind only.
+    Unblocked once `impl/0108-conversation-session` merges (note dated 2026-10-30 in its BUILD-GAPS entry).
+    Closed 2026-10-31 by direct fix on `fix/finalize-policy-forward`: `forwardTarget` applies rule 5 first for
+    every kind, and `HoldsUndelivered` gates the REST and MCP DLQ hold. Filed from the fix: F-29.3.5.
+  - [ ] **F-29.3.5** (Low, filed from F-29.3.4): a forward listener that does not hold the lease answers a
+    route's `INVALID_STATE_TRANSITION` when the re-read row fails the route precondition, where rule 5 names
+    `TARGET_NOT_READY`. Needs the order of rule 5 and the precondition check decided first.
 - Proposal routing: a session-owner authorization proposal (new, unwritten), after 0108's implementation,
-  which rewrites the Open Responses read and resolution paths.
+  which rewrites the Open Responses read and resolution paths. This proposal is 0110 (approved 2026-10-29,
+  merge `05ed531a5`), whose REC-1 closes all three entries below. Only its Open Responses steps wait for
+  0108's implementation; its part-A steps do not.
   - [ ] **F-15.1.55** (High, existing, annotated): session-create paths take the owner from the request.
     0108's first listed defect, the client-asserted `user` field on the built-in adapters, is this finding's
     adapter face, so it carries a note rather than a new entry.
@@ -4252,20 +4364,44 @@ filing a duplicate.
 - Not filed: none. Every listed defect is filed or annotated.
 
 **Defects filed from proposal 0109's unstaged-defect list (2026-10-29).** Proposal 0109 (snapshot restore at
-bind, approved 2026-10-29, merge `bad91fe31`, implementation pending) lists defects in the shipped tree that it
-does not stage. Its REC-1 files them at implementation; they are filed now, because no defect is dropped, and
-each new or annotated BUILD-GAPS entry says 0109's REC-1 updates the entry rather than filing a duplicate. Each
-was re-confirmed against the tree at `bad91fe31`. 0109's REC-1 closes F-7.1.34 (restore half) and F-7.1.33,
-whose owner lines now name proposal 0109 with their checklist steps.
+bind, approved 2026-10-29, merge `bad91fe31`, implemented 2026-10-30 on `impl/0109-snapshot-restore`) lists
+defects in the shipped tree that it does not stage. Its REC-1 files them at implementation; they were filed on
+2026-10-29, because no defect is dropped, and each new or annotated BUILD-GAPS entry says 0109's REC-1 updates
+the entry rather than filing a duplicate. Each was re-confirmed against the tree at `bad91fe31`. 0109's REC-1
+closed F-7.1.34 (restore half) and F-7.1.33 on 2026-10-30, re-confirmed F-7.1.36, F-15.1.63, F-7.3.36,
+F-5.2.63, and F-4.5.21 against the tree at `990cffb30`, and annotated each of those entries in place rather
+than filing a duplicate. F-10.1.45 was already closed and needed no record.
 
 - Direct-fix queue, after 0109's implementation, whose CODE-4 and CODE-5 edit `bind_request.go` and
-  `derive.go`, and after 0107's, which edits `derive.go` and `replay.go`.
-  - [ ] **F-7.1.36** (High): derive and replay persist a `created` row with no pod claimed, so on an exclusive
-    pool `prepareAtFinalize` prepares nothing and the launch-only `/start` reconnects to an empty binding. The
-    fix claims at create as `POST /v1/sessions` does, which adds claim-failure codes to the derive and replay
-    responses; if the §15.1 rows need those codes stated, it moves to the proposal pipeline.
-  - [ ] **F-15.1.63** (Medium): derive and replay mint no `uploadToken`, although the §15.1 replay response is
-    identical to `POST /v1/sessions`. It rides with F-7.1.36, which edits the same create path.
+  `derive.go`, and after 0107's, which edits `derive.go` and `replay.go`. Both prerequisites are met once
+  `impl/0109-snapshot-restore` merges (status 2026-10-30), so these entries are next in the queue.
+  - [x] **F-7.1.36** (High): derive and replay persist a `created` row with no pod claimed, so on an exclusive
+    pool `prepareAtFinalize` prepares nothing and the launch-only `/start` reconnects to an empty binding.
+    Closed 2026-10-30 by direct fix on `fix/derive-claim-and-setup-labels`: derive and replay claim through
+    the create path's `claimForNewRow` before the insert, answer its claim-failure codes (no §15.1 row needed
+    new codes), and release the claim on any insert failure. A derived and a replayed session on an exclusive
+    pool reach `running` with the restored workspace at tier 4. Filed from the fix: F-5.2.64 (a slot reserved
+    at create runs no §5.2 slot retry at `/start`), F-15.1.65 (derive and replay do not validate
+    `targetPool`), and F-15.1.66 (replay never answers `INCOMPATIBLE_RUNTIME`), each in the direct-fix queue.
+  - [ ] **F-5.2.64** (Medium, filed from F-7.1.36): a slot reserved at create is bound once at `/start`, so a
+    transient slot failure runs no §5.2 slot retry. Confirm the §5.2 reading first; a spec exception goes to
+    the proposal pipeline with F-5.2.62.
+  - [x] **F-15.1.65** (Low, filed from F-7.1.36): derive and replay skip `requirePoolSelectable` on
+    `targetPool`, so a wrong pool answers a retryable 503 and the pool grant is not checked. Closed 2026-10-30
+    by direct fix on `fix/derive-replay-validation`: both handlers run the create path's selection check on
+    `targetPool` before the copy, answering `400 VALIDATION_ERROR` or `403 FORBIDDEN`. Filed from the fix:
+    F-15.1.67.
+  - [x] **F-15.1.66** (Medium, filed from F-7.1.36): replay compares no `executionMode` and never answers
+    `400 INCOMPATIBLE_RUNTIME`. Closed 2026-10-30 by direct fix on `fix/derive-replay-validation`: replay
+    resolves `targetRuntime` and answers `400 INCOMPATIBLE_RUNTIME` with both modes on a mismatch, and
+    `400 VALIDATION_ERROR` for an unregistered runtime.
+  - [x] **F-15.1.67** (Low, filed from F-15.1.65): the served `Error` schema closes `error.category` over a
+    vocabulary the gateway never writes, so no 4xx body validates. Closed 2026-10-30 by direct fix on
+    `fix/derive-replay-validation`: the enum is the §15.1 categories, pinned to `errorclassify`.
+  - [x] **F-15.1.63** (Medium): derive and replay mint no `uploadToken`, although the §15.1 replay response is
+    identical to `POST /v1/sessions`. Closed 2026-10-30 by direct fix on `fix/derive-claim-and-setup-labels`:
+    both handlers mint through the create path's `mintUploadToken` before the insert, store the digest and
+    expiry, and return the token; a derived and a replayed session accept an upload before finalize at tier 4.
 - Direct-fix queue, independent of 0109's implementation and preferably ahead of it.
   - [x] **F-10.1.45** (High): only `miniostore` implements `ListByPrefix`, so the chunk resolver is nil on
     S3, GCS, and Azure, a resume restores no chunks there, and after 0109 derive and replay answer `500` there.
@@ -4284,6 +4420,45 @@ whose owner lines now name proposal 0109 with their checklist steps.
     the block for proposal 0106.
 - Not filed: **F-4.5.24**, which 0109 lists as a direct fix, was already closed on 2026-10-29
   (`fix/direct-batch-2`); its entry carries a note. Every other listed defect is filed or annotated.
+
+**Defects filed from proposal 0110's unstaged-defect list (2026-10-29).** Proposal 0110 (session-owner
+authorization, approved 2026-10-29, merge `05ed531a5`, implementation pending) lists defects in the shipped
+tree that it does not stage. Its REC-1 files them at implementation; they are filed now, because no defect is
+dropped, and each new BUILD-GAPS entry says 0110's REC-1 updates the entry rather than filing a duplicate. Each
+was re-confirmed against the tree at `05ed531a5`. 0110's REC-1 closes F-15.1.55, F-10.2.30, and F-15.1.54,
+whose owner lines now name proposal 0110 with their checklist steps. The closed F-10.2.4 and F-15.1.32 carry
+notes pointing at their successors.
+
+- Proposal routing, security.
+  - [ ] Its own proposal, queued after 0111 in "Queue after P4b" above, independent of 0110's implementation:
+    **F-11.5.26** (High, security): §11.5 idempotent replay is keyed by tenant and key and runs before route
+    authorization on every `AllowedPaths` route, so a second principal in the tenant that sends the same key
+    and body receives the first principal's cached response, including the create response's `uploadToken`
+    and the owner's finalize, start, resume, derive, and tool-use responses. §11.5 states the key, so binding
+    the record to the caller needs a proposal.
+- Proposal routing, a session permission-gating proposal (new, unwritten), after 0110's implementation, whose
+  CODE-2 and CODE-3 edit `rbac_gate.go` and the MCP tool handlers.
+  - [ ] **F-10.2.31** (Medium): the single-tenant admission of a role-less principal to every session
+    permission (`sessionPermissionGranted`) has no specification statement. The proposal decides between
+    stating it in §10.2 and refusing role-less principals in code (section 10.3, the 0110 decisions).
+  - [ ] **F-10.2.32** (Medium): `CreateSessionService`, `CreateAndStartService`, and the direct-store MCP
+    session tools skip the §10.2 permission matrix, so a `tenant-viewer` creates sessions through MCP and the
+    built-in adapters. It rides with F-10.2.31, because the in-pod MCP principal carries no roles and the
+    matrix states no exemption for it.
+- Proposal routing, other.
+  - [ ] Its own proposal, or the next proposal that edits the §15.1 blob row or §10.2 **Session ownership.**,
+    after 0110's implementation: **F-15.1.64** (Medium, `GET /v1/blobs/{ref...}` checks only the tenant;
+    the proposal chooses between §15.1's `403` and the `404` of **Session ownership.**). It succeeds closed
+    F-15.1.32.
+  - [ ] Its own proposal, or the next proposal that edits the §12.9 controls table, independent of 0110's
+    implementation: **F-12.9.23** (Medium, the §12.9 T4 access control names an "explicit grant" that no
+    section defines, and the §10.2 matrix lets a tenant-admin read a T4 transcript with no grant).
+- Direct-fix queue, after 0110's implementation, whose CODE-3 adds the `SessionAccessible` predicate and
+  edits `mcpsurface.go`.
+  - [ ] **F-15.2.30** (Medium): the native MCP `elicitation/create` reply on the `attach_session` stream has
+    no consumer, because `handleRPC` answers it as an unknown method. The fix routes `elicit:` and
+    `toolapprove:` replies to the existing elicitation and tool-use service calls and refuses a non-owner.
+- Not filed: none. Every listed defect is filed.
 
 **Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
 `pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every
@@ -4461,7 +4636,8 @@ Four findings were missing, and one entry is new:
   in the tenant. It was found by the P5 dossier and is outside P5's scope. First confirm the §15.1 and §13
   read-authorization rule: a direct fix with a tier-9 test if the specification states it, otherwise a
   small proposal. It is independent of the R-steps. Routed on 2026-10-29 to the session-owner authorization
-  proposal with F-10.2.30 and F-15.1.55 (the block for proposal 0108 above).
+  proposal with F-10.2.30 and F-15.1.55 (the block for proposal 0108 above). That proposal is 0110 (approved
+  2026-10-29, merge `05ed531a5`), whose S5, S11, and S12 cover this entry after 0108's implementation.
 - [ ] **TEST-GAPS T-10.3.15** (Medium, filed 2026-10-28): the Kind install runs no `CH-HOLDERFORWARD`
   listener, because the e2e overlay runs `global.devMode: true` with `mtls.enabled: false` and §10.3 NET-072
   disables the forward in that configuration, so no tier-5 test exercises a forward and an off-holder
@@ -4524,6 +4700,29 @@ that left a recycle-pool pod claimed under `TestPodLifecycle` (T-17.4.42). Four 
 - [x] **T-17.4.45** (Low): the tier-8 and tier-9 `kubectl run --attach` psql helpers can read an empty result
   when kubectl loses the pod's output. Fixed on `fix/f-25-9-21`: the end-marker retry now lives in
   `tests/testinfra/kind/psql.go`, and the tier-5, tier-8, and tier-9 helpers delegate to it.
+
+**Filed 2026-10-30 (shared assets).** A check of the §6.4 `/workspace/shared/` population against the tree at
+`34c66d26d` found that F-6.4.3 built the volume, the CRD field, and the inline path only. Both findings route to
+the warm-time shared-asset fill proposal in "Queue after P4b" above, queued after 0111.
+
+- [ ] **F-6.4.19** (Medium): `type: artifact` shared assets are never materialized. The admin API validates and
+  stores them in the migration 0075 `shared_assets` column, but nothing carries the registry value to the pod
+  builder, which reads the `Runtime` CRD, and the CRD schema has no `type`, `ref`, or `destPath` property. An
+  artifact entry registered through the admin API is dropped silently and warm-up succeeds; on the CRD it is
+  rejected for the missing `path`, or written as an empty file when a `path` is added.
+- [ ] **F-6.4.20** (Medium): inline shared assets travel base64-encoded in one adapter command-line argument, so
+  `MAX_ARG_STRLEN` caps a Runtime's inline set near 90 KiB in total and a larger set fails at container start
+  with `E2BIG`. §6.4 and §5.1 state no size limit, transport, or volume size.
+
+**Filed 2026-10-31 (recurring flakes).** Branch `fix/recurring-flakes` from `e4f0eedd9` fixed the test
+infrastructure behind T-12.3.13 and T-17.7.12 and traced T-12.4.13 and T-12.4.14 to a product race.
+
+- [ ] **F-12.4.38** (High): the §12.4 Redis-outage slot gate `ReserveSlotUnderLock` releases its per-pod
+  advisory lock before the admission is recorded anywhere the next gated count reads, because the occupancy
+  is written only when the session row's `pod_assignment` is persisted on bind. Concurrent admissions on one
+  pod during a Redis outage therefore overrun `maxConcurrentSessions`. `TestReserveSlotUnderLock` is the
+  acceptance test and stays red under load until the fix lands. A direct fix if the occupancy record needs
+  no §12.4 or §5.2 text, otherwise a small proposal. Independent of the R-steps.
 
 **Follow-ups recorded from proposal 0087 (owner decisions, 2026-10-22).**
 
@@ -4701,6 +4900,19 @@ Answered on 2026-10-01 for the later phases:
   backward-compatibility shims, dual modes, and migration paths while the platform is pre-deployment
   (`.claude/rules/code-best-practices.md`, "Configuration and compatibility") excludes a check whose only
   target is such an adapter. Proposal 0081 added `bind_attempt` to the same request without a gate.
+- Proposal 0110, 2026-10-29, three items decided by the orchestrator under the owner's standing delegation:
+  - The single-tenant role-less admission goes to the defects list. 0110 stages neither a §10.2 statement of
+    the admission nor a code refusal of role-less principals, and its rule 4 limits a role-less principal to
+    its own sessions in every tenancy mode, so its owner rule does not depend on the choice. The choice is
+    filed as F-10.2.31 for a successor proposal.
+  - `await_children` stays an act, so only the owner may call it. The handler begins deadlock tracking
+    (`DeadlockTracker.Begin`) and stamps qualifying activity (`ActivityStamper.Stamp`) on the parent session,
+    and both are side effects beyond a read.
+  - The route wrapper's first read is bounded, with a primary fallback. Before 0110, `/start` and `/resume`
+    read only the bounded primary, so an unbounded read-pool `Get` in the wrapper would let a hung replica
+    hold those routes. The wrapper's first `Get` runs under the `--session-primary-read-timeout` bound
+    (`PrimaryReadBound`), scoped to that `Get` alone; a timeout or replica error falls through to one
+    primary re-read, a primary miss answers `404`, and a primary error answers `500`.
 
 ### 10.4 Related work outside this track
 
@@ -4713,8 +4925,11 @@ the reopened F-7.5.3 and was approved on 2026-10-28 (merge `153a7e23b`), and 008
 2026-10-29 as proposal 0108 (merge `4e5a94071`), and its implementation is unblocked. The snapshot-restore
 proposal (the F-7.1.34 restore half, with F-7.1.33) was approved on 2026-10-29 as proposal 0109 (merge
 `bad91fe31`); its implementation rebases textually against 0086's and locates its `derive.go` targets by
-symbol against 0107's. The next change-proposal run is the session-owner authorization proposal (F-15.1.55,
-F-10.2.30, and F-15.1.54), drafting as 0110 (section 10.2, "Queue after P4b").
+symbol against 0107's. The session-owner authorization proposal (F-15.1.55, F-10.2.30, and F-15.1.54) was
+approved on 2026-10-29 as proposal 0110 (merge `05ed531a5`); its part-A steps do not wait for 0108, and its
+steps that touch the Open Responses translator land after 0108's implementation. The next change-proposal run
+is proposal 0077, re-derived, drafting as 0111, followed by the idempotent-replay proposal for F-11.5.26
+(section 10.2, "Queue after P4b").
 
 The final verification of proposal 0079 (2026-10-03) recorded these conditions, each of which also holds
 on the base commit and none of which is yet filed in BUILD-GAPS:

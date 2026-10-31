@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/common/scopes"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
 )
 
@@ -322,13 +323,24 @@ func TestErrorEnvelopeRequiresCategoryAndRetryable_spec_15_1_972(t *testing.T) {
 	if len(enumAny) == 0 {
 		t.Error("category.enum must list the §15.1 canonical category set")
 	}
-	wantCats := map[string]bool{"VALIDATION": false, "AUTH": false, "TRANSIENT": false, "INTERNAL": false}
+	// spec: §15.1 (Error response format: `category` is one of `TRANSIENT`,
+	// `PERMANENT`, `POLICY`, `UPSTREAM`), §15.2.1 item 3, §16.3 — the enum is
+	// exactly the categories errorclassify emits, so a body the gateway
+	// writes validates against the schema it serves. F-15.1.67.
+	wantCats := map[string]bool{}
+	for _, c := range []errorclassify.Category{
+		errorclassify.CategoryTransient, errorclassify.CategoryPermanent,
+		errorclassify.CategoryPolicy, errorclassify.CategoryUpstream,
+	} {
+		wantCats[string(c)] = false
+	}
 	for _, e := range enumAny {
-		if s, ok := e.(string); ok {
-			if _, ok := wantCats[s]; ok {
-				wantCats[s] = true
-			}
+		s, _ := e.(string)
+		if _, ok := wantCats[s]; !ok {
+			t.Errorf("category.enum carries %q, which is not a §15.1 error category", s)
+			continue
 		}
+		wantCats[s] = true
 	}
 	for k, present := range wantCats {
 		if !present {

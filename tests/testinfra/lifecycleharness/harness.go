@@ -20,6 +20,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordination"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
@@ -159,6 +160,27 @@ type Options struct {
 	// upload policy on every replica, so POST /upload-to-session admits a
 	// running session (§7.4).
 	MidSessionUpload bool
+	// ObjectStore, when set, wires every replica's session server to a
+	// checkpoint object store and every pod's adapter to its HTTP
+	// transport, so derive and replay copy a checkpoint and a derived or
+	// replayed session's first bind restores it (§7.1 Derive restore
+	// semantics).
+	ObjectStore *ObjectStore
+}
+
+// ObjectStore is the checkpoint object store a harness wires into its
+// replicas and pods. Blobs, Manifests, and Resolver are the session server's
+// blob store, checkpoint manifest store, and chunk resolver; Transport is the
+// pod adapter's object-store transport, which fetches the presigned GETs the
+// resolver mints.
+type ObjectStore struct {
+	Blobs     blobstore.Store
+	Manifests interface {
+		sessionserver.CheckpointManifestReader
+		sessionserver.CheckpointManifestWriter
+	}
+	Resolver  sessionserver.ResumeChunkResolver
+	Transport adapter.CheckpointTransport
 }
 
 // Harness is the shared world the replicas run in.
@@ -234,6 +256,8 @@ type Harness struct {
 	// runtimes is the runtime registry every replica reads when
 	// Options.MidSessionUpload is set, and nil otherwise.
 	runtimes runtimestore.Store
+	// objects is Options.ObjectStore, nil when the harness has none.
+	objects *ObjectStore
 }
 
 // Replica is one gateway replica: a session server with its own pod
@@ -276,6 +300,9 @@ type Replica struct {
 	// public is the replica's public path: the session handler mux and
 	// /mcp behind the auth middleware.
 	public http.Handler
+	// responses is the handler POST /v1/responses reaches on the replica's
+	// public path and its forward listener, set by SetResponsesHandler.
+	responses atomic.Pointer[http.Handler]
 
 	mu      sync.Mutex
 	crashed bool
@@ -322,7 +349,7 @@ func New(t testing.TB, opts Options) *Harness {
 		Trace:             NewTrace(),
 		Redis:             mr,
 		Leases:            leasestore.New(rc),
-		Cluster:           NewClusterWith(t, ClusterOptions{Recycling: opts.Recycling, HeartbeatInterval: opts.HeartbeatInterval, ControlPlane: opts.ControlPlane}),
+		Cluster:           NewClusterWith(t, ClusterOptions{Recycling: opts.Recycling, HeartbeatInterval: opts.HeartbeatInterval, ControlPlane: opts.ControlPlane, CheckpointTransport: objectTransport(opts.ObjectStore)}),
 		Checkpoints:       &Checkpointer{},
 		Interactions:      interactionstore.NewMemory(),
 		TreeMetrics:       &TreeMetrics{},
@@ -336,6 +363,7 @@ func New(t testing.TB, opts Options) *Harness {
 		finalizingSeconds: opts.MaxFinalizingSeconds,
 		msgLimit:          opts.MessagingRateLimit,
 		interceptors:      opts.Interceptors,
+		objects:           opts.ObjectStore,
 	}
 	if opts.Leases != nil {
 		h.Leases = opts.Leases(h.Leases)
@@ -459,6 +487,12 @@ func (h *Harness) AddReplica(name string) *Replica {
 		r.SlotCounter = h.newSlotCounter()
 		binder.SlotCounter = r.SlotCounter
 	}
+	// The binder stages a plan's uploadFile and uploadArchive sources from
+	// the same blob store the session server writes uploads to, as the
+	// gateway wires them.
+	if h.objects != nil {
+		binder.Blobs = h.objects.Blobs
+	}
 	exec := executor.NewPodExecutor(reg, binder)
 	r.Executor, r.Binder = exec, binder
 	var bus *sessionevents.Bus
@@ -476,7 +510,7 @@ func (h *Harness) AddReplica(name string) *Replica {
 	}
 	r.Events = bus
 	r.inputWaitGen = inputwaitrecovery.NewGeneration()
-	r.Server = sessionserver.New(h.Store, sessionserver.Options{
+	opts := sessionserver.Options{
 		DevTenantHeader:            true,
 		Events:                     bus,
 		IDFunc:                     newIDFunc(name),
@@ -502,7 +536,9 @@ func (h *Harness) AddReplica(name string) *Replica {
 		StreamFailureReportTimeout: ReleaseAllowance,
 		Runtimes:                   h.runtimes,
 		MidSessionUploadEnabled:    h.runtimes != nil,
-	})
+	}
+	h.applyObjectStore(&opts)
+	r.Server = sessionserver.New(h.Store, opts)
 	// spec: §28.5.1 (Gateway-to-pod) — a failed CH-ATTACH stream is
 	// reported to the replica's session server, as the gateway wires it.
 	exec.SetStreamFailureHandler(r.Server.ReportAttachStreamFailure)
@@ -559,20 +595,39 @@ func (h *Harness) replicaMCPDeps(r *Replica) mcptools.Deps {
 }
 
 // serveReplica builds the replica's MCP surface, its public path, and its
-// forward listener over one inner mux that routes /mcp to the MCP surface
-// and every other path to the session server.
+// forward listener over one inner mux that routes /mcp to the MCP surface,
+// POST /v1/responses to the replica's responses handler, and every other
+// path to the session server.
 //
 // spec: §29.3 (Interactive message send) Forwarding rules 2, 3, and 4,
-// §10.3 (mTLS PKI) NET-072
+// §10.3 (mTLS PKI) NET-072, §15 (Open Responses conversation sessions)
 func (h *Harness) serveReplica(r *Replica) {
 	r.MCP = mcp.NewServer()
 	mcptools.Register(r.MCP, h.replicaMCPDeps(r))
 	inner := http.NewServeMux()
 	inner.Handle("/mcp", r.MCP.Handler())
+	inner.HandleFunc("POST /v1/responses", r.serveResponses)
 	inner.Handle("/", r.Server.Handler())
 	r.public = authmw.Wrap(inner, harnessAuthOptions)
 	r.forward.serve(sessionserver.HolderForwardServerTLS(h.reloader, h.pki.CAPool),
 		sessionserver.NewHolderForwardHandler(inner, harnessAuthOptions, h.Inner))
+}
+
+// SetResponsesHandler sets the handler POST /v1/responses reaches on the
+// replica, on its public path and on its forward listener as the gateway's
+// listener mounts it. Until it is set the route answers 404.
+func (r *Replica) SetResponsesHandler(handler http.Handler) {
+	r.responses.Store(&handler)
+}
+
+// serveResponses dispatches POST /v1/responses to the replica's responses
+// handler.
+func (r *Replica) serveResponses(w http.ResponseWriter, req *http.Request) {
+	if handler := r.responses.Load(); handler != nil {
+		(*handler).ServeHTTP(w, req)
+		return
+	}
+	http.NotFound(w, req)
 }
 
 // SetForwardRefuse makes the replica's forward listener close each accepted
@@ -708,6 +763,24 @@ func (h *Harness) DoAs(r *Replica, user, method, path string, body any) (int, ma
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	rr := httptest.NewRecorder()
+	r.public.ServeHTTP(rr, req)
+	out := map[string]any{}
+	_ = json.Unmarshal(rr.Body.Bytes(), &out)
+	return rr.Code, out
+}
+
+// Upload posts body as one file to the session's upload endpoint on the
+// replica, carrying token in the X-Lenny-Upload-Token header, and returns
+// the status and the decoded answer.
+//
+// spec: §7.4 (Upload Safety) Upload authorization; §15.1 (REST API)
+func (h *Harness) Upload(r *Replica, id, token, mime string, body []byte) (int, map[string]any) {
+	h.T.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+id+"/upload", bytes.NewReader(body))
+	req.Header.Set("X-Lenny-Tenant-ID", Tenant)
+	req.Header.Set("X-Lenny-Upload-Token", token)
+	req.Header.Set("Content-Type", mime)
 	rr := httptest.NewRecorder()
 	r.public.ServeHTTP(rr, req)
 	out := map[string]any{}
@@ -853,6 +926,27 @@ func (h *Harness) poolRegistry() poolstore.Store {
 		return nil
 	}
 	return h.pools
+}
+
+// applyObjectStore wires the harness's checkpoint object store, when it has
+// one, into a replica's session server options.
+func (h *Harness) applyObjectStore(opts *sessionserver.Options) {
+	if h.objects == nil {
+		return
+	}
+	opts.Blobs = h.objects.Blobs
+	opts.CheckpointManifestReader = h.objects.Manifests
+	opts.CheckpointManifestWriter = h.objects.Manifests
+	opts.ResumeChunkResolver = h.objects.Resolver
+}
+
+// objectTransport is the pod adapter transport of an object store, nil when
+// the harness has none.
+func objectTransport(o *ObjectStore) adapter.CheckpointTransport {
+	if o == nil {
+		return nil
+	}
+	return o.Transport
 }
 
 // watchdogIdleSeconds is the watchdog idle bound: Options.MaxIdleSeconds,

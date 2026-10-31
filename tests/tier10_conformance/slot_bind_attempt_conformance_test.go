@@ -33,14 +33,17 @@ import (
 
 // Rule 1, the pairing rule: a non-mid-session bind-sequence request with no
 // token and a mid-session request with one are refused INVALID_ARGUMENT before
-// the registry is read.
+// the registry is read, and so is a mid-session FinalizeWorkspace that carries
+// restore_chunks.
 //
-// spec: §4.7.1 (role and gateway RPC contract); §15.4 (runtime adapter
-// specification)
+// spec: §4.7.1 (role and gateway RPC contract); §7.1 (Derive restore
+// semantics); §15.4 (runtime adapter specification)
 //
 // diagnosis: a request whose bind_attempt and mid_session do not pair was admitted, or
 // was refused only after it created, resolved or started an entry. Check that
-// every handler carrying the fields validates them before its resolve.
+// every handler carrying the fields validates them before its resolve. A
+// failing restore_chunks case means FinalizeWorkspace does not refuse a
+// mid-session restore beside validateBindFields.
 func TestPairingRuleRefusesAMalformedRequestAndChangesNothing_spec_4_7_1(t *testing.T) {
 	bindattempt.PairingRule(t, bindattempt.InProcess)
 }

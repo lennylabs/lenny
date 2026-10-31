@@ -15,7 +15,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // eventSortField is the sort key for the JSON list view of the events
@@ -412,7 +411,7 @@ func (s *Server) recordTTFTOnce(row sessionstore.Session, eventType string) {
 	if _, loaded := s.firstTokenObserved.LoadOrStore(row.ID, struct{}{}); loaded {
 		return
 	}
-	runtimeClass, ok := isolation.RuntimeClassName(row.IsolationProfile)
+	runtimeClass, ok := s.runtimeClassOf(row.IsolationProfile)
 	if !ok {
 		// A row with no resolved isolation profile would mislabel the
 		// histogram; skip rather than emit an empty runtime_class.

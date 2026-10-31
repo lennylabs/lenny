@@ -88,6 +88,10 @@ type concurrentAdapter struct {
 	// finalizeErr, when non-nil, makes FinalizeWorkspace fail so a test can
 	// drive the finalize-stage slot failure (§5.2, §16.1).
 	finalizeErr error
+	// restoreURLs records, per session, the restore_chunks capability URLs
+	// each FinalizeWorkspace carried, so a test can assert the §7.1 restore
+	// grants reach the adapter on the slot path.
+	restoreURLs map[string][]string
 	// startErr, when non-nil, makes StartSession fail so a test can drive
 	// the §5.2 slot-failure path.
 	startErr error
@@ -128,6 +132,7 @@ func newConcurrentAdapter() *concurrentAdapter {
 	return &concurrentAdapter{
 		started:               map[string]bool{},
 		finalized:             map[string]bool{},
+		restoreURLs:           map[string][]string{},
 		shutdownExitedCleanly: true,
 	}
 }
@@ -167,6 +172,10 @@ func (a *concurrentAdapter) FinalizeWorkspace(_ context.Context, req *adapterv1.
 	a.rec.record(req)
 	a.mu.Lock()
 	finalizeErr := a.finalizeErr
+	for _, g := range req.GetRestoreChunks() {
+		sid := req.GetSessionId().GetValue()
+		a.restoreURLs[sid] = append(a.restoreURLs[sid], g.GetUrl())
+	}
 	if finalizeErr == nil {
 		a.finalized[req.GetSessionId().GetValue()] = true
 	}
@@ -1605,4 +1614,36 @@ func TestSlotBindCompensationOutcomeReachesTheReclaimHook_spec_7_1(t *testing.T)
 			}
 		})
 	}
+}
+
+// spec: 7.5 (Setup Commands)
+// diagnosis: a session with no RunSetup, or with a RunSetup before its
+// FinalizeWorkspace, means the bind path gated setup per pod or ran it
+// before the slot was materialized. §7.5 runs each session's setup
+// commands once, after its own workspace is materialized, including when
+// two sessions share one concurrent-workspace pod.
+func TestBindSlotRunsEachSessionsSetupOnASharedPod_spec_7_5(t *testing.T) {
+	ns := testNamespace(t)
+	a := newConcurrentAdapter()
+	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
+
+	var pods []string
+	for _, sessionID := range []string{"sess-1", "sess-2"} {
+		res, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+			Pool: testPool, SessionID: sessionID, TenantID: "acme", Runtime: "claude-code",
+			MaxConcurrentSessions: 4, Plan: setupPlan(),
+		})
+		if err != nil {
+			t.Fatalf("BindSlot %s: %v", sessionID, err)
+		}
+		defer res.Adapter.Close()
+		pods = append(pods, res.SandboxName)
+	}
+	if pods[0] != pods[1] {
+		t.Fatalf("the two slots landed on different pods %v; the case needs one shared pod", pods)
+	}
+
+	assertOneSetupAfterFinalize(t, &a.rec, "sess-1")
+	assertOneSetupAfterFinalize(t, &a.rec, "sess-2")
 }

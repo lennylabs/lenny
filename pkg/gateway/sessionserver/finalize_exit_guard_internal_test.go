@@ -473,8 +473,10 @@ func TestFinalizeReadyStoreErrorFailsRow_spec_7_1(t *testing.T) {
 	}
 }
 
-// consumedTracker reports every digest as already consumed and records the
-// row state it observed at consume time.
+// consumedTracker reports every consume as already consumed and records the
+// row state it observed at consume time. IsConsumed reports false, so the
+// §7.4 uploadToken check at admission passes and the consume failure models
+// a digest invalidated between that check and the post-ready consume.
 type consumedTracker struct {
 	store sessionstore.Store
 	id    string
@@ -488,7 +490,7 @@ func (c *consumedTracker) MarkConsumed(string, time.Time) error {
 	return uploadtoken.ErrConsumed
 }
 
-func (*consumedTracker) IsConsumed(string) bool { return true }
+func (*consumedTracker) IsConsumed(string) bool { return false }
 
 // A failed upload-token consume after the ready write commits is logged, and
 // the call still answers 200 with the session `ready`; the pod and lease stay
@@ -496,14 +498,19 @@ func (*consumedTracker) IsConsumed(string) bool { return true }
 // spec: 7.1 (single-use uploadToken invalidation), 15.1 (finalize row)
 func TestFinalizeConsumeFailureKeepsReady_spec_7_1(t *testing.T) {
 	tracker := &consumedTracker{id: "s1"}
-	f := newExitFixture(t, Options{DevTenantHeader: true, UploadTokenVerifier: uploadtoken.NewVerifier(nil, tracker, nil)})
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("exit")})
+	f := newExitFixture(t, Options{DevTenantHeader: true, UploadTokenVerifier: uploadtoken.NewVerifier(ring, tracker, nil)})
 	tracker.store = f.inner
+	tok, parsed, err := uploadtoken.NewIssuer(ring, nil).IssueDetailed("s1", time.Hour)
+	if err != nil {
+		t.Fatalf("issue upload token: %v", err)
+	}
 	f.seed(t, "s1", "", "", func(row *sessionstore.Session) {
-		row.UploadTokenDigest = "digest-1"
-		row.UploadTokenExpiry = time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
+		row.UploadTokenDigest = parsed.Digest
+		row.UploadTokenExpiry = parsed.Expiry
 	})
 
-	rr := postFinalize(t, f.srv, "s1", "")
+	rr := postFinalizeWithToken(t, f.srv, "s1", "", tok)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body %s", rr.Code, rr.Body.String())

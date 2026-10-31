@@ -177,12 +177,15 @@ type UnimplementedTokenServiceServer struct{}
 func (UnimplementedTokenServiceServer) AssignCredentials(context.Context, *AssignCredentialsRequest) (*AssignCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AssignCredentials not implemented")
 }
+
 func (UnimplementedTokenServiceServer) RotateCredentials(context.Context, *RotateCredentialsRequest) (*RotateCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RotateCredentials not implemented")
 }
+
 func (UnimplementedTokenServiceServer) RevokeCredentials(context.Context, *RevokeCredentialsRequest) (*RevokeCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RevokeCredentials not implemented")
 }
+
 func (UnimplementedTokenServiceServer) ProbeSecretAccess(context.Context, *ProbeSecretAccessRequest) (*ProbeSecretAccessResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ProbeSecretAccess not implemented")
 }

@@ -16,16 +16,25 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
-// failingCopier is a blobstore.Store whose Copy always reports the source
-// object missing, so the §7.1 derive copy stage fails after the lock is
-// released — the post-copy-attempt failure the §7.1 derive rule 2 audit
-// row captures. F-15.1.14.
+// failingCopier is a blobstore.Store whose chunk Copy always reports the
+// source chunk missing, so the §7.1 derive copy stage fails after the lock
+// is released, on the chunk-copy arm, which is the post-copy-attempt
+// failure the §7.1 derive rule 2 audit row captures. F-15.1.14.
 type failingCopier struct{ *blobstore.MemoryStore }
 
 func (failingCopier) Copy(_, _ blobstore.URI) error { return blobstore.ErrNotFound }
 
-func newFailingBlobs() failingCopier {
-	return failingCopier{blobstore.NewMemoryStore(func() time.Time { return time.Unix(0, 0).UTC() })}
+// failingCopyOptions returns o wired with the source session's chunked
+// checkpoint, its manifest reader and writer, and a chunk resolver, behind a
+// blob store whose chunk Copy reports the chunk missing, so the derive
+// reaches the chunk copy and answers 503 DERIVE_SNAPSHOT_UNAVAILABLE rather
+// than the unwired 500.
+func failingCopyOptions(t *testing.T, o sessionserver.Options) sessionserver.Options {
+	t.Helper()
+	snap := sourceSnapshot(t)
+	snap.apply(&o)
+	o.Blobs = failingCopier{snap.blobs}
+	return o
 }
 
 // fenceStore simulates a §10.1 coordinator handoff: the source session's
@@ -74,14 +83,13 @@ func TestDeriveFailurePersistsAuditRow_spec_7_1_derive_rule_2(t *testing.T) {
 	store := memstore.New()
 	newSourceSession(t, store)
 	ctr := &captureCounter{}
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := sessionserver.New(store, failingCopyOptions(t, sessionserver.Options{
 		DevTenantHeader:          true,
 		IDFunc:                   func() string { return "sess_df" },
 		Clock:                    func() time.Time { return time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC) },
-		Blobs:                    newFailingBlobs(),
 		PersistDeriveFailureRows: true,
 		IncDeriveFailureAudit:    ctr.inc,
-	})
+	}))
 	h := srv.Handler()
 
 	rr := deriveRequest(t, h, sessionserver.DeriveRequest{})
@@ -132,13 +140,12 @@ func TestDeriveFailureNoPersistByDefault_spec_7_1_derive_rule_2(t *testing.T) {
 	store := memstore.New()
 	newSourceSession(t, store)
 	ctr := &captureCounter{}
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := sessionserver.New(store, failingCopyOptions(t, sessionserver.Options{
 		DevTenantHeader:       true,
 		IDFunc:                func() string { return "sess_df" },
-		Blobs:                 newFailingBlobs(),
 		IncDeriveFailureAudit: ctr.inc,
 		// PersistDeriveFailureRows left false.
-	})
+	}))
 	h := srv.Handler()
 
 	rr := deriveRequest(t, h, sessionserver.DeriveRequest{})
@@ -162,13 +169,12 @@ func TestDeriveFailureCASFenceSkipsWrite_spec_7_1_derive_rule_2(t *testing.T) {
 	newSourceSession(t, base)
 	store := &fenceStore{Store: base, target: "sess_source"}
 	ctr := &captureCounter{}
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := sessionserver.New(store, failingCopyOptions(t, sessionserver.Options{
 		DevTenantHeader:          true,
 		IDFunc:                   func() string { return "sess_df" },
-		Blobs:                    newFailingBlobs(),
 		PersistDeriveFailureRows: true,
 		IncDeriveFailureAudit:    ctr.inc,
-	})
+	}))
 	h := srv.Handler()
 
 	rr := deriveRequest(t, h, sessionserver.DeriveRequest{})
@@ -216,13 +222,12 @@ func TestDeriveFailureFencedByAResumeEntry_spec_7_1(t *testing.T) {
 	newSourceSession(t, base, func(r *sessionstore.Session) { r.State = session.StateResumePending })
 	store := &resumingSourceStore{Store: base, target: "sess_source"}
 	ctr := &captureCounter{}
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := sessionserver.New(store, failingCopyOptions(t, sessionserver.Options{
 		DevTenantHeader:          true,
 		IDFunc:                   func() string { return "sess_df" },
-		Blobs:                    newFailingBlobs(),
 		PersistDeriveFailureRows: true,
 		IncDeriveFailureAudit:    ctr.inc,
-	})
+	}))
 	h := srv.Handler()
 	rr := deriveRequest(t, h, sessionserver.DeriveRequest{AllowStale: true})
 	if rr.Code != http.StatusServiceUnavailable {
@@ -246,12 +251,11 @@ func TestDeriveFailureAuditRowIsNoTreeNode_spec_15_1(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
 	src := newSourceSession(t, store)
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := sessionserver.New(store, failingCopyOptions(t, sessionserver.Options{
 		DevTenantHeader:          true,
 		IDFunc:                   func() string { return "sess_df" },
-		Blobs:                    newFailingBlobs(),
 		PersistDeriveFailureRows: true,
-	})
+	}))
 
 	if rr := deriveRequest(t, srv.Handler(), sessionserver.DeriveRequest{}); rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("derive status: got %d, want 503; body=%s", rr.Code, rr.Body.String())

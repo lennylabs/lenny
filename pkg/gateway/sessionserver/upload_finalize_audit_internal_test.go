@@ -96,7 +96,7 @@ func TestHandleFinalizeEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 	})
 
 	// Seed a session row mid-flow (state=created) with a known digest.
-	_, parsed, err := issuer.IssueDetailed("sess_fin", uploadtoken.DefaultTTL)
+	tok, parsed, err := issuer.IssueDetailed("sess_fin", uploadtoken.DefaultTTL)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -113,6 +113,7 @@ func TestHandleFinalizeEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_fin/finalize", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "default")
+	req.Header.Set("X-Lenny-Upload-Token", tok)
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {

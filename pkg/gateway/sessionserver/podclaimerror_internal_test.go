@@ -264,13 +264,13 @@ func setupFailWith(code codes.Code) *podsession.SetupCommandFailure {
 }
 
 // spec: §7.3 (setup_command_failed non-retryable), §15.1 (SETUP_COMMAND_FAILED),
-// §6.2 (transient setup failure retried on a fresh pod) — a deterministic
+// §6.2 (pre-attached retry Scope) — a deterministic
 // setup-command exit the adapter reports as codes.FailedPrecondition surfaces
 // as the non-retryable 422 SETUP_COMMAND_FAILED with details.reason retained
 // and no Retry-After, while every other gRPC code (the complement of
 // FailedPrecondition: a crashed pod surfaced as Unavailable / DeadlineExceeded,
 // a wrapped non-status cause reported as Unknown, and Internal) stays the
-// retryable 503 fallback + Retry-After so §6.2 recovers it on a fresh pod.
+// retryable 503 fallback + Retry-After for a client retry.
 func TestWritePodClaimErrorSetupCommandFailed_spec_7_3(t *testing.T) {
 	s := New(memstore.New(), Options{DevTenantHeader: true})
 

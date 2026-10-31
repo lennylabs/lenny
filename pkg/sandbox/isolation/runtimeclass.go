@@ -14,7 +14,7 @@ func RuntimeClassName(p Profile) (string, bool) {
 // the isolation profile, applying the per-profile operator override
 // when present. spec: §17.5 — operators running gVisor as `runsc` or Kata
 // as `kata-qemu` / `kata-fc` override the chart-default literal via
-// `isolation.runtimeClassNames` Helm values. An override mapped to an
+// `runtimeClasses.profiles.<profile>.name` Helm values. An override mapped to an
 // empty string falls back to the default; a missing key falls back to
 // the default. The boolean is false for an unrecognized profile.
 func ResolveRuntimeClassName(p Profile, overrides map[Profile]string) (string, bool) {
@@ -31,6 +31,33 @@ func ResolveRuntimeClassName(p Profile, overrides map[Profile]string) (string, b
 	default:
 		return "", false
 	}
+}
+
+// RuntimeClassOverrides assembles the §17.5 per-profile RuntimeClass name
+// override map from the operator's three values, in the form
+// ResolveRuntimeClassName reads. An empty value leaves its profile out, so the
+// profile keeps its default name.
+//
+// The controller and the gateway both build their map here from the chart's
+// `runtimeClasses.profiles.<profile>.name` values, which reach each binary as the same
+// `--standard-runtime-class`, `--sandboxed-runtime-class`, and
+// `--microvm-runtime-class` flags. The controller stamps the result on the
+// pod's `runtimeClassName` and labels its warm-pool series from it, and the
+// gateway labels its own `runtime_class` series from it, so one profile maps
+// to one RuntimeClass name in both processes. spec: §17.5, §5.3 (Isolation
+// Profiles), §16.1 (Metrics).
+func RuntimeClassOverrides(standard, sandboxed, microvm string) map[Profile]string {
+	out := map[Profile]string{}
+	for p, name := range map[Profile]string{
+		ProfileStandard:  standard,
+		ProfileSandboxed: sandboxed,
+		ProfileMicrovm:   microvm,
+	} {
+		if name != "" {
+			out[p] = name
+		}
+	}
+	return out
 }
 
 // MustRuntimeClassName returns the §5.3 RuntimeClass name for p and

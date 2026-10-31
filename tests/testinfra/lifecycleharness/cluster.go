@@ -57,6 +57,8 @@ type Cluster struct {
 	Namespace string
 
 	heartbeat time.Duration
+	// transport is ClusterOptions.CheckpointTransport.
+	transport adapter.CheckpointTransport
 
 	mu       sync.Mutex
 	pods     map[string]*Pod // by pod IP
@@ -176,6 +178,10 @@ type ClusterOptions struct {
 	// cluster's namespace, so clusters sharing one control plane do not see
 	// each other's pods, claims, or pools.
 	ControlPlane *envtest.Shared
+	// CheckpointTransport, when set, is every pod adapter's object-store
+	// transport, which a derived or replayed session's restore fetches its
+	// presigned GETs through (§7.1 Derive restore semantics).
+	CheckpointTransport adapter.CheckpointTransport
 }
 
 // NewCluster starts envtest and seeds the warm pool and template.
@@ -223,7 +229,7 @@ func NewClusterWith(t testing.TB, opts ClusterOptions) *Cluster {
 			t.Fatalf("create %T: %v", o, err)
 		}
 	}
-	return &Cluster{Client: c, Namespace: ns, pods: map[string]*Pod{}, nextIP: 10, heartbeat: opts.HeartbeatInterval}
+	return &Cluster{Client: c, Namespace: ns, pods: map[string]*Pod{}, nextIP: 10, heartbeat: opts.HeartbeatInterval, transport: opts.CheckpointTransport}
 }
 
 // template is the warm pool's SandboxTemplate in namespace ns.
@@ -253,6 +259,7 @@ func (c *Cluster) AddIdlePod(t testing.TB) *Pod {
 	srv.WorkspaceBase = t.TempDir()
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = rt
+	srv.CheckpointTransport = c.transport
 	if c.heartbeat > 0 {
 		srv.HeartbeatInterval = c.heartbeat
 	}

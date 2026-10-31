@@ -22,6 +22,21 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
+// ConversationResponse is one Open Responses turn on a session. EndSeq is
+// the last transcript Seq the turn appended, which bounds a cold
+// continuation's rehydrated prefix. RecoveryGeneration is the session's
+// recovery_generation captured for the turn: at reservation for a warm
+// turn, and at bind for a session's first turn. A warm continuation
+// requires it unchanged. Completed is set once the turn's output is
+// recorded.
+// spec: §15 (Open Responses conversation sessions).
+type ConversationResponse struct {
+	CreatedAt          time.Time `json:"createdAt"`
+	EndSeq             uint64    `json:"endSeq"`
+	RecoveryGeneration int64     `json:"recoveryGeneration"`
+	Completed          bool      `json:"completed"`
+}
+
 // Session is the per-row payload the store persists. Mirrors the
 // subset of the §15.1 GET /v1/sessions/{id} envelope the minimal
 // gateway populates.
@@ -138,12 +153,16 @@ type Session struct {
 	// spec: §7.1.
 	ConversationContinuity string
 
-	// WorkspacePlan is the raw §14 WorkspacePlan JSON submitted with
-	// POST /v1/sessions or POST /v1/sessions/start. It is stored at
-	// create so the finalize and start handlers can materialize the
-	// workspace onto the claimed pod, and GET /v1/sessions/{id} can
-	// return the stored plan per §15.1. Nil when the session was
-	// created without a workspace plan.
+	// WorkspacePlan is the §14 WorkspacePlan JSON stored when the plan
+	// binds: in POST /v1/sessions or POST /v1/sessions/start, in the
+	// finalize request when creation carried none, or when the gateway
+	// creates a delegated child. It carries the runtime's
+	// workspaceDefaults ahead of the plan's own entries, so every later
+	// materialization reads the defaults pinned at bind, and
+	// GET /v1/sessions/{id} returns it per §15.1. Nil until a plan binds,
+	// and after a bind that yielded no plan.
+	// spec: §14.1 WorkspacePlan Schema Versioning (Plan binding; Runtime
+	// workspace defaults).
 	WorkspacePlan json.RawMessage
 
 	// WorkspaceSnapshot is the §7.1 / §15.1 workspace snapshot ref
@@ -160,16 +179,32 @@ type Session struct {
 	// ParentWorkspaceRef (§4.5 Workspace lineage).
 	ParentSessionID string
 
-	// ContinuationParentID is the OpenResponsesAdapter previous_response_id of
-	// the prior response this single-shot continuation chains from. It is
-	// distinct from ParentSessionID, which the §8.2/§8.6 delegation machinery
-	// and the delegation-tree orphan-cleanup sweep own: a single-shot
-	// continuation must not set ParentSessionID or it would be misclassified as
-	// a delegated child and swept. The pointer rides the §14.1 request-envelope
-	// bundle rather than a dedicated column; GET /v1/responses/{id} echoes it as
-	// previous_response_id.
-	// spec: §15 built-in adapter single-shot compute model.
+	// ContinuationParentID is the Open Responses response id
+	// (`<sessionId>.<n>`) that this session's first turn continued from. It
+	// is empty for a conversation's first session. It is distinct from
+	// ParentSessionID, which belongs to §8.2 delegation and the
+	// delegation-tree orphan-cleanup sweep: a continuation must not set
+	// ParentSessionID or it would be misclassified as a delegated child and
+	// swept. The pointer rides the §14.1 request-envelope bundle rather than
+	// a dedicated column.
+	// spec: §15 (Open Responses conversation sessions).
 	ContinuationParentID string
+
+	// Responses holds one record per Open Responses turn run on this
+	// session, in turn order. The ordinal of Responses[i] is i+1, so its
+	// response id is `<sessionId>.<i+1>`. Nil for a session no Open
+	// Responses turn ran on. The records ride the §14.1 request-envelope
+	// bundle rather than a dedicated table.
+	// spec: §15 (Open Responses conversation sessions).
+	Responses []ConversationResponse
+
+	// RequestedRuntimeRef is the runtime ref that the Open Responses request
+	// which created this session asked for. RuntimeRef is the value after
+	// §4.8 PreRoute and §10.7 experiment routing rewrite it, so a
+	// continuation compares its own requested runtime against this field.
+	// Empty for a session no Open Responses request created.
+	// spec: §15 (Open Responses conversation sessions).
+	RequestedRuntimeRef string
 
 	// RootSessionID is the §8.9 / §12.5 delegation-tree root: every
 	// session in a delegation tree carries the same RootSessionID,

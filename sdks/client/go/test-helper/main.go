@@ -127,7 +127,7 @@ func (h *helper) dispatch(cmd command) response {
 	case "delete_session":
 		return h.opDeleteSession(ctx, cmd.Args)
 	case "finalize":
-		return h.opTransition(ctx, cmd.Args, (*lenny.Client).Finalize)
+		return h.opFinalize(ctx, cmd.Args)
 	case "start":
 		return h.opTransition(ctx, cmd.Args, (*lenny.Client).Start)
 	case "interrupt":
@@ -215,10 +215,20 @@ func (h *helper) opDeleteSession(ctx context.Context, args map[string]any) respo
 // methods on lenny.Client.
 type transitionFn func(*lenny.Client, context.Context, string, ...lenny.RequestOption) (*lenny.Session, error)
 
-// opTransition executes a no-body lifecycle op (finalize, start,
+// opTransition executes a no-body lifecycle op (start,
 // interrupt, terminate).
 func (h *helper) opTransition(ctx context.Context, args map[string]any, fn transitionFn) response {
 	s, err := fn(h.client, ctx, stringArg(args, "id"))
+	if err != nil {
+		return errResponse(err)
+	}
+	return response{OK: true, Result: sessionResult(*s, nil)}
+}
+
+// opFinalize executes the finalize op, sending the §7.1 uploadToken the
+// create_session op returned (§7.4 Upload authorization).
+func (h *helper) opFinalize(ctx context.Context, args map[string]any) response {
+	s, err := h.client.Finalize(ctx, stringArg(args, "id"), stringArg(args, "upload_token"))
 	if err != nil {
 		return errResponse(err)
 	}

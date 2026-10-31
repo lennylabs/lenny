@@ -258,3 +258,166 @@ func TestUploadFilesTokenHeader_spec_15_2_3(t *testing.T) {
 		t.Errorf("content type = %q, want text/plain", svc.contentType)
 	}
 }
+
+// finalizeSchema is the decoded subset of the lenny/finalize_workspace
+// input schema the finalize assertions read.
+type finalizeSchema struct {
+	Type       string   `json:"type"`
+	Required   []string `json:"required"`
+	Properties map[string]struct {
+		Type json.RawMessage `json:"type"`
+	} `json:"properties"`
+}
+
+// catalogInputSchema returns the advertised input schema of the named
+// tool, failing the test when the tool is absent.
+func catalogInputSchema(t *testing.T, srv *mcp.Server, name string) json.RawMessage {
+	t.Helper()
+	for _, tool := range srv.Catalog() {
+		if tool.Name == name {
+			return tool.InputSchema
+		}
+	}
+	t.Fatalf("tool %q not in catalog", name)
+	return nil
+}
+
+// TestFinalizeWorkspaceInputSchemaDeclaresWorkspacePlan_spec_15_2_1 asserts the
+// lenny/finalize_workspace tool advertises the optional workspacePlan it
+// forwards as the REST finalize body: sessionId and the §7.4 uploadToken are
+// the required properties, and workspacePlan is typed ["object","null"]. The
+// other per-session POST tools keep the session-id-only schema.
+//
+// spec: 15.2.1 (REST/MCP Consistency Contract), 14.1 (WorkspacePlan Schema Versioning), 7.4 (Upload Safety, Upload authorization)
+func TestFinalizeWorkspaceInputSchemaDeclaresWorkspacePlan_spec_15_2_1(t *testing.T) {
+	srv := newClientToolsMCP(t, &fakeService{})
+
+	var got finalizeSchema
+	if err := json.Unmarshal(catalogInputSchema(t, srv, "lenny/finalize_workspace"), &got); err != nil {
+		t.Fatalf("decode finalize_workspace input schema: %v", err)
+	}
+	if got.Type != "object" {
+		t.Errorf("schema type = %q, want object", got.Type)
+	}
+	if len(got.Required) != 2 || got.Required[0] != "sessionId" || got.Required[1] != "uploadToken" {
+		t.Errorf("required = %v, want [sessionId uploadToken] (workspacePlan stays optional)", got.Required)
+	}
+	if _, ok := got.Properties["uploadToken"]; !ok {
+		t.Errorf("finalize_workspace input schema does not declare uploadToken")
+	}
+	plan, ok := got.Properties["workspacePlan"]
+	if !ok {
+		t.Fatalf("finalize_workspace input schema does not declare workspacePlan: %+v", got.Properties)
+	}
+	var planTypes []string
+	if err := json.Unmarshal(plan.Type, &planTypes); err != nil {
+		t.Fatalf("workspacePlan type is not a type array: %s (%v)", plan.Type, err)
+	}
+	if len(planTypes) != 2 || planTypes[0] != "object" || planTypes[1] != "null" {
+		t.Errorf("workspacePlan type = %v, want [object null]", planTypes)
+	}
+	if _, ok := got.Properties["sessionId"]; !ok {
+		t.Errorf("finalize_workspace input schema does not declare sessionId")
+	}
+
+	for _, name := range []string{"lenny/start_session", "lenny/terminate_session", "lenny/resume_session", "lenny/interrupt_session"} {
+		var other finalizeSchema
+		if err := json.Unmarshal(catalogInputSchema(t, srv, name), &other); err != nil {
+			t.Fatalf("decode %s input schema: %v", name, err)
+		}
+		if _, ok := other.Properties["workspacePlan"]; ok {
+			t.Errorf("%s input schema declares workspacePlan; only finalize_workspace binds a plan", name)
+		}
+		if _, ok := other.Properties["uploadToken"]; ok {
+			t.Errorf("%s input schema declares uploadToken; only finalize_workspace and upload_files take it", name)
+		}
+	}
+}
+
+// TestFinalizeWorkspaceForwardsWorkspacePlan_spec_15_2_1 asserts the workspacePlan
+// argument reaches the REST finalize route as the request body, with
+// sessionId stripped.
+//
+// spec: 15.2.1 (REST/MCP Consistency Contract), 14.1 (WorkspacePlan Schema Versioning)
+func TestFinalizeWorkspaceForwardsWorkspacePlan_spec_15_2_1(t *testing.T) {
+	svc := &fakeService{result: sessionserver.ServiceResult{Status: 200, Body: []byte(`{"state":"ready"}`)}}
+	srv := newClientToolsMCP(t, svc)
+
+	args := `{"sessionId":"s1","uploadToken":"tok-9","workspacePlan":{"schemaVersion":1,"sources":[{"type":"uploadFile","path":"a.txt","uploadRef":"ref-1"}]}}`
+	if _, err := dispatch(t, srv, "lenny/finalize_workspace", args); err != nil {
+		t.Fatalf("finalize_workspace: %v", err)
+	}
+	if svc.method != "POST" || svc.target != "/v1/sessions/s1/finalize" {
+		t.Fatalf("routed to %s %s, want POST /v1/sessions/s1/finalize", svc.method, svc.target)
+	}
+	var body struct {
+		SessionID     *string        `json:"sessionId"`
+		UploadToken   *string        `json:"uploadToken"`
+		WorkspacePlan map[string]any `json:"workspacePlan"`
+	}
+	if err := json.Unmarshal(svc.body, &body); err != nil {
+		t.Fatalf("forwarded body not JSON: %v (%s)", err, svc.body)
+	}
+	if body.SessionID != nil {
+		t.Errorf("forwarded body still carries sessionId: %s", svc.body)
+	}
+	if body.UploadToken != nil {
+		t.Errorf("forwarded body still carries uploadToken: %s", svc.body)
+	}
+	if got := svc.headers["X-Lenny-Upload-Token"]; got != "tok-9" {
+		t.Errorf("upload token header = %q, want tok-9", got)
+	}
+	if body.WorkspacePlan == nil || body.WorkspacePlan["sources"] == nil {
+		t.Errorf("forwarded body lost workspacePlan: %s", svc.body)
+	}
+}
+
+// TestFinalizeWorkspaceCarriesUploadToken_spec_7_4 asserts the
+// lenny/finalize_workspace tool forwards the uploadToken argument in the
+// X-Lenny-Upload-Token header the REST finalize verifies, sends no body for
+// a plan-less call, and refuses a call whose uploadToken is absent, empty,
+// or not a string with VALIDATION_ERROR before any REST call.
+//
+// spec: 7.4 (Upload Safety, Upload authorization), 15.2.1 (REST/MCP Consistency Contract)
+func TestFinalizeWorkspaceCarriesUploadToken_spec_7_4(t *testing.T) {
+	cases := []struct {
+		name      string
+		args      string
+		wantErr   string
+		wantToken string
+		wantBody  bool
+	}{
+		{name: "token without plan", args: `{"sessionId":"s1","uploadToken":"tok-1"}`, wantToken: "tok-1"},
+		{name: "token with plan", args: `{"sessionId":"s1","uploadToken":"tok-2","workspacePlan":{"schemaVersion":1,"sources":[]}}`, wantToken: "tok-2", wantBody: true},
+		{name: "token absent", args: `{"sessionId":"s1"}`, wantErr: "VALIDATION_ERROR"},
+		{name: "token empty", args: `{"sessionId":"s1","uploadToken":""}`, wantErr: "VALIDATION_ERROR"},
+		{name: "token blank", args: `{"sessionId":"s1","uploadToken":"   "}`, wantErr: "VALIDATION_ERROR"},
+		{name: "token not a string", args: `{"sessionId":"s1","uploadToken":7}`, wantErr: "VALIDATION_ERROR"},
+		{name: "session absent", args: `{"uploadToken":"tok-3"}`, wantErr: "VALIDATION_ERROR"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &fakeService{result: sessionserver.ServiceResult{Status: 200, Body: []byte(`{"state":"ready"}`)}}
+			srv := newClientToolsMCP(t, svc)
+			res, err := dispatch(t, srv, "lenny/finalize_workspace", tc.args)
+			if tc.wantErr != "" {
+				if code := errorCode(t, res); code != tc.wantErr {
+					t.Fatalf("error code = %q, want %s", code, tc.wantErr)
+				}
+				if svc.method != "" {
+					t.Errorf("refused call reached the REST route %s %s", svc.method, svc.target)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("finalize_workspace: %v", err)
+			}
+			if got := svc.headers["X-Lenny-Upload-Token"]; got != tc.wantToken {
+				t.Errorf("upload token header = %q, want %q", got, tc.wantToken)
+			}
+			if (len(svc.body) > 0) != tc.wantBody {
+				t.Errorf("forwarded body = %q, want body present = %v", svc.body, tc.wantBody)
+			}
+		})
+	}
+}

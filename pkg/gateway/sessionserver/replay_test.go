@@ -32,7 +32,7 @@ func seedTerminalSource(t *testing.T, store sessionstore.Store, mods ...func(*se
 		CreatedAt:        time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		UpdatedAt:        time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{
-			Ref:    "/acme/workspace/sess_src/snap",
+			Ref:    sourceCheckpointRef("sess_src"),
 			Source: sessionstore.WorkspaceSnapshotSealed,
 		},
 	}
@@ -58,11 +58,10 @@ func replayReq(t *testing.T, h http.Handler, body sessionserver.ReplayRequest) *
 func TestReplayWorkspaceDerive(t *testing.T) {
 	store := memstore.New()
 	seedTerminalSource(t, store)
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := sessionserver.New(store, snapshotFor(t, "sess_src").wire(sessionserver.Options{
 		DevTenantHeader: true,
-		Blobs:           snapshotBlobs(t, "sess_src", "snap"),
 		IDFunc:          func() string { return "sess_replay" },
-	})
+	}))
 	rr := replayReq(t, srv.Handler(), sessionserver.ReplayRequest{
 		ReplayMode:    sessionserver.ReplayWorkspaceDerive,
 		TargetRuntime: "gemini-cli",
@@ -84,15 +83,14 @@ func TestReplayPromptHistoryCopiesTranscript(t *testing.T) {
 	transcripts := transcriptstore.NewMemory()
 	store := memstore.New(memstore.WithTranscriptCopier(transcripts.CopySession))
 	seedTerminalSource(t, store)
-	_ = transcripts.Append(context.Background(), "acme", "sess_src",
+	_, _ = transcripts.Append(context.Background(), "acme", "sess_src",
 		transcriptstore.Entry{Role: "user", Content: "original prompt"})
 
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := sessionserver.New(store, snapshotFor(t, "sess_src").wire(sessionserver.Options{
 		DevTenantHeader: true,
-		Blobs:           snapshotBlobs(t, "sess_src", "snap"),
 		IDFunc:          func() string { return "sess_replay" },
 		Transcripts:     transcripts,
-	})
+	}))
 	rr := replayReq(t, srv.Handler(), sessionserver.ReplayRequest{
 		ReplayMode:    sessionserver.ReplayPromptHistory,
 		TargetRuntime: "gemini-cli",

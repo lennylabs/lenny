@@ -145,7 +145,7 @@ func (w *gatewayWiring) buildControlServer(
 		// deferred by the composition root (runGateway) so they fire at
 		// process shutdown rather than when this build step returns.
 		var err error
-		scrubReports, err = newScrubReportService(w.clusterClient, agentpodstatepg.New(w.pgPool), w.pools, w.runtimes, gwMetrics, slotHealth, *agentNamespace, holdTTL, w.holdCoordinator, w.recycleBoundary, clockinject.Now)
+		scrubReports, err = newScrubReportService(w.clusterClient, agentpodstatepg.New(w.pgPool), w.pools, w.runtimes, w.runtimeClassOverrides(), gwMetrics, slotHealth, *agentNamespace, holdTTL, w.holdCoordinator, w.recycleBoundary, clockinject.Now)
 		if err != nil {
 			log.Fatalf("lenny-gateway: §4.7 scrub-report service: %v", err)
 		}

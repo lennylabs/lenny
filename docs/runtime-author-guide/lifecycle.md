@@ -58,7 +58,7 @@ ASCII fallback for the diagram above (sdk-warm-path):
 
 In SDK-warm mode, the platform launches the agent process during the warm phase (before any session) to eliminate cold-start latency. In the sidecar model the runtime supervisor launches it at warm-up when the pool's SDK-warm circuit breaker is closed at the moment the pod is created; otherwise the pod warms pod-warm with no process, and the supervisor launches the process when the session's workspace is configured. The adapter signals that the pod is ready only after the warm-up process has connected, then waits for session assignment.
 
-**Demotion:** If a claimed session's workspace includes files matching `sdkWarmBlockingPaths` (default: `["CLAUDE.md", ".claude/*"]`), the adapter calls `DemoteSDK`: the runtime supervisor ends the pre-connected process with a SIGTERM grace that ends within the request's deadline, the pod returns to pod-warm state, and the session's start launches a new process after the workspace is materialized. This adds 1--3 seconds but ensures the agent starts with workspace files present.
+**Demotion:** If a source in the session's workspace plan targets a path that matches `sdkWarmBlockingPaths` (default: `["CLAUDE.md", ".claude/*"]`), the gateway calls `DemoteSDK` before it materializes the workspace: the runtime supervisor ends the pre-connected process with a SIGTERM grace that ends within the request's deadline, the pod returns to pod-warm state, and the session's start launches a new process after the workspace is materialized. This adds 1--3 seconds but ensures the agent starts with workspace files present.
 
 ---
 
@@ -138,11 +138,11 @@ A runtime does not exit at the end of a session: a process that exits on its own
 
 ## Workspace Materialization
 
-When a pod is claimed for a session, the gateway materializes the client's files into the workspace:
+After the session's workspace plan binds, the gateway materializes it into the session's pod ([Workspace sources](../getting-started/concepts.md#workspace-sources)):
 
-1. **Upload phase:** Files stream from the client through the gateway into the session's `/workspace/slots/{sessionId}/staging` on the pod. Each file is validated (no path traversal, no symlinks outside workspace, size limits enforced).
+1. **Staging:** The gateway streams the content of the uploads that the plan's sources name into the session's `/workspace/slots/{sessionId}/staging` on the pod, and it extracts `tar`, `tar.gz`, and `zip` archives itself with zip-slip protection before streaming them. Each file is validated (no path traversal, no symlinks outside workspace, size limits enforced).
 
-2. **Finalization:** The gateway promotes files from `/workspace/slots/{sessionId}/staging` to `/workspace/slots/{sessionId}/current`. Archive extraction (tar.gz, tar.bz2, zip) happens here with zip-slip protection.
+2. **Finalization:** The gateway promotes files from `/workspace/slots/{sessionId}/staging` to `/workspace/slots/{sessionId}/current`.
 
 3. **Setup commands:** If the runtime defines setup commands (e.g., `npm install`), they run in `/workspace/slots/{sessionId}/current` with a bounded timeout. Setup command output is captured for diagnostics.
 

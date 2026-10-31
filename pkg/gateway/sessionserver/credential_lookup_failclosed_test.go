@@ -202,14 +202,20 @@ func (f *credOutageFixture) sandboxClaimed(t *testing.T) bool {
 }
 
 // spec: §4.9 (Pre-Claim Credential Availability Check), §7.1 (Atomicity of
-// session creation), §15.1 (SESSION_CREATION_FAILED)
+// session creation), §14.1 (WorkspacePlan Schema Versioning: Runtime
+// workspace defaults), §15.1 (SERVICE_UNAVAILABLE)
 // diagnosis: a combined create-and-start whose runtime read fails
-// transiently must fail closed before the claim: 503 SESSION_CREATION_FAILED
-// with Retry-After and reason credential_lookup_unavailable, no session row,
+// transiently must fail closed before the claim. The first read of the
+// runtime is the workspaceDefaults composition when the plan binds, so the
+// refusal is 503 SERVICE_UNAVAILABLE with Retry-After, with no session row,
 // no claimed pod, and no credential lease. Once the store recovers the same
 // request starts the session with its credential lease. A failure means a
-// session was started without the credential its tenant policy requires, a
-// pod or lease leaked on the refusal, or the refusal was not retryable.
+// session was started without its runtime's defaults or the credential its
+// tenant policy requires, a pod or lease leaked on the refusal, or the
+// refusal was not retryable. The credential lookup's own
+// credential_lookup_unavailable refusal on this path is pinned by
+// TestCredentialPreClaimCallersFailClosed_spec_4_9 and
+// TestWritePodClaimErrorCredentialLookupIsRetryable_spec_7_1.
 func TestCreateAndStartFailsClosedOnCredentialLookupOutage_spec_4_9(t *testing.T) {
 	t.Parallel()
 	f := newCredOutageFixture(t, "sess-cred-outage")
@@ -231,12 +237,9 @@ func TestCreateAndStartFailsClosedOnCredentialLookupOutage_spec_4_9(t *testing.T
 	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if env.Error.Code != "SESSION_CREATION_FAILED" || !env.Error.Retryable || rr.Header().Get("Retry-After") == "" {
-		t.Errorf("answer = %s retryable=%v Retry-After=%q, want retryable SESSION_CREATION_FAILED with Retry-After",
+	if env.Error.Code != "SERVICE_UNAVAILABLE" || !env.Error.Retryable || rr.Header().Get("Retry-After") == "" {
+		t.Errorf("answer = %s retryable=%v Retry-After=%q, want retryable SERVICE_UNAVAILABLE with Retry-After",
 			env.Error.Code, env.Error.Retryable, rr.Header().Get("Retry-After"))
-	}
-	if env.Error.Details["reason"] != "credential_lookup_unavailable" {
-		t.Errorf("details.reason = %v, want credential_lookup_unavailable", env.Error.Details["reason"])
 	}
 	if _, err := f.store.Get(context.Background(), "acme", "sess-cred-outage"); !errors.Is(err, sessionstore.ErrNotFound) {
 		t.Errorf("the refused create persisted a row (err=%v)", err)

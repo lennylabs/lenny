@@ -90,7 +90,7 @@ Use these spellings and formulations everywhere. Do not introduce synonyms.
 - TaskResult: `{"output":{"parts":[MessagePart[]], "artifactRefs":[...]}}` — note this has an extra `output.` wrapper, unlike the outbound response
 - Streaming endpoint: `GET /v1/sessions/{id}/logs` (with `Accept: text/event-stream` for SSE)
 - Message send: `POST /v1/sessions/{id}/messages`
-- Upload token header: `X-Upload-Token: <token>`
+- Upload token header: `X-Lenny-Upload-Token: <token>`
 
 ---
 

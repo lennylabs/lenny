@@ -84,8 +84,29 @@ test('finalize keeps the retry policy', async () => {
   const srv = await startServer(answer503('SESSION_CREATION_FAILED'));
   try {
     const client = newClient(srv.url, { retryPolicy: { ...policy, maxAttempts: 3 } });
-    await assert.rejects(client.finalize('sess_1'));
+    await assert.rejects(client.finalize('sess_1', 'tok-1'));
     assert.equal(srv.counts.get('/v1/sessions/sess_1/finalize'), 3);
+  } finally {
+    await srv.close();
+  }
+});
+
+// spec: §7.4 (Upload Safety, Upload authorization), §15.6 (Client SDKs).
+// Every finalize request carries the §7.1 uploadToken in the
+// X-Lenny-Upload-Token header, and an empty token is refused before any
+// request is sent.
+test('finalize sends the upload token and refuses an empty one', async () => {
+  const tokens = [];
+  const srv = await startServer((req, res) => {
+    tokens.push(req.headers['x-lenny-upload-token'] ?? '');
+    answer503('SESSION_CREATION_FAILED')(req, res);
+  });
+  try {
+    const client = newClient(srv.url, { retryPolicy: { ...policy, maxAttempts: 1 } });
+    await assert.rejects(client.finalize('sess_1', 'tok-7', { idempotencyKey: 'k1' }));
+    assert.deepEqual(tokens, ['tok-7']);
+    await assert.rejects(client.finalize('sess_1', ''), /requires an upload token/);
+    assert.equal(srv.counts.get('/v1/sessions/sess_1/finalize'), 1);
   } finally {
     await srv.close();
   }

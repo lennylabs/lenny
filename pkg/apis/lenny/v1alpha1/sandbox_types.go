@@ -4,7 +4,6 @@ package v1alpha1
 
 import (
 	corev1 "k8s.io/api/core/v1"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -69,18 +68,6 @@ type SandboxSpec struct {
 	// through the registry.
 	// +optional
 	ResourceClass string `json:"resourceClass,omitempty"`
-
-	// WorkspacePlan is the §14 WorkspacePlan a §12.6 CreatePod pod was
-	// created with. spec: §12.6 — the PodSpec carries the
-	// WorkspacePlan. It is empty for a warm pod (the WarmPoolController
-	// creates pods without a session, so the plan is materialized at
-	// session claim); the gateway-created-pod path (Tier 4+) stamps the
-	// resolved plan so the pod expresses the workspace it was created
-	// for. The schema is preserved as-is rather than re-declared here so
-	// a §14 schema revision does not require a CRD change.
-	// +kubebuilder:pruning:PreserveUnknownFields
-	// +optional
-	WorkspacePlan *apiextensionsv1.JSON `json:"workspacePlan,omitempty"`
 
 	// TopologySpreadConstraints distribute the pod across zones and
 	// nodes. spec: §5.2 — the WarmPoolController copies the

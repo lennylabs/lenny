@@ -9,7 +9,6 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
-	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // HoldCanceller cancels a §6.2 reserved-hold expiry timer this replica holds
@@ -105,12 +104,13 @@ func (b *Binder) handshake(ctx context.Context, sandboxName, pool string) (*lenn
 	// now that the idle→claimed transition has succeeded and the
 	// adapter handshake has confirmed the pod is usable. Labels are
 	// {pool, runtime_class}; the runtime_class is mapped from the
-	// pod's §5.3 isolation profile so the §6.3 demotion-rate
+	// pod's §5.3 isolation profile through the §17.5 override, as the
+	// controller maps it, so the §6.3 demotion-rate
 	// denominator is per runtime class. An unrecognized profile would
 	// mislabel the series; skip rather than emit an empty
 	// runtime_class.
 	if b.ClaimAccepted != nil {
-		if rc, ok := isolation.RuntimeClassName(isolation.Profile(sb.Spec.IsolationProfile)); ok {
+		if rc, ok := b.runtimeClassOf(sb.Spec.IsolationProfile); ok {
 			b.ClaimAccepted(pool, rc)
 		}
 	}

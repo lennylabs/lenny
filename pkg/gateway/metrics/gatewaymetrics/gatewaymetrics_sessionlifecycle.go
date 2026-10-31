@@ -93,13 +93,15 @@ type sessionLifecycleMetrics struct {
 	// after which the pod is held and the release retries in 60s.
 	// spec: §16.1 (Metrics), §6.2 (Pod State Machine).
 	sessionSuspensionCheckpointFailed *prometheus.CounterVec
-	// warmpoolWarmupFailure is the §16.1
-	// `lenny_warmpool_warmup_failure_total{error_type}` counter:
-	// incremented whenever a warm-pool-side §6.3 startup phase
-	// (workspace prep, setup_command, credential assignment, etc.)
-	// fails. error_type is the §7.3 non-retryable failure category
-	// the gateway classified. F-7.5.9.
-	// spec: §16.1, §7.3.
+	// warmpoolWarmupFailure is the gateway half of the §16.1
+	// `lenny_warmpool_warmup_failure_total` counter. The gateway emits
+	// error_type="setup_command_failed" for a session whose setup commands
+	// fail. The WarmPoolController emits the warm-up error types
+	// (image_pull_error, resource_quota_exceeded, node_pressure) with the
+	// pool and runtime_class labels from its own registry
+	// (pkg/controller/sandbox). Both halves carry the same §16.1 label set
+	// (F-16.1.9). F-7.5.9.
+	// spec: §16.1, §7.5.
 	warmpoolWarmupFailure *prometheus.CounterVec
 	// injectionGateFailClosed is the
 	// `lenny_injection_gate_failclosed_total{cause}` counter: incremented
@@ -188,11 +190,11 @@ func newSessionLifecycleMetrics(reg *prometheus.Registry) (sessionLifecycleMetri
 		return m, err
 	}
 	// §6.1 / §16.1 — `lenny_warmpool_sdk_demotions_total`
-	// counts SDK-warm pods demoted to pod-warm before session assignment
-	// because the workspace plan matched sdkWarmBlockingPaths.
+	// counts SDK-warm pods demoted to pod-warm because the workspace
+	// plan matched sdkWarmBlockingPaths.
 	warmpoolSDKDemotions, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_warmpool_sdk_demotions_total",
-		Help: "SDK-warm pods demoted to pod-warm before session assignment per pool (§6.1, §16.1).",
+		Help: "SDK-warm pods demoted to pod-warm per pool (§6.1, §16.1).",
 	}, []string{"pool"})
 	if err != nil {
 		return m, err
@@ -267,13 +269,13 @@ func newSessionLifecycleMetrics(reg *prometheus.Registry) (sessionLifecycleMetri
 	if err != nil {
 		return m, err
 	}
-	// §16.1 — `lenny_warmpool_warmup_failure_total{error_type}`
-	// counts warm-pool-side startup failures by §7.3 non-retryable
-	// failure category. F-7.5.9.
+	// §16.1 — `lenny_warmpool_warmup_failure_total{pool, runtime_class,
+	// error_type}`, the gateway's setup_command_failed count. F-7.5.9,
+	// F-16.1.9.
 	warmpoolWarmupFailure, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_warmpool_warmup_failure_total",
-		Help: "Warm-pool warm-up failures by error_type (§16.1, §7.3).",
-	}, []string{"error_type"})
+		Help: "Warm-pool warm-up failures by pool, runtime_class, and error_type (§16.1, §7.3).",
+	}, []string{"pool", "runtime_class", "error_type"})
 	if err != nil {
 		return m, err
 	}

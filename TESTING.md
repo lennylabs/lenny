@@ -826,8 +826,8 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 2. `go vet -tags=contract ./tests/tier3_contract/...` — the contract-tagged tests compile, even where they are expected to fail at runtime in the current phase.
 3. `buf lint` over the proto sources under `schemas/`.
 4. `buf breaking` against `.git#branch=main`. Off `main` the findings are reported as advisory, because a long-lived feature branch evolves the proto deliberately; on `main` the check hard-fails.
-5. `gofumpt -l .` — formatting.
-6. `goimports -l -local github.com/lennylabs/lenny .` — import ordering.
+5. `gofumpt -l .` — formatting. The walk from the repository root also reaches directories outside the checkout under test, such as other git worktrees under `.claude/worktrees/` and git-ignored scratch trees. The harness therefore judges only the Go files that `git ls-files --cached --others --exclude-standard` lists, and it keeps the whole report when git is unavailable.
+6. `goimports -l -local github.com/lennylabs/lenny .` — import ordering, scoped to the same files as `gofumpt`.
 7. `golangci-lint run` with the project's `.golangci.yml`. Enabled linters include `errcheck`, `staticcheck` (which absorbs the former `gosimple` checks in the v2 series), `unused`, `govet`, `ineffassign`, and `misspell`.
 8. `scripts/lint-schema.sh` — every tenant-scoped table has `tenant_id` as the leading index column (R-01).
 9. `scripts/lint-queries.sh` — no cross-tenant JOIN without the matching `a.tenant_id = b.tenant_id` clause (R-02), and the cross-tenant exception annotation inventory matches the documented list.

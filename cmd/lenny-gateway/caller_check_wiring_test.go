@@ -17,6 +17,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
@@ -72,7 +74,7 @@ func TestSingleShotBinderRefusesImpersonationBearer_spec_10_2(t *testing.T) {
 	})
 	ctx := authmw.WithPrincipal(context.Background(),
 		authmw.Principal{Subject: "alice@acme.com", TenantID: "acme", JTI: "jti-impersonation"})
-	_, err := sessionSingleShotBinder{srv: srv}.BindSingleShot(ctx, translator.SingleShotSpec{TenantID: "acme", RuntimeRef: "claude-code"})
+	_, err := sessionSingleShotBinder{srv: srv, runtimes: runtimestore.NewMemory(), capOverrides: runtimecapoverride.NewMemory()}.BindSingleShot(ctx, translator.SingleShotSpec{TenantID: "acme", RuntimeRef: "claude-code"})
 	var ssErr *translator.SingleShotError
 	if !errors.As(err, &ssErr) {
 		t.Fatalf("err = %v, want *translator.SingleShotError", err)

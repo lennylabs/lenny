@@ -270,7 +270,7 @@ Every agent pod runs with:
 | Root filesystem | Read-only |
 | Writable paths | tmpfs (`/tmp`), workspace, sessions, artifacts |
 | Credentials | No standing credentials; short-lived lease only. Object-store access is granted as a gateway-minted presigned capability (single key, single method, exact `Content-Length` on a `PUT`, short expiry), never as an object-store credential. |
-| File delivery | Gateway-mediated for all session inputs and outputs. Checkpoint chunk objects are the one exception: the agent pod `PUT`s them to, and on resume `GET`s them from, object storage against gateway-minted presigned capabilities. The gateway remains the sole authority that resolves the key, validates the tenant prefix, and signs. No shared storage mounts. |
+| File delivery | Gateway-mediated for all session inputs and outputs. Checkpoint chunk objects are the one exception: the agent pod `PUT`s them to, and on resume and at a derived or replayed session's first bind `GET`s them from, object storage against gateway-minted presigned capabilities. The gateway remains the sole authority that resolves the key, validates the tenant prefix, and signs. No shared storage mounts. |
 
 ### Adapter-Agent Boundary
 

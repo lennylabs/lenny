@@ -19,10 +19,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 )
@@ -37,8 +39,9 @@ func TestGatewayPostgresPersistenceE2E(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 
 	pg := sharedDatabase(t)
-	// The replay below copies the source's workspace snapshot object, so
-	// the gateway stores artifacts in a MinIO the test can seed.
+	// The replay below copies the source's chunked checkpoint, so the
+	// gateway stores artifacts in a MinIO the test can seed. MinIO is also
+	// the backend whose chunk resolver the replay requires.
 	mio := containers.StartMinIO(t, containers.MinIOOptions{})
 	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn="+pg.DSN,
 		"--minio-endpoint="+mio.Endpoint, "--minio-bucket="+mio.Bucket,
@@ -197,11 +200,11 @@ func TestGatewayPostgresPersistenceE2E(t *testing.T) {
 	//      transaction (§12.8 Lifecycle fence and drain, §15.1 replay),
 	//      through the transcript copier stores.go wires in the Postgres
 	//      branch. Without the copier the replay answers 500. The replay
-	//      also copies the source's sealed snapshot object under its own
-	//      ID (§15.1 Session Replay Semantics), and its workspace download
-	//      serves the copied bytes. ----
-	setSnapshotRef(t, ctx, pg.Pool, sid)
-	seedSnapshotObject(t, mio, sid, "replay-source-workspace")
+	//      also copies the source's sealed chunked checkpoint under its own
+	//      ID (§7.1 Derive copy semantics, §15.1 Session Replay Semantics),
+	//      and its workspace download serves the copied bytes. ----
+	checkpointID := setSnapshotRef(t, ctx, pg.Pool, sid, len("replay-source-workspace"))
+	seedSnapshotObject(t, mio, sid, checkpointID, "replay-source-workspace")
 	code, replayed := do(http.MethodPost, "/v1/sessions/"+sid+"/replay", "", map[string]any{
 		"replayMode": "prompt_history", "targetRuntime": "echo",
 	})
@@ -270,9 +273,11 @@ func TestGatewayPostgresIntegrityWarningStartup(t *testing.T) {
 	}
 }
 
-// seedSnapshotObject writes body at the object setSnapshotRef's ref names,
-// /acme/workspace/{sid}/snap, in the gateway's MinIO bucket.
-func seedSnapshotObject(t *testing.T, mio *containers.MinIO, sid, body string) {
+// seedSnapshotObject writes body as chunk 0 of the chunked checkpoint
+// setSnapshotRef records for sid, under that checkpoint's
+// /acme/checkpoints/{sid}/{checkpointID}/ prefix in the gateway's MinIO
+// bucket.
+func seedSnapshotObject(t *testing.T, mio *containers.MinIO, sid, checkpointID, body string) {
 	t.Helper()
 	store, err := miniostore.New(miniostore.Config{
 		Endpoint: mio.Endpoint, AccessKey: mio.AccessKey, SecretKey: mio.SecretKey, Bucket: mio.Bucket,
@@ -280,12 +285,10 @@ func seedSnapshotObject(t *testing.T, mio *containers.MinIO, sid, body string) {
 	if err != nil {
 		t.Fatalf("miniostore.New: %v", err)
 	}
-	uri := blobstore.URI{
-		TenantID: "acme", ObjectType: blobstore.ObjectTypeWorkspace,
-		SessionID: sid, PartID: "snap", TTL: time.Hour,
-	}
-	if _, err := store.Put(uri, "application/gzip", strings.NewReader(body)); err != nil {
-		t.Fatalf("seed snapshot object: %v", err)
+	uri := resumechunks.ChunkObjectURI("acme", sid, checkpointID, 0, partialmanifeststore.ChunkEncodingTar)
+	uri.TTL = time.Hour
+	if _, err := store.Put(uri, "application/x-tar", strings.NewReader(body)); err != nil {
+		t.Fatalf("seed snapshot chunk: %v", err)
 	}
 }
 
@@ -307,11 +310,15 @@ func downloadWorkspace(t *testing.T, base, id string) string {
 	return string(raw)
 }
 
-// setSnapshotRef gives the session a sealed workspace snapshot reference,
-// in a transaction scoped to its tenant as the row-level tenant guard
-// requires.
-func setSnapshotRef(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sid string) {
+// setSnapshotRef gives the session a sealed workspace snapshot naming a
+// fresh one-chunk checkpoint of chunkBytes bytes, and records that
+// checkpoint's complete checkpoint_manifest row, in one transaction scoped
+// to its tenant as the row-level tenant guard requires. It returns the
+// checkpoint id, under whose prefix seedSnapshotObject writes the chunk.
+func setSnapshotRef(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sid string, chunkBytes int) string {
 	t.Helper()
+	checkpointID := uuid.NewString()
+	prefix := "/acme/checkpoints/" + sid + "/" + checkpointID
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin: %v", err)
@@ -321,13 +328,22 @@ func setSnapshotRef(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sid s
 		t.Fatalf("set tenant: %v", err)
 	}
 	if _, err := tx.Exec(ctx,
+		`INSERT INTO checkpoint_manifest (tenant_id, checkpoint_id, session_id, partial, manifest_reason,
+		   chunk_object_key_prefix, chunk_size_bytes, chunk_encoding, chunk_count, workspace_bytes_uploaded,
+		   checkpoint_started_at, checkpoint_timeout_at)
+		 VALUES ('acme', $1::uuid, $2, FALSE, 'complete', $3, 16777216, 'tar', 1, $4, now(), now())`,
+		checkpointID, sid, prefix+"/", chunkBytes); err != nil {
+		t.Fatalf("record checkpoint manifest: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
 		`UPDATE sessions SET workspace_snapshot_ref = $2, workspace_snapshot_source = 'sealed' WHERE id = $1::uuid`,
-		sid, "/acme/workspace/"+sid+"/snap"); err != nil {
+		sid, prefix); err != nil {
 		t.Fatalf("set workspace snapshot ref: %v", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
+	return checkpointID
 }
 
 // countAsTenant runs a COUNT query in a transaction scoped to the acme

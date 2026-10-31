@@ -106,6 +106,10 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 // requestOptions carries per-call settings threaded through do.
 type requestOptions struct {
 	idempotencyKey string
+	// uploadToken, when set, is sent as the §7.1 X-Lenny-Upload-Token
+	// header. Finalize and FinalizeWorkspace set it; no public option
+	// exposes it, because the token belongs to those calls alone.
+	uploadToken string
 }
 
 // RequestOption customizes a single request.
@@ -215,9 +219,24 @@ func (c *Client) DeleteSession(ctx context.Context, id string, opts ...RequestOp
 }
 
 // Finalize calls POST /v1/sessions/{id}/finalize, transitioning a
-// created session to ready.
-func (c *Client) Finalize(ctx context.Context, id string, opts ...RequestOption) (*Session, error) {
-	return c.transition(ctx, http.MethodPost, id, "finalize", opts...)
+// created session to ready. uploadToken is the §7.1 token the create
+// response returned; the gateway rejects a finalize request that does not
+// carry it (§7.4 Upload authorization).
+//
+// spec: §7.4 Upload Safety (Upload authorization); §7.1 Normal Flow; §15.1.
+func (c *Client) Finalize(ctx context.Context, id, uploadToken string, opts ...RequestOption) (*Session, error) {
+	if uploadToken == "" {
+		return nil, fmt.Errorf("lenny: Finalize requires an upload token")
+	}
+	return c.transition(ctx, http.MethodPost, id, "finalize", withUploadToken(uploadToken, opts)...)
+}
+
+// withUploadToken appends the option that sends the §7.1 uploadToken
+// header to the caller's request options.
+func withUploadToken(token string, opts []RequestOption) []RequestOption {
+	out := make([]RequestOption, 0, len(opts)+1)
+	out = append(out, opts...)
+	return append(out, func(o *requestOptions) { o.uploadToken = token })
 }
 
 // Start calls POST /v1/sessions/{id}/start, transitioning a ready
@@ -486,6 +505,9 @@ func (c *Client) roundTrip(ctx context.Context, method, path string, bodyBytes [
 	}
 	if ro.idempotencyKey != "" {
 		req.Header.Set("Idempotency-Key", ro.idempotencyKey)
+	}
+	if ro.uploadToken != "" {
+		req.Header.Set(uploadTokenHeader, ro.uploadToken)
 	}
 	if c.tenantID != "" {
 		req.Header.Set("X-Lenny-Tenant-ID", c.tenantID)

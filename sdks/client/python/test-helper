@@ -87,7 +87,7 @@ class Helper:
             "get_session": self.op_get_session,
             "list_sessions": self.op_list_sessions,
             "delete_session": self.op_delete_session,
-            "finalize": lambda a: self.op_transition("finalize", a),
+            "finalize": self.op_finalize,
             "start": lambda a: self.op_transition("start", a),
             "interrupt": lambda a: self.op_transition("interrupt", a),
             "terminate": lambda a: self.op_transition("terminate", a),
@@ -175,10 +175,21 @@ class Helper:
             return err_response(exc)
         return {"ok": True, "result": session_result(session, None)}
 
+    def op_finalize(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Execute the finalize op with the create op's upload token."""
+        assert self.client is not None
+        try:
+            session = self.client.finalize(
+                string_arg(args, "id"), string_arg(args, "upload_token")
+            )
+        except Exception as exc:  # noqa: BLE001
+            return err_response(exc)
+        return {"ok": True, "result": session_result(session, None)}
+
     def op_transition(
         self, action: str, args: dict[str, Any]
     ) -> dict[str, Any]:
-        """Execute a no-body lifecycle op (finalize, start, interrupt, terminate)."""
+        """Execute a no-body lifecycle op (start, interrupt, terminate)."""
         assert self.client is not None
         method = getattr(self.client, action)
         try:

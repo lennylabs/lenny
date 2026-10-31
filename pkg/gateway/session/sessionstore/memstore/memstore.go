@@ -12,6 +12,7 @@ package memstore
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -198,8 +199,16 @@ func (s *Store) createLocked(ctx context.Context, sess sessionstore.Session, bef
 		}
 	}
 	s.deleteOwnReservationLocked(sess)
-	s.sessions[sess.ID] = sess
+	s.sessions[sess.ID] = cloneRow(sess)
 	return nil
+}
+
+// cloneRow returns row with its Open Responses records copied, so a caller
+// that mutates a row it passed in or got back cannot alias stored state.
+// spec: §15 (Open Responses conversation sessions).
+func cloneRow(row sessionstore.Session) sessionstore.Session {
+	row.Responses = slices.Clone(row.Responses)
+	return row
 }
 
 // Get returns the row keyed by (tenant, id). Returns ErrNotFound
@@ -213,7 +222,7 @@ func (s *Store) Get(_ context.Context, tenantID, id string) (sessionstore.Sessio
 	if !ok || row.TenantID != tenantID {
 		return sessionstore.Session{}, sessionstore.ErrNotFound
 	}
-	return row, nil
+	return cloneRow(row), nil
 }
 
 // GetPrimary implements sessionstore.PrimaryReader. The in-memory store has
@@ -232,7 +241,7 @@ func (s *Store) GetByID(_ context.Context, id string) (sessionstore.Session, err
 	if !ok {
 		return sessionstore.Session{}, sessionstore.ErrNotFound
 	}
-	return row, nil
+	return cloneRow(row), nil
 }
 
 // Update applies mutate to the row in-place under the store lock,
@@ -259,6 +268,7 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 	prevCoordGen := row.CoordinationGeneration
 	prevRetryCount := row.RetryCount
 	prevLastSeq := row.LastSeq
+	row = cloneRow(row)
 	if err := mutate(&row); err != nil {
 		return sessionstore.Session{}, err
 	}
@@ -298,7 +308,7 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 	// write changes the state, to the instant the UpdatedAt stamp records.
 	sessionstore.StampStateEntry(prevState, prevEntered, &row, now)
 	row.UpdatedAt = now
-	s.sessions[id] = row
+	s.sessions[id] = cloneRow(row)
 	return row, nil
 }
 
@@ -348,7 +358,7 @@ func (s *Store) List(_ context.Context, tenantID string, f sessionstore.ListFilt
 		if f.ExcludeDeriveFailures && row.FailureClass == session.FailureClassDeriveFailure {
 			continue
 		}
-		out = append(out, row)
+		out = append(out, cloneRow(row))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
@@ -380,7 +390,7 @@ func (s *Store) ListPodlessSuspended(_ context.Context, tenantID, afterID string
 		if afterID != "" && row.ID <= afterID {
 			continue
 		}
-		out = append(out, row)
+		out = append(out, cloneRow(row))
 	}
 	s.mu.RUnlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -412,7 +422,7 @@ func (s *Store) ListByRoot(_ context.Context, tenantID, rootSessionID string) ([
 		if rsid != rootSessionID {
 			continue
 		}
-		out = append(out, row)
+		out = append(out, cloneRow(row))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out, nil

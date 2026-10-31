@@ -175,7 +175,7 @@ function implementPrompt(f, priorIssues) {
   return [
     'ROLE. You are closing ONE test-coverage gap from TEST-GAPS.md. Follow .claude/rules/code-best-practices.md, .claude/rules/test-coverage.md, and .claude/rules/spec-driven-development.md.',
     '',
-    'GIT DISCIPLINE (hard rule — a violation corrupts the whole batch). You are ALREADY on the correct batch branch; every finding in this batch shares it. Commit your work with `git add <specific paths> && git commit` ONLY. Do NOT run `git checkout <branch>`, `git switch`, `git branch`, `git checkout -b`, `git merge`, `git rebase`, `git push`, or `git reset --hard <ref>`. Never create a branch, never switch branches, never merge into any branch (least of all a long-lived one like impl/v1-initial or main), never push. Do not "tidy up" by branching your work and merging it back — that is exactly what breaks the batch (it once left findings committed straight onto the shared parent). To undo only your own uncommitted edits, the sole allowed form is the path-scoped `git checkout -- <file>` (or `git restore <file>`), which touches files, not branches. If you ever notice you are not on the branch you started on, STOP and report it rather than committing.',
+    'GIT DISCIPLINE (hard rule — a violation corrupts the whole batch). You are ALREADY on the correct batch branch; every finding in this batch shares it. Commit your work with `git add <specific paths> && git commit` ONLY. Do NOT run `git checkout <branch>`, `git switch`, `git branch`, `git checkout -b`, `git merge`, `git rebase`, `git push`, or `git reset --hard <ref>`. Never create a branch, never switch branches, never merge into any branch (least of all a long-lived one like main), never push. Do not "tidy up" by branching your work and merging it back — that is exactly what breaks the batch (it once left findings committed straight onto the shared parent). To undo only your own uncommitted edits, the sole allowed form is the path-scoped `git checkout -- <file>` (or `git restore <file>`), which touches files, not branches. If you ever notice you are not on the branch you started on, STOP and report it rather than committing.',
     '',
     'FINDING ' + f.id + ' — ' + f.title + ' [' + f.severity + '] (section §' + f.section + ')',
     '- Spec/Doc: ' + f.specDoc,
@@ -397,7 +397,7 @@ if (toResolve.length) {
     '',
     'For each, locate its heading (`grep -n \'^### - \\[ \\] <id> \'` — use the literal id) in TEST-GAPS.md, flip `- [ ]` to `- [x]` and `OPEN` to `RESOLVED <commitSha>`, and replace the five original fields (Spec/Doc, Existing tests, Gap, Dependencies, Suggested test) with a single `- **Resolution:** <resolutionNote>` field, mirroring the existing worked example at T-10.1.11 (grep it in TEST-GAPS.md for the exact tone). For route="moot" findings, phrase the Resolution as "already covered by <what>, found during batch review" rather than implying new work landed; a moot resolution legitimately has no commitSha of its own when nothing needed to change — if none was given, look up the actual historical commit that landed the covering test/fix via `git log --oneline --all -- <the covering test file the resolutionNote names>` and cite that instead of leaving the RESOLVED marker bare. For route="code-fix" findings, the Resolution must state both what the test now pins and what product-code defect was corrected, citing the spec section that made the fix unambiguous.',
     '',
-    'GIT DISCIPLINE: you are already on the batch branch and must stay on it — first confirm `git branch --show-current` is NOT `impl/v1-initial`/`main` (if it is, STOP and report; do not write). Use only `git add TEST-GAPS.md` + `git commit`; never checkout/switch/branch/merge/push. Commit the TEST-GAPS.md edit by itself: `git add TEST-GAPS.md && git commit -m "test-gaps: mark <ids> resolved"`.',
+    'GIT DISCIPLINE: you are already on the batch branch and must stay on it — first confirm `git branch --show-current` is NOT `main` (if it is, STOP and report; do not write). Use only `git add TEST-GAPS.md` + `git commit`; never checkout/switch/branch/merge/push. Commit the TEST-GAPS.md edit by itself: `git add TEST-GAPS.md && git commit -m "test-gaps: mark <ids> resolved"`.',
     '',
     'RETURN markedCount (integer) and commitSha (the TEST-GAPS.md commit).',
   ].join('\n')
@@ -454,7 +454,7 @@ if (toAnnotate.length) {
     '',
     'For each, locate its heading (`grep -n \'^### - \\[ \\] <id> \'`) in TEST-GAPS.md and append one new field after the existing Suggested test field, before the next heading: `- **Needs human input (as of ' + '<today\'s date via `date +%F`>' + '):** <humanQuestion>`. Do not alter any of the finding\'s other fields.',
     '',
-    'GIT DISCIPLINE: stay on the current batch branch — first confirm `git branch --show-current` is NOT `impl/v1-initial`/`main` (if it is, STOP and report; do not write). Use only `git add TEST-GAPS.md` + `git commit`; never checkout/switch/branch/merge/push. Commit the TEST-GAPS.md edit by itself: `git add TEST-GAPS.md && git commit -m "test-gaps: record open questions for human review"`.',
+    'GIT DISCIPLINE: stay on the current batch branch — first confirm `git branch --show-current` is NOT `main` (if it is, STOP and report; do not write). Use only `git add TEST-GAPS.md` + `git commit`; never checkout/switch/branch/merge/push. Commit the TEST-GAPS.md edit by itself: `git add TEST-GAPS.md && git commit -m "test-gaps: record open questions for human review"`.',
     '',
     'RETURN annotatedCount (integer) and commitSha.',
   ].join('\n')
@@ -505,7 +505,7 @@ if (discoveredIssues.length) {
     '',
     'Do not touch any finding\'s text beyond the one-line addenda and new insertions described above.',
     '',
-    'GIT DISCIPLINE: stay on the current batch branch — first confirm `git branch --show-current` is NOT `impl/v1-initial`/`main` (if it is, STOP and report; do not write). Use only `git add TEST-GAPS.md` + `git commit`; never checkout/switch/branch/merge/push. Commit the TEST-GAPS.md edit by itself: `git add TEST-GAPS.md && git commit -m "test-gaps: record <N> issue(s) discovered during batch review"`.',
+    'GIT DISCIPLINE: stay on the current batch branch — first confirm `git branch --show-current` is NOT `main` (if it is, STOP and report; do not write). Use only `git add TEST-GAPS.md` + `git commit`; never checkout/switch/branch/merge/push. Commit the TEST-GAPS.md edit by itself: `git add TEST-GAPS.md && git commit -m "test-gaps: record <N> issue(s) discovered during batch review"`.',
     '',
     'RETURN filedCount (integer, genuinely new findings only), skippedAsDuplicateCount (integer, issues that matched an existing finding or were merged as within-batch dupes), corroboratedIds (array of existing finding ids you appended a one-line addendum to, empty if none), commitSha.',
   ].join('\n')

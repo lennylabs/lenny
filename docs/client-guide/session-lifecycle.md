@@ -142,50 +142,63 @@ The `uploadToken` is a short-lived, session-scoped HMAC-SHA256 token. Treat it a
 
 ### b. Upload Files
 
+Upload each file as the raw request body. The request carries the upload token from session creation in the `X-Lenny-Upload-Token` header.
+
 ```
 POST /v1/sessions/sess_abc123/upload
-Content-Type: multipart/form-data
+Content-Type: application/octet-stream
 Authorization: Bearer <token>
-X-Upload-Token: sess_abc123.1712345678.a1b2c3d4e5f6...
-
---boundary
-Content-Disposition: form-data; name="files"; filename="main.py"
-Content-Type: application/octet-stream
+X-Lenny-Upload-Token: sess_abc123.1712345678.a1b2c3d4e5f6...
 
 <file contents>
---boundary
-Content-Disposition: form-data; name="files"; filename="config.yaml"
-Content-Type: application/octet-stream
-
-<file contents>
---boundary--
 ```
 
-**Response** (`200 OK`):
+**Response** (`201 Created`):
 
 ```json
 {
-  "uploaded": [
-    {"path": "main.py", "size": 1234},
-    {"path": "config.yaml", "size": 567}
-  ]
+  "uploadRef": "<uploadRef>",
+  "size": 1234
 }
 ```
 
+The `uploadRef` is an opaque reference to the stored upload. Keep it and pass it verbatim in the workspace plan that finalize binds. The OpenAPI document lists the other response fields.
+
+Upload an archive in `tar`, `tar.gz`, or `zip` format to `POST /v1/sessions/{id}/upload-archive` with the same header. Its response carries an `uploadRef` that an `uploadArchive` source names. The gateway extracts the archive at materialization.
+
 **Upload rules:**
-- All paths are relative to the workspace root
+- An upload is not part of the workspace until a source of the bound plan names its `uploadRef`; the gateway does not materialize an upload that no source names (see [Workspace sources](../getting-started/concepts.md#workspace-sources))
+- An `uploadRef` is valid only in a plan bound to the session it was uploaded to
+- Workspace paths in the plan are relative to the workspace root
 - Paths with `..`, absolute paths, and symlinks are rejected
 - Per-file and total session size limits are enforced
-- Supported archive formats: `tar.gz`, `tar.bz2`, `zip` (extracted automatically)
 - Zip bomb protection: decompression ratio limit (default 100:1)
 
 ### c. Finalize Workspace
 
+When the session was created without a workspace plan, the finalize body binds one. Its `uploadFile` and `uploadArchive` sources name the uploads from step b by their `uploadRef`.
+
 ```
 POST /v1/sessions/sess_abc123/finalize
+Content-Type: application/json
 Authorization: Bearer <token>
-X-Upload-Token: sess_abc123.1712345678.a1b2c3d4e5f6...
+X-Lenny-Upload-Token: sess_abc123.1712345678.a1b2c3d4e5f6...
+
+{
+  "workspacePlan": {
+    "schemaVersion": 1,
+    "sources": [
+      { "type": "uploadFile", "path": "main.py", "uploadRef": "<uploadRef>" },
+      { "type": "uploadFile", "path": "config.yaml", "uploadRef": "<uploadRef>" }
+    ],
+    "setupCommands": [
+      { "cmd": "pip install -r requirements.txt" }
+    ]
+  }
+}
 ```
+
+Each `<uploadRef>` is the value from the corresponding upload response. Omit the body when the session was created with a plan, or when the workspace needs no plan; finalize then materializes the plan bound at creation, or the empty plan.
 
 **Response** (`200 OK`):
 
@@ -204,7 +217,7 @@ X-Upload-Token: sess_abc123.1712345678.a1b2c3d4e5f6...
 }
 ```
 
-Finalization validates the staging area, materializes the workspace, and runs any setup commands configured on the runtime. The upload token is consumed; it cannot be reused after this call.
+Finalization binds the plan, materializes the workspace, and runs the plan's setup commands. A finalize request rejected for its plan, for example with `400 VALIDATION_ERROR` and `details.reason` `upload_ref_foreign_session` or `plan_already_set`, or with `400 WORKSPACE_PLAN_INVALID`, binds nothing and leaves the session in `created`, so the client can correct the plan and finalize again. The upload token is consumed once finalization succeeds; it cannot be reused after that.
 
 ### d. Start Session
 
@@ -539,7 +552,7 @@ The source session must be in a terminal state. Two replay modes:
 
 | Endpoint | Valid Precondition States | Resulting Transition |
 |---|---|---|
-| `POST /v1/sessions/{id}/upload` | `created`; also `running` if mid-session upload enabled | Remains in current state |
+| `POST /v1/sessions/{id}/upload`, `POST /v1/sessions/{id}/upload-archive` | `created`; also `running` if mid-session upload enabled | Remains in current state |
 | `POST /v1/sessions/{id}/finalize` | `created` | `finalizing` then `ready` |
 | `POST /v1/sessions/{id}/start` | `ready` | `starting` then `running` |
 | `POST /v1/sessions/{id}/interrupt` | `running` | `suspended` |

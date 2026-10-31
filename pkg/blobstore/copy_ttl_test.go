@@ -54,7 +54,7 @@ func TestCopyKeepsTheSourceTTLWhenTheDestinationNamesNone_spec_7_1(t *testing.T)
 		{name: "checkpoint chunk copied at once", objType: blobstore.ObjectTypeCheckpoint, srcTTL: time.Hour, wantTTL: time.Hour},
 		{name: "checkpoint chunk copied late in its lifetime", objType: blobstore.ObjectTypeCheckpoint, srcTTL: time.Hour, copyAfter: 55 * time.Minute, wantTTL: time.Hour},
 		{name: "workspace snapshot with no destination TTL", objType: blobstore.ObjectTypeWorkspace, srcTTL: 48 * time.Hour, wantTTL: 48 * time.Hour},
-		{name: "destination TTL wins over the source's", objType: blobstore.ObjectTypeWorkspace, srcTTL: time.Hour, dstTTL: blobstore.DerivedSnapshotTTL, wantTTL: blobstore.DerivedSnapshotTTL},
+		{name: "destination TTL wins over the source's", objType: blobstore.ObjectTypeWorkspace, srcTTL: time.Hour, dstTTL: 7 * 24 * time.Hour, wantTTL: 7 * 24 * time.Hour},
 		{name: "shorter destination TTL wins too", objType: blobstore.ObjectTypeCheckpoint, srcTTL: 48 * time.Hour, dstTTL: time.Hour, wantTTL: time.Hour},
 	}
 	for _, st := range stores {

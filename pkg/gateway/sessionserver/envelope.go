@@ -96,7 +96,7 @@ func (s *Server) validateRequestEnvelope(w http.ResponseWriter, r *http.Request,
 	// explicitly-requested profile the pool does not satisfy. A defaulted
 	// profile would reject a pin whose pool differs from the deployment
 	// default even though the client deferred to the pool. F-CS2 (0018).
-	if !s.requirePoolSelectable(w, r, tenantID, req.RuntimeRef, string(req.IsolationProfile), req.Pool) {
+	if !s.requirePoolSelectable(w, r, tenantID, req.RuntimeRef, string(req.IsolationProfile), req.Pool, "pool") {
 		return nil, false
 	}
 	row.Pool = req.Pool

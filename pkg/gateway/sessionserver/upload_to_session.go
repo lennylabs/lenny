@@ -146,7 +146,7 @@ func (s *Server) handleUploadToSession(w http.ResponseWriter, r *http.Request) {
 			"failed to stage mid-session upload onto the pod: "+err.Error(), nil)
 		return
 	}
-	if _, err := bind.Adapter.FinalizeWorkspace(ctx, row.ID, plan, nil, "", true); err != nil {
+	if _, err := bind.Adapter.FinalizeWorkspace(ctx, row.ID, plan, nil, nil, "", true); err != nil {
 		s.emitMidSessionUploadAudit(ctx, row, uploadOutcomeRejected, "materialize_failed", "")
 		s.writeError(w, http.StatusBadGateway, "UPSTREAM_ERROR",
 			"failed to materialize mid-session upload into the workspace: "+err.Error(), nil)

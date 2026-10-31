@@ -111,6 +111,16 @@ After the last checklist step, and before the final gate, the run sweeps once fo
 
 The final reviewers are told that a `comments:` commit is expected, so they do not read it as new scope. A sweep agent that dies leaves the comments unchanged and does not stop the run. `sweepComments: false` turns the sweep off.
 
+## The quality review
+
+The per-step and final reviews check the code against the proposal. They do not look for bugs or security defects the proposal never named. Once the final design-conformance review is clean, the run therefore invokes the `code-review` skill (at level `high`) and the `security-review` skill once each, in parallel, over the cumulative diff from the base commit. They run once rather than per step, because both skills fan out over a large diff, and a per-step pass would read the same code again for every step.
+
+- **Report.** Each reviewer is read-only and reports concrete defects in the changed code. A reviewer that cannot load its skill performs the equivalent review itself and marks its findings `[fallback]`.
+- **Fix.** One agent checks each finding against the code, fixes the ones that hold with a regression test at the tier the defect lives in, and records in its commit message why it left any finding unfixed.
+- **Re-verify.** The post-review re-verification then re-runs the reached tiers, as it does after a design-review fix.
+
+The run's result carries the findings under `qualityReview`. Pass `qualityReview: false` to skip the phase.
+
 ## Deviations
 
 `.deviations.md` records where the landed code departs from what the proposal states: what it says, what the code does with file:line, why no legal change closes the gap, what a later reader would get wrong, and a suggested next step.

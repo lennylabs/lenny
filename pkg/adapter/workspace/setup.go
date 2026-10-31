@@ -58,8 +58,9 @@ type SetupOptions struct {
 	AggregateTimeout time.Duration
 
 	// FailOnAggregateTimeout selects the §5.1 setupPolicy.onTimeout
-	// disposition: true is `fail` (abort pod startup), false is `warn`
-	// (proceed to runtime start despite the unfinished setup phase). When
+	// disposition: true is `fail` (fails the session's setup; spec: §7.5
+	// Setup Commands; §6.2 Pod State Machine), false is `warn` (proceed
+	// to runtime start despite the unfinished setup phase). When
 	// false RunSetup returns ErrSetupAggregateTimeoutWarn (non-fatal) on
 	// cap-exceed so the caller can emit the §5.1 warn observability
 	// before unwrapping to RPC success. spec: §5.1 — F-7.5.13.
@@ -107,9 +108,9 @@ func DefaultSetupEnv(workdir string) []string {
 // RunSetup executes the WorkspacePlan setup commands in order, each one
 // in workdir under a bounded timeout. Execution stops at the first
 // command that exits non-zero or exceeds its timeout, and that
-// command's error is returned. The §4.7 adapter calls RunSetup from
-// StartSession after the workspace is materialized and before the
-// runtime binary is launched.
+// command's error is returned. The adapter's RunSetup RPC handler
+// calls it after FinalizeWorkspace has materialized the session's slot
+// and before StartSession. spec: §7.5 Setup Commands.
 //
 // When opts.AggregateTimeout is set, the whole setup phase is bounded
 // by that §5.1 cap. Exceeding it aborts with an error under the `fail`

@@ -10,6 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 // BindRequest describes a session to place on a warm pod.
@@ -135,6 +136,13 @@ type BindRequest struct {
 	// no-op, which is the create and start paths. spec: §7.3 (Retry and
 	// Resume).
 	OnClaimed func(context.Context) error
+	// RestoreChunks mints the presigned GET capabilities for the session's
+	// starting snapshot. nil means no restore. The Binder calls it at most once
+	// per bind attempt, after stageWorkspace and immediately before
+	// FinalizeWorkspace, because the capabilities expire after
+	// checkpointCapabilityTTLSeconds. The result is never logged or persisted.
+	// spec: §7.1 (Derive restore semantics).
+	RestoreChunks func(context.Context) ([]adapterclient.ChunkGrant, error)
 	// attemptScoped marks a request Bind built for one whole-sequence bind
 	// attempt. On it a Prepare or Launch failure releases only the §4.9
 	// leases the attempt minted (mintedLeaseIDs) and deletes the claim,
@@ -385,12 +393,37 @@ func (r *BindResult) Closing() bool { return r.closing.Load() }
 type SetupCommandFailure struct {
 	// Pod is the sandbox name the failure was observed on.
 	Pod string
+	// Pool is the SandboxWarmPool the pod belongs to, and RuntimeClass the
+	// RuntimeClass its §5.3 isolation profile maps to (empty for an
+	// unrecognized profile). The gateway labels its setup_command_failed
+	// count of lenny_warmpool_warmup_failure_total with both, as §16.1
+	// lists. spec: §16.1 (Metrics); §5.3.
+	Pool         string
+	RuntimeClass string
 	// Cause is the adapter-side error (a gRPC FailedPrecondition).
 	Cause error
 	// Outputs is the per-command transcript captured up to the failure,
 	// including the failing command's stdout/stderr/exit code when
 	// available.
 	Outputs []*adapterv1.SetupCommandOutput
+}
+
+// runtimeClassOf returns the RuntimeClass name a pod of the §5.3 isolation
+// profile runs under, honoring the §17.5 operator override the controller
+// applies to the pod's runtimeClassName, and reports false for an
+// unrecognized profile. The warm-pool claim counter and the
+// setup_command_failed count both label runtime_class through it, so both
+// agree with the controller's series under an override (F-16.1.10).
+// spec: §5.3 (Isolation Profiles); §17.5; §16.1 (Metrics).
+func (b *Binder) runtimeClassOf(profile string) (string, bool) {
+	return isolation.ResolveRuntimeClassName(isolation.Profile(profile), b.RuntimeClassNameOverrides)
+}
+
+// runtimeClassLabel is runtimeClassOf with an unrecognized profile mapped to
+// the empty label, for a failure record that carries the label as data.
+func (b *Binder) runtimeClassLabel(profile string) string {
+	rc, _ := b.runtimeClassOf(profile)
+	return rc
 }
 
 func (e *SetupCommandFailure) Error() string {
@@ -424,4 +457,16 @@ type BindTimings struct {
 	// AgentSessionStart is the StartSession RPC phase, after which the
 	// session is ready.
 	AgentSessionStart time.Duration
+}
+
+// mintRestoreChunks invokes a bind request's restore closure, returning no
+// grants when the request carries none. It runs once per bind attempt,
+// immediately before FinalizeWorkspace, so the capabilities are fresh when
+// the adapter fetches them. The grants are bearer URLs and are never logged.
+// spec: §7.1 (Derive restore semantics).
+func mintRestoreChunks(ctx context.Context, restore func(context.Context) ([]adapterclient.ChunkGrant, error)) ([]adapterclient.ChunkGrant, error) {
+	if restore == nil {
+		return nil, nil
+	}
+	return restore(ctx)
 }

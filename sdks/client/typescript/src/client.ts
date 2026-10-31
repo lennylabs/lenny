@@ -81,6 +81,15 @@ export interface ClientOptions {
 /**
  * Per-call options threaded through a single request.
  */
+/**
+ * UploadTokenRequestOptions carries the §7.1 uploadToken that finalize
+ * sends in the X-Lenny-Upload-Token header. It is internal: no public
+ * option exposes the token, because it belongs to the finalize call alone.
+ */
+interface UploadTokenRequestOptions extends RequestOptions {
+  uploadToken?: string;
+}
+
 export interface RequestOptions {
   /**
    * Attaches an Idempotency-Key header to the request. The §11.5
@@ -280,10 +289,16 @@ export class Client {
 
   /**
    * finalize calls POST /v1/sessions/{id}/finalize, transitioning a
-   * created session to ready.
+   * created session to ready. uploadToken is the §7.1 token the create
+   * response returned; every finalize request carries it in the
+   * X-Lenny-Upload-Token header (§7.4 Upload authorization).
    */
-  async finalize(id: string, opts: RequestOptions = {}): Promise<Session> {
-    return this.transition('POST', id, 'finalize', opts);
+  async finalize(id: string, uploadToken: string, opts: RequestOptions = {}): Promise<Session> {
+    if (!uploadToken) {
+      throw new Error('lenny: finalize requires an upload token');
+    }
+    const withToken: UploadTokenRequestOptions = { ...opts, uploadToken };
+    return this.transition('POST', id, 'finalize', withToken);
   }
 
   /**
@@ -552,6 +567,10 @@ export class Client {
     }
     if (opts.idempotencyKey) {
       headers.set('Idempotency-Key', opts.idempotencyKey);
+    }
+    const uploadToken = (opts as UploadTokenRequestOptions).uploadToken;
+    if (uploadToken) {
+      headers.set('X-Lenny-Upload-Token', uploadToken);
     }
     if (this.tenantId) {
       headers.set('X-Lenny-Tenant-ID', this.tenantId);

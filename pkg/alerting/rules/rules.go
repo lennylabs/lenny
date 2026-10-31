@@ -1126,7 +1126,7 @@ func warningAlerts() []Rule {
 			For:         5 * time.Minute,
 			Severity:    SeverityWarning,
 			Summary:     "Warm pool warm-up failures sustained",
-			Description: "lenny_warmpool_warmup_failure_total rate exceeds 1 failure/min for any pool for more than 5 min; pods are failing to reach idle state during warm-up. WarmPoolLow / WarmPoolExhausted may follow.",
+			Description: "lenny_warmpool_warmup_failure_total rate exceeds 1 failure/min for any pool for more than 5 min. The error_type label classifies each failure. WarmPoolLow / WarmPoolExhausted may follow.",
 			SpecRef:     "§16.5",
 		},
 		{

@@ -38,8 +38,11 @@ func TestServedOpenAPIDeclaresRuntimeProcessEnum(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read body: %v", err)
 	}
+	// OpenAPI 3.1 lets a schema's type be a string or an array of
+	// strings (a nullable object is ["object","null"]), so the decoder
+	// keeps it raw and only this field's type is read as a string.
 	type prop struct {
-		Type       string          `json:"type"`
+		Type       json.RawMessage `json:"type"`
 		Enum       []string        `json:"enum"`
 		Properties map[string]prop `json:"properties"`
 	}
@@ -56,8 +59,12 @@ func TestServedOpenAPIDeclaresRuntimeProcessEnum(t *testing.T) {
 		t.Fatal("Runtime.sessionPolicy.recycle.runtimeProcess is absent from the served document")
 	}
 	got := slices.Sorted(slices.Values(rp.Enum))
-	if rp.Type != "string" || !slices.Equal(got, []string{"keep", "restart"}) {
-		t.Errorf("runtimeProcess = type %q enum %v, want string [keep restart]", rp.Type, got)
+	var typ string
+	if err := json.Unmarshal(rp.Type, &typ); err != nil {
+		t.Fatalf("runtimeProcess type %s is not a single type name: %v", rp.Type, err)
+	}
+	if typ != "string" || !slices.Equal(got, []string{"keep", "restart"}) {
+		t.Errorf("runtimeProcess = type %q enum %v, want string [keep restart]", typ, got)
 	}
 }
 

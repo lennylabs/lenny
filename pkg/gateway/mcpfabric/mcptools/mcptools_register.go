@@ -313,8 +313,9 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// forwards the tools/call before the scope check, the inbound
 		// limit, the inReplyTo resolution, and PreMessageDelivery, so the
 		// coordinator runs each of them once. A message carrying no
-		// inReplyTo whose forward is not delivered runs those steps here
-		// and is then held in the DLQ.
+		// inReplyTo to a running or input_required session whose forward
+		// is not delivered runs those steps here and is then held in the
+		// DLQ; ForwardToolCall refuses one to a session in any other state.
 		undelivered := false
 		if deps.HolderForward != nil {
 			kind := sessionserver.ForwardKindMessageNoReplyTo
@@ -323,7 +324,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			}
 			res, outcome, ferr := deps.HolderForward.ForwardToolCall(ctx, row, kind, "lenny/send_message", args)
 			switch {
-			case outcome == sessionserver.ForwardNotDelivered && kind == sessionserver.ForwardKindMessageNoReplyTo:
+			case outcome == sessionserver.ForwardNotDelivered && sessionserver.HoldsUndelivered(row, kind):
 				undelivered = true
 			case outcome != sessionserver.ForwardLocal:
 				return res, ferr
@@ -2484,6 +2485,15 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			}
 			if errors.Is(err, delegation.ErrExportScanUnavailable) {
 				return mcp.ToolResult{}, mcp.NewToolError("EXPORT_FILE_SCAN_UNAVAILABLE",
+					err.Error(), nil)
+			}
+			// spec: §14.1 WorkspacePlan Schema Versioning (Runtime workspace
+			// defaults) — a transient store error kept the gateway from
+			// reading the child runtime's workspaceDefaults, so the
+			// delegation failed closed before creating the child. Surface the
+			// retryable SERVICE_UNAVAILABLE the REST binding requests return.
+			if errors.Is(err, runtimestore.ErrWorkspaceDefaultsLookup) {
+				return mcp.ToolResult{}, mcp.NewToolError("SERVICE_UNAVAILABLE",
 					err.Error(), nil)
 			}
 			return mcp.ToolResult{}, err

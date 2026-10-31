@@ -787,78 +787,103 @@ type UnimplementedAdapterServer struct{}
 func (UnimplementedAdapterServer) PrepareWorkspace(grpc.ClientStreamingServer[PrepareWorkspaceRequest, PrepareWorkspaceResponse]) error {
 	return status.Error(codes.Unimplemented, "method PrepareWorkspace not implemented")
 }
+
 func (UnimplementedAdapterServer) FinalizeWorkspace(context.Context, *FinalizeWorkspaceRequest) (*FinalizeWorkspaceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FinalizeWorkspace not implemented")
 }
+
 func (UnimplementedAdapterServer) RunSetup(context.Context, *RunSetupRequest) (*RunSetupResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RunSetup not implemented")
 }
+
 func (UnimplementedAdapterServer) StartSession(context.Context, *StartSessionRequest) (*StartSessionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StartSession not implemented")
 }
+
 func (UnimplementedAdapterServer) ConfigureWorkspace(context.Context, *ConfigureWorkspaceRequest) (*ConfigureWorkspaceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ConfigureWorkspace not implemented")
 }
+
 func (UnimplementedAdapterServer) SendMessage(context.Context, *SendMessageRequest) (*SendMessageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SendMessage not implemented")
 }
+
 func (UnimplementedAdapterServer) Attach(grpc.BidiStreamingServer[AttachRequest, AttachResponse]) error {
 	return status.Error(codes.Unimplemented, "method Attach not implemented")
 }
+
 func (UnimplementedAdapterServer) AssignCredentials(context.Context, *AssignCredentialsRequest) (*AssignCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AssignCredentials not implemented")
 }
+
 func (UnimplementedAdapterServer) RotateCredentials(context.Context, *RotateCredentialsRequest) (*RotateCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RotateCredentials not implemented")
 }
+
 func (UnimplementedAdapterServer) ExtendCredentialLease(context.Context, *ExtendCredentialLeaseRequest) (*ExtendCredentialLeaseResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExtendCredentialLease not implemented")
 }
+
 func (UnimplementedAdapterServer) RevokeCredentials(context.Context, *RevokeCredentialsRequest) (*RevokeCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RevokeCredentials not implemented")
 }
+
 func (UnimplementedAdapterServer) Interrupt(context.Context, *InterruptRequest) (*InterruptResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Interrupt not implemented")
 }
+
 func (UnimplementedAdapterServer) Checkpoint(grpc.BidiStreamingServer[CheckpointRequest, CheckpointResponse]) error {
 	return status.Error(codes.Unimplemented, "method Checkpoint not implemented")
 }
+
 func (UnimplementedAdapterServer) SignalDeadline(context.Context, *SignalDeadlineRequest) (*SignalDeadlineResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SignalDeadline not implemented")
 }
+
 func (UnimplementedAdapterServer) Resume(context.Context, *ResumeRequest) (*ResumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Resume not implemented")
 }
+
 func (UnimplementedAdapterServer) CoordinatorFence(context.Context, *CoordinatorFenceRequest) (*CoordinatorFenceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CoordinatorFence not implemented")
 }
+
 func (UnimplementedAdapterServer) CheckpointBarrier(context.Context, *CheckpointBarrierRequest) (*CheckpointBarrierResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CheckpointBarrier not implemented")
 }
+
 func (UnimplementedAdapterServer) SealSession(context.Context, *SealSessionRequest) (*SealSessionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SealSession not implemented")
 }
+
 func (UnimplementedAdapterServer) UnsealSession(context.Context, *UnsealSessionRequest) (*UnsealSessionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UnsealSession not implemented")
 }
+
 func (UnimplementedAdapterServer) ExportPaths(context.Context, *ExportPathsRequest) (*ExportPathsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExportPaths not implemented")
 }
+
 func (UnimplementedAdapterServer) ReportUsage(context.Context, *ReportUsageRequest) (*ReportUsageResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportUsage not implemented")
 }
+
 func (UnimplementedAdapterServer) Shutdown(context.Context, *ShutdownRequest) (*ShutdownResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Shutdown not implemented")
 }
+
 func (UnimplementedAdapterServer) DemoteSDK(context.Context, *DemoteSDKRequest) (*DemoteSDKResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DemoteSDK not implemented")
 }
+
 func (UnimplementedAdapterServer) NegotiateVersion(context.Context, *NegotiateVersionRequest) (*NegotiateVersionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method NegotiateVersion not implemented")
 }
+
 func (UnimplementedAdapterServer) GetObservedIntegrationLevel(context.Context, *GetObservedIntegrationLevelRequest) (*GetObservedIntegrationLevelResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetObservedIntegrationLevel not implemented")
 }
+
 func (UnimplementedAdapterServer) AdapterEvents(grpc.BidiStreamingServer[AdapterEventsRequest, AdapterEventsResponse]) error {
 	return status.Error(codes.Unimplemented, "method AdapterEvents not implemented")
 }
@@ -1706,21 +1731,27 @@ type UnimplementedGatewayControlServer struct{}
 func (UnimplementedGatewayControlServer) ListPlatformTools(context.Context, *ListPlatformToolsRequest) (*ListPlatformToolsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListPlatformTools not implemented")
 }
+
 func (UnimplementedGatewayControlServer) CallPlatformTool(context.Context, *CallPlatformToolRequest) (*CallPlatformToolResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CallPlatformTool not implemented")
 }
+
 func (UnimplementedGatewayControlServer) ListSessionConnectors(context.Context, *ListSessionConnectorsRequest) (*ListSessionConnectorsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListSessionConnectors not implemented")
 }
+
 func (UnimplementedGatewayControlServer) ListConnectorTools(context.Context, *ListConnectorToolsRequest) (*ListConnectorToolsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListConnectorTools not implemented")
 }
+
 func (UnimplementedGatewayControlServer) CallConnectorTool(context.Context, *CallConnectorToolRequest) (*CallConnectorToolResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CallConnectorTool not implemented")
 }
+
 func (UnimplementedGatewayControlServer) ReportSessionScrub(context.Context, *ReportSessionScrubRequest) (*ReportSessionScrubResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportSessionScrub not implemented")
 }
+
 func (UnimplementedGatewayControlServer) ReportPodScrub(context.Context, *ReportPodScrubRequest) (*ReportPodScrubResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportPodScrub not implemented")
 }

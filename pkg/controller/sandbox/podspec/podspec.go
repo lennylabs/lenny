@@ -107,7 +107,7 @@ type Inputs struct {
 	// RuntimeClassNameOverrides remaps the §5.3 isolation profile to a
 	// cluster-specific RuntimeClass name. spec: §17.5 — clusters
 	// that ship gVisor as `runsc` or Kata as `kata-qemu` / `kata-fc`
-	// set this through the chart's `isolation.runtimeClassNames` Helm
+	// set this through the chart's `runtimeClasses.profiles.<profile>.name` Helm
 	// values so the controller does not require operators to rename
 	// in-cluster RuntimeClass objects to match Lenny's literal defaults.
 	// A nil or empty map preserves the §5.3 defaults.

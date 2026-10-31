@@ -28,7 +28,7 @@ import (
 // source session's transcript, reading a session's entries, and the
 // tenant-deletion Phase 4 transcripts entry.
 type Transcripts interface {
-	Append(ctx context.Context, tenantID, sessionID string, entries ...transcriptstore.Entry) error
+	Append(ctx context.Context, tenantID, sessionID string, entries ...transcriptstore.Entry) (uint64, error)
 	Get(ctx context.Context, tenantID, sessionID string) ([]transcriptstore.Entry, error)
 	DeleteByTenant(ctx context.Context, tenantID string) (int, error)
 }

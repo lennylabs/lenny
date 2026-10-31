@@ -123,7 +123,7 @@ func registerPodIdentityFlags(f *controllerFlags) {
 	// spec: §17.5 — operators whose cluster ships the gVisor or
 	// Kata RuntimeClass under a non-default name (`runsc`, `kata-qemu`,
 	// `kata-fc`) override Lenny's literal defaults here so the chart's
-	// `isolation.runtimeClassNames` Helm values reach the controller
+	// `runtimeClasses.profiles.<profile>.name` Helm values reach the controller
 	// without forcing a rename of in-cluster RuntimeClass objects.
 	flag.StringVar(&f.runtimeClassStandard, "standard-runtime-class", os.Getenv("LENNY_STANDARD_RUNTIME_CLASS"),
 		"§17.5 RuntimeClass name override for the §5.3 standard profile. Empty uses the default 'runc'.")

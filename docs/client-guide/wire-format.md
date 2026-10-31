@@ -37,7 +37,7 @@ https://<gateway-host>/
 | OpenAI Chat Completions | `application/json` | `application/json` or `text/event-stream` |
 | Open Responses | `application/json` | `application/json` or `text/event-stream` |
 | Admin | `application/json` | `application/json` |
-| Upload (`POST /v1/sessions/{id}/upload`) | `multipart/form-data` | `application/json` |
+| Upload (`POST /v1/sessions/{id}/upload`, `POST /v1/sessions/{id}/upload-archive`) | Raw file or archive bytes (any content type) | `application/json` |
 
 ---
 
@@ -49,10 +49,10 @@ Authorization: Bearer <oidc-or-lenny-access-token>
 
 For the admin surface, the token is a shared admin token set at install time. For client surfaces, the token is either an IdP-issued OIDC token the gateway verifies directly, or a Lenny access token obtained via `POST /v1/oauth/token` (RFC 8693 token exchange).
 
-**Upload token** (separate credential, not a Bearer token). Every `POST /v1/sessions` response includes an `uploadToken`. Include it on every upload request as:
+**Upload token** (separate credential, not a Bearer token). Every `POST /v1/sessions` response includes an `uploadToken`. Include it on every upload and finalize request as:
 
 ```
-X-Upload-Token: <uploadToken>
+X-Lenny-Upload-Token: <uploadToken>
 ```
 
 Format: `<session_id>.<expiry_unix_seconds>.<hmac_hex>`. Treat it as a secret. The token expires at `session_creation_time + maxCreatedStateTimeoutSeconds` (default 300s).
@@ -66,8 +66,9 @@ Format: `<session_id>.<expiry_unix_seconds>.<hmac_hex>`. Treat it as a secret. T
 | Method | Endpoint | Purpose |
 |:-------|:---------|:--------|
 | `POST` | `/v1/sessions` | Multi-step session creation (returns `sessionId`, `uploadToken`) |
-| `POST` | `/v1/sessions/{id}/upload` | Upload workspace files (multipart; requires `X-Upload-Token`) |
-| `POST` | `/v1/sessions/{id}/finalize` | Seal workspace; run setup commands |
+| `POST` | `/v1/sessions/{id}/upload` | Upload one workspace file as the raw body (requires `X-Lenny-Upload-Token`); the `201` response carries an `uploadRef` |
+| `POST` | `/v1/sessions/{id}/upload-archive` | Upload one `tar`, `tar.gz`, or `zip` archive as the raw body (requires `X-Lenny-Upload-Token`); the `201` response carries an `uploadRef` |
+| `POST` | `/v1/sessions/{id}/finalize` | Bind the workspace plan in the optional body if creation carried none, materialize the workspace, and run setup commands |
 | `POST` | `/v1/sessions/{id}/start` | Start the agent runtime |
 | `POST` | `/v1/sessions/start` | One-shot create + finalize + start |
 | `POST` | `/v1/sessions/{id}/messages` | Send a message to a running session |
@@ -216,8 +217,7 @@ The session-creation body may include a `workspacePlan`. Top-level fields:
     "$schema": "https://schemas.lenny.dev/workspaceplan/v1.json",
     "schemaVersion": 1,
     "sources": [
-      { "type": "inlineFile", "path": "CLAUDE.md", "content": "..." },
-      { "type": "uploadFile", "path": "src/main.ts", "uploadRef": "upload_abc123" }
+      { "type": "inlineFile", "path": "CLAUDE.md", "content": "..." }
     ],
     "setupCommands": [
       { "cmd": "npm ci", "timeoutSeconds": 300 }
@@ -230,6 +230,8 @@ The session-creation body may include a `workspacePlan`. Top-level fields:
   "delegationLease": { "maxDepth": 2, "maxChildrenTotal": 5 }
 }
 ```
+
+A plan in the session-creation body cannot carry `uploadFile` or `uploadArchive` sources, because uploads happen after creation. A plan that names uploads binds in the `POST /v1/sessions/{id}/finalize` body as `{"workspacePlan": {...}}`, with each source's `uploadRef` set to the value from the upload response (see [Workspace sources](../getting-started/concepts.md#workspace-sources)).
 
 The full schema is in the [WorkspacePlan reference](../reference/workspace-plan) and [Spec §14](https://github.com/lennylabs/lenny/blob/main/spec/14_workspace-plan-schema.md).
 
@@ -318,7 +320,7 @@ X-RateLimit-Reset: 1718203380
 ## 12. Things that surprise new integrators
 
 - **SSE buffer size.** Some `agent_output` events carry large payloads (base64 screenshots, long code blocks). If your SSE parser caps lines at 64 KB (e.g., Go's default `bufio.Scanner`), raise the ceiling or switch to a reader.
-- **Upload token is not a Bearer token.** It goes in `X-Upload-Token`, not `Authorization`. Using `Authorization: Bearer <uploadToken>` returns `401 UNAUTHORIZED`.
+- **Upload token is not a Bearer token.** It goes in `X-Lenny-Upload-Token`, not `Authorization`. Using `Authorization: Bearer <uploadToken>` returns `401 UNAUTHORIZED`.
 - **TaskResult nests `output.parts`.** Inbound messages use `input[]`, outbound responses use `output[]` directly, but delegation task results use `output.parts[]` with an extra wrapper.
 - **Inline vs. uploadRef.** Small text fits in `inline`; anything binary or over a few KB should be pre-uploaded and referenced by `uploadRef`.
 - **Isolation profile vs. RuntimeClass.** Use `isolationProfile` (`standard`/`sandboxed`/`microvm`) in config; the K8s `RuntimeClass` (`runc`/`gvisor`/`kata`) is an implementation detail set by the installer.

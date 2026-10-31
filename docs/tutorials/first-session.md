@@ -68,14 +68,14 @@ Every agent message, state change, and question-to-the-user comes through this f
 
 ### Step 4: Upload a workspace (optional)
 
-Some runtimes (for example `claude-code`) need files to work with. Upload any directory or archive:
+Some runtimes (for example `claude-code`) need files to work with. A workspace is staged when the session is created, so start a new session with `--workspace` for a directory or `--file` for individual files:
 
 ```shell
 mkdir -p /tmp/demo && echo "hello from a file" > /tmp/demo/greeting.txt
-lenny session upload $SESSION_ID --path /tmp/demo
+lenny session new --runtime claude-code --workspace /tmp/demo
 ```
 
-The CLI handles the multi-step upload and returns the files it accepted.
+The CLI creates the session, uploads the content, and finalizes the session with a workspace plan that names each upload, then starts it. The [Workspace sources](../getting-started/concepts.md#workspace-sources) concept page describes how the plan places uploads in the workspace.
 
 ### Step 5: Inspect the session
 
@@ -154,16 +154,17 @@ The stream sends Server-Sent Events: `agent_output`, `status_change`, and (for r
 
 ### Upload and finalize a workspace
 
-If you created the session with `POST /v1/sessions` (instead of the one-shot `start` endpoint), use the `uploadToken` from that response:
+If you created the session with `POST /v1/sessions` (instead of the one-shot `start` endpoint), use the `uploadToken` from that response. Each upload returns an `uploadRef`, and the finalize body binds a workspace plan that names it:
 
 ```bash
-curl -sk -X POST "https://localhost:8443/v1/sessions/${SESSION_ID}/upload" \
-  -H "X-Upload-Token: ${UPLOAD_TOKEN}" \
-  -F "files=@/tmp/demo/greeting.txt;filename=greeting.txt"
+UPLOAD_REF=$(curl -sk -X POST "https://localhost:8443/v1/sessions/${SESSION_ID}/upload" \
+  -H "X-Lenny-Upload-Token: ${UPLOAD_TOKEN}" \
+  --data-binary @/tmp/demo/greeting.txt | jq -r '.uploadRef')
 
 curl -sk -X POST "https://localhost:8443/v1/sessions/${SESSION_ID}/finalize" \
-  -H "X-Upload-Token: ${UPLOAD_TOKEN}" \
-  -H "Content-Type: application/json" -d '{}'
+  -H "X-Lenny-Upload-Token: ${UPLOAD_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "{\"workspacePlan\":{\"schemaVersion\":1,\"sources\":[{\"type\":\"uploadFile\",\"path\":\"greeting.txt\",\"uploadRef\":\"${UPLOAD_REF}\"}]}}"
 ```
 
 ### Terminate

@@ -111,6 +111,10 @@ generate-proto: ## Regenerate the gRPC bindings from schemas/*.proto
 	done
 	@echo "  goimports → pkg/proto"
 	@PATH="$(GOPATH_BIN):$$PATH" goimports -w -local github.com/lennylabs/lenny ./pkg/proto
+	@echo "  gofumpt → pkg/proto"
+	@# gofumpt groups the protoc var declarations on its first pass and spaces
+	@# the grouped block on its second, so two passes reach its fixed point.
+	@for pass in 1 2; do find pkg/proto -name '*.go' -exec env PATH="$(GOPATH_BIN):$$PATH" gofumpt -w {} +; done
 
 .PHONY: install
 install: ## Install lenny-test + lenny-compliance into $(go env GOPATH)/bin

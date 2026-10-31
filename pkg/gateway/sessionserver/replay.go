@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -42,6 +44,11 @@ type ReplayRequest struct {
 // ReplayResponse is the §15.1 replay reply.
 type ReplayResponse struct {
 	SessionResponse
+
+	// UploadToken is the §7.1 uploadToken of the replayed session. §15.1
+	// states the replay response carries it, identical to
+	// `POST /v1/sessions`. Treat as a secret per §7.1.
+	UploadToken string `json:"uploadToken"`
 
 	ReplayMode      string `json:"replayMode"`
 	ParentSessionID string `json:"parentSessionId"`
@@ -127,6 +134,13 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"fields": []map[string]string{{"field": "sourceSessionId"}}})
 		return
 	}
+	// spec: §15.1 (Session Replay Semantics) — targetRuntime must be a
+	// registered runtime with the source session's executionMode; a
+	// different mode answers 400 INCOMPATIBLE_RUNTIME. It runs before the
+	// targetPool check, whose pool must be backed by this runtime.
+	if !s.requireReplayRuntimeCompatible(w, r, source, req.TargetRuntime) {
+		return
+	}
 
 	// §15.1 SEC-001 monotonicity — same rule as derive.
 	target := req.TargetIsolationProfile
@@ -137,6 +151,17 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			fmt.Sprintf("targetIsolationProfile %q is not a recognised §5.3 profile", target),
 			map[string]any{"fields": []map[string]string{{"field": "targetIsolationProfile"}}})
+		return
+	}
+	// spec: §15.1 (Session Replay Semantics) — targetPool "Must be a pool
+	// backed by targetRuntime", and the replayed session claims a pod pinned
+	// to it, so a named targetPool passes the same selection check as a
+	// create-body pool (§14.1 CreateSessionRequest.pool, §4
+	// pool_tenant_access): 400 VALIDATION_ERROR for a pool that does not
+	// exist, is not backed by targetRuntime, or does not satisfy the target
+	// profile, and 403 FORBIDDEN for a pool the tenant holds no grant on. It
+	// runs before the downgrade audit event, the reservation, and the copy.
+	if !s.requirePoolSelectable(w, r, tenantID, req.TargetRuntime, string(target), req.TargetPool, "targetPool") {
 		return
 	}
 	principal, _ := getPrincipal(r)
@@ -199,6 +224,7 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:         now,
 		RuntimeRef:        req.TargetRuntime,
 		PoolRef:           req.TargetPool,
+		Pool:              req.TargetPool,
 		IsolationProfile:  target,
 		WorkspaceSnapshot: copySnapshotRef(source.WorkspaceSnapshot, replayedRef),
 		// spec: §15.1 (Session Replay Semantics), §12.8 step 16, §4.5
@@ -207,7 +233,31 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 		// parent_workspace_ref.
 		ParentWorkspaceRef: source.WorkspaceSnapshot.Ref,
 	}
+	// spec: §15.1 (Session Replay Semantics), §7.1 (Atomicity of session
+	// creation (steps 2–8)) — the replayed session proceeds through the
+	// standard lifecycle, so it claims its warm pod (or reserves its slot)
+	// before the insert, as POST /v1/sessions and derive do. A claim failure
+	// undoes the copy and the reservation and answers the create path's
+	// claim-failure envelope with no session_id.
+	createClaim, ok := s.claimDerivedRow(w, r, &replayed)
+	if !ok {
+		s.undoDerivedWrites(r.Context(), tenantID, replayedID)
+		return
+	}
+	// spec: §15.1 (Session Replay Semantics) — the response carries the
+	// uploadToken, identical to POST /v1/sessions, minted and stored in the
+	// same atomic unit as the insert (§7.1 step 8). A mint failure releases
+	// the claim, undoes the copy and the reservation, and answers with no
+	// session_id.
+	uploadToken, ok := s.mintUploadToken(w, r, &replayed, createClaim, trace.SpanFromContext(r.Context()))
+	if !ok {
+		s.undoDerivedWrites(r.Context(), tenantID, replayedID)
+		return
+	}
 	if err := s.insertReplayed(r.Context(), replayed, source.ID, req.ReplayMode); err != nil {
+		// spec: §7.1 (Atomicity of session creation (steps 2–8)) — every
+		// insert failure releases the create-time claim.
+		s.rollbackClaim(r.Context(), createClaim, replayedID)
 		// spec: §12.8 (Lifecycle fence and drain) — the fence over the
 		// tenant and the new owner, or a reservation the owner's erasure
 		// ended, undoes the snapshot copy, releases the reservation, and
@@ -226,6 +276,7 @@ func (s *Server) handleReplay(w http.ResponseWriter, r *http.Request) {
 
 	resp := ReplayResponse{
 		SessionResponse: toResponse(replayed),
+		UploadToken:     uploadToken,
 		ReplayMode:      string(req.ReplayMode),
 		ParentSessionID: source.ID,
 	}
