@@ -7364,6 +7364,8 @@ fidelity** (no real copy, no advisory lock, no DERIVE_SNAPSHOT_UNAVAILABLE).
 
 **Note (2026-10-31):** The F-7.4.21 fix makes every finalize verify the token, including a finalize that uploaded nothing, so this defect now refuses every finalize routed to a replica other than the one that minted the token. The refusal is `401 UPLOAD_TOKEN_INVALID`. Raise its priority. Found by the security review of the F-7.4.21 merge. Raised to High, 2026-10-31: a deployment with more than one gateway replica cannot finalize reliably, and the kind stack runs one replica, so no tier sees it. Next change-proposal after 0111.
 
+**Note (2026-11-01):** The kind stack runs two gateway replicas, so tier 5 does see this defect, which corrects the note above. On the reinstall of `fix/kind-verify-3cb3523`, `TestEagerClaimFinalizeMaterializesAgainstWarmPod` and `TestEagerClaimTerminateReadySessionReleasesPodAndLease` failed with `401 UPLOAD_TOKEN_INVALID`, and 12 reruns gave 7 passes and 5 failures. A probe that created a session on one gateway pod IP and finalized on a chosen pod IP gave 200 on all 8 same-replica attempts and 401 on all 8 cross-replica attempts. The two tests stay intermittent, at about one failure in two through the Service, until this finding closes.
+
 ### - [ ] F-7.1.32 — The §7.1 `starting_timeout` failure-class row links §6.3, which does not define `STARTING_TIMEOUT` [Low] — OPEN
 
 **Spec:** §7.1 Normal Flow, the `starting_timeout` row of the failure-class table ("`STARTING_TIMEOUT` expired during agent-runtime launch (`starting → failed`, see §6.3)"); §6.2 Pod State Machine, the `starting` row of the `maxSessionAge` timer table, which defines the `maxStartingTimeoutSeconds` watchdog.

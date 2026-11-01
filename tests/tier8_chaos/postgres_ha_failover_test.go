@@ -76,6 +76,9 @@ const (
 	// so the swap preserves whatever credentials the install actually
 	// used.
 	postgresHAPrimaryHost = "lenny-postgres.lenny-system.svc"
+	// postgresDDLDSNKey holds the §12.3 DDL login DSN. The gateway dials it at
+	// boot and exits when it fails, so the swap moves it with postgres-dsn.
+	postgresDDLDSNKey     = "billing-audit-ddl-postgres-dsn"
 	postgresHAReplicaHost = "lenny-postgres-replica.lenny-system.svc"
 )
 
@@ -116,6 +119,7 @@ func TestPostgresHAFailover(t *testing.T) {
 	// restore exactly what was there and the replica DSN can be derived
 	// from it (same credentials, host swapped) rather than hardcoded.
 	originalDSN := readSecretPostgresDSN(t, c)
+	originalDDLDSN := readSecretDSN(t, c, postgresDDLDSNKey)
 	if !strings.Contains(originalDSN, postgresHAPrimaryHost) {
 		t.Fatalf("gateway postgres-dsn %q does not reference the expected primary host %q; "+
 			"cannot derive the replica DSN by host substitution", originalDSN, postgresHAPrimaryHost)
@@ -125,7 +129,7 @@ func TestPostgresHAFailover(t *testing.T) {
 		if !dsnSwapped {
 			return
 		}
-		restoreGatewayDSN(t, c, originalDSN)
+		restoreGatewayDSN(t, c, originalDSN, originalDDLDSN)
 	})
 
 	waitPostgresHAJobComplete(t, c, postgresHABootstrapJob, 90*time.Second)
@@ -190,7 +194,8 @@ func TestPostgresHAFailover(t *testing.T) {
 	t.Logf("%s promoted out of recovery", postgresReplicaDeployment)
 
 	replicaDSN := strings.Replace(originalDSN, postgresHAPrimaryHost, postgresHAReplicaHost, 1)
-	setSecretPostgresDSN(t, c, replicaDSN)
+	replicaDDLDSN := strings.Replace(originalDDLDSN, postgresHAPrimaryHost, postgresHAReplicaHost, 1)
+	setSecretPostgresDSN(t, c, replicaDSN, replicaDDLDSN)
 	dsnSwapped = true
 	if out, err := rolloutRestartDeployment(t, c, gatewayDeployment); err != nil {
 		t.Fatalf("rollout restart %s onto the promoted standby: %v\n%s", gatewayDeployment, err, out)
@@ -339,14 +344,20 @@ func waitReplicaPromoted(t *testing.T, c *kind.Cluster, timeout time.Duration) b
 // (charts/lenny/templates/datastore-secret.yaml).
 func readSecretPostgresDSN(t *testing.T, c *kind.Cluster) string {
 	t.Helper()
+	return readSecretDSN(t, c, "postgres-dsn")
+}
+
+// readSecretDSN reads one key of the datastore-conn Secret.
+func readSecretDSN(t *testing.T, c *kind.Cluster, key string) string {
+	t.Helper()
 	out, err := c.KubectlOut(t, "-n", lennySystemNamespace, "get", "secret", datastoreConnSecretName,
-		"-o", "jsonpath={.data.postgres-dsn}")
+		"-o", "go-template={{index .data \""+key+"\"}}")
 	if err != nil {
 		t.Fatalf("read %s secret: %v\n%s", datastoreConnSecretName, err, out)
 	}
 	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(out))
 	if err != nil {
-		t.Fatalf("decode postgres-dsn from %s: %v", datastoreConnSecretName, err)
+		t.Fatalf("decode %s from %s: %v", key, datastoreConnSecretName, err)
 	}
 	return string(decoded)
 }
@@ -355,9 +366,9 @@ func readSecretPostgresDSN(t *testing.T, c *kind.Cluster) string {
 // postgres-dsn key to dsn. The gateway does not hot-reload the Secret;
 // the caller must roll the gateway Deployment for the new value to
 // take effect on fresh connections.
-func setSecretPostgresDSN(t *testing.T, c *kind.Cluster, dsn string) {
+func setSecretPostgresDSN(t *testing.T, c *kind.Cluster, dsn, ddlDSN string) {
 	t.Helper()
-	patch := fmt.Sprintf(`{"stringData":{"postgres-dsn":%q}}`, dsn)
+	patch := fmt.Sprintf(`{"stringData":{"postgres-dsn":%q,%q:%q}}`, dsn, postgresDDLDSNKey, ddlDSN)
 	out, err := c.KubectlOut(t, "-n", lennySystemNamespace, "patch", "secret", datastoreConnSecretName,
 		"--type=merge", "-p", patch)
 	if err != nil {
@@ -370,9 +381,9 @@ func setSecretPostgresDSN(t *testing.T, c *kind.Cluster, dsn string) {
 // restored primary. Called from t.Cleanup, so failures are reported
 // with t.Errorf rather than t.Fatalf: a cleanup step must not abort and
 // skip the cleanup steps registered before it.
-func restoreGatewayDSN(t *testing.T, c *kind.Cluster, dsn string) {
+func restoreGatewayDSN(t *testing.T, c *kind.Cluster, dsn, ddlDSN string) {
 	t.Helper()
-	patch := fmt.Sprintf(`{"stringData":{"postgres-dsn":%q}}`, dsn)
+	patch := fmt.Sprintf(`{"stringData":{"postgres-dsn":%q,%q:%q}}`, dsn, postgresDDLDSNKey, ddlDSN)
 	if out, err := c.KubectlOut(t, "-n", lennySystemNamespace, "patch", "secret", datastoreConnSecretName,
 		"--type=merge", "-p", patch); err != nil {
 		t.Errorf("restore %s secret postgres-dsn: %v\n%s", datastoreConnSecretName, err, out)
