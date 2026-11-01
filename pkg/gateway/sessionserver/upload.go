@@ -3,6 +3,7 @@
 package sessionserver
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -558,10 +559,16 @@ func (s *Server) recheckUploadChannel(w http.ResponseWriter, r *http.Request, te
 }
 
 // unwindCommittedBlob releases the bytes the reservation reconcile left held
-// and soft-deletes the staged blob.
+// and soft-deletes the staged blob. A client that disconnects after its body is
+// consumed cancels the request context, which is what fails the recheck read,
+// and the Redis counter refuses a shift on a cancelled context. The release
+// therefore runs detached from request cancellation, under the recheck read's
+// operator-tunable bound. spec: §7.4 (Upload Safety).
 func (s *Server) unwindCommittedBlob(r *http.Request, tenantID string, reservation *quotaReservation, commit uploadCommit) {
 	if reservation != nil {
-		_ = s.storageQuota.Adjust(r.Context(), tenantID, -commit.bytesRead.n)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), sessionstore.PrimaryReadBound(s.primaryReadTimeout))
+		defer cancel()
+		_ = s.storageQuota.Adjust(ctx, tenantID, -commit.bytesRead.n)
 	}
 	s.softDeleteStagedBlob(commit.uri, commit.ref)
 }

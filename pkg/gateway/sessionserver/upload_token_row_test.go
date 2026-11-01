@@ -40,6 +40,20 @@ type rowTokenFixture struct {
 	issuer  *uploadtoken.Issuer
 }
 
+// contextBoundCounter refuses a shift on a done context, as the Redis counter
+// does. storagequota.Memory ignores its context, so without this wrapper a
+// release on a cancelled request context reads as a successful release.
+type contextBoundCounter struct {
+	*storagequota.Memory
+}
+
+func (c contextBoundCounter) Adjust(ctx context.Context, tenantID string, delta int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return c.Memory.Adjust(ctx, tenantID, delta)
+}
+
 func newRowTokenFixture(t *testing.T, inner sessionstore.Store) *rowTokenFixture {
 	t.Helper()
 	clock := func() time.Time { return rowTokenNow }
@@ -58,7 +72,7 @@ func newRowTokenFixture(t *testing.T, inner sessionstore.Store) *rowTokenFixture
 		UploadTokenVerifier: uploadtoken.NewVerifier(nil, nil, clock),
 		Blobs:               blobs,
 		Tenants:             tenants,
-		StorageQuota:        counter,
+		StorageQuota:        contextBoundCounter{Memory: counter},
 	})
 	return &rowTokenFixture{h: asOwner(srv.Handler()), store: store, blobs: blobs, counter: counter, issuer: issuer}
 }
@@ -84,6 +98,12 @@ func (f *rowTokenFixture) seedRow(t *testing.T, inner sessionstore.Store, state 
 // post sends the action ("upload" or "finalize") with token.
 func (f *rowTokenFixture) post(t *testing.T, action, token string) *httptest.ResponseRecorder {
 	t.Helper()
+	return f.postContext(t, context.Background(), action, token)
+}
+
+// postContext is post with the request bound to ctx.
+func (f *rowTokenFixture) postContext(t *testing.T, ctx context.Context, action, token string) *httptest.ResponseRecorder {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+rowTokenSession+"/"+action, strings.NewReader("payload"))
 	req.Header.Set("X-Lenny-Tenant-ID", rowTokenTenant)
 	req.Header.Set("Content-Type", "text/plain")
@@ -93,7 +113,7 @@ func (f *rowTokenFixture) post(t *testing.T, action, token string) *httptest.Res
 	}
 	req.Header.Set("X-Lenny-Upload-Token", token)
 	rr := httptest.NewRecorder()
-	f.h.ServeHTTP(rr, req)
+	f.h.ServeHTTP(rr, req.WithContext(ctx))
 	return rr
 }
 
@@ -359,6 +379,35 @@ func TestPostPutRecheckRefusesEveryFailedRead_spec_7_4(t *testing.T) {
 				t.Errorf("reserved bytes after the refusal = %d, want 0", used)
 			}
 		})
+	}
+}
+
+// A client that disconnects after its body is consumed fails the recheck read
+// with context.Canceled, and that cancellation must not reach the release. The
+// counter honors its context as the Redis counter does, so a release on the
+// request context leaves the bytes held against the tenant.
+//
+// spec: §7.4 (Upload Safety), §11.2 (Budgets and Quotas)
+func TestPostPutRecheckReleasesAfterRequestCancellation_spec_7_4(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	inner := &laggingStore{Store: memstore.New()}
+	inner.primary = append(inner.primary, primaryIn(session.StateCreated),
+		func(sessionstore.Session) (sessionstore.Session, error) {
+			cancel()
+			return sessionstore.Session{}, context.Canceled
+		})
+	f := newRowTokenFixture(t, inner)
+	tok := f.seedRow(t, inner.Store, session.StateCreated)
+
+	f.wantRefusal(t, f.postContext(t, ctx, "upload", tok), http.StatusInternalServerError, "INTERNAL_ERROR")
+
+	deleted, total := countSessionBlobs(t, f.blobs, rowTokenTenant, rowTokenSession)
+	if total != 1 || deleted != 1 {
+		t.Errorf("blobs: total %d, soft-deleted %d; want the staged blob soft-deleted", total, deleted)
+	}
+	if used, _ := f.counter.Used(context.Background(), rowTokenTenant); used != 0 {
+		t.Errorf("reserved bytes after the cancelled refusal = %d, want 0", used)
 	}
 }
 
