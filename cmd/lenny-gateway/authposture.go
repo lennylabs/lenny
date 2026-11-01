@@ -68,9 +68,31 @@ var publicRoutePatterns = []string{
 // spec: §10.2 (Authentication); §15.1 (OpenAPI spec endpoint); §5.1
 // (publishedMetadata visibility levels); §27.3 (playground authentication).
 func newPublicPathMatcher() func(*http.Request) bool {
+	return newRouteMatcher(publicRoutePatterns)
+}
+
+// probeRoutePatterns lists the kubelet probe, scrape, and drain-readiness
+// routes, which carry no caller identity. It matches the routes the
+// correlation middleware leaves out of the access log.
+var probeRoutePatterns = []string{
+	"GET /healthz",
+	"GET /readyz",
+	"GET /metrics",
+	"GET /internal/drain-readiness",
+}
+
+// healthReportRoutePatterns lists the §25.3 health report routes.
+var healthReportRoutePatterns = []string{
+	"/v1/admin/health",
+	"/v1/admin/health/",
+}
+
+// newRouteMatcher returns a predicate reporting whether a ServeMux holding
+// patterns would route a request to one of them.
+func newRouteMatcher(patterns []string) func(*http.Request) bool {
 	mux := http.NewServeMux()
 	noop := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
-	for _, p := range publicRoutePatterns {
+	for _, p := range patterns {
 		mux.Handle(p, noop)
 	}
 	return func(r *http.Request) bool {
@@ -100,6 +122,7 @@ func applyAuthPostureOptions(opts *authmw.Options, devMode bool) {
 	opts.AllowDevHeaders = devMode
 	opts.AllowDevRoles = devMode
 	opts.RequireAuth = !devMode
+	opts.ProbePath = newRouteMatcher(probeRoutePatterns)
 	opts.PublicPath = nil
 	if !devMode {
 		opts.PublicPath = newPublicPathMatcher()

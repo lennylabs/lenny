@@ -837,6 +837,9 @@ func (w *gatewayWiring) buildHTTPSurface(
 		Environments:               environments,
 		Tenants:                    w.tenants,
 		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
+		// spec: §25.3 — the health report states `postgres.status` while
+		// Postgres is unreachable, so it reads no §10.6 registry.
+		Exempt: newRouteMatcher(healthReportRoutePatterns),
 	})
 
 	// Auth next-to-outermost. The dev-header transport (AllowDevHeaders,

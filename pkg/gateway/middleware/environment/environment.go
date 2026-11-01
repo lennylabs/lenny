@@ -156,6 +156,12 @@ type Options struct {
 	// the no-environment fallback policy cannot be resolved without it.
 	Tenants tenantstore.Store
 
+	// Exempt, when set, reports whether a request targets a route that
+	// reads no §10.6 Resolution, so the middleware passes it through without
+	// a registry read. The §25.3 health report is such a route: it reports
+	// Postgres unreachable, so it cannot depend on a Postgres read.
+	Exempt func(*http.Request) bool
+
 	// DefaultNoEnvironmentPolicy is the §10.6 platform-wide
 	// noEnvironmentPolicy applied to a caller whose tenant set no
 	// per-tenant value. It is the resolvedNoEnvPolicy the gateway
@@ -217,6 +223,10 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// deployment with no environment registry passes through with an
 	// unconfigured Resolution.
 	if m.opts.Environments == nil || m.opts.Tenants == nil {
+		m.inner.ServeHTTP(w, r)
+		return
+	}
+	if m.opts.Exempt != nil && m.opts.Exempt(r) {
 		m.inner.ServeHTTP(w, r)
 		return
 	}

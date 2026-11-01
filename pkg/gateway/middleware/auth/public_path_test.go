@@ -187,3 +187,37 @@ func TestDevHeadersHonouredUnderAllowDevHeaders(t *testing.T) {
 		t.Fatalf("dev headers: status %d principal %+v; want tenant acme subject mallory", rr.Code, rec.p)
 	}
 }
+
+// TestDevHeaderProbeCarriesNoPrincipal_spec_25_3 asserts that a single-tenant
+// dev-header gateway leaves a probe request that names no tenant without a
+// principal, so no inner middleware reads a datastore for it and a store
+// outage does not fail liveness. A probe route that names a tenant, and any
+// other route, keep the dev-header path.
+//
+// spec: §25.3 (`/healthz`), §17.4 (dev mode).
+func TestDevHeaderProbeCarriesNoPrincipal_spec_25_3(t *testing.T) {
+	opts := Options{AllowDevHeaders: true, DevHeaderNamesTenant: true, ProbePath: publicHealthz}
+	for _, tc := range []struct {
+		name, path, tenant string
+		wantPrincipal      bool
+	}{
+		{"probe with no tenant", "/healthz", "", false},
+		{"probe naming a tenant", "/healthz", "acme", true},
+		{"other route with no tenant", "/v1/sessions", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &identityRecorder{}
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			if tc.tenant != "" {
+				req.Header.Set("X-Lenny-Tenant-ID", tc.tenant)
+			}
+			Wrap(rec, opts).ServeHTTP(httptest.NewRecorder(), req)
+			if !rec.called {
+				t.Fatal("the inner handler did not run")
+			}
+			if rec.hasP != tc.wantPrincipal {
+				t.Errorf("principal present = %t, want %t", rec.hasP, tc.wantPrincipal)
+			}
+		})
+	}
+}

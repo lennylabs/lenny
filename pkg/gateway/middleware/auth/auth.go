@@ -212,6 +212,15 @@ type Options struct {
 	// public route. nil treats every route as authenticated.
 	PublicPath func(*http.Request) bool
 
+	// ProbePath, when set, reports whether a request targets a kubelet probe
+	// or a scrape route. On a dev-header gateway in single-tenant mode, a
+	// request that names no tenant resolves to the default tenant's
+	// principal, and every middleware inside this one then reads the
+	// datastores for it. A probe request with no tenant header carries no
+	// identity, so ProbePath keeps it unauthenticated and a store outage does
+	// not fail a liveness check. spec: §25.3 (`/healthz`), §17.4.
+	ProbePath func(*http.Request) bool
+
 	// Revocations, when set, is consulted after a Bearer JWT verifies:
 	// a token whose jti has been revoked is rejected even though its
 	// signature and expiry are still valid (§13.3 token revocation).
@@ -459,7 +468,8 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 2) Optional dev-header fallback.
 	if m.opts.AllowDevHeaders {
 		tenantHeader := r.Header.Get("X-Lenny-Tenant-ID")
-		if tenantHeader != "" || !m.opts.MultiTenant {
+		isProbe := m.opts.ProbePath != nil && m.opts.ProbePath(r)
+		if tenantHeader != "" || (!m.opts.MultiTenant && !isProbe) {
 			m.serveDevHeaders(w, r)
 			return
 		}

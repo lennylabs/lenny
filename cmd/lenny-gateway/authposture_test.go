@@ -272,3 +272,37 @@ func TestDevPostureHonoursTenantHeader(t *testing.T) {
 		}
 	}
 }
+
+// TestProbeAndHealthReportRouteMatchers_spec_25_3 pins the routes the probe
+// and health report matchers admit. A route left out of the probe set reads
+// Postgres on a dev-mode gateway, and a health route left out of the report
+// set answers 500 during a Postgres outage.
+//
+// spec: §25.3.
+func TestProbeAndHealthReportRouteMatchers_spec_25_3(t *testing.T) {
+	var opts authmw.Options
+	applyAuthPostureOptions(&opts, true)
+	report := newRouteMatcher(healthReportRoutePatterns)
+	for _, tc := range []struct {
+		method, path  string
+		probe, health bool
+	}{
+		{http.MethodGet, "/healthz", true, false},
+		{http.MethodGet, "/readyz", true, false},
+		{http.MethodGet, "/metrics", true, false},
+		{http.MethodGet, "/internal/drain-readiness", true, false},
+		{http.MethodPost, "/healthz", false, false},
+		{http.MethodGet, "/v1/admin/health", false, true},
+		{http.MethodGet, "/v1/admin/health/postgres", false, true},
+		{http.MethodGet, "/v1/admin/tenants", false, false},
+		{http.MethodGet, "/v1/sessions", false, false},
+	} {
+		r := httptest.NewRequest(tc.method, tc.path, nil)
+		if got := opts.ProbePath(r); got != tc.probe {
+			t.Errorf("%s %s: probe = %t, want %t", tc.method, tc.path, got, tc.probe)
+		}
+		if got := report(r); got != tc.health {
+			t.Errorf("%s %s: health report = %t, want %t", tc.method, tc.path, got, tc.health)
+		}
+	}
+}

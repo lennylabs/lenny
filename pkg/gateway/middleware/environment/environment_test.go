@@ -410,6 +410,43 @@ func TestResolverFailsClosedOnStoreError(t *testing.T) {
 	}
 }
 
+// TestResolverExemptRouteSkipsTheRegistry_spec_25_3 asserts that an Exempt
+// route reaches its handler while the registry read fails, and that a route
+// outside Exempt still fails closed. The §25.3 health report states
+// `postgres.status` during a Postgres outage, so a registry read in front of
+// it hides the outage behind a 500.
+//
+// spec: §25.3, §10.6.
+func TestResolverExemptRouteSkipsTheRegistry_spec_25_3(t *testing.T) {
+	cap := &captureHandler{}
+	h := environmentmw.Wrap(cap, environmentmw.Options{
+		Environments: errEnvStore{environmentstore.NewMemory()},
+		Tenants:      tenantstore.NewMemory(),
+		Exempt:       func(r *http.Request) bool { return r.URL.Path == "/v1/admin/health" },
+	})
+	for _, tc := range []struct {
+		path   string
+		want   int
+		served bool
+	}{
+		{"/v1/admin/health", http.StatusOK, true},
+		{"/v1/runtimes", http.StatusInternalServerError, false},
+	} {
+		cap.served = false
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		req = req.WithContext(authmw.WithPrincipal(req.Context(),
+			authmw.Principal{Subject: "alice", TenantID: "acme"}))
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != tc.want || cap.served != tc.served {
+			t.Errorf("%s: status %d served %t, want %d and %t", tc.path, rr.Code, cap.served, tc.want, tc.served)
+		}
+		if cap.res.Configured {
+			t.Errorf("%s: resolution must stay unconfigured", tc.path)
+		}
+	}
+}
+
 // Resolve produces the same Resolution as the HTTP middleware, so a
 // handler reached outside the middleware chain (an MCP tool in a unit
 // test) filters identically.
