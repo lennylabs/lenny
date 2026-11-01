@@ -4562,6 +4562,43 @@ re-confirmed against the tree at `65a7a15e3`.
     Secrets. The proposal resolves the conflict between the two sections.
 - Not filed: none. Every listed defect is filed.
 
+**Defects filed from proposal 0114's unstaged-defect list (2026-11-01).** Proposal 0114 (shared token and OAuth
+state, approved 2026-11-01) lists defects in the shipped tree that it does not stage. Each was re-confirmed against
+the tree at `91f8ff9cd`, and none was already fixed. These entries discharge RECORDS-1 items 3 and 4 of 0114's
+non-spec changes, so 0114's implementation does not file them again. F-9.3.18 and F-27.3.17 stay reserved for the
+findings RECORDS-1 names, so the ids below skip them.
+
+- [ ] **Proposal 0114** (approved 2026-11-01): resolves F-7.1.31 and F-27.3.16. Implementation is next.
+- Direct-fix queue, after proposal 0114's implementation.
+  - [ ] **F-12.5.34** (Medium): `softDeleteStagedBlob` does not reach `*cataloging.Store`, so session GC releases
+    refused upload bytes a second time and `storage_bytes_used` under-counts. Direct fix.
+  - [ ] **F-9.3.20** (Medium): the chart renders neither `--connector-oauth-callback-url` nor
+    `LENNY_CONNECTOR_OAUTH_CALLBACK_URL`, so a chart deployment cannot enable the connector OAuth flow. Direct fix.
+  - [ ] **F-11.1.12** (Low): `uploadLimiter.closeSession` runs only in the finalize handler, so a `sessionBytes`
+    entry outlives its session on every other replica. Direct fix.
+  - [ ] **F-27.3.18** (Low): `handleAuthError` renders 200 for tenant-claim rejections, while §27.3.1 records 401
+    and 403. Direct fix.
+- Proposal routing, independent of 0114's implementation.
+  - [ ] **F-12.3.30** (High): `environmentmw` reads the primary alone and fails closed, so a primary outage answers
+    500 on existing sessions, against §12.3. §10.6 makes the filter an authorization boundary, so it needs a
+    proposal.
+  - [ ] **F-12.8.64** (Medium): the dead-letter redaction receipt signer holds a per-process HMAC key that no party
+    can verify, and no admin route serves a public key. Needs a proposal, which adds the route.
+  - [ ] **F-7.4.22** (Low): finalize's upload abort is per process, so it does not sever a stream on a peer once
+    0114's cross-replica admission lands. §7.4 names no abort mechanism, so it needs a proposal.
+  - [ ] **F-9.3.19** (Low): the connector callback answers `400 CONNECTOR_OAUTH_STATE_UNKNOWN` on a store fault.
+    §9.3 is silent on a store fault, so it needs a proposal.
+  - [ ] **F-12.4.40** (Low): the §12.4 **Failure behavior per use case** table has no row for playground revocation
+    or OAuth state. Specification text, so it needs a proposal. Rides with F-9.3.19.
+  - [ ] **F-15.1.73** (Low): `REDIS_UNAVAILABLE` has no §15.1 catalog row and no `errorclassify` entry. Specification
+    text, so it needs a proposal.
+- Noted on existing OPEN entries, with no new item, because each already has a line in this section.
+  - **F-11.5.26** (High) and **F-11.5.27** (Medium): finalize's token check sits behind the idempotency middleware,
+    and a replay is not bound to the caller. The proposal that closes F-11.5.26 owns both.
+  - **F-15.1.57** (Low): the specification does not settle whether REST `/upload` in `running` admits a bearer. The
+    upload route proposal owns it.
+- Not filed: none. Every listed defect is filed or noted.
+
 **Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
 `pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every
 other test in that binary.
