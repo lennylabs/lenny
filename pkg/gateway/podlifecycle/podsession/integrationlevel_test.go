@@ -46,7 +46,7 @@ func TestIntegrationLevelRank_spec_5_1(t *testing.T) {
 // RUNTIME_LEVEL_UNDERPERFORMS, and the runtime is not recorded as verified
 // so every later assignment keeps being rejected.
 func TestVerifyIntegrationLevelUnderperforms_spec_5_1(t *testing.T) {
-	b := &Binder{}
+	b := &Binder{IntegrationLevelProbeWaitMs: 1}
 	probe := &fakeLevelProbe{level: "basic"}
 	err := b.verifyIntegrationLevel(context.Background(), probe, "claude-code", "full")
 	var underperf *RuntimeLevelUnderperforms
@@ -160,5 +160,55 @@ func TestIntegrationLevelProbeWaitMs_spec_5_1(t *testing.T) {
 	}
 	if got := (&Binder{IntegrationLevelProbeWaitMs: 250}).integrationLevelProbeWaitMs(); got != 250 {
 		t.Errorf("override wait = %d, want 250", got)
+	}
+}
+
+// sequenceLevelProbe answers each probe with the next level, repeating the
+// last one.
+type sequenceLevelProbe struct {
+	levels []string
+	calls  int
+}
+
+func (p *sequenceLevelProbe) GetObservedIntegrationLevel(context.Context, int32) (string, error) {
+	i := min(p.calls, len(p.levels)-1)
+	p.calls++
+	return p.levels[i], nil
+}
+
+// TestVerifyIntegrationLevelWaitsForAReconnectingRuntime_spec_5_1 asserts that
+// a Standard runtime that reads basic until its platform MCP connection
+// returns is admitted, a runtime that stays below its declared level is still
+// rejected once the budget runs out, and a runtime at its declared level is
+// read once.
+//
+// spec: §5.1.
+func TestVerifyIntegrationLevelWaitsForAReconnectingRuntime_spec_5_1(t *testing.T) {
+	ctx := context.Background()
+	reconnect := &sequenceLevelProbe{levels: []string{"basic", "basic", "standard"}}
+	b := &Binder{IntegrationLevelProbeWaitMs: 5000}
+	if err := b.verifyIntegrationLevel(ctx, reconnect, "rt-reconnect", "standard"); err != nil {
+		t.Fatalf("reconnecting runtime rejected: %v", err)
+	}
+	if reconnect.calls != 3 {
+		t.Errorf("probe calls = %d, want 3", reconnect.calls)
+	}
+
+	stuck := &sequenceLevelProbe{levels: []string{"basic"}}
+	b = &Binder{IntegrationLevelProbeWaitMs: 250}
+	var underperf *RuntimeLevelUnderperforms
+	if err := b.verifyIntegrationLevel(ctx, stuck, "rt-stuck", "standard"); !errors.As(err, &underperf) {
+		t.Fatalf("err = %v, want *RuntimeLevelUnderperforms", err)
+	}
+	if stuck.calls < 2 {
+		t.Errorf("probe calls = %d, want at least 2 before rejecting", stuck.calls)
+	}
+
+	met := &sequenceLevelProbe{levels: []string{"basic"}}
+	if err := (&Binder{}).verifyIntegrationLevel(ctx, met, "rt-basic", "basic"); err != nil {
+		t.Fatalf("basic runtime rejected: %v", err)
+	}
+	if met.calls != 1 {
+		t.Errorf("probe calls = %d for a runtime at its level, want 1", met.calls)
 	}
 }

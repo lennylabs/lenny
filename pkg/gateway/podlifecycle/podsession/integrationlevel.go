@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -25,6 +26,10 @@ type observedLevelProbe interface {
 // misclassify a slow runtime while bounding the one-time first-assignment
 // latency for a runtime that never opens the channel. spec: §5.1.
 const DefaultIntegrationLevelProbeWaitMs = 10000
+
+// integrationLevelReprobeInterval paces the re-reads of an observed level
+// below the declared level.
+const integrationLevelReprobeInterval = 100 * time.Millisecond
 
 // RuntimeLevelUnderperforms is returned by Bind when the §5.1 observed
 // integration level from the adapter handshake is below the runtime's
@@ -88,7 +93,7 @@ func (b *Binder) verifyIntegrationLevel(ctx context.Context, cl observedLevelPro
 		return nil
 	}
 	declaredRank := integrationLevelRank(declared)
-	observed, err := cl.GetObservedIntegrationLevel(ctx, b.integrationLevelProbeWaitMs())
+	observed, err := b.observeLevel(ctx, cl, declaredRank)
 	if err != nil {
 		if status.Code(err) == codes.Unimplemented {
 			// The adapter predates the observed-level probe; the §5.1 check
@@ -113,6 +118,30 @@ func (b *Binder) verifyIntegrationLevel(ctx context.Context, cl observedLevelPro
 	}
 	b.integrationVerified.Store(runtime, struct{}{})
 	return nil
+}
+
+// observeLevel reads the observed level, re-reading it inside the probe's wait
+// budget while it ranks below the declared level. The adapter classifies a
+// runtime with no CH-RUNTIMEOPS handshake from the platform MCP signal without
+// waiting, and a slot release stops the pod's MCP server, so a kept runtime
+// process that has not yet reconnected reads basic. A runtime that meets its
+// declared level at first read pays no delay, and §5.1 rejection stays for a
+// runtime that is still below it when the budget runs out.
+//
+// spec: §5.1.
+func (b *Binder) observeLevel(ctx context.Context, cl observedLevelProbe, declaredRank int) (string, error) {
+	waitMs := b.integrationLevelProbeWaitMs()
+	deadline := time.Now().Add(time.Duration(waitMs) * time.Millisecond)
+	observed, err := cl.GetObservedIntegrationLevel(ctx, waitMs)
+	for err == nil && integrationLevelRank(observed) < declaredRank && time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return observed, nil
+		case <-time.After(integrationLevelReprobeInterval):
+		}
+		observed, err = cl.GetObservedIntegrationLevel(ctx, 0)
+	}
+	return observed, err
 }
 
 // integrationLevelProbeWaitMs is the configured probe wait, defaulting to
