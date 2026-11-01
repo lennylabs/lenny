@@ -6,7 +6,7 @@
 
 **What changes.**
 
-- §7.1 and §7.4 make the session row the `uploadToken` authority, and `pkg/uploadtoken` plus both session server call sites verify the digest, expiry, and state from the primary row (SPEC-1, CODE-1, CODE-2).
+- §7.1 and §7.4 make the session row the `uploadToken` authority, and `pkg/uploadtoken` plus both session server call sites verify the digest, expiry, and state from the primary row, and §11.1 states that the upload caps hold per replica (SPEC-1, CODE-1, CODE-2).
 - §15.1 defines `UPLOAD_TOKEN_INVALID`, `errorclassify` carries it, and §18 drops the rotation items (SPEC-2, CODE-2).
 - The ring, tracker, rotator, and their gateway wiring are deleted (CODE-3).
 - `StateSigner` is deleted, and `StateStore.Consume` is the connector callback's single authority (SPEC-3, CODE-4).
@@ -19,7 +19,7 @@
 2. The `uploadToken` stays a required second credential, because deleting it reverses the F-7.4.21 fix and removes a check §7.4 requires.
 3. The format stays three segments and the third becomes 256 random bits, because the digest covers the whole token and so binds the embedded expiry.
 4. `verifyUploadToken` defines the check order through SPEC-1 **Check order:**, and expiry precedes consumption as `Verifier.Verify` orders them today.
-5. Consumption is derived from the row with no write (SPEC-1 **Single-use invalidation:**), and a valid token on a terminal row falls through to 409, because a terminal row does not record whether finalize succeeded and 410 must always mean finalization committed.
+5. Consumption is derived from the row with no write (SPEC-1 **Single-use invalidation:**), and a valid token on a `finalizing` or terminal row falls through to 409, because neither row proves a committed finalize: a terminal row does not record whether finalize succeeded, and 410 must always mean finalization committed.
 6. No code returns a row to `created`, and the rule runs ahead of the precondition, so a future capability that admits `running` cannot reopen replay for a token holder.
 7. Both call sites and the `finalizeUpload` recheck read through `s.readPrimary`, because `pgstore.Get` reads the §12.3 read pool and a lagging `created` row would admit an upload after consumption. A read error at the recheck refuses the upload, because the per-process `uploadAborts` leaves the recheck as the only channel close on a peer.
 8. `handleFinalize` reads the row before the token check, which exposes nothing new because `requireSessionAccess` already read the row and answers 404 first.
