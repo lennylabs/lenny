@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -40,7 +42,7 @@ func newFinalizeTokenProbe(t *testing.T) *finalizeTokenProbe {
 		UploadTokenIssuer:   issuer,
 		UploadTokenVerifier: uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), nil),
 	})
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 	return &finalizeTokenProbe{ts: ts, store: store, issuer: issuer}
 }
@@ -67,7 +69,7 @@ func (p *finalizeTokenProbe) do(t *testing.T, path, tenant, token, body string) 
 
 func (p *finalizeTokenProbe) create(t *testing.T, tenant string) (string, string) {
 	t.Helper()
-	status, body := p.do(t, "/v1/sessions", tenant, "", `{"runtimeRef":"claude-code","userId":"alice@acme.com"}`)
+	status, body := p.do(t, "/v1/sessions", tenant, "", `{"runtimeRef":"claude-code"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("create: status %d body %s", status, body)
 	}

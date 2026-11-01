@@ -25,6 +25,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -117,7 +119,7 @@ func TestVCSCredentialReadFailsClosedWithNoEarlierValue(t *testing.T) {
 	})
 	t.Cleanup(srv.Close)
 
-	if rr := vcsFailClosedCreate(t, srv.Handler()); rr.Code != http.StatusCreated {
+	if rr := vcsFailClosedCreate(t, ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)); rr.Code != http.StatusCreated {
 		t.Fatalf("first create status = %d, want 201; body %s", rr.Code, rr.Body.String())
 	}
 	if len(ls.creds) != 1 || ls.creds[0].Token != vcsFailClosedToken {
@@ -125,7 +127,7 @@ func TestVCSCredentialReadFailsClosedWithNoEarlierValue(t *testing.T) {
 	}
 
 	firstLastID := lastID
-	rr := vcsFailClosedCreate(t, srv.Handler())
+	rr := vcsFailClosedCreate(t, ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	if rr.Code != http.StatusServiceUnavailable || !strings.Contains(rr.Body.String(), "GIT_CLONE_REF_RESOLVE_TRANSIENT") {
 		t.Fatalf("second create = %d %s, want 503 GIT_CLONE_REF_RESOLVE_TRANSIENT", rr.Code, rr.Body.String())
 	}
