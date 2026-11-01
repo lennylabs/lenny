@@ -505,7 +505,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 
 - KMS envelope encryption in the Token Service per [§13.3](13_security-model.md#133-credential-flow), wrapping the Phase 5.5 `issued_tokens` table writes inside the write-before-issue Postgres transaction.
 - `pkg/tokenexchange` ([§13.3](13_security-model.md#133-credential-flow) RFC 8693 invariants as a pure `Validate` function: scope narrowing `issued.scope ⊆ subject.scope`; tenant-scope match `issued.tenant_id == subject.tenant_id == caller.tenant_id`; caller-type cannot-elevate `agent < service < human`; audience cannot broaden; `typ` rules; `delegation_depth = parent + 1`; and `exp` clamp with ±1s skew and RFC 7519 whole-second truncation).
-- Full OAuth 2.1 connector flow with PKCE, signed `state`, and KMS-encrypted credential storage per [§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc), building on the `ConnectorDefinition` resource and OAuth callback handler shipped in Phase 4.5.
+- Full OAuth 2.1 connector flow with PKCE, random `state`, and KMS-encrypted credential storage per [§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc), building on the `ConnectorDefinition` resource and OAuth callback handler shipped in Phase 4.5.
 - Redis EventBus `token.revoked` cluster-wide propagation.
 - `TokenRevocationPropagationLag` alert wiring per [§16.5](16_observability.md#165-alerting-rules-and-slos).
 - `lenny-ctl admin users force-revoke` end-to-end wiring per [§24.9](24_lenny-ctl-command-reference.md#249-user-and-token-management), completing the Phase 7 `full_revoke` user-invalidation flow with KMS-backed revocation.
