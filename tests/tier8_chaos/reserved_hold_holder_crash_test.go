@@ -62,7 +62,16 @@ func TestOrphanGCReclaimsReservedClaimAfterHolderCrash(t *testing.T) {
 			lennyControllerDeployment)
 	}
 
-	sandboxRef := idleWarmSandbox(t, c, orphanGCFixturePool)
+	// A reserved pod leaves warm inventory, so the pool creates a replacement,
+	// and the reclaimed pod's return leaves one idle pod over target. The
+	// planner drains the lowest-sorted idle names, so the last name stays idle
+	// and the test observes the re-pooling rather than the trim. spec: §4.6.2.
+	idlePods := idleWarmSandboxes(t, c, orphanGCFixturePool)
+	if len(idlePods) < 2 {
+		t.Skipf("not yet applicable: precondition not met: pool %s has %d idle warm pods, want at least 2",
+			orphanGCFixturePool, len(idlePods))
+	}
+	sandboxRef := idlePods[len(idlePods)-1]
 	// The occupancy projection associates a claim with its Sandbox by the
 	// deterministic per-pod name claim-<podName> (observeClaim). spec: §4.6.1
 	// (claim-<podName>).

@@ -33,6 +33,7 @@ package tier8_chaos_test
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -57,12 +58,24 @@ const orphanGCFixturePool = "echo-pool-sidecar"
 // projection to act on.
 func idleWarmSandbox(t *testing.T, c *kind.Cluster, pool string) string {
 	t.Helper()
+	names := idleWarmSandboxes(t, c, pool)
+	if len(names) == 0 {
+		t.Skipf("not yet applicable: precondition not met: pool %s has no Ready, idle, unclaimed warm pod", pool)
+	}
+	return names[0]
+}
+
+// idleWarmSandboxes lists the pool's Ready, idle, unclaimed warm pods in
+// sorted name order.
+func idleWarmSandboxes(t *testing.T, c *kind.Cluster, pool string) []string {
+	t.Helper()
 	out, err := c.KubectlOut(t, "-n", agentNamespace, "get", "pods",
 		"-l", "lenny.dev/managed=true,lenny.dev/pool="+pool,
 		"-o", `jsonpath={range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}`)
 	if err != nil {
 		t.Skipf("not yet applicable: precondition not met: cannot list %s pods: %v\n%s", pool, err, out)
 	}
+	var names []string
 	for _, name := range strings.Fields(out) {
 		phase, perr := c.KubectlOut(t, "-n", agentNamespace, "get", "sandbox", name,
 			"-o", "jsonpath={.status.phase}")
@@ -74,10 +87,10 @@ func idleWarmSandbox(t *testing.T, c *kind.Cluster, pool string) string {
 		if cerr != nil || strings.TrimSpace(claim) != "" {
 			continue
 		}
-		return name
+		names = append(names, name)
 	}
-	t.Skipf("not yet applicable: precondition not met: pool %s has no Ready, idle, unclaimed warm pod", pool)
-	return ""
+	sort.Strings(names)
+	return names
 }
 
 // sandboxPhase reads a Sandbox's status.phase, or "" on a read error.
