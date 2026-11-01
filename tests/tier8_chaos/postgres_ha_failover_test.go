@@ -401,8 +401,11 @@ func rolloutRestartDeployment(t *testing.T, c *kind.Cluster, deployment string) 
 		"deployment/"+deployment); err != nil {
 		return out, fmt.Errorf("rollout restart: %w", err)
 	}
+	// The bound exceeds the gateway's 240-second termination grace period,
+	// because the preStop drain of a replica holding a live session can use
+	// all of it.
 	out, err := c.KubectlOut(t, "-n", lennySystemNamespace, "rollout", "status",
-		"deployment/"+deployment, "--timeout=120s")
+		"deployment/"+deployment, "--timeout=300s")
 	if err != nil {
 		return out, fmt.Errorf("rollout status: %w", err)
 	}
