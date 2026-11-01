@@ -4515,6 +4515,13 @@ where git runs. Git in the gateway container needs a memory limit of about 20 Gi
   `internet` pools; §26.2 promises an allowlist that §13.2.6 does not provide; pull requests need the host API as well as
   git; and nodes host pods of different tenants by default.
 
+**Owner decisions (2026-11-01).**
+
+- F-12.9.24: require the `kms` encryption provider for credential Secrets only when the deployment has a T4 tenant, and state which part preflight verifies and which part is an operator obligation. Needs a proposal.
+- F-10.2.35: state the dev identity headers in the specification, add a user option to all three SDKs, and under `--dev-mode` only fall back to a default user such as `dev-user` with a log line. Needs a proposal.
+- Reader access (F-10.2.31, F-10.2.32, F-10.2.36, F-10.2.37): one proposal. Memory recall is owner-only. An attached stream re-evaluates access periodically, for example every 60 seconds, and closes on failure. The §10.2 matrix applies on every surface, including MCP and the adapters, with an explicit in-pod exemption. A reader cannot continue a conversation, and a demoted owner cannot send warm turns.
+- The finalize upload-token check stays in place until the shared key-source proposal lands.
+
 **Pending work (2026-11-01).** The kind cluster `lenny-e2e` is still at migration 196 with old images; reinstall once
 from `main` and run tiers 5, 8, and 9 for 0110, 0112, and slot reservations. Branch `fix/kind-verify-3cb3523` holds one
 test edit (`81af4b818`) to merge first. The shared gateway key-source proposal (F-7.1.31) is not affected by the review
