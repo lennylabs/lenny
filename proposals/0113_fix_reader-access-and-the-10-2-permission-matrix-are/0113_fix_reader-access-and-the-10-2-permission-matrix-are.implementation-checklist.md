@@ -16,8 +16,10 @@
       Tiers 0, 11. Depends on: S1
 - [ ] **S7 · spec** — SPEC-7. Lands the §12.3 sentence.
       Tiers 0, 11. Depends on: S1
-- [ ] **S8 · code** — CODE-1, CODE-2, CODE-4. Lands the matrix predicate, the dev role, and the `lookupCallerSession` step in one commit, as their landing constraint requires.
-      Tiers 0, 1, 3, 9. Depends on: S1
+- [ ] **S7a · spec** — SPEC-8. Lands the `lenny/vcs_token` and pod credential edits.
+      Tiers 0, 11. Depends on: S1
+- [ ] **S8 · code** — CODE-1, CODE-2, CODE-4. Lands the matrix predicate, the pod tool set, the `lenny/vcs_token` caller check, the Runtime `env` comment, the dev role, and the `lookupCallerSession` step in one commit, as their landing constraint requires.
+      Tiers 0, 1, 3, 9. Depends on: S1, S7a
 - [ ] **S9 · code** — CODE-3. Lands the create services' mux dispatch.
       Tiers 0, 1, 3, 9. Depends on: S1, S8
 - [ ] **S10 · code** — CODE-5. Lands the Open Responses checks.
@@ -31,6 +33,6 @@
 - [ ] **S14 · test** — TEST-1. Lands the cross-tier tests.
       Tiers 3, 4, 7a, 8, 9. Depends on: S8, S9, S10, S11, S12, S13
 - [ ] **S15 · docs** — DOCS-1. Lands the documentation pages.
-      Tiers 0, 11. Depends on: S1, S2, S3, S4, S5
+      Tiers 0, 11. Depends on: S1, S2, S3, S4, S5, S7a
 - [ ] **S16 · docs** — RECORDS-1. Lands the finding closures and the plan update.
       Tiers 0. Depends on: S14, S15

@@ -12,7 +12,7 @@ The refusal order on every surface is matrix (`403`), subject (`401`), row read,
 
 ### CODE-1 · One context-based matrix predicate, in-pod admission and tool set, and removal of the tenancy branch
 
-Targets: `pkg/gateway/sessionserver/rbac_gate.go`, `pkg/gateway/middleware/auth/auth.go` (`Principal`), `pkg/gateway/gatewaycontrol/platformtools/platformtools.go` (`WithSessionPrincipal`, `Bridge`), `pkg/gateway/sessionserver/sessionserver.go` (`multiTenant`, `Options.MultiTenant`), `cmd/lenny-gateway/sessionsrv.go` (the `multiTenant` local and the `MultiTenant:` option), and comments in `pkg/gateway/sessionserver/route_table.go` and `service.go`.
+Targets: `pkg/gateway/sessionserver/rbac_gate.go`, `pkg/gateway/middleware/auth/auth.go` (`Principal`), `pkg/gateway/gatewaycontrol/platformtools/platformtools.go` (`WithSessionPrincipal`, `Bridge`), `pkg/gateway/mcpfabric/mcptools/mcptools.go` (`registerVCSTokenTool`), `pkg/apis/lenny/v1alpha1/runtime_types.go` (`Env` doc comment), `pkg/gateway/sessionserver/sessionserver.go` (`multiTenant`, `Options.MultiTenant`), `cmd/lenny-gateway/sessionsrv.go` (the `multiTenant` local and the `MultiTenant:` option), and comments in `pkg/gateway/sessionserver/route_table.go` and `service.go`.
 
 1. Add to `authmw.Principal`:
 
@@ -59,6 +59,20 @@ Targets: `pkg/gateway/sessionserver/rbac_gate.go`, `pkg/gateway/middleware/auth/
 6. Remove `MultiTenant` from the test constructors in `pkg/gateway/sessionserver/rbac_gate_test.go`, `session_access_test.go`, `session_owner_binding_test.go`, and `session_ownership_test.go`. The two tier 9 `MultiTenant` sites are `authmw.Options` on `opsserver` and stay.
 
 7. In `platformtools.go`, add the unexported set `podTools`, holding the tool names the `CH-MCP-PLATFORM` card names (SPEC-8). `ListPlatformTools` skips a catalog entry outside the set. `CallPlatformTool` returns `leasecontrol.ErrPlatformToolNotFound` for a name outside the set, ahead of `WithSessionPrincipal`. Rewrite the package doc and the `ListPlatformTools` doc there, the `ListPlatformTools` doc in `pkg/gateway/mcpfabric/delegationtree/leasecontrol/platformtools.go`, the `ListPlatformTools` doc in `pkg/adapter/gatewaycontrol/platformtools.go`, and the `Catalog` doc in `pkg/gateway/mcpfabric/mcp/mcp.go`, each of which says a pod sees the gateway-edge catalog. Change `lenny/x` in `TestWithSessionPrincipalIsThePrincipalCallPlatformToolInstalls_spec_29_3` to a tool in the set.
+
+8. In `registerVCSTokenTool`, replace the `callerSessionID` check with the in-pod test, under the decision in D2. The refusal code and message stay. Rewrite the comment above the check. Add `InPod: true` to every `vcs_token_test.go` principal that carries a `SessionID`, including the one in `TestVCSTokenRequiresHost_spec_26_2_119`, whose expected code the new check also returns.
+
+   ```go
+   // spec: §9.1 (Platform MCP Server Tools); §10.2 (Session ownership) rule 8.
+   p, ok := authmw.FromContext(ctx)
+   if !ok || !p.InPod {
+       return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
+           "lenny/vcs_token requires an in-pod session principal", nil)
+   }
+   sessionID := p.SessionID
+   ```
+
+9. In the `Env` doc comment of `pkg/apis/lenny/v1alpha1/runtime_types.go`, replace "secrets reach the runtime through its credential file" with "LLM credentials reach the runtime through its credential file", as SPEC-8 Edit (n) does for §5.1. Run `make generate` to rewrite the two generated CRD files.
 
 `setForwardIdentity` is unchanged, because a bearer or dev principal always records a credential. The forward listener rebuilds the principal through `WithSessionPrincipal`, so `InPod` survives the hop.
 
@@ -357,7 +371,7 @@ Target: `pkg/gateway/mcpfabric/mcp/projection.go`.
 
 ## Staged schema, chart, and migration changes
 
-None. The interval is fixed in the specification, so no chart value or flag is added.
+CODE-1 step 9 regenerates `charts/lenny/crds/lenny.dev_runtimes.yaml` and `pkg/embedded/crds/lenny.dev_runtimes.yaml`, which changes one field description and no schema. The interval is fixed in the specification, so no chart value or flag is added.
 
 ## Staged docs changes
 
@@ -375,6 +389,13 @@ This deliverable edits the pages below. Pages state behavior with no section num
 - `docs/tutorials/agent-memory.md` (Memory Scoping): state that recall is owner-only.
 - `docs/runtime-author-guide/runtime-sdk.md` (Platform tools): replace "a generic `Call` for any other registered tool" with "a generic `Call` for any other tool the server lists".
 - `docs/getting-started/concepts.md` (Workspace sources): delete " and never sees raw credentials", so the clause ends "the pod itself has no network access during setup".
+- `docs/getting-started/concepts.md` (Credentials): replace "two categories of credentials, both following" with "LLM provider and connector credentials, both following".
+- `docs/client-guide/authentication.md` (Delivery Modes): replace "Credentials reach agent pods" with "LLM provider credentials reach agent pods".
+- `docs/getting-started/concepts.md` (Connector credentials): replace "Pods never hold downstream OAuth tokens:" with "Pods never hold connector OAuth tokens. A VCS token used by `git` is a separate credential that reaches the pod, as [Workspace sources](#workspace-sources) describes. Connector tokens are handled as follows:".
+- `docs/index.md` (Credential delivery): after "the pod receives neither client tokens nor connector tokens.", add "A VCS token for a private `gitClone` source is a separate credential: the in-pod `git` credential helper fetches it from the gateway, so that token reaches the pod."
+- `docs/operator-guide/security-principles.md` (1.3): before "Compromising a pod yields", add a paragraph: "The in-pod `git` credential helper fetches a VCS token from the gateway, and that token reaches the pod outside the lease flow above."
+- `docs/operator-guide/security-principles.md` (4. What Lenny does not do): replace "It prevents them from escaping the pod, exfiltrating credentials, or affecting other tenants." with "It prevents them from escaping the pod or affecting other tenants. An agent can reach any credential the pod holds, such as a direct-mode lease or a VCS token."
+- `docs/runtime-author-guide/lifecycle.md` (Runtime Supervisor): replace "credentials reach your runtime through its credential file" with "LLM credentials reach your runtime through its credential file".
 
 ### RECORDS-1 · Finding closures and the remediation plan
 
@@ -382,6 +403,7 @@ Targets: `BUILD-GAPS.md` and `gateway-runtime-comms-remediation.md`.
 
 - Close F-10.2.31, F-10.2.32, F-10.2.36, and F-10.2.37, and tick them in the plan.
 - Add a note to F-10.2.35, which stays OPEN: the default `user` role on dev identity paths landed here, and the dev headers' SDK option and default-user identity remain owed.
+- Add a note to F-4.9.44, which stays OPEN, naming the statements that hold only for a short-lived, scoped token, so that its resolution reviews each one: §1 Core Design Principles item 6 "No broad credentials in pods"; §2 Goals "no standing credentials in pods"; §4.3 **Key rules:** "they receive short-lived access tokens"; §4.9 **Design principle:**; §4.9 **Credential Lease** "It never receives the pool's root secret or long-lived key."; §4.9 **Security Boundaries** "Long-lived credentials ... live **only** in the Token Service and Kubernetes Secrets", "materialized short-lived credentials", and, because §26.2 still calls the grant a lease, "Leases are **revocable**"; §13.1 Credentials row; §13.3 direct-mode flow "long-lived secrets"; §14 **`gitClone.auth` object.** "short-lived HTTPS bearer/basic token scoped to the repository"; §23 Feature Comparison Matrix **Pod security** row; §23.1 item 3 "No standing credentials"; §26.3 scope table Consumer cell; `docs/index.md` Credential delivery "Pods hold no standing credentials."; `docs/about/why-lenny.md` What Lenny is "agents receive short-lived leases scoped to the session", Isolation model "No standing credentials are mounted.", and Design principles item 3; `docs/getting-started/concepts.md` Workspace sources "fetches short-lived tokens" and Credentials "pods never hold long-lived secrets"; `docs/operator-guide/security-principles.md` 1.3 opening sentence and "Compromising a pod yields no usable long-term credential material."; `docs/operator-guide/security.md` Security Context Credentials row; `docs/getting-started/architecture.md` Pod security settings Credentials row and What pods can and cannot do "Hold long-lived API keys or secrets".
 
 The standing records pass files the summary's `## Defects in the shipped tree that this proposal does not stage` at approval, so this deliverable files none of them.
 
@@ -402,6 +424,7 @@ Tier 1 rows land in the code step of the named deliverable, with the fixture cha
 | Role-less refusal, rule 4 | CODE-1 | `rbac_gate_test.go` | `TestSessionEndpointAdmitsRolelessPrincipal`: both existing cases are role-less through `asOwner`, so both invert to refused. Fold `TestSessionEndpointMultiTenantRejectsRolelessPrincipal` into it. A separate no-principal case on the bare `srv.Handler()` expects rule 3's `401`. |
 | In-pod admission, rule 8 | CODE-1 | `platformtools_test.go`, `pkg/gateway/sessionserver/holder_forward_listener_test.go`, `tests/tier3_contract/holderforward/holderforward_test.go` | `InPod` is set by `WithSessionPrincipal` and survives the forward. A bearer with `caller_type: agent`, a `SessionID`, and no role is refused. `PermSessionEvalWrite` and `PermReadTenantSessions` are refused for `InPod`. |
 | Pod tool set, rule 8 | CODE-1 | `platformtools_test.go` | Over a real `mcptools.Register` server with `SessionService` and every optional dependency that registers a card tool set (`Events`, `InputWaits`, `Interactions`, `Runtimes`, `Delegation`, `Memory`, and `VCSCreds`), `ListPlatformTools` returns exactly the card's names. `lenny/create_session`, `lenny/create_and_start_session`, and `lenny/get_session_logs` each return `ErrPlatformToolNotFound` and reach no handler. `lenny/vcs_token` dispatches. |
+| `lenny/vcs_token` caller, CODE-1 step 8 | CODE-1 | `pkg/gateway/mcpfabric/mcptools/vcs_token_test.go` | `TestVCSTokenRefusesBearerWithSessionClaim_spec_26_2`: a principal with `SessionID`, `CallerType: agent`, and no `InPod` gets `VALIDATION_ERROR`, reaches no resolver, and records nothing through `VCSLeaseAuditor`. The same principal with `InPod: true` receives the token. |
 | Dev default role | CODE-2 | `pkg/gateway/middleware/auth/auth_test.go` | Header absent gives `user`; a header naming only an invalid role gives no roles; a valid header is honored; `AllowDevRoles` false gives no roles. |
 | Dev playground mint | CODE-2 | playground mint tests | The dev bearer carries `user` and satisfies `minted.roles ⊆ subject.roles`. |
 | Token Service bearer | CODE-1 | `pkg/gateway/sessionserver/rbac_gate_test.go` | A principal built from a Token Service-issued bearer with no mapping row gets `403` on a session route, and the same bearer with a mapping row is admitted. |
@@ -450,6 +473,7 @@ Targets: the directories below, in `tests/`.
 - Run on the live gateway helper with a built-in reader role assigned through the mapping.
 - A `tenant-viewer` creates through neither MCP nor an adapter, and a demoted owner sends no warm turn.
 - A platform tool call through `platformtools.New` over a registered server creates no session through `lenny/create_session` or `lenny/create_and_start_session`, and reads no other session through `lenny/get_session_logs`, on a tenant with a demoted owner.
+- On a `mcptools.Register` server with a stub `VCSCreds` behind the auth middleware, a bearer whose JWT carries a `session_id` claim calls `lenny/vcs_token` and is refused as CODE-1 step 8 states, and a call through `platformtools.New` over that server returns the token. The server runs in-process, because the live gateway registers the tool only when it holds a Token Service connection.
 - Wait out the real interval, and assert that no event after the removal reaches the client beyond the close.
 
 ## Edge cases and accepted failure modes
@@ -463,6 +487,8 @@ Targets: the directories below, in `tests/`.
 
 - `cmd/lenny-gateway/credentialsurface.go`, `mcpsurface.go`, `sessionsrv.go`
 - `pkg/adapter/gatewaycontrol/platformtools.go`
+- `pkg/apis/lenny/v1alpha1/runtime_types.go`
+- `charts/lenny/crds/lenny.dev_runtimes.yaml`, `pkg/embedded/crds/lenny.dev_runtimes.yaml`
 - `pkg/gateway/environment/translator/continuity.go`, `open_responses.go`, `openai_chat.go`, `singleshot.go`
 - `pkg/gateway/gatewaycontrol/platformtools/platformtools.go`
 - `pkg/gateway/mcpfabric/delegationtree/leasecontrol/platformtools.go`
@@ -475,7 +501,8 @@ Targets: the directories below, in `tests/`.
 - `docs/api/mcp.md`, `open-responses.md`, `openai-completions.md`, `rest.md`
 - `docs/client-guide/authentication.md`, `streaming.md`
 - `docs/getting-started/concepts.md`
-- `docs/operator-guide/security.md`
-- `docs/runtime-author-guide/runtime-sdk.md`
+- `docs/index.md`
+- `docs/operator-guide/security-principles.md`, `security.md`
+- `docs/runtime-author-guide/lifecycle.md`, `runtime-sdk.md`
 - `docs/tutorials/agent-memory.md`
 - `BUILD-GAPS.md`, `gateway-runtime-comms-remediation.md`

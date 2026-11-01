@@ -10,7 +10,7 @@
 - Rule 8 states the in-pod principal.
 - Rule 9 states the stream re-evaluation, its interval, and its close.
 
-§15 places the matrix check and the owner test ahead of the warm conditions, so conditions 1 to 4, the reservation text, and §29.3 stay verbatim. §9.4 states how the two recall surfaces differ. §27.3.1, §10.1.3, and §12.3 record the observable effect of rule 9. §28.5.3, §9.1, and §26.2 name the tool rule 8's bound must keep reachable, §14 cites §26.2, and §4.7.11 item 4 limits its socket bar to LLM credentials. §15.2 **Event-stream resume.** owns `params.seq`, the cursor a WebSocket client presents after a rule 9 close.
+§15 places the matrix check and the owner test ahead of the warm conditions, so conditions 1 to 4, the reservation text, and §29.3 stay verbatim. §9.4 states how the two recall surfaces differ. §27.3.1, §10.1.3, and §12.3 record the observable effect of rule 9. §28.5.3, §9.1, and §26.2 name the tool rule 8's bound must keep reachable, and §26.2 is the home of the fact that the `lenny/vcs_token` result reaches the pod. §14, §4.3, §4.7.11, §4.9, §5.1, §9.3, §13.3, and §23 narrow to that fact or cite it. §15.2 **Event-stream resume.** owns `params.seq`, the cursor a WebSocket client presents after a rule 9 close.
 
 ## Edge cases and accepted failure modes
 
@@ -56,7 +56,7 @@ A refused caller receives `403 FORBIDDEN` on REST, the `FORBIDDEN` tool error on
 **Edit (e), rules 8 and 9.** Append after rule 7, as the next items of the same numbered list:
 
 ```markdown
-8. A platform tool call from a session's pod runs under that session's in-pod principal, whose subject is the session's owner and which carries no role. The gateway builds this principal only for a call that arrives over `LNK-GWCONTROL` or that another replica forwards ([Section 29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 3). No credential yields it, so a bearer with `caller_type: agent` is an ordinary principal under these rules. The gateway lists and dispatches for a pod only the tools the `CH-MCP-PLATFORM` card in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) names, and a call naming any other tool fails as an unknown tool. The matrix admits the in-pod principal to "Create / cancel own sessions" and "Read own session history" and to no other permission. The other rules apply to it as to any principal.
+8. A platform tool call from a session's pod runs under that session's in-pod principal, whose subject is the session's owner and which carries no role. The gateway builds this principal only for a call that arrives over `LNK-GWCONTROL` or that another replica forwards ([Section 29.3](29_communication-scenarios.md#293-interactive-message-send) **Forwarding.** rule 3). No credential yields it, so a bearer with `caller_type: agent` is an ordinary principal under these rules. For a pod's platform MCP server, the gateway lists and dispatches only the tools the `CH-MCP-PLATFORM` card in [Section 28.5.3](28_communication-channels.md#2853-intra-pod) names, and a platform tool call naming any other tool fails as an unknown tool. The matrix admits the in-pod principal to "Create / cancel own sessions" and "Read own session history" and to no other permission. The other rules apply to it as to any principal.
 9. A long-lived read stream re-evaluates access on a 60-second interval while it is open. These streams are `attach_session` over SSE and over WebSocket, the SSE form of `GET /v1/sessions/{id}/events`, and the SSE form of `GET /v1/sessions/{id}/logs`. A re-evaluation reads the principal's current roles under **Role assignment:** below, checks "Read own session history", and applies rule 4, for an owner as for a reader. A role conveyed only by an OIDC claim changes when the client presents a new token, so a re-evaluation does not observe that change. When a re-evaluation refuses or cannot complete, the gateway closes the stream: an SSE response ends with no terminal frame, and a WebSocket connection closes with standard code `1008` and close reason `session_access_lost`. When a re-evaluation passes and events may have been dropped while it ran, the gateway closes the stream the same way, except that a WebSocket connection closes with standard code `1013` and no close reason. A client reconnects with its resume cursor, and the gateway evaluates the reconnect as a new request.
 ```
 
@@ -128,7 +128,7 @@ Append to the end of the **Behavior during Postgres failover:** paragraph, after
 An open read stream whose access re-evaluation cannot read Postgres in this window closes ([Section 10.2](10_gateway-internals.md#102-authentication) **Session ownership.** rule 9), and the client reattaches with its cursor once the read succeeds.
 ```
 
-### SPEC-8 · spec/28_communication-channels.md § 28.5.3 Intra-pod, spec/09_mcp-integration.md § Platform MCP Server Tools, spec/26_reference-runtime-catalog.md § 26.2 Shared Patterns for Coding-Agent Runtimes, spec/14_workspace-plan-schema.md § 14 Workspace Plan Schema, and spec/04_system-components.md § 4.7.11 Adapter-Agent Security Boundary
+### SPEC-8 · spec/28_communication-channels.md § 28.5.3 Intra-pod, spec/09_mcp-integration.md § Platform MCP Server Tools and § OAuth/OIDC Flow, spec/26_reference-runtime-catalog.md § 26.2 Shared Patterns for Coding-Agent Runtimes, spec/14_workspace-plan-schema.md § 14 Workspace Plan Schema, spec/04_system-components.md § 4.3 Token Service, § 4.7.11 Adapter-Agent Security Boundary, and § Security Boundaries, spec/05_runtime-registry-and-pool-model.md § Standalone Runtime, spec/13_security-model.md § 13.3 Credential Flow, and spec/23_competitive-landscape.md § Additional Platform Capabilities
 
 **Edit (a), §28.5.3.** On the `CH-MCP-PLATFORM` card, in **Messages.**, insert after the sentence ending "`lenny/get_task_tree`, and `lenny/set_tracing_context` ([§9.1](09_mcp-integration.md#91-where-mcp-is-used)).":
 
@@ -145,7 +145,7 @@ The server also carries `lenny/vcs_token`, which the in-pod `git` credential hel
 **Edit (c), §26.2.** In the `vcs.<provider>.read` / `vcs.<provider>.write` bullet of **Credential-lease scopes (shared).**, replace "The runtime never sees the raw token; `git` inside the pod uses an HTTPS credential helper that calls the gateway's token endpoint." with:
 
 ```markdown
-`git` inside the pod uses an HTTPS credential helper that obtains the token by calling `lenny/vcs_token` on the platform MCP server ([§9.1](09_mcp-integration.md#91-where-mcp-is-used)).
+`git` inside the pod uses an HTTPS credential helper that obtains the token by calling `lenny/vcs_token` on the platform MCP server ([§9.1](09_mcp-integration.md#91-where-mcp-is-used)). The token therefore reaches the pod over the platform MCP socket.
 ```
 
 **Edit (d), §14 `gitClone` source row.** In the Purpose cell, delete ", so the runtime never sees raw credentials", so the cell ends "The gateway performs the clone using its network path, not the pod's." The row stays one physical line.
@@ -160,6 +160,50 @@ uses the in-pod HTTPS credential helper ([§26.2](26_reference-runtime-catalog.m
 
 ```markdown
 Credentials are never passed via environment variables (readable via `/proc`, persist in crash dumps, often captured by framework logging). LLM credentials are never passed via Unix sockets or MCP servers, and the adapter never sends LLM credential material to the agent post-startup.
+```
+
+**Edit (g), §4.7.11 opening.** Replace "extract credentials, or manipulate the adapter" with:
+
+```markdown
+extract credentials other than the credential files the agent UID can read ([§13.1](13_security-model.md#131-pod-security)) and the VCS token of [§26.2](26_reference-runtime-catalog.md#262-shared-patterns-for-coding-agent-runtimes), or manipulate the adapter
+```
+
+**Edit (h), §4.3 **Key rules:**.** Replace "Pods never hold downstream OAuth tokens — the Token Service does" with:
+
+```markdown
+Pods never hold connector OAuth tokens — the Token Service does. The `lenny/vcs_token` result reaches the pod as [§26.2](26_reference-runtime-catalog.md#262-shared-patterns-for-coding-agent-runtimes) states
+```
+
+**Edit (i), §4.9 **Security Boundaries**.** At the end of the bullet opening "Pods receive **materialized short-lived credentials**", after "— never via environment variables", append:
+
+```markdown
+. The `lenny/vcs_token` result reaches the pod outside this path ([§26.2](26_reference-runtime-catalog.md#262-shared-patterns-for-coding-agent-runtimes))
+```
+
+**Edit (j), §9.3 **Key invariants:**.** Replace "Tokens never transit through pods. The gateway owns all downstream credential state." with:
+
+```markdown
+Connector tokens never transit through pods. The gateway owns all connector credential state.
+```
+
+**Edit (k), §13.3 **Connector credentials (OAuth):**.** In the code block, replace "Gateway holds all downstream OAuth tokens" with "Gateway holds all connector OAuth tokens", and replace "Pod never receives: client tokens, downstream OAuth tokens" with "Pod never receives: client tokens, connector OAuth tokens".
+
+**Edit (l), §13.3 **Key distinction:**.** Insert after the sentence ending "for details on both modes.":
+
+```markdown
+The `lenny/vcs_token` result follows neither path and reaches the pod as [§26.2](26_reference-runtime-catalog.md#262-shared-patterns-for-coding-agent-runtimes) states.
+```
+
+**Edit (m), §23 **Additional Platform Capabilities** item 9.** Replace "on behalf of pods — pods never see raw credentials." with:
+
+```markdown
+on behalf of pods, so a proxy-mode pod never sees the provider key.
+```
+
+**Edit (n), §5.1 **`env`**.** Replace "are not a channel for secrets, which reach the runtime through its credential file ([Section 4.7](04_system-components.md#47-runtime-adapter))." with:
+
+```markdown
+are not a channel for secrets. LLM credentials reach the runtime through its credential file ([Section 4.7](04_system-components.md#47-runtime-adapter)).
 ```
 
 ### SPEC-9 · spec/15_external-api-surface.md § 15.2 MCP API
@@ -189,11 +233,14 @@ In the `SessionEventTerminated` row, whose projection cell opens "MCP task compl
 ## Spec files touched
 
 - `spec/04_system-components.md`
+- `spec/05_runtime-registry-and-pool-model.md`
 - `spec/09_mcp-integration.md`
 - `spec/10_gateway-internals.md`
 - `spec/12_storage-architecture.md`
+- `spec/13_security-model.md`
 - `spec/14_workspace-plan-schema.md`
 - `spec/15_external-api-surface.md`
+- `spec/23_competitive-landscape.md`
 - `spec/26_reference-runtime-catalog.md`
 - `spec/27_web-playground.md`
 - `spec/28_communication-channels.md`
