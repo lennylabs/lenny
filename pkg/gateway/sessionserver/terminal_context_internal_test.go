@@ -59,6 +59,12 @@ type tcStore struct {
 	onTerminal func(*sessionstore.Session)
 }
 
+// GetPrimary forwards the primary read, so sessionstore.ReadPrimary reaches the
+// inner store rather than falling back to tcStore.Update.
+func (s *tcStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	return s.Store.(sessionstore.PrimaryReader).GetPrimary(ctx, tenantID, id)
+}
+
 func (s *tcStore) Update(ctx context.Context, tenantID, id string, mutate func(*sessionstore.Session) error) (sessionstore.Session, error) {
 	out, err := s.Store.Update(ctx, tenantID, id, mutate)
 	if err != nil || !session.IsTerminal(out.State) {

@@ -168,6 +168,14 @@ func IsTerminal(s State) bool {
 	return false
 }
 
+// UploadTokenConsumed reports whether a session in state s has consumed its
+// uploadToken. A terminal row and a finalizing row fall through to the §15.1
+// precondition. A state added later reads as consumed.
+// spec: §7.1 (uploadToken format and security properties)
+func UploadTokenConsumed(s State) bool {
+	return !IsTerminal(s) && s != StateCreated && s != StateFinalizing
+}
+
 // CountsTowardConcurrencyCaps reports whether a session in state s
 // counts toward the concurrent-session admission caps: the per-tenant
 // quota and the per-user, per-runtime, and global limits. Every

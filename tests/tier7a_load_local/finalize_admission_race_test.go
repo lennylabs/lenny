@@ -75,6 +75,12 @@ type transitionStore struct {
 	entryGate *peerGate
 }
 
+// GetPrimary forwards the primary read, so sessionstore.ReadPrimary reaches the
+// inner store rather than falling back to transitionStore.Update.
+func (s *transitionStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	return s.Store.(sessionstore.PrimaryReader).GetPrimary(ctx, tenantID, id)
+}
+
 func (s *transitionStore) Update(
 	ctx context.Context, tenantID, id string, mutate func(*sessionstore.Session) error,
 ) (sessionstore.Session, error) {

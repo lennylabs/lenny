@@ -59,11 +59,7 @@ func seedAndMintUploadSubsystem(t *testing.T, store sessionstore.Store, issuer *
 	if err := store.Create(context.Background(), row); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	tok, err := issuer.Issue(id, uploadtoken.DefaultTTL)
-	if err != nil {
-		t.Fatalf("issue token: %v", err)
-	}
-	return tok
+	return sessionserver.MintUploadToken(t, store, issuer, tenant, id)
 }
 
 func doUpload(t *testing.T, h http.Handler, id, tenant, token, body string) *httptest.ResponseRecorder {

@@ -1,38 +1,46 @@
 // SPDX-License-Identifier: MIT
 
-// Package uploadtoken implements the §7.1 `uploadToken` HMAC-SHA256
-// scheme used by the §15.1 `POST /v1/sessions/{id}/upload` and
-// `POST /v1/sessions/{id}/upload-archive` endpoints.
+// Package uploadtoken implements the §7.1 `uploadToken` used by the
+// §15.1 `POST /v1/sessions/{id}/upload`,
+// `POST /v1/sessions/{id}/upload-archive`, and
+// `POST /v1/sessions/{id}/finalize` endpoints.
 //
-// Token wire format: `<session_id>.<expiry_unix_seconds>.<hmac_hex>`
-// where the HMAC covers `session_id || "." || expiry_unix_seconds`
-// under a gateway-held signing key.
+// Token wire format: `<session_id>.<expiry_unix_seconds>.<secret_hex>`,
+// where the third segment is 256 random bits in hexadecimal.
 //
-// Spec invariants this package enforces:
+// A token authenticates by digest against the session row. The issuer
+// draws the secret and returns the SHA-256 digest of the whole token,
+// the gateway persists that digest and the expiry on the row, and every
+// replica verifies a presented token against the row. No key exists, so
+// a token minted on one replica verifies on any other and across a
+// restart. The digest covers the embedded expiry, so a client that edits
+// the second segment fails the digest check.
 //
-//   - TTL — the token carries an absolute expiry; Verify rejects
-//     expired tokens with ErrExpired (mapped to
-//     `401 UPLOAD_TOKEN_EXPIRED`).
-//   - Session scope — the embedded `session_id` must equal the
-//     session being uploaded to; mismatches return ErrSessionMismatch
-//     (`403 UPLOAD_TOKEN_MISMATCH`).
-//   - Single-use invalidation — calls to Consume mark a token's
-//     digest as consumed; subsequent Verify against that digest
-//     returns ErrConsumed (`410 UPLOAD_TOKEN_CONSUMED`).
-//   - Cryptographic protection — HMAC-SHA256 over the canonical
-//     signing input; signature mismatches return ErrInvalid
+// Verify makes these checks, in this order:
+//
+//   - Format: three non-empty segments, an integer second segment, and
+//     a hexadecimal third segment. A malformed token returns ErrInvalid
 //     (`401 UPLOAD_TOKEN_INVALID`).
-//   - Key rotation — the KeyRing carries one signing key plus zero or
-//     more verification keys still inside the §7.1 overlap window
-//     (default 5 minutes). Verify accepts any key in the ring. The
-//     gateway's Rotator (see rotator.go) drives the 24h rotation
-//     cadence and the overlap-window sweep.
+//   - Session scope: the embedded `session_id` must equal the session
+//     row's id. A mismatch returns ErrSessionMismatch
+//     (`403 UPLOAD_TOKEN_MISMATCH`).
+//   - Digest: the token's digest must equal the digest on the row in
+//     constant time. A mismatch, or a row with no digest, returns
+//     ErrInvalid (`401 UPLOAD_TOKEN_INVALID`).
+//   - TTL: the row's expiry must not have passed. Otherwise Verify
+//     returns ErrExpired (`401 UPLOAD_TOKEN_EXPIRED`). The token's own
+//     second segment is not read for enforcement.
+//
+// Consumption is derived from the session state by the caller through
+// `session.UploadTokenConsumed`, so this package holds no record of it.
+// The caller maps a consumed row to ErrConsumed
+// (`410 UPLOAD_TOKEN_CONSUMED`).
 //
 // **Secret-credential handling — gateway side.** Per §7.1 the
 // uploadToken is a secret credential: clients MUST NOT log it, embed
 // it in URLs, or include it in client-side error reports. On the
-// gateway side this package is the sole holder of the plaintext
-// signing keys and the only producer of token strings. The gateway:
+// gateway side this package is the only producer of token strings. The
+// gateway:
 //
 //   - Returns the token in the response body of `POST /v1/sessions`
 //     and `POST /v1/sessions/start` only; never in a URL, redirect
@@ -40,23 +48,19 @@
 //   - Persists only the SHA-256 digest of the token on the session
 //     row (`uploadTokenDigest`), never the token itself; the digest
 //     is opaque and cannot be replayed.
-//   - Stores the consumed-tracker keyed by digest so the §11.7 audit
-//     log and any operator-side observability surface never see the
-//     raw token.
 //
 // Callers in the gateway (`pkg/gateway/sessionserver/upload.go` and
 // friends) preserve this boundary: a verify failure logs the digest
 // and the §15.1 error code, never the raw token bytes.
 //
-// The package is pure: no Redis, no Postgres. The
-// `ConsumedTracker` interface lets production swap in a Redis-backed
-// implementation; the in-memory `NewMemoryTracker()` is sufficient
-// for tests and the minimal gateway.
+// The package is pure: no Redis, no Postgres. The caller reads the
+// session row and passes its digest and expiry to Verify.
 package uploadtoken
 
 import (
-	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -84,8 +88,9 @@ const (
 // Sentinel errors. The gateway maps each to its §15.1 / §7.1 error
 // code.
 var (
-	// ErrInvalid corresponds to `401 UPLOAD_TOKEN_INVALID` — malformed
-	// token or HMAC mismatch.
+	// ErrInvalid corresponds to `401 UPLOAD_TOKEN_INVALID`: a missing or
+	// malformed token, a digest that differs from the session row's, or
+	// a session row with no digest.
 	ErrInvalid = errors.New("uploadtoken: invalid token")
 
 	// ErrExpired corresponds to `401 UPLOAD_TOKEN_EXPIRED`.
@@ -94,7 +99,8 @@ var (
 	// ErrSessionMismatch corresponds to `403 UPLOAD_TOKEN_MISMATCH`.
 	ErrSessionMismatch = errors.New("uploadtoken: session-id mismatch")
 
-	// ErrConsumed corresponds to `410 UPLOAD_TOKEN_CONSUMED`.
+	// ErrConsumed corresponds to `410 UPLOAD_TOKEN_CONSUMED`. Verify does
+	// not return it: the session server returns it from the row state.
 	ErrConsumed = errors.New("uploadtoken: token already consumed")
 )
 
@@ -169,19 +175,6 @@ func (r *KeyRing) Expire(expiredKeyIDs ...string) int {
 	return dropped
 }
 
-// keys returns the active key plus every overlap key, in
-// most-recent-first order. Used by Verify to try every candidate.
-func (r *KeyRing) keys() []SigningKey {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make([]SigningKey, 0, 1+len(r.overlap))
-	out = append(out, r.active)
-	for i := len(r.overlap) - 1; i >= 0; i-- {
-		out = append(out, r.overlap[i])
-	}
-	return out
-}
-
 // ConsumedTracker records which tokens have been single-use
 // invalidated per §7.1. Production wires this to Redis; the
 // in-memory implementation is sufficient for tests and the minimal
@@ -243,25 +236,29 @@ func (t *MemoryTracker) Sweep(now time.Time) int {
 	return dropped
 }
 
+// secretBytes is the §7.1 size of the token's random third segment:
+// 256 bits.
+const secretBytes = 32
+
 // Issuer mints uploadTokens. The zero value is not usable; construct
 // with NewIssuer.
 type Issuer struct {
-	ring  *KeyRing
 	clock func() time.Time
 }
 
-// NewIssuer returns an Issuer that signs with ring's active key. The
-// clock is used for the issuance "now" stamp; pass nil to default to
-// time.Now.
-func NewIssuer(ring *KeyRing, clock func() time.Time) *Issuer {
+// NewIssuer returns an Issuer. The ring argument is ignored. The clock
+// is used for the issuance "now" stamp; pass nil to default to time.Now.
+func NewIssuer(_ *KeyRing, clock func() time.Time) *Issuer {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
-	return &Issuer{ring: ring, clock: clock}
+	return &Issuer{clock: clock}
 }
 
 // Issue mints a new uploadToken for sessionID with the supplied TTL.
-// When ttl is zero, DefaultTTL is used.
+// When ttl is zero, DefaultTTL is used. A caller that persists the
+// session row uses IssueDetailed, because a token authenticates only
+// against the digest on the row.
 func (i *Issuer) Issue(sessionID string, ttl time.Duration) (string, error) {
 	tok, _, err := i.IssueDetailed(sessionID, ttl)
 	return tok, err
@@ -269,8 +266,9 @@ func (i *Issuer) Issue(sessionID string, ttl time.Duration) (string, error) {
 
 // IssueDetailed mints a new uploadToken and additionally returns the
 // parsed form so the caller can persist the digest + expiry alongside
-// the session row. The minted token is identical to what Issue
-// returns; the parsed form is computed in-place.
+// the session row. Each call draws a fresh secret, so two calls for one
+// session return different tokens.
+// spec: §7.1 (uploadToken format and security properties)
 func (i *Issuer) IssueDetailed(sessionID string, ttl time.Duration) (string, ParsedToken, error) {
 	if sessionID == "" {
 		return "", ParsedToken{}, fmt.Errorf("uploadtoken: empty session id")
@@ -285,135 +283,82 @@ func (i *Issuer) IssueDetailed(sessionID string, ttl time.Duration) (string, Par
 	if ttl <= 0 {
 		ttl = DefaultTTL
 	}
-	now := i.clock()
-	expiry := now.Add(ttl).Unix()
-	active := i.ring.Active()
-	signed := sign(active, sessionID, expiry)
+	expiry := i.clock().Add(ttl).Unix()
+	var secret [secretBytes]byte
+	// crypto/rand.Read never returns an error under Go 1.24 and later.
+	_, _ = rand.Read(secret[:])
+	token := fmt.Sprintf("%s.%d.%s", sessionID, expiry, hex.EncodeToString(secret[:]))
 	parsed := ParsedToken{
 		SessionID: sessionID,
 		Expiry:    time.Unix(expiry, 0).UTC(),
-		Digest:    digestToken(signed),
-		KeyID:     active.KeyID,
+		Digest:    digestToken(token),
 	}
-	return signed, parsed, nil
+	return token, parsed, nil
 }
 
-// Verify validates the token bytes against the supplied sessionID
-// and the current clock. Returns the parsed components on success,
-// or one of ErrInvalid / ErrExpired / ErrSessionMismatch /
-// ErrConsumed.
+// ParsedToken is the issuance record of a token: the fields the caller
+// persists on the session row.
 type ParsedToken struct {
 	SessionID string
 	Expiry    time.Time
-	Digest    string // canonical sha256 digest of the full token, used as the consumed-tracker key
-	KeyID     string // key that validated the token
+	Digest    string // canonical sha256 digest of the full token, stored on the session row
+	KeyID     string // always empty: tokens are not signed
 }
 
-// Verifier verifies uploadTokens against a KeyRing and a clock.
+// Verifier verifies uploadTokens against a session row and a clock.
 type Verifier struct {
-	ring    *KeyRing
-	tracker ConsumedTracker
-	clock   func() time.Time
+	clock func() time.Time
 }
 
-// NewVerifier returns a Verifier. Pass a non-nil ConsumedTracker to
-// enable single-use enforcement; pass nil to disable single-use
-// enforcement entirely (the gateway only does so for unit tests).
-func NewVerifier(ring *KeyRing, tracker ConsumedTracker, clock func() time.Time) *Verifier {
+// NewVerifier returns a Verifier. The ring and tracker arguments are
+// ignored. Pass a nil clock to default to time.Now.
+func NewVerifier(_ *KeyRing, _ ConsumedTracker, clock func() time.Time) *Verifier {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
-	return &Verifier{ring: ring, tracker: tracker, clock: clock}
+	return &Verifier{clock: clock}
 }
 
-// Verify checks token against sessionID and the current clock.
-func (v *Verifier) Verify(token, sessionID string) (ParsedToken, error) {
-	parsed, key, err := parseAndVerifyHMAC(token, v.ring)
+// Verify checks token against the session row's id, digest, and expiry. It
+// returns ErrInvalid for a malformed token, ErrSessionMismatch for a foreign
+// session, ErrInvalid for an empty rowDigest or a digest mismatch, and
+// ErrExpired once rowExpiry has passed, checked in that order. A token is
+// admitted at the rowExpiry instant.
+// spec: §7.1 (uploadToken format and security properties)
+func (v *Verifier) Verify(token, sessionID, rowDigest string, rowExpiry time.Time) error {
+	embeddedSession, err := parseToken(token)
 	if err != nil {
-		return ParsedToken{}, err
+		return err
 	}
-	if parsed.SessionID != sessionID {
-		return parsed, ErrSessionMismatch
+	if embeddedSession != sessionID {
+		return ErrSessionMismatch
 	}
-	if v.clock().After(parsed.Expiry) {
-		return parsed, ErrExpired
+	if rowDigest == "" || subtle.ConstantTimeCompare([]byte(digestToken(token)), []byte(rowDigest)) != 1 {
+		return ErrInvalid
 	}
-	if v.tracker != nil && v.tracker.IsConsumed(parsed.Digest) {
-		return parsed, ErrConsumed
+	if v.clock().After(rowExpiry) {
+		return ErrExpired
 	}
-	parsed.KeyID = key.KeyID
-	return parsed, nil
+	return nil
 }
 
-// Consume marks the token's digest as consumed in the tracker (if
-// one is wired). Returns ErrConsumed if the token was already
-// consumed.
-func (v *Verifier) Consume(parsed ParsedToken) error {
-	if v.tracker == nil {
-		return nil
-	}
-	return v.tracker.MarkConsumed(parsed.Digest, parsed.Expiry)
-}
-
-// ConsumeDigest marks the supplied digest as consumed without
-// requiring a Verify call first. Useful for callers that persisted
-// the digest at issuance time (e.g., the session row) and need to
-// invalidate a token from a context where the original token string
-// is no longer available.
-func (v *Verifier) ConsumeDigest(digest string, expiry time.Time) error {
-	if v.tracker == nil {
-		return nil
-	}
-	return v.tracker.MarkConsumed(digest, expiry)
-}
-
-// parseAndVerifyHMAC tries every key in ring (active first, then
-// overlap) and returns the parsed token + matching key on success.
-func parseAndVerifyHMAC(token string, ring *KeyRing) (ParsedToken, SigningKey, error) {
+// parseToken checks the §7.1 wire format and returns the embedded session id.
+func parseToken(token string) (string, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
-		return ParsedToken{}, SigningKey{}, ErrInvalid
+		return "", ErrInvalid
 	}
-	expiryUnix, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil {
-		return ParsedToken{}, SigningKey{}, ErrInvalid
+	if _, err := strconv.ParseInt(parts[1], 10, 64); err != nil {
+		return "", ErrInvalid
 	}
-	sigBytes, err := hex.DecodeString(parts[2])
-	if err != nil {
-		return ParsedToken{}, SigningKey{}, ErrInvalid
+	if _, err := hex.DecodeString(parts[2]); err != nil {
+		return "", ErrInvalid
 	}
-	for _, k := range ring.keys() {
-		want := computeHMAC(k.Secret, parts[0], expiryUnix)
-		if hmac.Equal(want, sigBytes) {
-			return ParsedToken{
-				SessionID: parts[0],
-				Expiry:    time.Unix(expiryUnix, 0).UTC(),
-				Digest:    digestToken(token),
-			}, k, nil
-		}
-	}
-	return ParsedToken{}, SigningKey{}, ErrInvalid
-}
-
-// sign produces the §7.1 wire format.
-func sign(key SigningKey, sessionID string, expiry int64) string {
-	mac := computeHMAC(key.Secret, sessionID, expiry)
-	return fmt.Sprintf("%s.%d.%s", sessionID, expiry, hex.EncodeToString(mac))
-}
-
-// computeHMAC returns the HMAC-SHA256 over the §7.1 canonical
-// signing input `session_id || "." || expiry`.
-func computeHMAC(secret []byte, sessionID string, expiry int64) []byte {
-	mac := hmac.New(sha256.New, secret)
-	mac.Write([]byte(sessionID))
-	mac.Write([]byte("."))
-	mac.Write([]byte(strconv.FormatInt(expiry, 10)))
-	return mac.Sum(nil)
+	return parts[0], nil
 }
 
 // digestToken returns the SHA-256 hex digest of the full token wire
-// bytes — used as the single-use tracker key so the tracker never
-// stores raw HMAC signatures.
+// bytes. The session row stores this digest in place of the token.
 func digestToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])

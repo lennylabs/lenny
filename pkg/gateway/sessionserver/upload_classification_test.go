@@ -53,10 +53,7 @@ func TestHandleUploadRejectsTierStoreMismatch_spec_12_9_1048(t *testing.T) {
 	if err := store.Create(context.Background(), row); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	tok, err := issuer.Issue("sess_t4", uploadtoken.DefaultTTL)
-	if err != nil {
-		t.Fatalf("issue token: %v", err)
-	}
+	tok := sessionserver.MintUploadToken(t, store, issuer, "restricted", "sess_t4")
 
 	rr := doUpload(t, asOwner(srv.Handler()), "sess_t4", "restricted", tok, "restricted-bytes")
 	if rr.Code != http.StatusUnprocessableEntity {

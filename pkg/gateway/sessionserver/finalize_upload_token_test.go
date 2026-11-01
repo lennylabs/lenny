@@ -24,8 +24,14 @@ import (
 // the store, so a test can assert that a refused request touched no state.
 type countingSessionStore struct {
 	sessionstore.Store
-	gets    atomic.Int64
-	updates atomic.Int64
+	gets         atomic.Int64
+	primaryReads atomic.Int64
+	updates      atomic.Int64
+}
+
+func (c *countingSessionStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	c.primaryReads.Add(1)
+	return c.Store.(sessionstore.PrimaryReader).GetPrimary(ctx, tenantID, id)
 }
 
 func (c *countingSessionStore) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
@@ -42,12 +48,11 @@ func (c *countingSessionStore) Update(ctx context.Context, tenantID, id string, 
 // and verifier over a counting memstore, holding one `created` session
 // whose row records the digest of the token the issuer minted for it.
 type finalizeTokenFixture struct {
-	h       http.Handler
-	store   *countingSessionStore
-	issuer  *uploadtoken.Issuer
-	tracker *uploadtoken.MemoryTracker
-	now     time.Time
-	token   string
+	h      http.Handler
+	store  *countingSessionStore
+	issuer *uploadtoken.Issuer
+	now    time.Time
+	token  string
 }
 
 const (
@@ -61,13 +66,12 @@ func newFinalizeTokenFixture(t *testing.T) *finalizeTokenFixture {
 	clock := func() time.Time { return now }
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("finalize-secret")})
 	issuer := uploadtoken.NewIssuer(ring, clock)
-	tracker := uploadtoken.NewMemoryTracker()
 	store := &countingSessionStore{Store: memstore.New()}
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:     true,
 		Clock:               clock,
 		UploadTokenIssuer:   issuer,
-		UploadTokenVerifier: uploadtoken.NewVerifier(ring, tracker, clock),
+		UploadTokenVerifier: uploadtoken.NewVerifier(ring, nil, clock),
 	})
 	tok, parsed, err := issuer.IssueDetailed(finalizeTokenSession, uploadtoken.DefaultTTL)
 	if err != nil {
@@ -87,7 +91,7 @@ func newFinalizeTokenFixture(t *testing.T) *finalizeTokenFixture {
 			t.Fatalf("seed %s: %v", id, err)
 		}
 	}
-	return &finalizeTokenFixture{h: asOwner(srv.Handler()), store: store, issuer: issuer, tracker: tracker, now: now, token: tok}
+	return &finalizeTokenFixture{h: asOwner(srv.Handler()), store: store, issuer: issuer, now: now, token: tok}
 }
 
 func (f *finalizeTokenFixture) finalize(t *testing.T, token string, setHeader bool, body string) *httptest.ResponseRecorder {
@@ -117,6 +121,17 @@ func (f *finalizeTokenFixture) row(t *testing.T) sessionstore.Session {
 	return row
 }
 
+// setRow applies mut to the row without counting a store write.
+func (f *finalizeTokenFixture) setRow(t *testing.T, mut func(*sessionstore.Session)) {
+	t.Helper()
+	if _, err := f.store.Store.Update(context.Background(), finalizeTokenTenant, finalizeTokenSession, func(row *sessionstore.Session) error {
+		mut(row)
+		return nil
+	}); err != nil {
+		t.Fatalf("set row: %v", err)
+	}
+}
+
 func finalizeErrorCode(t *testing.T, rr *httptest.ResponseRecorder) string {
 	t.Helper()
 	var env struct {
@@ -132,43 +147,42 @@ func finalizeErrorCode(t *testing.T, rr *httptest.ResponseRecorder) string {
 
 // A finalize request is admitted only with the uploadToken issued at session
 // creation. Every refused token answers the envelope admitUpload uses and
-// leaves the session row unread and unwritten: the row stays `created` and
-// binds no plan.
+// leaves the session row unwritten: the row keeps its state and binds no plan.
 // spec: 7.4 (Upload Safety, Upload authorization), 7.1 (Normal Flow, uploadToken format and security properties), 15.1 (finalize)
 func TestFinalizeRequiresUploadToken_spec_7_4(t *testing.T) {
 	plan := `{"workspacePlan":{"schemaVersion":1,"sources":[{"type":"inlineFile","path":"a.txt","content":"x"}]}}`
 	cases := []struct {
 		name       string
-		token      func(f *finalizeTokenFixture) string
+		token      func(t *testing.T, f *finalizeTokenFixture) string
 		setHeader  bool
 		body       string
 		wantStatus int
 		wantCode   string
+		wantState  session.State // created when empty
 	}{
 		{
 			name:       "missing header",
-			token:      func(*finalizeTokenFixture) string { return "" },
+			token:      func(*testing.T, *finalizeTokenFixture) string { return "" },
 			setHeader:  false,
 			wantStatus: http.StatusUnauthorized, wantCode: "UPLOAD_TOKEN_INVALID",
 		},
 		{
 			name:       "empty header with a plan body",
-			token:      func(*finalizeTokenFixture) string { return "" },
+			token:      func(*testing.T, *finalizeTokenFixture) string { return "" },
 			setHeader:  true,
 			body:       plan,
 			wantStatus: http.StatusUnauthorized, wantCode: "UPLOAD_TOKEN_INVALID",
 		},
 		{
 			name:       "malformed token",
-			token:      func(*finalizeTokenFixture) string { return "not-a-token" },
+			token:      func(*testing.T, *finalizeTokenFixture) string { return "not-a-token" },
 			setHeader:  true,
 			wantStatus: http.StatusUnauthorized, wantCode: "UPLOAD_TOKEN_INVALID",
 		},
 		{
-			name: "token signed under a key outside the ring",
-			token: func(f *finalizeTokenFixture) string {
-				other := uploadtoken.NewIssuer(uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "kx", Secret: []byte("wrong")}), func() time.Time { return f.now })
-				tok, err := other.Issue(finalizeTokenSession, uploadtoken.DefaultTTL)
+			name: "token from another issuance for the session",
+			token: func(_ *testing.T, f *finalizeTokenFixture) string {
+				tok, err := f.issuer.Issue(finalizeTokenSession, uploadtoken.DefaultTTL)
 				if err != nil {
 					panic(err)
 				}
@@ -178,8 +192,8 @@ func TestFinalizeRequiresUploadToken_spec_7_4(t *testing.T) {
 			wantStatus: http.StatusUnauthorized, wantCode: "UPLOAD_TOKEN_INVALID",
 		},
 		{
-			name: "tampered signature",
-			token: func(f *finalizeTokenFixture) string {
+			name: "tampered secret",
+			token: func(_ *testing.T, f *finalizeTokenFixture) string {
 				last := f.token[len(f.token)-1]
 				repl := byte('0')
 				if last == '0' {
@@ -192,14 +206,9 @@ func TestFinalizeRequiresUploadToken_spec_7_4(t *testing.T) {
 		},
 		{
 			name: "expired token",
-			token: func(f *finalizeTokenFixture) string {
-				// Issued an hour before the verifier's clock with a one-minute TTL.
-				past := uploadtoken.NewIssuer(uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("finalize-secret")}), func() time.Time { return f.now.Add(-time.Hour) })
-				tok, err := past.Issue(finalizeTokenSession, time.Minute)
-				if err != nil {
-					panic(err)
-				}
-				return tok
+			token: func(t *testing.T, f *finalizeTokenFixture) string {
+				f.setRow(t, func(row *sessionstore.Session) { row.UploadTokenExpiry = f.now.Add(-time.Minute) })
+				return f.token
 			},
 			setHeader:  true,
 			body:       plan,
@@ -207,7 +216,7 @@ func TestFinalizeRequiresUploadToken_spec_7_4(t *testing.T) {
 		},
 		{
 			name: "token for another session",
-			token: func(f *finalizeTokenFixture) string {
+			token: func(_ *testing.T, f *finalizeTokenFixture) string {
 				tok, err := f.issuer.Issue("sess_other", uploadtoken.DefaultTTL)
 				if err != nil {
 					panic(err)
@@ -220,24 +229,19 @@ func TestFinalizeRequiresUploadToken_spec_7_4(t *testing.T) {
 		},
 		{
 			name: "consumed token",
-			token: func(f *finalizeTokenFixture) string {
-				p, err := uploadtoken.NewVerifier(uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("finalize-secret")}), nil, func() time.Time { return f.now }).Verify(f.token, finalizeTokenSession)
-				if err != nil {
-					panic(err)
-				}
-				if err := f.tracker.MarkConsumed(p.Digest, p.Expiry); err != nil {
-					panic(err)
-				}
+			token: func(t *testing.T, f *finalizeTokenFixture) string {
+				f.setRow(t, func(row *sessionstore.Session) { row.State = session.StateReady })
 				return f.token
 			},
 			setHeader:  true,
 			wantStatus: http.StatusGone, wantCode: "UPLOAD_TOKEN_CONSUMED",
+			wantState: session.StateReady,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFinalizeTokenFixture(t)
-			tok := tc.token(f)
+			tok := tc.token(t, f)
 			rr := f.finalize(t, tok, tc.setHeader, tc.body)
 			if rr.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d; body %s", rr.Code, tc.wantStatus, rr.Body.String())
@@ -245,18 +249,26 @@ func TestFinalizeRequiresUploadToken_spec_7_4(t *testing.T) {
 			if got := finalizeErrorCode(t, rr); got != tc.wantCode {
 				t.Errorf("code = %q, want %q", got, tc.wantCode)
 			}
-			// The one read is the §10.2 ownership check, which precedes the
-			// token check (Session ownership rule 7). A refused token costs
-			// no further read.
+			// The replica read is the §10.2 ownership check, which precedes
+			// the token check (Session ownership rule 7). The primary read
+			// supplies the row the §7.1 checks compare against, and a refused
+			// token costs no further read and no write.
 			if n := f.store.gets.Load(); n != 1 {
 				t.Errorf("store Get calls = %d, want the ownership read alone", n)
 			}
+			if n := f.store.primaryReads.Load(); n != 1 {
+				t.Errorf("primary reads = %d, want 1", n)
+			}
 			if n := f.store.updates.Load(); n != 0 {
-				t.Errorf("store Update calls = %d, want 0 before the token check", n)
+				t.Errorf("store Update calls = %d, want 0 after a refused token", n)
+			}
+			wantState := tc.wantState
+			if wantState == "" {
+				wantState = session.StateCreated
 			}
 			row := f.row(t)
-			if row.State != session.StateCreated {
-				t.Errorf("state = %q, want created", row.State)
+			if row.State != wantState {
+				t.Errorf("state = %q, want %q", row.State, wantState)
 			}
 			if len(row.WorkspacePlan) != 0 {
 				t.Errorf("WorkspacePlan = %s, want none bound", row.WorkspacePlan)
@@ -278,7 +290,7 @@ func TestFinalizeAdmitsIssuedTokenThenRefusesItsReuse_spec_7_4(t *testing.T) {
 	if got := f.row(t).State; got != session.StateReady {
 		t.Fatalf("state = %q, want ready", got)
 	}
-	gets, updates := f.store.gets.Load(), f.store.updates.Load()
+	gets, primaryReads, updates := f.store.gets.Load(), f.store.primaryReads.Load(), f.store.updates.Load()
 
 	rr = f.finalize(t, f.token, true, "")
 	if rr.Code != http.StatusGone {
@@ -287,10 +299,11 @@ func TestFinalizeAdmitsIssuedTokenThenRefusesItsReuse_spec_7_4(t *testing.T) {
 	if got := finalizeErrorCode(t, rr); got != "UPLOAD_TOKEN_CONSUMED" {
 		t.Errorf("code = %q, want UPLOAD_TOKEN_CONSUMED", got)
 	}
-	// The one further read is the §10.2 ownership check.
-	if f.store.gets.Load() != gets+1 || f.store.updates.Load() != updates {
-		t.Errorf("refused finalize passed the token check: gets %d->%d, updates %d->%d",
-			gets, f.store.gets.Load(), updates, f.store.updates.Load())
+	// The further reads are the §10.2 ownership check and the row read the
+	// token check compares against.
+	if f.store.gets.Load() != gets+1 || f.store.primaryReads.Load() != primaryReads+1 || f.store.updates.Load() != updates {
+		t.Errorf("refused finalize passed the token check: gets %d->%d, primary reads %d->%d, updates %d->%d",
+			gets, f.store.gets.Load(), primaryReads, f.store.primaryReads.Load(), updates, f.store.updates.Load())
 	}
 	if got := f.row(t).State; got != session.StateReady {
 		t.Errorf("state after refused finalize = %q, want ready", got)

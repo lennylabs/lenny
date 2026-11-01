@@ -26,7 +26,7 @@ import (
 // newUploadLimitServer builds an upload server for the acme tenant whose
 // §11.1 upload-admission caps are set as supplied (zero leaves a scope
 // unlimited), seeded with a created session sess_upload.
-func newUploadLimitServer(t *testing.T, perSession, global int, maxBytes int64) (*sessionserver.Server, *uploadtoken.Issuer, sessionstore.Store) {
+func newUploadLimitServer(t *testing.T, perSession, global int, maxBytes int64) (*sessionserver.Server, string, sessionstore.Store) {
 	t.Helper()
 	store := memstore.New()
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
@@ -45,7 +45,7 @@ func newUploadLimitServer(t *testing.T, perSession, global int, maxBytes int64) 
 		MaxUploadBytesPerSession:       maxBytes,
 	})
 	seedCreatedSession(t, store, "sess_upload", "acme")
-	return srv, issuer, store
+	return srv, sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload"), store
 }
 
 // blockingReader blocks on its first Read until release is closed,
@@ -77,8 +77,7 @@ func (b *blockingReader) Read(p []byte) (int, error) {
 // concurrency cap is rejected with 429 RATE_LIMITED while the first is
 // in-flight, then admitted once the first finishes. spec: §11.1.
 func TestUploadPerSessionConcurrencyLimit(t *testing.T) {
-	srv, issuer, _ := newUploadLimitServer(t, 1, 0, 0)
-	tok, _ := issuer.Issue("sess_upload", 0)
+	srv, tok, _ := newUploadLimitServer(t, 1, 0, 0)
 	h := asOwner(srv.Handler())
 
 	br := &blockingReader{started: make(chan struct{}), release: make(chan struct{}), data: []byte("hello")}
@@ -119,8 +118,7 @@ func TestUploadPerSessionConcurrencyLimit(t *testing.T) {
 // With no upload caps configured the handler admits without bookkeeping.
 // spec: §11.1.
 func TestUploadNoLimitsConfigured(t *testing.T) {
-	srv, issuer, _ := newUploadLimitServer(t, 0, 0, 0)
-	tok, _ := issuer.Issue("sess_upload", 0)
+	srv, tok, _ := newUploadLimitServer(t, 0, 0, 0)
 	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, bytes.Repeat([]byte("x"), 4096), "text/plain")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("unlimited upload: status %d, want 201; body %s", rr.Code, rr.Body.String())
@@ -131,8 +129,7 @@ func TestUploadNoLimitsConfigured(t *testing.T) {
 // a session past its total once the declared Content-Length is known.
 // spec: §11.1.
 func TestUploadPerSessionSizeCapEarlyReject(t *testing.T) {
-	srv, issuer, _ := newUploadLimitServer(t, 0, 0, 20)
-	tok, _ := issuer.Issue("sess_upload", 0)
+	srv, tok, _ := newUploadLimitServer(t, 0, 0, 20)
 	h := asOwner(srv.Handler())
 
 	if rr := uploadRequest(t, h, "sess_upload", "acme", tok, []byte("hello world"), "text/plain"); rr.Code != http.StatusCreated {
@@ -151,8 +148,7 @@ func TestUploadPerSessionSizeCapEarlyReject(t *testing.T) {
 // The cumulative cap admits uploads up to exactly the limit and rejects
 // the first byte past it. spec: §11.1.
 func TestUploadPerSessionSizeCapBoundary(t *testing.T) {
-	srv, issuer, _ := newUploadLimitServer(t, 0, 0, 22)
-	tok, _ := issuer.Issue("sess_upload", 0)
+	srv, tok, _ := newUploadLimitServer(t, 0, 0, 22)
 	h := asOwner(srv.Handler())
 
 	for i := 0; i < 2; i++ {
@@ -171,8 +167,7 @@ func TestUploadPerSessionSizeCapBoundary(t *testing.T) {
 // the over-cap upload, and does not consume the session's headroom.
 // spec: §11.1.
 func TestUploadPerSessionSizeCapPostHocOnActualBytes(t *testing.T) {
-	srv, issuer, _ := newUploadLimitServer(t, 0, 0, 20)
-	tok, _ := issuer.Issue("sess_upload", 0)
+	srv, tok, _ := newUploadLimitServer(t, 0, 0, 20)
 	h := asOwner(srv.Handler())
 
 	// Declare 5 bytes (passes the early check) but stream 30.

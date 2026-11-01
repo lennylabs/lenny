@@ -24,7 +24,7 @@ import (
 // newQuotaUploadServer builds an upload server whose acme tenant has
 // the given storage quota (zero means unlimited), seeded with a
 // created session sess_upload.
-func newQuotaUploadServer(t *testing.T, quotaBytes int64) (*sessionserver.Server, *uploadtoken.Issuer, *storagequota.Memory) {
+func newQuotaUploadServer(t *testing.T, quotaBytes int64) (*sessionserver.Server, string, *storagequota.Memory) {
 	t.Helper()
 	store := memstore.New()
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
@@ -49,7 +49,7 @@ func newQuotaUploadServer(t *testing.T, quotaBytes int64) (*sessionserver.Server
 		StorageQuota:        counter,
 	})
 	seedCreatedSession(t, store, "sess_upload", "acme")
-	return srv, issuer, counter
+	return srv, sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload"), counter
 }
 
 // uploadWithContentLength drives an upload whose declared
@@ -68,8 +68,7 @@ func uploadWithContentLength(t *testing.T, h http.Handler, token string, body []
 }
 
 func TestUploadUnderStorageQuota(t *testing.T) {
-	srv, issuer, counter := newQuotaUploadServer(t, 1000)
-	tok, _ := issuer.Issue("sess_upload", 0)
+	srv, tok, counter := newQuotaUploadServer(t, 1000)
 
 	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
 	if rr.Code != http.StatusCreated {
@@ -81,8 +80,7 @@ func TestUploadUnderStorageQuota(t *testing.T) {
 }
 
 func TestUploadRejectedByStorageQuotaPreCheck(t *testing.T) {
-	srv, issuer, counter := newQuotaUploadServer(t, 10)
-	tok, _ := issuer.Issue("sess_upload", 0)
+	srv, tok, counter := newQuotaUploadServer(t, 10)
 
 	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
 	if rr.Code != http.StatusTooManyRequests {
@@ -97,8 +95,7 @@ func TestUploadRejectedByStorageQuotaPreCheck(t *testing.T) {
 }
 
 func TestUploadRejectedByStorageQuotaStreamCap(t *testing.T) {
-	srv, issuer, counter := newQuotaUploadServer(t, 100)
-	tok, _ := issuer.Issue("sess_upload", 0)
+	srv, tok, counter := newQuotaUploadServer(t, 100)
 
 	// Declare 10 bytes but stream 200: the reservation is admitted on
 	// the declared size, then the hard stream cap aborts the upload.
@@ -116,8 +113,7 @@ func TestUploadRejectedByStorageQuotaStreamCap(t *testing.T) {
 }
 
 func TestUploadReconcilesStorageQuota(t *testing.T) {
-	srv, issuer, counter := newQuotaUploadServer(t, 1000)
-	tok, _ := issuer.Issue("sess_upload", 0)
+	srv, tok, counter := newQuotaUploadServer(t, 1000)
 
 	// Declare 50 bytes but send only 11: the reservation reconciles
 	// down to the bytes actually written.
@@ -131,8 +127,7 @@ func TestUploadReconcilesStorageQuota(t *testing.T) {
 }
 
 func TestUploadWithoutContentLengthRejectedUnderQuota(t *testing.T) {
-	srv, issuer, _ := newQuotaUploadServer(t, 1000)
-	tok, _ := issuer.Issue("sess_upload", 0)
+	srv, tok, _ := newQuotaUploadServer(t, 1000)
 
 	rr := uploadWithContentLength(t, asOwner(srv.Handler()), tok, []byte("hello world"), -1)
 	if rr.Code != http.StatusBadRequest {
@@ -180,7 +175,7 @@ func TestUploadStorageQuotaDualOutageFailsClosed_spec_12_4_210(t *testing.T) {
 		StorageQuota:        unavailableCounter{},
 	})
 	seedCreatedSession(t, store, "sess_upload", "acme")
-	tok, _ := issuer.Issue("sess_upload", 0)
+	tok := sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload")
 
 	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
 	if rr.Code != http.StatusServiceUnavailable {
@@ -194,8 +189,7 @@ func TestUploadStorageQuotaDualOutageFailsClosed_spec_12_4_210(t *testing.T) {
 func TestUploadNoStorageQuotaSkipsEnforcement(t *testing.T) {
 	// Tenant quota of zero means unlimited: the upload proceeds and the
 	// counter is left untouched.
-	srv, issuer, counter := newQuotaUploadServer(t, 0)
-	tok, _ := issuer.Issue("sess_upload", 0)
+	srv, tok, counter := newQuotaUploadServer(t, 0)
 
 	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
 	if rr.Code != http.StatusCreated {

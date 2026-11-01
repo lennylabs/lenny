@@ -23,15 +23,13 @@ func finalizeTestServerWithStore(store sessionstore.Store) *Server {
 	return New(store, Options{DevTenantHeader: true, Clock: clock})
 }
 
-// barrierGetStore holds every Get for one session id until `parties` Gets
-// have arrived, so each concurrent finalize call reads the pre-lock row
+// barrierGetStore holds every primary read of one session id until `parties`
+// reads have arrived, so each concurrent finalize call reads the pre-lock row
 // before any of them reaches its entry Update. Without the barrier a second
 // call that starts after the first commits reads `finalizing` in its
 // pre-lock Validate, and the test would pass without the locked re-check.
-// The §10.2 ownership check's read runs under the primary-read bound, so it
-// carries a deadline, and it passes the barrier untouched: only the
-// handler's own pre-lock read, which runs under the request's context,
-// counts as a party.
+// The §10.2 ownership check reads through Get, so it passes the barrier
+// untouched: only the handler's own primary read counts as a party.
 type barrierGetStore struct {
 	sessionstore.Store
 	id      string
@@ -44,9 +42,9 @@ func newBarrierGetStore(inner sessionstore.Store, id string, parties int) *barri
 	return b
 }
 
-func (b *barrierGetStore) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
-	row, err := b.Store.Get(ctx, tenantID, id)
-	if _, bounded := ctx.Deadline(); id == b.id && !bounded {
+func (b *barrierGetStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	row, err := b.Store.(sessionstore.PrimaryReader).GetPrimary(ctx, tenantID, id)
+	if id == b.id {
 		b.arrived.Done()
 		b.arrived.Wait()
 	}
@@ -59,6 +57,12 @@ func (b *barrierGetStore) Get(ctx context.Context, tenantID, id string) (session
 type updateErrStore struct {
 	sessionstore.Store
 	err error
+}
+
+// GetPrimary forwards the primary read, so the injected fault reaches only the
+// entry write.
+func (u *updateErrStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	return u.Store.(sessionstore.PrimaryReader).GetPrimary(ctx, tenantID, id)
 }
 
 func (u *updateErrStore) Update(context.Context, string, string, func(*sessionstore.Session) error) (sessionstore.Session, error) {

@@ -169,10 +169,11 @@ type SetupOutputEntry struct {
 type CreateSessionResponse struct {
 	SessionResponse
 
-	// UploadToken is the §7.1 single-use HMAC uploadToken the client
-	// supplies on every `POST /v1/sessions/{id}/upload` and
-	// `POST /v1/sessions/{id}/upload-archive` until the session is
-	// finalized. Treat as a secret per §7.1.
+	// UploadToken is the §7.1 single-use uploadToken the client
+	// supplies on every `POST /v1/sessions/{id}/upload`,
+	// `POST /v1/sessions/{id}/upload-archive`, and
+	// `POST /v1/sessions/{id}/finalize` until the session is finalized.
+	// Treat as a secret per §7.1.
 	UploadToken string `json:"uploadToken"`
 
 	// WorkspacePlanWarnings echoes any §14 consumer-advisory

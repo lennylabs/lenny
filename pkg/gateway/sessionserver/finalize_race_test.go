@@ -16,16 +16,13 @@ package sessionserver_test
 // finalize handler's own.
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"sync"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -47,7 +44,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
-	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
 // raceSessionID is the session every finalize race case creates.
@@ -108,6 +104,12 @@ func (h *hookStore) arm(hooks ...*storeHook) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.hooks = append(h.hooks, hooks...)
+}
+
+// GetPrimary forwards the primary read, so sessionstore.ReadPrimary reaches the
+// inner store rather than falling back to hookStore.Update.
+func (h *hookStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	return h.Store.(sessionstore.PrimaryReader).GetPrimary(ctx, tenantID, id)
 }
 
 func (h *hookStore) Update(
@@ -186,35 +188,11 @@ func (s *raceLifecycleSink) count(eventTypes ...string) int {
 // terminalAuditTypes are the §7.2 terminal lifecycle audit event types.
 var terminalAuditTypes = []string{"session.completed", "session.failed", "session.cancelled", "session.expired"}
 
-// raceTracker is an uploadtoken.ConsumedTracker whose MarkConsumed records the
-// row State it observes and reports the digest as already consumed. Its
-// IsConsumed reports false, so the §7.4 uploadToken check at admission
-// passes and the consume failure models a digest another writer invalidated
-// between the check and the post-ready consume.
-type raceTracker struct {
-	mu    sync.Mutex
-	store sessionstore.Store
-	seen  []session.State
-}
-
-func (c *raceTracker) MarkConsumed(string, time.Time) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if row, err := c.store.Get(context.Background(), raceTenant, raceSessionID); err == nil {
-		c.seen = append(c.seen, row.State)
-	}
-	return uploadtoken.ErrConsumed
-}
-
-func (*raceTracker) IsConsumed(string) bool { return false }
-
 // raceOptions selects the fixture variants a case needs.
 type raceOptions struct {
 	// failAssignRPC makes the adapter's AssignCredentials RPC fail after
 	// recordingLeaseAssigner.AssignProto has recorded the lease.
 	failAssignRPC bool
-	// tracker, when set, backs the server's upload-token verifier.
-	tracker *raceTracker
 }
 
 // raceFixture is one finalize server on the pod-bind fixture: an envtest
@@ -222,16 +200,13 @@ type raceOptions struct {
 // adapter over bufconn, a real podsession.Binder with a recording credential
 // assigner, and a hookStore over a memstore.
 type raceFixture struct {
-	h http.Handler
-	// uploadToken is the §7.1 token finalize sends, minted for
-	// raceSessionID when the fixture wires an upload-token verifier.
-	uploadToken string
-	inner       *memstore.Store
-	hooks       *hookStore
-	cluster     client.Client
-	assigner    *recordingLeaseAssigner
-	bus         *sessionevents.Bus
-	audit       *raceLifecycleSink
+	h        http.Handler
+	inner    *memstore.Store
+	hooks    *hookStore
+	cluster  client.Client
+	assigner *recordingLeaseAssigner
+	bus      *sessionevents.Bus
+	audit    *raceLifecycleSink
 }
 
 // failAssignCredentialsInterceptor fails the adapter's AssignCredentials RPC
@@ -287,20 +262,9 @@ func newRaceFixture(t *testing.T, opt raceOptions) *raceFixture {
 		Events:                  bus,
 		LifecycleAuditSink:      audit,
 	}
-	var uploadToken string
-	if opt.tracker != nil {
-		opt.tracker.store = inner
-		ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("race")})
-		opts.UploadTokenVerifier = uploadtoken.NewVerifier(ring, opt.tracker, nil)
-		tok, err := uploadtoken.NewIssuer(ring, nil).Issue(raceSessionID, time.Hour)
-		if err != nil {
-			t.Fatalf("issue upload token: %v", err)
-		}
-		uploadToken = tok
-	}
 	srv := sessionserver.New(hooks, opts)
 	return &raceFixture{
-		h: asOwner(srv.Handler()), uploadToken: uploadToken, inner: inner, hooks: hooks, cluster: cluster,
+		h: asOwner(srv.Handler()), inner: inner, hooks: hooks, cluster: cluster,
 		assigner: assigner, bus: bus, audit: audit,
 	}
 }
@@ -357,15 +321,7 @@ func (f *raceFixture) create(t *testing.T, plan json.RawMessage) {
 // finalize runs POST /v1/sessions/{id}/finalize with body (nil for none).
 func (f *raceFixture) finalize(t *testing.T, body []byte) (int, []byte) {
 	t.Helper()
-	if f.uploadToken == "" {
-		rr := postSessionStep(t, f.h, "/v1/sessions/"+raceSessionID+"/finalize", body)
-		return rr.Code, rr.Body.Bytes()
-	}
-	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+raceSessionID+"/finalize", bytes.NewReader(body))
-	req.Header.Set("X-Lenny-Tenant-ID", "acme")
-	req.Header.Set("X-Lenny-Upload-Token", f.uploadToken)
-	rr := httptest.NewRecorder()
-	f.h.ServeHTTP(rr, req)
+	rr := postSessionStep(t, f.h, "/v1/sessions/"+raceSessionID+"/finalize", body)
 	return rr.Code, rr.Body.Bytes()
 }
 
@@ -780,40 +736,6 @@ func TestFinalizeMalformedPlanCommittedReclaimsPod_spec_7_1(t *testing.T) {
 	if n := f.audit.count(terminalAuditTypes...); n != 1 {
 		t.Errorf("terminal lifecycle audit rows = %d, want 1", n)
 	}
-}
-
-// The single-use upload-token consume runs after the ready write commits; a
-// consume that reports the digest already invalidated is logged, and the call
-// answers 200 with the session `ready`, keeping its pod and lease.
-// spec: 7.1 (single-use uploadToken invalidation), 15.1 (finalize row)
-func TestFinalizeConsumeAfterReadyWrite_spec_7_1(t *testing.T) {
-	t.Parallel()
-	tracker := &raceTracker{}
-	f := newRaceFixture(t, raceOptions{tracker: tracker})
-	f.create(t, nil)
-	f.writeRow(t, func(row *sessionstore.Session) {
-		row.UploadTokenDigest = "digest-1"
-		row.UploadTokenExpiry = time.Now().Add(time.Hour).UTC()
-	})
-
-	code, body := f.finalize(t, nil)
-
-	if code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body %s", code, body)
-	}
-	tracker.mu.Lock()
-	seen := append([]session.State(nil), tracker.seen...)
-	tracker.mu.Unlock()
-	if !reflect.DeepEqual(seen, []session.State{session.StateReady}) {
-		t.Errorf("tracker saw states %v, want [ready]", seen)
-	}
-	if got := f.row(t).State; got != session.StateReady {
-		t.Errorf("state = %q, want ready", got)
-	}
-	if !f.claimPresent(t) {
-		t.Errorf("claim-sbx-1 deleted, want the session to keep its pod")
-	}
-	f.assertReleased(t, nil)
 }
 
 // A ready write that returns a store error without committing, followed by a

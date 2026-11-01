@@ -340,3 +340,11 @@ func TestDelegationAuditContentionIsNotAClassifiedCode(t *testing.T) {
 		t.Errorf("DELEGATION_PARENT_REVOKED = (%s, %v), want (POLICY, false)", cat, retr)
 	}
 }
+
+// spec: §15.1 (Error code catalog)
+func TestClassifyUploadTokenInvalid_spec_15_1(t *testing.T) {
+	cat, retryable := Classify("UPLOAD_TOKEN_INVALID")
+	if cat != CategoryPermanent || retryable {
+		t.Errorf("Classify(UPLOAD_TOKEN_INVALID) = (%v, %v), want (PERMANENT, false)", cat, retryable)
+	}
+}

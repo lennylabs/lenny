@@ -2536,11 +2536,11 @@ gateway:
   # back-pressure semaphore (extractionThresholds.uploadHandler). Each
   # scope is unlimited when its value is 0 or omitted, so the default
   # posture is unchanged until an operator opts in.
-  #   maxConcurrentPerSession — §11.1. Cap on in-flight uploads
+  #   maxConcurrentPerSession — §11.1. Per-replica cap on in-flight uploads
   #     against one session; excess uploads get 429 RATE_LIMITED.
   #   maxConcurrentGlobal — §11.1. Per-replica cap on in-flight
   #     uploads across all sessions; excess uploads get 429 RATE_LIMITED.
-  #   maxBytesPerSession — §11.1. Cap on the cumulative size of
+  #   maxBytesPerSession — §11.1. Per-replica cap on the cumulative size of
   #     all uploads in one session; excess uploads get 429 QUOTA_EXCEEDED.
   #     The per-file ceiling is the separate 64 MiB request-body cap.
   # F-11.1.5, F-11.1.6.

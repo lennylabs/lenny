@@ -289,7 +289,10 @@ type uploadCommit struct {
 // §16.3.
 func (s *Server) admitUpload(w http.ResponseWriter, r *http.Request, span trace.Span, tenantID string) (sessionstore.Session, bool) {
 	id := r.PathValue("id")
-	row, err := s.store.Get(r.Context(), tenantID, id)
+	// spec: §7.1 (Check order), §12.3 (Postgres HA Requirements). The row is
+	// the token authority, so it comes from the primary: a lagging replica
+	// row in `created` would admit an upload after consumption.
+	row, err := s.readPrimary(r.Context(), tenantID, id)
 	if err != nil {
 		// spec: §16.3 — record the lookup failure on the
 		// `session.upload` span. A missing session is a caller error
@@ -305,7 +308,7 @@ func (s *Server) admitUpload(w http.ResponseWriter, r *http.Request, span trace.
 	}
 
 	// §7.1 uploadToken: validate before any body is read.
-	if err := s.verifyUploadToken(r, row.ID); err != nil {
+	if err := s.verifyUploadToken(r, row); err != nil {
 		s.writeUploadTokenError(w, err)
 		return sessionstore.Session{}, false
 	}
@@ -488,28 +491,16 @@ func (s *Server) finalizeUpload(w http.ResponseWriter, r *http.Request, tenantID
 		}
 	}
 
-	// §7.4: race window — finalize may have committed between
-	// the pre-Put precondition check and now. Re-load the session row
-	// and re-validate; if the row no longer admits /upload, soft-delete
-	// the just-written blob, release the reservation, and surface
-	// UPLOAD_CHANNEL_CLOSED so the channel-close contract holds even
-	// when finalize lands after the upload's body Read started.
-	// F-7.4.16.
-	if post, perr := s.store.Get(r.Context(), tenantID, row.ID); perr == nil {
-		if verr := session.Validate(session.PreconditionRequest{
-			Endpoint:     session.EndpointUpload,
-			CurrentState: post.State,
-		}); verr != nil {
-			if reservation != nil {
-				// The reconcile call above left bytesRead.n bytes held;
-				// release exactly that residual on the abort path.
-				_ = s.storageQuota.Adjust(r.Context(), tenantID, -bytesRead.n)
-			}
-			s.softDeleteStagedBlob(uri, ref)
-			s.writeError(w, http.StatusGone, "UPLOAD_CHANNEL_CLOSED",
-				"upload channel closed by finalize", nil)
-			return false
-		}
+	// spec: §7.4 (Upload Safety), §7.1 (Check order), §12.3 (Postgres HA
+	// Requirements). Finalize may have committed between the pre-Put
+	// precondition check and now, and the finalize that committed may have
+	// run on a peer, whose in-process abort signal never reaches this stream.
+	// This read is the only channel close such a stream sees, so it reads the
+	// primary and every failed read refuses the upload: the blob is
+	// soft-deleted and the reservation released on each refusal, so no read
+	// outcome reaches the commit below. F-7.4.16.
+	if !s.recheckUploadChannel(w, r, tenantID, row.ID, reservation, commit) {
+		return false
 	}
 
 	// §11.1: authoritative per-session cumulative-size check
@@ -536,6 +527,43 @@ func (s *Server) finalizeUpload(w http.ResponseWriter, r *http.Request, tenantID
 		return false
 	}
 	return true
+}
+
+// recheckUploadChannel re-reads the session row after the Put and reports
+// whether it still admits the upload. On a refusal it unwinds the committed
+// blob and writes the envelope: 404 or 500 for a failed read, mapped as
+// admitUpload maps it, and 410 UPLOAD_CHANNEL_CLOSED for a row past the upload
+// window. spec: §7.4, §15.1.
+func (s *Server) recheckUploadChannel(w http.ResponseWriter, r *http.Request, tenantID, id string, reservation *quotaReservation, commit uploadCommit) bool {
+	post, err := s.readPrimary(r.Context(), tenantID, id)
+	if err != nil {
+		s.unwindCommittedBlob(r, tenantID, reservation, commit)
+		if errors.Is(err, sessionstore.ErrNotFound) {
+			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+			return false
+		}
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return false
+	}
+	if verr := session.Validate(session.PreconditionRequest{
+		Endpoint:     session.EndpointUpload,
+		CurrentState: post.State,
+	}); verr != nil {
+		s.unwindCommittedBlob(r, tenantID, reservation, commit)
+		s.writeError(w, http.StatusGone, "UPLOAD_CHANNEL_CLOSED",
+			"upload channel closed by finalize", nil)
+		return false
+	}
+	return true
+}
+
+// unwindCommittedBlob releases the bytes the reservation reconcile left held
+// and soft-deletes the staged blob.
+func (s *Server) unwindCommittedBlob(r *http.Request, tenantID string, reservation *quotaReservation, commit uploadCommit) {
+	if reservation != nil {
+		_ = s.storageQuota.Adjust(r.Context(), tenantID, -commit.bytesRead.n)
+	}
+	s.softDeleteStagedBlob(commit.uri, commit.ref)
 }
 
 // writeUploadResponse renders the §15.1 201 UploadResponse (the §4.5
@@ -817,11 +845,13 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, body)
 }
 
-// verifyUploadToken pulls the `X-Lenny-Upload-Token` header off the
-// request and verifies it against the supplied session id. Returns
-// nil on success or one of uploadtoken.{ErrInvalid, ErrExpired,
-// ErrSessionMismatch, ErrConsumed}.
-func (s *Server) verifyUploadToken(r *http.Request, sessionID string) error {
+// verifyUploadToken pulls the `X-Lenny-Upload-Token` header off the request
+// and verifies it against the session row, then derives consumption from the
+// row state. Both upload admission and finalize call it, so it alone defines
+// the token checks' order. Returns nil on success or one of
+// uploadtoken.{ErrInvalid, ErrSessionMismatch, ErrExpired, ErrConsumed}.
+// spec: §7.1 (Check order, Single-use invalidation)
+func (s *Server) verifyUploadToken(r *http.Request, row sessionstore.Session) error {
 	if s.uploadVerifier == nil {
 		// Disabled: tests + the minimal gateway can opt out by not
 		// passing a verifier. Production always wires one.
@@ -831,8 +861,13 @@ func (s *Server) verifyUploadToken(r *http.Request, sessionID string) error {
 	if tok == "" {
 		return uploadtoken.ErrInvalid
 	}
-	_, err := s.uploadVerifier.Verify(tok, sessionID)
-	return err
+	if err := s.uploadVerifier.Verify(tok, row.ID, row.UploadTokenDigest, row.UploadTokenExpiry); err != nil {
+		return err
+	}
+	if session.UploadTokenConsumed(row.State) {
+		return uploadtoken.ErrConsumed
+	}
+	return nil
 }
 
 func (s *Server) writeUploadTokenError(w http.ResponseWriter, err error) {

@@ -45,10 +45,7 @@ func TestRunUploadEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 	if err := store.Create(context.Background(), row); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	tok, err := issuer.Issue(row.ID, uploadtoken.DefaultTTL)
-	if err != nil {
-		t.Fatalf("mint: %v", err)
-	}
+	tok := MintUploadToken(t, store, issuer, row.TenantID, row.ID)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_audit/upload", bytes.NewBufferString("hello"))
 	req.Header.Set("X-Lenny-Tenant-ID", "default")
@@ -129,8 +126,13 @@ func TestHandleFinalizeEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 	if ev.Detail != parsed.Digest {
 		t.Errorf("Detail = %q, want digest %q", ev.Detail, parsed.Digest)
 	}
-	if !tracker.IsConsumed(parsed.Digest) {
-		t.Errorf("digest should be consumed after finalize")
+	// spec: §7.1 (Single-use invalidation): the `ready` row is the consumption.
+	got, err := store.Get(context.Background(), "default", "sess_fin")
+	if err != nil {
+		t.Fatalf("read row: %v", err)
+	}
+	if got.State != session.StateReady {
+		t.Errorf("state = %q, want ready", got.State)
 	}
 }
 
@@ -161,7 +163,7 @@ func TestRunUploadAuditNilSinkSafe_spec_7_4_17(t *testing.T) {
 	if err := store.Create(context.Background(), row); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	tok, _ := issuer.Issue(row.ID, uploadtoken.DefaultTTL)
+	tok := MintUploadToken(t, store, issuer, row.TenantID, row.ID)
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_nil/upload", bytes.NewBufferString("x"))
 	req.Header.Set("X-Lenny-Tenant-ID", "default")
 	req.Header.Set("X-Lenny-Upload-Token", tok)

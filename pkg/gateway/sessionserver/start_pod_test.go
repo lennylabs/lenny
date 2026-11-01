@@ -1347,6 +1347,12 @@ type readyTransitionFailStore struct {
 	failReady bool
 }
 
+// GetPrimary forwards the primary read, so sessionstore.ReadPrimary reaches the
+// inner store rather than falling back to readyTransitionFailStore.Update.
+func (s *readyTransitionFailStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	return s.Store.(sessionstore.PrimaryReader).GetPrimary(ctx, tenantID, id)
+}
+
 func (s *readyTransitionFailStore) Update(ctx context.Context, tenantID, id string, mutate func(*sessionstore.Session) error) (sessionstore.Session, error) {
 	if s.failReady {
 		// Probe the mutation on a copy: when it would set the row to `ready`,

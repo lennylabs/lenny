@@ -3,6 +3,8 @@
 package uploadtoken_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -13,104 +15,170 @@ import (
 
 // spec: §7.1 uploadToken format + security properties.
 
-func newRing(t *testing.T) *uploadtoken.KeyRing {
+// issue mints a token from a fixed-clock issuer and returns the token and the
+// row fields the gateway persists.
+func issue(t *testing.T, sessionID string, ttl time.Duration, now time.Time) (string, uploadtoken.ParsedToken) {
 	t.Helper()
-	return uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("secret-1")})
+	tok, parsed, err := uploadtoken.NewIssuer(nil, func() time.Time { return now }).IssueDetailed(sessionID, ttl)
+	if err != nil {
+		t.Fatalf("IssueDetailed: %v", err)
+	}
+	return tok, parsed
 }
 
-func TestIssueAndVerifyRoundTrip(t *testing.T) {
-	ring := newRing(t)
-	fixed := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	clock := func() time.Time { return fixed }
-	issuer := uploadtoken.NewIssuer(ring, clock)
-	verifier := uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), clock)
+func verifierAt(now time.Time) *uploadtoken.Verifier {
+	return uploadtoken.NewVerifier(nil, nil, func() time.Time { return now })
+}
 
-	tok, err := issuer.Issue("sess_abc", time.Minute)
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
+// sha256Hex is the row digest of tok.
+func sha256Hex(tok string) string {
+	sum := sha256.Sum256([]byte(tok))
+	return hex.EncodeToString(sum[:])
+}
+
+var testNow = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// spec: §7.1 (uploadToken format and security properties)
+func TestIssueAndVerifyRoundTrip(t *testing.T) {
+	tok, parsed := issue(t, "sess_abc", time.Minute, testNow)
 	parts := strings.Split(tok, ".")
 	if len(parts) != 3 || parts[0] != "sess_abc" {
 		t.Errorf("wire format: got %q", tok)
 	}
-
-	parsed, err := verifier.Verify(tok, "sess_abc")
-	if err != nil {
-		t.Fatalf("Verify: %v", err)
-	}
 	if parsed.SessionID != "sess_abc" {
 		t.Errorf("parsed sessionID: got %q", parsed.SessionID)
 	}
-	if !parsed.Expiry.Equal(fixed.Add(time.Minute)) {
-		t.Errorf("expiry: got %v, want %v", parsed.Expiry, fixed.Add(time.Minute))
+	if !parsed.Expiry.Equal(testNow.Add(time.Minute)) {
+		t.Errorf("expiry: got %v, want %v", parsed.Expiry, testNow.Add(time.Minute))
 	}
-	if parsed.KeyID != "k1" {
-		t.Errorf("keyID: got %q, want k1", parsed.KeyID)
+	if parsed.Digest != sha256Hex(tok) {
+		t.Errorf("digest: got %q, want the SHA-256 hex of the whole token", parsed.Digest)
+	}
+	if err := verifierAt(testNow).Verify(tok, "sess_abc", parsed.Digest, parsed.Expiry); err != nil {
+		t.Fatalf("Verify: %v", err)
 	}
 }
 
+// spec: §7.1 (uploadToken format and security properties)
 func TestIssueDefaultsToSpecTTL(t *testing.T) {
-	ring := newRing(t)
-	fixed := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	clock := func() time.Time { return fixed }
-	issuer := uploadtoken.NewIssuer(ring, clock)
-	verifier := uploadtoken.NewVerifier(ring, nil, clock)
-
-	tok, err := issuer.Issue("sess_abc", 0)
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-	parsed, _ := verifier.Verify(tok, "sess_abc")
-	if !parsed.Expiry.Equal(fixed.Add(uploadtoken.DefaultTTL)) {
-		t.Errorf("default TTL: got expiry %v, want %v", parsed.Expiry, fixed.Add(uploadtoken.DefaultTTL))
+	_, parsed := issue(t, "sess_abc", 0, testNow)
+	if !parsed.Expiry.Equal(testNow.Add(uploadtoken.DefaultTTL)) {
+		t.Errorf("default TTL: got expiry %v, want %v", parsed.Expiry, testNow.Add(uploadtoken.DefaultTTL))
 	}
 }
 
-func TestVerifyRejectsExpiredToken(t *testing.T) {
-	ring := newRing(t)
-	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	issuer := uploadtoken.NewIssuer(ring, func() time.Time { return t0 })
-	tok, _ := issuer.Issue("sess_abc", time.Second)
+// spec: §7.1 (uploadToken format and security properties)
+func TestIssuedSecretIs256RandomBits_spec_7_1(t *testing.T) {
+	first, _ := issue(t, "sess_abc", time.Minute, testNow)
+	second, _ := issue(t, "sess_abc", time.Minute, testNow)
+	if first == second {
+		t.Error("two tokens issued for one session at one instant are equal")
+	}
+	secret := strings.Split(first, ".")[2]
+	if len(secret) != 64 {
+		t.Errorf("third segment has %d characters, want 64", len(secret))
+	}
+	if _, err := hex.DecodeString(secret); err != nil {
+		t.Errorf("third segment is not hexadecimal: %v", err)
+	}
+}
 
-	verifier := uploadtoken.NewVerifier(ring, nil, func() time.Time { return t0.Add(10 * time.Second) })
-	_, err := verifier.Verify(tok, "sess_abc")
+// spec: §7.1 (uploadToken format and security properties)
+func TestVerifyRejectsExpiredToken(t *testing.T) {
+	tok, parsed := issue(t, "sess_abc", time.Second, testNow)
+	err := verifierAt(testNow.Add(10*time.Second)).Verify(tok, "sess_abc", parsed.Digest, parsed.Expiry)
 	if !errors.Is(err, uploadtoken.ErrExpired) {
 		t.Errorf("Verify: got %v, want ErrExpired", err)
 	}
 }
 
+// spec: §7.1 (uploadToken format and security properties)
+func TestVerifyExpiryBoundaryUsesRowExpiry_spec_7_1(t *testing.T) {
+	tok, parsed := issue(t, "sess_abc", time.Hour, testNow)
+	rowExpiry := testNow.Add(time.Minute)
+	if err := verifierAt(rowExpiry).Verify(tok, "sess_abc", parsed.Digest, rowExpiry); err != nil {
+		t.Errorf("Verify at the rowExpiry instant: %v", err)
+	}
+	// The embedded expiry is an hour out, so this refusal proves the row
+	// value is the one enforced.
+	err := verifierAt(rowExpiry.Add(time.Second)).Verify(tok, "sess_abc", parsed.Digest, rowExpiry)
+	if !errors.Is(err, uploadtoken.ErrExpired) {
+		t.Errorf("Verify one second past rowExpiry: got %v, want ErrExpired", err)
+	}
+}
+
+// spec: §7.1 (uploadToken format and security properties)
 func TestVerifyRejectsSessionMismatch(t *testing.T) {
-	ring := newRing(t)
-	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
-	issuer := uploadtoken.NewIssuer(ring, clock)
-	verifier := uploadtoken.NewVerifier(ring, nil, clock)
-	tok, _ := issuer.Issue("sess_abc", time.Minute)
-	_, err := verifier.Verify(tok, "sess_xyz")
+	tok, parsed := issue(t, "sess_abc", time.Minute, testNow)
+	err := verifierAt(testNow).Verify(tok, "sess_xyz", parsed.Digest, parsed.Expiry)
 	if !errors.Is(err, uploadtoken.ErrSessionMismatch) {
 		t.Errorf("Verify: got %v, want ErrSessionMismatch", err)
 	}
 }
 
-func TestVerifyRejectsTamperedHMAC(t *testing.T) {
-	ring := newRing(t)
-	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
-	issuer := uploadtoken.NewIssuer(ring, clock)
-	verifier := uploadtoken.NewVerifier(ring, nil, clock)
-	tok, _ := issuer.Issue("sess_abc", time.Minute)
-	// Flip last char.
-	tampered := tok[:len(tok)-1] + "0"
-	if tampered == tok {
-		tampered = tok[:len(tok)-1] + "1"
+// A guessed secret naming a foreign session reaches the scope check ahead of
+// the digest check, so it answers 403 MISMATCH rather than 401 INVALID.
+//
+// spec: §7.1 (Check order)
+func TestVerifyScopeRunsAheadOfDigest_spec_7_1(t *testing.T) {
+	guessed := "sess_other.1893456000." + strings.Repeat("ab", 32)
+	_, parsed := issue(t, "sess_abc", time.Minute, testNow)
+	err := verifierAt(testNow).Verify(guessed, "sess_abc", parsed.Digest, parsed.Expiry)
+	if !errors.Is(err, uploadtoken.ErrSessionMismatch) {
+		t.Errorf("Verify: got %v, want ErrSessionMismatch", err)
 	}
-	_, err := verifier.Verify(tampered, "sess_abc")
+}
+
+// spec: §7.1 (Check order)
+func TestVerifyDigestRunsAheadOfExpiry_spec_7_1(t *testing.T) {
+	tok, parsed := issue(t, "sess_abc", time.Minute, testNow)
+	err := verifierAt(testNow.Add(time.Hour)).Verify(tok+"00", "sess_abc", parsed.Digest, parsed.Expiry)
 	if !errors.Is(err, uploadtoken.ErrInvalid) {
 		t.Errorf("Verify: got %v, want ErrInvalid", err)
 	}
 }
 
+// spec: §7.1 (uploadToken format and security properties)
+func TestVerifyRejectsTamperedSecret(t *testing.T) {
+	tok, parsed := issue(t, "sess_abc", time.Minute, testNow)
+	// Flip last char.
+	tampered := tok[:len(tok)-1] + "0"
+	if tampered == tok {
+		tampered = tok[:len(tok)-1] + "1"
+	}
+	err := verifierAt(testNow).Verify(tampered, "sess_abc", parsed.Digest, parsed.Expiry)
+	if !errors.Is(err, uploadtoken.ErrInvalid) {
+		t.Errorf("Verify: got %v, want ErrInvalid", err)
+	}
+}
+
+// The digest covers the whole token, so a client cannot extend the embedded
+// expiry.
+//
+// spec: §7.1 (uploadToken format and security properties)
+func TestVerifyRejectsEditedExpirySegment_spec_7_1(t *testing.T) {
+	tok, parsed := issue(t, "sess_abc", time.Minute, testNow)
+	parts := strings.Split(tok, ".")
+	edited := parts[0] + ".4102444800." + parts[2]
+	err := verifierAt(testNow).Verify(edited, "sess_abc", parsed.Digest, parsed.Expiry)
+	if !errors.Is(err, uploadtoken.ErrInvalid) {
+		t.Errorf("Verify: got %v, want ErrInvalid", err)
+	}
+}
+
+// spec: §7.1 (Authentication)
+func TestVerifyRejectsEmptyRowDigest_spec_7_1(t *testing.T) {
+	tok, parsed := issue(t, "sess_abc", time.Minute, testNow)
+	err := verifierAt(testNow).Verify(tok, "sess_abc", "", parsed.Expiry)
+	if !errors.Is(err, uploadtoken.ErrInvalid) {
+		t.Errorf("Verify: got %v, want ErrInvalid", err)
+	}
+}
+
+// spec: §7.1 (Authentication)
 func TestVerifyRejectsMalformedToken(t *testing.T) {
-	ring := newRing(t)
-	verifier := uploadtoken.NewVerifier(ring, nil, nil)
+	verifier := uploadtoken.NewVerifier(nil, nil, nil)
+	digest := sha256Hex("a.123.deadbeef")
 	for _, tok := range []string{
 		"",
 		"only.two",
@@ -119,92 +187,10 @@ func TestVerifyRejectsMalformedToken(t *testing.T) {
 		"a.notnumeric.deadbeef",
 		"a.123.zznoteven_hex",
 	} {
-		_, err := verifier.Verify(tok, "sess_abc")
+		err := verifier.Verify(tok, "a", digest, testNow.Add(100*365*24*time.Hour))
 		if !errors.Is(err, uploadtoken.ErrInvalid) {
 			t.Errorf("Verify(%q): got %v, want ErrInvalid", tok, err)
 		}
-	}
-}
-
-func TestVerifyAcceptsOverlapKey(t *testing.T) {
-	// Issue with key1; rotate to key2; the overlap window should
-	// admit the original token until the operator explicitly expires
-	// key1.
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("first")})
-	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
-	issuer := uploadtoken.NewIssuer(ring, clock)
-	tok, _ := issuer.Issue("sess_abc", time.Hour)
-
-	ring.Rotate(uploadtoken.SigningKey{KeyID: "k2", Secret: []byte("second")})
-
-	verifier := uploadtoken.NewVerifier(ring, nil, clock)
-	parsed, err := verifier.Verify(tok, "sess_abc")
-	if err != nil {
-		t.Fatalf("Verify after rotate: %v", err)
-	}
-	if parsed.KeyID != "k1" {
-		t.Errorf("keyID: got %q, want k1", parsed.KeyID)
-	}
-
-	if dropped := ring.Expire("k1"); dropped != 1 {
-		t.Errorf("Expire dropped: got %d, want 1", dropped)
-	}
-	if _, err := verifier.Verify(tok, "sess_abc"); !errors.Is(err, uploadtoken.ErrInvalid) {
-		t.Errorf("Verify after Expire(k1): got %v, want ErrInvalid", err)
-	}
-}
-
-func TestRotateOnlyOnePreviousKeyIsAdded(t *testing.T) {
-	// Multiple rotations push each previous key onto the overlap
-	// slice. Verify can pick any of them.
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("a")})
-	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
-	t1, _ := uploadtoken.NewIssuer(ring, clock).Issue("sess_abc", time.Hour)
-	ring.Rotate(uploadtoken.SigningKey{KeyID: "k2", Secret: []byte("b")})
-	t2, _ := uploadtoken.NewIssuer(ring, clock).Issue("sess_abc", time.Hour)
-	ring.Rotate(uploadtoken.SigningKey{KeyID: "k3", Secret: []byte("c")})
-	t3, _ := uploadtoken.NewIssuer(ring, clock).Issue("sess_abc", time.Hour)
-
-	verifier := uploadtoken.NewVerifier(ring, nil, clock)
-	for _, c := range []struct {
-		token string
-		key   string
-	}{
-		{t1, "k1"},
-		{t2, "k2"},
-		{t3, "k3"},
-	} {
-		parsed, err := verifier.Verify(c.token, "sess_abc")
-		if err != nil {
-			t.Errorf("Verify %s: %v", c.key, err)
-			continue
-		}
-		if parsed.KeyID != c.key {
-			t.Errorf("token signed by %s validated under %s", c.key, parsed.KeyID)
-		}
-	}
-}
-
-func TestConsumeMarksDigestSingleUse(t *testing.T) {
-	ring := newRing(t)
-	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
-	tracker := uploadtoken.NewMemoryTracker()
-	issuer := uploadtoken.NewIssuer(ring, clock)
-	verifier := uploadtoken.NewVerifier(ring, tracker, clock)
-
-	tok, _ := issuer.Issue("sess_abc", time.Minute)
-	parsed, err := verifier.Verify(tok, "sess_abc")
-	if err != nil {
-		t.Fatalf("Verify: %v", err)
-	}
-	if err := verifier.Consume(parsed); err != nil {
-		t.Fatalf("Consume: %v", err)
-	}
-	if _, err := verifier.Verify(tok, "sess_abc"); !errors.Is(err, uploadtoken.ErrConsumed) {
-		t.Errorf("Verify after Consume: got %v, want ErrConsumed", err)
-	}
-	if err := verifier.Consume(parsed); !errors.Is(err, uploadtoken.ErrConsumed) {
-		t.Errorf("re-Consume: got %v, want ErrConsumed", err)
 	}
 }
 
@@ -227,7 +213,7 @@ func TestMemoryTrackerSweepExpired(t *testing.T) {
 }
 
 func TestIssueRejectsEmptyOrDottedSessionID(t *testing.T) {
-	issuer := uploadtoken.NewIssuer(newRing(t), nil)
+	issuer := uploadtoken.NewIssuer(nil, nil)
 	if _, err := issuer.Issue("", time.Minute); err == nil {
 		t.Error("empty sess_id should error")
 	}

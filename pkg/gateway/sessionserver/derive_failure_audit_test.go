@@ -126,7 +126,7 @@ func TestDeriveFailurePersistsAuditRow_spec_7_1_derive_rule_2(t *testing.T) {
 
 	// §15.1 — action endpoints reject the terminal row with
 	// 409 INVALID_STATE_TRANSITION.
-	for _, ep := range []string{"terminate", "interrupt", "resume", "finalize", "start"} {
+	for _, ep := range []string{"terminate", "interrupt", "resume", "start"} {
 		ar := sessionRequest(t, h, http.MethodPost, "/v1/sessions/sess_df/"+ep)
 		if ar.Code != http.StatusConflict {
 			t.Errorf("POST /%s on derive_failure row: got %d, want 409; body=%s", ep, ar.Code, ar.Body.String())

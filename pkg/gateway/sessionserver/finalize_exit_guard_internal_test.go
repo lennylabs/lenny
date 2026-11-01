@@ -31,7 +31,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
 // exitHookMode is what an exitHook does on the Update it selects.
@@ -65,6 +64,12 @@ type exitHookStore struct {
 	sessionstore.Store
 	mu    sync.Mutex
 	hooks []*exitHook
+}
+
+// GetPrimary forwards the primary read, so sessionstore.ReadPrimary reaches the
+// inner store rather than falling back to exitHookStore.Update.
+func (h *exitHookStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	return h.Store.(sessionstore.PrimaryReader).GetPrimary(ctx, tenantID, id)
 }
 
 func (h *exitHookStore) Update(
@@ -470,58 +475,5 @@ func TestFinalizeReadyStoreErrorFailsRow_spec_7_1(t *testing.T) {
 	}
 	if n := f.auditCount(auditSessionFailed); n != 1 {
 		t.Errorf("session.failed rows = %d, want 1", n)
-	}
-}
-
-// consumedTracker reports every consume as already consumed and records the
-// row state it observed at consume time. IsConsumed reports false, so the
-// §7.4 uploadToken check at admission passes and the consume failure models
-// a digest invalidated between that check and the post-ready consume.
-type consumedTracker struct {
-	store sessionstore.Store
-	id    string
-	seen  []session.State
-}
-
-func (c *consumedTracker) MarkConsumed(string, time.Time) error {
-	if row, err := c.store.Get(context.Background(), "default", c.id); err == nil {
-		c.seen = append(c.seen, row.State)
-	}
-	return uploadtoken.ErrConsumed
-}
-
-func (*consumedTracker) IsConsumed(string) bool { return false }
-
-// A failed upload-token consume after the ready write commits is logged, and
-// the call still answers 200 with the session `ready`; the pod and lease stay
-// with the session.
-// spec: 7.1 (single-use uploadToken invalidation), 15.1 (finalize row)
-func TestFinalizeConsumeFailureKeepsReady_spec_7_1(t *testing.T) {
-	tracker := &consumedTracker{id: "s1"}
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("exit")})
-	f := newExitFixture(t, Options{DevTenantHeader: true, UploadTokenVerifier: uploadtoken.NewVerifier(ring, tracker, nil)})
-	tracker.store = f.inner
-	tok, parsed, err := uploadtoken.NewIssuer(ring, nil).IssueDetailed("s1", time.Hour)
-	if err != nil {
-		t.Fatalf("issue upload token: %v", err)
-	}
-	f.seed(t, "s1", "", "", func(row *sessionstore.Session) {
-		row.UploadTokenDigest = parsed.Digest
-		row.UploadTokenExpiry = parsed.Expiry
-	})
-
-	rr := postFinalizeWithToken(t, f.srv, "s1", "", tok)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body %s", rr.Code, rr.Body.String())
-	}
-	if !reflect.DeepEqual(tracker.seen, []session.State{session.StateReady}) {
-		t.Errorf("tracker saw states %v, want [ready]", tracker.seen)
-	}
-	if got := f.state(t, "s1"); got != session.StateReady {
-		t.Errorf("state = %q, want ready", got)
-	}
-	if len(f.assigner.released) != 0 {
-		t.Errorf("ReleaseSession calls = %v, want none", f.assigner.released)
 	}
 }

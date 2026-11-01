@@ -365,6 +365,7 @@ var table = map[string]entry{
 	"ELICITATION_INTEGRITY_JUSTIFICATION_REQUIRED": {CategoryPermanent, false}, // spec: 15:1086
 	"ELICITATION_INTEGRITY_BELOW_PLATFORM_FLOOR":   {CategoryPermanent, false}, // spec: 15:1087
 	"DUPLICATE_MESSAGE_ID":                         {CategoryPermanent, false}, // spec: 15:1046
+	"UPLOAD_TOKEN_INVALID":                         {CategoryPermanent, false}, // spec: §15.1 (Error code catalog)
 	"UPLOAD_TOKEN_EXPIRED":                         {CategoryPermanent, false}, // spec: 15:1090
 	"UPLOAD_TOKEN_MISMATCH":                        {CategoryPermanent, false}, // spec: 15:1091
 	"UPLOAD_TOKEN_CONSUMED":                        {CategoryPermanent, false}, // spec: 15:1092

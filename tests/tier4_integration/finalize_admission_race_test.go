@@ -167,15 +167,16 @@ func (h *admissionHookStore) arm(hooks ...*admissionHook) {
 	h.hooks = append(h.hooks, hooks...)
 }
 
-// onNextGet arms fn to run once, after the next Get has read the row.
+// onNextGet arms fn to run once, after the next primary read has returned the
+// row, which is the read finalize makes ahead of its token check.
 func (h *admissionHookStore) onNextGet(fn func()) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.afterNextGet = fn
 }
 
-func (h *admissionHookStore) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
-	row, err := h.Store.Get(ctx, tenantID, id)
+func (h *admissionHookStore) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	row, err := h.Store.(sessionstore.PrimaryReader).GetPrimary(ctx, tenantID, id)
 	h.mu.Lock()
 	fn := h.afterNextGet
 	h.afterNextGet = nil

@@ -241,9 +241,13 @@ func TestCreateMintsUploadTokenAndIsolationLevel(t *testing.T) {
 	if !strings.HasPrefix(resp.UploadToken, "sess_new.") {
 		t.Errorf("uploadToken prefix: %q does not start with sess_new.", resp.UploadToken)
 	}
-	// uploadToken must verify under the same key ring.
+	// uploadToken must verify against the digest and expiry on the row.
+	created, err := store.Get(context.Background(), "acme", resp.ID)
+	if err != nil {
+		t.Fatalf("read created row: %v", err)
+	}
 	v := uploadtoken.NewVerifier(ring, nil, clock)
-	if _, err := v.Verify(resp.UploadToken, resp.ID); err != nil {
+	if err := v.Verify(resp.UploadToken, resp.ID, created.UploadTokenDigest, created.UploadTokenExpiry); err != nil {
 		t.Errorf("uploadToken does not verify: %v", err)
 	}
 	if resp.SessionIsolationLevel.IsolationProfile != string(isolation.Default()) {

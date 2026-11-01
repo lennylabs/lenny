@@ -179,7 +179,7 @@ func TestUploadStartsSessionUploadSpan_spec_16_3(t *testing.T) {
 
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
-	tok, _ := issuer.Issue("sess_upload", 0)
+	tok := sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload")
 
 	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
 	if rr.Code != http.StatusCreated {
@@ -195,18 +195,19 @@ func TestUploadStartsSessionUploadSpan_spec_16_3(t *testing.T) {
 	}
 }
 
-// vanishingStore serves the §10.2 ownership check's bounded read with a row
-// the test owner owns and answers every later, unbounded read with
-// ErrNotFound, standing in for a session deleted between the ownership check
-// and the handler's own read.
+// vanishingStore serves the §10.2 ownership check's read with a row the test
+// owner owns and answers the handler's primary read with ErrNotFound, standing
+// in for a session deleted between the ownership check and the handler's own
+// read.
 type vanishingStore struct {
 	*memstore.Store
 }
 
-func (v vanishingStore) Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
-	if _, bounded := ctx.Deadline(); bounded {
-		return sessionstore.Session{ID: id, TenantID: tenantID, UserID: testOwner, State: session.StateCreated}, nil
-	}
+func (v vanishingStore) Get(_ context.Context, tenantID, id string) (sessionstore.Session, error) {
+	return sessionstore.Session{ID: id, TenantID: tenantID, UserID: testOwner, State: session.StateCreated}, nil
+}
+
+func (v vanishingStore) GetPrimary(context.Context, string, string) (sessionstore.Session, error) {
 	return sessionstore.Session{}, sessionstore.ErrNotFound
 }
 
@@ -224,7 +225,7 @@ func TestUploadSpanRecordsMissingSessionError_spec_16_3(t *testing.T) {
 		UploadTokenVerifier: uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), clock),
 		Blobs:               blobstore.NewMemoryStore(nil),
 	})
-	// The ownership check admits the owner, and the handler's store.Get then
+	// The ownership check admits the owner, and the handler's primary read then
 	// returns ErrNotFound, driving the §16.3 RESOURCE_NOT_FOUND error branch
 	// on the upload span.
 	tok, _ := issuer.Issue("sess_missing_upload", 0)

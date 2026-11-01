@@ -160,6 +160,12 @@ func (f *faultSessions) Get(ctx context.Context, tenantID, id string) (sessionst
 	return f.Store.Get(ctx, tenantID, id)
 }
 
+// GetPrimary forwards the primary read, so sessionstore.ReadPrimary reaches the
+// inner store rather than falling back to faultSessions.Update.
+func (f *faultSessions) GetPrimary(ctx context.Context, tenantID, id string) (sessionstore.Session, error) {
+	return f.Store.(sessionstore.PrimaryReader).GetPrimary(ctx, tenantID, id)
+}
+
 // countingAssigner is a Binder.Credentials that counts every lease it mints,
 // so a test asserts that no lease is minted on a failed resolution.
 type countingAssigner struct {

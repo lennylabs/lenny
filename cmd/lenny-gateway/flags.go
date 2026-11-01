@@ -670,13 +670,13 @@ func (f *gatewayFlags) registerStorageFlags() {
 	// opt in. F-11.1.5, F-11.1.6.
 	f.uploadMaxConcurrentPerSession = flag.Int("upload-max-concurrent-per-session",
 		envInt("LENNY_UPLOAD_MAX_CONCURRENT_PER_SESSION", 0),
-		"§11.1 per-session concurrent-upload admission cap. Excess in-flight uploads against one session are rejected with 429 RATE_LIMITED. Zero disables the per-session concurrency cap. Override via LENNY_UPLOAD_MAX_CONCURRENT_PER_SESSION. F-11.1.5.")
+		"§11.1 per-session (per-replica) concurrent-upload admission cap. Excess in-flight uploads against one session are rejected with 429 RATE_LIMITED. Zero disables the per-session concurrency cap. Override via LENNY_UPLOAD_MAX_CONCURRENT_PER_SESSION. F-11.1.5.")
 	f.uploadMaxConcurrentGlobal = flag.Int("upload-max-concurrent-global",
 		envInt("LENNY_UPLOAD_MAX_CONCURRENT_GLOBAL", 0),
 		"§11.1 global (per-replica) concurrent-upload admission cap. Excess in-flight uploads across all sessions are rejected with 429 RATE_LIMITED. Zero disables the global concurrency cap. Override via LENNY_UPLOAD_MAX_CONCURRENT_GLOBAL. F-11.1.5.")
 	f.uploadMaxBytesPerSession = flag.Int64("upload-max-bytes-per-session",
 		envInt64("LENNY_UPLOAD_MAX_BYTES_PER_SESSION", 0),
-		"§11.1 per-session cumulative upload-size cap (bytes). The sum of all uploads in a session is rejected with 429 QUOTA_EXCEEDED past this value; the per-file cap is the separate 64 MiB body ceiling. Zero disables the per-session size cap. Override via LENNY_UPLOAD_MAX_BYTES_PER_SESSION. F-11.1.6.")
+		"§11.1 per-session (per-replica) cumulative upload-size cap (bytes). The sum of a session's uploads on the replica is rejected with 429 QUOTA_EXCEEDED past this value; the per-file cap is the separate 64 MiB body ceiling. Zero disables the per-session size cap. Override via LENNY_UPLOAD_MAX_BYTES_PER_SESSION. F-11.1.6.")
 	f.midSessionUploadEnabled = flag.Bool("mid-session-upload",
 		envFlag("LENNY_MID_SESSION_UPLOAD"),
 		"§7.4 deployer policy: admit uploads into an already-running session (POST /v1/sessions/{id}/upload-to-session) when the bound runtime also declares capabilities.midSessionUpload. Off by default; override via LENNY_MID_SESSION_UPLOAD. F-7.4.6.")

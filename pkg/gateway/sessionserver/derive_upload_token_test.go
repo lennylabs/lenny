@@ -4,6 +4,8 @@ package sessionserver_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -95,16 +97,16 @@ func TestDeriveAndReplayMintAnUploadToken_spec_15_1(t *testing.T) {
 			if resp.UploadToken == "" {
 				t.Fatalf("response carries no uploadToken; body=%s", rr.Body.String())
 			}
-			parsed, err := verifier.Verify(resp.UploadToken, "sess_new")
-			if err != nil {
-				t.Fatalf("the returned token does not verify for the new session: %v", err)
-			}
 			row, err := store.Get(context.Background(), "acme", "sess_new")
 			if err != nil {
 				t.Fatalf("get new row: %v", err)
 			}
-			if row.UploadTokenDigest == "" || row.UploadTokenDigest != parsed.Digest {
-				t.Errorf("stored digest = %q, want the returned token's %q", row.UploadTokenDigest, parsed.Digest)
+			if err := verifier.Verify(resp.UploadToken, "sess_new", row.UploadTokenDigest, row.UploadTokenExpiry); err != nil {
+				t.Fatalf("the returned token does not verify for the new session: %v", err)
+			}
+			sum := sha256.Sum256([]byte(resp.UploadToken))
+			if want := hex.EncodeToString(sum[:]); row.UploadTokenDigest != want {
+				t.Errorf("stored digest = %q, want the returned token's %q", row.UploadTokenDigest, want)
 			}
 			if want := t0.Add(300 * time.Second); !row.UploadTokenExpiry.Equal(want) {
 				t.Errorf("stored expiry = %v, want %v (creation + maxCreatedStateTimeoutSeconds)", row.UploadTokenExpiry, want)

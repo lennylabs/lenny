@@ -87,7 +87,7 @@ func uploadRequest(t *testing.T, h http.Handler, id, tenant, token string, body 
 func TestUploadHappyPath(t *testing.T) {
 	srv, issuer, _, blobs, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
-	tok, _ := issuer.Issue("sess_upload", 0)
+	tok := sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload")
 
 	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
 	if rr.Code != http.StatusCreated {
@@ -185,21 +185,37 @@ func TestUploadRejectsSessionMismatch(t *testing.T) {
 	}
 }
 
+// A valid token on a session past finalization answers by the §7.1
+// consumption rule: 410 once the row has reached `ready`, and the §15.1
+// precondition's 409 on `finalizing` and terminal rows.
+// spec: §7.1 (Single-use invalidation), §15.1 (upload precondition)
 func TestUploadRejectsWrongState(t *testing.T) {
-	srv, issuer, _, _, store, _ := newUploadServer(t)
-	// Session is `ready` — not in upload's precondition table.
-	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if err := store.Create(context.Background(), sessionstore.Session{
-		UserID: testOwner,
-		ID:     "sess_upload", TenantID: "acme", State: session.StateReady,
-		CreatedAt: now, UpdatedAt: now,
-	}); err != nil {
-		t.Fatalf("seed: %v", err)
+	cases := []struct {
+		state      session.State
+		wantStatus int
+		wantCode   string
+	}{
+		{session.StateReady, http.StatusGone, "UPLOAD_TOKEN_CONSUMED"},
+		{session.StateFinalizing, http.StatusConflict, "INVALID_STATE_TRANSITION"},
+		{session.StateCompleted, http.StatusConflict, "INVALID_STATE_TRANSITION"},
 	}
-	tok, _ := issuer.Issue("sess_upload", 0)
-	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("data"), "text/plain")
-	if rr.Code != http.StatusConflict {
-		t.Errorf("status: got %d, want 409 (INVALID_STATE_TRANSITION); body=%s", rr.Code, rr.Body.String())
+	for _, tc := range cases {
+		t.Run(string(tc.state), func(t *testing.T) {
+			srv, issuer, _, _, store, _ := newUploadServer(t)
+			now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			if err := store.Create(context.Background(), sessionstore.Session{
+				UserID: testOwner,
+				ID:     "sess_upload", TenantID: "acme", State: tc.state,
+				CreatedAt: now, UpdatedAt: now,
+			}); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			tok := sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload")
+			rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("data"), "text/plain")
+			if rr.Code != tc.wantStatus || !strings.Contains(rr.Body.String(), tc.wantCode) {
+				t.Errorf("got %d %s, want %d %s", rr.Code, rr.Body.String(), tc.wantStatus, tc.wantCode)
+			}
+		})
 	}
 }
 
@@ -215,7 +231,7 @@ func TestUploadRejectsMissingSession(t *testing.T) {
 func TestUploadDefaultsMimeTypeWhenAbsent(t *testing.T) {
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
-	tok, _ := issuer.Issue("sess_upload", 0)
+	tok := sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload")
 	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("data"), "")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201", rr.Code)
@@ -306,7 +322,7 @@ func TestBlobGetReturns400ForMalformedURI(t *testing.T) {
 func TestUploadRejectsOversizedBody(t *testing.T) {
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
-	tok, _ := issuer.Issue("sess_upload", 0)
+	tok := sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload")
 
 	// One byte past the platform cap.
 	body := bytes.Repeat([]byte("x"), int(sessionserver.UploadMaxBodyBytes)+1)
@@ -328,7 +344,7 @@ func TestUploadRejectsOversizedBody(t *testing.T) {
 func TestUploadAdmitsBodyAtCap(t *testing.T) {
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
-	tok, _ := issuer.Issue("sess_upload", 0)
+	tok := sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload")
 
 	body := bytes.Repeat([]byte("x"), int(sessionserver.UploadMaxBodyBytes))
 	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, body, "application/octet-stream")
@@ -341,7 +357,7 @@ func TestUploadRoundTripsThroughBlobGet(t *testing.T) {
 	// Upload a file, then GET it back via the blob endpoint.
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
-	tok, _ := issuer.Issue("sess_upload", 0)
+	tok := sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload")
 
 	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("round-trip"), "text/plain")
 	if rr.Code != http.StatusCreated {

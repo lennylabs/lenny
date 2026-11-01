@@ -5,10 +5,32 @@ package sessionserver
 import (
 	"context"
 	"net/http"
+	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
+
+// MintUploadToken issues a token for a seeded row and records its digest and
+// expiry on the row, as session creation does, and returns the token. A token
+// verifies only against its row, so a fixture that wires a verifier mints
+// through this and reuses the returned token for the whole test.
+func MintUploadToken(t *testing.T, store sessionstore.Store, issuer *uploadtoken.Issuer, tenantID, id string) string {
+	t.Helper()
+	tok, parsed, err := issuer.IssueDetailed(id, uploadtoken.DefaultTTL)
+	if err != nil {
+		t.Fatalf("mint upload token: %v", err)
+	}
+	if _, err := store.Update(context.Background(), tenantID, id, func(row *sessionstore.Session) error {
+		row.UploadTokenDigest = parsed.Digest
+		row.UploadTokenExpiry = parsed.Expiry
+		return nil
+	}); err != nil {
+		t.Fatalf("record upload token on the row: %v", err)
+	}
+	return tok
+}
 
 // DriveResumeAndWait drives one resume attempt for the row, as the watchdog's
 // resume_pending sweep does, and waits until the attempt returns. It is the

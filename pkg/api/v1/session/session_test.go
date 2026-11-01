@@ -400,3 +400,26 @@ func TestUploadAndStaleDeriveKeepRefusingInputRequired_spec_15_1(t *testing.T) {
 		}
 	}
 }
+
+// Consumption is derived from the state with no write. `resuming` sits outside
+// AllStates and rows can hold it, so the table appends it.
+//
+// spec: §7.1 (uploadToken format and security properties, Single-use invalidation)
+func TestUploadTokenConsumedByState_spec_7_1(t *testing.T) {
+	for _, s := range append(AllStates(), StateResuming) {
+		want := s != StateCreated && s != StateFinalizing && !IsTerminal(s)
+		if got := UploadTokenConsumed(s); got != want {
+			t.Errorf("UploadTokenConsumed(%s) = %v, want %v", s, got, want)
+		}
+	}
+	for _, s := range []State{StateCreated, StateFinalizing, StateCompleted, StateFailed, StateCancelled, StateExpired} {
+		if UploadTokenConsumed(s) {
+			t.Errorf("UploadTokenConsumed(%s) = true, want false", s)
+		}
+	}
+	for _, s := range []State{StateReady, StateRunning, StateResuming, State("added_later")} {
+		if !UploadTokenConsumed(s) {
+			t.Errorf("UploadTokenConsumed(%s) = false, want true", s)
+		}
+	}
+}

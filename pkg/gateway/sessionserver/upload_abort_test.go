@@ -57,7 +57,7 @@ func TestOverStreamRemovesStagedBlob_spec_7_4_14(t *testing.T) {
 	})
 	seedCreatedSession(t, store, "sess_upload", "acme")
 
-	tok, _ := issuer.Issue("sess_upload", 0)
+	tok := sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload")
 	big := bytes.Repeat([]byte("x"), 200)
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_upload/upload", bytes.NewReader(big))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -95,10 +95,7 @@ func TestUploadAfterFinalizeReturnsChannelClosed_spec_7_4_16(t *testing.T) {
 	seedCreatedSession(t, store, "sess_upload", "acme")
 
 	// Pre-finalize the session by directly mutating the row to `ready`
-	// — the same state the finalize handler transitions to. The
-	// pre-Put precondition reads the stale state from a wrapper that
-	// returns `created`; the post-Put recheck reads the actual row and
-	// must reject.
+	// — the same state the finalize handler transitions to.
 	if _, err := store.Update(context.Background(), "acme", "sess_upload", func(r *sessionstore.Session) error {
 		r.State = session.StateReady
 		return nil
@@ -106,14 +103,14 @@ func TestUploadAfterFinalizeReturnsChannelClosed_spec_7_4_16(t *testing.T) {
 		t.Fatalf("flip to ready: %v", err)
 	}
 
-	// The pre-Put precondition check at the start of handleUpload will
-	// reject the call straight away because the row is already `ready`.
-	// That is the simpler half of F-7.4.16: post-finalize calls to
-	// /upload are rejected. We test that here.
-	tok, _ := issuer.Issue("sess_upload", 0)
+	// The §7.1 token check at the start of handleUpload rejects the call
+	// straight away because the row is already `ready`. That is the simpler
+	// half of F-7.4.16: post-finalize calls to /upload are rejected. We test
+	// that here.
+	tok := sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload")
 	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hi"), "text/plain")
-	if rr.Code != http.StatusConflict {
-		t.Fatalf("/upload after finalize: status %d, want 409; body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusGone || !strings.Contains(rr.Body.String(), "UPLOAD_TOKEN_CONSUMED") {
+		t.Fatalf("/upload after finalize: status %d, want 410 UPLOAD_TOKEN_CONSUMED; body=%s", rr.Code, rr.Body.String())
 	}
 
 	// And no blob was committed (the pre-check fired before any byte
@@ -130,7 +127,7 @@ func TestUploadAfterFinalizeReturnsChannelClosed_spec_7_4_16(t *testing.T) {
 func TestInFlightUploadAbortedByFinalize_spec_7_4_16(t *testing.T) {
 	srv, issuer, _, blobs, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
-	tok, _ := issuer.Issue("sess_upload", 0)
+	tok := sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload")
 
 	// blockingBody emits one byte then blocks until released. The
 	// /upload handler is mid-Read on the blocking call when finalize
@@ -205,7 +202,7 @@ func TestInFlightUploadAbortedByFinalize_spec_7_4_16(t *testing.T) {
 func TestUploadRegisteredAfterFinalizeImmediatelyAborts_spec_7_4_16(t *testing.T) {
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
-	tok, _ := issuer.Issue("sess_upload", 0)
+	tok := sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload")
 
 	// Finalize first.
 	finReq := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_upload/finalize", nil)
@@ -217,12 +214,11 @@ func TestUploadRegisteredAfterFinalizeImmediatelyAborts_spec_7_4_16(t *testing.T
 		t.Fatalf("finalize: status %d, want 200; body=%s", finRR.Code, finRR.Body.String())
 	}
 
-	// Now attempt /upload — the pre-Put precondition check fires
-	// before the abort registry; the spec-mandated channel-closure
-	// surfaces as the precondition error.
+	// Now attempt /upload — the §7.1 token check fires before the abort
+	// registry, and the `ready` row answers as consumed.
 	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hi"), "text/plain")
-	if rr.Code != http.StatusConflict {
-		t.Errorf("post-finalize /upload: status %d, want 409; body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusGone || !strings.Contains(rr.Body.String(), "UPLOAD_TOKEN_CONSUMED") {
+		t.Errorf("post-finalize /upload: status %d, want 410 UPLOAD_TOKEN_CONSUMED; body=%s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -267,7 +263,7 @@ func countSessionBlobs(t *testing.T, blobs blobstore.Store, tenant, session stri
 func TestUploadOptionalContentHashMatch_spec_7_4_10(t *testing.T) {
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
-	tok, _ := issuer.Issue("sess_upload", 0)
+	tok := sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload")
 
 	// The well-known SHA-256 of "hello world".
 	const matching = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
@@ -290,7 +286,7 @@ func TestUploadOptionalContentHashMatch_spec_7_4_10(t *testing.T) {
 func TestUploadOptionalContentHashMismatch_spec_7_4_10(t *testing.T) {
 	srv, issuer, _, blobs, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
-	tok, _ := issuer.Issue("sess_upload", 0)
+	tok := sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload")
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_upload/upload",
 		bytes.NewReader([]byte("hello world")))
@@ -321,7 +317,7 @@ func TestUploadOptionalContentHashMismatch_spec_7_4_10(t *testing.T) {
 func TestUploadOptionalContentHashCaseInsensitive_spec_7_4_10(t *testing.T) {
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
-	tok, _ := issuer.Issue("sess_upload", 0)
+	tok := sessionserver.MintUploadToken(t, store, issuer, "acme", "sess_upload")
 
 	const upper = "B94D27B9934D3E08A52E52D7DA7DABFAC484EFE37A5380EE9088F7ACE2EFCDE9"
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_upload/upload",

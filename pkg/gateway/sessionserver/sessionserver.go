@@ -22,7 +22,6 @@ package sessionserver
 
 import (
 	"context"
-	"crypto/rand"
 	"net/http"
 	"sync"
 	"time"
@@ -858,16 +857,16 @@ type Options struct {
 
 	// UploadTokenIssuer mints the §7.1 uploadToken stamped on every
 	// successful POST /v1/sessions response. When nil, the server
-	// constructs a default issuer backed by a freshly-generated
-	// random key — production callers always supply their own issuer
-	// so tokens survive a process restart.
+	// constructs a default issuer. The session row authenticates a
+	// token, so a token verifies on any replica whichever issuer
+	// minted it.
 	UploadTokenIssuer *uploadtoken.Issuer
 
 	// UploadTokenVerifier validates the X-Lenny-Upload-Token header
 	// on POST /v1/sessions/{id}/upload calls. When nil, the upload
 	// handler skips validation — useful only in tests that pre-create
-	// session rows directly. Production wires this to the same
-	// KeyRing that backs UploadTokenIssuer.
+	// session rows directly. The verifier authenticates a token against
+	// the digest and expiry on the session row.
 	UploadTokenVerifier *uploadtoken.Verifier
 
 	// UploadTokenTTL overrides the upload-token expiry stamped on every
@@ -1523,8 +1522,8 @@ type Options struct {
 
 	// MaxUploadBytesPerSession is the §11.1 per-session
 	// cumulative upload-size cap: the gateway rejects an upload with 429
-	// QUOTA_EXCEEDED once the sum of all uploads in a session would
-	// exceed this value. The per-file (per-blob) cap is the separate
+	// QUOTA_EXCEEDED once the sum of a session's uploads on the
+	// replica would exceed this value. The per-file (per-blob) cap is the separate
 	// UploadMaxBodyBytes ceiling. Zero leaves the per-session size scope
 	// unlimited. spec: §11.1. F-11.1.6.
 	MaxUploadBytesPerSession int64
@@ -1928,16 +1927,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		TreeTimeout:  opts.TreeRecoveryTreeTimeout,
 	})
 	if s.uploadIssuer == nil {
-		// Default to a freshly-generated random key so the server is
-		// useful in tests. Production callers always wire their own
-		// keyring with the §7.1 rotation timers.
-		var seed [32]byte
-		_, _ = rand.Read(seed[:])
-		ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{
-			KeyID:  "default",
-			Secret: seed[:],
-		})
-		s.uploadIssuer = uploadtoken.NewIssuer(ring, s.clock)
+		s.uploadIssuer = uploadtoken.NewIssuer(nil, s.clock)
 	}
 	if !isolation.IsValid(s.defaultIsoProf) {
 		// spec: §5.3 — honor the dev-mode fallback to `standard`

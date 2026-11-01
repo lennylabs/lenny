@@ -69,10 +69,7 @@ func seedCreatedSession(t *testing.T, srv *Server, id string, clock func() time.
 
 func uploadRequest(t *testing.T, issuer *uploadtoken.Issuer, srv *Server, id, body string, hdrs map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
-	tok, err := issuer.Issue(id, uploadtoken.DefaultTTL)
-	if err != nil {
-		t.Fatalf("mint: %v", err)
-	}
+	tok := MintUploadToken(t, srv.store, issuer, "default", id)
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+id+"/upload", bytes.NewBufferString(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "default")
 	req.Header.Set("X-Lenny-Upload-Token", tok)
