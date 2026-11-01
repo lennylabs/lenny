@@ -184,10 +184,12 @@ func buildAuditChain(tenantID string) []audit.Row {
 			// id is part of the §11.7 item 3 hash tuple, so it must be a
 			// fixed value seeded into audit_log.id (not the column
 			// default) to match the hash computed here.
-			ID:                 fmt.Sprintf("00000000-0000-4000-8000-00000000000%d", i+1),
-			Seq:                uint64(i + 1),
-			TenantID:           tenantID,
-			EventType:          "chaos.audit_probe",
+			ID:       fmt.Sprintf("00000000-0000-4000-8000-00000000000%d", i+1),
+			Seq:      uint64(i + 1),
+			TenantID: tenantID,
+			// The §25.9 list renders each row as OCSF, so the type must have
+			// a §11.7 catalog entry; an unmapped type answers 500.
+			EventType:          "session.force_terminated",
 			EventSchemaVersion: audit.DefaultEventSchemaVersion,
 			Payload:            json.RawMessage(fmt.Sprintf(`{"step":%d}`, i+1)),
 			Timestamp:          base.Add(time.Duration(i) * time.Minute),

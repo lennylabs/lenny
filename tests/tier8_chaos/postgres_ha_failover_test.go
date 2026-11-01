@@ -146,6 +146,11 @@ func TestPostgresHAFailover(t *testing.T) {
 	if err := d.BootstrapTenant(ctx, postgresHATenant); err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
+	// A new tenant defaults to the deny-all §10.6 noEnvironmentPolicy, and
+	// this session names no environment.
+	if err := d.AllowSessionsWithNoEnvironment(ctx, postgresHATenant); err != nil {
+		t.Fatalf("allow sessions with no environment: %v", err)
+	}
 	sess, err := d.CreateAndStart(ctx, postgresHATenant, sessiondriver.EchoRuntimeSidecar)
 	if err != nil {
 		if errors.Is(err, sessiondriver.ErrPoolNotReady) {

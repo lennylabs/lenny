@@ -157,7 +157,13 @@ func startOnce(t testing.TB, binary string, opts Options) (*Process, error) {
 	// §17.4: LENNY_DEV_MODE=true admits the dev headers, the dev trust
 	// hook (AuthArgs), and the unauthenticated surface the integration
 	// tests rely on. An Options.Env entry overrides it.
-	cmd.Env = append(append(os.Environ(), "LENNY_REDIS_ALLOW_INSECURE=true", "LENNY_DEV_MODE=true", stackkey.Env(t)), opts.Env...)
+	// KUBECONFIG names a file that does not exist, so the process has no
+	// Kubernetes client and skips leader election (§25.4). With the inherited
+	// environment it reads the developer's ~/.kube/config, and one left
+	// running by a killed test holds the lenny-ops-leader Lease of whichever
+	// cluster that file selects, away from the replicas deployed there.
+	noKube := "KUBECONFIG=" + filepath.Join(tmp, "no-kubeconfig")
+	cmd.Env = append(append(os.Environ(), noKube, "LENNY_REDIS_ALLOW_INSECURE=true", "LENNY_DEV_MODE=true", stackkey.Env(t)), opts.Env...)
 	// WaitDelay backstops the cleanup path: if SIGINT does not cause the
 	// process to exit within this window, the runtime sends SIGKILL and
 	// closes the inherited stdio pipes so cmd.Wait can return.
