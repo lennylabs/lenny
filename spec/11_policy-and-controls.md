@@ -7,8 +7,8 @@
 | Rate limits (requests/min)           | Global, per-user, per-runtime, per-pool |
 | Concurrency limits (active sessions) | Global, per-user, per-team, per-runtime |
 | Active delegated children            | Per-session, per-user                   |
-| Concurrent uploads                   | Per-session, global                     |
-| Upload size                          | Per-file, per-session                   |
+| Concurrent uploads                   | Per-session, global (each per replica)  |
+| Upload size                          | Per-file, per-session (per replica)     |
 
 **Concurrent-session count.** The concurrency limits in the table above and the per-tenant concurrent-session quota ([Section 11.2](#112-budgets-and-quotas)) count a session from its creation until it reaches a terminal state, except while it is `suspended` ([Section 7.2](07_session-lifecycle.md#72-interactive-session-model)), whether or not it holds its pod. The per-tenant quota counts the tenant's sessions, the per-user limit counts the sessions a user owns within a tenant, the per-runtime limit counts the sessions targeting a runtime within a tenant, and the global limit counts every session. A limit of 0 is disabled. Session creation is refused with `429 QUOTA_EXCEEDED` ([Section 15.1](15_external-api-surface.md#151-rest-api)) when the count of an enabled limit whose scope the new session belongs to is at or above that limit.
 
