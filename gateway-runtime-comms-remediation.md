@@ -4496,6 +4496,30 @@ notes pointing at their successors.
   platform admin registers an existing Secret by `secretRef`, or a tenant admin submits the value through the admin
   API and the gateway writes the Secret. Proposal 0111 cites it and lands after it. Implemented 2026-10-31; tiers 5, 8, and 9 are owed on the merged tree.
 
+**Git and egress design under owner review (2026-11-01).** Proposal 0111 is paused on branch
+`draft/0111-warm-workspace`; do not resume it as staged. Its last run stopped at prune, and the owner is reconsidering
+where git runs. Git in the gateway container needs a memory limit of about 20 GiB plus a measured term per replica.
+
+- Owner direction so far: lean toward a separate git mirror service; Goblet is rejected as unmaintained; pods may have
+  network access to named destinations; egress filtering for all HTTP traffic is wanted; deployers may bring their own
+  proxy; runtimes must be able to `git push`.
+- Orchestrator recommendation, not yet decided: a central egress proxy, because a sidecar cannot enforce under
+  pod-wide NetworkPolicy and a per-node proxy holds multi-tenant policy on agent nodes; a proxy contract with a
+  level 1 for any proxy (per-pool allowlists) and a level 2 where the proxy calls Lenny (per-session policy, revocation,
+  and audit); a git endpoint contract of standard git smart HTTP, defaulting to a small `lenny-git-mirror` on stock git,
+  with the gateway clone as fallback; push in v1 through the proxy with minted repo-scoped tokens, which needs F-4.9.44;
+  and pod identity as a shared prerequisite for private repositories and level 2.
+- Open owner decisions: level 2 in v1 or level 1 first; whether a host without minted tokens (generic `git-https`) may
+  push; and whether a token in the pod for about an hour is acceptable for v1.
+- Facts behind the recommendation: default `restricted` pods have no route to a git host, so push works only on
+  `internet` pools; §26.2 promises an allowlist that §13.2.6 does not provide; pull requests need the host API as well as
+  git; and nodes host pods of different tenants by default.
+
+**Pending work (2026-11-01).** The kind cluster `lenny-e2e` is still at migration 196 with old images; reinstall once
+from `main` and run tiers 5, 8, and 9 for 0110, 0112, and slot reservations. Branch `fix/kind-verify-3cb3523` holds one
+test edit (`81af4b818`) to merge first. The shared gateway key-source proposal (F-7.1.31) is not affected by the review
+above and can start, awaiting the owner's word.
+
 **Defects filed from proposal 0112's unstaged-defect list (2026-10-31).** Proposal 0112 (credential Secrets in a
 dedicated namespace, approved 2026-10-31, implementation pending) lists defects in the shipped tree that it does
 not stage. No existing OPEN BUILD-GAPS entry covered any of them, so each is filed as a new entry. Each was
