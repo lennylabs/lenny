@@ -209,9 +209,9 @@ func newStartFixture(t *testing.T, id string) *startFixture {
 	gate := newLaunchGate()
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	f := &startFixture{
 		id:       id,
@@ -221,7 +221,7 @@ func newStartFixture(t *testing.T, id string) *startFixture {
 		bus:      sessionevents.NewBus(256),
 		gate:     gate,
 		cluster:  cluster,
-		binder:   podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv, grpc.ChainUnaryInterceptor(gate.intercept))),
+		binder:   podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv, grpc.ChainUnaryInterceptor(gate.intercept))),
 	}
 	f.opts = sessionserver.Options{
 		DevTenantHeader:         true,
@@ -229,7 +229,7 @@ func newStartFixture(t *testing.T, id string) *startFixture {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               f.binder,
 		PodRegistry:             f.registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		CoordinationLeaseStore:  f.leases,
 		ReplicaID:               "replica-a",
 		Events:                  f.bus,
@@ -321,7 +321,7 @@ func (f *startFixture) leaseHolder(t *testing.T) string {
 func (f *startFixture) claimBound(t *testing.T) bool {
 	t.Helper()
 	var c lennyv1.SandboxClaim
-	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &c)
+	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &c)
 	if apierrors.IsNotFound(err) {
 		return false
 	}
@@ -333,7 +333,7 @@ func (f *startFixture) claimBound(t *testing.T) bool {
 
 func (f *startFixture) claimPresent(t *testing.T) bool {
 	t.Helper()
-	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &lennyv1.SandboxClaim{})
+	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &lennyv1.SandboxClaim{})
 	if apierrors.IsNotFound(err) {
 		return false
 	}
@@ -560,7 +560,7 @@ func TestStartForeignLeaseHolderFailsTheSession_spec_7_2(t *testing.T) {
 func TestStartLaunchFailureBeforeTheBinderReclaimsByName_spec_7_2(t *testing.T) {
 	t.Parallel()
 	f := newStartFixture(t, "sess-f2")
-	if err := f.cluster.Delete(context.Background(), podBindWarmPool("echo-pool", "echo-tmpl")); err != nil {
+	if err := f.cluster.Delete(context.Background(), podBindWarmPool(t, "echo-pool", "echo-tmpl")); err != nil {
 		t.Fatalf("delete warm pool: %v", err)
 	}
 	if !f.claimPresent(t) {
@@ -796,18 +796,18 @@ func TestServiceModeStartTakesNoLease_spec_10_1_1(t *testing.T) {
 	adapterSrv.Runtime = &podBindRuntime{}
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("svc-pool", "svc-tmpl"),
-		podBindServiceTemplate("svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("svc-sbx-1", "svc-pool", "10.244.3.9"),
+		podBindWarmPool(t, "svc-pool", "svc-tmpl"),
+		podBindServiceTemplate(t, "svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "svc-sbx-1", "svc-pool", "10.244.3.9"),
 	)
 	store := memstore.New()
 	leases := newComponentLeaseStore()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Pools:                   podBindServicePool(t, "svc-pool", "svc-runtime", 8),
 		CoordinationLeaseStore:  leases,
 		ReplicaID:               "replica-a",

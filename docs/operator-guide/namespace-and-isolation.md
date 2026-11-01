@@ -16,12 +16,13 @@ This page covers namespace layout, Pod Security Standards enforcement, RuntimeCl
 
 ## Namespace Layout
 
-Lenny uses three namespaces by default:
+Lenny uses the following namespaces by default:
 
 ```
 lenny-system/           # Gateway, token service, controllers, stores
 lenny-agents/           # Agent pods (runc + gVisor isolation)
 lenny-agents-kata/      # Kata pods (dedicated node pool, microVM isolation)
+lenny-credentials/      # Credential Secrets (credentials.namespace); no pods
 ```
 
 | Namespace | Contents | Isolation Level |
@@ -29,8 +30,33 @@ lenny-agents-kata/      # Kata pods (dedicated node pool, microVM isolation)
 | `lenny-system` | Gateway replicas, Token Service, Warm Pool Controller, PoolScalingController, PgBouncer | Platform infrastructure -- standard Kubernetes security |
 | `lenny-agents` | Agent pods using `standard` (runc) or `sandboxed` (gVisor) RuntimeClass | Default-deny NetworkPolicy; RuntimeClass-aware admission |
 | `lenny-agents-kata` | Agent pods using `microvm` (Kata) RuntimeClass | Default-deny NetworkPolicy; dedicated node pool required |
+| `lenny-credentials` | Credential Secrets; the Helm value `credentials.namespace` names this namespace | `pods: "0"` ResourceQuota; only the Token Service reads and only the gateway writes |
 
 Additional agent namespaces can be added via `.Values.agentNamespaces`. The Helm chart renders NetworkPolicies and admission policies into each namespace.
+
+### Credentials Namespace
+
+The credentials namespace holds credential Secrets and nothing else. The chart renders it under these rules:
+
+- The Namespace carries the `helm.sh/resource-policy: keep` annotation, so `helm uninstall` leaves the namespace and its Secrets in place.
+- A ResourceQuota with `pods: "0"` refuses every pod in the namespace, so no workload mounts a credential Secret.
+- The `lenny-token-service` ServiceAccount holds a namespace-wide `get` on `secrets`, with no `list` or `watch`.
+- The `lenny-gateway` ServiceAccount holds `create`, `update`, `delete`, and `deletecollection` on `secrets`, with no `get`, `list`, `watch`, or `patch`. The gateway reads a stored value only through the Token Service.
+- No other Lenny ServiceAccount holds a verb on `secrets` in the namespace.
+- The two Roles render only when `tokenService.enabled` is true. The Namespace and the ResourceQuota render in every profile.
+- No NetworkPolicy is rendered in the namespace, because no pod runs there.
+
+The chart refuses to render when `credentials.namespace` equals the release namespace or names an `agentNamespaces` entry.
+
+The Token Service can read every Secret in the namespace, so keeping other Secrets out of it is an operator obligation. To check it, a `platform-admin` runs the following listing with Kubernetes `list` on `secrets` in the namespace:
+
+```bash
+lenny-ctl admin credential-pools list-unreferenced-secrets --namespace lenny-credentials
+```
+
+The command prints the Secrets that no credential pool references and whose names lack the reserved `lenny-cred-` prefix. It reads Secret metadata only.
+
+The kept Namespace also keeps Helm's release ownership annotations. A reinstall under a different release name has to delete the Namespace or re-annotate it first. Deleting it deletes the credential Secrets it holds.
 
 ---
 

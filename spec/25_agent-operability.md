@@ -4505,8 +4505,8 @@ The following tools are exposed via the MCP `tools/list` method. Tool names foll
 | `lenny_credential_pool_create` | `POST /v1/admin/credential-pools` | Create a credential pool |
 | `lenny_credential_pool_update` | `PUT /v1/admin/credential-pools/{name}` | Update a credential pool |
 | `lenny_credential_pool_delete` | `DELETE /v1/admin/credential-pools/{name}` | Delete a credential pool (destructive; requires `confirm`) |
-| `lenny_credential_add` | `POST /v1/admin/credential-pools/{name}/credentials` | Add a credential to a pool |
-| `lenny_credential_retire` | `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke` | Retire (revoke) a pool credential. Pool credential rotation is performed by revoking the old credential and adding a replacement via `lenny_credential_add` — see [§4.9](04_system-components.md#49-credential-leasing-service) Credential rotation workflow. |
+| `lenny_credential_add` | `POST /v1/admin/credential-pools/{name}/credentials` | Add a credential to a pool by `secretRef`, `roleArn`, or `secretData` ([§4.9](04_system-components.md#49-credential-leasing-service) Credential Storage Topology) |
+| `lenny_credential_retire` | `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke` | Retire (revoke) a pool credential. Pool credential rotation follows [§4.9](04_system-components.md#49-credential-leasing-service) Credential rotation workflow. |
 | `lenny_runtime_register` | `POST /v1/admin/runtimes` | Register a runtime |
 | `lenny_runtime_update` | `PUT /v1/admin/runtimes/{name}` | Update a runtime |
 | `lenny_runtime_retire` | `DELETE /v1/admin/runtimes/{name}` | Retire a runtime |

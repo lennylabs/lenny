@@ -100,13 +100,43 @@ func preStates() []preState {
 			id := h.StartSession(r)
 			for i := 0; i <= MaxRetries; i++ {
 				Report(t, r, id, string(session.FailureRuntimeCrash))
-				for p := 0; p < 10 && h.Row(id).State == session.StateResumePending; p++ {
-					h.Pass()
-				}
+				h.awaitResumeExit(t, id)
 			}
 			return id
 		}},
 	}
+}
+
+// resumeExitWait bounds awaitResumeExit in wall-clock time. It is a stuck-test
+// limit: the wait ends when the attempt ends.
+const resumeExitWait = time.Minute
+
+// awaitResumeExit returns once the session has left resume_pending and
+// resuming, stepping the clock while the row is resume_pending so the watchdog
+// starts the attempt.
+//
+// The attempt runs on its own goroutine, so a Pass can return with the row
+// still resuming: Settle reads a row that has not moved for 60ms as settled,
+// and a loaded host holds an attempt longer than that. The caller then reports
+// against a resuming row, which the failure funnel refuses because the report
+// names no expected generation, so that report spends no retry and the row
+// never reaches awaiting_client_action (TEST-GAPS T-7.2.16). The clock stands
+// still while the row is resuming, so a slow attempt does not run down the
+// resuming budget.
+func (h *Harness) awaitResumeExit(t *testing.T, id string) {
+	t.Helper()
+	deadline := time.Now().Add(resumeExitWait)
+	for time.Now().Before(deadline) {
+		switch h.Row(id).State {
+		case session.StateResumePending:
+			h.Pass()
+		case session.StateResuming:
+			time.Sleep(5 * time.Millisecond)
+		default:
+			return
+		}
+	}
+	t.Fatalf("session %s still %q after %s", id, h.Row(id).State, resumeExitWait)
 }
 
 // writer is one terminal writer driven through its production caller.

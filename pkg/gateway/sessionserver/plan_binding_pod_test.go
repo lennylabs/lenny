@@ -40,11 +40,11 @@ func newPlanBindPodEnv(t *testing.T, sessionID string) *planBindPodEnv {
 	adapterSrv.Runtime = &podBindRuntime{}
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 	blobs := blobstore.NewMemoryStore(nil)
 	binder.Blobs = blobs
 	staged := blobstore.URI{
@@ -64,7 +64,7 @@ func newPlanBindPodEnv(t *testing.T, sessionID string) *planBindPodEnv {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             podsession.NewRegistry(),
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Blobs:                   blobs,
 	})
 	return &planBindPodEnv{cluster: cluster, store: store, handler: asOwner(srv.Handler()), stagedRef: staged.String()}
@@ -74,7 +74,7 @@ func newPlanBindPodEnv(t *testing.T, sessionID string) *planBindPodEnv {
 func (e *planBindPodEnv) claimPresent(t *testing.T) bool {
 	t.Helper()
 	var claim lennyv1.SandboxClaim
-	err := e.cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim)
+	err := e.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim)
 	return err == nil
 }
 

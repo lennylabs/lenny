@@ -74,6 +74,14 @@
       "type": "object"
     },
     "credentials": {
+      "properties": {
+        "namespace": {
+          "description": "§4.9 credentials namespace: the dedicated namespace that holds credential Secrets only. Must differ from the release namespace and every agentNamespaces entry.",
+          "maxLength": 63,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "type": "string"
+        }
+      },
       "type": "object"
     },
     "delegation": {

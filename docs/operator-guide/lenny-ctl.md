@@ -215,19 +215,22 @@ lenny-ctl preflight --config values.yaml \
 
 | Command | Description | Min Role |
 |---|---|---|
-| `lenny-ctl admin credential-pools list` | List all credential pools | `platform-admin` |
-| `lenny-ctl admin credential-pools get --pool <name>` | Show pool details with health scores | `platform-admin` |
-| `lenny-ctl admin credential-pools add-credential --pool <name> --provider <p>` | Add credential to pool | `platform-admin` |
-| `lenny-ctl admin credential-pools update-credential --pool <name> --credential <id>` | Update a credential | `platform-admin` |
-| `lenny-ctl admin credential-pools remove-credential --pool <name> --credential <id>` | Remove a credential | `platform-admin` |
+| `lenny-ctl admin credential-pools list` | List all credential pools and their status | `tenant-viewer` (own tenant) |
+| `lenny-ctl admin credential-pools get --pool <name>` | Show pool details including per-credential health scores and lease counts | `tenant-viewer` (own tenant) |
+| `lenny-ctl admin credential-pools add-credential --pool <name> --provider <p>` | Add a credential to the pool by `--secret-ref` or `--role-arn`, with `--id` naming the credential. A credential value is added through the admin API `secretData` field ([Credential Secrets](configuration.md#credential-secrets)). | `tenant-admin` (own tenant)¹ |
+| `lenny-ctl admin credential-pools update-credential --pool <name> --credential <id>` | Update a credential | `tenant-admin` (own tenant)¹ |
+| `lenny-ctl admin credential-pools remove-credential --pool <name> --credential <id>` | Remove a credential | `tenant-admin` (own tenant) |
+| `lenny-ctl admin credential-pools list-unreferenced-secrets [--namespace <ns>]` | List the names of the Secrets in the credentials namespace (`--namespace`, default `lenny-credentials`) that no credential pool of any tenant references and whose names lack the reserved `lenny-cred-` prefix. The command reads Secret metadata only. It exits non-zero and lists no name when any call fails or when a stored `secretRef` does not name a Secret in that namespace. | `platform-admin`, plus Kubernetes `list` on `secrets` in the credentials namespace through the current `kubeconfig` context |
+
+¹ Introducing a `secretRef` requires `platform-admin` ([Credential Secrets](configuration.md#credential-secrets)).
 
 ### Emergency Revocation
 
 | Command | Description | Min Role |
 |---|---|---|
-| `lenny-ctl admin credential-pools revoke-credential --pool <name> --credential <id> --reason <r>` | Revoke a single credential (terminates all leases) | `platform-admin` |
-| `lenny-ctl admin credential-pools revoke-pool --pool <name> --reason <r>` | Revoke all credentials in a pool | `platform-admin` |
-| `lenny-ctl admin credential-pools re-enable --pool <name> --credential <id> --reason <r>` | Re-enable a revoked credential | `platform-admin` |
+| `lenny-ctl admin credential-pools revoke-credential --pool <name> --credential <id> --reason <r>` | Revoke a single credential. All active leases are affected: they are terminated in direct mode and denied in place in proxy mode. | `tenant-admin` (own tenant) |
+| `lenny-ctl admin credential-pools revoke-pool --pool <name> --reason <r>` | Revoke all credentials in a pool | `tenant-admin` (own tenant) |
+| `lenny-ctl admin credential-pools re-enable --pool <name> --credential <id> --reason <r>` | Re-enable a revoked credential. Use after rotating the underlying secret at the provider and updating the Kubernetes Secret, or after a credential update carrying `secretData`. | `tenant-admin` (own tenant) |
 
 ---
 
@@ -386,18 +389,21 @@ lenny-ctl admin credential-pools list
 
 ```bash
 # 1. Create new credential at provider
-# 2. Update K8s Secret
+# 2. Create the Secret in the credentials namespace
 kubectl create secret generic anthropic-key-new \
-  -n lenny-system --from-literal=apiKey="sk-ant-new-..."
+  -n <credentials.namespace> --from-literal=apiKey="sk-ant-new-..."
 
 # 3. Add to pool
 lenny-ctl admin credential-pools add-credential \
-  --pool anthropic-prod --provider anthropic_direct
+  --pool anthropic-prod --provider anthropic_direct \
+  --id new-key-id --secret-ref anthropic-key-new
 
 # 4. Remove old credential
 lenny-ctl admin credential-pools remove-credential \
   --pool anthropic-prod --credential old-key-id
 ```
+
+Step 3 introduces a `secretRef`, so it requires `platform-admin`. A `tenant-admin` replaces steps 2 and 3 with an admin API credential addition carrying `secretData`, as [Credential Secrets](configuration.md#credential-secrets) shows.
 
 ### Emergency Response
 

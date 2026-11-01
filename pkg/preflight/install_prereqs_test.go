@@ -208,11 +208,26 @@ func TestUnverifiableEncryptionWarnings_spec_17_6(t *testing.T) {
 	}
 	// The two texts are the two distinct §17.6 rows.
 	if !strings.Contains(EtcdSecretEncryptionWarning, "does not encrypt Secrets in etcd") ||
-		!strings.Contains(EtcdSecretEncryptionWarning, "'etcdctl get /registry/secrets/lenny-system/<name> | hexdump'") {
+		!strings.Contains(EtcdSecretEncryptionWarning, "'etcdctl get /registry/secrets/<credentials namespace>/<name> | hexdump'") {
 		t.Errorf("etcd warning text drifted from §17.6: %q", EtcdSecretEncryptionWarning)
 	}
 	if !strings.Contains(NodeDiskEncryptionWarning, "Node-level disk encryption (LUKS/dm-crypt") ||
 		!strings.Contains(NodeDiskEncryptionWarning, "encrypted scratch volumes.") {
 		t.Errorf("node disk warning text drifted from §17.6: %q", NodeDiskEncryptionWarning)
+	}
+}
+
+// TestEtcdSecretEncryptionWarningNamesCredentialsNamespace pins the etcd
+// verification path to the credentials namespace. Credential Secrets live in
+// that namespace, so the release namespace path would inspect the wrong keys.
+//
+// spec: §17.6 (Packaging and Installation) "etcd Secret encryption (warning)"
+// spec: §4.9 "Production requirement — etcd encryption at rest for Secrets."
+func TestEtcdSecretEncryptionWarningNamesCredentialsNamespace(t *testing.T) {
+	if !strings.Contains(EtcdSecretEncryptionWarning, "/registry/secrets/<credentials namespace>/<name>") {
+		t.Errorf("etcd warning does not name the credentials namespace path: %q", EtcdSecretEncryptionWarning)
+	}
+	if strings.Contains(EtcdSecretEncryptionWarning, "lenny-system") {
+		t.Errorf("etcd warning still names the release namespace: %q", EtcdSecretEncryptionWarning)
 	}
 }

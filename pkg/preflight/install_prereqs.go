@@ -124,7 +124,7 @@ func (c SIEMEndpointCheck) Decide() Decision {
 // text, verbatim from the preflight check table row.
 //
 // spec: §17.6 (Packaging and Installation) "etcd Secret encryption (warning)"
-const EtcdSecretEncryptionWarning = "WARNING: Kubernetes does not encrypt Secrets in etcd by default. Credential pool API keys stored in Kubernetes Secrets (secretRef) are readable in plaintext from etcd snapshots or backups unless EncryptionConfiguration is enabled. Production deployments MUST configure EncryptionConfiguration with aescbc/aesgcm/kms for the 'secrets' resource type. Cloud-managed clusters: enable envelope encryption via AWS KMS (EKS), GCP Cloud KMS (GKE), or Azure Key Vault (AKS). Self-managed clusters: verify with 'etcdctl get /registry/secrets/lenny-system/<name> | hexdump'. See Section 4.9."
+const EtcdSecretEncryptionWarning = "WARNING: Kubernetes does not encrypt Secrets in etcd by default. Credential pool API keys stored in Kubernetes Secrets (secretRef) are readable in plaintext from etcd snapshots or backups unless EncryptionConfiguration is enabled. Production deployments MUST configure EncryptionConfiguration with aescbc/aesgcm/kms for the 'secrets' resource type. Cloud-managed clusters: enable envelope encryption via AWS KMS (EKS), GCP Cloud KMS (GKE), or Azure Key Vault (AKS). Self-managed clusters: verify with 'etcdctl get /registry/secrets/<credentials namespace>/<name> | hexdump'. See Section 4.9."
 
 // NodeDiskEncryptionWarning is the §17.6 node disk encryption warning text,
 // verbatim from the preflight check table row.

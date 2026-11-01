@@ -12,6 +12,7 @@ import (
 	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
@@ -155,6 +156,9 @@ func hasGitClone(plan workspaceplan.Plan) bool {
 // credential the clone will (§14). A source with no auth block
 // resolves to a zero credential (public). It returns nil when no resolver
 // is wired, leaving public-only resolution unchanged.
+//
+// A resolver error is classified for the §15.1 plan-binding response by
+// classifyVCSCredentialError.
 func (s *Server) vcsCredentialFunc(r *http.Request) workspaceplan.VCSCredentialFunc {
 	if s.vcsCreds == nil {
 		return nil
@@ -166,10 +170,32 @@ func (s *Server) vcsCredentialFunc(r *http.Request) workspaceplan.VCSCredentialF
 		}
 		c, err := s.vcsCreds.Resolve(ctx, tenantID, gc.URL, gc.Auth.LeaseScope)
 		if err != nil {
-			return workspaceplan.VCSCredential{}, err
+			return workspaceplan.VCSCredential{}, classifyVCSCredentialError(err)
 		}
 		return workspaceplan.VCSCredential{Username: c.Username, Token: c.Token}, nil
 	}
+}
+
+// classifyVCSCredentialError maps a VCS credential resolver failure onto the
+// plan-binding failure class. A missing or refused credential
+// (vcscred.ErrNoUsableCredential) and a host binding failure
+// (*credentialpoolstore.VCSResolveError) are returned unchanged, and
+// workspaceplan.PinCommitSHAs wraps them as the non-retryable auth_failed
+// reason (422 GIT_CLONE_REF_UNRESOLVABLE). Every other failure, such as the
+// Token Service being unreachable or its circuit breaker being open, is a
+// failed Secret read that fails closed with the TRANSIENT category, so it is
+// returned as a *workspaceplan.ResolveError with reason network_error, which
+// the handler answers with 503 GIT_CLONE_REF_RESOLVE_TRANSIENT. The
+// classification lives here rather than in vcscred because vcscred imports
+// workspaceplan.
+//
+// spec: §4.9 (Token Service secret resolution), §15.1 (Error codes), §14.
+func classifyVCSCredentialError(err error) error {
+	var bindErr *credentialpoolstore.VCSResolveError
+	if errors.Is(err, vcscred.ErrNoUsableCredential) || errors.As(err, &bindErr) {
+		return err
+	}
+	return &workspaceplan.ResolveError{Reason: workspaceplan.ResolveNetworkError, Err: err}
 }
 
 // checkGitCloneAuthBindings runs the §14 gitClone auth host-to-pool

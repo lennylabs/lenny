@@ -24,7 +24,7 @@ func TestEmitterRegistersAndServesCatalog(t *testing.T) {
 	emitter.IncErrors("exchange", "invalid_grant")
 	emitter.IncRateLimited("caller_per_second")
 	emitter.IncRateLimitedSampled("caller_per_second")
-	emitter.IncSecretReload("success")
+	emitter.IncCredentialSecretRead("success")
 	// §16.1 / §16.5 — the 5xx counter feeds the TokenStoreUnavailable
 	// alert. F-13.3.4.
 	emitter.Inc5xx("token_store_unavailable")
@@ -78,5 +78,37 @@ func TestEmitterSetTimeDriftRoundTrips(t *testing.T) {
 	body, _ = io.ReadAll(w.Body)
 	if !strings.Contains(string(body), "lenny_time_drift_seconds 1.75") {
 		t.Fatalf("/metrics missing updated drift gauge:\n%s", body)
+	}
+}
+
+// spec: §16.1 (lenny_token_service_secret_reloads_total), §4.9 Token Service
+// secret resolution rule 5. The counter counts credential Secret reads and
+// probes by outcome and carries no Secret-name label, so each of the four
+// outcomes renders as a series labelled by outcome alone.
+func TestEmitterCredentialSecretReadOutcomes(t *testing.T) {
+	emitter, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for _, o := range []string{"success", "not_found", "denied", "unavailable"} {
+		emitter.IncCredentialSecretRead(o)
+	}
+	emitter.IncCredentialSecretRead("not_found")
+	w := httptest.NewRecorder()
+	emitter.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
+	body, _ := io.ReadAll(w.Body)
+	for _, want := range []string{
+		`lenny_token_service_secret_reloads_total{outcome="success"} 1`,
+		`lenny_token_service_secret_reloads_total{outcome="not_found"} 2`,
+		`lenny_token_service_secret_reloads_total{outcome="denied"} 1`,
+		`lenny_token_service_secret_reloads_total{outcome="unavailable"} 1`,
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("/metrics missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(string(body), `lenny_token_service_secret_reloads_total{secret`) ||
+		strings.Contains(string(body), `secret_name=`) {
+		t.Errorf("secret reads counter carries a Secret-name label:\n%s", body)
 	}
 }

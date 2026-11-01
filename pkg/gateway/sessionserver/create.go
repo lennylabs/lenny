@@ -156,12 +156,13 @@ func (s *Server) createAdmissionGates(w http.ResponseWriter, r *http.Request, re
 
 // validateAndBuildCreateRow runs the §5.3 isolation-profile, §15.1
 // pool-draining, §14 workspace-plan, §7.5 setup-command, and §7.3
-// retry-policy validation, resolves the §7.1 isolation level, and
+// retry-policy validation, runs the §4.8 PreRoute and PostRoute chains around
+// the §10.7 ExperimentRouter, resolves the §7.1 isolation level, and
 // assembles the persisted session row (retention/resume deadlines, §14
 // request-envelope fields, §27.6 playground caps, and the §10.7 experiment
 // variant). It returns the built row and the createBuild the persist and
 // response stages consume, writing the §15.1 error envelope and returning
-// ok=false on any rejection. spec: §5.3, §15.1, §14, §7.5, §7.3, §7.1, §10.7.
+// ok=false on any rejection. spec: §4.8, §5.3, §15.1, §14, §7.5, §7.3, §7.1, §10.7.
 func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Request, req CreateSessionRequest, tenantID, owner string, span trace.Span) (sessionstore.Session, createBuild, bool) {
 	// §5.3 isolation profile: explicit override > §5.3 default. The
 	// minimal gateway does not yet resolve pools, so any explicit
@@ -183,14 +184,6 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 	// pool resolution on this create defers to the pool (effective requested
 	// profile empty) rather than the deployment default. F-CS2 (0018).
 	effProf := effectiveRequestedProfile(req.IsolationProfile, isoProf, req.Pool)
-
-	// spec: §15.1 — reject a create that would select a pool in
-	// the `draining` phase with 503 POOL_DRAINING + Retry-After before any
-	// pod claim. The gate resolves the same pool the session would bind
-	// to; it is inert in the Postgres-only posture (no pool binding). F-15.1.8.
-	if !s.requirePoolNotDraining(w, r, req.RuntimeRef, effProf, req.Pool) {
-		return sessionstore.Session{}, createBuild{}, false
-	}
 
 	// §14 workspace plan: parse + validate when present. Absent plan
 	// is admitted (the session starts with an empty workspace, the
@@ -224,6 +217,27 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 	if req.RetryPolicy != nil {
 		clamped := session.ClampRetryPolicy(req.RetryPolicy, s.retryPolicyCaps)
 		effectiveRetry = &clamped
+	}
+
+	// spec: §4.8 — the PreRoute segment below the ExperimentRouter pivot,
+	// which runs after the PostAuth chain in createAdmissionGates and before
+	// runtime selection, as on the create-and-start path. Everything below
+	// reads req.RuntimeRef, so this local copy of the request carries the
+	// runtime the segment selected: the pool gates, the isolation level, and
+	// the §14 envelope all judge the runtime the session continues with. The
+	// owner is the §10.2 session owner, which a MODIFY cannot alter.
+	runtimeRef, ok := s.preRouteBeforeExperiment(w, r, tenantID, owner, req.RuntimeRef)
+	if !ok {
+		return sessionstore.Session{}, createBuild{}, false
+	}
+	req.RuntimeRef = runtimeRef
+
+	// spec: §15.1 — reject a create that would select a pool in
+	// the `draining` phase with 503 POOL_DRAINING + Retry-After before any
+	// pod claim. The gate resolves the same pool the session would bind
+	// to; it is inert in the Postgres-only posture (no pool binding). F-15.1.8.
+	if !s.requirePoolNotDraining(w, r, req.RuntimeRef, effProf, req.Pool) {
+		return sessionstore.Session{}, createBuild{}, false
 	}
 
 	// spec: §7.1 — resolve the pool-derived isolation level
@@ -298,6 +312,17 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 	if !s.routeExperiment(w, r, &row) {
 		return sessionstore.Session{}, createBuild{}, false
 	}
+	// spec: §4.8 — the PreRoute segment at or above the ExperimentRouter
+	// pivot; a runtime-hint MODIFY here is the last word on the runtime.
+	if !s.preRouteAfterExperiment(w, r, &row, effProf, req.Pool) {
+		return sessionstore.Session{}, createBuild{}, false
+	}
+	// spec: §15.1 — the drain gate above judged the runtime before the
+	// ExperimentRouter and the later PreRoute segment ran, so a runtime
+	// either one selected is judged here, before any pod claim. F-15.1.8.
+	if row.RuntimeRef != req.RuntimeRef && !s.requirePoolNotDraining(w, r, row.RuntimeRef, effProf, req.Pool) {
+		return sessionstore.Session{}, createBuild{}, false
+	}
 	// spec: §7.5 Setup Commands (Command policy); §5.1 — the client's
 	// setup commands are checked against the setupCommandPolicy of the
 	// session's runtime, the one routing selected (row.RuntimeRef), before
@@ -317,6 +342,11 @@ func (s *Server) validateAndBuildCreateRow(w http.ResponseWriter, r *http.Reques
 		if !ok {
 			return sessionstore.Session{}, createBuild{}, false
 		}
+	}
+	// spec: §4.8 — the PostRoute chain, after runtime selection and before
+	// any pod claim, as on the create-and-start path. F-4.8.25.
+	if !s.postRouteAfterSelection(w, r, &row) {
+		return sessionstore.Session{}, createBuild{}, false
 	}
 
 	// spec: §14 — the §14 plan-parse warnings and the

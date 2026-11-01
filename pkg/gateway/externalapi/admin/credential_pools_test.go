@@ -34,7 +34,7 @@ func validCredentialPool(tenant, name string) admin.CredentialPoolPayload {
 		Name:     name,
 		Provider: "anthropic_direct",
 		Credentials: []admin.CredentialEntryPayload{
-			{ID: "key-1", SecretRef: "lenny-system/anthropic-key-1"},
+			{ID: "key-1", SecretRef: "anthropic-key-1"},
 		},
 		AssignmentStrategy:    "least-loaded",
 		MaxConcurrentSessions: 10,
@@ -249,11 +249,20 @@ func TestCreateCredentialPoolRejectsInvalidCachePolicy(t *testing.T) {
 	}
 }
 
+// poolWithoutRefs is validCredentialPool with no credential entries, so a
+// caller without platform-admin introduces no secretRef (§4.9 Registering
+// a Secret by reference).
+func poolWithoutRefs(tenant, name string) admin.CredentialPoolPayload {
+	p := validCredentialPool(tenant, name)
+	p.Credentials = nil
+	return p
+}
+
 func TestCreateCredentialPoolAsTenantAdmin(t *testing.T) {
 	router, store := newCredentialPoolAdmin(t)
 	// A tenant-admin omits tenantId — the call targets their own tenant.
 	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/credential-pools",
-		validCredentialPool("", "p1"), withTenantAdminPrincipal)
+		poolWithoutRefs("", "p1"), withTenantAdminPrincipal)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("tenant-admin create: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -267,7 +276,7 @@ func TestCreateCredentialPoolTenantAdminScopedToOwnTenant(t *testing.T) {
 	// A tenant-admin of "acme" supplies tenantId "globex"; §10.2 scoping
 	// pins the pool to their own tenant regardless of the body.
 	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/credential-pools",
-		validCredentialPool("globex", "p1"), withTenantAdminPrincipal)
+		poolWithoutRefs("globex", "p1"), withTenantAdminPrincipal)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body %s", rr.Code, rr.Body.String())
 	}
@@ -377,9 +386,12 @@ func TestUpdateCredentialPoolReplacesFields(t *testing.T) {
 	router, store := newCredentialPoolAdmin(t)
 	if err := store.Create(context.Background(), credentialpoolstore.CredentialPool{
 		TenantID: "acme", Name: "p1", Provider: "anthropic_direct", MaxConcurrentSessions: 5,
+		Credentials: []credentialpoolstore.Credential{{ID: "key-1", SecretRef: "lenny-credentials/anthropic-key-1"}},
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	// The body resubmits the stored ref in bare form, which is the same
+	// canonical ref and so no introduction: a tenant-admin may send it.
 	body := validCredentialPool("", "p1")
 	body.MaxConcurrentSessions = 25
 	rr := doAdminReq(t, router.Handler(), http.MethodPut, "/v1/admin/credential-pools/p1",
@@ -427,7 +439,8 @@ func TestCredentialPoolRejectsNonAdmin(t *testing.T) {
 
 // §10.2: credential-pool endpoints are gated on manage_credential_pools.
 // A tenant custom role that holds the permission is admitted; one that
-// does not is rejected.
+// does not is rejected. §4.9: the permission does not let the custom role
+// introduce a secretRef, which needs platform-admin.
 func TestCredentialPoolCustomRoleEnforcement(t *testing.T) {
 	store := credentialpoolstore.NewMemory()
 	roles := customrolestore.NewMemory()
@@ -445,9 +458,14 @@ func TestCredentialPoolCustomRoleEnforcement(t *testing.T) {
 
 	asCredAdmin := func(req *http.Request) *http.Request { return withRolesFor(req, "acme", "cred-admin") }
 	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/credential-pools",
-		validCredentialPool("acme", "p1"), asCredAdmin)
+		poolWithoutRefs("acme", "p1"), asCredAdmin)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("custom role with manage_credential_pools: got %d, want 201 (body=%s)", rr.Code, rr.Body.String())
+	}
+	rr = doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/credential-pools",
+		validCredentialPool("acme", "p2"), asCredAdmin)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("custom role introducing a secretRef: got %d, want 403 (body=%s)", rr.Code, rr.Body.String())
 	}
 
 	asUsageViewer := func(req *http.Request) *http.Request { return withRolesFor(req, "acme", "usage-viewer") }

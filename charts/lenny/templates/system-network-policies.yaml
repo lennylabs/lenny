@@ -205,10 +205,10 @@ spec:
 {{/*
 allow-token-service re-admits the §4.3 Token Service flows the §13.2
 default-deny otherwise blocks: ingress from the gateway pods on the
-mTLS gRPC port, and egress to PgBouncer, Redis, the KMS endpoint, and
-kube-system CoreDNS. Redis is matched by component label for the
-self-managed profile; an external Redis is reached by a deployer-added
-CIDR rule.
+mTLS gRPC port, and egress to PgBouncer, Redis, the KMS endpoint, the
+kube-apiserver, and kube-system CoreDNS. Redis is matched by component
+label for the self-managed profile; an external Redis is reached by a
+deployer-added CIDR rule.
 */}}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -272,6 +272,18 @@ spec:
       ports:
         - port: 443
           protocol: TCP
+    # §13.2.4 / §4.9: the admin-time Secret probe and every credential
+    # Secret read are one kube-apiserver get. The CIDR is operator-tunable,
+    # bounded by the kubeApiServerPorts rule, exactly as in
+    # allow-controller-egress.
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.kubeApiServerCIDR | quote }}
+      ports:
+        {{- range .Values.kubeApiServerPorts }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
     - to:
         - namespaceSelector:
             matchLabels:

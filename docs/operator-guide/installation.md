@@ -170,7 +170,7 @@ kubectl label namespace lenny-agents-kata \
 
 ### Step 3: Create Infrastructure Secrets
 
-Create Kubernetes Secrets for credential material before installing the chart:
+Create Kubernetes Secrets for the infrastructure connections before installing the chart:
 
 ```bash
 # Postgres connection (if not using Helm values directly)
@@ -182,12 +182,9 @@ kubectl create secret generic lenny-postgres \
 kubectl create secret generic lenny-redis \
   -n lenny-system \
   --from-literal=dsn="rediss://:password@redis:6380"
-
-# LLM provider credentials (one Secret per credential)
-kubectl create secret generic lenny-anthropic-key-1 \
-  -n lenny-system \
-  --from-literal=apiKey="sk-ant-..."
 ```
+
+LLM provider credentials are added after the install, because the `credentialPools: []` entry in the values below references none. [Credential Pools](configuration.md#credential-pools) describes how to add them.
 
 ### Step 4: Create values.yaml
 

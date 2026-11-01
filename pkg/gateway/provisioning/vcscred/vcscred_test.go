@@ -39,7 +39,7 @@ func githubPool() credentialpoolstore.CredentialPool {
 		Provider:     "github",
 		HostPatterns: []string{"github.com"},
 		Credentials: []credentialpoolstore.Credential{
-			{ID: "c1", SecretRef: "lenny-system/gh-token"},
+			{ID: "c1", SecretRef: "gh-token"},
 		},
 	}
 }
@@ -63,7 +63,7 @@ func TestResolvePublicSourceIsZeroCredential(t *testing.T) {
 func TestResolveAuthenticatedReturnsToken(t *testing.T) {
 	r := &StoreResolver{
 		Pools:   fakePools{pools: []credentialpoolstore.CredentialPool{githubPool()}},
-		Secrets: fakeSecrets{byRef: map[string]string{"lenny-system/gh-token": "ghs_abc123"}},
+		Secrets: fakeSecrets{byRef: map[string]string{"gh-token": "ghs_abc123"}},
 	}
 	cred, err := r.Resolve(context.Background(), "acme", "https://github.com/acme/repo.git", "vcs.github.read")
 	if err != nil {
@@ -101,7 +101,7 @@ func TestResolveNoUsableCredential(t *testing.T) {
 	pool.Credentials[0].Status = credentialpoolstore.CredentialRevoked
 	r := &StoreResolver{
 		Pools:   fakePools{pools: []credentialpoolstore.CredentialPool{pool}},
-		Secrets: fakeSecrets{byRef: map[string]string{"lenny-system/gh-token": "ghs_abc123"}},
+		Secrets: fakeSecrets{byRef: map[string]string{"gh-token": "ghs_abc123"}},
 	}
 	_, err := r.Resolve(context.Background(), "acme", "https://github.com/acme/repo.git", "vcs.github.read")
 	if !errors.Is(err, ErrNoUsableCredential) {
@@ -114,7 +114,7 @@ func TestResolveNoUsableCredential(t *testing.T) {
 func TestResolveEmptySecretIsNoUsableCredential(t *testing.T) {
 	r := &StoreResolver{
 		Pools:   fakePools{pools: []credentialpoolstore.CredentialPool{githubPool()}},
-		Secrets: fakeSecrets{byRef: map[string]string{"lenny-system/gh-token": "   "}},
+		Secrets: fakeSecrets{byRef: map[string]string{"gh-token": "   "}},
 	}
 	_, err := r.Resolve(context.Background(), "acme", "https://github.com/acme/repo.git", "vcs.github.read")
 	if !errors.Is(err, ErrNoUsableCredential) {

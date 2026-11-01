@@ -316,6 +316,15 @@ type Router struct {
 
 	credentialRekey CredentialRekeyer
 	secretProber    SecretAccessProber
+	// secretWriter writes and deletes Lenny-written credential Secrets.
+	// Nil when no Token Service is configured, which refuses every write
+	// that needs a Secret operation (§4.9 Credential values submitted
+	// through the admin API rule 6).
+	secretWriter CredentialSecretWriter
+
+	// credNS is the §4.9 credentials namespace every credential-pool
+	// secretRef is parsed against (Options.CredentialsNamespace).
+	credNS string
 
 	// caRotation drives the §10.3 CA-rotation state machine. Nil leaves
 	// the /v1/admin/ca-rotation routes unregistered (mTLS PKI disabled).
@@ -477,6 +486,15 @@ type Options struct {
 	// --session-primary-read-timeout flag; zero uses
 	// sessionstore.DefaultPrimaryReadTimeout. spec: §12.3, §11.4.
 	PrimaryReadTimeout time.Duration
+
+	// CredentialsNamespace is the §4.9 credentials namespace, sourced from
+	// the gateway --credentials-namespace flag. The credential-pool handlers
+	// and the bootstrap seed parse every submitted secretRef against it and
+	// store the canonical "<namespace>/<name>" form. The value is resolved
+	// with credential.ResolveNamespace, so empty selects
+	// credential.DefaultNamespace, the flag's default.
+	// spec: §4.9 (Credential Storage Topology).
+	CredentialsNamespace string
 }
 
 // NewRouter returns a Router. Pass nil for opts to use the defaults.
@@ -485,6 +503,7 @@ func NewRouter(tenants tenantstore.Store, opts Options) *Router {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
+	credNS := credential.ResolveNamespace(opts.CredentialsNamespace)
 	return &Router{
 		tenants:             tenants,
 		clock:               clock,
@@ -495,6 +514,7 @@ func NewRouter(tenants tenantstore.Store, opts Options) *Router {
 		billingAuditDDLPool: opts.BillingAuditDDLPool,
 		primaryDDLPool:      opts.PrimaryDDLPool,
 		primaryReadTimeout:  opts.PrimaryReadTimeout,
+		credNS:              credNS,
 	}
 }
 

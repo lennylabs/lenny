@@ -65,9 +65,9 @@ func launchServer(t *testing.T, store sessionstore.Store, id string, maxFinalizi
 	adapterSrv.Runtime = &podBindRuntime{}
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	registry := podsession.NewRegistry()
 	dial := podBindAdapterDialer(t, adapterSrv, grpc.ChainUnaryInterceptor(probe.intercept))
@@ -75,9 +75,9 @@ func launchServer(t *testing.T, store sessionstore.Store, id string, maxFinalizi
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return id },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(cluster, dial),
+		PodBinder:               podBindBinder(t, cluster, dial),
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		MaxFinalizing:           maxFinalizing,
 	})
 	return srv, registry, cluster
@@ -242,7 +242,7 @@ func countingBinder(t *testing.T, calls *int) *podsession.Binder {
 	}).Build()
 	return &podsession.Binder{
 		Client:    c,
-		Namespace: podTestNS,
+		Namespace: testNS(t),
 		DialAdapter: func(string) (*adapterclient.Client, error) {
 			count()
 			return nil, errors.New("no adapter")
@@ -274,7 +274,7 @@ func TestLaunchReadsTheRowFromThePrimary_spec_5_2(t *testing.T) {
 			DefaultIsolationProfile: isolation.ProfileSandboxed,
 			PodBinder:               countingBinder(t, &calls),
 			PodRegistry:             podsession.NewRegistry(),
-			AgentNamespace:          podTestNS,
+			AgentNamespace:          testNS(t),
 		})
 		rr := postSessionStep(t, asOwner(srv.Handler()), "/v1/sessions/sess-lagging/start", nil)
 		if rr.Code != http.StatusConflict {
@@ -300,7 +300,7 @@ func TestLaunchReadsTheRowFromThePrimary_spec_5_2(t *testing.T) {
 			DefaultIsolationProfile: isolation.ProfileSandboxed,
 			PodBinder:               countingBinder(t, &calls),
 			PodRegistry:             podsession.NewRegistry(),
-			AgentNamespace:          podTestNS,
+			AgentNamespace:          testNS(t),
 		})
 		_, err := srv.MaterializeDelegatedChild(context.Background(), "acme", "child-lagging")
 		var guard *sessionserver.DelegatedChildNotCreatedError

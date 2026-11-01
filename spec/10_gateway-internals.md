@@ -301,7 +301,7 @@ Authentication alone is not sufficient for multi-tenant deployments. The platfor
 | Read other users' sessions (same tenant)       |        Yes        |       Yes        |    Yes (read-only)       |         No         |            No            |
 | Manage runtimes                                | Yes (all tenants) | Yes (own tenant) | Read-only (own tenant)   |         No         |            No            |
 | Manage pools / scaling policies                | Yes (all tenants) | Yes (own tenant) | Read-only (own tenant)   |         No         |            No            |
-| Manage credential pools                        | Yes (all tenants) | Yes (own tenant) | Read-only (own tenant)   |         No         |            No            |
+| Manage credential pools                        | Yes (all tenants) | Yes (own tenant)¹ | Read-only (own tenant)   |         No         |            No            |
 | View usage / metering                          | Yes (all tenants) | Yes (own tenant) |    Yes (own tenant)      | Yes (own tenant)   |            No            |
 | Manage quotas                                  | Yes (all tenants) | Yes (own tenant) | Read-only (own tenant)   |         No         |            No            |
 | Manage users / role assignments                | Yes (all tenants) | Yes (own tenant) |            No            |         No         |            No            |
@@ -314,6 +314,8 @@ Authentication alone is not sufficient for multi-tenant deployments. The platfor
 | Issue billing corrections (operator-initiated) |        Yes        |        No        |            No            |         No         |            No            |
 | Manage platform-wide settings                  |        Yes        |        No        |            No            |         No         |            No            |
 | Access other tenants' data                     |        Yes        |        No        |            No            |         No         |            No            |
+
+¹ Introducing a `secretRef` into a credential pool requires `platform-admin` ([Section 4.9](04_system-components.md#49-credential-leasing-service) **Registering a Secret by reference.**).
 
 **Session ownership.** Every session has one owner, and the following rules govern who reads and who acts on it.
 

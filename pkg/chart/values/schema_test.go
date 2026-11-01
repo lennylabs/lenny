@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -173,6 +174,24 @@ func TestRejectsDevTenantIDPattern_spec_17_6_373(t *testing.T) {
 	}
 	if err := ValidateYAML(schema, []byte("playground:\n  devTenantId: acme\n")); err != nil {
 		t.Errorf("expected a valid devTenantId to pass: %v", err)
+	}
+}
+
+// TestCredentialsNamespacePattern pins credentials.namespace to a DNS label:
+// an empty value would leave the Token Service and the gateway with no
+// credentials namespace, and the section's other keys stay accepted.
+//
+// spec: §4.9 "Credentials namespace.", §17.6.
+func TestCredentialsNamespacePattern_spec_4_9(t *testing.T) {
+	schema := mustSchema(t)
+	for _, bad := range []string{`""`, "Bad_Namespace", strings.Repeat("a", 64)} {
+		if err := ValidateYAML(schema, []byte("credentials:\n  namespace: "+bad+"\n")); err == nil {
+			t.Errorf("expected credentials.namespace %s to be rejected", bad)
+		}
+	}
+	doc := "credentials:\n  namespace: acme-credentials\n  expiryWarningLeadSeconds: 60\n"
+	if err := ValidateYAML(schema, []byte(doc)); err != nil {
+		t.Errorf("expected a valid credentials section to pass: %v", err)
 	}
 }
 

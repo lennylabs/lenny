@@ -79,11 +79,11 @@ func newRebindFixture(t *testing.T, id string, noIdlePod bool) *rebindFixture {
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 	objs := []client.Object{
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 	}
 	if !noIdlePod {
-		objs = append(objs, podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"))
+		objs = append(objs, podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"))
 	}
 	f := &rebindFixture{
 		store:    memstore.New(),
@@ -96,9 +96,9 @@ func newRebindFixture(t *testing.T, id string, noIdlePod bool) *rebindFixture {
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return id },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               podBindBinder(f.cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodBinder:               podBindBinder(t, f.cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             f.registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Executor:                f.exec,
 		CoordinationLeaseStore:  f.leases,
 		ReplicaID:               "rep-1",
@@ -259,7 +259,7 @@ func TestResumeAgainstForeignLeaseHolderHoldsRow_spec_15_1(t *testing.T) {
 				t.Errorf("lease holder = %q, want rep-2", h)
 			}
 			var claim lennyv1.SandboxClaim
-			err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim)
+			err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim)
 			if err == nil && claim.Status.Phase == string(claimstate.Bound) {
 				t.Errorf("claim-sbx-1 bound, want no pod claimed by a replica without the lease")
 			} else if err != nil && !apierrors.IsNotFound(err) {

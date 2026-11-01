@@ -457,6 +457,11 @@ spec:
           args:
             - --addr=:{{ .Values.gateway.internalPort }}
             - --grpc-addr=:{{ .Values.gateway.grpcPort }}
+            # §4.9 **Secret references.** rule 2: the namespace every
+            # credential secretRef is canonicalized into. It renders in every
+            # profile because the admin handlers parse refs with or without a
+            # Token Service.
+            - --credentials-namespace={{ include "lenny.credentialsNamespace" . }}
             # §8.6 — deployment-default auto-mode lease-extension
             # rate limit. Rendered only when set; 0/unset keeps the spec
             # default of no limit. F-8.6.7.

@@ -49,10 +49,10 @@ nodes:
 # pod's connection to the apiserver ClusterIP 10.x.0.1 lands on a
 # neighboring cluster's node and times out). The e2e cluster therefore pins
 # distinct ranges so its routes never collide with a default-CIDR cluster
-# sharing the bridge. The service range stays inside 10.96.0.0/12 so the
-# chart's broad-egress NetworkPolicies (to: 10.96.0.0/12 on 443/6443, which
-# admit the apiserver ClusterIP) keep admitting the apiserver without a
-# policy edit; 10.97.0.0/16 is a subnet of 10.96.0.0/12.
+# sharing the bridge. The service range stays inside the chart default
+# kubeApiServerCIDR, 10.96.0.0/12. kindnet evaluates egress NetworkPolicy
+# after the DNAT rewrite, so e2e-values.yaml sets kubeApiServerCIDR to the
+# node bridge range that holds the apiserver endpoint.
 networking:
   podSubnet: "10.245.0.0/16"
   serviceSubnet: "10.97.0.0/16"

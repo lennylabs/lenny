@@ -482,6 +482,43 @@ tests:
             port: 8081
             protocol: TCP
 
+  # spec: §13.2.4, §4.9. The Token Service reads credential Secrets from the
+  # kube-apiserver, and the default-deny drops that traffic without this rule.
+  - it: allows Token Service egress to the kube-apiserver on every kubeApiServerPorts entry
+    documentSelector:
+      path: metadata.name
+      value: allow-token-service
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - ipBlock:
+                  cidr: 10.96.0.0/12
+            ports:
+              - port: 443
+                protocol: TCP
+              - port: 6443
+                protocol: TCP
+
+  - it: follows custom kubeApiServerCIDR and kubeApiServerPorts on the Token Service rule
+    set:
+      kubeApiServerCIDR: 172.20.0.1/32
+      kubeApiServerPorts: [8443]
+    documentSelector:
+      path: metadata.name
+      value: allow-token-service
+    asserts:
+      - contains:
+          path: spec.egress
+          content:
+            to:
+              - ipBlock:
+                  cidr: 172.20.0.1/32
+            ports:
+              - port: 8443
+                protocol: TCP
+
   - it: follows a custom tokenService.httpPort on the gateway egress rule
     set:
       tokenService.httpPort: 9181

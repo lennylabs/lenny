@@ -168,9 +168,10 @@ var table = map[string]entry{
 	// unavailable, so clients can back off and retry. The session-start
 	// handler emits this code with HTTP 503 + Retry-After.
 	"TOKEN_SERVICE_UNAVAILABLE": {CategoryUpstream, true},
-	// §4.9 admin-time RBAC live-probe. A DENIED/NOT_FOUND
+	// §4.9 admin-time Secret probe. A DENIED/NOT_FOUND
 	// verdict is PERMANENT: the secretRef cannot be read until the
-	// operator patches the Token Service RBAC, so retrying the same
+	// operator creates the Secret in the credentials namespace or, on
+	// DENIED, restores the Token Service Role, so retrying the same
 	// write fails identically.
 	"CREDENTIAL_SECRET_RBAC_MISSING": {CategoryPermanent, false},
 	// §4.9: the probe could not be evaluated (Token Service
@@ -178,6 +179,11 @@ var table = map[string]entry{
 	// timeout). TRANSIENT and retryable; the write was rejected rather
 	// than fail open.
 	"CREDENTIAL_PROBE_UNAVAILABLE": {CategoryTransient, true},
+	// §4.9 Credential values submitted through the admin API rule 6,
+	// §15.1: an admin credential-pool write whose Lenny-written Secret
+	// operation has no writer because no Token Service is configured.
+	// PERMANENT; the same write fails until the Token Service is enabled.
+	"TOKEN_SERVICE_NOT_CONFIGURED": {CategoryPermanent, false},
 	// §4.9, §15.1 — the §4.9 pre-claim check found
 	// no provider in the intersection with an assignable credential, or
 	// the credential pool exhausted at assignment. POLICY, HTTP 503; the

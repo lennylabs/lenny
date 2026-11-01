@@ -499,6 +499,8 @@ graph TB
 
 **`lenny-system` namespace** contains all platform components: gateway replicas, controllers, Token Service, PgBouncer. These components have the Kubernetes role-based access control (RBAC) permissions needed to manage pods, CRDs, and secrets.
 
+**`lenny-credentials` namespace** (the Helm value `credentials.namespace`) holds credential Secrets and runs no pods. The Token Service reads these Secrets, and the gateway writes them. No other platform component has access to them.
+
 **`lenny-agents` namespace** contains agent pods running with standard container isolation (runc) or gVisor sandbox. NetworkPolicies enforce:
 
 - **Default-deny all:** No ingress or egress by default.

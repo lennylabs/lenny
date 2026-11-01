@@ -4223,9 +4223,16 @@ D2), which stays with the upload route proposal.
     ordering the specification does not state, it goes to a proposal. Closed 2026-10-31 by direct fix on
     `fix/finalize-policy-forward`: both create routes check `row.RuntimeRef` after routing and immediately
     before the defaults composition, the position §14.1 rule 1 states. Filed from the fix: F-4.8.25.
-  - [ ] **F-4.8.25** (Medium, filed from F-7.5.16): `POST /v1/sessions` runs no §4.8 PreRoute or PostRoute
-    chain, while create-and-start runs both around the ExperimentRouter. Direct fix after proposal 0110,
-    which edits the create path.
+  - [x] **F-4.8.25** (Medium, filed from F-7.5.16): `POST /v1/sessions` runs no §4.8 PreRoute or PostRoute
+    chain, while create-and-start runs both around the ExperimentRouter. Closed 2026-10-31 by direct fix on
+    `fix/route-chain-create`: both create routes call one set of route helpers, and the drain gate judges the
+    routed runtime. Filed from the fix: F-4.8.26, F-15.1.72, and F-12.9.25.
+  - [ ] **F-4.8.26** (Low, filed from F-4.8.25): the §14 envelope and the §27.6 caps read a runtime that
+    experiment routing or a late PreRoute MODIFY may replace. The order needs specification text, so it goes
+    to a proposal.
+  - [ ] **F-15.1.72** (Medium, filed from F-4.8.25): `POST /v1/sessions/start` has no drain gate. Direct fix.
+  - [ ] **F-12.9.25** (Medium, filed from F-4.8.25): `POST /v1/sessions` does not validate tenant
+    classification. Direct fix.
   - [x] **F-16.1.8** (Medium): `lenny_warmpool_warmup_failure_total` has no warm-up emitter and only the
     `error_type` label, so `PoolScaleoutBlockedByQuota` never fires. The Sandbox reconciler now emits
     `image_pull_error`, `resource_quota_exceeded`, and `node_pressure` with the §16.1 labels, once per
@@ -4484,10 +4491,34 @@ notes pointing at their successors.
     mapping. The tier-9 session owner isolation test assigns its custom role through the bearer role claim
     until the fix lands, and the fix switches it back.
 
-- [ ] **Proposal 0112** (`proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/`): approved
+- [x] **Proposal 0112** (`proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/`): approved
   2026-10-31. Credential Secrets live in a dedicated namespace that the Token Service reads namespace-wide; a
   platform admin registers an existing Secret by `secretRef`, or a tenant admin submits the value through the admin
-  API and the gateway writes the Secret. Proposal 0111 cites it and lands after it. Implementation next.
+  API and the gateway writes the Secret. Proposal 0111 cites it and lands after it. Implemented 2026-10-31; tiers 5, 8, and 9 are owed on the merged tree.
+
+**Git and egress design under owner review (2026-11-01).** Proposal 0111 is paused on branch
+`draft/0111-warm-workspace`; do not resume it as staged. Its last run stopped at prune, and the owner is reconsidering
+where git runs. Git in the gateway container needs a memory limit of about 20 GiB plus a measured term per replica.
+
+- Owner direction so far: lean toward a separate git mirror service; Goblet is rejected as unmaintained; pods may have
+  network access to named destinations; egress filtering for all HTTP traffic is wanted; deployers may bring their own
+  proxy; runtimes must be able to `git push`.
+- Orchestrator recommendation, not yet decided: a central egress proxy, because a sidecar cannot enforce under
+  pod-wide NetworkPolicy and a per-node proxy holds multi-tenant policy on agent nodes; a proxy contract with a
+  level 1 for any proxy (per-pool allowlists) and a level 2 where the proxy calls Lenny (per-session policy, revocation,
+  and audit); a git endpoint contract of standard git smart HTTP, defaulting to a small `lenny-git-mirror` on stock git,
+  with the gateway clone as fallback; push in v1 through the proxy with minted repo-scoped tokens, which needs F-4.9.44;
+  and pod identity as a shared prerequisite for private repositories and level 2.
+- Open owner decisions: level 2 in v1 or level 1 first; whether a host without minted tokens (generic `git-https`) may
+  push; and whether a token in the pod for about an hour is acceptable for v1.
+- Facts behind the recommendation: default `restricted` pods have no route to a git host, so push works only on
+  `internet` pools; §26.2 promises an allowlist that §13.2.6 does not provide; pull requests need the host API as well as
+  git; and nodes host pods of different tenants by default.
+
+**Pending work (2026-11-01).** The kind cluster `lenny-e2e` is still at migration 196 with old images; reinstall once
+from `main` and run tiers 5, 8, and 9 for 0110, 0112, and slot reservations. Branch `fix/kind-verify-3cb3523` holds one
+test edit (`81af4b818`) to merge first. The shared gateway key-source proposal (F-7.1.31) is not affected by the review
+above and can start, awaiting the owner's word.
 
 **Defects filed from proposal 0112's unstaged-defect list (2026-10-31).** Proposal 0112 (credential Secrets in a
 dedicated namespace, approved 2026-10-31, implementation pending) lists defects in the shipped tree that it does
@@ -4544,8 +4575,10 @@ other test in that binary.
     package. Filed from the T-17.4.26 fix (2026-10-27). Fixed in `1edca69df`: the package shares one control
     plane and each test gets its own namespace. The package fell from 237.4 s to 19.4 s. The slowest measured
     unit-tier package is now `pkg/gateway/sessionserver` (T-17.4.27, 198.9 s).
-  - [ ] **T-17.4.27** (Medium): `pkg/gateway/sessionserver` starts a private control plane per test in
+  - [x] **T-17.4.27** (Medium): `pkg/gateway/sessionserver` starts a private control plane per test in
     parallel, and under load one start failed the unit tier with "resource quota evaluation timed out".
+    Fixed on `fix/route-chain-create`: the package shares one control plane and each test gets its own
+    namespace. The package passes in about 105 s, against 198.9 s and 164.4 s recorded at higher load.
   - [x] **T-17.4.23** (Low): `pkg/embedded/stack` starts a control plane in each of 19 tests (127.4 s).
     Fixed in `2a0c51c4a` with no product change: tests whose code takes the namespace, or whose manifest
     the test supplies, use per-test namespaces, and each object at a product-fixed namespace and name has
@@ -4565,8 +4598,13 @@ other test in that binary.
     selects them on their own changes. Survey every `tests/tier*/` directory and add a `validate-maps` check. Direct fix.
     Fixed on `fix/test-infra-gaps`: 104 of 115 tier test directories had no key and each now has one, and
     `validate-maps` fails on a tracked test directory under `tests/tier*/` that no glob key covers.
-  - [ ] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s). It took
-    109.1 s in a scoped unit-tier run on 2026-10-27, the slowest of that run.
+  - [x] **T-17.4.25** (Info): `cmd/lenny-gateway` starts one in 5 tests (about 31 s of 86.4 s). It took
+    109.1 s in a scoped unit-tier run on 2026-10-27, the slowest of that run. Fixed on
+    `fix/route-chain-create`: the package shares one control plane and each test gets its own namespace.
+    The package passes in 63.6 s.
+  - [ ] **T-17.4.49** (Low): a process that exited and is not yet reaped reads as `HolderUnknown`, so
+    `ports.Ready` hands back a process that lost its port. It failed
+    `TestOpsHarnessRestartsOnAnOccupiedAddress` once on 2026-10-31. Direct fix.
   - [x] **T-17.4.29** (Medium): parallel implementation worktrees share the one `lenny-e2e` kind cluster,
     and `tests/testinfra/kind/install.sh` runs the installing branch's migrations against the shared
     Postgres, so branches with different migration sets leave the database ahead of each other or dirty. On

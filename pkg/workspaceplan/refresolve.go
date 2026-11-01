@@ -115,8 +115,14 @@ func (c VCSCredential) IsZero() bool { return c.Token == "" }
 // source at ref-resolution time. The gateway supplies it so the
 // ls-remote that pins a private repo's ref uses the same credential the
 // clone will. It returns a zero VCSCredential for a public source. A
-// non-nil error aborts pinning for that source; PinCommitSHAs wraps it
-// as a ResolveError with the auth_failed reason.
+// non-nil error aborts pinning for that source. A *ResolveError the
+// function returns keeps its Reason, and PinCommitSHAs fills its
+// SourceIndex, URL, and Ref, so the caller can classify a transient
+// credential read (the Token Service unreachable, for example) as
+// network_error. PinCommitSHAs wraps any other error as a ResolveError
+// with the auth_failed reason.
+//
+// spec: §14 (gitClone ref resolution), §4.9 (Token Service secret resolution).
 type VCSCredentialFunc func(ctx context.Context, src GitClone) (VCSCredential, error)
 
 // RefResolver resolves a gitClone source's ref to an immutable commit
@@ -223,11 +229,16 @@ func resolveRef(ctx context.Context, gc GitClone, idx int, resolver RefResolver,
 	if creds != nil {
 		c, err := creds(ctx, gc)
 		if err != nil {
-			// A credential-materialization failure (no usable pool
-			// credential, an unreadable Secret) is a non-retryable
-			// configuration failure, surfaced here so it fails session
-			// creation rather than the later clone — the §14 boundary the
-			// gateway must catch at create time.
+			// A credential-materialization failure is surfaced here so it
+			// fails session creation rather than the later clone, the §14
+			// boundary the gateway must catch at create time. A failure the
+			// credential function classified keeps its reason; any other
+			// (no usable pool credential, a host binding failure) is the
+			// non-retryable auth_failed configuration failure.
+			var re *ResolveError
+			if errors.As(err, &re) {
+				return "", fillResolveError(re, gc, idx)
+			}
 			return "", &ResolveError{
 				SourceIndex: idx, URL: gc.URL, Ref: gc.Ref,
 				Reason: ResolveAuthFailed, Err: err,
@@ -239,14 +250,7 @@ func resolveRef(ctx context.Context, gc GitClone, idx int, resolver RefResolver,
 	if err != nil {
 		var re *ResolveError
 		if errors.As(err, &re) {
-			re.SourceIndex = idx
-			if re.URL == "" {
-				re.URL = gc.URL
-			}
-			if re.Ref == "" {
-				re.Ref = gc.Ref
-			}
-			return "", re
+			return "", fillResolveError(re, gc, idx)
 		}
 		// A resolver that did not classify the failure is treated as a
 		// transient network error — the retryable default.
@@ -263,4 +267,18 @@ func resolveRef(ctx context.Context, gc GitClone, idx int, resolver RefResolver,
 		}
 	}
 	return sha, nil
+}
+
+// fillResolveError stamps a classified ResolveError with the index of the
+// source that failed, and with that source's URL and ref when the error
+// left them empty, so the §15.1 response details name the source.
+func fillResolveError(re *ResolveError, gc GitClone, idx int) *ResolveError {
+	re.SourceIndex = idx
+	if re.URL == "" {
+		re.URL = gc.URL
+	}
+	if re.Ref == "" {
+		re.Ref = gc.Ref
+	}
+	return re
 }

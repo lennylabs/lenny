@@ -181,7 +181,7 @@ credentialPools:
     maxLeases: 50
     credentials:
       - id: key-1
-        secretRef: lenny-system/anthropic-key-1
+        secretRef: anthropic-key-1
 ```
 
 ### Delivery Modes
@@ -395,8 +395,9 @@ The `DedicatedDNSUnavailable` critical alert fires when all dedicated CoreDNS re
 | ServiceAccount | Namespace | Purpose | Key Permissions |
 |---|---|---|---|
 | `lenny-gateway` | `lenny-system` | Gateway replicas | Read/write Sandbox CRDs, read Secrets; KMS `Sign` and `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names |
+| `lenny-gateway` | `credentials.namespace` | Credential Secret writer | `create`, `update`, `delete`, and `deletecollection` on `secrets`, with no `get`, `list`, `watch`, or `patch` |
 | `lenny-controller` | `lenny-system` | Warm Pool Controller | Full Sandbox CRD management |
-| `lenny-token-service` | `lenny-system` | Token Service | KMS decrypt, Secret read; KMS `Sign` and `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names |
+| `lenny-token-service` | `lenny-system` | Token Service | KMS decrypt; namespace-wide `get` on `secrets` in `credentials.namespace`, with no `list` or `watch`; KMS `Sign` and `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names |
 | `lenny-ops-sa` | `lenny-system` | `lenny-ops` | KMS `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names; no `Sign` |
 
 ---
@@ -416,12 +417,12 @@ Every audit event that leaves the Postgres hot tier (SIEM forwarding, pgaudit si
 
 ### Credential-Sensitive Exclusions
 
-RPCs that handle credentials (`AssignCredentials`, `RotateCredentials`) are excluded from:
+RPCs that handle credentials (`AssignCredentials`, `RotateCredentials`, and `ProbeSecretAccess` when its request names a key, because the response then carries a credential value) are excluded from:
 - Payload-level logging
 - gRPC access logs
 - OTel trace span attributes
 
-Only RPC name, lease ID, provider type, and outcome are recorded.
+Only RPC name, lease ID, provider type, Secret name, and outcome are recorded.
 
 ### Audit Chain Integrity
 

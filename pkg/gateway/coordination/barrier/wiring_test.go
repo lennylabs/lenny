@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,8 +37,9 @@ func (fakeRuntime) Output(context.Context, string) (<-chan []byte, error) {
 }
 
 // fencedAdapter returns an in-process adapter with session "s1" started
-// and fenced to generation 9, plus a client dialed to it.
-func fencedAdapter(t *testing.T) (*adapter.Server, *adapterclient.Client) {
+// and fenced to generation 9, plus a client dialed to it. opts configure the
+// adapter's gRPC server.
+func fencedAdapter(t *testing.T, opts ...grpc.ServerOption) (*adapter.Server, *adapterclient.Client) {
 	t.Helper()
 	srv := adapter.New("barrier-wiring-test")
 	srv.WorkspaceBase = t.TempDir()
@@ -45,7 +47,7 @@ func fencedAdapter(t *testing.T) (*adapter.Server, *adapterclient.Client) {
 	srv.Runtime = fakeRuntime{}
 
 	lis := bufconn.Listen(1 << 20)
-	gs := adapter.NewGRPCServer(srv)
+	gs := adapter.NewGRPCServer(srv, opts...)
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
 
@@ -84,6 +86,15 @@ func fencedAdapter(t *testing.T) (*adapter.Server, *adapterclient.Client) {
 // Against the pre-quiesce-and-hold adapter, which self-checkpointed and
 // acked immediately, Send returned a nil error before the window; this
 // test would fail there because it now asserts the held-window deadline.
+//
+// The window closes on both ends of the RPC at nearly the same instant, and
+// either end can finish first. The client's deadline yields DeadlineExceeded.
+// The adapter's yields an ack with an empty checkpoint_ref, which the client
+// returns when that ack is read before its own timer fires. Under host load
+// the second outcome occurs in this test, so it accepts both and holds what
+// both share: the barrier held for the window and no checkpoint was claimed
+// (BUILD-GAPS F-10.1.46 records the two outcomes the gateway can observe, and
+// TestPodDispatcherSendAckAtTheAdapterWindow_spec_10_1_169 drives the second).
 func TestPodDispatcherSendHoldsUntilWindow_spec_10_1_169(t *testing.T) {
 	_, cl := fencedAdapter(t)
 
@@ -98,18 +109,55 @@ func TestPodDispatcherSendHoldsUntilWindow_spec_10_1_169(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	_, err := d.Send(ctx, barrier.Target{
+	ack, err := d.Send(ctx, barrier.Target{
 		TenantID: "acme", SessionID: "s1", CoordinationGeneration: 9,
 	}, "b-1")
 	elapsed := time.Since(start)
-	if err == nil {
-		t.Fatal("Send returned an ack with no gateway-driven stream; the barrier no longer holds quiescence")
-	}
-	if status.Code(err) != codes.DeadlineExceeded {
+	if err != nil && status.Code(err) != codes.DeadlineExceeded {
 		t.Fatalf("Send error = %v, want DeadlineExceeded (the held ack window closed)", err)
+	}
+	if ack.CheckpointRef != "" {
+		t.Fatalf("Send ack carries checkpoint_ref %q with no gateway-driven stream", ack.CheckpointRef)
 	}
 	if elapsed < 400*time.Millisecond {
 		t.Fatalf("Send returned after %s; the barrier did not hold quiescence for the window", elapsed)
+	}
+}
+
+// spec: §10.1 — when the adapter's end of the window closes first, the
+// adapter holds quiescence to its deadline and acks with an empty
+// checkpoint_ref. The interceptor gives the handler a deadline shorter than
+// the client's, which fixes the order the unloaded test leaves to the
+// scheduler, so this path runs on every run.
+func TestPodDispatcherSendAckAtTheAdapterWindow_spec_10_1_169(t *testing.T) {
+	const window = 500 * time.Millisecond
+	_, cl := fencedAdapter(t, grpc.ChainUnaryInterceptor(func(
+		ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler,
+	) (any, error) {
+		if !strings.HasSuffix(info.FullMethod, "/CheckpointBarrier") {
+			return handler(ctx, req)
+		}
+		ctx, cancel := context.WithTimeout(ctx, window)
+		defer cancel()
+		return handler(ctx, req)
+	}))
+	d := &barrier.PodDispatcher{
+		Conn: func(string) (*adapterclient.Client, bool) { return cl, true },
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	start := time.Now()
+	ack, err := d.Send(ctx, barrier.Target{
+		TenantID: "acme", SessionID: "s1", CoordinationGeneration: 9,
+	}, "b-1")
+	if err != nil {
+		t.Fatalf("Send = %v, want the ack the adapter sends at its window", err)
+	}
+	if ack.CheckpointRef != "" {
+		t.Fatalf("Send ack carries checkpoint_ref %q with no gateway-driven stream", ack.CheckpointRef)
+	}
+	if elapsed := time.Since(start); elapsed < window {
+		t.Fatalf("Send returned after %s; the adapter did not hold quiescence for its %s window", elapsed, window)
 	}
 }
 

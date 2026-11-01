@@ -13,7 +13,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
-	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
 // TestPodEndpointListerAgainstAPIServer_spec_5_2_500 exercises the
@@ -23,17 +22,12 @@ import (
 // terminating pods. The pod Ready condition is the readiness signal the
 // statelessslot probe drives and an EndpointSlice mirrors.
 func TestPodEndpointListerAgainstAPIServer_spec_5_2_500(t *testing.T) {
-	env := envtest.Start(t)
 	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
 		t.Fatalf("scheme: %v", err)
 	}
-	cl, err := client.New(env.RESTConfig(), client.Options{Scheme: scheme})
-	if err != nil {
-		t.Fatalf("client: %v", err)
-	}
+	cl, ns := sharedEnvtestClient(t, scheme)
 	ctx := context.Background()
-	const ns = "default"
 	const pool = "acme-stateless"
 
 	// Helper to create a pod and stamp its status (envtest has no kubelet,
@@ -116,17 +110,12 @@ func TestPodEndpointListerAgainstAPIServer_spec_5_2_500(t *testing.T) {
 // lenny.dev/tenant-id on the pod at a given IP, and idempotency on a
 // re-pin.
 func TestPodTenantLabelerAgainstAPIServer_spec_5_2_500(t *testing.T) {
-	env := envtest.Start(t)
 	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
 		t.Fatalf("scheme: %v", err)
 	}
-	cl, err := client.New(env.RESTConfig(), client.Options{Scheme: scheme})
-	if err != nil {
-		t.Fatalf("client: %v", err)
-	}
+	cl, ns := sharedEnvtestClient(t, scheme)
 	ctx := context.Background()
-	const ns = "default"
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

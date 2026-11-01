@@ -1331,7 +1331,7 @@ func generatedToolset() []Tool {
 			Method:        "POST",
 			Path:          "/v1/admin/credential-pools/{name}/credentials/{credId}/re-enable",
 			Category:      "mutation",
-			RequiredRole:  "platform-admin",
+			RequiredRole:  "tenant-admin",
 			Scope:         "tools:credential_pool:write",
 			DryRunSupport: "none",
 			ReadOnly:      false,

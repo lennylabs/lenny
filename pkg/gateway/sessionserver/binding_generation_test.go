@@ -104,9 +104,9 @@ func TestPublishedBindingCarriesRowGeneration_spec_10_1_1(t *testing.T) {
 			DevTenantHeader:         true,
 			IDFunc:                  func() string { return "unused" },
 			DefaultIsolationProfile: isolation.ProfileSandboxed,
-			PodBinder:               podBindBinder(cluster, dial),
+			PodBinder:               podBindBinder(t, cluster, dial),
 			PodRegistry:             registry,
-			AgentNamespace:          podTestNS,
+			AgentNamespace:          testNS(t),
 		})
 		if _, err := srv.MaterializeDelegatedChild(context.Background(), "acme", "child-gen"); err != nil {
 			t.Fatalf("MaterializeDelegatedChild: %v", err)

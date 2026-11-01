@@ -34,10 +34,11 @@ type Config struct {
 	// cleaned up with the test.
 	DataDir string
 	// Port is the loopback TCP port the instance listens on. Zero asks
-	// the kernel for a free ephemeral port at Start time, which lets
-	// concurrent embedded instances (for example parallel test binaries)
-	// avoid fixed-port collisions; the chosen port is then reflected by
-	// Port() and DSN().
+	// the kernel for a free ephemeral port at Start time, and the chosen
+	// port is then reflected by Port() and DSN(). A test passes zero: go
+	// test runs packages in parallel and other worktrees run on the same
+	// host, so two matching fixed ports fail one package with "process
+	// already listening" (TEST-GAPS T-17.4.48).
 	Port uint32
 	// Database, Username, and Password name the bootstrap database
 	// and superuser role created on first start.

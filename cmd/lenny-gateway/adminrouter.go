@@ -299,6 +299,9 @@ func (w *gatewayWiring) buildAdminRouter(
 		// spec: §11.4, §12.3 — bounds the full_revoke primary re-read of a
 		// cancel write that reported an error.
 		PrimaryReadTimeout: *f.sessionPrimaryReadTimeout,
+		// spec: §4.9 — the credentials namespace every credential-pool
+		// secretRef is parsed against and stored canonical in.
+		CredentialsNamespace: f.resolvedCredentialsNamespace(),
 	})).
 		WithKMSProbe(kmsProbeLifecycle).
 		WithRuntimes(w.runtimes).
@@ -923,6 +926,14 @@ func (w *gatewayWiring) buildAdminRouter(
 	// only when at least one envelope-backed store is wired (Postgres).
 	if credentialRekeyJob != nil {
 		adminRouter = adminRouter.WithCredentialRekey(credentialRekeyJob)
+	}
+	// §4.9 Lenny-written credential Secret writer. Wired whenever the Token
+	// Service link is present. A cluster config that cannot be resolved
+	// yields a writer whose every operation fails with 503
+	// SERVICE_UNAVAILABLE; 422 TOKEN_SERVICE_NOT_CONFIGURED applies only
+	// when no Token Service is configured.
+	if w.credentialSecretWriter != nil {
+		adminRouter = adminRouter.WithCredentialSecretWriter(w.credentialSecretWriter)
 	}
 	// §4.9 admin-time RBAC live-probe on credential-pool writes. Wired
 	// only when the Token Service link is present.

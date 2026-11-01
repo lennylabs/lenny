@@ -217,23 +217,26 @@ func (s *GRPCServer) RevokeCredentials(ctx context.Context, req *tokensv1.Revoke
 	return &tokensv1.RevokeCredentialsResponse{}, nil
 }
 
-// SetSecretAccessProber wires the §4.9 admin-time RBAC live-probe onto
-// the gRPC server. With it set, ProbeSecretAccess runs a
-// SelfSubjectAccessReview under the Token Service ServiceAccount. Left
-// unset (the dev path with no in-cluster Kubernetes client),
-// ProbeSecretAccess returns codes.Unavailable so the gateway admin
-// handler maps it to 503 CREDENTIAL_PROBE_UNAVAILABLE and never fails
-// open. spec: §4.9.
+// SetSecretAccessProber wires the §4.9 Token Service credential Secret
+// read onto the gRPC server. With it set, ProbeSecretAccess performs one
+// uncached get in the credentials namespace. Left unset (the dev path with
+// no in-cluster Kubernetes client), ProbeSecretAccess returns
+// codes.Unavailable so the gateway admin handler maps it to 503
+// CREDENTIAL_PROBE_UNAVAILABLE and every keyed read fails closed.
+//
+// spec: §4.9 Token Service secret resolution.
 func (s *GRPCServer) SetSecretAccessProber(p SecretAccessProber) { s.prober = p }
 
-// ProbeSecretAccess answers whether the Token Service ServiceAccount can
-// read the named Kubernetes Secret. It returns a definitive
-// {ALLOWED, DENIED, NOT_FOUND} verdict; a missing prober or any
-// non-deterministic evaluation failure is returned as codes.Unavailable
-// so the caller distinguishes a denied probe (fix RBAC) from a failed
-// probe (fix reachability) and never persists an unprobed secretRef.
+// ProbeSecretAccess reads the named credential Secret. It returns a
+// definitive ALLOWED, DENIED, or NOT_FOUND verdict; a missing prober or any
+// other read failure is returned as codes.Unavailable, so the caller
+// distinguishes a refused read from a failed one and never fails open. The
+// response carries a value only when the request names a key and the
+// verdict is ALLOWED, and no error status ever carries a value. Each call
+// that reaches a read, or finds no prober, records one
+// lenny_token_service_secret_reloads_total outcome.
 //
-// spec: §4.9.
+// spec: §4.9 Token Service secret resolution; §16.1.
 func (s *GRPCServer) ProbeSecretAccess(ctx context.Context, req *tokensv1.ProbeSecretAccessRequest) (resp *tokensv1.ProbeSecretAccessResponse, err error) {
 	defer s.observe("probe_secret_access", time.Now())(&err)
 	if req == nil {
@@ -243,14 +246,21 @@ func (s *GRPCServer) ProbeSecretAccess(ctx context.Context, req *tokensv1.ProbeS
 		return nil, status.Error(codes.InvalidArgument, "secret_name is required")
 	}
 	if s.prober == nil {
+		s.metrics.IncCredentialSecretRead(SecretReadOutcomeUnavailable)
 		return nil, status.Error(codes.Unavailable,
-			"secret-access probe not configured (Token Service has no in-cluster Kubernetes client)")
+			"secret read not configured (Token Service has no in-cluster Kubernetes client)")
 	}
-	verdict, perr := s.prober.ProbeSecretAccess(ctx, req.Namespace, req.SecretName)
+	verdict, value, perr := s.prober.ProbeSecretAccess(ctx, req.SecretName, req.Key)
 	if perr != nil {
-		return nil, status.Errorf(codes.Unavailable, "secret-access probe failed: %v", perr)
+		s.metrics.IncCredentialSecretRead(SecretReadOutcomeUnavailable)
+		return nil, status.Errorf(codes.Unavailable, "secret read failed: %v", perr)
 	}
-	return &tokensv1.ProbeSecretAccessResponse{Verdict: secretVerdictToProto(verdict)}, nil
+	s.metrics.IncCredentialSecretRead(secretReadOutcome(verdict))
+	resp = &tokensv1.ProbeSecretAccessResponse{Verdict: secretVerdictToProto(verdict)}
+	if req.Key != "" && verdict == SecretAccessAllowed {
+		resp.Value = value
+	}
+	return resp, nil
 }
 
 // materializationError returns the *credential.MaterializationError

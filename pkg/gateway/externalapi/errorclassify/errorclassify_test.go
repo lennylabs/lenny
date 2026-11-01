@@ -47,6 +47,11 @@ func TestClassifyKnownCodes(t *testing.T) {
 		// spec: §4.9, §15.1 — a user-only policy with
 		// no registered credential is PERMANENT and not retryable (404).
 		{"USER_CREDENTIAL_NOT_FOUND", CategoryPermanent, false},
+		// spec: §4.9 (Credential values submitted through the admin
+		// API) rule 6, §15.1 — an admin credential-pool write whose
+		// Secret operation finds no writer is PERMANENT and not
+		// retryable (422).
+		{"TOKEN_SERVICE_NOT_CONFIGURED", CategoryPermanent, false},
 		// spec: §11.5 — INVALID_IDEMPOTENCY_KEY is PERMANENT
 		// (key is malformed; the same key will be rejected identically).
 		// F-15.1.30.

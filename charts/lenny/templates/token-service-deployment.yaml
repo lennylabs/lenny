@@ -147,6 +147,9 @@ spec:
             - --oidc-client-id={{ . }}
             {{- end }}
             - --tenant-id-claim={{ .Values.auth.tenantIdClaim }}
+            # §4.9 "Credentials namespace.": the only namespace the Token
+            # Service reads credential Secrets from.
+            - --secret-namespace={{ include "lenny.credentialsNamespace" . }}
             # §4 KMS provider (F-4.3.11 / F-17.5.2). `local` is the
             # dev default; cloud installs set kms.provider to
             # aws | gcp | azure and supply the matching aliases.

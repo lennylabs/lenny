@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -469,7 +470,8 @@ func TestRun_CredentialPurgedBeforeCleanup_integration_spec_5_2_424(t *testing.T
 	}
 	marker := filepath.Join(dir, "leaked")
 
-	rep, err := Run(context.Background(), killSafeOps{DefaultOps{}}, Config{
+	ops := &hostSafeOps{}
+	rep, err := Run(context.Background(), ops, Config{
 		CredentialFiles: []string{cred},
 		CleanupDir:      dir,
 		// If the credential file still existed, `cat` would succeed and the
@@ -491,16 +493,43 @@ func TestRun_CredentialPurgedBeforeCleanup_integration_spec_5_2_424(t *testing.T
 	if rep.Result != Failed {
 		t.Fatalf("Result = %v, want Failed (cleanup cat should fail on the purged file)", rep.Result)
 	}
+	// Step 4 reached the wrapper rather than the host's directories.
+	if want := []string{"/tmp", "/dev/shm"}; !slices.Equal(ops.cleared, want) {
+		t.Fatalf("scratch clears = %q, want %q intercepted", ops.cleared, want)
+	}
 }
 
-// killSafeOps wraps DefaultOps so the process-kill steps are no-ops in
-// tests: a real kill -9 -1 would terminate the test binary. The filesystem
-// ops fall through to the real DefaultOps so the integration test exercises
-// the actual RemoveAll / PathState code paths.
-type killSafeOps struct{ DefaultOps }
+// hostSafeOps wraps DefaultOps for a test that runs the scrub on the host
+// running the tests. The scrub is written for a pod, where it owns every
+// process and every scratch directory, so three operations stay out of the
+// real DefaultOps. A real kill -9 -1 would terminate the test binary. A real
+// IPC purge would remove the host's segments. A real step 4 empties /tmp and
+// /dev/shm, which here hold every other process's files: this test emptied
+// them on each run until TEST-GAPS T-4.7.24 removed the call, which is what
+// took sockets and fixtures from packages running alongside it. RemoveAll stays
+// real so the test exercises the actual purge.
+type hostSafeOps struct {
+	DefaultOps
+	cleared []string
+}
 
-func (killSafeOps) KillUserProcesses(context.Context) error { return nil }
-func (killSafeOps) PurgeIPCShm(context.Context) error       { return nil }
+func (*hostSafeOps) KillUserProcesses(context.Context) error { return nil }
+func (*hostSafeOps) PurgeIPCShm(context.Context) error       { return nil }
+
+// ClearContents records dir and clears nothing.
+func (o *hostSafeOps) ClearContents(dir string) error {
+	o.cleared = append(o.cleared, dir)
+	return nil
+}
+
+// PathState reports a cleared directory as empty, as step 6 would read it in
+// a pod, and reads any other path through DefaultOps.
+func (o *hostSafeOps) PathState(path string) (exists bool, empty bool, err error) {
+	if slices.Contains(o.cleared, path) {
+		return true, true, nil
+	}
+	return o.DefaultOps.PathState(path)
+}
 
 // spec: §5.2 (step 0 purges the credential file before cleanupCommands
 // run; step 2 removes the workspace)

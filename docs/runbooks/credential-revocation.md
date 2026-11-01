@@ -101,26 +101,42 @@ done
 
 ### Step 4 — Rotate the Secret
 
-Update the Kubernetes Secret referenced by the credential:
+For a credential registered by reference, update the Kubernetes Secret in the credentials namespace:
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-kubectl create secret generic <secret-name> -n lenny-system \
+kubectl create secret generic <secret-name> -n <credentials.namespace> \
   --from-literal=apiKey="<new-key>" \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-Or, if you're using external-secrets-operator / sealed-secrets, update the upstream source.
+The next read returns the new value, and no pool update is required because the `secretRef` has not changed. If external-secrets-operator or sealed-secrets manages the Secret, update the upstream source.
+
+For a credential added by value, send a credential update carrying `secretData`:
+
+<!-- access: api method=PUT path=/v1/admin/credential-pools/{name}/credentials/{credId} -->
+```
+PUT /v1/admin/credential-pools/<name>/credentials/<credential-id>
+If-Match: <etag>
+{"secretData": {"apiKey": "<new-key>"}}
+```
 
 ### Step 5 — Add the rotated credential back (or replace)
 
 <!-- access: lenny-ctl -->
 ```bash
 lenny-ctl admin credential-pools add-credential \
-  --pool <pool> --provider <provider>
+  --pool <pool> --provider <provider> \
+  --id <new-credential-id> --secret-ref <secret-name>
 ```
 
-`--secret-ref` and `--max-concurrent-sessions` are body fields on the admin API; set them via the API call or in the pool's Helm values when the rotated credential must carry non-default settings.
+`--secret-ref` takes the Secret's bare name. Introducing a `secretRef` the pool does not already carry requires `platform-admin`. A `tenant-admin` adds the replacement by value through the admin API:
+
+<!-- access: api method=POST path=/v1/admin/credential-pools/{name}/credentials -->
+```
+POST /v1/admin/credential-pools/<name>/credentials
+{"id": "<new-credential-id>", "secretData": {"apiKey": "<new-key>"}}
+```
 
 Remove the old `credential-id` if the rotation is permanent:
 

@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/client-go/rest"
+
+	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 )
 
@@ -89,6 +92,8 @@ func TestParseFlagsPopulatesEveryDefault(t *testing.T) {
 		{"tlsKey", f.tlsKey == nil},
 		{"tlsCA", f.tlsCA == nil},
 		{"secretNamespace", f.secretNamespace == nil},
+		{"clusterQPS", f.clusterQPS == nil},
+		{"clusterBurst", f.clusterBurst == nil},
 		{"capabilityTokenTTL", f.capabilityTokenTTL == nil},
 		{"kmsOpts", f.kmsOpts == nil},
 		{"kmsFinalize", f.kmsFinalize == nil},
@@ -114,9 +119,14 @@ func TestParseFlagsPopulatesEveryDefault(t *testing.T) {
 		{"addr", *f.addr, ":8081"},
 		{"grpcAddr", *f.grpcAddr, ""},
 		{"metricsAddr", *f.metricsAddr, ""},
-		// registerIssuerAndStateFlags (§13.3 issuer, §4.9 probe namespace)
+		// registerIssuerAndStateFlags (§13.3 issuer, §4.9 credentials namespace)
 		{"issuer", *f.issuer, "https://lenny.dev.local/token"},
-		{"secretNamespace", *f.secretNamespace, "lenny-system"},
+		{"secretNamespace", *f.secretNamespace, credential.DefaultNamespace},
+		{"resolvedSecretNamespace", f.resolvedSecretNamespace(), credential.DefaultNamespace},
+		// registerClusterClientFlags (§4.9 credential Secret read client
+		// rate limit, matching the gateway's defaults)
+		{"clusterQPS", *f.clusterQPS, float64(100)},
+		{"clusterBurst", *f.clusterBurst, 200},
 		// registerRateLimitFlags (§13.3 normative limits)
 		{"rlCallerPerSec", *f.rlCallerPerSec, 10},
 		{"rlCallerPerMin", *f.rlCallerPerMin, 300},
@@ -162,12 +172,55 @@ func clearTokenServiceEnv(t *testing.T) {
 		"LENNY_TOKEN_SERVICE_TLS_CERT",
 		"LENNY_TOKEN_SERVICE_TLS_KEY",
 		"LENNY_TOKEN_SERVICE_CA",
-		"POD_NAMESPACE",
+		"LENNY_CREDENTIALS_NAMESPACE",
+		"LENNY_CLUSTER_QPS",
+		"LENNY_CLUSTER_BURST",
 		// providerflags.Bind env reads (registerKMSFlags).
 		"LENNY_KMS_PROVIDER",
 		"LENNY_ENV",
 	} {
 		t.Setenv(key, "")
+	}
+}
+
+// diagnosis: a failure means the Token Service reads credential Secrets from
+// a namespace other than the one the gateway canonicalizes references to, so
+// a probe or a keyed read can return a same-named Secret of the release
+// namespace.
+// spec: §4.9 (Credential Lifecycle and Secret Management) — Token Service
+// secret resolution rule 1; §17.6 (Packaging and Installation)
+func TestSecretNamespaceSelection_spec_4_9(t *testing.T) {
+	cases := []struct {
+		name      string
+		podNS     string
+		credNSEnv string
+		args      []string
+		want      string
+	}{
+		{name: "default", want: credential.DefaultNamespace},
+		{name: "release namespace is ignored", podNS: "lenny-system", want: credential.DefaultNamespace},
+		{name: "environment override", podNS: "lenny-system", credNSEnv: "acme-credentials", want: "acme-credentials"},
+		{name: "flag override", args: []string{"--secret-namespace=acme-credentials"}, want: "acme-credentials"},
+		{name: "empty flag resolves to the default", args: []string{"--secret-namespace="}, want: credential.DefaultNamespace},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			savedCmdLine := flag.CommandLine
+			savedArgs := os.Args
+			t.Cleanup(func() {
+				flag.CommandLine = savedCmdLine
+				os.Args = savedArgs
+			})
+			flag.CommandLine = flag.NewFlagSet(savedArgs[0], flag.ContinueOnError)
+			os.Args = append([]string{savedArgs[0]}, tc.args...)
+			clearTokenServiceEnv(t)
+			t.Setenv("POD_NAMESPACE", tc.podNS)
+			t.Setenv("LENNY_CREDENTIALS_NAMESPACE", tc.credNSEnv)
+
+			if got := parseFlags().resolvedSecretNamespace(); got != tc.want {
+				t.Errorf("resolvedSecretNamespace() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -210,5 +263,36 @@ func TestCapabilityTokenTTLFlagBound_spec_10_2(t *testing.T) {
 	}
 	if want := "time.Duration(*w.f.capabilityTokenTTL) * time.Second"; !strings.Contains(string(b), want) {
 		t.Errorf("server.go: buildServer does not pass the flag as Options.CapabilityTokenTTL (%q missing)", want)
+	}
+}
+
+// spec: §4.9 Token Service secret resolution.
+//
+// TestClusterClientRateLimitFlags pins the --cluster-qps and --cluster-burst
+// overrides through LENNY_CLUSTER_QPS and LENNY_CLUSTER_BURST and their
+// application to the client-go config the credential Secret reads use. With
+// client-go's default of 5 QPS every gateway credential read would queue
+// behind the throttle.
+func TestClusterClientRateLimitFlags(t *testing.T) {
+	savedCmdLine := flag.CommandLine
+	savedArgs := os.Args
+	t.Cleanup(func() {
+		flag.CommandLine = savedCmdLine
+		os.Args = savedArgs
+	})
+	flag.CommandLine = flag.NewFlagSet(savedArgs[0], flag.ContinueOnError)
+	os.Args = []string{savedArgs[0]}
+	clearTokenServiceEnv(t)
+	t.Setenv("LENNY_CLUSTER_QPS", "42.5")
+	t.Setenv("LENNY_CLUSTER_BURST", "84")
+
+	f := parseFlags()
+	if *f.clusterQPS != 42.5 || *f.clusterBurst != 84 {
+		t.Fatalf("cluster rate limit = (%v, %d), want (42.5, 84)", *f.clusterQPS, *f.clusterBurst)
+	}
+	cfg := &rest.Config{}
+	applyClientRateLimit(cfg, *f.clusterQPS, *f.clusterBurst)
+	if cfg.QPS != 42.5 || cfg.Burst != 84 {
+		t.Fatalf("rest.Config rate limit = (%v, %d), want (42.5, 84)", cfg.QPS, cfg.Burst)
 	}
 }

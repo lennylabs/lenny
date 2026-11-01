@@ -99,14 +99,14 @@ func targetPoolCluster(t *testing.T) client.Client {
 		t.Fatalf("AddToScheme: %v", err)
 	}
 	return fake.NewClientBuilder().WithScheme(s).WithObjects(
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindWarmPool("micro-pool", "micro-tmpl"),
-		podBindTemplate("micro-tmpl", "echo", string(isolation.ProfileMicrovm)),
-		podBindWarmPool("other-pool", "other-tmpl"),
-		podBindTemplate("other-tmpl", "other-runtime", string(isolation.ProfileSandboxed)),
-		podBindWarmPool("standard-pool", "standard-tmpl"),
-		podBindTemplate("standard-tmpl", "echo", string(isolation.ProfileStandard)),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindWarmPool(t, "micro-pool", "micro-tmpl"),
+		podBindTemplate(t, "micro-tmpl", "echo", string(isolation.ProfileMicrovm)),
+		podBindWarmPool(t, "other-pool", "other-tmpl"),
+		podBindTemplate(t, "other-tmpl", "other-runtime", string(isolation.ProfileSandboxed)),
+		podBindWarmPool(t, "standard-pool", "standard-tmpl"),
+		podBindTemplate(t, "standard-tmpl", "echo", string(isolation.ProfileStandard)),
 	).Build()
 }
 
@@ -156,10 +156,10 @@ func TestDeriveAndReplayTargetPoolSelection_spec_15_1(t *testing.T) {
 					DefaultIsolationProfile: isolation.ProfileSandboxed,
 					DeriveAuditSink:         sink,
 					TenantAccess:            poolSelectTenantAccess(t, tc.granted...),
-					AgentNamespace:          podTestNS,
+					AgentNamespace:          testNS(t),
 				}
 				if tc.binder {
-					opts.PodBinder = &podsession.Binder{Client: targetPoolCluster(t), Namespace: podTestNS}
+					opts.PodBinder = &podsession.Binder{Client: targetPoolCluster(t), Namespace: testNS(t)}
 					opts.PodRegistry = podsession.NewRegistry()
 				}
 				srv := sessionserver.New(store, snapshotFor(t, rt.sourceID).wire(opts))
@@ -212,12 +212,12 @@ func TestDeriveAndReplayGrantedTargetPoolClaimsOnIt_spec_15_1(t *testing.T) {
 			h, _, _ := claimingServerWith(
 				t, store, rt,
 				func(o *sessionserver.Options) { o.TenantAccess = poolSelectTenantAccess(t, "echo-pool-b") },
-				podBindWarmPool("echo-pool", "echo-tmpl"),
-				podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-				podBindIdleSandbox("sbx-a", "echo-pool", "10.244.2.5"),
-				podBindWarmPool("echo-pool-b", "echo-tmpl-b"),
-				podBindTemplate("echo-tmpl-b", "echo", string(isolation.ProfileSandboxed)),
-				podBindIdleSandbox("sbx-b", "echo-pool-b", "10.244.2.6"),
+				podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+				podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+				podBindIdleSandbox(t, "sbx-a", "echo-pool", "10.244.2.5"),
+				podBindWarmPool(t, "echo-pool-b", "echo-tmpl-b"),
+				podBindTemplate(t, "echo-tmpl-b", "echo", string(isolation.ProfileSandboxed)),
+				podBindIdleSandbox(t, "sbx-b", "echo-pool-b", "10.244.2.6"),
 			)
 			rr := rt.call(t, h)
 			if rr.Code != http.StatusCreated {

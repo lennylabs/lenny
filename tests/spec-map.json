@@ -1387,7 +1387,24 @@
         "tests/tier9_security/slot_credential_reclaim_fence_test.go",
         "tests/tier3_contract/tokenservice_release/release_contract_test.go::TestExhaustedPoolDoesNotOpenBreaker_spec_4_3",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPodReleasePointersLinkTheClaimRule_spec_4_6_3",
-        "pkg/gateway/sessionserver/finalize_race_internal_test.go::TestRecordPodClaimFailureKeepsArmPrecedence_spec_4_9"
+        "pkg/gateway/sessionserver/finalize_race_internal_test.go::TestRecordPodClaimFailureKeepsArmPrecedence_spec_4_9",
+        "tests/tier2_component/secretprobe/secretprobe_envtest_test.go",
+        "tests/tier3_contract/tokenservice_secret_read/tokenservice_secret_read_test.go",
+        "tests/tier9_security/tokenservice_secret_read_redaction_test.go",
+        "tests/tier3_contract/vcs_credential_read/vcs_credential_read_test.go",
+        "tests/tier9_security/vcs_credential_read_failclosed_test.go",
+        "tests/tier3_contract/admin_credential_pool_codes/admin_credential_pool_codes_test.go",
+        "tests/tier9_security/credential_secret_ref_cross_tenant_test.go",
+        "tests/tier9_security/credential_secret_data_value_test.go",
+        "tests/tier9_security/credentials_namespace_live_test.go",
+        "tests/tier5_e2e_kind/credentials_namespace_test.go",
+        "tests/tier4_integration/credential_pool_secret_write_pg_test.go",
+        "tests/tier7a_load_local/credential_pool_secret_write_interleaving_test.go",
+        "tests/tier7a_load_local/credential_secret_writer_unavailable_test.go",
+        "tests/tier8_chaos/credential_secret_write_residue_test.go",
+        "tests/tier4_integration/credential_pool_tenant_erasure_pg_test.go",
+        "tests/tier8_chaos/credential_tenant_erasure_chaos_test.go",
+        "tests/tier9_security/credential_tenant_erasure_isolation_test.go"
       ],
       "packages": [
         "pkg/credential",
@@ -4998,7 +5015,10 @@
         "pkg/gateway/environment/translator/continuity_test.go::TestContinuityRehydrateErasedTranscriptContributesNothing_spec_12_8",
         "tests/tier9_security/open_responses_isolation_erasure_test.go",
         "tests/tier7a_load_local/open_responses_conversation_invariant_test.go::TestOpenResponsesConversationInterleavingsHoldTheInvariants_spec_15",
-        "tests/tier7a_load_local/open_responses_conversation_invariant_test.go::TestOpenResponsesInvariantCheckerComparesRESTDeliveries_spec_15"
+        "tests/tier7a_load_local/open_responses_conversation_invariant_test.go::TestOpenResponsesInvariantCheckerComparesRESTDeliveries_spec_15",
+        "tests/tier4_integration/credential_pool_tenant_erasure_pg_test.go",
+        "tests/tier8_chaos/credential_tenant_erasure_chaos_test.go",
+        "tests/tier9_security/credential_tenant_erasure_isolation_test.go"
       ],
       "packages": [
         "pkg/store",
@@ -6418,7 +6438,8 @@
         "pkg/observability/logging/logging_test.go::TestHandlerProjectsCorrelationFieldsFromContext",
         "pkg/observability/logging/logging_test.go::TestHandlerSkipsEmptyCorrelationFields",
         "tests/tier2_component/observability/integration_test.go::TestObservabilityPrimitivesWireTogether",
-        "tests/tier2_component/migrations/audit_redaction_receipts_drop_fk_test.go::TestAuditRedactionReceiptsDropFKMigration_spec_12_8"
+        "tests/tier2_component/migrations/audit_redaction_receipts_drop_fk_test.go::TestAuditRedactionReceiptsDropFKMigration_spec_12_8",
+        "tests/tier9_security/tokenservice_secret_read_redaction_test.go"
       ],
       "packages": [
         "pkg/observability/logging"
@@ -8570,7 +8591,8 @@
         "tests/tier3_contract/adapter_observedlevel/intrapod_pointer_wire_test.go",
         "tests/tier10_conformance/adapter_contract_intrapod_pointer_test.go",
         "tests/tier3_contract/adapter_events/event_taxonomy_wire_test.go",
-        "tests/tier10_conformance/adapter_contract_event_taxonomy_test.go"
+        "tests/tier10_conformance/adapter_contract_event_taxonomy_test.go",
+        "tests/tier3_contract/tokenservice_secret_read/tokenservice_secret_read_test.go"
       ],
       "packages": [],
       "depends_on_sections": [

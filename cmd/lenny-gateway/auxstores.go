@@ -5,11 +5,13 @@ package main
 import (
 	"log"
 
+	"google.golang.org/grpc"
+
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
 	usagepg "github.com/lennylabs/lenny/pkg/gateway/billing/usagestore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorsecret"
+	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	credentialpoolpg "github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
@@ -23,6 +25,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
 	sessionusagepg "github.com/lennylabs/lenny/pkg/gateway/session/sessionusage/pgstore"
+	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
@@ -67,22 +70,17 @@ func (w *gatewayWiring) buildAuxStores() {
 	// §14: the VCS credential resolver materializes a gitClone
 	// source's short-lived token on the gateway (binding the URL host to
 	// one of the tenant's VCS credential pools, then reading the token
-	// from the credential's Kubernetes Secret) so the ref-pinning
-	// ls-remote and the clone authenticate without the pod ever seeing
-	// the raw credential. It needs a cluster client to read Secrets; in a
-	// dev/in-memory posture (no cluster client) it stays nil and an
-	// authenticated gitClone fails with a clear "no resolver wired"
-	// error. The Secret key defaults to `token`, the §4.9 github
-	// materializedConfig field.
-	var vcsCreds vcscred.Resolver
-	if w.clusterClient != nil {
-		vcsCreds = &vcscred.StoreResolver{
-			Pools:   credentialPools,
-			Secrets: connectorsecret.NewKubeResolver(w.clusterClient, "token"),
-		}
-		if w.podBinder != nil {
-			w.podBinder.VCSCreds = vcsCreds
-		}
+	// through the Token Service keyed read) so the ref-pinning ls-remote
+	// and the clone authenticate without the pod ever seeing the raw
+	// credential. The gateway holds no Secret read in the credentials
+	// namespace, so the read needs the Token Service link; without it
+	// the resolver stays nil and an authenticated gitClone fails with a
+	// clear "no resolver wired" error. The read shares the §4.3
+	// token_service breaker with credential assignment.
+	// spec: §4.9 (Token Service secret resolution), §14.
+	vcsCreds := buildVCSResolver(w.tokenServiceConn, credentialPools, w.credentialsNamespace, w.tokenServiceSubsystem)
+	if vcsCreds != nil && w.podBinder != nil {
+		w.podBinder.VCSCreds = vcsCreds
 	}
 
 	// §10.2 tenant custom-role registry, shared by the admin custom-role
@@ -119,6 +117,22 @@ func (w *gatewayWiring) buildAuxStores() {
 	w.usage = usage
 	w.sessionUsage = sessionUsage
 	w.taskUsageBuilder = taskUsageBuilder
+}
+
+// buildVCSResolver returns the §14 VCS credential resolver over the tenant's
+// credential pools, reading each token through the Token Service keyed read
+// on conn gated by the token_service subsystem. It returns nil when conn is
+// nil, because the gateway has no other read path to a credential Secret.
+//
+// spec: §4.9 (Token Service secret resolution), §14.
+func buildVCSResolver(conn *grpc.ClientConn, pools vcscred.PoolLister, credNS string, tokenService *subsystem.Subsystem) vcscred.Resolver {
+	if conn == nil {
+		return nil
+	}
+	return &vcscred.StoreResolver{
+		Pools:   pools,
+		Secrets: newTokenServiceVCSReader(tokensv1.NewTokenServiceClient(conn), credNS, tokenService),
+	}
 }
 
 // buildOpsEvents constructs the §25.3/§25.5 operational-event emitter and its

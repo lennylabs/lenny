@@ -141,11 +141,11 @@ func newCredOutageFixture(t *testing.T, id string) *credOutageFixture {
 	adapterSrv.Runtime = &podBindRuntime{}
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
-	binder := podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv))
+	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 	ledger := newLeaseLedger()
 	binder.Credentials = ledger
 
@@ -183,7 +183,7 @@ func newCredOutageFixture(t *testing.T, id string) *credOutageFixture {
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             f.registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Tenants:                 f.tenants,
 		Runtimes:                f.runtimes,
 		CredentialPools:         credPools,
@@ -197,7 +197,7 @@ func newCredOutageFixture(t *testing.T, id string) *credOutageFixture {
 func (f *credOutageFixture) sandboxClaimed(t *testing.T) bool {
 	t.Helper()
 	var claim lennyv1.SandboxClaim
-	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim)
+	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim)
 	return err == nil
 }
 

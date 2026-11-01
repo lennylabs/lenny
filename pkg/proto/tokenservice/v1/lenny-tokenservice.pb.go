@@ -40,20 +40,20 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// Verdict is the §4.9 admin-time RBAC-probe outcome.
+// Verdict is the outcome of a §4.9 Token Service credential Secret read.
 type Verdict int32
 
 const (
 	// VERDICT_UNSPECIFIED is never returned; it is the proto3 zero value.
 	Verdict_VERDICT_UNSPECIFIED Verdict = 0
-	// VERDICT_ALLOWED — the Token Service SA can get the Secret and the
-	// Secret exists.
+	// VERDICT_ALLOWED: the get returned the Secret and, on a keyed call,
+	// the named key holds a non-empty value.
 	Verdict_VERDICT_ALLOWED Verdict = 1
-	// VERDICT_DENIED — the SelfSubjectAccessReview denied the get verb on
-	// the Secret (the resourceName is not in the Token Service Role).
+	// VERDICT_DENIED: the get returned Forbidden (the chart Role is
+	// absent).
 	Verdict_VERDICT_DENIED Verdict = 2
-	// VERDICT_NOT_FOUND — the get verb is allowed but the Secret object
-	// does not exist.
+	// VERDICT_NOT_FOUND: the Secret does not exist in the credentials
+	// namespace, or a keyed call named a key that is missing or empty.
 	Verdict_VERDICT_NOT_FOUND Verdict = 3
 )
 
@@ -445,12 +445,11 @@ func (*RevokeCredentialsResponse) Descriptor() ([]byte, []int) {
 
 type ProbeSecretAccessRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// secret_name is the Kubernetes Secret name the credential pool's
-	// secretRef points at.
+	// secret_name is the Secret name in the Token Service's configured
+	// credentials namespace. No request names a namespace.
 	SecretName string `protobuf:"bytes,1,opt,name=secret_name,json=secretName,proto3" json:"secret_name,omitempty"`
-	// namespace optionally overrides the Token Service's configured
-	// secret namespace. Empty selects the configured default.
-	Namespace     string `protobuf:"bytes,2,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	// key, when set, asks for that data key's value.
+	Key           string `protobuf:"bytes,3,opt,name=key,proto3" json:"key,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -492,20 +491,22 @@ func (x *ProbeSecretAccessRequest) GetSecretName() string {
 	return ""
 }
 
-func (x *ProbeSecretAccessRequest) GetNamespace() string {
+func (x *ProbeSecretAccessRequest) GetKey() string {
 	if x != nil {
-		return x.Namespace
+		return x.Key
 	}
 	return ""
 }
 
 type ProbeSecretAccessResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// verdict is the access decision. A transport or evaluation failure
-	// is returned as a gRPC error (codes.Unavailable) rather than a
-	// verdict, so the caller can distinguish a definitive DENIED/NOT_FOUND
-	// from an indeterminate probe and never fail open.
-	Verdict       Verdict `protobuf:"varint,1,opt,name=verdict,proto3,enum=lenny.tokenservice.v1.Verdict" json:"verdict,omitempty"`
+	// verdict is the read outcome. A failure other than Forbidden or
+	// NotFound is returned as a gRPC error (codes.Unavailable) rather
+	// than a verdict, so the caller distinguishes a definitive DENIED or
+	// NOT_FOUND from a failed read and never fails open.
+	Verdict Verdict `protobuf:"varint,1,opt,name=verdict,proto3,enum=lenny.tokenservice.v1.Verdict" json:"verdict,omitempty"`
+	// value is set only when key was set and verdict is ALLOWED.
+	Value         []byte `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -545,6 +546,13 @@ func (x *ProbeSecretAccessResponse) GetVerdict() Verdict {
 		return x.Verdict
 	}
 	return Verdict_VERDICT_UNSPECIFIED
+}
+
+func (x *ProbeSecretAccessResponse) GetValue() []byte {
+	if x != nil {
+		return x.Value
+	}
+	return nil
 }
 
 // CredentialLease mirrors the §4.9 in-process credential.Lease on the
@@ -822,13 +830,14 @@ const file_lenny_tokenservice_proto_rawDesc = "" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x19\n" +
 	"\blease_id\x18\x02 \x01(\tR\aleaseId\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\"\x1b\n" +
-	"\x19RevokeCredentialsResponse\"Y\n" +
+	"\x19RevokeCredentialsResponse\"^\n" +
 	"\x18ProbeSecretAccessRequest\x12\x1f\n" +
 	"\vsecret_name\x18\x01 \x01(\tR\n" +
-	"secretName\x12\x1c\n" +
-	"\tnamespace\x18\x02 \x01(\tR\tnamespace\"U\n" +
+	"secretName\x12\x10\n" +
+	"\x03key\x18\x03 \x01(\tR\x03keyJ\x04\b\x02\x10\x03R\tnamespace\"k\n" +
 	"\x19ProbeSecretAccessResponse\x128\n" +
-	"\averdict\x18\x01 \x01(\x0e2\x1e.lenny.tokenservice.v1.VerdictR\averdict\"\x96\a\n" +
+	"\averdict\x18\x01 \x01(\x0e2\x1e.lenny.tokenservice.v1.VerdictR\averdict\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value\"\x96\a\n" +
 	"\x0fCredentialLease\x12\x19\n" +
 	"\blease_id\x18\x01 \x01(\tR\aleaseId\x12\x1d\n" +
 	"\n" +

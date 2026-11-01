@@ -31,7 +31,7 @@ func TestDeleteByUserAndTenant_ErasesCheckpoint_spec_12_8_step6(t *testing.T) {
 	}
 	pg := embpostgres.New(embpostgres.Config{
 		DataDir:      t.TempDir(),
-		Port:         15534,
+		Port:         0,
 		Database:     "lenny",
 		Username:     "lenny",
 		Password:     "lenny",

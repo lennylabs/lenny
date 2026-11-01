@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -126,5 +127,59 @@ func TestSessionCreateWithoutPoolsUnderCutover(t *testing.T) {
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("status = %d, want %d; body = %s", resp.StatusCode, http.StatusCreated, raw)
+	}
+}
+
+// spec: §4.3 (Token Service) / §4.9 (Credential Storage Topology) — Credential
+// values submitted through the admin API rules 5 and 6
+// diagnosis: the Token Service address alone gates the credential Secret
+// writer, so a gateway on a host with no cluster config still boots. A boot
+// failure means a cluster config became a startup precondition of that
+// address. A 422 means the writer is nil, which rule 6 reserves for a gateway
+// with no Token Service. The environment holds no kubeconfig, so this test
+// does not depend on the host's ~/.kube/config.
+func TestGatewayWithTokenServiceBootsWithoutClusterConfig_spec_4_9(t *testing.T) {
+	t.Parallel()
+	tokensvc.SkipUnlessAvailable(t)
+	ts := tokensvc.Start(t)
+	gw := gateway.StartOpts(t, gateway.Options{
+		Args: []string{
+			"--token-service-grpc-addr", ts.GRPCAddr(),
+			"--token-service-tenant", "tier4-cutover",
+		},
+		Env: []string{"KUBECONFIG=", "HOME=" + t.TempDir()},
+	})
+
+	send := func(path string, body any) (int, string) {
+		t.Helper()
+		raw, _ := json.Marshal(body)
+		req, _ := http.NewRequest(http.MethodPost, gw.BaseURL()+path, bytes.NewReader(raw))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Lenny-Tenant-ID", "tier4-cutover")
+		req.Header.Set("X-Lenny-User-ID", "alice")
+		req.Header.Set("X-Lenny-Roles", "tenant-admin")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("POST %s: %v", path, err)
+		}
+		defer resp.Body.Close()
+		out, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(out)
+	}
+
+	const poolPath = "/v1/admin/credential-pools"
+	if code, raw := send(poolPath, map[string]any{
+		"name": "p1", "provider": "anthropic_direct",
+	}); code != http.StatusCreated {
+		t.Fatalf("create pool: status = %d, body = %s", code, raw)
+	}
+	code, raw := send(poolPath+"/p1/credentials", map[string]any{
+		"id": "key-1", "secretData": map[string]string{"apiKey": "tier4-submitted-value"},
+	})
+	if code != http.StatusServiceUnavailable || !strings.Contains(raw, "SERVICE_UNAVAILABLE") {
+		t.Fatalf("secretData add: status = %d, body = %s, want 503 SERVICE_UNAVAILABLE", code, raw)
+	}
+	if strings.Contains(raw, "tier4-submitted-value") {
+		t.Fatalf("secretData add response carries the submitted value: %s", raw)
 	}
 }

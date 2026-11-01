@@ -30,7 +30,7 @@ func TestAddTenantTotal_AtomicIncrement_spec_12_4_268(t *testing.T) {
 	}
 	pg := embpostgres.New(embpostgres.Config{
 		DataDir:      t.TempDir(),
-		Port:         15533,
+		Port:         0,
 		Database:     "lenny",
 		Username:     "lenny",
 		Password:     "lenny",

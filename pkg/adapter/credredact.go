@@ -16,11 +16,12 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// credentialSensitiveMethods is the §16.4 set of gRPC methods whose
-// request and response payloads MUST be excluded from access logs, gRPC
-// access logs, and OTel trace span attributes. The CredentialLease.payload
-// carries the live secret material, so only the RPC name, lease ID, provider
-// type, and outcome may be recorded.
+// credentialSensitiveMethods is the adapter's subset of the §16.4 gRPC
+// methods whose request and response payloads MUST be excluded from access
+// logs, gRPC access logs, and OTel trace span attributes. The remaining
+// §16.4 method, ProbeSecretAccess, is served by the Token Service. The
+// CredentialLease.payload carries the live secret material, so only the RPC
+// name, lease ID, provider type, Secret name, and outcome may be recorded.
 //
 // spec: §16.4.
 var credentialSensitiveMethods = map[string]bool{
@@ -40,9 +41,10 @@ func IsCredentialSensitiveMethod(fullMethod string) bool {
 	return credentialSensitiveMethods[fullMethod]
 }
 
-// SafeCredentialFields returns the only request-derived values §16.4
-// permits a credential-sensitive RPC to record: the lease IDs and the
-// provider types. The CredentialLease.Payload secret bytes are never read or
+// SafeCredentialFields returns the request-derived values §16.4 permits an
+// adapter credential-sensitive RPC to record: the lease IDs and the provider
+// types. §16.4 also permits a Secret name, which these requests do not
+// carry. The CredentialLease.Payload secret bytes are never read or
 // returned. Results are sorted and deduplicated so a log line or span is
 // stable across protobuf map iteration order. A request type that carries no
 // leases (or an unexpected type) yields two empty slices.

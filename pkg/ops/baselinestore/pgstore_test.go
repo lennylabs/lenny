@@ -28,7 +28,7 @@ func newTestStore(t *testing.T) (*baselinestore.Store, *pgxpool.Pool, context.Co
 	}
 	pg := embpostgres.New(embpostgres.Config{
 		DataDir:      t.TempDir(),
-		Port:         15523,
+		Port:         0,
 		Database:     "lenny",
 		Username:     "lenny",
 		Password:     "lenny",

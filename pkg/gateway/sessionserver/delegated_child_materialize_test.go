@@ -73,9 +73,9 @@ func materializeCluster(t *testing.T, adapterOpts ...grpc.ServerOption) (client.
 	adapterSrv.Runtime = &podBindRuntime{}
 	cluster := podBindClient(
 		t,
-		podBindWarmPool("echo-pool", "echo-tmpl"),
-		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
+		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	return cluster, podBindAdapterDialer(t, adapterSrv, adapterOpts...), wsRoot
 }
@@ -217,14 +217,14 @@ func TestMaterializeDelegatedChildTransitionsToRunning_spec_8_2(t *testing.T) {
 	}`)
 	cluster, dial, wsRoot := materializeCluster(t)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, dial)
+	binder := podBindBinder(t, cluster, dial)
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
 	st, err := srv.MaterializeDelegatedChild(context.Background(), "acme", "child-1")
@@ -280,7 +280,7 @@ func TestMaterializeDelegatedChildPersistFailureReleasesCoordinationLease(t *tes
 	seedDelegatedChild(t, store, "child-lease-persist", "")
 	cluster, dial, _ := materializeCluster(t)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, dial)
+	binder := podBindBinder(t, cluster, dial)
 	leases := newComponentLeaseStore()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
@@ -288,7 +288,7 @@ func TestMaterializeDelegatedChildPersistFailureReleasesCoordinationLease(t *tes
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		CoordinationLeaseStore:  leases,
 		ReplicaID:               "replica-a",
 	})
@@ -339,7 +339,7 @@ func TestMaterializeDelegatedChildPublishesBindingDespiteSelfRenewFault(t *testi
 	}`)
 	cluster, dial, _ := materializeCluster(t)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, dial)
+	binder := podBindBinder(t, cluster, dial)
 	leases := newComponentLeaseStore()
 	// The hoisted at-bind acquire succeeds; any follow-on self-renew acquire
 	// faults transiently.
@@ -350,7 +350,7 @@ func TestMaterializeDelegatedChildPublishesBindingDespiteSelfRenewFault(t *testi
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		CoordinationLeaseStore:  leases,
 		ReplicaID:               "replica-a",
 	})
@@ -401,11 +401,11 @@ func TestMaterializeDelegatedChildNonCreatedGuard_spec_8_2(t *testing.T) {
 		t.Fatalf("seed running child: %v", err)
 	}
 	pool := &lennyv1.SandboxWarmPool{
-		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: podTestNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: testNS(t)},
 		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
 	}
 	tmpl := &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: podTestNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: testNS(t)},
 		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed)},
 	}
 	c := fake.NewClientBuilder().WithScheme(materializeFakeScheme(t)).WithObjects(pool, tmpl).Build()
@@ -414,9 +414,9 @@ func TestMaterializeDelegatedChildNonCreatedGuard_spec_8_2(t *testing.T) {
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               &podsession.Binder{Client: c, Namespace: podTestNS},
+		PodBinder:               &podsession.Binder{Client: c, Namespace: testNS(t)},
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
 	_, err := srv.MaterializeDelegatedChild(context.Background(), "acme", "child-run")
@@ -443,11 +443,11 @@ func TestMaterializeDelegatedChildPreClaimExhaustion_spec_8_2(t *testing.T) {
 	seedDelegatedChild(t, store, "child-exhausted", "")
 	tenants, runtimes, credPools := materializeCredStores(t, credentialpoolstore.CredentialRevoked)
 	pool := &lennyv1.SandboxWarmPool{
-		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: podTestNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: testNS(t)},
 		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
 	}
 	tmpl := &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: podTestNS},
+		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: testNS(t)},
 		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed)},
 	}
 	c := fake.NewClientBuilder().WithScheme(materializeFakeScheme(t)).WithObjects(pool, tmpl).Build()
@@ -456,9 +456,9 @@ func TestMaterializeDelegatedChildPreClaimExhaustion_spec_8_2(t *testing.T) {
 		DevTenantHeader:         true,
 		IDFunc:                  func() string { return "unused" },
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
-		PodBinder:               &podsession.Binder{Client: c, Namespace: podTestNS},
+		PodBinder:               &podsession.Binder{Client: c, Namespace: testNS(t)},
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Tenants:                 tenants,
 		Runtimes:                runtimes,
 		CredentialPools:         credPools,
@@ -495,7 +495,7 @@ func TestMaterializeDelegatedChildAssignmentRaceFailsClosed_spec_8_3(t *testing.
 	tenants, runtimes, credPools := materializeCredStores(t, credentialpoolstore.CredentialActive)
 	cluster, dial, _ := materializeCluster(t)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, dial)
+	binder := podBindBinder(t, cluster, dial)
 	// The pre-check resolves an assignable pool, but the lease mint fails in the
 	// assignment window: the §8.3 post-pod-claim race.
 	binder.Credentials = failingAssigner{}
@@ -505,7 +505,7 @@ func TestMaterializeDelegatedChildAssignmentRaceFailsClosed_spec_8_3(t *testing.
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 		Tenants:                 tenants,
 		Runtimes:                runtimes,
 		CredentialPools:         credPools,
@@ -530,7 +530,7 @@ func TestMaterializeDelegatedChildAssignmentRaceFailsClosed_spec_8_3(t *testing.
 	// The pod claimed before the assignment failure was released: its per-pod
 	// SandboxClaim is deleted, so no warm pod leaks.
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err == nil {
 		t.Errorf("per-pod claim still present after the assignment race; the claimed pod leaked")
 	}
 }
@@ -549,7 +549,7 @@ func TestMaterializeDelegatedChildPersistFailureReleasesBinding_spec_8_2(t *test
 	seedDelegatedChild(t, store, "child-persist", "")
 	cluster, dial, _ := materializeCluster(t)
 	registry := podsession.NewRegistry()
-	binder := podBindBinder(cluster, dial)
+	binder := podBindBinder(t, cluster, dial)
 	// A recording assigner is wired so the terminal rollback's §7.1 step-23
 	// lease revoke is observable. No credential pool is named, so the launch
 	// (StartSession) succeeds without an AssignCredentials RPC; the rollback
@@ -562,7 +562,7 @@ func TestMaterializeDelegatedChildPersistFailureReleasesBinding_spec_8_2(t *test
 		DefaultIsolationProfile: isolation.ProfileSandboxed,
 		PodBinder:               binder,
 		PodRegistry:             registry,
-		AgentNamespace:          podTestNS,
+		AgentNamespace:          testNS(t),
 	})
 
 	// Fail the terminal transition-persist Update: claim and launch succeed, the
@@ -583,7 +583,7 @@ func TestMaterializeDelegatedChildPersistFailureReleasesBinding_spec_8_2(t *test
 	// The launched pod was released: its per-pod SandboxClaim is deleted.
 	store.fail = false
 	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err == nil {
 		t.Errorf("per-pod claim still present after the failed persist; the bound pod leaked")
 	}
 	row, err := store.Get(context.Background(), "acme", "child-persist")
@@ -674,7 +674,7 @@ func TestMaterializeDelegatedChildRollbacksSurviveCancelledRequest_spec_7_1(t *t
 			seedDelegatedChild(t, store, childID, "")
 			var shutdowns atomic.Int32
 			cluster, dial, _ := materializeCluster(t, shutdownCounter(&shutdowns))
-			binder := podBindBinder(cluster, dial)
+			binder := podBindBinder(t, cluster, dial)
 			leases := newComponentLeaseStore()
 			opts := sessionserver.Options{
 				DevTenantHeader:         true,
@@ -682,7 +682,7 @@ func TestMaterializeDelegatedChildRollbacksSurviveCancelledRequest_spec_7_1(t *t
 				DefaultIsolationProfile: isolation.ProfileSandboxed,
 				PodBinder:               binder,
 				PodRegistry:             podsession.NewRegistry(),
-				AgentNamespace:          podTestNS,
+				AgentNamespace:          testNS(t),
 				CoordinationLeaseStore:  leases,
 				ReplicaID:               "replica-a",
 			}
@@ -704,7 +704,7 @@ func TestMaterializeDelegatedChildRollbacksSurviveCancelledRequest_spec_7_1(t *t
 			}
 
 			var claim lennyv1.SandboxClaim
-			if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: podTestNS, Name: "claim-sbx-1"}, &claim); err == nil {
+			if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err == nil {
 				t.Errorf("per-pod claim still present after the rollback; the claimed pod leaked")
 			}
 			if tc.wantShutdown && shutdowns.Load() == 0 {

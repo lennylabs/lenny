@@ -67,6 +67,17 @@ agentNamespaces is empty. Invoke with the root context:
 {{- end -}}
 
 {{/*
+lenny.credentialsNamespace returns credentials.namespace, the namespace that
+holds credential Secrets. Every template that names the namespace reads it
+here, so the Token Service --secret-namespace flag, the gateway
+--credentials-namespace flag, and the rendered namespace objects cannot name
+different namespaces. spec: §4.9 "Credentials namespace.", §17.6.
+*/}}
+{{- define "lenny.credentialsNamespace" -}}
+{{- required "credentials.namespace is required: set it to a dedicated namespace that holds credential Secrets only (§4.9)" .Values.credentials.namespace -}}
+{{- end -}}
+
+{{/*
 lenny.imagePullSecrets renders the imagePullSecrets list for a Lenny
 component pod spec from platform.registry.pullSecretName (§17.8.6). It
 emits nothing when no pull secret is configured, so a public-registry

@@ -86,7 +86,7 @@ func TestUpdateCredentialPoolDryRunMissing_spec_15_1(t *testing.T) {
 func TestCreateCredentialPoolDryRunValidates_spec_15_1(t *testing.T) {
 	router, _ := newCredentialPoolAdmin(t)
 	body := validCredentialPool("acme", "p-bad")
-	body.Credentials = []admin.CredentialEntryPayload{{SecretRef: "lenny-system/x"}} // missing id
+	body.Credentials = []admin.CredentialEntryPayload{{SecretRef: "x"}} // missing id
 	rr := doAdminReq(t, router.Handler(), http.MethodPost, "/v1/admin/credential-pools?dryRun=true",
 		body, withAdminPrincipal)
 	if rr.Code != http.StatusBadRequest {

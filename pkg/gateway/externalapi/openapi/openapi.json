@@ -2590,7 +2590,7 @@
         "summary": "Re-enable a previously revoked pool credential",
         "x-lenny-mcp-tool": "admin.re_enable_pool_credential",
         "x-lenny-scope": "tools:credential_pool:write",
-        "x-lenny-required-role": "platform-admin",
+        "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "policy-management",
         "security": [{ "BearerAuth": [] }],
         "parameters": [
