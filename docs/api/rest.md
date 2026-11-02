@@ -155,7 +155,11 @@ curl -X POST "https://lenny.example.com/v1/sessions/$SESSION_ID/finalize" \
 | `GIT_CLONE_REF_RESOLVE_TRANSIENT`, `SERVICE_UNAVAILABLE` | 503 | A `gitClone.ref` or the runtime's workspace defaults could not be read because of a transient failure. Retry after the `Retry-After` interval. |
 | `SETUP_COMMAND_FAILED` | 422 | A setup command exited non-zero. |
 | `RESOURCE_NOT_FOUND` | 404 | The session does not exist. |
-| `INVALID_STATE_TRANSITION` | 409 | The session is not in `created`. |
+| `INVALID_STATE_TRANSITION` | 409 | The session is finalizing or has ended. A valid token on a session in `ready` or a later non-terminal state returns `UPLOAD_TOKEN_CONSUMED`. |
+| `UPLOAD_TOKEN_INVALID` | 401 | The upload token is missing or malformed, does not match the digest recorded on the session, or was presented for a session with no token. |
+| `UPLOAD_TOKEN_EXPIRED` | 401 | The upload token's TTL has elapsed. |
+| `UPLOAD_TOKEN_MISMATCH` | 403 | The upload token names another session. |
+| `UPLOAD_TOKEN_CONSUMED` | 410 | The session completed finalization, so the upload token no longer applies. |
 
 A finalize call that is still running when the session ends, for example through `POST /v1/sessions/{id}/terminate`, `DELETE /v1/sessions/{id}`, an administrator force-terminate, or the gateway's finalizing timeout (`maxFinalizingTimeoutSeconds`), returns `INVALID_STATE_TRANSITION` (409), even when its own finalization also failed. The session stays in the state it ended in, and the error's `details.currentState` names that state.
 

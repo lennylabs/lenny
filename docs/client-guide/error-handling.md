@@ -120,6 +120,7 @@ All REST API endpoints return errors using a canonical JSON envelope:
 
 | Code | Category | HTTP | Retryable | Description | Recommended Action |
 |---|---|---|---|---|---|
+| `UPLOAD_TOKEN_INVALID` | `PERMANENT` | 401 | No | The upload token is missing or malformed, does not match the digest recorded on the session, or was presented for a session with no token. | Send the `uploadToken` returned when the session was created. |
 | `UPLOAD_TOKEN_EXPIRED` | `PERMANENT` | 401 | No | Upload token TTL has elapsed | Create a new session. |
 | `UPLOAD_TOKEN_MISMATCH` | `PERMANENT` | 403 | No | Upload token does not match target session | Use the token from the correct session. |
 | `UPLOAD_TOKEN_CONSUMED` | `PERMANENT` | 410 | No | Upload token already used by `FinalizeWorkspace` | Cannot upload after finalization. |

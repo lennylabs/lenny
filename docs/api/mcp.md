@@ -300,8 +300,11 @@ Uploading a file does not place it in the workspace. The gateway materializes on
 |:-----|:-----|
 | `VALIDATION_ERROR` | `sessionId`, `uploadToken`, or `contentBase64` is missing, or `contentBase64` is not valid base64 |
 | `RESOURCE_NOT_FOUND` | Session does not exist |
-| `INVALID_STATE_TRANSITION` | Session already finalized or started (and mid-session upload not enabled) |
+| `INVALID_STATE_TRANSITION` | The session is finalizing or has ended. A valid token on a session in `ready` or a later non-terminal state returns `UPLOAD_TOKEN_CONSUMED`. |
+| `UPLOAD_TOKEN_INVALID` | The upload token is malformed or does not match the session |
 | `UPLOAD_TOKEN_EXPIRED` | Upload token TTL elapsed |
+| `UPLOAD_TOKEN_MISMATCH` | The upload token names another session |
+| `UPLOAD_TOKEN_CONSUMED` | The session completed finalization and the upload token no longer applies |
 | `STORAGE_QUOTA_EXCEEDED` | Workspace size limit exceeded |
 
 **Example:**
@@ -354,7 +357,11 @@ Bind the session's workspace plan when creation carried none, materialize the wo
 | `WORKSPACE_PLAN_INVALID` | The `workspacePlan` fails schema validation |
 | `GIT_CLONE_AUTH_UNSUPPORTED_HOST`, `GIT_CLONE_AUTH_HOST_AMBIGUOUS`, `GIT_CLONE_REF_UNRESOLVABLE`, `GIT_CLONE_REF_RESOLVE_TRANSIENT` | A `gitClone` source cannot be authenticated or its `ref` cannot be resolved |
 | `RESOURCE_NOT_FOUND` | Session does not exist |
-| `INVALID_STATE_TRANSITION` | Session not in `created` state, or the session ended while finalization was in progress |
+| `INVALID_STATE_TRANSITION` | The session is finalizing or has ended. A valid token on a session in `ready` or a later non-terminal state returns `UPLOAD_TOKEN_CONSUMED`. |
+| `UPLOAD_TOKEN_INVALID` | The upload token is malformed or does not match the session |
+| `UPLOAD_TOKEN_EXPIRED` | Upload token TTL elapsed |
+| `UPLOAD_TOKEN_MISMATCH` | The upload token names another session |
+| `UPLOAD_TOKEN_CONSUMED` | The session completed finalization and the upload token no longer applies |
 
 A call rejected for its `workspacePlan` binds nothing and leaves the session in `created`.
 

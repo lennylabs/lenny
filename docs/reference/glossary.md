@@ -424,7 +424,7 @@ A gateway subsystem responsible for file upload proxying, payload validation, st
 ### Upload Token
 {: #upload-token }
 
-A short-lived, session-scoped HMAC-SHA256 signed token issued at session creation. Used to authorize pre-start file uploads. Format: `<session_id>.<expiry_unix_seconds>.<hmac_hex>`. Invalidated on `FinalizeWorkspace`. Must be treated as a secret credential.
+A short-lived, session-scoped secret issued at session creation. Used to authorize pre-start file uploads. Format: `<session_id>.<expiry_unix_seconds>.<secret_hex>`. Invalidated on `FinalizeWorkspace`. Must be treated as a secret credential.
 
 ## W
 

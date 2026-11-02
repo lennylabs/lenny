@@ -101,6 +101,7 @@ Errors that indicate a client-side issue. The request must be corrected before r
 | `REGION_CONSTRAINT_UNRESOLVABLE` | 422 | No storage or pool configuration can satisfy the requested `dataResidencyRegion`. `details.region` is included. | Configure storage or pools in the required region, or use a different region. |
 | `KMS_REGION_UNRESOLVABLE` | 422 | No KMS key is configured for the required region. `details.region` and `details.provider` are included. | Configure a KMS key in the required region. |
 | `ENV_VAR_BLOCKLISTED` | 400 | One or more requested environment variables are on the platform blocklist. `details.blocklisted` lists the offending names. | Remove the blocklisted environment variable names from the request. |
+| `UPLOAD_TOKEN_INVALID` | 401 | The upload token is missing or malformed, does not match the digest recorded on the session, or was presented for a session with no token. | Send the `uploadToken` returned when the session was created. |
 | `UPLOAD_TOKEN_EXPIRED` | 401 | The upload token's TTL has elapsed. | Create a new session to obtain a fresh upload token. |
 | `UPLOAD_TOKEN_MISMATCH` | 403 | The upload token's embedded `session_id` does not match the target session. | Use the upload token that was issued for this specific session. |
 | `UPLOAD_TOKEN_CONSUMED` | 410 | The upload token has already been invalidated by a successful `FinalizeWorkspace` call. | Upload tokens are single-use. No further uploads are permitted after finalization. For mid-session uploads, use the caller's bearer token. |

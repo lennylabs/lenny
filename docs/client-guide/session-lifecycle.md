@@ -138,7 +138,7 @@ Authorization: Bearer <token>
 }
 ```
 
-The `uploadToken` is a short-lived, session-scoped HMAC-SHA256 token. Treat it as a secret; do not log it or include it in URLs. It expires at `session_creation_time + maxCreatedStateTimeoutSeconds`.
+The `uploadToken` is a short-lived, session-scoped secret. Treat it as a secret; do not log it or include it in URLs. It expires at `session_creation_time + maxCreatedStateTimeoutSeconds`.
 
 ### b. Upload Files
 
@@ -563,6 +563,8 @@ The source session must be in a terminal state. Two replay modes:
 | `DELETE /v1/sessions/{id}` | Any non-terminal | `cancelled` |
 
 Calling an endpoint in an invalid state returns `409 INVALID_STATE_TRANSITION` with `details.currentState` and `details.allowedStates`.
+
+Upload and finalize requests check the `uploadToken` first, so a token error takes precedence over this response.
 
 ---
 

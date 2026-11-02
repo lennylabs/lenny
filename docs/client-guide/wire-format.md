@@ -55,7 +55,7 @@ For the admin surface, the token is a shared admin token set at install time. Fo
 X-Lenny-Upload-Token: <uploadToken>
 ```
 
-Format: `<session_id>.<expiry_unix_seconds>.<hmac_hex>`. Treat it as a secret. The token expires at `session_creation_time + maxCreatedStateTimeoutSeconds` (default 300s).
+Format: `<session_id>.<expiry_unix_seconds>.<secret_hex>`. Treat it as a secret. The token expires at `session_creation_time + maxCreatedStateTimeoutSeconds` (default 300s).
 
 **Optimistic concurrency** on Admin resources (`PUT /v1/admin/runtimes/{name}` and friends): `If-Match: "<etag>"` is required; omitting it returns `428 ETAG_REQUIRED`.
 
