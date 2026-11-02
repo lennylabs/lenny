@@ -3110,7 +3110,7 @@ be cluster-safe. The work lands after 0094 and before P5b, because P5b wires mor
     | `cmd/lenny-gateway` | met | met | n/a | n/a | n/a | unmet (F-12.4.32): each per-concern URL passes through `redistopology.Build` |
     | `cmd/lenny-ops` | met | met | n/a | n/a | n/a | n/a: `lenny-ops` connects through its own `--redis-url`, `--redis-sentinel-addrs`, and `--redis-cluster-addrs` flags |
     | `cmd/lenny-token-service` | met | met | n/a | n/a | n/a | unmet (F-12.4.32): the Cache/Pub-Sub concern URL that carries the revocation publish passes through `redistopology.Build` (added by the F-4.3.21 direct fix, 2026-10-26) |
-    | `pkg/connectoroauth` | met | met | met: the single-use OAuth `state` context has no coordination role | met: a `Consume` error returns 400 `CONNECTOR_OAUTH_STATE_UNKNOWN`, and the flow restarts (§9.3) | n/a | unmet (F-12.4.32) |
+    | `pkg/connectoroauth` | met | met | met: the single-use OAuth `state` context has no coordination role | unmet (F-9.3.19): a `Consume` store fault returns 400 `CONNECTOR_OAUTH_STATE_UNKNOWN`, the outcome for a forged or unknown `state`, and §9.3 states no store-fault outcome | n/a | unmet (F-12.4.32) |
     | `pkg/gateway/billing/billingstore/failover/redisstream` | met | met | met: staged billing entries replay idempotently into Postgres and have no coordination role | met: a Redis error moves the event to the bounded in-memory buffer, and a full buffer returns `ErrBufferFull`, which maps to 503 (§11.2.1) | n/a | unmet (F-12.4.32) |
     | `pkg/gateway/eventbuffer` | met | met | met: the §25.5 event stream has no coordination role | met: an `XADD` error keeps the event in the local buffer (§25.5) | n/a | unmet (F-12.4.32) |
     | `pkg/gateway/experiment/experimentsticky` | met | met | met: assignments re-derive from the HMAC bucketing (§10.7) | met: a `Get` error recomputes the assignment | n/a | unmet (F-12.4.32) |
@@ -3699,7 +3699,7 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
       §8.2 calls the exchange an in-process Token Service call while the Token Service runs as its own
       Deployment, and how the gateway authenticates as that internal caller;
     - how the child token is delivered to the child pod.
-  - [ ] **Shared gateway key-source proposal** (not yet written): **F-7.1.31** (High since 2026-10-31: every finalize now verifies the token, so a finalize on a replica other than the minter is refused; next change-proposal after 0111), the per-process
+  - [x] **Shared gateway key-source proposal** (not yet written): **F-7.1.31** (High since 2026-10-31: every finalize now verifies the token, so a finalize on a replica other than the minter is refused; next change-proposal after 0111), the per-process
     `uploadToken` key ring and consumed-token tracker, and **F-27.3.16** (Medium), the per-process playground
     OIDC state-cookie key (rerouted here 2026-10-27, because a direct-fix attempt found no key source with
     spec text: the playground session cookie is opaque, no mounted chart Secret covers this use, the spec
@@ -3708,6 +3708,10 @@ renewal path is filed together with the session-creation mint as F-10.2.25.
     platform-scoped, single-use, short-TTL key, mirroring the §9.3 connector OAuth `state` and the §12.4
     `conn:oauth:state:{state}` row, rather than a chart HMAC Secret or a new KMS alias. Apply the same
     reasoning to F-7.1.31 where it fits. Drafted after P3, under the one-change-proposal rule.
+    Resolved by proposal 0114 (implemented 2026-11-02), which created no shared key: the `uploadToken`
+    verifies against a digest and expiry on the primary session row, consumption is derived from the row
+    state, and the playground and connector OAuth `state` live in the shared `conn:oauth:state:{state}`
+    store. F-7.1.31, F-27.3.16, F-15.1.69, and F-9.3.18 are closed.
   - [ ] **Token audience and error-catalog proposal** (not yet written): **F-10.2.27** (Medium, no verifier
     enforces `aud` by default), **F-15.1.56** (Low, no §15 rows for the revoked-token and
     `token_validation_unavailable` responses), and **F-12.3.26** (Low, no `issued_tokens` row in the §12.3
@@ -3936,10 +3940,20 @@ F-10.2.26 `jwt.OIDCVerifier`.
     ID token with the F-10.2.26 verifier.
     Fixed in `d588555a2`: `buildPlaygroundOIDC` wires the exchanger, which reads the endpoints from the
     discovery document on first use. The per-process state-cookie key is filed as F-27.3.16.
-  - [ ] **F-27.3.16** (Medium), filed from the F-27.3.15 fix: the playground OIDC state cookie is signed with
+  - [x] **F-27.3.16** (Medium), filed from the F-27.3.15 fix: the playground OIDC state cookie is signed with
     a per-process key, so a callback served by another gateway replica fails with `oidc_state_invalid`. Sign
     it with a key every replica shares. Rerouted 2026-10-27 to the shared gateway key-source proposal above:
     no existing key source has spec text for this use, so the fix needs a proposal.
+    Closed 2026-11-02 by proposal 0114: the OIDC `state` and PKCE verifier live in the shared
+    `conn:oauth:state:{state}` store, and the cookie holds the opaque `state`.
+  - [x] **F-9.3.18** (Medium), filed and closed by proposal 0114 (2026-11-02): the connector OAuth `state`
+    was signed with a per-process seed and verified ahead of `StateStore.Consume`, so a callback on another
+    replica or after a restart was refused. The signer is deleted, and `Consume` is the callback's single
+    authority.
+  - [ ] **F-27.3.17** (Medium), filed from proposal 0114: an anonymous `GET /playground/auth/login` writes
+    one `conn:oauth:state:{state}` key per request for the 10-minute TTL, no default rate limit bounds the
+    writes, and the shared Redis instance runs `noeviction`, so a flood can fill it to `maxmemory`. Opt-in
+    (`oidc` mode only) and TTL-bounded. A new bound is §27.3.1 text, so it needs a proposal.
   - [x] **F-13.3.21** (Medium): the Token Service verifies the `/v1/oauth/token` caller credential with its
     key set alone, so the upstream OIDC ID token that §13.3 names as the bootstrap credential is refused.
     Add the IdP verifier as a caller-credential member, with issuer and client-ID flags the chart renders
@@ -4211,9 +4225,11 @@ D2), which stays with the upload route proposal.
     2026-10-31 by direct fix on `fix/finalize-policy-forward`: the token is verified before the row is read,
     and the SDKs, the CLI, the playground, and `lenny/finalize_workspace` send it. Filed from the fix:
     F-15.1.69.
-  - [ ] **F-15.1.69** (Low, filed from F-7.4.21): `UPLOAD_TOKEN_INVALID` has no §15.1 catalog row, so MCP
+  - [x] **F-15.1.69** (Low, filed from F-7.4.21): `UPLOAD_TOKEN_INVALID` has no §15.1 catalog row, so MCP
     classifies it as transient and retryable while REST answers it as permanent. Needs a catalog row through
     the proposal pipeline, then the `errorclassify` entry.
+    Closed 2026-11-02 by proposal 0114: §15.1 carries the `UPLOAD_TOKEN_INVALID` row, `errorclassify`
+    carries the code, and the tier-3 parity test asserts it with no exemption.
   - [x] **F-7.5.15** (Medium): `enforceSetupCommandPolicy` admits a plan on every runtime read error. Answer a
     transient read with `503 SERVICE_UNAVAILABLE`, as 0086's defaults composition does, after 0086's S14.
     Closed 2026-10-31 by direct fix on `fix/finalize-policy-forward`: the read classifies a failure as the
@@ -4568,7 +4584,8 @@ the tree at `91f8ff9cd`, and none was already fixed. These entries discharge REC
 non-spec changes, so 0114's implementation does not file them again. F-9.3.18 and F-27.3.17 stay reserved for the
 findings RECORDS-1 names, so the ids below skip them.
 
-- [ ] **Proposal 0114** (approved 2026-11-01): resolves F-7.1.31 and F-27.3.16. Implementation is next.
+- [x] **Proposal 0114** (approved 2026-11-01): resolves F-7.1.31 and F-27.3.16. Landed 2026-11-02 on
+  `impl/0114-shared-token-state`, closing F-7.1.31, F-27.3.16, F-15.1.69, and F-9.3.18 and filing F-27.3.17.
 - Direct-fix queue, after proposal 0114's implementation.
   - [ ] **F-12.5.34** (Medium): `softDeleteStagedBlob` does not reach `*cataloging.Store`, so session GC releases
     refused upload bytes a second time and `storage_bytes_used` under-counts. Direct fix.
