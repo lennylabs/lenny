@@ -3,8 +3,8 @@
 //go:build security
 
 // Tier-9 finalize upload-token probe. Every finalize request carries the
-// uploadToken issued at session creation, and the gateway verifies it
-// before it reads or writes the session. This suite drives REST create and
+// uploadToken issued at session creation, and the gateway verifies it against
+// the session row before it writes the session. This suite drives REST create and
 // finalize through sessionserver.New with the production token issuer and
 // verifier, and asserts that a caller holding the session bearer but no
 // valid token cannot finalize the session or bind a plan into it.
@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 type finalizeTokenProbe struct {
@@ -39,7 +40,7 @@ func newFinalizeTokenProbe(t *testing.T) *finalizeTokenProbe {
 		UploadTokenIssuer:   issuer,
 		UploadTokenVerifier: uploadtoken.NewVerifier(nil),
 	})
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 	return &finalizeTokenProbe{ts: ts, store: store, issuer: issuer}
 }
