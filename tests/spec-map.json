@@ -2429,7 +2429,16 @@
         "pkg/adapter/workspace/materialize_test.go",
         "tests/tier3_contract/adapter_workspace_restore/restore_chunks_wire_test.go",
         "tests/tier9_security/restore_grant_scope_test.go",
-        "tests/tier10_conformance/slot_bind_attempt_conformance_test.go"
+        "tests/tier10_conformance/slot_bind_attempt_conformance_test.go",
+        "pkg/gateway/sessionserver/upload_token_row_test.go",
+        "pkg/gateway/sessionserver/upload_token_cross_replica_test.go",
+        "tests/tier11_docs/upload_token_row_authority_docs_test.go",
+        "tests/tier4_integration/upload_token_two_replica_test.go::TestUploadTokenCompletesAcrossGatewayProcesses_spec_7_1",
+        "tests/tier5_e2e_kind/upload_token_two_replica_kind_test.go::TestUploadTokenCompletesAcrossGatewayPods_spec_7_1",
+        "tests/tier7a_load_local/finalize_admission_race_test.go::TestOneTokenRacedAcrossTwoServersFinalizesOnce_spec_7_1",
+        "tests/tier8_chaos/upload_token_postgres_outage_test.go::TestUploadAndFinalizeRefuseDuringPrimaryOutage_spec_7_1",
+        "tests/tier9_security/finalize_upload_token_test.go::TestFinalizeRefusesForeignAndReplayedUploadTokens_spec_7_4",
+        "tests/tier3_contract/rest_mcp_consistency/finalize_upload_token_parity_test.go::TestFinalizeUploadTokenRESTMCPParity_spec_7_4"
       ],
       "packages": [
         "pkg/session"
@@ -2815,7 +2824,11 @@
         "pkg/gateway/runtime/adapterclient/client_test.go",
         "pkg/adapter/bindattempt_orderings_test.go",
         "pkg/adapter/files_updated_test.go",
-        "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderUploadAndInterruptAreForwarded_spec_29_3"
+        "tests/tier4_integration/holder_forward_routes_test.go::TestOffHolderUploadAndInterruptAreForwarded_spec_29_3",
+        "pkg/gateway/sessionserver/upload_token_row_test.go",
+        "tests/tier4_integration/upload_token_two_replica_test.go::TestUploadTokenCompletesAcrossGatewayProcesses_spec_7_1",
+        "tests/tier5_e2e_kind/upload_token_two_replica_kind_test.go::TestUploadTokenCompletesAcrossGatewayPods_spec_7_1",
+        "tests/tier8_chaos/upload_token_postgres_outage_test.go::TestUploadAndFinalizeRefuseDuringPrimaryOutage_spec_7_1"
       ],
       "packages": [
         "pkg/upload"
@@ -3270,7 +3283,9 @@
         "tests/tier4_integration/external_mcp_tool_test.go",
         "tests/tier4_integration/connector_delegation_scope_test.go",
         "pkg/adapter/connectormcp_test.go",
-        "tests/tier7a_load_local/podmcp_once_per_pod_start_race_test.go"
+        "tests/tier7a_load_local/podmcp_once_per_pod_start_race_test.go",
+        "cmd/lenny-gateway/oauth_state_store_test.go",
+        "tests/tier9_security/oauth_state_binding_test.go::TestOAuthStateRefusedOutsideItsFlow_spec_9_3"
       ],
       "packages": [
         "pkg/connector",
@@ -3537,7 +3552,12 @@
         "pkg/gateway/sessionserver/start_starting_state_test.go::TestServiceModeStartTakesNoLease_spec_10_1_1",
         "tests/tier11_docs/build_gaps_session_timers_records_currency_test.go::TestSessionTimersPlanEntryStatesTheLandedDesign_spec_10_1_1",
         "pkg/gateway/mcpfabric/delegationtree/orphancleanup/dispositions_test.go::TestOrphanGaugeIsSelectedMinusAppliedEnds_spec_8_10",
-        "tests/tier8_chaos/sweep_fault_continuation_test.go::TestBlockingTerminalHookHoldsItsClaimWithoutDelayingThePass_spec_7_1"
+        "tests/tier8_chaos/sweep_fault_continuation_test.go::TestBlockingTerminalHookHoldsItsClaimWithoutDelayingThePass_spec_7_1",
+        "pkg/gateway/sessionserver/upload_token_cross_replica_test.go",
+        "tests/tier4_integration/upload_token_two_replica_test.go::TestUploadTokenCompletesAcrossGatewayProcesses_spec_7_1",
+        "tests/tier4_integration/playground_oidc_login_test.go::TestPlaygroundOIDCLoginCompletesAcrossGatewayProcesses_spec_27_3_1",
+        "tests/tier5_e2e_kind/upload_token_two_replica_kind_test.go::TestUploadTokenCompletesAcrossGatewayPods_spec_7_1",
+        "tests/tier7a_load_local/finalize_admission_race_test.go::TestOneTokenRacedAcrossTwoServersFinalizesOnce_spec_7_1"
       ],
       "packages": [
         "pkg/gateway"
@@ -4275,7 +4295,8 @@
         "tests/tier3_contract/rest_mcp_consistency/cap_refusal_parity_test.go::TestResumeCapRefusalParity_spec_15_2_1",
         "tests/tier4_integration/suspended_resume_admission_test.go::TestSuspendedSessionResumeAdmissionOnCompose_spec_11_1",
         "tests/tier7a_load_local/suspended_resume_admission_race_test.go::TestConcurrentSuspendedResumesAtQuota_spec_11_1",
-        "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestForwardedCreateAndStartKeepsTheAdmissionRateLimit_spec_29_3"
+        "pkg/gateway/sessionserver/holder_forward_sites_test.go::TestForwardedCreateAndStartKeepsTheAdmissionRateLimit_spec_29_3",
+        "pkg/gateway/sessionserver/upload_token_cross_replica_test.go"
       ],
       "packages": [
         "pkg/policy/admission"
@@ -4331,7 +4352,8 @@
         "tests/tier3_contract/checkpoint_stream/checkpoint_stream_wire_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go",
         "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
-        "cmd/lenny-gateway/any_state_terminal_writers_test.go::TestBudgetTerminatorFromRecoveryAndPausedStatesWritesExpired_spec_7_2"
+        "cmd/lenny-gateway/any_state_terminal_writers_test.go::TestBudgetTerminatorFromRecoveryAndPausedStatesWritesExpired_spec_7_2",
+        "pkg/gateway/sessionserver/upload_token_row_test.go"
       ],
       "packages": [
         "pkg/quota",
@@ -4653,7 +4675,9 @@
         "migrations/0178_checkpoint_manifest_test.go",
         "tests/tier2_component/migrations/prod_columns_test.go",
         "tests/tier8_chaos/session_suspend_resume_chaos_test.go::TestPrimaryPartitionDoesNotStallMessages_spec_12_3",
-        "tests/tier2_component/stores/sessionstore_reservations_test.go::TestSessionStoreReservedSessionIDsReadsPrimary_spec_12_8"
+        "tests/tier2_component/stores/sessionstore_reservations_test.go::TestSessionStoreReservedSessionIDsReadsPrimary_spec_12_8",
+        "pkg/gateway/sessionserver/upload_token_row_test.go",
+        "tests/tier8_chaos/upload_token_postgres_outage_test.go::TestUploadAndFinalizeRefuseDuringPrimaryOutage_spec_7_1"
       ],
       "packages": [
         "pkg/store",
@@ -4714,7 +4738,10 @@
         "tests/tier2_component/opsrevocation/ops_revocation_bus_test.go::TestOpsRevocationSetUsesBaseRedisWithoutCacheURL",
         "tests/tier2_component/stores/reserve_slot_under_lock_test.go::TestReclaimSlotReservations",
         "tests/tier7a_load_local/slot_reservation_interleaving_test.go",
-        "tests/tier8_chaos/slot_reservation_outage_test.go"
+        "tests/tier8_chaos/slot_reservation_outage_test.go",
+        "cmd/lenny-gateway/oauth_state_store_test.go",
+        "tests/tier8_chaos/playground_oidc_redis_outage_test.go::TestPlaygroundOIDCStateFailsClosedAcrossRedisOutage_spec_27_3_1",
+        "tests/tier9_security/oauth_state_binding_test.go::TestOAuthStateRefusedOutsideItsFlow_spec_9_3"
       ],
       "packages": [
         "pkg/store/lease",
@@ -5930,7 +5957,11 @@
         "pkg/gateway/sessionserver/finalize_race_internal_test.go::TestFinalizingPreconditionRefusesNonFinalizing_spec_15_1",
         "pkg/gateway/sessionserver/finalize_race_internal_test.go::TestFailFinalizingLosesToTerminalWriter_spec_15_1",
         "pkg/gateway/sessionserver/terminal_context_internal_test.go::TestFailFinalizingCommitsOnCancelledRequest_spec_7_1",
-        "pkg/gateway/sessionserver/terminal_writers_internal_test.go::TestTerminateAndDeleteRevalidateOnTheLockedRow_spec_15_1"
+        "pkg/gateway/sessionserver/terminal_writers_internal_test.go::TestTerminateAndDeleteRevalidateOnTheLockedRow_spec_15_1",
+        "pkg/gateway/sessionserver/upload_token_row_test.go",
+        "pkg/gateway/sessionserver/upload_token_cross_replica_test.go",
+        "tests/tier11_docs/upload_token_row_authority_docs_test.go",
+        "tests/tier3_contract/rest_mcp_consistency/finalize_upload_token_parity_test.go::TestFinalizeUploadTokenRESTMCPParity_spec_7_4"
       ],
       "packages": [
         "pkg/api/v1/session",
@@ -8170,7 +8201,14 @@
         "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundMintExpAtCapabilityTokenTTLBounds_spec_10_2",
         "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundMintExpClampedToSubjectExp_spec_10_2",
         "pkg/gateway/mcpfabric/playground/token_capabilityttl_test.go::TestPlaygroundOIDCMintExpClampedToSessionRecordExpiry_spec_10_2",
-        "tests/tier9_security/ops_revocation_enforcement_test.go::TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4"
+        "tests/tier9_security/ops_revocation_enforcement_test.go::TestPlaygroundBearerRefusedOnOpsAndAsCaller_spec_25_4",
+        "cmd/lenny-gateway/oauth_state_store_test.go",
+        "pkg/gateway/mcpfabric/playground/cross_replica_test.go",
+        "tests/tier4_integration/playground_oidc_login_test.go::TestLivePlaygroundOIDCModeSignsInThroughTheIdP_spec_27_3_1",
+        "tests/tier4_integration/playground_oidc_login_test.go::TestPlaygroundOIDCLoginCompletesAcrossGatewayProcesses_spec_27_3_1",
+        "tests/tier8_chaos/playground_oidc_redis_outage_test.go::TestPlaygroundOIDCStateFailsClosedAcrossRedisOutage_spec_27_3_1",
+        "tests/tier9_security/oauth_state_binding_test.go::TestPlaygroundCallbackBindsStateToTheBrowser_spec_27_3_1",
+        "tests/tier9_security/oauth_state_binding_test.go::TestOAuthStateRefusedOutsideItsFlow_spec_9_3"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"

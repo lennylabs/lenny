@@ -137,13 +137,7 @@ func TestFinalizeUploadTokenRESTMCPParity_spec_7_4(t *testing.T) {
 			if mcpRes.Code != rest.Code {
 				t.Errorf("code parity: REST=%+v MCP=%+v", rest, mcpRes)
 			}
-			// UPLOAD_TOKEN_INVALID is absent from the §15.1 error catalog, so
-			// the MCP projection classifies it by the unknown-code fallback
-			// while REST derives the pair from the 401 status. That
-			// divergence is filed as F-15.1.69 and needs a catalog entry;
-			// the catalogued codes hold full parity here.
-			if rest.Code != "UPLOAD_TOKEN_INVALID" &&
-				(mcpRes.Category != rest.Category || mcpRes.Retryable != rest.Retryable) {
+			if mcpRes.Category != rest.Category || mcpRes.Retryable != rest.Retryable {
 				t.Errorf("category parity: REST=%+v MCP=%+v", rest, mcpRes)
 			}
 			assertStillCreated(t, store, id)

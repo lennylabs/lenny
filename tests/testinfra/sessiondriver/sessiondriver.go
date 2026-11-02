@@ -681,6 +681,61 @@ func (d *Driver) Finalize(ctx context.Context, tenantID, sessionID, uploadToken 
 		map[string]string{"X-Lenny-Upload-Token": uploadToken})
 }
 
+// CallResult is the status and the §15.1 error code of one response, for a
+// test that asserts a refusal without parsing an error string. Code is empty on
+// a response with no error envelope.
+type CallResult struct {
+	Status int
+	Code   string
+	Body   []byte
+}
+
+// FinalizeResult issues POST /v1/sessions/{id}/finalize as Finalize does and
+// returns the outcome whatever the status. uploadToken is sent as given, so
+// a test can present an invalid or a consumed token.
+func (d *Driver) FinalizeResult(ctx context.Context, tenantID, sessionID, uploadToken string) (*CallResult, error) {
+	return d.uploadTokenCall(ctx, tenantID, sessionID, "finalize", uploadToken, "", nil)
+}
+
+// Upload issues POST /v1/sessions/{id}/upload with content under the §7.1
+// uploadToken and returns the outcome whatever the status.
+func (d *Driver) Upload(ctx context.Context, tenantID, sessionID, uploadToken string, content []byte) (*CallResult, error) {
+	return d.uploadTokenCall(ctx, tenantID, sessionID, "upload", uploadToken, "text/plain", content)
+}
+
+// uploadTokenCall posts body to /v1/sessions/{id}/{step} carrying the
+// uploadToken header and decodes the §15.1 error envelope when one is present.
+func (d *Driver) uploadTokenCall(ctx context.Context, tenantID, sessionID, step, uploadToken, contentType string, body []byte) (*CallResult, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.baseURL+"/v1/sessions/"+sessionID+"/"+step, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("%s session %q: %w", step, sessionID, err)
+	}
+	d.applySessionAuth(req, tenantAdmin(tenantID))
+	req.Header.Set("X-Lenny-Upload-Token", uploadToken)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	res, err := d.hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s session %q: %w", step, sessionID, err)
+	}
+	defer res.Body.Close()
+	rb, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read %s response for session %q: %w", step, sessionID, err)
+	}
+	result := &CallResult{Status: res.StatusCode, Body: rb}
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(rb, &envelope) == nil {
+		result.Code = envelope.Error.Code
+	}
+	return result, nil
+}
+
 // sessionStep posts an empty body to /v1/sessions/{id}/{step} and decodes
 // the 200 session response.
 func (d *Driver) sessionStep(ctx context.Context, tenantID, sessionID, step string) (*Session, error) {
