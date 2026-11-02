@@ -26,7 +26,7 @@ TS-1 is additive to the objects in `egress-and-git-design.md`, a new optional fi
 
 | Proposal | Depends on | Why |
 | :-- | :-- | :-- |
-| TS-1 | EG-1, EG-4 in `egress-and-git-design.md` | The objects it scopes |
+| TS-1 | EG-1, EG-4, EG-9 in `egress-and-git-design.md` | The objects it scopes |
 | TS-2 | None | It can land at any point |
 
 ## Evidence for the need

@@ -23,6 +23,7 @@ Out of scope: egress policy, routing, and evidence, which `egress-and-git-design
 - The forwarded CONNECT route to an address the decision pins, with the connector's identity injected as the upstream credential.
 - A selector peer on the `lenny-egress` policy for an in-cluster service.
 - A registration validator written per target kind.
+- Mints for a host behind a connector taken through `lenny-egress`, and a CA on a credential binding for a private host with no endpoint registration.
 - Per-endpoint CAs, `allowedRefPatterns`, and `credentialPinned` acting in `netagent`, and evidence records naming the route target.
 
 Validators refuse connectors at level 1.
@@ -39,8 +40,8 @@ Validators refuse connectors at level 1.
 
 | Proposal | Depends on | Why |
 | :-- | :-- | :-- |
-| OC-1 | EG-6 in `egress-and-git-design.md` | Typed route targets |
-| OC-2 | OC-1, EG-8 | The gateway, and the visibility reads |
+| OC-1 | EG-2 in `egress-and-git-design.md` | Typed route targets and the mint path |
+| OC-2 | OC-1, EG-8, EG-9 | The gateway, the visibility reads, and the policy objects |
 | OC-3 | OC-1 | The gateway |
 
 ## Evidence for the need

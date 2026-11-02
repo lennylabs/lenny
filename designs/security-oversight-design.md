@@ -22,7 +22,7 @@ Out of scope: producing egress and git evidence, which `egress-and-git-design.md
 | Label | Item | Summary |
 | :-- | :-- | :-- |
 | SO-1 | `security-auditor` role | Reads audit events, evidence streams, posture, and subscriptions, with no session content. A tenant admin cannot remove it without a platform action or a recorded approval, to be decided. §10.2's permission matrix has no audit row today, and `tenant-viewer` reads all session content. |
-| SO-2 | Tenant guardrails and posture API | A tenant record writable only by a separate role that can forbid `file` delivery, `allowStoredTokenPush`, tenant-registered upstreams, report-only mode, and host patterns. Weakening emits an event, requires a justification, and can carry a cooldown, following §9.2's and §8.3's weakening precedents. A posture API reports pool sharing, `isolationProfile`, enforcement level, gates, and chain integrity. |
+| SO-2 | Tenant guardrails and posture API | A tenant record writable only by a separate role that can forbid `file` delivery, `allowStoredTokenPush`, tenant-registered upstreams, the shadow policy, and host patterns. Weakening emits an event, requires a justification, and can carry a cooldown, following §9.2's and §8.3's weakening precedents. A posture API reports pool sharing, `isolationProfile`, enforcement level, gates, and chain integrity. |
 | SO-3 | Per-tenant SIEM destination | `audit.siem.endpoint` is one platform value today, so a regulated tenant's independent copy sits with the operator. |
 | SO-4 | Operator access transparency | `admin.impersonation_*` events sit under the platform tenant (§11.7, CMP-058), so a customer cannot see them. Mirror them to the target tenant, with optional per-tenant approval. |
 | SO-5 | Delegated approvers | `tool-use/{id}/approve` is limited to the session owner today (§10.2, **Session ownership.**). A security approver, and an approval-required flag on `writableRepositories`. |
@@ -33,9 +33,9 @@ Out of scope: producing egress and git evidence, which `egress-and-git-design.md
 
 | Proposal | Depends on | Why |
 | :-- | :-- | :-- |
-| SO-1 | EG-2, EG-8 in `egress-and-git-design.md` | The named permissions on the new reads |
-| SO-2 | EG-2 | One write path for opt-ins |
-| SO-3 | EG-2 | The evidence export |
+| SO-1 | EG-8, EG-9 in `egress-and-git-design.md` | The named permissions on the new reads |
+| SO-2 | EG-9 | One write path for opt-ins |
+| SO-3 | EG-8, EG-10 | The evidence export |
 | SO-4, SO-5, SO-6, and SO-7 | None | They can land at any point |
 
 `egress-and-git-design.md` does not wait for SO-6: its Certificates carry `lenny.dev/doctor-optout` until then.

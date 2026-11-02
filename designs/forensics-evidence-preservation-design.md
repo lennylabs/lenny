@@ -29,8 +29,8 @@ Out of scope: producing egress, tunnel, git, and credential records, which `egre
 
 ## Agent activity: decisions to make
 
-- **Producer.** An adapter or runtime producer is `self_reported` and sees only what the agent tells it. A node-level sensor (eBPF, for example) is `enforced` and sees every process, but it adds a privileged DaemonSet on agent nodes, which `egress-and-git-design.md` otherwise avoids.
-- **Sensitivity.** Commands and paths can contain secrets, so the stream needs its own permission, retention, and redaction. Whether the customer or the operator can read it is a question for `security-oversight-design.md`.
+- **Producer.** An adapter or runtime producer is `self_reported` and sees only what the agent tells it. A node-level sensor (eBPF, for example) is `observed` and sees every process, but it adds a privileged DaemonSet on agent nodes, which `egress-and-git-design.md` otherwise avoids.
+- **Sensitivity.** Commands and paths can contain secrets, so the stream needs its own permission, retention, and redaction, and a per-session key through `payloadKeyRef`, so that `DeleteByUser` can destroy the key while anchored digests still verify. Whether the customer or the operator can read it is a question for `security-oversight-design.md`.
 - **Volume.** Process and file events exceed egress decisions by orders of magnitude, so sampling rules and per-tenant cost need a decision.
 - **Scope.** A customer's security team and the operator's forensics team may want different detail, so this could be several streams.
 
@@ -40,10 +40,10 @@ Out of scope: producing egress, tunnel, git, and credential records, which `egre
 | :-- | :-- | :-- |
 | FE-1 | EG-2 in `egress-and-git-design.md` | The `quarantined` binding state |
 | FE-2 | EG-5 | The held flag |
-| FE-3 | EG-2 | Holds over evidence streams |
-| FE-4 | EG-2, EG-3, EG-5 | The streams it reconciles |
+| FE-3 | EG-10 | The held marker on manifests |
+| FE-4 | EG-2, EG-3, EG-5, EG-10 | The streams it reconciles |
 | FE-5 | FE-1, FE-2 | The procedures it documents |
-| FE-6 | EG-2 | The envelope and store |
+| FE-6 | EG-10 | The envelope, ingest, and key field |
 
 ## Evidence for the need
 
