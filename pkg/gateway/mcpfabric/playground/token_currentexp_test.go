@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
@@ -30,11 +31,12 @@ func TestMintStampsCurrentExpOnSessionRecord_spec_27_3_1_93(t *testing.T) {
 	}}
 	const bearerTTL = 900 * time.Second
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, CapabilityTokenTTL: bearerTTL}, Options{
-		Signer:   jwtsign.HMAC(signer),
-		Verifier: signer,
-		Sessions: store,
-		OIDC:     oidc,
-		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
+		Signer:     jwtsign.HMAC(signer),
+		Verifier:   signer,
+		Sessions:   store,
+		OIDC:       oidc,
+		OAuthState: connectoroauth.NewMemoryStateStore(),
+		Tenants:    fakeTenants{registered: map[string]bool{"acme": true}},
 	})
 
 	pgSrv := httptest.NewServer(h.PlaygroundRoutes())
@@ -42,7 +44,7 @@ func TestMintStampsCurrentExpOnSessionRecord_spec_27_3_1_93(t *testing.T) {
 	tokenSrv := httptest.NewServer(h.TokenRoutes())
 	defer tokenSrv.Close()
 
-	cookie := completeOIDCLogin(t, h, pgSrv, oidc)
+	cookie := completeOIDCLogin(t, pgSrv)
 
 	// Mint a bearer and capture the full token so its exp claim can be
 	// compared against the record's stamped CurrentExp.

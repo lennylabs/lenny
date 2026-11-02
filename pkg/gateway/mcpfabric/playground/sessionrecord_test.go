@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
@@ -114,12 +115,13 @@ func TestLogoutRevokesSessionBearer(t *testing.T) {
 		Scope:    "tools:sessions:read",
 	}}
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, CapabilityTokenTTL: 900 * time.Second}, Options{
-		Signer:   jwtsign.HMAC(signer),
-		Verifier: signer,
-		Sessions: store,
-		OIDC:     oidc,
-		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
-		Metrics:  nil,
+		Signer:     jwtsign.HMAC(signer),
+		Verifier:   signer,
+		Sessions:   store,
+		OIDC:       oidc,
+		OAuthState: connectoroauth.NewMemoryStateStore(),
+		Tenants:    fakeTenants{registered: map[string]bool{"acme": true}},
+		Metrics:    nil,
 	}).WithAuditEmitter(audit)
 
 	// Drive the full login → mint → logout flow.
@@ -128,7 +130,7 @@ func TestLogoutRevokesSessionBearer(t *testing.T) {
 	tokenSrv := httptest.NewServer(h.TokenRoutes())
 	defer tokenSrv.Close()
 
-	cookie := completeOIDCLogin(t, h, pgSrv, oidc)
+	cookie := completeOIDCLogin(t, pgSrv)
 
 	// Mint a bearer carrying the session cookie.
 	bearerJTI := mintWithCookie(t, tokenSrv, cookie)
@@ -194,11 +196,12 @@ func TestRevokedBearerCheckSurvivesAcrossHandlers(t *testing.T) {
 	oidc := &fakeOIDC{subject: OIDCSubject{UserID: "eve", TenantID: "acme", Scope: "tools:sessions:read"}}
 
 	opts := Options{
-		Signer:   jwtsign.HMAC(signer),
-		Verifier: signer,
-		Sessions: store,
-		OIDC:     oidc,
-		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
+		Signer:     jwtsign.HMAC(signer),
+		Verifier:   signer,
+		Sessions:   store,
+		OIDC:       oidc,
+		OAuthState: connectoroauth.NewMemoryStateStore(),
+		Tenants:    fakeTenants{registered: map[string]bool{"acme": true}},
 	}
 	cfg := Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, CapabilityTokenTTL: 900 * time.Second}
 	replicaA := New(cfg, opts)
@@ -209,7 +212,7 @@ func TestRevokedBearerCheckSurvivesAcrossHandlers(t *testing.T) {
 	aTok := httptest.NewServer(replicaA.TokenRoutes())
 	defer aTok.Close()
 
-	cookie := completeOIDCLogin(t, replicaA, aPg, oidc)
+	cookie := completeOIDCLogin(t, aPg)
 	bearerJTI := mintWithCookie(t, aTok, cookie)
 	id, tenant := idTenantForCookie(t, store, cookie)
 
@@ -236,7 +239,7 @@ func TestRevokedBearerCheckSurvivesAcrossHandlers(t *testing.T) {
 // completeOIDCLogin drives GET /playground/auth/login then
 // /playground/auth/callback and returns the lenny_playground_session
 // cookie value the gateway set.
-func completeOIDCLogin(t *testing.T, h *Handler, srv *httptest.Server, oidc *fakeOIDC) string {
+func completeOIDCLogin(t *testing.T, srv *httptest.Server) string {
 	t.Helper()
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
@@ -255,13 +258,9 @@ func completeOIDCLogin(t *testing.T, h *Handler, srv *httptest.Server, oidc *fak
 	if stateCookie == nil {
 		t.Fatal("login set no state cookie")
 	}
-	// Recover the state value the gateway minted from the signed cookie.
-	cv, err := h.openState(stateCookie.Value)
-	if err != nil {
-		t.Fatalf("openState: %v", err)
-	}
+	// The cookie value is the opaque state the gateway minted.
 	cbReq, _ := http.NewRequest(http.MethodGet,
-		srv.URL+"/playground/auth/callback?code=auth-code&state="+cv.State, nil)
+		srv.URL+"/playground/auth/callback?code=auth-code&state="+stateCookie.Value, nil)
 	cbReq.AddCookie(stateCookie)
 	cbResp, err := client.Do(cbReq)
 	if err != nil {

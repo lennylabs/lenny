@@ -4,9 +4,12 @@ package playground
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/connectoroauth"
 )
 
 // §27.3.1 tenant-claim rejection codes. These are the redirect query
@@ -19,6 +22,11 @@ const (
 	errTenantClaimInvalidFormat = "tenant_claim_invalid_format"
 )
 
+// errOIDCStateUnavailable is the §27.3.1 callback redirect code for a
+// `state` store fault. The error page answers 503 for it, because the
+// store outage is the final outcome the browser receives.
+const errOIDCStateUnavailable = "oidc_state_unavailable"
+
 // Cookie names from §27.3.
 const (
 	// sessionCookie is the §27.3 opaque playground session cookie. Its
@@ -26,8 +34,9 @@ const (
 	// excludes sibling paths such as /playground-admin.
 	sessionCookie = "lenny_playground_session"
 
-	// oidcStateCookie is the §27.3.1 short-lived signed cookie that
-	// carries the per-login state and PKCE verifier. Its Path is
+	// oidcStateCookie is the §27.3.1 short-lived cookie that carries
+	// the opaque per-login `state` and binds the login to the browser.
+	// The PKCE verifier stays in the shared state store. Its Path is
 	// /playground/auth/ so it is scoped to the OIDC handlers only.
 	oidcStateCookie = "lenny_playground_oidc_state"
 
@@ -39,27 +48,20 @@ const (
 	stateCookieTTL = 10 * time.Minute
 )
 
-// stateCookieValue carries the per-login OIDC flow context. It is
-// serialized into the signed, HttpOnly state cookie so the callback
-// can recover the PKCE verifier without a server-side store. The
-// gateway signs the cookie value; an unsigned or tampered cookie is
-// rejected at the callback.
-type stateCookieValue struct {
-	State    string `json:"state"`
-	Verifier string `json:"verifier"`
-	IssuedAt int64  `json:"issued_at"`
-}
-
 // handleLogin serves GET /playground/auth/login: it starts the OIDC
 // authorization-code flow (§27.3.1 step 1). It is reachable only in
 // oidc mode; the other modes have no login endpoint.
+//
+// The authorization URL resolves before the store write, so a provider
+// outage writes no key from this anonymous route. The cookie is set after
+// the write, so a failed login sets no cookie.
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if h.cfg.AuthMode != AuthModeOIDC {
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
 			"the playground login endpoint exists only in authMode=oidc", nil)
 		return
 	}
-	if h.oidc == nil {
+	if h.oidc == nil || h.oauthState == nil {
 		writeError(w, http.StatusServiceUnavailable, "LENNY_PLAYGROUND_OIDC_UNAVAILABLE",
 			"the playground OIDC provider is not configured", nil)
 		return
@@ -74,23 +76,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	challenge := codeChallengeS256(verifier)
-	cv := stateCookieValue{State: state, Verifier: verifier, IssuedAt: h.now().Unix()}
-	signed, err := h.sealState(cv)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     oidcStateCookie,
-		Value:    signed,
-		Path:     statePath,
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(stateCookieTTL.Seconds()),
-	})
-	authURL, err := h.oidc.AuthorizationURL(r.Context(), state, challenge, h.callbackURL(r))
+	authURL, err := h.oidc.AuthorizationURL(r.Context(), state, codeChallengeS256(verifier), h.callbackURL(r))
 	if err != nil {
 		// The provider's endpoints cannot be resolved, for example
 		// because its discovery document is unreachable. The login is
@@ -99,15 +85,39 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			"the playground OIDC provider is unavailable", nil)
 		return
 	}
+	// spec: §27.3.1 (Failure modes summary) — a store fault at login is
+	// fail-closed and answers JSON, because no browser redirect is pending.
+	flow := connectoroauth.FlowContext{CodeVerifier: verifier, CreatedAt: h.now()}
+	if err := h.oauthState.Put(state, flow, stateCookieTTL); err != nil {
+		slog.WarnContext(r.Context(), "playground: OIDC state write failed", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "REDIS_UNAVAILABLE",
+			"the playground OIDC state write did not commit", nil)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     oidcStateCookie,
+		Value:    state,
+		Path:     statePath,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(stateCookieTTL.Seconds()),
+	})
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
 // handleCallback serves GET /playground/auth/callback: the OIDC
-// provider redirects here (§27.3.1 step 1). It verifies state,
-// performs the PKCE-protected token exchange, establishes the
-// server-side playground session record, and sets the session
-// cookie. Every failure clears the state cookie and redirects to the
-// playground error page.
+// provider redirects here (§27.3.1 step 1). It compares `state` with the
+// state cookie, atomically consumes the shared store entry, performs the
+// PKCE-protected token exchange with the stored verifier, establishes the
+// server-side playground session record, and sets the session cookie.
+//
+// The cookie comparison and the configuration check run ahead of the
+// consume, so a request without the browser binding and an unconfigured
+// handler each leave the entry in place. A bad or missing `state` and a
+// store fault clear the state cookie and redirect to the playground error
+// page, because a browser receives this response and cannot consume a JSON
+// envelope.
 func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 	if h.cfg.AuthMode != AuthModeOIDC {
 		writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
@@ -126,25 +136,21 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 		h.redirectAuthError(w, r, "oidc_state_missing")
 		return
 	}
-	cv, err := h.openState(stateCookie.Value)
-	if err != nil {
-		h.redirectAuthError(w, r, "oidc_state_invalid")
-		return
-	}
-	if cv.State != state {
+	if stateCookie.Value != state {
 		h.redirectAuthError(w, r, "oidc_state_mismatch")
 		return
 	}
-	if h.now().Unix()-cv.IssuedAt > int64(stateCookieTTL.Seconds()) {
-		h.redirectAuthError(w, r, "oidc_state_expired")
-		return
-	}
-	if h.oidc == nil || h.sessions == nil {
+	if h.oidc == nil || h.sessions == nil || h.oauthState == nil {
 		writeError(w, http.StatusServiceUnavailable, "LENNY_PLAYGROUND_OIDC_UNAVAILABLE",
 			"the playground OIDC provider or session store is not configured", nil)
 		return
 	}
-	subject, err := h.oidc.Exchange(r.Context(), code, cv.Verifier, h.callbackURL(r))
+	flow, errCode := h.consumeLoginState(r.Context(), state)
+	if errCode != "" {
+		h.redirectAuthError(w, r, errCode)
+		return
+	}
+	subject, err := h.oidc.Exchange(r.Context(), code, flow.CodeVerifier, h.callbackURL(r))
 	if err != nil {
 		// A §27.3.1 tenant-claim rejection redirects with the canonical
 		// code; any other exchange failure uses the generic code.
@@ -177,6 +183,27 @@ func (h *Handler) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, sessionCookiePath, http.StatusFound)
+}
+
+// consumeLoginState consumes the single-use §27.3.1 `state` entry. On
+// failure it returns the error-page code. An entry carrying a ConnectorID
+// was written by the §9.3 connector flow, which shares the store, so it is
+// refused as an invalid state. A replay and an unknown value share one code.
+func (h *Handler) consumeLoginState(ctx context.Context, state string) (connectoroauth.FlowContext, string) {
+	flow, err := h.oauthState.Consume(state, h.now())
+	switch {
+	case err == nil && flow.ConnectorID != "":
+		return connectoroauth.FlowContext{}, "oidc_state_invalid"
+	case err == nil:
+		return flow, ""
+	case errors.Is(err, connectoroauth.ErrStateExpired):
+		return connectoroauth.FlowContext{}, "oidc_state_expired"
+	case errors.Is(err, connectoroauth.ErrStateUnknown), errors.Is(err, connectoroauth.ErrStateConsumed):
+		return connectoroauth.FlowContext{}, "oidc_state_invalid"
+	default:
+		slog.WarnContext(ctx, "playground: OIDC state consume failed", "error", err)
+		return connectoroauth.FlowContext{}, errOIDCStateUnavailable
+	}
 }
 
 // establishSession creates the §27.3.1 server-side playground session
@@ -458,12 +485,18 @@ func (h *Handler) revokedMarkerTTL(rec SessionRecord) time.Duration {
 
 // handleAuthError serves GET /playground/auth/error: it renders the
 // embedded error page so the SPA can surface an OIDC failure code to
-// the user. The page itself is part of the SPA bundle.
+// the user. The page itself is part of the SPA bundle. It answers 503
+// for a §27.3.1 `state` store fault and 200 for every other code.
 func (h *Handler) handleAuthError(w http.ResponseWriter, r *http.Request) {
+	code := r.URL.Query().Get("error")
+	status := http.StatusOK
+	if code == errOIDCStateUnavailable {
+		status = http.StatusServiceUnavailable
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(errorPageHTML(r.URL.Query().Get("error")))
+	w.WriteHeader(status)
+	_, _ = w.Write(errorPageHTML(code))
 }
 
 // redirectAuthError clears the OIDC state cookie and redirects the

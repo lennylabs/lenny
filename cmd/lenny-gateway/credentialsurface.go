@@ -176,24 +176,9 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 		credentialRekeyJob = rekey.NewJob(credentialRekeyers...)
 	}
 	var connectorOAuth *admin.ConnectorOAuth
-	var connectorStateStore *connectoroauth.MemoryStateStore
 	if *connectorOAuthCallbackURL != "" {
-		// spec: §9.3 — pending state binds to (session, connector)
-		// with TTL=10min. Production binds it to Redis so the flow survives
-		// a gateway restart and a callback resolves on any replica
-		// (F-9.3.5); the in-memory store is the single-process fallback and
-		// alone needs the periodic Sweep scheduled below in the watchdog
-		// group (Redis relies on native key expiry). F-9.3.16.
-		var connectorStateBacking connectoroauth.StateStore
-		if w.redisClient != nil {
-			connectorStateBacking = connectoroauth.NewRedisStateStore(w.concernRedis.For(storerouter.RedisConcernCachePubSub))
-			log.Printf("lenny-gateway: §9.3 connector OAuth state backed by Redis (TTL=10m, cross-replica)")
-		} else {
-			connectorStateStore = connectoroauth.NewMemoryStateStore()
-			connectorStateBacking = connectorStateStore
-		}
 		connectorOAuth = &admin.ConnectorOAuth{
-			StateStore:  connectorStateBacking,
+			StateStore:  w.oauthStateStore(),
 			Credentials: connectorCreds,
 			CallbackURL: *connectorOAuthCallbackURL,
 		}
@@ -235,7 +220,32 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 	w.connectorCreds = connectorCreds
 	w.credentialRekeyJob = credentialRekeyJob
 	w.connectorOAuth = connectorOAuth
-	w.connectorStateStore = connectorStateStore
+}
+
+// oauthStateStore returns the one §9.3 and §27.3.1 OAuth state store that the
+// connector flow and the playground share. Under Redis it survives a restart
+// and resolves on any replica, and native key expiry reclaims its entries. The
+// memory store is the single-process fallback, which w.connectorStateStore
+// exposes to the watchdog sweep in startBackgroundWorkers. Each caller receives
+// the same instance, so the first call selects the backing. w.oauthState is an
+// interface that receives a non-nil value on each path, so it never holds a
+// typed-nil *MemoryStateStore.
+//
+// spec: §9.3 (Connector Definition and OAuth/OIDC); §27.3.1 (OIDC
+// cookie-to-MCP-bearer exchange); §12.4 (Redis HA and Failure Modes).
+func (w *gatewayWiring) oauthStateStore() connectoroauth.StateStore {
+	if w.oauthState != nil {
+		return w.oauthState
+	}
+	if w.redisClient != nil {
+		w.oauthState = connectoroauth.NewRedisStateStore(w.concernRedis.For(storerouter.RedisConcernCachePubSub))
+		log.Printf("lenny-gateway: §9.3 and §27.3.1 OAuth state backed by Redis (TTL=10m, cross-replica)")
+		return w.oauthState
+	}
+	mem := connectoroauth.NewMemoryStateStore()
+	w.connectorStateStore = mem
+	w.oauthState = mem
+	return mem
 }
 
 // sessionSingleShotBinder adapts *sessionserver.Server to the

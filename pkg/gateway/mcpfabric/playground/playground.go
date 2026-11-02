@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 )
 
@@ -327,16 +328,17 @@ type TenantRegistry interface {
 //
 // Routes returns the http.Handler for each family.
 type Handler struct {
-	cfg      Config
-	signer   jwt.Signer
-	verifier jwt.Verifier
-	tenants  TenantRegistry
-	sessions SessionStore
-	oidc     OIDCExchanger
-	issued   IssuedTokenReader
-	metrics  *Metrics
-	audit    AuditEmitter
-	now      func() time.Time
+	cfg        Config
+	signer     jwt.Signer
+	verifier   jwt.Verifier
+	tenants    TenantRegistry
+	sessions   SessionStore
+	oidc       OIDCExchanger
+	oauthState connectoroauth.StateStore
+	issued     IssuedTokenReader
+	metrics    *Metrics
+	audit      AuditEmitter
+	now        func() time.Time
 }
 
 // IssuedTokenReader reads one issued_tokens row so the apiKey mint can
@@ -377,6 +379,11 @@ type Options struct {
 	// configured provider. Required in oidc mode; ignored otherwise.
 	OIDC OIDCExchanger
 
+	// OAuthState is the shared §27.3.1 `state` store that holds the
+	// per-login PKCE verifier under conn:oauth:state:{state}. Required in
+	// oidc mode; ignored otherwise.
+	OAuthState connectoroauth.StateStore
+
 	// IssuedTokens reads the pasted subject's issued_tokens row so the
 	// apiKey mint refuses a subject that §13.3 step (1a) rejects: a
 	// revoked token or a platform-admin impersonation bearer. The gateway
@@ -409,15 +416,16 @@ func New(cfg Config, opts Options) *Handler {
 		now = time.Now
 	}
 	return &Handler{
-		cfg:      cfg,
-		signer:   opts.Signer,
-		verifier: verifier,
-		tenants:  opts.Tenants,
-		sessions: opts.Sessions,
-		oidc:     opts.OIDC,
-		issued:   opts.IssuedTokens,
-		metrics:  opts.Metrics,
-		now:      now,
+		cfg:        cfg,
+		signer:     opts.Signer,
+		verifier:   verifier,
+		tenants:    opts.Tenants,
+		sessions:   opts.Sessions,
+		oidc:       opts.OIDC,
+		issued:     opts.IssuedTokens,
+		metrics:    opts.Metrics,
+		now:        now,
+		oauthState: opts.OAuthState,
 	}
 }
 

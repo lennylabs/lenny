@@ -8154,6 +8154,7 @@
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestAPIKeyModeScopeIsNarrowedToIntersection",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestOIDCModeRejectsBearerOnTokenEndpoint",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestOIDCLoginRedirectsAndSetsStateCookie",
+        "tests/tier3_contract/playground/playground_oidc_state_test.go",
         "tests/tier3_contract/playground/playground_test.go::TestDevModeMintReturnsBearer",
         "tests/tier3_contract/playground/playground_test.go::TestMintedJWTCarriesPlaygroundOrigin",
         "tests/tier3_contract/playground/playground_test.go::TestAPIKeyModeRejectsCapabilitySubjectToken",

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
@@ -19,16 +20,17 @@ func TestSessionCookieIsOpaqueAndDoesNotEmbedTenant_spec_27_3_1_81(t *testing.T)
 	store := NewMemorySessionStore()
 	oidc := &fakeOIDC{subject: OIDCSubject{UserID: "alice", TenantID: "acme", Scope: "tools:sessions:read"}}
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, CapabilityTokenTTL: 900 * time.Second}, Options{
-		Signer:   jwtsign.HMAC(devSigner()),
-		Verifier: devSigner(),
-		Sessions: store,
-		OIDC:     oidc,
-		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
+		Signer:     jwtsign.HMAC(devSigner()),
+		Verifier:   devSigner(),
+		Sessions:   store,
+		OIDC:       oidc,
+		OAuthState: connectoroauth.NewMemoryStateStore(),
+		Tenants:    fakeTenants{registered: map[string]bool{"acme": true}},
 	})
 	pgSrv := httptest.NewServer(h.PlaygroundRoutes())
 	defer pgSrv.Close()
 
-	cookie := completeOIDCLogin(t, h, pgSrv, oidc)
+	cookie := completeOIDCLogin(t, pgSrv)
 	if cookie == "" {
 		t.Fatal("login set no session cookie")
 	}

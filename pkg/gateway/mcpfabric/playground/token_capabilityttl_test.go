@@ -13,6 +13,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
@@ -118,16 +119,17 @@ func TestPlaygroundOIDCMintExpClampedToSessionRecordExpiry_spec_10_2(t *testing.
 	loginAt := time.Now().UTC().Truncate(time.Second)
 	clock := loginAt
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC, OIDCSessionTTL: time.Hour, CapabilityTokenTTL: 900 * time.Second}, Options{
-		Signer:   jwtsign.HMAC(signer),
-		Verifier: signer,
-		Sessions: store,
-		OIDC:     oidc,
-		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
-		Now:      func() time.Time { return clock },
+		Signer:     jwtsign.HMAC(signer),
+		Verifier:   signer,
+		Sessions:   store,
+		OIDC:       oidc,
+		OAuthState: connectoroauth.NewMemoryStateStore(),
+		Tenants:    fakeTenants{registered: map[string]bool{"acme": true}},
+		Now:        func() time.Time { return clock },
 	})
 	pgSrv := httptest.NewServer(h.PlaygroundRoutes())
 	defer pgSrv.Close()
-	cookie := completeOIDCLogin(t, h, pgSrv, oidc)
+	cookie := completeOIDCLogin(t, pgSrv)
 
 	id, tenant := idTenantForCookie(t, store, cookie)
 	rec, err := store.GetSession(context.Background(), tenant, id)

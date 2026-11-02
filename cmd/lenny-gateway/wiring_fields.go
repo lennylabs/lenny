@@ -289,6 +289,9 @@ type gatewayWiringFields struct {
 	connectorCreds       connectorcredstore.Store
 	credentialRekeyJob   *rekey.Job
 	connectorOAuth       *admin.ConnectorOAuth
+	// oauthState memoises oauthStateStore: the one §9.3 and §27.3.1 OAuth
+	// state store.
+	oauthState connectoroauth.StateStore
 
 	// Constructed subsystems and stores the §4.1 background-worker step
 	// (startBackgroundWorkers) reads to launch the periodic sweepers,

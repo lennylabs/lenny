@@ -560,6 +560,38 @@ func TestConnectorOAuthCallbackCompletesOnAPeerRouter_spec_9_3(t *testing.T) {
 	}
 }
 
+// TestConnectorOAuthCallbackRefusesAPlaygroundEntry_spec_9_3 stores a
+// playground login entry, which names no connector, in the store both flows
+// share. The connector callback refuses it through the connector lookup with
+// no provider exchange and no stored credential.
+//
+// spec: §9.3 (Connector Definition and OAuth/OIDC) "`state` parameter (anti-CSRF)", §27.3.1 (OIDC cookie-to-MCP-bearer exchange)
+func TestConnectorOAuthCallbackRefusesAPlaygroundEntry_spec_9_3(t *testing.T) {
+	f := newOAuthFixture(t)
+	f.registerOAuthConnector(t, false)
+	state := connectoroauth.NewState()
+	entry := connectoroauth.FlowContext{CodeVerifier: "playground-verifier", CreatedAt: time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)}
+	if err := f.stateStore.Put(state, entry, connectoroauth.DefaultStateTTL); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	rr := httptest.NewRecorder()
+	f.router.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet,
+		"/v1/admin/connectors/oauth/callback?code=code-1&state="+url.QueryEscape(state), nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("got %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "CONNECTOR_OAUTH_INVALID_CALLBACK") {
+		t.Errorf("body = %s, want CONNECTOR_OAUTH_INVALID_CALLBACK", rr.Body.String())
+	}
+	if got := f.tokenHits.Load(); got != 0 {
+		t.Errorf("the callback reached the provider token endpoint %d times, want 0", got)
+	}
+	if rows, _ := f.creds.ListByConnector(context.Background(), "acme", "github"); len(rows) != 0 {
+		t.Errorf("the callback stored %d credentials, want 0", len(rows))
+	}
+}
+
 // TestConnectorOAuthCallbackReplayedStateRejected covers a replayed
 // callback: the same state used twice. The second use must be rejected
 // and must not exchange a code again.

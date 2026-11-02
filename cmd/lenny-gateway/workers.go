@@ -82,16 +82,18 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 		}
 	})
 
-	// ----- §9.3 connector OAuth state-store sweep -----
+	// ----- §9.3 and §27.3.1 OAuth state-store sweep -----
 	// F-9.3.16: the in-memory MemoryStateStore is bound by the
 	// state-TTL (10 min per §9.3) plus a `consumed` flag for
 	// single-use enforcement. Without a periodic Sweep the entries
 	// accumulate until process restart. The cadence is well inside one
 	// TTL window so consumed/expired entries are reclaimed promptly.
 	// A Redis-backed store relies on native key expiry instead — this
-	// goroutine runs only when the in-memory store is wired (the
-	// `--connector-oauth-callback-url` opt-in path).
-	// spec: §9.3.
+	// goroutine runs only when the in-memory store is wired, which
+	// oauthStateStore does for the `--connector-oauth-callback-url` opt-in
+	// path and for an oidc-mode playground. Both build steps run ahead of
+	// this one, so the sweep covers a store either of them created.
+	// spec: §9.3, §27.3.1.
 	if w.connectorStateStore != nil {
 		go func(store *connectoroauth.MemoryStateStore) {
 			tick := time.NewTicker(1 * time.Minute)

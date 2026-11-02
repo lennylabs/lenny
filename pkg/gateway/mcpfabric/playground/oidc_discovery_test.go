@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 	oidcstub "github.com/lennylabs/lenny/tests/testinfra/stubs/oidc"
 )
@@ -145,11 +146,12 @@ func TestOIDCModeSignsInThroughTheDiscoveredProvider_spec_27_3_1(t *testing.T) {
 	idp := oidcstub.New(t)
 	idp.SetLoginIdentity(oidcstub.MintOptions{Subject: "alice@acme.com", Extra: map[string]any{discoveryTenantClaim: "acme"}})
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC}, Options{
-		Signer:   jwtsign.HMAC(devSigner()),
-		Verifier: devSigner(),
-		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
-		Sessions: NewMemorySessionStore(),
-		OIDC:     discoveredExchanger(t, idp, "lenny-playground"),
+		Signer:     jwtsign.HMAC(devSigner()),
+		Verifier:   devSigner(),
+		Tenants:    fakeTenants{registered: map[string]bool{"acme": true}},
+		Sessions:   NewMemorySessionStore(),
+		OIDC:       discoveredExchanger(t, idp, "lenny-playground"),
+		OAuthState: connectoroauth.NewMemoryStateStore(),
 	})
 	mux := http.NewServeMux()
 	mux.Handle("/playground/", h.PlaygroundRoutes())
@@ -211,10 +213,11 @@ func TestOIDCModeSignsInThroughTheDiscoveredProvider_spec_27_3_1(t *testing.T) {
 	down := httptest.NewServer(http.NotFoundHandler())
 	down.Close()
 	offline := New(Config{Enabled: true, AuthMode: AuthModeOIDC}, Options{
-		Signer:   jwtsign.HMAC(devSigner()),
-		Verifier: devSigner(),
-		Sessions: NewMemorySessionStore(),
-		OIDC:     NewHTTPOIDCExchanger(HTTPOIDCConfig{IssuerURL: down.URL, ClientID: "lenny-playground", IDTokenValidator: IDTokenValidatorFromVerifier(nil)}),
+		Signer:     jwtsign.HMAC(devSigner()),
+		Verifier:   devSigner(),
+		Sessions:   NewMemorySessionStore(),
+		OIDC:       NewHTTPOIDCExchanger(HTTPOIDCConfig{IssuerURL: down.URL, ClientID: "lenny-playground", IDTokenValidator: IDTokenValidatorFromVerifier(nil)}),
+		OAuthState: connectoroauth.NewMemoryStateStore(),
 	})
 	offSrv := httptest.NewServer(offline.PlaygroundRoutes())
 	defer offSrv.Close()

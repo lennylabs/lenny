@@ -10,11 +10,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
@@ -36,16 +38,26 @@ func (f fakeTenants) IsRegistered(id string) (bool, error) {
 // successful Exchange and exchangeErr otherwise.
 type fakeOIDC struct {
 	subject     OIDCSubject
+	authURLErr  error
 	exchangeErr error
-	lastVerif   string
+
+	mu        sync.Mutex
+	lastVerif string
+	exchanges int
 }
 
 func (f *fakeOIDC) AuthorizationURL(_ context.Context, state, challenge, _ string) (string, error) {
+	if f.authURLErr != nil {
+		return "", f.authURLErr
+	}
 	return "https://provider.example/authorize?state=" + state + "&code_challenge=" + challenge, nil
 }
 
 func (f *fakeOIDC) Exchange(_ context.Context, code, verifier, _ string) (OIDCSubject, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.lastVerif = verifier
+	f.exchanges++
 	if f.exchangeErr != nil {
 		return OIDCSubject{}, f.exchangeErr
 	}
@@ -766,10 +778,11 @@ func TestConfigJSONCarriesDevBanner(t *testing.T) {
 func TestOIDCLoginRedirectsAndSetsStateCookie(t *testing.T) {
 	oidc := &fakeOIDC{}
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC}, Options{
-		Signer:   jwtsign.HMAC(devSigner()),
-		Verifier: devSigner(),
-		Sessions: NewMemorySessionStore(),
-		OIDC:     oidc,
+		Signer:     jwtsign.HMAC(devSigner()),
+		Verifier:   devSigner(),
+		Sessions:   NewMemorySessionStore(),
+		OIDC:       oidc,
+		OAuthState: connectoroauth.NewMemoryStateStore(),
 	})
 	srv := httptest.NewServer(h.PlaygroundRoutes())
 	defer srv.Close()

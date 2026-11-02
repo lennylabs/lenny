@@ -16,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/introspection"
 	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditscope"
@@ -424,6 +425,13 @@ func (w *gatewayWiring) buildHTTPSurface(
 			// F-27.6.9.
 			log.Printf("lenny-gateway: §27.6 playground SessionStore is in-memory (no --redis-url): bearer revocations are not durable across gateway restarts and do not propagate across replicas; production deployments MUST set --redis-url")
 		}
+		// spec: §27.3.1 — oidc mode keeps `state` and the PKCE verifier in
+		// the store the §9.3 connector flow shares. The other modes have no
+		// login flow, so they build no store.
+		var pgOAuthState connectoroauth.StateStore
+		if pgCfg.AuthMode == playground.AuthModeOIDC {
+			pgOAuthState = w.oauthStateStore()
+		}
 		pg := playground.New(pgCfg, playground.Options{
 			// spec: §10.2 — Sign goes through the breaker so
 			// KMS outages convert to retryable KMS_SIGNING_UNAVAILABLE.
@@ -441,7 +449,8 @@ func (w *gatewayWiring) buildHTTPSurface(
 			Metrics:  pgMetrics,
 			// spec: §27.3.1 — the oidc-mode authorization-code
 			// exchanger against the --oidc-issuer-url provider. F-27.3.15.
-			OIDC: buildPlaygroundOIDC(w.f, w.idpVerifier, pgCfg.AuthMode),
+			OIDC:       buildPlaygroundOIDC(w.f, w.idpVerifier, pgCfg.AuthMode),
+			OAuthState: pgOAuthState,
 			// spec: §10.2 (Playground mint invariants, invariant 1) — the
 			// apiKey mint applies §13.3 step (1a) to the pasted subject's
 			// issued_tokens row.
