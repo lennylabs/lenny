@@ -24,7 +24,7 @@ Out of scope: egress policy, routing, and evidence, which `egress-and-git-design
 - A selector peer on the `lenny-egress` policy for an in-cluster service.
 - A registration validator written per target kind.
 - Mints for a host behind a connector taken through `lenny-egress`, and a CA on a credential binding for a private host with no endpoint registration.
-- Per-endpoint CAs, `allowedRefPatterns`, and `credentialPinned` acting in `netagent`, and evidence records naming the route target.
+- Per-endpoint CAs and `allowedRefPatterns` acting in `netagent`, `credentialPinned` once EG-12 lands, and evidence records naming the route target.
 
 Validators refuse connectors at level 1.
 
