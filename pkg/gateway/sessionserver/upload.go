@@ -118,7 +118,8 @@ const (
 // The handler:
 //
 //  1. Looks up the session row in the active tenant.
-//  2. Validates the §7.1 uploadToken (`X-Lenny-Upload-Token` header).
+//  2. Validates the §7.1 uploadToken (`X-Lenny-Upload-Token` header),
+//     which is consumed once the session has reached `ready`.
 //  3. Validates the session is in a state that permits upload.
 //  4. Streams the request body into the blob store keyed by a new
 //     part_id under the session's tenant+session prefix.
@@ -126,9 +127,6 @@ const (
 //
 // Spec gaps the minimal gateway does not yet cover:
 //
-//   - Per-§7.1 single-use invalidation at finalize time — the upload
-//     handler does not consume the token; the finalize handler will
-//     when it ships.
 //   - Per-§7.4 mid-session upload (running state) — admitted when
 //     the runtime capabilities flag is set; for now the minimal
 //     gateway uses the §15.1 precondition table directly (which
