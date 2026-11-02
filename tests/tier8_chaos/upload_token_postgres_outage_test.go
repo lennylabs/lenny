@@ -42,6 +42,9 @@ const (
 	// tokenOutagePrimaryRead is Options.PrimaryReadTimeout, so a refusal
 	// during the cut has a bound the test states.
 	tokenOutagePrimaryRead = 2 * time.Second
+	// tokenOutageRefusalBound is the longest a refusal during the cut may take:
+	// the primary read bound plus a margin for the handler's work around it.
+	tokenOutageRefusalBound = tokenOutagePrimaryRead + time.Second
 	// tokenOutageCap is the §11.1 per-session upload cap. tokenOutageProbe
 	// exceeds it, so a request that clears the token check answers 429.
 	tokenOutageCap = 64
@@ -53,6 +56,11 @@ var (
 	tokenOutageProbe = strings.Repeat("p", 2*tokenOutageCap)
 	tokenOutageInCap = "payload"
 )
+
+// The conversion fails to compile when tokenOutageRefusalBound reaches
+// sessionstore.DefaultPrimaryReadTimeout, because a bound at the default would
+// accept a read that ignored Options.PrimaryReadTimeout.
+const _ = uint64(sessionstore.DefaultPrimaryReadTimeout - tokenOutageRefusalBound - 1)
 
 // tokenOutageEnv is a session server whose primary pool sits behind proxy.
 type tokenOutageEnv struct {
@@ -132,15 +140,15 @@ func (e *tokenOutageEnv) finalize() (*httptest.ResponseRecorder, time.Duration) 
 	return e.call(http.MethodPost, "/finalize", "", "")
 }
 
-// wantPrimaryRefusal fails unless the call answered 500 within the primary
-// read bound. The margin covers the handler's own work around the read.
+// wantPrimaryRefusal fails unless the call answered 500 within
+// tokenOutageRefusalBound.
 func wantPrimaryRefusal(t *testing.T, what string, rr *httptest.ResponseRecorder, took time.Duration) {
 	t.Helper()
 	if rr.Code != http.StatusInternalServerError {
 		t.Errorf("%s during the cut: status %d, body %s, want 500", what, rr.Code, rr.Body.String())
 	}
-	if bound := tokenOutagePrimaryRead + 3*time.Second; took > bound {
-		t.Errorf("%s during the cut took %s, want within %s", what, took, bound)
+	if took > tokenOutageRefusalBound {
+		t.Errorf("%s during the cut took %s, want within %s", what, took, tokenOutageRefusalBound)
 	}
 }
 
