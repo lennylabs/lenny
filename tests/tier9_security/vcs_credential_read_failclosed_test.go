@@ -33,6 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
+	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
 const (
@@ -116,8 +117,9 @@ func TestVCSCredentialReadFailsClosedWithNoEarlierValue(t *testing.T) {
 		VCSCredentials:  &vcscred.StoreResolver{Pools: pools, Secrets: secrets},
 	})
 	t.Cleanup(srv.Close)
+	handler := ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 
-	if rr := vcsFailClosedCreate(t, srv.Handler()); rr.Code != http.StatusCreated {
+	if rr := vcsFailClosedCreate(t, handler); rr.Code != http.StatusCreated {
 		t.Fatalf("first create status = %d, want 201; body %s", rr.Code, rr.Body.String())
 	}
 	if len(ls.creds) != 1 || ls.creds[0].Token != vcsFailClosedToken {
@@ -125,7 +127,7 @@ func TestVCSCredentialReadFailsClosedWithNoEarlierValue(t *testing.T) {
 	}
 
 	firstLastID := lastID
-	rr := vcsFailClosedCreate(t, srv.Handler())
+	rr := vcsFailClosedCreate(t, handler)
 	if rr.Code != http.StatusServiceUnavailable || !strings.Contains(rr.Body.String(), "GIT_CLONE_REF_RESOLVE_TRANSIENT") {
 		t.Fatalf("second create = %d %s, want 503 GIT_CLONE_REF_RESOLVE_TRANSIENT", rr.Code, rr.Body.String())
 	}
