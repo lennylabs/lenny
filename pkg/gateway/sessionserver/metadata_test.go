@@ -23,13 +23,12 @@ import (
 func newCreateServerWithMetadata(t *testing.T) (*sessionserver.Server, func() string) {
 	t.Helper()
 	clock := func() time.Time { return time.Date(2026, 5, 26, 9, 0, 0, 0, time.UTC) }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	idFn := func() string { return "sess_md" }
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
 		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            idFn,
-		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer: uploadtoken.NewIssuer(clock),
 	})
 	return srv, idFn
 }

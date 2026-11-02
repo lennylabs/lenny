@@ -381,9 +381,7 @@ type gatewayWiringFields struct {
 	tenants                   tenantstore.Store
 	tokenServiceSubsystem     *subsystem.Subsystem
 	transcripts               transcriptstore.Store
-	uploadRotator             *uploadtoken.Rotator
 	uploadSubsystem           *subsystem.Subsystem
-	uploadTracker             *uploadtoken.MemoryTracker
 	wd                        *watchdog.Watchdog
 	billingTier               *redisstream.Tier
 	// billingStream is the billing pipeline's Tier 1 stream (the Redis
@@ -474,7 +472,6 @@ type gatewayWiringFields struct {
 	rateLimiter       ratelimit.Counter
 	readPool          *pgxpool.Pool
 	recycleBoundary   *recycle.RecycleBoundaryCoordinator
-	ring              *uploadtoken.KeyRing
 	runtimes          runtimestore.Store
 	saTokenVerifier   leasecontrol.TokenVerifier
 	saUserVerifier    serviceidentity.SATokenAuthenticator

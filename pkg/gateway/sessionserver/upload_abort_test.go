@@ -36,9 +36,8 @@ func TestOverStreamRemovesStagedBlob_spec_7_4_14(t *testing.T) {
 	store := memstore.New()
 	blobs := blobstore.NewMemoryStore(nil)
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("upload-secret")})
-	issuer := uploadtoken.NewIssuer(ring, clock)
-	verifier := uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), clock)
+	issuer := uploadtoken.NewIssuer(clock)
+	verifier := uploadtoken.NewVerifier(clock)
 	tenants := tenantstore.NewMemory()
 	if err := tenants.Create(context.Background(), tenantstore.Tenant{
 		ID: "acme", StorageQuotaBytes: 100,

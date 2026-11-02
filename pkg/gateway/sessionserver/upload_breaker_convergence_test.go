@@ -65,10 +65,8 @@ func newOutageReplica(t *testing.T, blobs blobstore.Store, threshold int) replic
 	store := memstore.New()
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return t0 }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("upload-secret")})
-	issuer := uploadtoken.NewIssuer(ring, clock)
-	tracker := uploadtoken.NewMemoryTracker()
-	verifier := uploadtoken.NewVerifier(ring, tracker, clock)
+	issuer := uploadtoken.NewIssuer(clock)
+	verifier := uploadtoken.NewVerifier(clock)
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:     true,
 		Clock:               clock,

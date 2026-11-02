@@ -32,8 +32,8 @@ func newReplica(t *testing.T, store sessionstore.Store, blobs blobstore.Store, m
 	t.Helper()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:          true,
-		UploadTokenIssuer:        uploadtoken.NewIssuer(nil, nil),
-		UploadTokenVerifier:      uploadtoken.NewVerifier(nil, nil, nil),
+		UploadTokenIssuer:        uploadtoken.NewIssuer(nil),
+		UploadTokenVerifier:      uploadtoken.NewVerifier(nil),
 		Blobs:                    blobs,
 		MaxUploadBytesPerSession: maxBytes,
 	})

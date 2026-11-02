@@ -18,7 +18,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gcpause"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
-	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
 // startBackgroundWorkers launches the §4.1 gateway's periodic
@@ -82,37 +81,6 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 				res.ResumingTimeouts, res.PerResumingOutcome)
 		}
 	})
-
-	// §7.1 uploadToken signing-key rotator. The default
-	// cadence rotates every 24h with a 5-minute overlap window; the
-	// rotator both installs the new key and sweeps overlap keys whose
-	// deadline has elapsed. spec: §7.1.
-	go w.uploadRotator.Run(w.watchdogCtx)
-
-	// F-7.4.9: §7.1 single-use upload-token tracker sweep. The memory
-	// tracker holds one entry per consumed token's digest until its
-	// expiry timestamp; without a periodic Sweep the map grows
-	// monotonically with the gateway's process lifetime. The cadence is
-	// the watchdog tick interval — cheap enough to run frequently and
-	// short enough that a sweep happens well within one
-	// maxCreatedStateTimeoutSeconds window. spec: §7.1.
-	go func() {
-		tick := time.NewTicker(uploadtoken.DefaultRotationInterval / 96) // 15m at the default 24h
-		if tick == nil {
-			return
-		}
-		defer tick.Stop()
-		for {
-			select {
-			case <-w.watchdogCtx.Done():
-				return
-			case now := <-tick.C:
-				if n := w.uploadTracker.Sweep(now.UTC()); n > 0 {
-					log.Printf("lenny-gateway: §7.1 upload-token tracker swept %d expired digests", n)
-				}
-			}
-		}
-	}()
 
 	// ----- §9.3 connector OAuth state-store sweep -----
 	// F-9.3.16: the in-memory MemoryStateStore is bound by the

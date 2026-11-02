@@ -28,12 +28,11 @@ import (
 func newUploadTokenServers(t *testing.T) (*httptest.Server, *httptest.Server, sessionstore.Store, *uploadtoken.Issuer) {
 	t.Helper()
 	store := memstore.New()
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("parity")})
-	issuer := uploadtoken.NewIssuer(ring, nil)
+	issuer := uploadtoken.NewIssuer(nil)
 	rest := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:     true,
 		UploadTokenIssuer:   issuer,
-		UploadTokenVerifier: uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), nil),
+		UploadTokenVerifier: uploadtoken.NewVerifier(nil),
 	})
 	tsREST := httptest.NewServer(ownerprincipal.Wrap(rest.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
@@ -110,10 +109,9 @@ func TestFinalizeUploadTokenRESTMCPParity_spec_7_4(t *testing.T) {
 			}
 			return tok
 		}, wantCode: "UPLOAD_TOKEN_MISMATCH"},
-		{name: "foreign signing key", token: func(t *testing.T, _ *uploadtoken.Issuer, id string) string {
-			// Bound to this session's id, so only the signature differs.
-			other := uploadtoken.NewIssuer(uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "kx", Secret: []byte("other")}), nil)
-			tok, err := other.Issue(id, uploadtoken.DefaultTTL)
+		{name: "token the session row does not hold", token: func(t *testing.T, issuer *uploadtoken.Issuer, id string) string {
+			// Bound to this session's id, so only the secret differs.
+			tok, err := issuer.Issue(id, uploadtoken.DefaultTTL)
 			if err != nil {
 				t.Fatalf("issue: %v", err)
 			}

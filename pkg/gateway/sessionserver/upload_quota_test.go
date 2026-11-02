@@ -28,9 +28,8 @@ func newQuotaUploadServer(t *testing.T, quotaBytes int64) (*sessionserver.Server
 	t.Helper()
 	store := memstore.New()
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("upload-secret")})
-	issuer := uploadtoken.NewIssuer(ring, clock)
-	verifier := uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), clock)
+	issuer := uploadtoken.NewIssuer(clock)
+	verifier := uploadtoken.NewVerifier(clock)
 	tenants := tenantstore.NewMemory()
 	if err := tenants.Create(context.Background(), tenantstore.Tenant{
 		ID: "acme", StorageQuotaBytes: quotaBytes,
@@ -157,9 +156,8 @@ func (unavailableCounter) Set(context.Context, string, int64) error { return nil
 func TestUploadStorageQuotaDualOutageFailsClosed_spec_12_4_210(t *testing.T) {
 	store := memstore.New()
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("upload-secret")})
-	issuer := uploadtoken.NewIssuer(ring, clock)
-	verifier := uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), clock)
+	issuer := uploadtoken.NewIssuer(clock)
+	verifier := uploadtoken.NewVerifier(clock)
 	tenants := tenantstore.NewMemory()
 	if err := tenants.Create(context.Background(), tenantstore.Tenant{ID: "acme", StorageQuotaBytes: 1000}); err != nil {
 		t.Fatalf("seed tenant: %v", err)

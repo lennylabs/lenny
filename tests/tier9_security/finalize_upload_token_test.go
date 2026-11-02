@@ -33,12 +33,11 @@ type finalizeTokenProbe struct {
 func newFinalizeTokenProbe(t *testing.T) *finalizeTokenProbe {
 	t.Helper()
 	store := memstore.New()
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("tier9-finalize")})
-	issuer := uploadtoken.NewIssuer(ring, nil)
+	issuer := uploadtoken.NewIssuer(nil)
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:     true,
 		UploadTokenIssuer:   issuer,
-		UploadTokenVerifier: uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), nil),
+		UploadTokenVerifier: uploadtoken.NewVerifier(nil),
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -84,15 +83,15 @@ func (p *finalizeTokenProbe) create(t *testing.T, tenant string) (string, string
 // spec: 7.4 (Upload Safety, Upload authorization), 7.1 (Normal Flow, uploadToken format and security properties), 15.1 (finalize)
 // diagnosis: a failure means a caller without the session's own valid
 // uploadToken finalized the session or bound a plan into it: the token from
-// another session, a token minted under a key outside the gateway's ring,
-// no token, or a token replayed after the session finalized was accepted.
+// another session, a well-formed token whose digest the session row does not
+// hold, no token, or a token replayed after the session finalized was accepted.
 // Inspect the verifyUploadToken call at the top of handleFinalize in
 // pkg/gateway/sessionserver/finalize_handler.go.
 func TestFinalizeRefusesForeignAndReplayedUploadTokens_spec_7_4(t *testing.T) {
 	p := newFinalizeTokenProbe(t)
 	victim, victimToken := p.create(t, "acme")
 	_, attackerToken := p.create(t, "acme")
-	forged, err := uploadtoken.NewIssuer(uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("guessed")}), nil).Issue(victim, uploadtoken.DefaultTTL)
+	forged, err := uploadtoken.NewIssuer(nil).Issue(victim, uploadtoken.DefaultTTL)
 	if err != nil {
 		t.Fatalf("forge: %v", err)
 	}
@@ -106,7 +105,7 @@ func TestFinalizeRefusesForeignAndReplayedUploadTokens_spec_7_4(t *testing.T) {
 	}{
 		{"no token", "", http.StatusUnauthorized, "UPLOAD_TOKEN_INVALID"},
 		{"another session's token", attackerToken, http.StatusForbidden, "UPLOAD_TOKEN_MISMATCH"},
-		{"token forged under a guessed key", forged, http.StatusUnauthorized, "UPLOAD_TOKEN_INVALID"},
+		{"token forged with a guessed secret", forged, http.StatusUnauthorized, "UPLOAD_TOKEN_INVALID"},
 	}
 	for _, tc := range refusals {
 		t.Run(tc.name, func(t *testing.T) {

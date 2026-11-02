@@ -23,10 +23,8 @@ func TestRunUploadEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 	store := memstore.New()
 	blobs := blobstore.NewMemoryStore(nil)
 	clock := func() time.Time { return time.Date(2026, 5, 26, 9, 0, 0, 0, time.UTC) }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k", Secret: []byte("s")})
-	issuer := uploadtoken.NewIssuer(ring, clock)
-	tracker := uploadtoken.NewMemoryTracker()
-	verifier := uploadtoken.NewVerifier(ring, tracker, clock)
+	issuer := uploadtoken.NewIssuer(clock)
+	verifier := uploadtoken.NewVerifier(clock)
 	sink := &captureLifecycleAudit{}
 	srv := New(store, Options{
 		DevTenantHeader:     true,
@@ -79,10 +77,8 @@ func TestRunUploadEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 func TestHandleFinalizeEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 	store := memstore.New()
 	clock := func() time.Time { return time.Date(2026, 5, 26, 9, 0, 0, 0, time.UTC) }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k", Secret: []byte("s")})
-	issuer := uploadtoken.NewIssuer(ring, clock)
-	tracker := uploadtoken.NewMemoryTracker()
-	verifier := uploadtoken.NewVerifier(ring, tracker, clock)
+	issuer := uploadtoken.NewIssuer(clock)
+	verifier := uploadtoken.NewVerifier(clock)
 	sink := &captureLifecycleAudit{}
 	srv := New(store, Options{
 		DevTenantHeader:     true,
@@ -142,10 +138,8 @@ func TestRunUploadAuditNilSinkSafe_spec_7_4_17(t *testing.T) {
 	store := memstore.New()
 	blobs := blobstore.NewMemoryStore(nil)
 	clock := func() time.Time { return time.Date(2026, 5, 26, 9, 0, 0, 0, time.UTC) }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k", Secret: []byte("s")})
-	issuer := uploadtoken.NewIssuer(ring, clock)
-	tracker := uploadtoken.NewMemoryTracker()
-	verifier := uploadtoken.NewVerifier(ring, tracker, clock)
+	issuer := uploadtoken.NewIssuer(clock)
+	verifier := uploadtoken.NewVerifier(clock)
 	srv := New(store, Options{
 		DevTenantHeader:     true,
 		Clock:               clock,

@@ -1927,7 +1927,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		TreeTimeout:  opts.TreeRecoveryTreeTimeout,
 	})
 	if s.uploadIssuer == nil {
-		s.uploadIssuer = uploadtoken.NewIssuer(nil, s.clock)
+		s.uploadIssuer = uploadtoken.NewIssuer(s.clock)
 	}
 	if !isolation.IsValid(s.defaultIsoProf) {
 		// spec: §5.3 — honor the dev-mode fallback to `standard`

@@ -66,7 +66,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -75,14 +74,6 @@ const (
 	// DefaultTTL is the §7.1 default token lifetime: 300 s, matching
 	// `maxCreatedStateTimeoutSeconds`.
 	DefaultTTL = 5 * time.Minute
-
-	// DefaultRotationInterval is the §7.1 default signing-key
-	// rotation cadence: 24 hours.
-	DefaultRotationInterval = 24 * time.Hour
-
-	// DefaultOverlapWindow is the §7.1 default overlap window during
-	// which the previous signing key remains valid for verification.
-	DefaultOverlapWindow = 5 * time.Minute
 )
 
 // Sentinel errors. The gateway maps each to its §15.1 / §7.1 error
@@ -104,138 +95,6 @@ var (
 	ErrConsumed = errors.New("uploadtoken: token already consumed")
 )
 
-// SigningKey is one key in the KeyRing. KeyID identifies the key for
-// observability + rotation auditing; Secret carries the HMAC secret
-// bytes. The secret is never returned to callers and is included in
-// the canonical signing input only.
-type SigningKey struct {
-	KeyID  string
-	Secret []byte
-}
-
-// KeyRing holds the active signing key plus zero or more
-// previously-active keys still inside the §7.1 overlap window. The
-// zero KeyRing is not usable; construct with NewKeyRing.
-type KeyRing struct {
-	mu      sync.RWMutex
-	active  SigningKey
-	overlap []SigningKey
-}
-
-// NewKeyRing returns a KeyRing with `active` as the signing key and
-// no overlap keys. Subsequent Rotate calls move `active` into the
-// overlap slice and install the new key as active.
-func NewKeyRing(active SigningKey) *KeyRing {
-	return &KeyRing{active: active}
-}
-
-// Active returns the current signing key (a copy of the SigningKey
-// struct; the underlying secret bytes are shared).
-func (r *KeyRing) Active() SigningKey {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.active
-}
-
-// Rotate installs `next` as the new active key and pushes the
-// previous active key onto the overlap slice. The overlap key is
-// removed automatically when Expire is called with a time after
-// its "valid until" instant — managed by the caller (typically a
-// 24-hour rotation timer paired with a 5-minute overlap sweep).
-func (r *KeyRing) Rotate(next SigningKey) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.overlap = append(r.overlap, r.active)
-	r.active = next
-}
-
-// Expire removes any overlap keys whose `KeyID` appears in the
-// `expiredKeyIDs` set. Use this in the overlap-window sweep
-// goroutine.
-func (r *KeyRing) Expire(expiredKeyIDs ...string) int {
-	if len(expiredKeyIDs) == 0 {
-		return 0
-	}
-	expired := make(map[string]struct{}, len(expiredKeyIDs))
-	for _, id := range expiredKeyIDs {
-		expired[id] = struct{}{}
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	kept := r.overlap[:0]
-	dropped := 0
-	for _, k := range r.overlap {
-		if _, drop := expired[k.KeyID]; drop {
-			dropped++
-			continue
-		}
-		kept = append(kept, k)
-	}
-	r.overlap = kept
-	return dropped
-}
-
-// ConsumedTracker records which tokens have been single-use
-// invalidated per §7.1. Production wires this to Redis; the
-// in-memory implementation is sufficient for tests and the minimal
-// gateway. Implementations must be goroutine-safe.
-type ConsumedTracker interface {
-	// MarkConsumed records the supplied digest as consumed. Returns
-	// nil if the digest was newly marked, ErrConsumed if the digest
-	// was already marked.
-	MarkConsumed(digest string, expiry time.Time) error
-
-	// IsConsumed reports whether the digest is already marked
-	// consumed.
-	IsConsumed(digest string) bool
-}
-
-// NewMemoryTracker returns an in-memory ConsumedTracker suitable for
-// tests and the minimal gateway. Entries are purged on demand by the
-// caller via Sweep; nothing is GC'd otherwise.
-func NewMemoryTracker() *MemoryTracker { return &MemoryTracker{m: map[string]time.Time{}} }
-
-// MemoryTracker is the in-memory ConsumedTracker.
-type MemoryTracker struct {
-	mu sync.Mutex
-	m  map[string]time.Time
-}
-
-// MarkConsumed implements ConsumedTracker.
-func (t *MemoryTracker) MarkConsumed(digest string, expiry time.Time) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if _, ok := t.m[digest]; ok {
-		return ErrConsumed
-	}
-	t.m[digest] = expiry
-	return nil
-}
-
-// IsConsumed implements ConsumedTracker.
-func (t *MemoryTracker) IsConsumed(digest string) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	_, ok := t.m[digest]
-	return ok
-}
-
-// Sweep deletes every consumed entry whose expiry is at or before
-// `now`. Returns the number of entries dropped. Callers run this
-// periodically to bound memory.
-func (t *MemoryTracker) Sweep(now time.Time) int {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	dropped := 0
-	for k, exp := range t.m {
-		if !exp.After(now) {
-			delete(t.m, k)
-			dropped++
-		}
-	}
-	return dropped
-}
-
 // secretBytes is the §7.1 size of the token's random third segment:
 // 256 bits.
 const secretBytes = 32
@@ -246,9 +105,9 @@ type Issuer struct {
 	clock func() time.Time
 }
 
-// NewIssuer returns an Issuer. The ring argument is ignored. The clock
-// is used for the issuance "now" stamp; pass nil to default to time.Now.
-func NewIssuer(_ *KeyRing, clock func() time.Time) *Issuer {
+// NewIssuer returns an Issuer. The clock is used for the issuance "now"
+// stamp; pass nil to default to time.Now.
+func NewIssuer(clock func() time.Time) *Issuer {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
@@ -302,7 +161,6 @@ type ParsedToken struct {
 	SessionID string
 	Expiry    time.Time
 	Digest    string // canonical sha256 digest of the full token, stored on the session row
-	KeyID     string // always empty: tokens are not signed
 }
 
 // Verifier verifies uploadTokens against a session row and a clock.
@@ -310,9 +168,8 @@ type Verifier struct {
 	clock func() time.Time
 }
 
-// NewVerifier returns a Verifier. The ring and tracker arguments are
-// ignored. Pass a nil clock to default to time.Now.
-func NewVerifier(_ *KeyRing, _ ConsumedTracker, clock func() time.Time) *Verifier {
+// NewVerifier returns a Verifier. Pass a nil clock to default to time.Now.
+func NewVerifier(clock func() time.Time) *Verifier {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}

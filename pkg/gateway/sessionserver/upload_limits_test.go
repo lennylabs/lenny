@@ -30,9 +30,8 @@ func newUploadLimitServer(t *testing.T, perSession, global int, maxBytes int64) 
 	t.Helper()
 	store := memstore.New()
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("upload-secret")})
-	issuer := uploadtoken.NewIssuer(ring, clock)
-	verifier := uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), clock)
+	issuer := uploadtoken.NewIssuer(clock)
+	verifier := uploadtoken.NewVerifier(clock)
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:                true,
 		Clock:                          clock,

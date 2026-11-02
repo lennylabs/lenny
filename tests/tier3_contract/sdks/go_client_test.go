@@ -147,11 +147,10 @@ func newGateway(t *testing.T) *httptest.Server {
 	// spec: §7.1 (uploadToken), §7.4 (Upload authorization) — the gateway
 	// mints and verifies the uploadToken as production does, so the SDK's
 	// finalize round trip carries the token the create response returned.
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("sdk-contract")})
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
 		DevTenantHeader:     true,
-		UploadTokenIssuer:   uploadtoken.NewIssuer(ring, nil),
-		UploadTokenVerifier: uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), nil),
+		UploadTokenIssuer:   uploadtoken.NewIssuer(nil),
+		UploadTokenVerifier: uploadtoken.NewVerifier(nil),
 	})
 	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)

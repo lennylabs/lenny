@@ -72,13 +72,12 @@ func TestDeriveAndReplayMintAnUploadToken_spec_15_1(t *testing.T) {
 			rt.seed(t, store)
 			t0 := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 			clock := func() time.Time { return t0 }
-			ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("upload-secret")})
-			verifier := uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), clock)
+			verifier := uploadtoken.NewVerifier(clock)
 			srv := sessionserver.New(store, snapshotFor(t, rt.sourceID).wire(sessionserver.Options{
 				DevTenantHeader:     true,
 				Clock:               clock,
 				IDFunc:              func() string { return "sess_new" },
-				UploadTokenIssuer:   uploadtoken.NewIssuer(ring, clock),
+				UploadTokenIssuer:   uploadtoken.NewIssuer(clock),
 				UploadTokenVerifier: verifier,
 				UploadTokenTTL:      300 * time.Second,
 			}))

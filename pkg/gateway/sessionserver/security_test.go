@@ -84,16 +84,14 @@ func TestFinalizeConsumesUploadToken(t *testing.T) {
 	// upload with the same token → ErrConsumed.
 	store := memstore.New()
 	blobs := blobstore.NewMemoryStore(nil)
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test")})
-	tracker := uploadtoken.NewMemoryTracker()
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:     true,
 		Clock:               clock,
 		IDFunc:              func() string { return "sess_X" },
-		UploadTokenIssuer:   uploadtoken.NewIssuer(ring, clock),
-		UploadTokenVerifier: uploadtoken.NewVerifier(ring, tracker, clock),
+		UploadTokenIssuer:   uploadtoken.NewIssuer(clock),
+		UploadTokenVerifier: uploadtoken.NewVerifier(clock),
 		Blobs:               blobs,
 	})
 

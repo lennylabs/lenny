@@ -21,12 +21,11 @@ import (
 func failureTestServer(t *testing.T, caps session.RetryPolicyCaps) (*sessionserver.Server, sessionstore.Store) {
 	t.Helper()
 	clock := func() time.Time { return time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC) }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:   true,
 		Clock:             clock,
-		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer: uploadtoken.NewIssuer(clock),
 		RetryPolicyCaps:   caps,
 	})
 	return srv, store

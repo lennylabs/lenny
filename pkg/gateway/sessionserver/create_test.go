@@ -66,13 +66,12 @@ func createRequestRaw(t *testing.T, h http.Handler, body []byte) *httptest.Respo
 // F-15.2.4.
 func TestCreateSessionServiceHappyPath_spec_15_2_1_1380(t *testing.T) {
 	store := memstore.New()
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_svc" },
-		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer: uploadtoken.NewIssuer(clock),
 	})
 
 	resp, svcErr := srv.CreateSessionService(ownerCtx(context.Background()), "acme", sessionserver.CreateSessionRequest{
@@ -213,13 +212,12 @@ func TestCreateAndStartServiceCarriesRetryAfterOnPoolExhaustion(t *testing.T) {
 
 func TestCreateMintsUploadTokenAndIsolationLevel(t *testing.T) {
 	store := memstore.New()
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_new" },
-		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer: uploadtoken.NewIssuer(clock),
 	})
 
 	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
@@ -246,7 +244,7 @@ func TestCreateMintsUploadTokenAndIsolationLevel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read created row: %v", err)
 	}
-	v := uploadtoken.NewVerifier(ring, nil, clock)
+	v := uploadtoken.NewVerifier(clock)
 	if err := v.Verify(resp.UploadToken, resp.ID, created.UploadTokenDigest, created.UploadTokenExpiry); err != nil {
 		t.Errorf("uploadToken does not verify: %v", err)
 	}
@@ -278,13 +276,12 @@ func TestCreateMintsUploadTokenAndIsolationLevel(t *testing.T) {
 
 func TestCreateRecordsEnvironment(t *testing.T) {
 	store := memstore.New()
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_env" },
-		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer: uploadtoken.NewIssuer(clock),
 	})
 
 	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
@@ -326,13 +323,12 @@ func TestCreateRecordsEnvironment(t *testing.T) {
 
 func TestCreateWithoutEnvironmentLeavesItEmpty(t *testing.T) {
 	store := memstore.New()
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_noenv" },
-		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer: uploadtoken.NewIssuer(clock),
 	})
 	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
 	if rr.Code != http.StatusCreated {
@@ -346,13 +342,12 @@ func TestCreateWithoutEnvironmentLeavesItEmpty(t *testing.T) {
 
 func TestEnvironmentSessionsEndpointSetsEnvironment(t *testing.T) {
 	store := memstore.New()
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_envpath" },
-		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer: uploadtoken.NewIssuer(clock),
 	})
 
 	body, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"})
@@ -380,13 +375,12 @@ func TestEnvironmentSessionsEndpointSetsEnvironment(t *testing.T) {
 
 func TestEnvironmentSessionsEndpointPathOverridesBody(t *testing.T) {
 	store := memstore.New()
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_override" },
-		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer: uploadtoken.NewIssuer(clock),
 	})
 
 	// An environment in the request body is overridden by the URL path.
@@ -769,14 +763,13 @@ func TestCreateAcceptsNullWorkspacePlan(t *testing.T) {
 // rejects Create to verify the persistence-failure half of the
 // rollback contract.
 func TestCreateReturnsSessionCreationFailedOnPersistFailure_spec_7_1_4(t *testing.T) {
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	store := &createRejectingStore{Store: memstore.New()}
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_persist_fail" },
-		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer: uploadtoken.NewIssuer(clock),
 	})
 
 	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
@@ -938,7 +931,6 @@ var errCreateRejected = errors.New("test: persistence failure injected")
 func seedNoEnvServer(t *testing.T, sessionID string, tenantPolicy, platformDefault string, envs ...environmentstore.Environment) (*sessionserver.Server, *memstore.Store) {
 	t.Helper()
 	store := memstore.New()
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	es := environmentstore.NewMemory()
 	for _, e := range envs {
@@ -954,7 +946,7 @@ func seedNoEnvServer(t *testing.T, sessionID string, tenantPolicy, platformDefau
 		DevTenantHeader:            true,
 		Clock:                      clock,
 		IDFunc:                     func() string { return sessionID },
-		UploadTokenIssuer:          uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer:          uploadtoken.NewIssuer(clock),
 		Environments:               es,
 		Tenants:                    ts,
 		DefaultNoEnvironmentPolicy: platformDefault,
@@ -1068,7 +1060,6 @@ func TestCreateWithoutEnvironmentEmptyTenantPolicyDefaultsToDenyAll_spec_10_6(t 
 func seedExplicitEnvServer(t *testing.T, sessionID string, rt runtimestore.Runtime, envs ...environmentstore.Environment) (*sessionserver.Server, *memstore.Store) {
 	t.Helper()
 	store := memstore.New()
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	es := environmentstore.NewMemory()
 	for _, e := range envs {
@@ -1090,7 +1081,7 @@ func seedExplicitEnvServer(t *testing.T, sessionID string, rt runtimestore.Runti
 		DevTenantHeader:            true,
 		Clock:                      clock,
 		IDFunc:                     func() string { return sessionID },
-		UploadTokenIssuer:          uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer:          uploadtoken.NewIssuer(clock),
 		Environments:               es,
 		Tenants:                    ts,
 		Runtimes:                   rts,
@@ -1253,13 +1244,12 @@ func TestExplicitEnvironmentNoPrincipalPassesThrough_spec_10_6(t *testing.T) {
 // does not engage without environments/tenants wired.
 func TestCreateAdmissionGateDisabledWhenRegistriesUnwired_spec_11_1(t *testing.T) {
 	store := memstore.New()
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:            true,
 		Clock:                      clock,
 		IDFunc:                     func() string { return "sess_unwired" },
-		UploadTokenIssuer:          uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer:          uploadtoken.NewIssuer(clock),
 		DefaultNoEnvironmentPolicy: tenantstore.NoEnvPolicyDenyAll,
 	})
 	rr := createRequestAs(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{RuntimeRef: "claude-code"},

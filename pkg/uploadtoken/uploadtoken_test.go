@@ -19,7 +19,7 @@ import (
 // row fields the gateway persists.
 func issue(t *testing.T, sessionID string, ttl time.Duration, now time.Time) (string, uploadtoken.ParsedToken) {
 	t.Helper()
-	tok, parsed, err := uploadtoken.NewIssuer(nil, func() time.Time { return now }).IssueDetailed(sessionID, ttl)
+	tok, parsed, err := uploadtoken.NewIssuer(func() time.Time { return now }).IssueDetailed(sessionID, ttl)
 	if err != nil {
 		t.Fatalf("IssueDetailed: %v", err)
 	}
@@ -27,7 +27,7 @@ func issue(t *testing.T, sessionID string, ttl time.Duration, now time.Time) (st
 }
 
 func verifierAt(now time.Time) *uploadtoken.Verifier {
-	return uploadtoken.NewVerifier(nil, nil, func() time.Time { return now })
+	return uploadtoken.NewVerifier(func() time.Time { return now })
 }
 
 // sha256Hex is the row digest of tok.
@@ -177,7 +177,7 @@ func TestVerifyRejectsEmptyRowDigest_spec_7_1(t *testing.T) {
 
 // spec: §7.1 (Authentication)
 func TestVerifyRejectsMalformedToken(t *testing.T) {
-	verifier := uploadtoken.NewVerifier(nil, nil, nil)
+	verifier := uploadtoken.NewVerifier(nil)
 	digest := sha256Hex("a.123.deadbeef")
 	for _, tok := range []string{
 		"",
@@ -194,41 +194,12 @@ func TestVerifyRejectsMalformedToken(t *testing.T) {
 	}
 }
 
-func TestMemoryTrackerSweepExpired(t *testing.T) {
-	tr := uploadtoken.NewMemoryTracker()
-	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	_ = tr.MarkConsumed("a", now.Add(-time.Minute))
-	_ = tr.MarkConsumed("b", now.Add(time.Minute))
-
-	dropped := tr.Sweep(now)
-	if dropped != 1 {
-		t.Errorf("Sweep dropped: got %d, want 1", dropped)
-	}
-	if tr.IsConsumed("a") {
-		t.Error("a should have been swept")
-	}
-	if !tr.IsConsumed("b") {
-		t.Error("b should be retained (still in window)")
-	}
-}
-
 func TestIssueRejectsEmptyOrDottedSessionID(t *testing.T) {
-	issuer := uploadtoken.NewIssuer(nil, nil)
+	issuer := uploadtoken.NewIssuer(nil)
 	if _, err := issuer.Issue("", time.Minute); err == nil {
 		t.Error("empty sess_id should error")
 	}
 	if _, err := issuer.Issue("sess.with.dots", time.Minute); err == nil {
 		t.Error("dotted sess_id should error")
-	}
-}
-
-func TestActiveKeyIsCurrent(t *testing.T) {
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1"})
-	if ring.Active().KeyID != "k1" {
-		t.Errorf("Active.KeyID: got %q, want k1", ring.Active().KeyID)
-	}
-	ring.Rotate(uploadtoken.SigningKey{KeyID: "k2"})
-	if ring.Active().KeyID != "k2" {
-		t.Errorf("Active.KeyID after Rotate: got %q, want k2", ring.Active().KeyID)
 	}
 }

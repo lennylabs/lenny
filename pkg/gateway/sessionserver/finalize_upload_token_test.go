@@ -64,14 +64,13 @@ func newFinalizeTokenFixture(t *testing.T) *finalizeTokenFixture {
 	t.Helper()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("finalize-secret")})
-	issuer := uploadtoken.NewIssuer(ring, clock)
+	issuer := uploadtoken.NewIssuer(clock)
 	store := &countingSessionStore{Store: memstore.New()}
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:     true,
 		Clock:               clock,
 		UploadTokenIssuer:   issuer,
-		UploadTokenVerifier: uploadtoken.NewVerifier(ring, nil, clock),
+		UploadTokenVerifier: uploadtoken.NewVerifier(clock),
 	})
 	tok, parsed, err := issuer.IssueDetailed(finalizeTokenSession, uploadtoken.DefaultTTL)
 	if err != nil {

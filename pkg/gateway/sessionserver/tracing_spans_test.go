@@ -59,12 +59,11 @@ func TestCreateStartsSessionCreateSpan_spec_16_3(t *testing.T) {
 	defer restore()
 
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
 		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_span_ok" },
-		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer: uploadtoken.NewIssuer(clock),
 	})
 
 	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
@@ -88,12 +87,11 @@ func TestCreateSpanRecordsPersistError_spec_16_3(t *testing.T) {
 	defer restore()
 
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test")})
 	srv := sessionserver.New(&createRejectingStore{Store: memstore.New()}, sessionserver.Options{
 		DevTenantHeader:   true,
 		Clock:             clock,
 		IDFunc:            func() string { return "sess_span_fail" },
-		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer: uploadtoken.NewIssuer(clock),
 	})
 
 	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
@@ -216,13 +214,12 @@ func TestUploadSpanRecordsMissingSessionError_spec_16_3(t *testing.T) {
 	defer restore()
 
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("upload-secret")})
-	issuer := uploadtoken.NewIssuer(ring, clock)
+	issuer := uploadtoken.NewIssuer(clock)
 	srv := sessionserver.New(vanishingStore{memstore.New()}, sessionserver.Options{
 		DevTenantHeader:     true,
 		Clock:               clock,
 		UploadTokenIssuer:   issuer,
-		UploadTokenVerifier: uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), clock),
+		UploadTokenVerifier: uploadtoken.NewVerifier(clock),
 		Blobs:               blobstore.NewMemoryStore(nil),
 	})
 	// The ownership check admits the owner, and the handler's primary read then

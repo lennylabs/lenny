@@ -28,7 +28,6 @@ import (
 
 func envelopeServer(t *testing.T, opts sessionserver.Options) *sessionserver.Server {
 	t.Helper()
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	if opts.Clock == nil {
 		opts.Clock = clock
@@ -37,7 +36,7 @@ func envelopeServer(t *testing.T, opts sessionserver.Options) *sessionserver.Ser
 		opts.IDFunc = func() string { return "sess_env_test" }
 	}
 	if opts.UploadTokenIssuer == nil {
-		opts.UploadTokenIssuer = uploadtoken.NewIssuer(ring, opts.Clock)
+		opts.UploadTokenIssuer = uploadtoken.NewIssuer(opts.Clock)
 	}
 	return sessionserver.New(memstore.New(), opts)
 }
@@ -104,12 +103,11 @@ func TestCreateRejectsDeployerBlockedEnvVar_spec_14_105(t *testing.T) {
 
 func TestCreateAcceptsAndEchoesEnv_spec_14(t *testing.T) {
 	store := memstore.New()
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
 		Clock:           clock, IDFunc: func() string { return "sess_env_ok" },
-		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer: uploadtoken.NewIssuer(clock),
 	})
 	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
 		RuntimeRef: "claude-code",
@@ -396,12 +394,11 @@ func TestCreateRejectsNegativeDelegationLease_spec_14(t *testing.T) {
 // spec: §14 (delegationLease envelope field), §14.1 (CreateSessionRequest).
 func TestCreateEchoesDelegationLease_spec_14(t *testing.T) {
 	store := memstore.New()
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
 		Clock:           clock, IDFunc: func() string { return "sess_pool" },
-		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer: uploadtoken.NewIssuer(clock),
 	})
 	depth, kids := 2, 5
 	rr := createRequest(t, asOwner(srv.Handler()), sessionserver.CreateSessionRequest{
@@ -438,12 +435,11 @@ func TestCreateEchoesDelegationLease_spec_14(t *testing.T) {
 // outer fields), §8.3 (delegation policy resource).
 func TestCreateDecodesPlaygroundDelegationLeaseWireKey_spec_27_4(t *testing.T) {
 	store := memstore.New()
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
 		Clock:           clock, IDFunc: func() string { return "sess_pg" },
-		UploadTokenIssuer: uploadtoken.NewIssuer(ring, clock),
+		UploadTokenIssuer: uploadtoken.NewIssuer(clock),
 	})
 	// The exact JSON the §27.4 SPA emits for a filled delegation selection:
 	// the nested delegationLease.delegationPolicyRef key with only the policy

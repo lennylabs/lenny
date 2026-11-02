@@ -146,7 +146,7 @@ func (w *gatewayWiring) buildLLMProxy(
 // §4.3/§10.2/§10.3 credential, signing, and verification surfaces: the
 // Postgres or in-memory (Source-Mode SQLite) stores, the §12.3 store
 // router, the §11.2.1 two-tier billing failover pipeline, the §7.1
-// uploadToken key ring, the §4 KMS provider, the token service, the
+// uploadToken issuer and verifier, the §4 KMS provider, the token service, the
 // bearer verifier, the session executor, and the §4.9 credential-
 // assignment service. It records every store and client the later build
 // steps wire onto the accumulator. The §17.4 SQLite flush-loop cancel

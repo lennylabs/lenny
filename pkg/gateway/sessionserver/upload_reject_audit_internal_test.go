@@ -40,10 +40,8 @@ func (m *fakeUploadMetrics) AddExtractionAbort(errorType string) {
 func uploadTestServer(t *testing.T, opts Options) (*Server, *uploadtoken.Issuer, func() time.Time) {
 	t.Helper()
 	clock := func() time.Time { return time.Date(2026, 5, 26, 9, 0, 0, 0, time.UTC) }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k", Secret: []byte("s")})
-	issuer := uploadtoken.NewIssuer(ring, clock)
-	tracker := uploadtoken.NewMemoryTracker()
-	verifier := uploadtoken.NewVerifier(ring, tracker, clock)
+	issuer := uploadtoken.NewIssuer(clock)
+	verifier := uploadtoken.NewVerifier(clock)
 	opts.Clock = clock
 	opts.UploadTokenIssuer = issuer
 	opts.UploadTokenVerifier = verifier

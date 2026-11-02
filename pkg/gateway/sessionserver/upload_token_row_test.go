@@ -57,7 +57,7 @@ func (c contextBoundCounter) Adjust(ctx context.Context, tenantID string, delta 
 func newRowTokenFixture(t *testing.T, inner sessionstore.Store) *rowTokenFixture {
 	t.Helper()
 	clock := func() time.Time { return rowTokenNow }
-	issuer := uploadtoken.NewIssuer(nil, clock)
+	issuer := uploadtoken.NewIssuer(clock)
 	blobs := blobstore.NewMemoryStore(nil)
 	tenants := tenantstore.NewMemory()
 	if err := tenants.Create(context.Background(), tenantstore.Tenant{ID: rowTokenTenant, StorageQuotaBytes: 1 << 20}); err != nil {
@@ -69,7 +69,7 @@ func newRowTokenFixture(t *testing.T, inner sessionstore.Store) *rowTokenFixture
 		DevTenantHeader:     true,
 		Clock:               clock,
 		UploadTokenIssuer:   issuer,
-		UploadTokenVerifier: uploadtoken.NewVerifier(nil, nil, clock),
+		UploadTokenVerifier: uploadtoken.NewVerifier(clock),
 		Blobs:               blobs,
 		Tenants:             tenants,
 		StorageQuota:        contextBoundCounter{Memory: counter},

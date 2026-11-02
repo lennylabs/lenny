@@ -53,7 +53,6 @@ func fakeSeal(_ context.Context, _ string, pt []byte) ([]byte, error) {
 
 func callbackServer(t *testing.T, store sessionstore.Store, opts sessionserver.Options) *sessionserver.Server {
 	t.Helper()
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("test-secret")})
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	if opts.Clock == nil {
 		opts.Clock = clock
@@ -62,7 +61,7 @@ func callbackServer(t *testing.T, store sessionstore.Store, opts sessionserver.O
 		opts.IDFunc = func() string { return "sess_cb" }
 	}
 	if opts.UploadTokenIssuer == nil {
-		opts.UploadTokenIssuer = uploadtoken.NewIssuer(ring, opts.Clock)
+		opts.UploadTokenIssuer = uploadtoken.NewIssuer(opts.Clock)
 	}
 	if opts.CallbackValidator == nil {
 		opts.CallbackValidator = callbackValidator()

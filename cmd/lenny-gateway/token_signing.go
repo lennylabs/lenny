@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"log"
 	"strings"
 	"sync"
@@ -17,8 +16,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
-// buildTokenSigningStores constructs the §7.1 uploadToken key ring, issuer,
-// verifier, and rotator; the §4 / §17.5 KMS provider and its breaker
+// buildTokenSigningStores constructs the §7.1 uploadToken issuer and
+// verifier; the §4 / §17.5 KMS provider and its breaker
 // observer; the §10.2 JWT key set and the shared remote signer; and the
 // §10.2 bearer verifier, recording each on the accumulator. It is an
 // extracted per-concern step of buildStores.
@@ -33,31 +32,12 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	bearerExpectedAudiences := f.bearerExpectedAudiences
 	bearerTrustHMACKeyFile := f.bearerTrustHMACKeyFile
 	tenantIDClaim := f.tenantIDClaim
-	// ----- §7.1 uploadToken KeyRing + rotator -----
-	// The §7.1 contract requires the gateway to rotate signing
-	// keys on a deployer-configurable schedule (default 24h) and keep
-	// the previous key valid through a 5-minute overlap window so
-	// tokens minted just before rotation continue to verify. The boot
-	// key seeds the ring; the rotator goroutine (started below under
-	// watchdogCtx) drives subsequent rotations and the overlap sweep.
-	// spec: §7.1.
-	var seed [32]byte
-	if _, err := rand.Read(seed[:]); err != nil {
-		log.Fatalf("lenny-gateway: rand: %v", err)
-	}
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "boot", Secret: seed[:]})
-	uploadIssuer := uploadtoken.NewIssuer(ring, nil)
-	uploadTracker := uploadtoken.NewMemoryTracker()
-	uploadVerifier := uploadtoken.NewVerifier(ring, uploadTracker, nil)
-	uploadRotator := uploadtoken.NewRotator(ring, uploadtoken.RotatorOptions{
-		OnRotate: func(active, displaced uploadtoken.SigningKey) {
-			log.Printf("lenny-gateway: §7.1 uploadToken signing key rotated; active=%s overlap=%s",
-				active.KeyID, displaced.KeyID)
-		},
-		OnExpire: func(expired []string) {
-			log.Printf("lenny-gateway: §7.1 uploadToken signing key(s) expired from overlap window: %v", expired)
-		},
-	})
+	// ----- §7.1 uploadToken -----
+	// A token authenticates by digest against the session row, so the
+	// issuer and verifier hold no key and every replica verifies alike.
+	// spec: §7.1, §10.1.1.
+	uploadIssuer := uploadtoken.NewIssuer(nil)
+	uploadVerifier := uploadtoken.NewVerifier(nil)
 
 	// ----- §4 KMS provider -----
 	// The §4 / §12.9 envelope-encryption KEK seam and the §10.2 remote
@@ -164,11 +144,8 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	// spec: §4.1 — record the §7.1 uploadToken, §4 KMS, and §10.2 / §10.3
 	// signing and verification surfaces on the accumulator for the
 	// credential-assignment step and the run loop.
-	w.ring = ring
 	w.uploadIssuer = uploadIssuer
 	w.uploadVerifier = uploadVerifier
-	w.uploadTracker = uploadTracker
-	w.uploadRotator = uploadRotator
 	w.kmsProvider = kmsProvider
 	w.kmsBreakerObs = kmsBreakerObs
 	w.jwtKeySet = keySet

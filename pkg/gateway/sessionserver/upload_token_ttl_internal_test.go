@@ -30,8 +30,7 @@ func TestCreateSessionUsesConfiguredUploadTokenTTL_spec_7_4_7(t *testing.T) {
 	store := memstore.New()
 	at := time.Date(2026, 5, 26, 0, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return at }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k", Secret: []byte("s")})
-	issuer := uploadtoken.NewIssuer(ring, clock)
+	issuer := uploadtoken.NewIssuer(clock)
 	const ttl = 600 * time.Second
 	srv := New(store, Options{
 		DevTenantHeader:   true,
@@ -66,8 +65,7 @@ func TestCreateSessionDefaultUploadTokenTTL_spec_7_4_7(t *testing.T) {
 	store := memstore.New()
 	at := time.Date(2026, 5, 26, 0, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return at }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k", Secret: []byte("s")})
-	issuer := uploadtoken.NewIssuer(ring, clock)
+	issuer := uploadtoken.NewIssuer(clock)
 	srv := New(store, Options{
 		DevTenantHeader:   true,
 		Clock:             clock,
@@ -100,10 +98,8 @@ func TestUploadTokenExpiresPerConfiguredTTL_spec_7_4_7(t *testing.T) {
 	at := time.Date(2026, 5, 26, 0, 0, 0, 0, time.UTC)
 	current := at
 	clock := func() time.Time { return current }
-	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k", Secret: []byte("s")})
-	issuer := uploadtoken.NewIssuer(ring, clock)
-	tracker := uploadtoken.NewMemoryTracker()
-	verifier := uploadtoken.NewVerifier(ring, tracker, clock)
+	issuer := uploadtoken.NewIssuer(clock)
+	verifier := uploadtoken.NewVerifier(clock)
 	srv := New(store, Options{
 		DevTenantHeader:     true,
 		Clock:               clock,
@@ -141,31 +137,6 @@ func TestUploadTokenExpiresPerConfiguredTTL_spec_7_4_7(t *testing.T) {
 	}
 	if !strings.Contains(rr2.Body.String(), "UPLOAD_TOKEN_EXPIRED") {
 		t.Errorf("body does not name UPLOAD_TOKEN_EXPIRED: %s", rr2.Body.String())
-	}
-}
-
-// F-7.4.9: MemoryTracker.Sweep drops expired digests but keeps live
-// digests. The gateway's tick calls Sweep with the current clock so
-// memory is bounded.
-func TestUploadTokenTrackerSweep_spec_7_4_9(t *testing.T) {
-	tr := uploadtoken.NewMemoryTracker()
-	now := time.Date(2026, 5, 26, 0, 0, 0, 0, time.UTC)
-	// Two consumed digests: one expires before `now+1m`, one after.
-	if err := tr.MarkConsumed("d-expired", now.Add(-1*time.Minute)); err != nil {
-		t.Fatalf("MarkConsumed expired: %v", err)
-	}
-	if err := tr.MarkConsumed("d-live", now.Add(1*time.Hour)); err != nil {
-		t.Fatalf("MarkConsumed live: %v", err)
-	}
-	dropped := tr.Sweep(now)
-	if dropped != 1 {
-		t.Errorf("dropped = %d, want 1", dropped)
-	}
-	if tr.IsConsumed("d-expired") {
-		t.Errorf("d-expired should have been swept")
-	}
-	if !tr.IsConsumed("d-live") {
-		t.Errorf("d-live should still be tracked")
 	}
 }
 
