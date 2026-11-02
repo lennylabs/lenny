@@ -4080,6 +4080,7 @@
         "tests/tier0_static/deployment_boundary_test.go::TestDeploymentBoundaryEveryAdapterInputIsRenderedOrRegistered",
         "charts/lenny/tests/holder-forward_test.yaml",
         "tests/testinfra/gatewaypki/gatewaypki_test.go::TestMintIssuesAGatewayLeafTheClusterCAVerifies_spec_10_3",
+        "tests/testinfra/gatewaypki/gatewaypki_test.go::TestFlagsNameEachMaterialPath_spec_10_3",
         "pkg/gateway/sessionserver/holder_forward_marker_internal_test.go::TestVerifyGatewayPeerRefusesAConnectionWithoutAPeerCertificate_spec_10_3"
       ],
       "packages": [
@@ -4705,6 +4706,7 @@
         "tests/tier2_component/breakers/breakerstore_test.go",
         "tests/tier2_component/quota/quotastore_test.go",
         "pkg/redisconn/redisconn_test.go",
+        "pkg/gateway/mcpfabric/playground/cross_replica_test.go::TestRedisSessionStoreTenantKeyIsolation_spec_27_3_1_98",
         "tests/tier11_docs/remediation_plan_redis_condition_audit_test.go",
         "pkg/ops/coordination/redisstore/redisstore_test.go::TestRedisStoreClientInstallsSlotGuard_spec_12_4",
         "pkg/ops/coordination/redisstore/redisstore_test.go::TestRedisLockKeysShareOneSlot_spec_25_4",

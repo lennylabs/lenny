@@ -16,6 +16,7 @@ import (
 
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
+	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 	oidcstub "github.com/lennylabs/lenny/tests/testinfra/stubs/oidc"
 )
 
@@ -148,7 +149,7 @@ func TestPlaygroundOIDCLoginCompletesAcrossGatewayProcesses_spec_27_3_1(t *testi
 	idp := oidcstub.New(t)
 	idp.SetLoginIdentity(oidcstub.MintOptions{Subject: "alice@acme.com", TenantID: "default"})
 	rd := containers.StartRedis(t, containers.RedisOptions{})
-	args := []string{
+	args := append([]string{
 		"--no-environment-policy", "allow-all",
 		"--dev-mode=false",
 		"--oidc-issuer-url=" + idp.Issuer(),
@@ -156,7 +157,7 @@ func TestPlaygroundOIDCLoginCompletesAcrossGatewayProcesses_spec_27_3_1(t *testi
 		"--playground-enabled",
 		"--playground-auth-mode=oidc",
 		"--redis-url=redis://" + rd.Addr + "/0",
-	}
+	}, gatewaypki.Mint(t).Flags()...)
 	gwA := gateway.StartWith(t, args...)
 	gwB := gateway.StartWith(t, args...)
 

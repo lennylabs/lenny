@@ -81,6 +81,18 @@ func Mint(t testing.TB) *Material {
 	return m
 }
 
+// Flags returns the cmd/lenny-gateway flags that hand the gateway this
+// material. A gateway outside dev mode with a --redis-url refuses to start
+// without them under §10.3 NET-072, so a test of a production-posture gateway
+// on Redis appends them to its arguments.
+func (m *Material) Flags() []string {
+	return []string{
+		"--adapter-tls-cert=" + m.CertFile,
+		"--adapter-tls-key=" + m.KeyFile,
+		"--adapter-ca=" + m.CAFile,
+	}
+}
+
 // Leaf mints a leaf certificate from the material's CA with the given DNS
 // and URI SANs and a 127.0.0.1 IP SAN, valid for client and server
 // authentication, and writes it under the material's directory.

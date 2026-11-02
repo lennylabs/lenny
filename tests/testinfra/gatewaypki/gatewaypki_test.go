@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"net/url"
+	"slices"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
@@ -67,5 +68,22 @@ func TestMintIssuesAGatewayLeafTheClusterCAVerifies_spec_10_3(t *testing.T) {
 	}
 	if _, err := leaf.Verify(x509.VerifyOptions{Roots: m.CAPool, DNSName: gatewaycontrol.GatewayDNSName}); err == nil {
 		t.Error("a leaf without the gateway DNS SAN verified as the gateway name")
+	}
+}
+
+// spec: §10.3 (mTLS PKI) NET-072
+//
+// TestFlagsNameEachMaterialPath_spec_10_3 asserts that Flags hands the gateway
+// the certificate, key, and CA paths under the flags NET-072 requires, each
+// paired with its own file.
+func TestFlagsNameEachMaterialPath_spec_10_3(t *testing.T) {
+	m := Mint(t)
+	want := []string{
+		"--adapter-tls-cert=" + m.CertFile,
+		"--adapter-tls-key=" + m.KeyFile,
+		"--adapter-ca=" + m.CAFile,
+	}
+	if got := m.Flags(); !slices.Equal(got, want) {
+		t.Errorf("Flags() = %v, want %v", got, want)
 	}
 }

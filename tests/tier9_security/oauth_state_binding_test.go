@@ -31,6 +31,7 @@ import (
 
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
+	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 	oidcstub "github.com/lennylabs/lenny/tests/testinfra/stubs/oidc"
 )
 
@@ -70,16 +71,16 @@ func startBindingStack(t *testing.T) *bindingStack {
 	}
 
 	s := &bindingStack{exchanges: exchanges}
-	s.playground = gateway.StartWith(
-		t,
+	playgroundArgs := append([]string{
 		"--no-environment-policy", "allow-all",
 		"--dev-mode=false",
-		"--oidc-issuer-url="+idp.Issuer(),
+		"--oidc-issuer-url=" + idp.Issuer(),
 		"--oidc-client-id=lenny-gateway",
 		"--playground-enabled",
 		"--playground-auth-mode=oidc",
 		redisFlag,
-	)
+	}, gatewaypki.Mint(t).Flags()...)
+	s.playground = gateway.StartWith(t, playgroundArgs...)
 	s.connector = gateway.StartWith(
 		t,
 		"--no-environment-policy", "allow-all", "--dev-mode",

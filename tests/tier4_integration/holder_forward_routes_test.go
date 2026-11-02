@@ -985,9 +985,10 @@ func TestForwardedCrossTenantTerminateIsNotFound_spec_29_3(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	m := gatewaypki.Mint(t)
-	gw := gateway.StartWith(t, "--no-environment-policy", "allow-all", "--dev-mode", "--agent-runtime", "echo",
-		"--redis-url=redis://"+rd.Addr+"/0",
-		"--adapter-tls-cert="+m.CertFile, "--adapter-tls-key="+m.KeyFile, "--adapter-ca="+m.CAFile)
+	gw := gateway.StartWith(t, append([]string{
+		"--no-environment-policy", "allow-all", "--dev-mode", "--agent-runtime", "echo",
+		"--redis-url=redis://" + rd.Addr + "/0",
+	}, m.Flags()...)...)
 	do := gateReq(t, gw.BaseURL())
 	if code, boot := do(http.MethodPost, "/v1/admin/bootstrap", "platform-admin", map[string]any{
 		"tenants": []map[string]any{{"id": "acme", "displayName": "Acme Corp"}, {"id": "globex", "displayName": "Globex"}},

@@ -22,6 +22,7 @@ import (
 
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
+	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 	oidcstub "github.com/lennylabs/lenny/tests/testinfra/stubs/oidc"
 	"github.com/lennylabs/lenny/tests/testinfra/tcpfault"
 )
@@ -136,16 +137,16 @@ func TestPlaygroundOIDCStateFailsClosedAcrossRedisOutage_spec_27_3_1(t *testing.
 	idp.SetLoginIdentity(oidcstub.MintOptions{Subject: "alice@acme.com", TenantID: "default"})
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	proxy := tcpfault.Start(t, rd.Addr)
-	gw := gateway.StartWith(
-		t,
+	args := append([]string{
 		"--no-environment-policy", "allow-all",
 		"--dev-mode=false",
-		"--oidc-issuer-url="+idp.Issuer(),
+		"--oidc-issuer-url=" + idp.Issuer(),
 		"--oidc-client-id=lenny-gateway",
 		"--playground-enabled",
 		"--playground-auth-mode=oidc",
-		"--redis-url=redis://"+proxy.Addr()+"/0",
-	)
+		"--redis-url=redis://" + proxy.Addr() + "/0",
+	}, gatewaypki.Mint(t).Flags()...)
+	gw := gateway.StartWith(t, args...)
 
 	cutCallback := beginPgRedisLogin(t, gw)
 	preCut := beginPgRedisLogin(t, gw)
