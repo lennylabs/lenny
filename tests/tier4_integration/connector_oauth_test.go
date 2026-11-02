@@ -6,7 +6,7 @@
 // authorization-code flow end-to-end through the real
 // cmd/lenny-gateway binary. It registers an oauth2 connector, drives
 // POST /v1/admin/connectors/{id}/oauth/authorize to mint the
-// authorization URL and signed state, then drives
+// authorization URL and random state, then drives
 // GET /v1/admin/connectors/oauth/callback against a fake provider
 // token endpoint and asserts the gateway completes the code exchange.
 
@@ -25,8 +25,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/kms"
+	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 )
 
@@ -35,10 +38,10 @@ import (
 //
 //	through the real cmd/lenny-gateway binary. The
 //	POST /v1/admin/connectors/{id}/oauth/authorize endpoint, the
-//	GET /v1/admin/connectors/oauth/callback handler, the signed
-//	state mint/verify, the PKCE S256 challenge, or the
-//	provider token exchange diverged from §9.3 when driven
-//	through one process.
+//	GET /v1/admin/connectors/oauth/callback handler, the
+//	state store, the PKCE S256 challenge, or the provider
+//	token exchange diverged from §9.3 when driven through one
+//	process.
 func TestOAuthConnector(t *testing.T) {
 	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
@@ -72,15 +75,7 @@ func TestOAuthConnector(t *testing.T) {
 	}))
 	defer provider.Close()
 
-	// Write the provider's self-signed certificate to a PEM file so the
-	// gateway's connector-OAuth HTTP client trusts the TLS token
-	// endpoint. httptest's leaf certificate is self-signed, so it is
-	// its own CA.
-	caPath := filepath.Join(t.TempDir(), "provider-ca.pem")
-	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: provider.Certificate().Raw})
-	if err := os.WriteFile(caPath, caPEM, 0o600); err != nil {
-		t.Fatalf("write provider CA: %v", err)
-	}
+	caPath := writeConnectorProviderCA(t, provider)
 
 	// The §9.3 flow requires an absolute callback URL: it is the
 	// redirect_uri the provider would redirect the browser back to.
@@ -149,7 +144,7 @@ func TestOAuthConnector(t *testing.T) {
 		t.Fatalf("authorize response missing authorizationUrl/state: %v", authz)
 	}
 	// §9.3: the authorization URL carries the OAuth 2.1 grant params,
-	// the signed state, and the PKCE S256 challenge.
+	// the state, and the PKCE S256 challenge.
 	parsed, err := url.Parse(authURL)
 	if err != nil {
 		t.Fatalf("authorizationUrl is not a URL: %v", err)
@@ -167,7 +162,7 @@ func TestOAuthConnector(t *testing.T) {
 	}
 
 	// ---- the provider redirects the browser back to the callback
-	//      with the authorization code and the signed state ----
+	//      with the authorization code and the state ----
 	callbackPath := "/v1/admin/connectors/oauth/callback?code=auth-code-xyz&state=" + url.QueryEscape(state)
 	resp, err := client.Get(base + callbackPath)
 	if err != nil {
@@ -234,8 +229,8 @@ func TestOAuthConnector(t *testing.T) {
 		t.Errorf("replayed state error code = %q, want a CONNECTOR_OAUTH_STATE_* code", errCode)
 	}
 
-	// §9.3 anti-CSRF: a callback whose state was not minted by this
-	// gateway fails signature verification before any code exchange.
+	// §9.3 anti-CSRF: a callback whose state has no stored flow is
+	// refused before any code exchange.
 	resp3, err := client.Get(base + "/v1/admin/connectors/oauth/callback?code=x&state=forged-state")
 	if err != nil {
 		t.Fatalf("forged-state callback: %v", err)
@@ -243,5 +238,129 @@ func TestOAuthConnector(t *testing.T) {
 	defer resp3.Body.Close()
 	if resp3.StatusCode != http.StatusBadRequest {
 		t.Errorf("forged-state callback: want 400, got %d", resp3.StatusCode)
+	}
+	raw3, _ := io.ReadAll(resp3.Body)
+	if !strings.Contains(string(raw3), "CONNECTOR_OAUTH_STATE_UNKNOWN") {
+		t.Errorf("forged-state body = %s, want CONNECTOR_OAUTH_STATE_UNKNOWN", raw3)
+	}
+}
+
+// writeConnectorProviderCA writes the provider's self-signed certificate
+// to a PEM file so the gateway's connector-OAuth HTTP client trusts the
+// TLS token endpoint. httptest's leaf certificate is self-signed, so it
+// is its own CA.
+func writeConnectorProviderCA(t *testing.T, provider *httptest.Server) string {
+	t.Helper()
+	caPath := filepath.Join(t.TempDir(), "provider-ca.pem")
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: provider.Certificate().Raw})
+	if err := os.WriteFile(caPath, caPEM, 0o600); err != nil {
+		t.Fatalf("write provider CA: %v", err)
+	}
+	return caPath
+}
+
+// connectorOAuthAuthorize starts a flow for connector id on the gateway at
+// base and returns the flow's state.
+func connectorOAuthAuthorize(t *testing.T, base, id string) string {
+	t.Helper()
+	code, raw := deletionAdminDo(t, base, http.MethodPost, "/v1/admin/connectors/"+id+"/oauth/authorize", nil)
+	if code != http.StatusOK {
+		t.Fatalf("authorize on %s: status %d: %s", base, code, raw)
+	}
+	var out struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil || out.State == "" {
+		t.Fatalf("authorize on %s: no state in %s (%v)", base, raw, err)
+	}
+	return out.State
+}
+
+// connectorOAuthCallback delivers the provider redirect to the gateway at
+// base, with no credentials, as the browser delivers it.
+func connectorOAuthCallback(t *testing.T, base, state string) (int, string) {
+	t.Helper()
+	resp, err := http.Get(base + "/v1/admin/connectors/oauth/callback?code=auth-code-xyz&state=" + url.QueryEscape(state))
+	if err != nil {
+		t.Fatalf("callback on %s: %v", base, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(raw)
+}
+
+// spec: 9.3 (Connector Definition and OAuth/OIDC) "`state` parameter (anti-CSRF)", 10.1.1 (Stateless Replicas and Per-Session Coordination), 12.4 (Redis HA and Failure Modes)
+// diagnosis: a callback refused on replica B means the flow still depends
+// on a value held in the process that ran authorize, such as a per-process
+// state signature, or the state store is not the shared Redis store. A
+// refusal on the replacement gateway means the same for a restart. A
+// replay that is not CONNECTOR_OAUTH_STATE_REPLAYED means the Redis
+// tombstone does not reach the other replica.
+func TestConnectorOAuthCompletesAcrossGatewayProcesses_spec_9_3(t *testing.T) {
+	t.Parallel()
+	gateway.SkipUnlessAvailable(t)
+
+	var exchanges atomic.Int64
+	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		exchanges.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "provider-access-token", "token_type": "Bearer"})
+	}))
+	defer provider.Close()
+
+	pg := sharedDatabase(t)
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	keyFile := filepath.Join(t.TempDir(), "master.key")
+	// Create the master key before any replica starts, so concurrent first
+	// use cannot write two different keys to one path.
+	if _, err := kms.LoadOrCreateMasterKey(keyFile); err != nil {
+		t.Fatalf("create master key: %v", err)
+	}
+	// The connector registry and the state store are per process without
+	// --postgres-dsn and --redis-url.
+	args := append(keySetReplicaArgs(pg.DSN, keyFile),
+		"--redis-url=redis://"+rd.Addr+"/0",
+		"--connector-oauth-callback-url=http://callback.acme.test/v1/admin/connectors/oauth/callback",
+		"--connector-oauth-ca="+writeConnectorProviderCA(t, provider))
+	gwA := gateway.StartWith(t, args...)
+	gwB := gateway.StartWith(t, args...)
+
+	code, raw := deletionAdminDo(t, gwA.BaseURL(), http.MethodPost, "/v1/admin/connectors", map[string]any{
+		"id":           "github",
+		"displayName":  "GitHub",
+		"mcpServerUrl": "https://mcp.github.test",
+		"transport":    "streamable_http",
+		"auth": map[string]any{
+			"type":                  "oauth2",
+			"authorizationEndpoint": "https://github.test/login/oauth/authorize",
+			"tokenEndpoint":         provider.URL + "/token",
+			"clientId":              "lenny-client-id",
+		},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("create connector: status %d: %s\n%s", code, raw, gwA.Logs())
+	}
+
+	state := connectorOAuthAuthorize(t, gwA.BaseURL(), "github")
+	if code, body := connectorOAuthCallback(t, gwB.BaseURL(), state); code != http.StatusOK {
+		t.Fatalf("callback on replica B: status %d: %s\n%s", code, body, gwB.Logs())
+	}
+	if got := exchanges.Load(); got != 1 {
+		t.Fatalf("provider token exchanges after the peer callback = %d, want 1", got)
+	}
+	code, body := connectorOAuthCallback(t, gwA.BaseURL(), state)
+	if code != http.StatusBadRequest || !strings.Contains(body, "CONNECTOR_OAUTH_STATE_REPLAYED") {
+		t.Errorf("replay on replica A: status %d: %s, want 400 CONNECTOR_OAUTH_STATE_REPLAYED", code, body)
+	}
+	if got := exchanges.Load(); got != 1 {
+		t.Errorf("provider token exchanges after the replay = %d, want 1", got)
+	}
+
+	// A gateway started after A stops completes a flow A began.
+	pending := connectorOAuthAuthorize(t, gwA.BaseURL(), "github")
+	gwA.Stop(t)
+	gwC := gateway.StartWith(t, args...)
+	if code, body := connectorOAuthCallback(t, gwC.BaseURL(), pending); code != http.StatusOK {
+		t.Fatalf("callback on the replacement gateway: status %d: %s\n%s", code, body, gwC.Logs())
 	}
 }

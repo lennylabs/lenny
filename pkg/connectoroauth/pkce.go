@@ -11,14 +11,13 @@
 //     generation. §9.3 mandates PKCE (S256) for public clients and
 //     recommends it for confidential clients, so every authorization
 //     request the gateway builds carries a code_challenge.
-//   - StateSigner (state.go) — the §9.3 anti-CSRF `state` parameter.
-//     state is cryptographically random (>=128 bits, base64url) and
-//     HMAC-SHA256 signed so a forged callback whose state was not
-//     minted by this gateway is rejected before any code exchange.
+//   - NewState (state.go) — the §9.3 anti-CSRF `state` parameter.
+//     state is cryptographically random (>=128 bits, base64url).
 //   - StateStore (state.go) — the per-flow context (code_verifier,
 //     connector id, session id, user id, redirect URI) keyed by the
 //     state value with a 10-minute TTL per §9.3, and single-use
-//     consumption so a replayed callback is rejected.
+//     consumption, so a callback whose state has no stored flow and a
+//     replayed callback are rejected before any code exchange.
 //
 // OAuth 2.1 framing. OAuth 2.1 removes the implicit grant; this
 // package supports only the authorization-code grant with PKCE. There

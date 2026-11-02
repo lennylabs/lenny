@@ -45,7 +45,7 @@ type AuthorizationRequest struct {
 	// Scopes is the connector's requested auth.scopes.
 	Scopes []string
 
-	// State is the signed anti-CSRF value from StateSigner.Mint.
+	// State is the anti-CSRF value from NewState.
 	State string
 
 	// CodeChallenge is the PKCE S256 challenge. Always set per §9.3
@@ -54,8 +54,8 @@ type AuthorizationRequest struct {
 }
 
 // BuildAuthorizationURL renders an OAuth 2.1 authorization-code request
-// URL. It always emits `response_type=code`, the signed `state`, and
-// the PKCE `code_challenge` with `code_challenge_method=S256`. OAuth
+// URL. It always emits `response_type=code`, the `state`, and the
+// PKCE `code_challenge` with `code_challenge_method=S256`. OAuth
 // 2.1 removes the implicit grant, so `response_type` is never `token`.
 //
 // It returns an error when a required field is empty or the

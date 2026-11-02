@@ -18,7 +18,7 @@ func TestBuildAuthorizationURL(t *testing.T) {
 		ClientID:              "client-123",
 		RedirectURI:           "https://gw.acme.com/v1/admin/connectors/oauth/callback",
 		Scopes:                []string{"repo", "read:org"},
-		State:                 "signed-state-value",
+		State:                 "opaque-state-value",
 		CodeChallenge:         "the-pkce-challenge",
 	})
 	if err != nil {
@@ -33,7 +33,7 @@ func TestBuildAuthorizationURL(t *testing.T) {
 		"response_type":         "code",
 		"client_id":             "client-123",
 		"redirect_uri":          "https://gw.acme.com/v1/admin/connectors/oauth/callback",
-		"state":                 "signed-state-value",
+		"state":                 "opaque-state-value",
 		"code_challenge":        "the-pkce-challenge",
 		"code_challenge_method": "S256",
 		"scope":                 "repo read:org",

@@ -3,141 +3,35 @@
 package connectoroauth
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
 )
 
-func newTestSigner(t *testing.T) *StateSigner {
-	t.Helper()
-	s, err := NewStateSigner(SigningKey{KeyID: "k1", Secret: []byte("test-state-signing-key-0123456789")})
-	if err != nil {
-		t.Fatalf("NewStateSigner: %v", err)
-	}
-	return s
-}
-
-func TestNewStateSignerRejectsEmptySecret(t *testing.T) {
-	if _, err := NewStateSigner(SigningKey{KeyID: "k1"}); err == nil {
-		t.Fatalf("NewStateSigner with empty secret: want error")
-	}
-}
-
-// TestStateSignRoundTrip is the sign/verify round-trip: a minted state
-// verifies, and two mints are distinct (the nonce is random).
-func TestStateSignRoundTrip(t *testing.T) {
-	s := newTestSigner(t)
-	a, err := s.Mint()
-	if err != nil {
-		t.Fatalf("Mint: %v", err)
-	}
-	if err := s.Verify(a); err != nil {
-		t.Fatalf("Verify of a freshly minted state: %v", err)
-	}
-	b, err := s.Mint()
-	if err != nil {
-		t.Fatalf("Mint: %v", err)
-	}
-	if a == b {
-		t.Fatalf("two Mint calls returned an identical state; the nonce is not random")
-	}
-}
-
-// TestStateTamperedSignatureRejected covers a forged callback: a state
-// whose signature bytes were altered must fail verification, so an
-// attacker who fabricates a `state` cannot drive a code exchange.
-func TestStateTamperedSignatureRejected(t *testing.T) {
-	s := newTestSigner(t)
-	state, err := s.Mint()
-	if err != nil {
-		t.Fatalf("Mint: %v", err)
-	}
-	nonce, sig, _ := strings.Cut(state, ".")
-
-	// Flip the FIRST character of the signature segment. The last
-	// character of a base64.RawURLEncoding string carries fewer bits
-	// than a middle character (its low bits are padding-zero), so
-	// flipping the last char can decode to the same bytes; the first
-	// character is always meaningful and a flip always changes the
-	// decoded signature.
-	sigRunes := []rune(sig)
-	if sigRunes[0] == 'A' {
-		sigRunes[0] = 'B'
-	} else {
-		sigRunes[0] = 'A'
-	}
-	tampered := nonce + "." + string(sigRunes)
-	if err := s.Verify(tampered); err != ErrStateSignatureInvalid {
-		t.Fatalf("Verify of a tampered signature: got %v, want ErrStateSignatureInvalid", err)
-	}
-
-	// Tampering with the nonce must also fail: the signature no longer
-	// covers the altered nonce.
-	nonceRunes := []rune(nonce)
-	if nonceRunes[0] == 'A' {
-		nonceRunes[0] = 'B'
-	} else {
-		nonceRunes[0] = 'A'
-	}
-	tamperedNonce := string(nonceRunes) + "." + sig
-	if err := s.Verify(tamperedNonce); err != ErrStateSignatureInvalid {
-		t.Fatalf("Verify of a tampered nonce: got %v, want ErrStateSignatureInvalid", err)
-	}
-}
-
-// TestStateForgedUnderWrongKeyRejected covers a state minted by a
-// signer with a different key: it must not verify under this signer.
-func TestStateForgedUnderWrongKeyRejected(t *testing.T) {
-	mine := newTestSigner(t)
-	attacker, err := NewStateSigner(SigningKey{KeyID: "evil", Secret: []byte("a-different-attacker-controlled-key")})
-	if err != nil {
-		t.Fatalf("NewStateSigner: %v", err)
-	}
-	forged, err := attacker.Mint()
-	if err != nil {
-		t.Fatalf("Mint: %v", err)
-	}
-	if err := mine.Verify(forged); err != ErrStateSignatureInvalid {
-		t.Fatalf("Verify of a state minted under a foreign key: got %v, want ErrStateSignatureInvalid", err)
-	}
-}
-
-func TestStateMalformedRejected(t *testing.T) {
-	s := newTestSigner(t)
-	for _, bad := range []string{
-		"",
-		"no-separator",
-		".",
-		"nonce.",
-		".sig",
-		"not!base64.also!bad",
-	} {
-		if err := s.Verify(bad); err != ErrStateMalformed && err != ErrStateSignatureInvalid {
-			t.Fatalf("Verify(%q) = %v, want ErrStateMalformed or ErrStateSignatureInvalid", bad, err)
+// TestNewStateIsRandomUnpaddedBase64URL pins the §9.3 `state` format: an
+// unpadded base64url value of at least 128 random bits with no signature
+// segment, distinct on every call.
+//
+// spec: §9.3 (Connector Definition and OAuth/OIDC) "`state` parameter (anti-CSRF)"
+func TestNewStateIsRandomUnpaddedBase64URL_spec_9_3(t *testing.T) {
+	seen := make(map[string]struct{}, 256)
+	for range 256 {
+		state := NewState()
+		raw, err := base64.RawURLEncoding.DecodeString(state)
+		if err != nil {
+			t.Fatalf("NewState() = %q is not unpadded base64url: %v", state, err)
 		}
-	}
-}
-
-func TestStateSignerRotationAcceptsBothKeys(t *testing.T) {
-	s := newTestSigner(t)
-	old, err := s.Mint()
-	if err != nil {
-		t.Fatalf("Mint: %v", err)
-	}
-	if err := s.Rotate(SigningKey{KeyID: "k2", Secret: []byte("the-rotated-state-signing-key-xyz")}); err != nil {
-		t.Fatalf("Rotate: %v", err)
-	}
-	// A state minted before the rotation still verifies (overlap key).
-	if err := s.Verify(old); err != nil {
-		t.Fatalf("Verify of a pre-rotation state: %v", err)
-	}
-	// A state minted after the rotation verifies too.
-	fresh, err := s.Mint()
-	if err != nil {
-		t.Fatalf("Mint: %v", err)
-	}
-	if err := s.Verify(fresh); err != nil {
-		t.Fatalf("Verify of a post-rotation state: %v", err)
+		if len(raw)*8 < 128 {
+			t.Fatalf("NewState() decodes to %d bits, want at least 128", len(raw)*8)
+		}
+		if strings.Contains(state, ".") {
+			t.Fatalf("NewState() = %q carries a signature segment", state)
+		}
+		if _, dup := seen[state]; dup {
+			t.Fatalf("NewState() repeated %q", state)
+		}
+		seen[state] = struct{}{}
 	}
 }
 

@@ -3,12 +3,9 @@
 package connectoroauth
 
 import (
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"errors"
-	"strings"
 	"sync"
 	"time"
 )
@@ -21,25 +18,15 @@ const (
 	DefaultStateTTL = 10 * time.Minute
 
 	// stateNonceBytes is the random-byte count behind a `state` value.
-	// §9.3 requires "≥128 bits"; 16 bytes is exactly 128 bits and the
-	// store draws this many before signing.
+	// §9.3 requires "≥128 bits"; 16 bytes is exactly 128 bits.
 	stateNonceBytes = 16
 )
 
 // Sentinel errors. The connector OAuth callback handler maps each to
 // its HTTP status.
 var (
-	// ErrStateMalformed — the `state` query parameter is empty or does
-	// not parse as a `<nonce>.<hmac>` pair.
-	ErrStateMalformed = errors.New("connectoroauth: state is malformed")
-
-	// ErrStateSignatureInvalid — the `state` HMAC does not verify under
-	// any key in the ring. The callback was forged or tampered with.
-	ErrStateSignatureInvalid = errors.New("connectoroauth: state signature is invalid")
-
-	// ErrStateUnknown — the `state` verified its signature but has no
-	// stored flow context. It was never issued by this gateway, or its
-	// context already expired out of the store.
+	// ErrStateUnknown — the `state` has no stored flow context. It was
+	// never issued, or its context already expired out of the store.
 	ErrStateUnknown = errors.New("connectoroauth: state has no stored flow")
 
 	// ErrStateExpired — the stored flow context is past its TTL.
@@ -50,16 +37,9 @@ var (
 	ErrStateConsumed = errors.New("connectoroauth: state was already consumed")
 )
 
-// SigningKey is one HMAC key in the StateSigner ring. KeyID identifies
-// the key for rotation; Secret carries the HMAC secret bytes.
-type SigningKey struct {
-	KeyID  string
-	Secret []byte
-}
-
 // FlowContext is the per-authorization-request state §9.3 binds to a
-// `state` value. The connector OAuth callback handler looks it up by
-// the verified state, then exchanges the authorization code under it.
+// `state` value. The connector OAuth callback handler consumes it by
+// the returned state, then exchanges the authorization code under it.
 type FlowContext struct {
 	// ConnectorID is the §9.3 ConnectorDefinition the flow authorizes.
 	ConnectorID string
@@ -106,100 +86,15 @@ type FlowContext struct {
 	InitiatorUA string
 }
 
-// StateSigner mints and verifies the §9.3 anti-CSRF `state` parameter.
-// A state value is `base64url(nonce) || "." || base64url(hmac)` where
-// the HMAC-SHA256 covers the random nonce under a gateway-held key.
-// Verification is constant-time and tries every key in the ring so a
-// signing-key rotation does not invalidate in-flight authorizations.
-//
-// StateSigner is safe for concurrent use.
-type StateSigner struct {
-	mu      sync.RWMutex
-	active  SigningKey
-	overlap []SigningKey
-}
-
-// NewStateSigner returns a StateSigner with active as the signing key
-// and no rotation-overlap keys. It returns an error when the key
-// secret is empty.
-func NewStateSigner(active SigningKey) (*StateSigner, error) {
-	if len(active.Secret) == 0 {
-		return nil, errors.New("connectoroauth: state signing key secret is empty")
-	}
-	return &StateSigner{active: active}, nil
-}
-
-// Rotate installs next as the active signing key and retains the
-// previous active key for verification during the rotation-overlap
-// window. Mint always uses the newest key; Verify accepts either.
-func (s *StateSigner) Rotate(next SigningKey) error {
-	if len(next.Secret) == 0 {
-		return errors.New("connectoroauth: state signing key secret is empty")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.overlap = append(s.overlap, s.active)
-	s.active = next
-	return nil
-}
-
-// Mint draws a fresh 128-bit random nonce, signs it with the active
-// key, and returns the wire `state` value. It returns an error only
-// when the system random source fails.
-func (s *StateSigner) Mint() (string, error) {
+// NewState returns a random §9.3 `state` value: stateNonceBytes of
+// crypto/rand entropy in unpadded base64url. The random bytes alone make
+// the value unguessable, and the StateStore entry is what a callback
+// proves knowledge of. crypto/rand.Read does not return an error: it
+// aborts the program when the system random source fails.
+func NewState() string {
 	nonce := make([]byte, stateNonceBytes)
-	if _, err := rand.Read(nonce); err != nil {
-		return "", err
-	}
-	s.mu.RLock()
-	key := s.active
-	s.mu.RUnlock()
-	nonceB64 := base64.RawURLEncoding.EncodeToString(nonce)
-	sig := computeStateHMAC(key.Secret, nonceB64)
-	return nonceB64 + "." + base64.RawURLEncoding.EncodeToString(sig), nil
-}
-
-// Verify checks that state was minted by this gateway: it parses the
-// `<nonce>.<hmac>` pair and confirms the HMAC verifies under some key
-// in the ring. It returns ErrStateMalformed for a structurally invalid
-// value and ErrStateSignatureInvalid when no key validates the
-// signature. A nil error means the state is authentic; the caller
-// still looks the state up in the StateStore to reject unknown,
-// expired, or replayed values.
-func (s *StateSigner) Verify(state string) error {
-	nonceB64, sigB64, ok := strings.Cut(state, ".")
-	if !ok || nonceB64 == "" || sigB64 == "" {
-		return ErrStateMalformed
-	}
-	if _, err := base64.RawURLEncoding.DecodeString(nonceB64); err != nil {
-		return ErrStateMalformed
-	}
-	sig, err := base64.RawURLEncoding.DecodeString(sigB64)
-	if err != nil {
-		return ErrStateMalformed
-	}
-	s.mu.RLock()
-	keys := make([]SigningKey, 0, 1+len(s.overlap))
-	keys = append(keys, s.active)
-	keys = append(keys, s.overlap...)
-	s.mu.RUnlock()
-	for _, k := range keys {
-		want := computeStateHMAC(k.Secret, nonceB64)
-		if hmac.Equal(want, sig) {
-			return nil
-		}
-	}
-	return ErrStateSignatureInvalid
-}
-
-// computeStateHMAC returns the HMAC-SHA256 over the base64url nonce.
-// The nonce is the only signed input: the random bytes alone make the
-// state unforgeable, and the flow context is bound server-side in the
-// StateStore rather than in the signed token.
-func computeStateHMAC(secret []byte, nonceB64 string) []byte {
-	mac := hmac.New(sha256.New, secret)
-	mac.Write([]byte(nonceB64))
-	return mac.Sum(nil)
+	_, _ = rand.Read(nonce)
+	return base64.RawURLEncoding.EncodeToString(nonce)
 }
 
 // StateStore holds the §9.3 per-flow context keyed by the `state`

@@ -68,14 +68,10 @@ func (m *MemoryClientSecretResolver) Resolve(_ context.Context, ref string) (str
 }
 
 // ConnectorOAuth bundles the dependencies of the §9.3 connector OAuth
-// 2.1 authorization-code flow handlers: the signed-state minter, the
-// per-flow state store, the connector-credential store the resulting
-// tokens land in, and the HTTP client used for the provider token
-// exchange.
+// 2.1 authorization-code flow handlers: the per-flow state store, the
+// connector-credential store the resulting tokens land in, and the HTTP
+// client used for the provider token exchange.
 type ConnectorOAuth struct {
-	// StateSigner mints and verifies the §9.3 anti-CSRF `state`.
-	StateSigner *connectoroauth.StateSigner
-
 	// StateStore holds the per-flow PKCE context keyed by `state`, with
 	// the §9.3 10-minute TTL and single-use consumption.
 	StateStore connectoroauth.StateStore
@@ -117,13 +113,13 @@ func (r *Router) WithConnectorOAuth(c *ConnectorOAuth) *Router {
 // connector and the flow's state value for correlation.
 type AuthorizeConnectorResponse struct {
 	// AuthorizationURL is the provider authorization-code URL carrying
-	// the PKCE code_challenge and the signed state.
+	// the PKCE code_challenge and the state.
 	AuthorizationURL string `json:"authorizationUrl"`
 
 	// ConnectorID is the connector the flow authorizes.
 	ConnectorID string `json:"connectorId"`
 
-	// State is the signed anti-CSRF value bound to this flow.
+	// State is the anti-CSRF value bound to this flow.
 	State string `json:"state"`
 }
 
@@ -131,7 +127,7 @@ type AuthorizeConnectorResponse struct {
 // endpoint: POST /v1/admin/connectors/{name}/oauth/authorize.
 //
 // It builds the provider authorization URL for the path connector with
-// a PKCE S256 code_challenge and a signed state, stores the
+// a PKCE S256 code_challenge and a random state, stores the
 // code_verifier and per-flow context in the StateStore keyed by the
 // state value with the §9.3 10-minute TTL, and returns the URL. Any
 // authenticated caller may initiate a flow; the resulting credential
@@ -180,12 +176,7 @@ func (r *Router) handleAuthorizeConnector(w http.ResponseWriter, req *http.Reque
 			"could not generate the PKCE challenge", nil)
 		return
 	}
-	state, err := r.connectorOAuth.StateSigner.Mint()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"could not mint the OAuth state", nil)
-		return
-	}
+	state := connectoroauth.NewState()
 
 	authURL, err := connectoroauth.BuildAuthorizationURL(connectoroauth.AuthorizationRequest{
 		AuthorizationEndpoint: conn.Auth.AuthorizationEndpoint,
@@ -281,17 +272,19 @@ func (r *Router) handleAuthorizeConnector(w http.ResponseWriter, req *http.Reque
 // endpoint: GET /v1/admin/connectors/oauth/callback.
 //
 // The provider redirects the user's browser here with `code` and
-// `state`. The handler verifies the state signature, consumes the
-// stored flow context (rejecting an unknown, expired, or already-used
-// state), exchanges the code and the PKCE code_verifier at the
+// `state`. The handler consumes the stored flow context (rejecting an
+// unknown, expired, or already-used state), exchanges the code and the
+// PKCE code_verifier at the
 // provider's token endpoint, and stores the resulting access and
 // refresh tokens in the connector-credential store for the flow's
 // (tenant, connector, user) triple.
 //
 // This endpoint carries no Bearer token — it is a browser redirect.
-// The signed `state` is the §9.3 anti-CSRF control: a callback whose
-// state was not minted by this gateway is rejected before any code
-// exchange, so a forged callback cannot drive a token exchange.
+// The single-use `state` is the §9.3 anti-CSRF control, and
+// StateStore.Consume is its single authority: a callback whose state has
+// no stored flow is rejected before any code exchange, so a forged
+// callback cannot drive a token exchange. The store is shared across
+// replicas, so the callback completes on any replica.
 func (r *Router) handleConnectorOAuthCallback(w http.ResponseWriter, req *http.Request) {
 	q := req.URL.Query()
 	state := q.Get("state")
@@ -310,16 +303,8 @@ func (r *Router) handleConnectorOAuthCallback(w http.ResponseWriter, req *http.R
 		return
 	}
 
-	// §9.3 anti-CSRF: the state signature must verify before anything
-	// touches the store or the provider.
-	if err := r.connectorOAuth.StateSigner.Verify(state); err != nil {
-		writeError(w, http.StatusBadRequest, "CONNECTOR_OAUTH_STATE_INVALID",
-			"the OAuth callback state failed signature verification", nil)
-		return
-	}
-
-	// Consume the flow context. A single-use consume rejects an
-	// unknown, expired, or replayed state.
+	// §9.3 anti-CSRF: consume the flow context. A single-use consume
+	// rejects an unknown, expired, or replayed state.
 	flow, err := r.connectorOAuth.StateStore.Consume(state, r.clock())
 	if err != nil {
 		switch {

@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"log"
@@ -179,16 +178,6 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 	var connectorOAuth *admin.ConnectorOAuth
 	var connectorStateStore *connectoroauth.MemoryStateStore
 	if *connectorOAuthCallbackURL != "" {
-		var stateSeed [32]byte
-		if _, err := rand.Read(stateSeed[:]); err != nil {
-			log.Fatalf("lenny-gateway: connector OAuth state signing key: %v", err)
-		}
-		stateSigner, err := connectoroauth.NewStateSigner(connectoroauth.SigningKey{
-			KeyID: "boot", Secret: stateSeed[:],
-		})
-		if err != nil {
-			log.Fatalf("lenny-gateway: connector OAuth state signer: %v", err)
-		}
 		// spec: §9.3 — pending state binds to (session, connector)
 		// with TTL=10min. Production binds it to Redis so the flow survives
 		// a gateway restart and a callback resolves on any replica
@@ -204,7 +193,6 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 			connectorStateBacking = connectorStateStore
 		}
 		connectorOAuth = &admin.ConnectorOAuth{
-			StateSigner: stateSigner,
 			StateStore:  connectorStateBacking,
 			Credentials: connectorCreds,
 			CallbackURL: *connectorOAuthCallbackURL,

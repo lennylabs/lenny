@@ -25,8 +25,8 @@ import (
 // surfaces a replay attempt in the §9.3 audit trail.
 //
 // Expiry is delegated to Redis native key TTL rather than a Sweep
-// (state.go:289: "a Redis-backed store relies on native key expiry
-// instead"). An entry past its TTL is evicted by Redis, so Consume
+// (MemoryStateStore.Sweep: "a Redis-backed store relies on native key
+// expiry instead"). An entry past its TTL is evicted by Redis, so Consume
 // returns ErrStateUnknown for it; the Memory store's ErrStateExpired
 // distinction is a forensic nicety that the Redis backing does not
 // reproduce. The handler maps both to a 4xx caller error.
@@ -44,8 +44,8 @@ func NewRedisStateStore(client redis.UniversalClient) *RedisStateStore {
 var _ StateStore = (*RedisStateStore)(nil)
 
 // redisStateKeyPrefix namespaces the per-flow state entries. The `state`
-// value is a cryptographically unique HMAC nonce (StateSigner.Mint), so
-// the key needs no tenant scoping — Consume is given only the `state`
+// value is a cryptographically unique random nonce (NewState), so the
+// key needs no tenant scoping — Consume is given only the `state`
 // string and must derive the key from it alone.
 const redisStateKeyPrefix = "conn:oauth:state:"
 

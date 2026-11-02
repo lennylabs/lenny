@@ -499,8 +499,8 @@ func (r *Router) registerConnectorRoutes(mux *http.ServeMux) {
 		// so it is gated on authentication inside the handler rather
 		// than on platform-admin. The callback endpoint is a browser
 		// redirect from the OAuth provider carrying no Bearer token;
-		// it is intentionally not gated, and the signed `state`
-		// parameter is its anti-CSRF control. The literal
+		// it is intentionally not gated, and the single-use `state`
+		// consumed from the store is its anti-CSRF control. The literal
 		// `oauth/callback` segment takes precedence over the
 		// `{name}` wildcard in Go's ServeMux.
 		mux.Handle("GET /v1/admin/connectors/oauth/callback",

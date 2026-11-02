@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,6 +33,7 @@ type oauthFixture struct {
 	tokenServer *httptest.Server
 	tokenStatus int
 	tokenBody   string
+	tokenHits   atomic.Int64
 	audit       *recordingAudit
 }
 
@@ -45,6 +47,7 @@ func newOAuthFixture(t *testing.T) *oauthFixture {
 	// the fake provider is served over TLS; its Client() trusts the
 	// test certificate.
 	f.tokenServer = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.tokenHits.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(f.tokenStatus)
 		_, _ = w.Write([]byte(f.tokenBody))
@@ -56,18 +59,11 @@ func newOAuthFixture(t *testing.T) *oauthFixture {
 	f.stateStore = connectoroauth.NewMemoryStateStore()
 	f.audit = &recordingAudit{}
 
-	signer, err := connectoroauth.NewStateSigner(connectoroauth.SigningKey{
-		KeyID: "test", Secret: []byte("connector-oauth-test-signing-key-01"),
-	})
-	if err != nil {
-		t.Fatalf("NewStateSigner: %v", err)
-	}
 	tenants := tenantstore.NewMemory()
 	f.router = admin.NewRouter(tenants, admin.Options{
 		Clock: func() time.Time { return time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC) },
 		Audit: f.audit,
 	}).WithConnectors(f.connectors).WithConnectorOAuth(&admin.ConnectorOAuth{
-		StateSigner:   signer,
 		StateStore:    f.stateStore,
 		Credentials:   f.creds,
 		ClientSecrets: admin.NewMemoryClientSecretResolver(map[string]string{"lenny-system/github-client-secret": "shh"}),
@@ -168,7 +164,6 @@ func TestAuthorizeConnectorHappyPath(t *testing.T) {
 	if q.Get("redirect_uri") != oauthCallbackURL {
 		t.Errorf("redirect_uri = %q, want %q", q.Get("redirect_uri"), oauthCallbackURL)
 	}
-	// The signed state must verify under the gateway's signer.
 	if len(f.audit.snapshot()) == 0 || f.audit.snapshot()[0].Type != "connector.oauth.authorization_initiated" {
 		t.Errorf("expected an authorization_initiated audit event, got %+v", f.audit.snapshot())
 	}
@@ -461,71 +456,107 @@ func TestConnectorOAuthCallbackPublicClient(t *testing.T) {
 	}
 }
 
-// TestConnectorOAuthCallbackForgedStateRejected covers the §9.3
-// anti-CSRF control: a callback whose state was not minted by this
-// gateway must be rejected before any token exchange, and no
-// credential must be stored.
-func TestConnectorOAuthCallbackForgedStateRejected(t *testing.T) {
-	f := newOAuthFixture(t)
-	f.registerOAuthConnector(t, false)
+// putCountingStateStore counts the writes a callback makes to the state
+// store, so a test can assert that a refused callback wrote nothing.
+type putCountingStateStore struct {
+	connectoroauth.StateStore
+	puts atomic.Int64
+}
 
-	// An attacker fabricates a state under their own signing key.
-	attacker, err := connectoroauth.NewStateSigner(connectoroauth.SigningKey{
-		KeyID: "evil", Secret: []byte("an-attacker-controlled-signing-key"),
+func (s *putCountingStateStore) Put(state string, fc connectoroauth.FlowContext, ttl time.Duration) error {
+	s.puts.Add(1)
+	return s.StateStore.Put(state, fc, ttl)
+}
+
+// newRouterOver returns a second admin Router over the fixture's stores,
+// standing in for a peer replica: it shares only the connector registry,
+// the credential store, and the state store with the fixture's router.
+func (f *oauthFixture) newRouterOver(store connectoroauth.StateStore) *admin.Router {
+	return admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC) },
+		Audit: f.audit,
+	}).WithConnectors(f.connectors).WithConnectorOAuth(&admin.ConnectorOAuth{
+		StateStore:    store,
+		Credentials:   f.creds,
+		ClientSecrets: admin.NewMemoryClientSecretResolver(map[string]string{"lenny-system/github-client-secret": "shh"}),
+		HTTPClient:    f.tokenServer.Client(),
+		CallbackURL:   oauthCallbackURL,
 	})
-	if err != nil {
-		t.Fatalf("NewStateSigner: %v", err)
-	}
-	forged, err := attacker.Mint()
-	if err != nil {
-		t.Fatalf("Mint: %v", err)
-	}
-	cbReq := httptest.NewRequest(http.MethodGet,
-		"/v1/admin/connectors/oauth/callback?code=code-1&state="+url.QueryEscape(forged), nil)
-	rr := httptest.NewRecorder()
-	f.router.Handler().ServeHTTP(rr, cbReq)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("forged state: got %d, want 400", rr.Code)
-	}
-	if !strings.Contains(rr.Body.String(), "CONNECTOR_OAUTH_STATE_INVALID") {
-		t.Errorf("forged-state body = %s, want CONNECTOR_OAUTH_STATE_INVALID", rr.Body.String())
-	}
-	// No credential may be stored from a forged callback.
-	if rows, _ := f.creds.ListByConnector(context.Background(), "acme", "github"); len(rows) != 0 {
-		t.Errorf("a forged callback stored %d credentials, want 0", len(rows))
+}
+
+// TestConnectorOAuthCallbackForgedStateIsUnknown_spec_9_3 covers the §9.3
+// anti-CSRF control: a callback whose state has no stored flow answers
+// 400 CONNECTOR_OAUTH_STATE_UNKNOWN, reaches no provider token endpoint,
+// stores no credential, and writes nothing to the state store. Both a
+// random value and the retired two-segment format take this path, and a
+// flow pending for the connector does not change the outcome.
+//
+// spec: §9.3 (Connector Definition and OAuth/OIDC) "`state` parameter (anti-CSRF)"
+func TestConnectorOAuthCallbackForgedStateIsUnknown_spec_9_3(t *testing.T) {
+	for name, forged := range map[string]string{
+		"random value":       connectoroauth.NewState(),
+		"two-segment format": connectoroauth.NewState() + "." + connectoroauth.NewState(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newOAuthFixture(t)
+			f.registerOAuthConnector(t, false)
+			f.initiate(t) // A pending flow the forged value does not name.
+			store := &putCountingStateStore{StateStore: f.stateStore}
+			router := f.newRouterOver(store)
+
+			rr := httptest.NewRecorder()
+			router.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet,
+				"/v1/admin/connectors/oauth/callback?code=code-1&state="+url.QueryEscape(forged), nil))
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("forged state: got %d, want 400; body=%s", rr.Code, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), "CONNECTOR_OAUTH_STATE_UNKNOWN") {
+				t.Errorf("forged-state body = %s, want CONNECTOR_OAUTH_STATE_UNKNOWN", rr.Body.String())
+			}
+			if got := f.tokenHits.Load(); got != 0 {
+				t.Errorf("a forged callback reached the provider token endpoint %d times, want 0", got)
+			}
+			if rows, _ := f.creds.ListByConnector(context.Background(), "acme", "github"); len(rows) != 0 {
+				t.Errorf("a forged callback stored %d credentials, want 0", len(rows))
+			}
+			if got := store.puts.Load(); got != 0 {
+				t.Errorf("a forged callback wrote the state store %d times, want 0", got)
+			}
+		})
 	}
 }
 
-// TestConnectorOAuthCallbackUnknownStateRejected covers a
-// signature-valid state with no stored flow — the state was minted by
-// this gateway's signer but never Put into the store (or it expired
-// out). It must be rejected.
-func TestConnectorOAuthCallbackUnknownStateRejected(t *testing.T) {
+// TestConnectorOAuthCallbackCompletesOnAPeerRouter_spec_9_3 authorizes on
+// one router and calls back on a second router that shares the state
+// store and holds no secret in common with the first, which fails if the
+// callback depends on a per-process value. A replay on the first router
+// answers CONNECTOR_OAUTH_STATE_REPLAYED.
+//
+// spec: §9.3 (Connector Definition and OAuth/OIDC) "`state` parameter (anti-CSRF)", §10.1.1 (Stateless Replicas and Per-Session Coordination)
+func TestConnectorOAuthCallbackCompletesOnAPeerRouter_spec_9_3(t *testing.T) {
 	f := newOAuthFixture(t)
 	f.registerOAuthConnector(t, false)
+	peer := f.newRouterOver(f.stateStore)
 
-	// Mint a state through the router's own signer but never store a
-	// flow for it: re-create a signer with the same key the fixture
-	// used so the signature verifies.
-	signer, err := connectoroauth.NewStateSigner(connectoroauth.SigningKey{
-		KeyID: "test", Secret: []byte("connector-oauth-test-signing-key-01"),
-	})
-	if err != nil {
-		t.Fatalf("NewStateSigner: %v", err)
-	}
-	orphan, err := signer.Mint()
-	if err != nil {
-		t.Fatalf("Mint: %v", err)
-	}
-	cbReq := httptest.NewRequest(http.MethodGet,
-		"/v1/admin/connectors/oauth/callback?code=code-1&state="+url.QueryEscape(orphan), nil)
+	state := stateFromAuthURL(t, f.initiate(t).AuthorizationURL)
+	cbURL := "/v1/admin/connectors/oauth/callback?code=code-1&state=" + url.QueryEscape(state)
+
 	rr := httptest.NewRecorder()
-	f.router.Handler().ServeHTTP(rr, cbReq)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("unknown state: got %d, want 400", rr.Code)
+	peer.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, cbURL, nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("callback on the peer router: %d, body=%s", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "CONNECTOR_OAUTH_STATE_UNKNOWN") {
-		t.Errorf("unknown-state body = %s, want CONNECTOR_OAUTH_STATE_UNKNOWN", rr.Body.String())
+	if _, err := f.creds.Get(context.Background(), "acme", "github", "alice@acme.com", ""); err != nil {
+		t.Fatalf("the peer callback stored no credential: %v", err)
+	}
+
+	replay := httptest.NewRecorder()
+	f.router.Handler().ServeHTTP(replay, httptest.NewRequest(http.MethodGet, cbURL, nil))
+	if replay.Code != http.StatusBadRequest {
+		t.Fatalf("replay on the first router: got %d, want 400", replay.Code)
+	}
+	if !strings.Contains(replay.Body.String(), "CONNECTOR_OAUTH_STATE_REPLAYED") {
+		t.Errorf("replay body = %s, want CONNECTOR_OAUTH_STATE_REPLAYED", replay.Body.String())
 	}
 }
 
