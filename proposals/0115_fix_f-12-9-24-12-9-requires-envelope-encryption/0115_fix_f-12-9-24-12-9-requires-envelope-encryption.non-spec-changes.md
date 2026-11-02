@@ -10,10 +10,6 @@ No behaviour changes in any Lenny component. CODE-1 changes one string constant,
 
 Replace the constant's value. The text is the SPEC-3 Failure Message with `\|` written as `|`.
 
-```go
-const EtcdSecretEncryptionWarning = "WARNING: Kubernetes does not encrypt Secrets in etcd by default. Credential pool API keys stored in Kubernetes Secrets (secretRef) are readable in plaintext from etcd snapshots or backups unless EncryptionConfiguration is enabled. Production deployments MUST configure EncryptionConfiguration with aescbc/aesgcm/kms for the 'secrets' resource type. Cloud-managed clusters: enable the provider encryption option Section 4.9 lists for the cluster type. Self-managed clusters: verify with 'etcdctl get /registry/secrets/<credentials namespace>/<name> | hexdump'. Section 12.9 (Credential pool secrets at rest) states when a workspaceTier T4 setting requires a configuration listed in Section 4.9 (KMS-backed configurations)."
-```
-
 Add `TestEtcdSecretEncryptionWarningCitesT4Requirement` to `pkg/preflight/install_prereqs_test.go`, beside `TestEtcdSecretEncryptionWarningNamesCredentialsNamespace`. The Testing section states what it asserts.
 
 ## Staged schema, chart, and migration changes
@@ -32,19 +28,17 @@ In `charts/lenny/values.yaml`, replace the comment above `etcdEncryption.enabled
   # resource, or for a self-managed cluster that supplies its own
   # EncryptionConfiguration. This ConfigMap renders aescbc only, so a
   # deployment under the §12.9 KMS-backed requirement cannot use it. A
-  # self-managed cluster moving off this document sets false last, after
-  # the procedure in docs/runbooks/etcd-key-rotation.md, because the
-  # upgrade removes the ConfigMap and any unpinned key it holds.
+  # self-managed cluster moving off this document sets false as the last
+  # step of the Move to a KMS provider section of
+  # docs/runbooks/etcd-key-rotation.md, because the upgrade removes the
+  # ConfigMap and any unpinned key it holds.
 ```
 
 In the Helm comment at the top of `charts/lenny/templates/etcd-encryption.yaml`, insert this paragraph after the paragraph ending `treat this ConfigMap as documentation of intent.` and before the line `Key rotation is documented in docs/runbooks/etcd-key-rotation.md.`
 
 ```text
-This document renders aescbc only. A self-managed deployment under the
-§12.9 KMS-backed requirement skips the operator step above, supplies its
-own EncryptionConfiguration and KMS plugin, and sets
-etcdEncryption.enabled false as the last step of the Move to a KMS
-provider section of docs/runbooks/etcd-key-rotation.md.
+The etcdEncryption.enabled comment in values.yaml states when to skip
+the operator step above.
 ```
 
 Neither comment restates the T4 condition, and neither adds a §13.1 citation.
@@ -56,7 +50,7 @@ Neither comment restates the T4 condition, and neither adds a §13.1 citation.
 **`docs/operator-guide/security-principles.md`, section 1.5.** Replace the paragraph with this text.
 
 ```markdown
-OAuth refresh tokens, user-supplied API keys, and webhook callback secrets are encrypted at the application layer with KMS-envelope encryption. The database role with read access to the encrypted column cannot decrypt without a separate KMS permission. Workspace files, snapshots, and session transcripts in object storage use server-side encryption, and `workspaceTier: T4` uses SSE-KMS under a tenant-scoped key. Other Postgres data, including audit logs, relies on storage-level encryption at rest. Credential pool API keys live in Kubernetes Secrets and rely on etcd encryption at rest, a cluster-level control that must be KMS-backed when any tenant, environment, or Runtime uses `workspaceTier: T4`. See [Security — What Gets Encrypted](security#what-gets-encrypted).
+OAuth refresh tokens, user-supplied API keys, and webhook callback secrets are encrypted at the application layer with KMS-envelope encryption. The database role with read access to the encrypted column cannot decrypt without a separate KMS permission. Workspace files, snapshots, and session transcripts in object storage use server-side encryption, and a tenant with `workspaceTier: T4` uses SSE-KMS under a tenant-scoped key. Audit logs in Postgres rely on storage-layer encryption at rest. Credential pool API keys live in Kubernetes Secrets and rely on etcd encryption at rest, a cluster-level control that must be KMS-backed when any tenant, environment, or Runtime uses `workspaceTier: T4`. See [Security — What Gets Encrypted](security#what-gets-encrypted).
 ```
 
 Confirm against §4.9.1 and the `callbackSecret` storage text in §14 that the database-role sentence holds for all three items in the first sentence, and narrow it if it does not.
@@ -66,7 +60,7 @@ Confirm against §4.9.1 and the `callbackSecret` storage text in §14 that the d
 **`docs/operator-guide/security-principles.md`, control primitives table, row `KMS envelope encryption`.** Replace the second cell with this text. The row stays one physical line.
 
 ```markdown
-AWS KMS / GCP KMS / Azure Key Vault / HashiCorp Vault; application-layer encryption for Token Service credentials and webhook callback secrets; SSE-KMS for `workspaceTier: T4` object storage.
+AWS KMS / GCP KMS / Azure Key Vault / HashiCorp Vault; application-layer encryption for Token Service credentials and webhook callback secrets; SSE-KMS for object storage of tenants with `workspaceTier: T4`.
 ```
 
 **`docs/operator-guide/security.md`, What Gets Encrypted, row `LLM provider API keys`.** Replace the second cell with this text.
@@ -98,7 +92,7 @@ Non-blocking warning in production; preflight does not read the provider configu
 **Introduction.** Replace the paragraph beginning `This runbook applies to self-managed clusters` with these two paragraphs.
 
 ```markdown
-This runbook applies to self-managed clusters where the operator controls the apiserver flags. A deployment in which any tenant, environment, or Runtime has `workspaceTier: T4` uses a KMS-backed provider. The aescbc rotation procedure does not apply to that deployment, and its key rotates in the KMS.
+The aescbc rotation procedure applies to self-managed clusters where the operator controls the apiserver flags. A deployment in which any tenant, environment, or Runtime has `workspaceTier: T4` uses a KMS-backed provider. The aescbc rotation procedure does not apply to that deployment, and its key rotates in the KMS.
 
 On cloud-managed clusters the `secrets` resource is protected by the encryption option the cluster uses. The KMS-backed integrations are EKS envelope encryption with a customer-managed AWS KMS key, GKE CMEK, and AKS etcd encryption with Azure Key Vault; rotate those keys through the provider's KMS console or API. The Google-managed default on GKE and Azure Disk Encryption on AKS do not qualify when a deployment has a `workspaceTier: T4` setting. The Verification section reads the aescbc prefix and the chart ConfigMap, so it does not apply to these clusters. Verify a cloud-managed cluster with the provider's describe command, for example `aws eks describe-cluster --query 'cluster.encryptionConfig'` on EKS.
 ```
@@ -114,9 +108,11 @@ On cloud-managed clusters the `secrets` resource is protected by the encryption 
 ````markdown
 ## Move to a KMS provider
 
-This section moves a self-managed cluster from the chart's aescbc document to a `kms` provider. A deployment completes it before any tenant, environment, or Runtime is set to `workspaceTier: T4`. A cloud-managed cluster does not use this section, and enables the provider's KMS integration instead.
+This section moves a cluster's etcd Secret encryption to a KMS-backed configuration. A deployment completes it before any tenant, environment, or Runtime is set to `workspaceTier: T4`.
 
-The chart document has no `kms` provider, so these stages edit the EncryptionConfiguration file on each control-plane node directly. The operator maintains that file from the first stage onward. Deploy the KMS plugin on every control-plane node before starting. After each stage that edits the file, propagate it to every control-plane node and restart every apiserver.
+A cloud-managed cluster enables the provider's KMS integration and confirms it with the provider's describe command in place of Stages 1 to 3, runs Stage 4, repeating it until the rewrite reports no error, and then runs Stage 7. Stages 5 and 6 do not apply to it.
+
+A self-managed cluster runs every stage to move from the chart's aescbc document to a `kms` provider. That document has no `kms` provider, so these stages edit the EncryptionConfiguration file on each control-plane node directly. The operator maintains that file from the first stage onward. Deploy the KMS plugin on every control-plane node before starting. After each stage that edits the file, propagate it to every control-plane node and restart every apiserver.
 
 ### Stage 1: add `kms` in second position
 
@@ -156,7 +152,15 @@ Run the rewrite in Remediation Step 4.
 
 ### Stage 5: verify the stored prefix
 
-Read a known Secret with the `etcdctl` command in Verification Step 1. The raw value must begin with `k8s:enc:kms:`. A value that begins with `k8s:enc:aescbc:` has not been rewritten, so rerun Stage 4 for that namespace.
+Count the Secrets in etcd and the stored values that carry the `kms` prefix.
+
+```bash
+ETCD_CLIENT='etcdctl --cacert=/etc/kubernetes/pki/etcd/ca.crt --cert=/etc/kubernetes/pki/etcd/server.crt --key=/etc/kubernetes/pki/etcd/server.key'
+kubectl -n kube-system exec <etcd-pod> -- $ETCD_CLIENT get /registry/secrets/ --prefix --keys-only | grep -c '^/registry/secrets/'
+kubectl -n kube-system exec <etcd-pod> -- $ETCD_CLIENT get /registry/secrets/ --prefix --print-value-only | grep -ac '^k8s:enc:kms:'
+```
+
+The two counts must be equal and greater than zero. Two zero counts mean the read failed. A difference means some Secrets are stored under another provider, so rerun Stage 4 and repeat this stage.
 
 ### Stage 6: remove `aescbc`
 
@@ -164,9 +168,9 @@ Remove the `aescbc` provider, leaving `kms` and `identity`. Any Secret still enc
 
 ### Stage 7: set `etcdEncryption.enabled: false`
 
-Set `etcdEncryption.enabled: false` in the chart values and run `helm upgrade`. The upgrade removes the `lenny-etcd-encryption` ConfigMap. The file on each control-plane node is now the only copy of the configuration.
+Set `etcdEncryption.enabled: false` in the chart values and run `helm upgrade`. The upgrade removes the `lenny-etcd-encryption` ConfigMap.
 
-etcd snapshots taken before Stage 4 stay under the old aescbc key.
+On a self-managed cluster, etcd snapshots taken before Stage 4 stay under the old aescbc key.
 ````
 
 ## Testing
@@ -177,11 +181,11 @@ Add this file with the tier 11 tests the table below names. Each carries a `// s
 
 | Test | Tier | Deliverable | `// spec:` | Assertion and path covered |
 |:--|:--|:--|:--|:--|
-| `TestEtcdSecretEncryptionWarningCitesT4Requirement` | 1 | CODE-1 | §17.6 "etcd Secret encryption (warning)"; §12.9 "Credential pool secrets at rest." | The constant contains `Cloud-managed clusters:`, `workspaceTier T4`, `Section 12.9 (Credential pool secrets at rest)`, and `Section 4.9 (KMS-backed configurations)`. `Cloud-managed clusters:` is the discriminating assertion for the non-T4 managed cluster, because deleting that sentence leaves those operators an instruction they cannot follow. |
+| `TestEtcdSecretEncryptionWarningCitesT4Requirement` | 1 | CODE-1 | §17.6 "etcd Secret encryption (warning)"; §12.9 "Credential pool secrets at rest."; §4.9 "KMS-backed configurations." | The constant contains `Cloud-managed clusters:`, `workspaceTier T4`, `Section 12.9 (Credential pool secrets at rest)`, and `Section 4.9 (KMS-backed configurations)`. `Cloud-managed clusters:` is the discriminating assertion for the non-T4 managed cluster, because deleting that sentence leaves those operators an instruction they cannot follow. |
 | `TestUnverifiableEncryptionWarnings_spec_17_6`, `TestEtcdSecretEncryptionWarningNamesCredentialsNamespace`, and `TestRunEmitsUnverifiableEncryptionWarnings_spec_17_6` (existing) | 1 | CODE-1 | Their existing annotations | They pass unedited. They hold the production-only, always-passing behaviour, the empty and non-production environment values, and the credentials namespace path. |
-| `TestEtcdKeyRotationRunbookMigrationStaysOutOfRotationSteps_spec_4_9` | 11 | TEST-1 | §4.9 "KMS-backed configurations." | `runbooks.ParseSteps` over the shipped runbook returns exactly the Diagnosis, Remediation, and Verification titles and no title beginning `Stage`. A migration stage carrying an access marker fails here. In the same test, the `## Move to a KMS provider` body places the `kms` promotion before the rewrite, the rewrite before the `aescbc` removal, and `etcdEncryption.enabled: false` after all three, which fails on a reordering that makes Secrets undecryptable. |
+| `TestEtcdKeyRotationRunbookMigrationStaysOutOfRotationSteps_spec_4_9` | 11 | TEST-1 | §4.9 "KMS-backed configurations." | `runbooks.ParseSteps` over the shipped runbook returns exactly the Diagnosis, Remediation, and Verification titles and no title beginning `Stage`. A migration stage carrying an access marker fails here. In the same test, the `## Move to a KMS provider` body places the `kms` promotion before the rewrite, the rewrite before the `aescbc` removal, and `etcdEncryption.enabled: false` after all three, which fails on a reordering that makes Secrets undecryptable. The paragraph beginning `A cloud-managed cluster` names Stage 4, which fails on a section that excludes those clusters from the rewrite. The Stage 5 body contains `--prefix --print-value-only` and `k8s:enc:kms:`, which fails on a gate that reads one Secret. |
 | `TestOperatorPagesScopeApplicationLayerEncryption_spec_12_9` | 11 | TEST-1 | §12.9 "Credential pool secrets at rest." | `security-principles.md` no longer contains `Every piece of data classified as T3 or T4` or `application-layer crypto for T3/T4 data`, and `security.md` states the requirement at both DOCS-1 sites. An empty read of either page fails the test rather than passing it. |
-| Existing chart tests | 0, 11 | CHART-1 | Their existing annotations | `charts/lenny/tests/etcd-encryption_test.yaml` and the embedded-manifests sync check pass unedited. Compare `helm template` output before and after the change with `etcdEncryption.aescbcKeys` pinned, because `lookup` returns empty offline and an unpinned key differs on each render. The comparison must be empty. `tests/tier5_e2e_kind/etcd_encryption_test.go` needs no run, because nothing rendered changes. |
+| Existing chart tests | 0, 11 | CHART-1 | Their existing annotations | `charts/lenny/tests/etcd-encryption_test.yaml` and the embedded-manifests sync check pass with no edit to them or to `pkg/embedded/manifests/manifests.yaml`, so the sync check is the render comparison. `tests/tier5_e2e_kind/etcd_encryption_test.go` needs no run, because nothing rendered changes. |
 
 ## Edge cases and accepted failure modes
 

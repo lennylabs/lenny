@@ -20,7 +20,7 @@
 4. **Scope of the requirement.** A T4 setting is the only condition, as the owner set it, so the requirement does not depend on production mode. A production conjunct would exempt a deployment holding T4 data on the chart default `environment: "dev"`. Embedded Mode keeps its §17.9.7 exemption, because its rendered `EncryptionConfiguration` is inert and the §17.4 banner discloses insecure credentials.
 5. **Definition of KMS-backed.** It is stated once in §4.9, beside the options. The table rows stay as the production baseline, so rule 8 stays true unedited. The bold label exists because Credential Storage Topology is long and `spec-citations.md` requires a label to cite there.
 6. **Where the condition is evaluated.** The operator evaluates it on every path that sets the tier, in the form §12.5 item 1 already uses. The §17.6 warning stays production-only, non-blocking, and unconditional on tier, so it needs no T4 signal, and outside production mode Lenny emits no signal for this control.
-7. **Verification boundary.** Preflight verifies no part of the provider configuration. Selecting the provider, rewriting Secrets, evaluating the condition, and acting before a T4 setting are operator obligations. This is the statement the owner asked for, and §12.9 says the §12.5 probe covers the tenant-scoped key only.
+7. **Verification boundary.** SPEC-1 states the boundary the owner asked for: Lenny cannot observe the provider, so no part of this control is verified.
 8. **Enforcement.** The new paragraph, placed directly after **Enforcement.**, narrows the rejection, so that paragraph and §15.1 stay unedited. The §15.1 `tier_store_mismatch` clause concerns configured stores at the interface boundary.
 9. **No enforcement gate.** The attestation gate is declined. Lenny cannot enforce the provider, a boolean proves nothing, and the owner asked for a stated boundary. No existing fail-closed check is removed, because none exists for this control.
 10. **Chart.** It renders what it renders today. A chart cannot activate a provider, deploy a KMS plugin, or affect a managed cluster, so `etcdEncryption.enabled: false` plus operator-supplied configuration is the T4 path. The `enabled: true` default and §18.14 stay. The comments in values.yaml and the template header forbid or omit that path, so they change.
@@ -36,9 +36,8 @@
 
 - The §12.9 T4 mapping row, the **Enforcement.** paragraph, §15.1, §4.9 rule 8, and the §4.9 table rows look like candidates for editing and stay as they are. That includes the `kubectl apply` in the self-managed row, which is filed.
 - A later reader of the owner decision alone re-derives the reading that T4 is conditional on a tenant. Decision 2 closes that reading.
-- SPEC-3 and CODE-1 must match byte for byte, apart from the `\|` escape, and no gate compares them. Update both from the staged text. Their table row and the §4.9 callout must each stay one physical line.
+- CODE-1 takes its text from SPEC-3, and no gate compares the constant with the §17.6 row. The SPEC-3 table row and the §4.9 callout must each stay one physical line.
 - The DOCS-2 stages are ordered. `aescbc` leaves only after the prefix check passes, and `etcdEncryption.enabled: false` comes last because the upgrade removes the ConfigMap. `ParseSteps` has no `## ` case, so an access marker in the new section joins the rotation step list. The section uses `###` headings with no markers.
-- A render comparison on an unpinned key reports a false difference, because `lookup` returns empty offline.
 - The same comments carry stale §13.1 citations. They stay, they are filed, and new text must not repeat them.
 - The credential bullet's scope leans on the §12.9 Redis cell of the Credential leases row, and the lease store is itself a filed multi-way conflict. Do not cite that cell as settled.
 
@@ -64,7 +63,7 @@
 - Stating only that the §4.9 options meet T4 (BUILD-GAPS option 2). This is false for `aescbc` and omits the owner's requirement.
 - Deleting or rewording only the "already satisfies" sentence. The T4 cell stays false and the owner's requirement is absent.
 - Reading the owner's condition literally with no exception statement. Deployments without a T4 setting would hold T4 data in breach of the cell, which is the refuted premise.
-- Keeping the predicate at "T4 tenant". An environment or Runtime reaches T4 with a T3 tenant, so that reading leaves a gap, and widening costs nothing here.
+- Keeping the predicate at "T4 tenant". Decision 3 widens it.
 - Implementing `CLASSIFICATION_CONTROL_VIOLATION` on the credential Secret writer. The writer has no provider input, and operator-created Secrets never pass through it.
 - Appending a carve-out sentence to the **Enforcement.** paragraph itself. The new paragraph sits directly after it, and a second statement of the rule adds drift.
 - Editing §15.1 for the etcd case. No new reason or emission path exists.
@@ -72,7 +71,7 @@
 - Extending `T4DefaultEncryptionCheck`, `assertT4DefaultEncryption`, or `VolumeEncryptionCheck`, or adding a preflight attestation. Preflight runs before tenants exist and a boolean verifies nothing, and `assertT4DefaultEncryption` exits early on backends other than gcs and azure.
 - Wiring `--object-storage-serves-t4-tenant` for this check. The warning is unconditional, and the flag would go stale after a post-install transition.
 - Making the warning tier-conditional or fail-closed. The §17.6 row is non-blocking and preflight has no input that could justify failing.
-- Adding a chart `kms` provider option (`etcdEncryption.provider`, plugin endpoint). The chart cannot deploy the plugin or wire the apiserver, managed clusters ignore the document, and `enabled: false` reaches the same result.
+- Adding a chart `kms` provider option (`etcdEncryption.provider`, plugin endpoint). Decision 10 gives the reason.
 - A chart render `fail` when seed values declare T4 with `enabled: true`. It covers one path and misfires on a cluster whose provider is KMS-backed.
 - Detecting the provider through etcd reads or apiserver surfaces. Preflight has no etcd access, and managed clusters do not expose these uniformly.
 - Binding an attestation to a cluster identity or KMS key ID, a new error code, or a new alert for etcd KMS outage. Each serves a gate this design does not add, and no Lenny signal exists for the outage.
@@ -83,8 +82,6 @@
 - Changing §18.14, TESTING.md §13.11, or the Kind test. The chart default and its test stand.
 
 ## Open decisions for human to make
-
-1. **Spec annotation of the warning-text test.** `TestEtcdSecretEncryptionWarningCitesT4Requirement` is the new unit test that pins the §17.6 preflight warning text. Its `// spec:` annotation names the sections the test verifies, and the harness maps tests to sections through that annotation. The staged annotation names §17.6 and §12.9, while the test also asserts that the warning cites §4.9 **KMS-backed configurations.** Should the annotation also name §4.9? The spec loop left the annotation unchanged and routed this decision to the non-spec loop. It derived no recommendation, so the open-decisions-and-impact-review phase supplies one.
 
 ## Defects in the shipped tree that this proposal does not stage
 
@@ -97,9 +94,9 @@ The defects below are filed into BUILD-GAPS.md and gateway-runtime-comms-remedia
 5. **`CheckSecretEncryption` failure text.** The text is narrower than the §4.9 table (pkg/tierpromotion/checks.go:162-167). It stays out because the check gates capacity tiers.
 6. **§4.9 re-encryption command.** The §4.9 self-managed row re-encrypts with `kubectl apply`, while the template and runbook use `kubectl replace`. It stays out because the table rows are otherwise unedited.
 7. **T4 on tenant create.** §12.5 item 1 names only `PUT /v1/admin/tenants/{id}`, and `POST /v1/admin/tenants` accepts `workspaceTier: T4` and runs no §12.5 KMS probe (pkg/gateway/externalapi/admin/tenants.go:1090-1135; `kmsProbe` calls sit only at tenants.go:1455 and bootstrap.go:524). F-12.9.3 closed the bootstrap path only. The fix needs a spec decision, so it routes through a proposal.
-8. **Spec conflict over the T4 key scope.** §12.5 selects the key from the tenant's `workspaceTier`, while §12.9 allows an environment to tighten to T4 and §6.4 gives a Runtime its own tier. The code matches §12.5 (`newSSEKeyResolver` reads the tenant row only, cmd/lenny-gateway/t4_encryption.go:127-138). It needs a proposal to decide key scope.
+8. **Spec conflict over the T4 key scope.** §12.5 selects the key from the tenant's `workspaceTier`, while §12.9 allows an environment to tighten to T4 and §6.4 gives a Runtime its own tier. The code matches §12.5 (`newSSEKeyResolver` reads the tenant row only, cmd/lenny-gateway/t4_encryption.go:127-138). DOCS-1 scopes its SSE-KMS sentences to tenants for this reason. It needs a proposal to decide key scope.
 9. **`attestVolumeEncryption` comment.** The values comment says the install fails closed (charts/lenny/values.yaml:3987-3993). An unattested cannot-perform install passes with a WARNING (pkg/preflight/volume_encryption.go:132-137), so the comment is false. It stays out because it concerns the T2 volume check.
-10. **Multi-way conflict over lease storage.** §18.40 item 6 says Kubernetes Secrets, §12.9 says Redis, and §18.15 and the §12.1 `CredentialPoolStore` row say Postgres, where migrations/0038_credential_leases.up.sql creates the table. This proposal does not establish which is correct.
+10. **Multi-way conflict over lease storage.** §18.40 item 6 says Kubernetes Secrets, §12.9 says Redis, and §18.15 and the §12.2 `CredentialPoolStore` row say Postgres, where migrations/0038_credential_leases.up.sql creates the table. This proposal does not establish which is correct.
 11. **The `EncryptionConfiguration` MUST.** The §4.9 callout's "must enable the Kubernetes `EncryptionConfiguration` resource" sentence and the same MUST in the §17.6 warning conflict with cloud-managed clusters, which cannot take a custom EncryptionConfiguration, and with the GKE default row. SPEC-3 leaves that MUST in place because resolving it rewrites the baseline rather than the T4 control.
 12. **§12.9 T3/T4 sentence.** **T2 storage-layer encryption definition.** says "application-layer encryption required for T3/T4 data", contrary to the same section's table. It stays out because it concerns every T3 and T4 store.
 13. **`callbackSecret` wording.** spec/14_workspace-plan-schema.md says `callbackSecret` uses "the same KMS backend as credential pool secrets", which over-claims for pool secrets. It stays out because it is a §14 sentence about webhook storage.
