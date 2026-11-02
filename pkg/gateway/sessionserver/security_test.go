@@ -138,14 +138,14 @@ func TestFinalizeConsumesUploadToken(t *testing.T) {
 	req.Header.Set("X-Lenny-Upload-Token", tok)
 	rr = httptest.NewRecorder()
 	asOwner(srv.Handler()).ServeHTTP(rr, req)
-	// Note: the session is now `ready`. The §7.1 token checks run
-	// ahead of the §15.1 precondition table, so the replay returns
-	// 410 UPLOAD_TOKEN_CONSUMED. A session still in `finalizing`
-	// reaches the precondition and returns 409
-	// INVALID_STATE_TRANSITION. We assert the
-	// rejection but allow either error code.
-	if rr.Code != http.StatusGone && rr.Code != http.StatusConflict {
-		t.Errorf("replay upload after finalize: got %d, want 410 or 409", rr.Code)
+	// The session is now `ready`. The §7.1 token checks run ahead of the
+	// §15.1 precondition table, and a `ready` session's token is consumed,
+	// so the replay returns 410 UPLOAD_TOKEN_CONSUMED.
+	if rr.Code != http.StatusGone {
+		t.Fatalf("replay upload after finalize: got %d, want 410; body=%s", rr.Code, rr.Body.String())
+	}
+	if code, _, _ := decodeError(t, rr); code != "UPLOAD_TOKEN_CONSUMED" {
+		t.Errorf("replay upload after finalize: error.code = %q, want UPLOAD_TOKEN_CONSUMED", code)
 	}
 }
 
