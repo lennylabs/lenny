@@ -1,6 +1,6 @@
 # Security oversight for customers and the operator
 
-Status: design for owner review, revision 3, 2026-11-03, after two independent reviews. Nothing in this document is built or staged, and no part of it has been tested. Statements about the current specification and tree were checked by reading them on this date. Proposals carry the label SO-n.
+Status: design for owner review, revision 11, 2026-11-03, after two independent reviews. It reads against `egress-and-git-design.md` revision 51, `user-git-identity-design.md` revision 11, and `user-credential-delivery-design.md` revision 8. Revision 4 added oversight of user credentials and request rules, and revisions 5 to 11 correct it after review. The owner's decisions of 2026-11-03 settle items in those designs, and this design's own decisions stay open. Nothing in this document is built or staged, and no part of it has been tested. Statements about the current specification and tree were checked by reading them on this date. Proposals carry the label SO-n. This revision followed independent security and consistency reviews whose final stop check found no Major or higher issue. That check traced the last round's changes and was not an end-to-end read, and no production component or live provider write has run.
 
 ## Problem
 
@@ -18,7 +18,7 @@ A company runs Lenny as a multi-tenant SaaS. Each customer's security team has t
 
 This design covers a read-only security role with a protected assignment, a tenant security record holding guardrails, a posture read, per-tenant SIEM destinations, visibility and approval of operator access, delegated approvers, and the operator tooling defects that this review filed.
 
-`egress-and-git-design.md` owns the production of egress and git evidence, and its hooks are inputs here. `forensics-evidence-preservation-design.md` owns preservation during an investigation. `tenant-scoping-identity-design.md` owns the statement of who supplies per-tenant SSO.
+`egress-and-git-design.md` owns the production of egress and git evidence, and its hooks are inputs here. `forensics-evidence-preservation-design.md` owns preservation during an investigation. `tenant-scoping-identity-design.md` owns the statement of who supplies per-tenant SSO. `user-credential-delivery-design.md` and `user-git-identity-design.md` own the mechanisms that "User credentials and request rules" constrains.
 
 ## Requirements
 
@@ -153,6 +153,10 @@ One record per tenant holds every customer-set security constraint, so one write
 ```json
 {
   "credentialDelivery": { "forbid": ["file", "metadata"] },
+  "requestRules": { "requiredPresets": [{ "hosts": "api.github.com", "preset": "github-deny", "minVersion": 7 }] },
+  "userAuthorization": { "require": ["github.com/acme/*"], "serviceIdentities": ["svc-nightly"], "forbidRuntimeHeld": true },
+  "identityBinding": { "forbidUnverified": true },
+  "tokenTrust": { "allowedRecords": [{ "digest": "sha256:...", "record": { "...": "the record content a person reviews" } }] },
   "storedTokenPush": "forbid",
   "verbatimClientFiles": "forbid",
   "tenantRegisteredServices": "forbid",
@@ -189,7 +193,7 @@ Each stored version is a row in `tenant_security_config_versions` with its autho
 The applier classifies each change field by field.
 
 - **A tightening** applies in the write's transaction. It emits `security.config_tightened`, and the response lists every object it suspended.
-- **A weakening** removes a forbid, shrinks `neverAllow`, widens `allowOnlyWithin`, relaxes approval rules, adds to `lifecycleSubjects` or `auditorStreamGrants`, or lowers `weakeningDelaySeconds`. The same delay applies to the security principal and SIEM destination changes those sections name. It needs a non-empty `justification`, or the write returns `400 SECURITY_CONFIG_JUSTIFICATION_REQUIRED`, following §9.2's **Justification requirement.** The write creates a pending version and emits `security.config_weakening_requested`, which subscriptions and SIEM destinations receive at once. A periodic applier activates it at `effectiveAt` and emits `security.config_weakened`.
+- **A weakening** removes a forbid, shrinks `neverAllow`, widens `allowOnlyWithin`, relaxes approval rules, relaxes `requestRules.requiredPresets`, `userAuthorization`, or `identityBinding.forbidUnverified`, adds to `tokenTrust.allowedRecords`, adds to `lifecycleSubjects` or `auditorStreamGrants`, or lowers `weakeningDelaySeconds`. The same delay applies to the security principal and SIEM destination changes those sections name. It needs a non-empty `justification`, or the write returns `400 SECURITY_CONFIG_JUSTIFICATION_REQUIRED`, following §9.2's **Justification requirement.** The write creates a pending version and emits `security.config_weakening_requested`, which subscriptions and SIEM destinations receive at once. A periodic applier activates it at `effectiveAt` and emits `security.config_weakened`.
 - **A mixed write** applies its tightening parts at once and holds its weakening parts.
 
 The delay differs from §8.3's weakening cooldown, which rejects delegation calls for a short window after a change has already taken effect. A delay fits here because it gives the rest of the security team time to cancel a weakening from a stolen credential before it has any effect. The duration has the same protection as §8.3's: `security.config.minWeakeningDelaySeconds`, a Helm value with a default of 3600, is a floor that the admin API cannot change, and a pending weakening keeps the delay in force when it was written. `security.config.maxWeakeningDelaySeconds`, a Helm value with a default of 604800, is a ceiling, because raising the delay applies at once and a stolen token would otherwise freeze every later removal.
@@ -204,6 +208,13 @@ A platform admin's write takes the same path, is mirrored under SO-4, and needs 
 | Constraint | Object affected | Effect while suspended |
 | :-- | :-- | :-- |
 | `credentialDelivery.forbid` | Credential bindings with that delivery | The Token Service mints nothing and `netagent` removes the file or endpoint. A plan naming the binding is rejected at create. |
+| `credentialDelivery.forbid: userCredential.file` | `userCredential` bindings delivered by `file` | The Token Service releases nothing and `netagent` removes the file. Copies an agent made remain. A plan naming the binding is rejected at create. |
+| `requestRules.requiredPresets` | `inject` bindings on a matching host whose resolved rules omit the preset or pin below its minimum version, read at a binding write and at a VCS pool write | Suspended, until the tenant admin restores the preset. I8 also refuses a resolved rule set lacking a preset recorded on the binding. |
+| `tokenTrust.allowedRecords` | Link providers and types whose current token trust record digest is not listed | Suspended, so nothing is released, linked, or written under them. It sits on EG-9's write path, so it holds against a tenant admin and not against a compromised gateway replica, which writes rows directly. |
+| `userAuthorization.require` | VCS pools matching the pattern with `userAuthorization: off` | Suspended, so a session on them is refused. |
+| `userAuthorization.serviceIdentities` | A VCS pool's `serviceIdentities` entries outside the allowed list | The entry is ignored, so a session on it is refused. |
+| `userAuthorization.forbidRuntimeHeld` | VCS pools with `allowRuntimeHeldCredentials: true` | The flag reads as `false`, so a `file` binding whose type hosts include those hosts is suspended, and a plan naming it is rejected at create with `422 USER_CREDENTIAL_BINDING_SUSPENDED`. A `registered` type can declare other hosts, as that design states, and the pin on the real host is the enforcing control. |
+| `identityBinding.forbidUnverified` | Link providers with `identityBinding: unverified` | The provider's links stop being used, and users relink once it changes. |
 | `storedTokenPush` | VCS pools with `allowStoredTokenPush` | Stored-token push and reused GitLab tokens are refused. Reads continue. |
 | `verbatimClientFiles` | Tenant client config files and overlay file templates | Files are removed at the next binding, and pods keep no copy after `netagent` applies the change. |
 | `tenantRegisteredServices` | Tenant-registered upstreams and git endpoints | Routes naming them deny, using the suspended state the egress design defines for a registration that fails re-resolution. |
@@ -215,6 +226,17 @@ A platform admin's write takes the same path, is mirrored under SO-4, and needs 
 
 A platform gate and a guardrail both apply: the platform grants a class, and the tenant's security team can still forbid it. A guardrail never grants anything a gate has not granted.
 
+### User credentials and request rules
+
+`user-credential-delivery-design.md` lets a tenant deliver a person's token to a pod, and `user-git-identity-design.md` configures that for VCS hosts. Oversight works as follows.
+
+- **The grant.** `userCredentialDelivery` is a platform-admin grant per tenant, its own risk class. A grant or a withdrawal is a platform admin's write to a customer's configuration, so SO-4a mirrors it to the tenant's chain. A customer's `security-admin` can forbid the delivery regardless, through `credentialDelivery.forbid`, in which `file` covers every `file` binding and `userCredential.file` covers this kind alone, because "a guardrail never grants anything a gate has not granted" and a gate cannot override a guardrail.
+- **Preset changes.** A tenant admin can clear or change a binding's request rules through EG-9's write path, which applies the guardrail check. Each write emits an audit event naming the old and new rules, and `requestRules.requiredPresets` makes a preset mandatory by host pattern, with a minimum version, so a binding pinned to an old version does not satisfy it. Removing a required preset is a weakening, with SO-2's delay. A preset update shipped by the platform is a platform change, recorded in the deployment's own audit, and it reports in posture as the version in force.
+- **Token trust records.** Everything that decides where a stored token can go and who can read it is one record, with a digest on each stored token, and any change makes the token unusable and sends it nowhere. **That protects stored tokens against reading through configuration. It does not protect a future grant:** a tenant admin who controls configuration can trick a user into granting a new token to a host she runs, or re-point an automated backend. It also does not see the DNS, CA, or network behind a name the customer operates. The enforcing control for a tenant that needs that separation is `tokenTrust.allowedRecords`, a `security-admin`'s list of approved records, each as its digest and content, under the weakening delay. EG-9's check recomputes the digest on each write touching a provider, type, route, or CA, and refuses or suspends what is not listed. It holds only when `security-admin` and `tenant-admin` are different people, which posture reports.
+- **Writing a token for a user.** `manage_user_credentials` lets its holder place a token under a named user's identity, and a tenant admin holds it, within §10.2's custom-role ceiling. SP2 does not reach this. Each write emits an audit event naming the writer and the user, and `GET /v1/credentials` shows the user `written_by`. A write naming a security principal is refused, on the reasoning of SP2.
+- **Repository rules.** SP11 and decision 25 apply as written. A `userCredential` binding whose platform-shipped narrowing template sets `followsEntryState`, which is `github-scoped` today, is a `mint-scoped` binding mint, and the flag is ignored on a tenant's own template, so it names only `granted` entries. Any other template, no template, a `registered` type, or any `file` binding is refused or suspended where the type's hosts include a rule's API host, under `approvals.repositoryWrites`, because Lenny cannot limit what it reaches. `allowRuntimeHeldCredentials` does not override this.
+- **Impersonation.** SP10 keeps approvals away from an impersonation bearer. `user-credential-delivery-design.md` also applies a check at the session input layer for a session whose delegation tree holds a `userCredential` binding or a repository under a `required` pool, with a test over every mounted mux. It refuses that bearer on every memory write and delete and on `/v1/credentials` writes, so an operator cannot drive such a session or swap its token.
+
 ### Posture
 
 `GET .../security-posture` returns one object with a section per subject, and each value carries `observedAt` and `state` (`known` or `unknown`). A section whose source is unavailable returns `state: "unknown"` inside the §25.2 degradation envelope rather than failing the read.
@@ -224,6 +246,7 @@ A platform gate and a guardrail both apply: the platform grants a class, and the
 | `pools` | For each pool the tenant can use: `sharedWithOtherTenants` (a boolean, with no tenant names or counts), `ownerTenant`, `isolationProfile`, `egressProfile`, and `gitAccess`. |
 | `egress` | The enforcement level (default, level 2, or level 1, with a pointer to what level 1 gives up), egress groups, and whether the tenant's address is shared. |
 | `gates` | The per-class grants the tenant holds, and the opt-ins in use under each. |
+| `userCredentials` | Types and their sources, bindings by delivery, the `userCredentialDelivery` grant, each binding's preset and version, cleared presets, link providers with `identityBinding: unverified` or no narrowing template, widened template `permissions`, `prAuthoring` pools on which no rule addresses bots, as a prompt under `user-git-identity-design.md` decision 35, each current token trust record and whether it is on `tokenTrust.allowedRecords`, VCS pools with `allowRuntimeHeldCredentials` or `pinHosts: false`, and sessions marked `agentHeldCredential` in the last 30 days. |
 | `securityConfig` | Active version, pending weakening with its `effectiveAt`, and suspended objects. |
 | `audit` | `complianceProfile`, `dataResidencyRegion`, retention, and the chain integrity report from the most recent background verification, with its time and range. |
 | `siem` | Whether a platform copy exists (with no address), each tenant destination's state and lag, and gaps recorded. |
@@ -526,6 +549,10 @@ The egress design's "Transport security" says that `lenny-ops` can read Secrets 
 | `auditorStreamGrants` | Sensitive evidence streams `security-auditor` may read. | Tenant | `security-admin` | Empty | Adding one is a weakening. |
 | `identityProvider.*` in the RBAC config | The tenant's token introspection endpoint and credentials. | Tenant | `tenant-admin` until the tenant has a security principal, then `security-admin` or a platform admin | Unset | See decision 23. |
 | `credentialDelivery.forbid` | Credential binding deliveries the tenant admin cannot use. | Tenant | `security-admin` | Empty | Applies on top of the platform gate. |
+| `requestRules.requiredPresets` | Presets a binding on a matching host must keep, with a minimum version. | Tenant | `security-admin` | Empty | Relaxing is a weakening. See `user-credential-delivery-design.md`. |
+| `userAuthorization.require`, `.serviceIdentities`, `.forbidRuntimeHeld` | Forces user authorization on VCS pools, limits service identities, and forbids runtime-held credentials on them. | Tenant | `security-admin` | Absent | See `user-git-identity-design.md`, and `user-credential-delivery-design.md` for `.forbidRuntimeHeld`. |
+| `identityBinding.forbidUnverified` | Refuses link providers with no identity check. | Tenant | `security-admin` | Unset | |
+| `tokenTrust.allowedRecords` | The token trust records a tenant may use. | Tenant | `security-admin` | Absent, which allows any | Adding is a weakening. A CA rotation or route move needs a new entry. See `user-credential-delivery-design.md`. |
 | `storedTokenPush` | Forbids `allowStoredTokenPush` and token reuse that depends on its gate. | Tenant | `security-admin` | Unset | |
 | `verbatimClientFiles` | Forbids tenant client files and overlay templates. | Tenant | `security-admin` | Unset | |
 | `tenantRegisteredServices` | Forbids tenant-registered upstreams and git endpoints. | Tenant | `security-admin` | Unset | |
@@ -591,9 +618,56 @@ Revision 37 of `egress-and-git-design.md` applied the items below that had to la
 
 Revision 1 of this document made five requests, and `egress-and-git-design.md` has applied them (revision 39 was re-read on 2026-11-03): the widened EG-9 write path, `suspendedBy` on opt-in objects with the guardrail layer, writable set entries as records, `lenny-evidence` reads from a named position with retention honouring a consumer's position, and `lenny-siem-forwarder` in the egress PKI's leaf list.
 
-One new request stands in this revision:
+`egress-and-git-design.md` revision 51 carries the `userCredentialDelivery` gate and the `requestRules` stage, which this design's guardrails act on through EG-9. They need no further request here. One earlier request stands:
 
-- **Binding mints and writable state (EG-4).** A binding mint carrying any write permission names only repositories with a `granted` writable set entry, where it now says "the session's repositories". Reason: the Token Service chooses that list in EG-4, EG-3's hook covers only the git path, and without this a `pendingApproval` repository takes REST writes, which breaks SP11. Changing the mint's repository list after EG-4 ships changes a shipped enforcement point. That design also needs to state what the list holds for a repository a session declares read only, because a binding's write permission reaches those too.
+- **Binding mints and writable state (EG-4).** Applied in egress revision 46, which now states under "Credential bindings" that a binding mint carrying any write permission names only repositories with a `granted` writable set entry.
+
+## Review of revision 9
+
+A final regression review raised N3: a new session naming a suspended binding pushed as the App. It holds, and the row rejects such a plan at create. None was rejected.
+
+## Review of revision 8
+
+Round 5 of the reviews raised m2: `.forbidRuntimeHeld` belongs to UC-5. It holds, and the rows name it. None was rejected.
+
+## Review of revision 7
+
+Round 4 of the reviews raised these, each verified against the text. m6, an `approvals.repositoryWrites` rule on an uncovered host, holds, and the write is refused. m11, the bot prompt, holds, and posture has the field. The security review's replica Minor on `allowedRecords` holds, and the row states it. None was rejected.
+
+## Review of revision 6
+
+Round 3 of the reviews raised these on this document, each verified against the text. m6, the guardrail dependencies, holds, and the row names each. m7 and the matching security Minor, the bare digests of `allowedRecords`, hold, and each entry now carries its content. R3-4, names the customer operates, and R3-8, the delegation tree, hold, and the sentences follow. None was rejected.
+
+## Review of revision 5
+
+Round 2 of the reviews raised these on this document, each verified against the text.
+
+| Finding | Outcome | Resolution |
+| :-- | :-- | :-- |
+| N2 and M1, `followsEntryState` is self-declared | Holds. | Honoured on platform-shipped templates alone. |
+| N8, the guardrail reads a write-time view | Holds. | Reads the resolved form at binding and pool writes, and I8 refuses a gap. |
+| N11, the gate's trigger | Holds. | The trigger names `required` pools. |
+| N27, a stale request | Holds. | Marked applied, and egress states it as normative text. |
+| N32, the dependency row | Holds. | Each guardrail names what it needs. |
+| N40, widened `permissions` | Holds. | A posture field, and `user-git-identity-design.md` decision 42 stays open. |
+| H2, an allowlist of endpoints | Holds, generalized. | `tokenTrust.allowedRecords` covers the whole record. |
+
+None was rejected.
+
+## Review of revision 4
+
+Two independent reviews of the user credential designs raised these on this document, each verified against the text.
+
+| Finding | Outcome | Resolution |
+| :-- | :-- | :-- |
+| A template as a guarantee of `mint-scoped` | Holds. `gitlab-fine-grained` does not follow entry state. | `followsEntryState` names which templates qualify. |
+| The weakening list and the record example omit the new fields | Holds | Added. |
+| Whether `forbid: file` covers `userCredential.file` | Holds as unstated | `file` covers both, and the other this kind alone. |
+| A pinned old preset version satisfies the guardrail | Holds | A minimum version. |
+| The impersonation list is short | Holds | A default-deny gate, in that design. |
+| `hosts` keyed checks can be avoided by a label | Holds | Checks read type hosts, with the lie stated. |
+
+None was rejected.
 
 ## Residual risks
 
@@ -605,7 +679,10 @@ One new request stands in this revision:
 - **Bearer capture before the security team exists.** An introspection endpoint a tenant admin set earlier keeps receiving other users' bearers, excluding principals, until a `security-admin` changes it. Posture reports the endpoint's host.
 - **Operator's copy remains.** A tenant destination adds a copy, and the operator's `audit.siem.endpoint` continues to receive the tenant's chain.
 - **Secrets already delivered.** Suspending a `file` or `federation` binding removes it from the pod, and an agent that copied the value keeps the copy until it expires or is rotated.
-- **Agent-held credentials.** SP11 covers tenant credentials. An agent holding its own key to a repository's host can write through an opaque tunnel if the host is allowed, which `credentialPinned` under EG-12 narrows. A binding on a host that is not the rule's API host, such as a CI system with its own repository access, is outside the check.
+- **User tokens.** A `userCredential` binding under `file` leaves a person's token in the agent's reach, and a guardrail or suspension does not reach a copy. Lenny cannot revoke a `registered` token at its provider. `user-credential-delivery-design.md` lists these limits.
+- **Request rules are a deny list by default.** A new provider operation passes until the preset is updated, even with `requiredPresets`. A guardrail requires a preset to be present, and it says nothing about what the preset names.
+- **A tenant admin writing tokens.** `manage_user_credentials` can place a token under a user's name. It is audited and visible to the user, and it is not prevented.
+- **Agent-held credentials.** SP11 covers tenant credentials. On a host a VCS pool or git route covers, an agent's own key is dropped for git and the mint is used, unless the session qualifies under `allowRuntimeHeldCredentials`. On an uncovered host, it can write through an opaque tunnel if the host is allowed, which `credentialPinned` under EG-12 narrows. An `approvals.repositoryWrites` rule on a host no pool or route covers has no enforcement point, so the write of such a rule is refused. A binding on a host that is not the rule's API host, such as a CI system with its own repository access, is outside the check.
 - **Minted write tokens.** A revoked repository approval stops new mints, and an existing token stays valid at the host until its expiry, held by `netagent`.
 - **Runtime-internal and adapter-local tools.** A tool a runtime runs in its own process, and each adapter-local tool, is outside SO-5a. Egress rules still apply to their network traffic.
 - **Audit payload content.** §12.9 classifies audit events as T2 or T3 and transcripts as T3. This design has not established that no event type carries user content, such as a free-text reason or a dead-letter `raw_canonical_b64`. SO-1's proposal has to audit the catalog, and the auditor's "no session content" statement depends on that result.
@@ -650,7 +727,7 @@ The outline's items keep their labels. SO-4 and SO-5 each split, because their p
 | Proposal | Depends on | Why |
 | :-- | :-- | :-- |
 | SO-1 | EG-8 and EG-9 for the evidence grants only | The named permissions on the new reads. The role and audit reads can land first, and the grants follow as one change. |
-| SO-2 | EG-9, EG-2, and EG-4 (the requested fields), and SO-1 | The write path, the suspended state, and the role that writes the record. The posture sections on egress need EG-2 and EG-9 and otherwise report `unknown`. |
+| SO-2 | EG-9, EG-2, and EG-4 (the requested fields), and SO-1. `identityBinding.forbidUnverified` needs UG-1, `userAuthorization` needs UG-2, with `.forbidRuntimeHeld` needing UC-5, `tokenTrust` needs UC-1 and, for link providers, UG-1, `requestRules` needs UC-4, and `userCredential.file` needs UC-5. | The write path, the suspended state, and the role that writes the record. The posture sections on egress need EG-2 and EG-9 and otherwise report `unknown`. |
 | SO-3 | SO-1 and SO-2, and EG-8, EG-10, and EG-11 for evidence delivery | The role, the delay on creating, changing, and removing a destination, the export, and the leaf. Audit delivery can land before the EG proposals, with the `lenny-siem-forwarder` row added when EG-10 lands. |
 | SO-4a | None | It can land at any point. |
 | SO-4b | SO-1, SO-2, SO-4a, and SO-5a | The approver role, the setting, the mirror, and the store. |
@@ -669,6 +746,8 @@ The outline stated that SO-4, SO-5, and SO-7 depend on nothing. The approval par
 | TS-4 | None | `lifecycleSubjects` lets its worker act on a protected subject. Whichever lands second adds that case. |
 | TS-2 | None in either direction | This design works with a broker or without one. `securityRoleSource` is where they meet. |
 | OC-2 | None | A connector registration passes the guardrail check as a tenant-registered service, and whichever of OC-2 and SO-2 lands second adds that case. |
+| UC-1, UC-4, UC-5 | None | Their fields pass the guardrail check through EG-9. The guardrails named under "User credentials and request rules" land with SO-2 or with the UC proposal, whichever is later. |
+| UG-2 | None | The same, for `userAuthorization`. |
 
 ## Documentation
 
@@ -869,3 +948,5 @@ Decisions 1, 3, 20, 21, and 22 are settled in this revision, and the design abov
 23. **Who controls `rbac-config`'s `identityProvider`.** Recommendation: exempt principals from introspection in every tenant, and once a tenant has a principal, move `identityProvider.*` writes to `security-admin` and `platform-admin` under the delay. Cost: a tenant admin loses a setting §10.2 gives it, at tenants that opted in, and a principal's groups can be stale until its token renews. Making the field platform-only in every tenant is simpler and closes bearer capture for all users, at the cost of an operator ticket for each customer's IdP change, including customers with no security team.
 24. **Platform admin writes to security principals.** Recommendation: a platform admin assigns only `security-admin`, only when none is active, with a ticket, and with the delay after the first assignment. A platform admin's removal takes the delay. Cost: a slower recovery for a customer that lost its only admin, and an operator cannot help by adding a reader. Refusing recovery altogether would leave such a customer with no path, and allowing any grant lets an operator identity approve the operator's own access.
 25. **Binding mints under a repository rule.** Recommendation: omit non-`granted` repositories from a binding's write-permission token, and refuse stored and non-`mint-scoped` bindings on a rule's API host. Cost: a tenant with a rule loses API reads of a pending repository through a write binding until approval, and it cannot use a GitLab project token or a PAT on that host's API. Minting a second read-only token by request path in `netagent` keeps those reads, at the cost of per-provider path parsing that the egress design has so far avoided.
+26. **Oversight of user credentials.** Recommendation: the guardrails and posture under "User credentials and request rules", and a `security-admin` able to forbid `userCredential.file`, require a preset, and forbid runtime-held credentials, with no grant of its own. Cost: more rows in the security record, and a customer with no security principal has nobody above a tenant admin who clears a preset. A platform-only hold on presets would not match the owner's statement that a tenant can change one.
+27. **A write naming a security principal.** Recommendation: refuse `manage_user_credentials` on a subject holding a security role, on SP2's reasoning. Cost: a security principal registers its own token. Allowing it would let a tenant admin plant a token in a watcher's session.

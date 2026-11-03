@@ -1,6 +1,6 @@
 # Tenant scoping and identity
 
-Status: design for owner review, revision 4, 2026-11-03, after independent reviews. The body states the option decision 14 recommends, in which a delegated child stays in its parent's Environment, and "Alternative under decision 14" keeps the crossing design. It reads `egress-and-git-design.md` revision 41. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code and specification. Proposals carry the label TS-n.
+Status: design for owner review, revision 12, 2026-11-03, after independent reviews. Revision 5 added scoping of user credential types, and revisions 6 to 12 correct it after review. The body states the option decision 14 recommends, in which a delegated child stays in its parent's Environment, and "Alternative under decision 14" keeps the crossing design. It reads `egress-and-git-design.md` revision 51, `user-credential-delivery-design.md` revision 8, and `user-git-identity-design.md` revision 11. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code and specification. Proposals carry the label TS-n. This revision followed independent security and consistency reviews whose final stop check found no Major or higher issue. That check traced the last round's changes and was not an end-to-end read, and no production component or live provider write has run.
 
 ## Problem
 
@@ -68,8 +68,11 @@ Scoping applies to objects the platform evaluates per session.
 | :-- | :-- | :-- |
 | VCS credential pool | Yes, through `environments` | Selected per repository at mint time |
 | Credential binding | Yes, through `environments` | Resolved per session at I8 |
+| User credential type and link provider | Yes, through `environments` | Resolved per session at I8, under `user-credential-delivery-design.md`. The binding that names one is scoped as above, and a session needs both visible. |
+| A user's token (a `registered` row or a link) | The `registered` row has an `environment` column, and §4.3's empty value means no Environment. A link has none, and it is keyed on the link provider's name. | The Token Service takes the session's E, then the no-Environment row. A link records a fact about a person on a provider, so a member of two teams links once. |
+| `requestRules` and presets | No | They are part of a binding, which is scoped. A team that needs other rules has its own binding on that host, and the one-binding-per-host rule applies per session. |
 | Always-allowed, session-requestable, and denied hosts | Yes, through `environmentPolicies` | Read per decision |
-| Egress routes and git routes | Yes, through `environmentPolicies` | Read per decision. A route can name a connector once OC-1 lands, with no further change. |
+| Egress routes and git routes | Yes, through `environmentPolicies` | Read per decision. A route can name a connector once OC-1 lands, with no further change. A token trust record covers every such route on its host, across every Environment, as `user-credential-delivery-design.md`, "Route value", states, so one team's scoped route, a move between Environments, or a reorder on a token's host makes that token unusable for all teams, and an asserted route follows the same formula as `boundRoutes(E)` under a delegation bound. The covered host set reads every git route and VCS pool of the tenant, unfiltered by Environment, so a session in E2 on a host only E1 names gets a refused push rather than a tunnel, as `egress-and-git-design.md`, "Git on covered hosts", states. |
 | Tenant warm-up additions | No | They apply before any session exists. |
 | Tenant pool overlay | No | It applies at pod creation or per pool and tenant. |
 | Egress group and CA trust bundle | No | Each is fixed at pod creation or dialled by tenant. |
@@ -155,7 +158,8 @@ Consequent rules:
 - **Bound.** The pool ceiling bounds every Environment entry. A tenant deny applies in every Environment, so an Environment cannot re-allow a host the tenant denies.
 - **Repositories.** Readable repositories are the session's `gitClone` sources, the allowlists of `visible(VCS pools, E)`, and public `sharedAssets` entries. Writable repositories must lie within `visible(VCS pools, E)` at bind and at each mint.
 - **Bindings.** A session attaches `always` bindings from `visible(bindings, E)`, and it can name `onRequest` bindings from the same set.
-- **Pods with no per-session policy.** A concurrent-session pool or a service-mode pool evaluates with E = ∅ for every session on the pod, including at the Token Service and in the readable and writable sets. "Local git endpoint" in `egress-and-git-design.md` makes those sets the union over the pod's sessions, because `netagent` cannot attribute a request to a slot, so a scoped repository on such a pod would be open to every slot. The rules follow from this:
+- **User credentials.** A `userCredential` binding needs its type visible too, as `visible(types, E)`. It takes `onRequest`, or `poolAttach` under `user-git-identity-design.md`, "The attach rule", whose trigger is a declared writable repository under such a pool in `visible(VCS pools, E)`. The pin from a `required` pool is outside `visible`, because it reads every VCS pool of the tenant. The pod refusal in `user-credential-delivery-design.md` covers E = ∅ on a concurrent or service-mode pod, because those pods refuse such a binding outright.
+- **Pods with no per-session policy.** A concurrent-session pool or a service-mode pool evaluates with E = ∅ for every session on the pod, including at the Token Service and in the readable and writable sets. "Git on covered hosts" in `egress-and-git-design.md` makes those sets the union over the pod's sessions, because `netagent` cannot attribute a request to a slot, so a scoped repository on such a pod would be open to every slot. The rules follow from this:
   - A plan that names an object visible to E alone (for example a repository whose only covering pool is scoped) is refused with `422 ENVIRONMENT_POLICY_NOT_ENFORCEABLE`.
   - A session whose E has non-empty `denied`, `egressRoutes`, or `gitRoutes` is refused with the same code (R4). The check runs at create, derive, replay, resume, delegated child placement, and each service-mode request that names an Environment, on the final runtime and pool.
   - Otherwise the session proceeds with unscoped objects. Entries of E that add access do not apply, which narrows the session, and the effective-policy read reports that.
@@ -310,6 +314,8 @@ TS-4 makes these changes:
 - **Permission.** A new `manage_user_lifecycle` permission covers these calls alone. `tenant-admin` holds it, and a custom role can hold it alone, such as `identity-sync`. The worker authenticates per tenant, through the client credentials path of §10.2, with that role.
 - **`identityProvider` hardening.** `GET rbac-config` stops returning `introspectionClientSecret`. The write validator and the client refuse an `introspectionEndpoint` that resolves to the §13.2.5 excluded ranges. The handler checks only for HTTPS and a host today, and the client uses a default dialer, while the gateway posts bearers to that URL.
 
+**User credentials and links.** A session's `caller_type` now sits on its row, and a delegated child copies its parent's value, so a service or agent caller receives no user token from a read of that row. Each of `soft_disable`, `hard_disable`, and `full_revoke` stops a user's `userCredential` releases, through `pkg/binding`'s invalidation level, and it revokes `oauth2Link` tokens at the provider, under `user-git-identity-design.md`. A `registered` token stays valid at its provider, because Lenny cannot revoke it, and the tenant is told. Reinstate restores neither. A subject with an invalidation level or an Article 18 restriction cannot be written to through `PUT /v1/admin/users/{userId}/credentials/{type}`. `identityBinding: claim` adds a provider identity claim to the broker contract, and a broker that cannot map it uses `directory`, whose write sits under `manage_user_lifecycle`, so the sync worker can hold it.
+
 Group changes have no Lenny API. A new token or an introspection call carries them, and §10.6 introspection is available per tenant for an operator that needs current groups at each request. When the worker cannot reach Lenny, the event waits in the worker, and a user stays active until delivery succeeds. A partial failure reported in the invalidate response is retried by the worker, as the idempotent call allows. For a caller without `platform-admin`, §11.4 step 5 reports the impersonation cascade as skipped, which is correct for a customer user, and the operator invalidates its own staff with a `platform-admin` caller.
 
 Offboarding latency is the directory's delivery time plus the sync worker's. Microsoft documents incremental cycles [at intervals defined per application](https://learn.microsoft.com/en-us/entra/identity/app-provisioning/how-provisioning-works) (provider documentation), with no general figure on that page. Until delivery, a user can create sessions while a token is valid. Lenny-issued tokens default to 900 seconds and are capped at 24 hours for `lenny-gateway` (§13.3 **`exp` granularity and parent-expiry handling.**), and a running session does not depend on its creator's token, so only invalidation ends it.
@@ -359,7 +365,9 @@ Further rules for a session with a bound:
 
 **Tests.** These add to the tiers below. A unit test covers `P → T`, `P → T → T`, and `P → T → U` for hosts, a host in `requestable(T)` the parent held, bindings, pools, the split repository fields, accumulated denies, route order, and the `restricted` row. Integration tests cover a bound surviving derive, replay, and resume, a failed bound write refusing the delegation, each enforcement point two hops below a crossing, and a gate decided in-pod with no groups. A security test confirms that a descendant cannot obtain a target-only object or reach a host a crossed Environment denies.
 
-**Egress design.** This option uses the bound parameter of the `pkg/binding` resolver and the clause of the delegated child rule stating that a crossing's limits persist, both of which revision 41 carries.
+**User credentials.** A `userCredential` binding is dropped at a crossing unless the bound's `bindings` names it and the delegation lease does too, since a child receives one only when the lease names it (`user-credential-delivery-design.md`). The child's user does not change at a crossing, so it would carry the same person's token into another team's runtime.
+
+**Egress design.** This option uses the bound parameter of the `pkg/binding` resolver and the clause of the delegated child rule stating that a crossing's limits persist, both of which revision 51 carries.
 
 ## Configuration by scope
 
@@ -377,6 +385,7 @@ Further rules for a session with a bound:
 | Environment members | The groups and subjects with a role in an Environment. | Environment | Tenant admin |
 | `environments` on a VCS credential pool | The Environments whose sessions can use the pool. Absent means tenant-wide. | Pool in a tenant | Tenant admin |
 | `environments` on a credential binding | The Environments whose sessions can use the binding. Absent means tenant-wide. | Binding in a tenant | Tenant admin |
+| `environments` on a user credential type or link provider | The Environments whose sessions can use it. Absent means tenant-wide. | Type or provider in a tenant | Tenant admin |
 | `environmentPolicies[E].alwaysAllowed` | Hosts each session in E reaches by default, added to the tenant's. | Environment | Tenant admin |
 | `environmentPolicies[E].sessionRequestable` | Hosts a session in E can request, added to the tenant's. | Environment | Tenant admin |
 | `environmentPolicies[E].denied` | Hosts refused to sessions in E, added to the tenant's. | Environment | Tenant admin |
@@ -416,11 +425,39 @@ Every setting in the "Scopes and who manages them" table of `egress-and-git-desi
 
 **A mapping error.** A broker change lets Acme's mapping reach `roles`, and a token arrives with `roles: [platform-admin]`. The gateway removes the role, the caller acts with no platform authority, and the alert fires. A separate error placing `tenant_id: globex` on Acme's token is not caught, which "Residual risks" states.
 
+## Review of revision 9
+
+Round 5 of the reviews raised the route assertion under `boundRoutes(E)`. It holds, and the row states it. None was rejected.
+
+## Review of revision 8
+
+Round 4 of the reviews raised M1, the route value's scope and order, M2, the covered set under Environments, m1, the stale heading, and m21, a stale request. Each holds, and the rows point to the other designs' rules. None was rejected.
+
+## Review of revision 7
+
+Round 3 of the reviews raised H1, routes per Environment against one digest, and m3, the "existing" column. Both hold. The route row points to the record's route value and states its cost, and the column text is corrected. None was rejected.
+
+## Review of revision 6
+
+Round 2 of the reviews raised N5, the attach trigger, and N13, the pin's reach against `visible`, on this document. Both hold, and the text above points to the attach rule and states the pin's source. None was rejected.
+
+## Review of revision 5
+
+Two independent reviews of the user credential designs raised these on this document, each verified against the text.
+
+| Finding | Outcome | Resolution |
+| :-- | :-- | :-- |
+| "It takes `onRequest` alone" against the pool's implicit attach | Holds | `poolAttach`, defined once in `user-git-identity-design.md`. |
+| The link's key | Holds | Keyed on the provider's name. |
+
+None was rejected.
+
 ## Residual risks
 
 - **Environment scoping shares pods.** On a recycling pool, state the scrub does not reach survives into another Environment's session within the tenant, as it does between users today. A team needing separation uses a pool with `recycle.enabled: false`, or a separate tenant (decision 5).
 - **Shared tenant resources.** The mirror's store for a pool used by several Environments, the Token Service token cache, egress group, and P7 quotas are shared across Environments. One team can consume the tenant's quota (decision 6). One team's egress address is the same as another's, so a customer firewall rule admits both.
 - **Tenant-wide objects stay tenant-wide.** A team cannot opt out of a tenant-wide binding or host. It can deny a host. The tenant admin must scope a binding to remove it from a team. Scoping a pool also leaves a repository reachable through any wider tenant-wide pool whose allowlist names it, so the write response warns when a scoped pool's repository appears on such an allowlist.
+- **A person's token across teams.** A link has no Environment, so a member of two teams has one token. Under `oauth2Link` with no narrowing template, a session in either team holds that token's full reach, whichever team's repositories it was meant for.
 - **Policy added after a session began.** A deny or a route added to an Environment reaches its one-session pods at the next decision. A transparent session created before the entry existed keeps E = ∅, and a session already running on a concurrent pod keeps running until its next resume, as the write's `Warning` reports.
 - **Shared runtimes run with the caller's objects.** A runtime that several Environments select runs under each session's own E, so that team's scoped credentials and repositories reach the shared runtime's code. A tenant admin decides this when writing the selector, and no inbound consent exists on the side that owns the runtime.
 - **Members of several teams.** A caller in both `web` and `payments` can create in `web` and avoid `payments`' deny. A deny binds a team's sessions and does not bind a person. Under `allow-all`, a token with no groups can likewise run E = ∅ on a runtime that no Environment with denied or route entries selects.
@@ -459,14 +496,14 @@ These exist independent of this design. They are for filing in `BUILD-GAPS.md` u
 
 ## Changes requested of egress-and-git-design.md
 
-This document does not edit that design. Revision 41 of `egress-and-git-design.md` carries the earlier requests: the `environment` envelope field, the `pkg/binding` resolver hook with its bound parameter, the prefix overlap rule, the delegated child rule with denies, routes, and persisted limits, and the TS-1 dependency row.
+This document does not edit that design. Revision 51 of `egress-and-git-design.md` carries the earlier requests: the `environment` envelope field, the `pkg/binding` resolver hook with its bound parameter, the prefix overlap rule, the delegated child rule with denies, routes, and persisted limits, and the TS-1 dependency row.
 
 | Request | Proposal | Why now |
 | :-- | :-- | :-- |
-| Still open. The mirror's I8 request names the pool and its cause (the calling pod's UID, the session, or the prefetch record), where the text still reads "scoped to the store's tenant and upstream". The gateway's `ls-refs` to the mirror carries the session as well as the tenant. The mirror prefetch resource accepts a pool name. The Token Service reads the cause itself. | EG-5 and EG-2 | I8 is a wire contract and the mirror is a shipped enforcement point. Without this the Token Service has no independent Environment check on a mirror fill, and same-prefix pools have no answer for a prefetch. Naming the pool is correct with no Environment involved, because a store's identity already includes the credential. |
+| Largely applied: the mirror's I8 request names the pool and its cause, and the mirror prefetch resource accepts a pool name. Still open: the Token Service reads the cause itself. | EG-5 and EG-2 | I8 is a wire contract and the mirror is a shipped enforcement point. Without this the Token Service has no independent Environment check on a mirror fill, and same-prefix pools have no answer for a prefetch. Naming the pool is correct with no Environment involved, because a store's identity already includes the credential. |
 | Conditional on decision 14's recommended option. Keep the resolver's bound parameter, empty, because it is what makes adding crossing later cheap. Mark the delegated child rule's clauses on a child in another Environment as applying only if crossing lands. | EG-2 and EG-9 | Revision 3's requests for those texts are no longer needed by the recommended option. Nothing has shipped, so leaving them costs a dormant parameter and a sentence. |
 
-The `environments` fields, `environmentPolicies`, the effective-policy parameter, and the binding host validator are additive and need nothing else from that design. `netagent` needs no change, because it receives resulting sets. Its credential cache also needs none, for the reason under "Enforcement points". On a pod with several sessions, the resolver receives E = ∅ from TS-1's own rule, which leaves the union in "Local git endpoint" as written.
+The `environments` fields, `environmentPolicies`, the effective-policy parameter, and the binding host validator are additive and need nothing else from that design. `netagent` needs no change, because it receives resulting sets. Its credential cache also needs none, for the reason under "Enforcement points". On a pod with several sessions, the resolver receives E = ∅ from TS-1's own rule, which leaves the union in "Git on covered hosts" as written.
 
 ## Specification sections affected
 
@@ -521,6 +558,7 @@ No `EG-`, `SO-`, `FE-`, or `OC-` proposal depends on a TS proposal. The relation
 - SO-1's open question on whether a broker supplies `security-auditor` has this answer: the role is tenant-scoped, so the broker can convey it in `roles` under this contract, and a platform-managed row overrides it. The row precedence means a `tenant-admin` can remove it, which remains SO-1's question.
 - SO-2's guardrails act on TS-1's writes through EG-9's single write path, and they can forbid an Environment's use of an opt-in with no TS change.
 - OC-2 routes can appear under `environmentPolicies` with no OC change.
+- UC-1 and UC-2 define types and link providers. TS-1 adds their `environments` field when both have landed, and neither waits. UG-2 and UC-3 read TS-4's invalidation level through `pkg/binding`, which returns it from EG-2.
 
 ## Documentation
 
@@ -620,7 +658,7 @@ No behaviour here needs cloud resources.
 - A descendant at any depth cannot obtain an object scoped outside its root's Environment, or reach a host that Environment denies.
 - An invalidated `tenant-admin` with a valid IdP token cannot reach the admin API, reinstate itself, or poison ordering with a future `observedAt`, and a token with no groups cannot shed a team's deny under `allow-all`.
 - A session cannot change its Environment through any request field, and a body `environment` on a path naming another is overridden.
-- An agent in E cannot obtain a credential scoped elsewhere through I8, a direct call to the Token Service with its own token, the mirror, or the local git endpoint.
+- An agent in E cannot obtain a credential scoped elsewhere through I8, a direct call to the Token Service with its own token, the mirror, or `netagent`'s git path.
 - A compromised-decision test: a stubbed decision service that allows a scoped object does not produce a mint, since the Token Service's own read refuses it.
 - A token with an absent, malformed, or unregistered tenant claim keeps the §10.2 refusals, and a nested tenant claim is refused.
 - A role holding `manage_user_lifecycle` alone can call `invalidate` and `reinstate` in its own tenant, and nothing else.
@@ -658,6 +696,7 @@ The rest are open for the owner, and the recommendation is the design above.
 | 12 | Reference broker | Name none as required. Publish selection criteria and one tested integration on Keycloak, which runs in test infrastructure. | Keycloak's per-realm SCIM needs a separate path, so the integration covers SSO and a worker fed by a stand-in. | A hosted vendor reference, which cannot run in the suite without an account and which reads as an endorsement. |
 | 14 | Cross-Environment delegation in the first version | Refuse it, so a child always stays in its parent's Environment and needs no bound. The assessment below states what this costs. | See the assessment. | Keep it, under "Alternative under decision 14". Or keep it only between Environments with no scoped objects or policy, refusing the combination at write. That retains the feature for tenants that do not scope, and it needs write checks on both sides and the gate and child selection of the alternative. |
 | 15 | Mixed Environments on concurrent and service pods | Evaluate with E = ∅, and refuse scoped objects, denies, and routes on those pods. | A team with its own repositories, denies, or routes cannot use a concurrent or service-mode pool at all. | Pin each pod to one Environment beside the tenant pin, so all its slots share E and E's full policy applies. It restores those pools for teams, at the cost of warm capacity per Environment, a pin record with arbitration like EG-0's, and a label fixed at bind. It is additive later. |
+| 16 | Scoping of user credentials | `environments` on types and link providers, with a `registered` row's `environment` column honoured and links having none | A type's token and its Environment are separate lists to keep straight, and one token serves a person in several teams. | A link per Environment, which matches §4.3's connector key and makes a member of two teams link twice for one account. |
 
 ### Assessment of decision 14
 

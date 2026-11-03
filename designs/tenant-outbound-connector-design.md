@@ -1,6 +1,6 @@
 # Tenant outbound connector
 
-Status: design for owner review, revision 3, 2026-11-03, after two independent reviews. It reads against `egress-and-git-design.md` revision 40. Nothing here is built or staged. No spike or test ran, so every behaviour below is a design statement, and "Spikes owed" lists what must be measured first. Proposals carry the label OC-n. Statements about Lenny were checked against the tree and the specification on this date, and statements about grpc-go against the v1.80.0 source `go.mod` names. Statements about other products come from the sources linked beside them, and those marked "(vendor)" are the vendor's own description.
+Status: design for owner review, revision 11, 2026-11-03, after two independent reviews. It reads against `egress-and-git-design.md` revision 51, `user-credential-delivery-design.md` revision 8, and `user-git-identity-design.md` revision 11. Revision 4 added an OAuth link to a private host, and revisions 5 to 11 align it after review. Nothing here is built or staged. No spike or test ran, so every behaviour below is a design statement, and "Spikes owed" lists what must be measured first. Proposals carry the label OC-n. Statements about Lenny were checked against the tree and the specification on this date, and statements about grpc-go against the v1.80.0 source `go.mod` names. Statements about other products come from the sources linked beside them, and those marked "(vendor)" are the vendor's own description. This revision followed independent security and consistency reviews whose final stop check found no Major or higher issue. That check traced the last round's changes and was not an end-to-end read, and no production component or live provider write has run.
 
 ## Problem
 
@@ -32,7 +32,7 @@ Egress policy, routing, and the existing evidence streams stay in `egress-and-gi
 
 - OR-1. A customer opens no inbound firewall rule. The agent needs outbound TCP 443 to two hostnames, the API host and the outbound gateway host, directly or through the customer's outbound HTTP CONNECT proxy.
 - OR-2. A tenant admin registers a connector and its hosts without a Helm change, a platform registration per host, or an operator ticket, once the platform admin has granted the tenant the feature.
-- OR-3. Every feature of the private destination path works on a connector route: clone, push, LFS, the API gateway's ref resolution, the Token Service's mints, `inject` delivery, `allowedRefPatterns`, and `credentialPinned`.
+- OR-3. Every feature of the private destination path works on a connector route: clone, push, LFS on a `mint-scoped` provider, which the egress design refuses on `mint-coarse` and `stored` providers such as GitLab and Gitea until a live GitLab run passes, the API gateway's ref resolution, the Token Service's mints, `inject` delivery, `allowedRefPatterns`, and `credentialPinned`. This includes a user's link to a private host and a `userCredential` binding on one (see "A user's link to a private host").
 - OR-4. A connector for `acme` never carries `globex`'s traffic, including under a compromised outbound gateway replica. "Security properties" and "Residual risks" state how far this holds.
 - OR-5. The customer limits what the agent reaches, independently of anything the platform asks.
 - OR-6. The egress design's properties hold on this path: P4 tenant isolation, P5 attribution, P6 fail closed, and P7 quotas.
@@ -442,7 +442,7 @@ Tenant `acme` runs a self-managed GitLab at `gitlab.acme.internal` on a private 
 **Clone.** A session of Alice's clones `gitlab.acme.internal/acme/web`.
 
 1. At plan bind, the API gateway resolves the ref through `lenny-egress` on its own identity, carrying `acme`. The decision pins replica r1 and signs a grant. r1 opens `Tunnel` to the instance the grant names, which verifies the grant, checks `allow`, resolves the name with Acme's DNS, and dials. The API gateway validates the host's certificate against `caBundle`, attaches a read token minted as below, and sends `ls-refs`.
-2. The pod's adapter clones the resolved SHA through `netagent`'s local git endpoint. `netagent` fetches a read token and the CA on I8, sends `CONNECT gitlab.acme.internal:443` to `lenny-egress`, and proceeds as above with a new grant for this stream. The clone's bytes are TLS to the host the whole way.
+2. The pod's adapter clones the resolved SHA through `netagent`, which terminates the host because the tenant's git route covers it. `netagent` fetches a read token and the CA on I8, sends `CONNECT gitlab.acme.internal:443` to `lenny-egress`, and proceeds as above with a new grant for this stream. The clone's bytes are TLS to the host the whole way.
 3. `egress.decision`, `egress.tunnel`, `outbound.stream`, `outbound.agent`, and `git.operation` all carry the same decision identifier or session. Bob's agent log has the same `did`.
 
 **Mint.** The first read token is a GitLab project access token. The Token Service checks both gates, then goes through `lenny-egress` on its own identity with `acme` asserted, which the decision honours because the host is in an `acme` VCS pool. It validates the host's certificate against `caBundle` before it sends the stored GitLab credential, then calls GitLab's project access token API. The stored credential stays in `lenny-credentials`, and neither the replica nor Bob's agent sees it in clear. At session end the Token Service revokes the token over the same path.
@@ -462,6 +462,35 @@ Tenant `acme` runs a self-managed GitLab at `gitlab.acme.internal` on a private 
 **A DNS failure.** Bob moves GitLab, and one instance's resolver lags. Carol, a user, sees a CONNECT failure with a decision identifier. Alice runs the probe, which reports the first instance passing all stages and the second reporting `dns_nxdomain`. Where a grant names both, the replica retries the other, so most streams succeed, and the status read is `degraded`. Alice passes the output to Bob, and `lenny-outbound-agent check` on that host confirms it.
 
 **GitHub Enterprise Server with the mirror.** `acme` also runs GHES behind `acme-dc1`. Alice sets `allowMirror: true` on its outbound host and routes it to the mirror. The mirror fetches through `lenny-egress` with `acme` asserted, into an `acme`-keyed store, and pods fetch from the store. With the connector offline, sessions resolve refs from the store within the 6-hour age limit, and `GET /v1/sessions/{id}` shows `resolvedFromStore`.
+
+**A user's link to a private host.** `user-git-identity-design.md`'s GHES example and `user-credential-delivery-design.md`'s `kind: oauth2` provider both use this path. Tenant `acme` runs an internal service at `tracker.acme.internal` behind `acme-dc1`, and it registers an outbound host and a link provider for it.
+
+1. Alice's browser is on Acme's network, so it reaches `tracker.acme.internal` for authorization, and the provider redirects back to Lenny's public URL. No inbound rule is needed.
+2. The Token Service exchanges the code through the mint path: `lenny-egress` with `acme` asserted, under a grant, validating against the host's CA before it sends the client secret. C6 and C9 apply, so neither the outbound gateway nor the agent reads the secret or the token.
+3. Refresh, revocation, and any narrowing template take the same path. **With the connector offline, a refresh answers `unavailable`,** new sessions on a `required` pool are refused with the retryable error, and a pending revocation waits in the durable record.
+4. Under `inject`, `netagent` terminates TLS as in the `inject` scenario above, applies any `requestRules`, and opens its own TLS through the connector. The binding's hosts must lie within the provider's `apiHosts`.
+5. Under `file`, the runtime holds the token and speaks TLS to the host itself through an opaque tunnel and the connector. `netagent` applies nothing, the grant still names the host, and the customer's allowlist still bounds it.
+6. C8 holds: a link provider's endpoint on a host a tenant registers cannot shadow a platform-reserved host. A `kind: oauth2` endpoint on a private address needs an outbound host, or a platform registration, and it is refused otherwise. An outbound host's route value and CA digest for a link provider's host or a type's host are in the token trust record, so registering or moving one, or rotating its CA, makes stored tokens unusable and sends them nowhere until a new user act. The name is resolved on the customer's side, so whoever controls the DNS, CA, or network behind it can read tokens, and the record cannot see that. C8's reserved set does not cover GHES, self-managed GitLab, or a `kind: oauth2` endpoint, and the record is what protects those.
+
+## Review of revision 9
+
+A final regression review raised N1 on this design's walkthrough: with the git route `direct` and an egress route to the connector, a flagged session's git request asserted the platform default. It holds, and the egress design's fall-through between route lists makes this topology work, with a test naming it. None was rejected.
+
+## Review of revision 8
+
+Round 5 of the reviews raised Sync M1, LFS on a connector route against the egress design's refusal, and m15, a held token on a covered host. Both hold. OR-3, the tier 4 row, and the residual are limited to what the egress design allows. None was rejected.
+
+## Review of revision 7
+
+Round 4 of the reviews raised m21: a request here was already applied. It holds, and the row says so. None was rejected.
+
+## Review of revision 6
+
+Round 3 of the reviews raised R3-4 on this design's text: the name is resolved on the customer's side, behind an unchanged outbound host. It holds, and the scenario states the limit. None was rejected.
+
+## Review of revision 5
+
+Round 2 of the reviews raised these on this document, each verified against the text. H1: a route plus a CA behind an unchanged name read tokens, and C8's reserved set does not cover GHES, self-managed GitLab, or a `kind: oauth2` endpoint. It holds, and the token trust record covers the route target and CA digest. N30: this document called a move a token-bearing edit that the other designs did not list. It holds, and the same record states it. None was rejected.
 
 ## Residual risks
 
@@ -527,6 +556,7 @@ Each design states its own dependencies, and proposals from different designs ma
 | OC-2 | EG-6 | Endpoint registration with per-endpoint CA, and the per-kind validator's tenant-registered path |
 | OC-2 | EG-8 | The effective-policy read and decision queries |
 | OC-2 | EG-9 | The overlay, one write path, and named permissions |
+| UG-1, UC-2 for a private host | OC-1, OC-2 | The token path to a link provider on an outbound host. A public provider needs neither. |
 | OC-3 | OC-1, OC-2 | The resources it reports on |
 | OC-3 | EG-8 | Decision reads used in debugging |
 | OC-4 | OC-1, OC-2 | The gateway and assignment |
@@ -538,11 +568,11 @@ SO-2's guardrails and SO-3's export apply through EG-9 and EG-10 with no connect
 
 ## Changes requested of egress-and-git-design.md
 
-The egress design has applied earlier requests, through revision 40: the Envoy text and EG-6 template, the kind rename, the decision cache statement, the grant signing key, the grant as the upstream credential, the generic endpoint record, durable pending revocation, the `self_reported` definition, the dependency table, and the level 1 refusal. It also added the per-call mint bounds, the tenant and host in the mint cache key, and the reserved host check at each decision. This design does not edit that document. These remain.
+The egress design has applied earlier requests, through revision 40: the Envoy text and EG-6 template, the kind rename, the decision cache statement, the grant signing key, the grant as the upstream credential, the generic endpoint record, durable pending revocation, the `self_reported` definition, the dependency table, and the level 1 refusal. It also added the per-call mint bounds, the tenant and host in the mint cache key, and the reserved host check at each decision. This design does not edit that document. Revisions 44 to 51 of that document add a link provider's endpoints and template hosts to the mint path's assertion, which this design's mint path uses unchanged. These remain.
 
 | Where | Change | Why | When |
 | :-- | :-- | :-- | :-- |
-| "Labels and dependencies across designs", the OC-1 row | Add EG-8 and EG-9. | OC-1 now holds the connector and instance routes, which use named permissions and the single write path. | Text now |
+| "Labels and dependencies across designs", the OC-1 row | Applied: EG-8 and EG-9 are in that row. | OC-1 holds the connector and instance routes, which use named permissions and the single write path. | Applied |
 | "Credentials", the resolver's tenant assertion | Let the decision honour the API gateway's assertion for a tenant's outbound hosts on a probe, and an instance named by the same identity. | The rule today requires a VCS pool prefix or a git route, and the probe must test one instance. | Additive, with OC-3 |
 | "Credentials", the 1.5-second CONNECT reply budget | Make the budget depend on the route target kind, if the spike shows wide-area dials exceed it. | A customer's slow resolver would fail plan bind while pods would succeed. | Additive, after the spike |
 | "Configuration by scope", `tenantOverride` flags | Add `outboundHosts` under EG-9's overlay table. | OC-2 needs the flag. | Additive, with OC-2 |
@@ -608,7 +638,7 @@ Each proposal carries the tests for its own surface, at the tiers `test-coverage
 
 ### Tier 4: integration
 
-- Clone, shallow clone, partial clone, push, and LFS work against a test GitLab and a test Gitea behind an agent, with a private CA.
+- Clone, shallow clone, partial clone, and push work against a test GitLab and a test Gitea behind an agent, with a private CA, and `info/lfs` is refused on both while the egress design's refusal stands.
 - The Token Service mints and revokes through the connector, with its certificate check failing closed on a wrong CA.
 - `inject` with TLS termination, `allowedRefPatterns`, and `credentialPinned` work on an outbound host.
 - The API gateway's `ls-refs` works, with the failure mapping's errors.
@@ -688,6 +718,7 @@ Nothing below has been run.
 - **Local allowlist default.** The allowlist starts empty, so the agent refuses until configured. Following the platform's routes would let a compromised platform reach anything the agent's host can reach, which defeats C3. The cost is a required step, and a drift failure when routes change, which the liveness read reports.
 - **Non-TLS internal hosts.** Both ends refuse them. Without TLS, C6 and C7 fail, since a stolen key or a compromised replica would read tokens. A customer with a plain-HTTP internal registry fronts it with TLS.
 - **Intercepting customer proxies.** The agent refuses them, and the customer exempts the outbound gateway's hostname. Authenticating inside the tunnel would let the proxy hold what a replica holds, plus the agent's session. The agent routes to the API host work through inspection. Some customers need a change approved by their security team.
+- **A runtime-held token through a connector.** On a host no pool or route covers, under `delivery: file`, the token crosses the connector inside the runtime's own TLS, and nothing on the platform side sees or limits its use, as `user-credential-delivery-design.md` states.
 - **Naming.** Identifiers use `outbound` or `site`, and the egress design renamed its kind, because §28.1 forbids reuse of the §9.3 term.
 
 ## Open decisions

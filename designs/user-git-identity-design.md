@@ -1,16 +1,18 @@
 # User-scoped repository access and pull request authoring
 
-Status: design for owner review, revision 3, 2026-11-03. It reads against `egress-and-git-design.md` revision 42. Nothing in this document is built or staged. Revision 2 folded in a traffic capture of `gh` 2.103.3 and `glab` 1.127.0 through a prototype filtering `netagent` and a recording stub (see "Capture results"). Revision 3 resolves an independent review's findings (see "Review of revision 2"). **The capture used plain git remotes, and under the egress design's rendered git config `gh` and `glab` stop before any network step, so UR-5 does not hold until "Git remotes and client tools" is resolved.** The stub executes nothing and enforces nothing, so a 200 at the stub says only that a request was forwarded. No request reached a provider, and no live spike has run. Statements about the tree were checked by reading the code and the specification on this date. Statements about GitHub, GitHub Enterprise Server (GHES), GitLab, and Coder come from the pages under "Sources". Proposals carry the label UG-n.
+Status: design for owner review, revision 11, 2026-11-03. It reads against `egress-and-git-design.md` revision 51 and `user-credential-delivery-design.md` revision 8. Revisions 5 to 10 resolve six rounds of review (see the "Review of revision" sections), and the owner's decisions 3, 35, 36, 40, and 42 are recorded, in the words "go with T and your recommendations". The spikes' stub proves forwarding only. Rules changed after the last run are **[design]**. Nothing in this document is built or staged. **Revision 4 applies owner decisions D1 and D2: the `vcs-authoring` allowlist filter is replaced by one generic binding with optional request rules held as data, with a GitHub deny preset on by default. The mechanism now lives in `user-credential-delivery-design.md`, and this document configures it for VCS hosts.** The capture of `gh` 2.103.3 and `glab` 1.127.0 stays here as history, and text it supported is marked superseded where the allowlist is gone. **The capture used plain git remotes. Under the prior loopback config `gh` and `glab` stopped before any network step, and under T, which the owner settled, they work [measured], so UR-5 is met on a stub, and live hosts are owed.** The stub executes nothing and enforces nothing, so a 200 at the stub says only that a request was forwarded. No request reached a provider, and no live spike has run. The bypass analysis under deny mode ran on the stub **[measured]**. Statements about the tree were checked by reading the code and the specification on this date. Statements about GitHub, GitHub Enterprise Server (GHES), GitLab, and Coder come from the pages under "Sources". Proposals carry the label UG-n. This revision followed independent security and consistency reviews whose final stop check found no Major or higher issue. That check traced the last round's changes and was not an end-to-end read, and no production component or live provider write has run.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
 | Tag | Meaning |
 | :-- | :-- |
-| **[measured]** | A hands-on result from a validation round of `egress-and-git-design.md`. |
+| **[measured]** | A hands-on result from a validation round of `egress-and-git-design.md`, or from the spike of 2026-11-03 on candidates L, T, and P and the deny preset. That spike's origin was stock `git http-backend` behind a recording stub. **The stub proves forwarding only:** a row that reached it says nothing about whether a host would accept the spelling, grant the permission, or perform the action. |
 | **[captured]** | Seen at the stub or at the prototype `netagent` in the capture of 2026-11-03. It shows what the client sent and what the filter did. It shows nothing about what a provider would do. |
 | **[stub cannot show]** | A question only the provider can answer. Each one has a spike under "Validation owed". |
+| **[live]** | Read from a provider's host, anonymously, with no write. |
 | **[documented]** | Stated on a vendor page under "Sources". The vendor's page was read and its behaviour was not tested. |
 | **[source]** | Read in the Lenny tree, the specification, or client tool source at cli/cli tag v2.103.3. |
+| **[pending]** | Waits on a measurement or decision named beside it. |
 | **[design]** | A statement of what this design requires. Nothing implements it. |
 
 ## Problem
@@ -22,35 +24,40 @@ Feedback on Lenny asked for user-scoped repository access and pull request autho
 
 These are separate features with different risk. Authorization keeps the user's token inside the Token Service. Pull request authoring lets an agent act with a token derived from a user's authority. This document therefore separates them, and either one's proposal can be rejected without affecting the other's dependencies, except that UG-3 needs UG-2's link and check.
 
+Pull request authoring is not a special case in the pod any more. It is a `userCredential` binding of `user-credential-delivery-design.md`, with an `oauth2Link` source, a narrowing template, and a preset, all held as data.
+
 ## Scope
 
-This design covers account linking (UG-1), repository authorization on GitHub, GHES, and GitLab (UG-2), pull request authoring on GitHub and GHES with the filter on every host (UG-3), an approval check for tenants that refuse user tokens (UG-4), and user-authored merge requests on GitLab (UG-5).
+This design covers account linking (UG-1), repository authorization on GitHub, GHES, and GitLab (UG-2), pull request authoring on GitHub and GHES as a configuration of the generic mechanism (UG-3), an approval check for tenants that refuse user tokens (UG-4), and user-authored merge requests on GitLab (UG-5).
 
-Out of scope: tenant-wide session content reads, the repository visibility rule, and EG-12 defaults. `egress-and-git-design.md` owns egress and git, and this document lists what it needs under "Changes requested of egress-and-git-design.md". `security-oversight-design.md` owns repository rules and guardrails, `tenant-scoping-identity-design.md` owns user lifecycle and Environments, `tenant-outbound-connector-design.md` owns private hosts, and `forensics-evidence-preservation-design.md` owns preservation.
+Out of scope: tenant-wide session content reads, the repository visibility rule, and EG-12 defaults. `egress-and-git-design.md` owns egress and git, and this document lists what it needs under "Changes requested of egress-and-git-design.md". `user-credential-delivery-design.md` owns the `userCredential` binding, the `registered` and `oauth2Link` sources, `file` delivery, request rules, and presets. `security-oversight-design.md` owns repository rules and guardrails, `tenant-scoping-identity-design.md` owns user lifecycle and Environments, `tenant-outbound-connector-design.md` owns private hosts, and `forensics-evidence-preservation-design.md` owns preservation.
 
 ## Terms
 
 | Term | Meaning |
 | :-- | :-- |
-| Link provider | A tenant object naming one host's provider kind and OAuth client. A tenant has at most one per host. |
-| Link | One Lenny user's stored authorization on one host, keyed on tenant, user, and host. |
-| Parent token | The user access token and refresh token a link holds. The parent token stays in the Token Service. |
+| Link provider | A tenant object naming a provider kind and OAuth client. A tenant has at most one per host among VCS kinds. |
+| Link | One Lenny user's stored authorization under one link provider, keyed on tenant, user, and link provider name. |
+| Parent token | The user access token and refresh token a link holds. On a VCS kind, both stay in the Token Service. `user-credential-delivery-design.md` states the `kind: oauth2` exception. |
 | Child token | On GitHub and GHES, a token derived from the parent by `POST /applications/{client_id}/token/scoped`, limited to named repositories and permissions. |
 | Verdict | The result of a repository check: `allowed`, `refused`, or `unavailable`. |
-| Request filter | The allowlist `netagent` applies to API requests before it attaches a token under `inject`. |
+| Request rules | Data on an `inject` binding, optionally from a preset, that refuses requests before the token is attached. `user-credential-delivery-design.md` defines them. |
+| Token trust record | Everything that decides where a stored token can go and who can read it, with a digest on each stored token. `user-credential-delivery-design.md` defines it. |
+| `user_act_required` | The one state of a stored token that needs a new user act: a relink here. It is derived from a trust record mismatch, and stored when a provider refuses a refresh. |
+| Request filter | Revision 3's provider-specific allowlist, `vcs-authoring`. **Superseded by request rules.** The name survives in the history below. |
 
 The word "connector" stays bound to §9.3 and to the outbound connector design's `outbound` identifiers. No new link, channel, or register enters §28: the new Token Service calls sit on `schemas/lenny-tokenservice.proto`, which [§28.7 Wire-contract artifact register](../spec/28_communication-channels.md#287-wire-contract-artifact-register) records as a surface the channel register holds no entry for, and the I8 fields are additions to an interface the egress design defines.
 
 ## Personas and requirements
 
-Alice is a developer at `acme` and Bob is her reviewer. Carol is `acme`'s tenant admin and Dave is its `security-admin`. Tenant `globex` runs on GitHub with a shared App. Tenant `initech` runs self-managed GitLab.
+Alice is a developer at `acme` and Bob is her reviewer. Carol is `acme`'s tenant admin and Dave is its `security-admin`. Tenant `globex` runs on GitHub with its own App. Tenant `initech` runs self-managed GitLab.
 
-- UR-1. Alice links her account once per host, and she sees the prompt before her session starts rather than a failure in the middle of it.
+- UR-1. Alice links her account once per link provider, and she sees the prompt before her session starts rather than a failure in the middle of it. This applies to a `required` pool, which `prAuthoring: user` needs.
 - UR-2. A session reaches a repository under a VCS pool that requires user authorization only when the requesting user can reach it at the access level the session declared.
 - UR-3. When Alice loses access, her session stops reading and writing that repository within a stated bound.
-- UR-4. Alice's pull request has Alice as its author, and Alice cannot supply the approval it needs.
-- UR-5. An agent running `gh pr create` or `glab mr create` works with the tool unmodified and with a placeholder as its token.
-- UR-6. No agent, prompt-injected or otherwise, can approve or merge through the host's API with a credential that Lenny attaches. Text that a repository's own automation reads as a command is a separate path, which "Comment-triggered actions" treats.
+- UR-4. Alice's pull request has Alice as its author, and Alice cannot supply the approval it needs, except through a pull request a colluding session opened on her namespace branch ("Residual risks").
+- UR-5. An agent running any `gh` or `glab` command works with the tool unmodified and with a placeholder as its token, **within the token's permissions**, except what the preset refuses, which a tenant can change. The host refuses what the token does not permit: under the default `pull_requests: write` and `contents: read`, that includes `gh issue create` and `gh run`, and likely `gh issue view` and `gh pr checks` (S15). `permissions` is data a tenant can widen. **This is met on a stub under T, and live hosts are owed:** `gh` and `glab` worked on every command listed under "Git remotes and client tools" **[measured]**. `gh` needs git in the image even with `-R`, and `gh release upload` needs a binding on `uploads.github.com`. A new `gh` release needs no change here, because a new operation passes by default.
+- UR-6. With the preset on, no agent can approve or merge through an operation the preset names, with a credential Lenny attaches under `inject`. **This is a deny list, and the owner accepted that a new operation with that power passes until the preset is updated.** A tenant can clear the preset unless a `security-admin` requires it. It does not hold for a token the runtime holds under `file`, or against text a repository's own automation reads as a command, which "Comment-triggered actions" treats.
 - UR-7. Automated sessions keep working under a named service identity, and a person cannot use that path to skip the check.
 - UR-8. A tenant can refuse user tokens in pods and still get a two-person review check.
 
@@ -58,34 +65,37 @@ Alice is a developer at `acme` and Bob is her reviewer. Carol is `acme`'s tenant
 
 ### Security properties
 
-- UP-1. A parent token and a refresh token never leave the Token Service. A gateway replica, `netagent`, and the mirror never hold one. The Token Service API and the `user_links` store hold this.
-- UP-2. A child token is limited at the host to the session's `granted` writable repositories and to `pull_requests: write` and `contents: read`. The host enforces this.
-- UP-3. `netagent` attaches a user-derived token only to the binding's API host and only to a request the request filter admits. A credential whose required handling `netagent` does not implement is refused. `netagent` holds this, and the Token Service sets the requirement.
+- UP-1. A refresh token never leaves the Token Service, and it goes only where its token trust record says. On a VCS kind a parent access token never leaves either, because a delivering VCS provider must name a platform-shipped narrowing template. On `kind: oauth2` with no template, `netagent` receives the parent access token under the record's delivery ceiling, as `user-credential-delivery-design.md` states, and a replica can obtain it under `leakScan` on a `file` binding. The mirror never holds a parent token. The Token Service API and the `user_links` store hold this.
+- UP-2. Under a platform-shipped narrowing template, a child token is limited at the host to the session's `granted` writable repositories and to the template's `permissions`, by default `pull_requests: write` and `contents: read`. The host enforces this, and S15 owes the live test. The write path requires a shipped template on a VCS kind whose `delivery` is not `none`.
+- UP-3. Under `inject`, `netagent` attaches a user-derived token only to the binding's hosts and only to a request the binding's request rules admit, with `default: allow` and the preset as this configuration's default. A credential whose required handling `netagent` does not implement is refused. `netagent` holds this, and the Token Service sets the rules and the requirement. Under `file` none of this applies.
 - UP-4. A session with a requesting user never receives an App token for a repository under a pool that requires user authorization unless a fresh verdict says the user holds that access. The Token Service holds this before its cache lookup, and `lenny-egress-authz` holds it independently from the recorded entry state.
 - UP-5. A user-derived token never reaches a pod that can serve another session or a later session. The binding validator, the session gateway check, and the Token Service each hold this.
 - UP-6. A session with no link, or a failed or unavailable check, never falls through to an App token on such a pool.
-- UP-7. An impersonation bearer cannot cause a linked token to be used. The gateway holds this.
+- UP-7. An impersonation bearer cannot cause a linked token to be used. The gateway's session input check holds this, over the session's delegation tree, under `user-credential-delivery-design.md`.
 - UP-8. One tenant's link, check result, or token never reaches another tenant. Link rows sit under row-level security, and every cache key carries the tenant.
 - UP-9. A link's provider account is one the tenant's identity source ties to the Lenny user, unless the tenant records that it does not. The link flow and the sweep hold this.
-- UP-10. No user-derived token leaves the Token Service except through I8 under the filter. No gateway path, connector included, receives one.
+- UP-10. No token held under this design's links leaves the Token Service except through I8, under the binding's delivery and the provider's `delivery`, or to a session's coordinating gateway replica under `leakScan`, and a compromised replica can acquire any such session's lease, as `user-credential-delivery-design.md` states. No gateway connector path receives one. Decision 3 refuses a connector of its own on these hosts when a pool on the host is `required`.
 
 ### Threats
 
 | Attacker | Can | Cannot | Why |
 | :-- | :-- | :-- | :-- |
-| Prompt-injected agent on Alice's session | Create, edit, close, and comment on pull requests as Alice on a session repository, including Bob's. Read what the child token reads. Request reviewers. Waste Alice's rate limit up to the session's quota. Write text a repository's bot treats as a command, within what the tenant's stated patterns leave open. | Approve, merge, set auto-merge, dismiss a review, push through the API, act outside the session's repositories, or read the token. | The filter refuses, the host limits the child, and `inject` keeps the token in `netagent`. |
-| Two injected sessions, Alice's and Bob's | Each opens a pull request as its user. Each can comment on the other's, which reaches any comment-driven approval bot the tenant failed to state. | Approve the other's pull request through the host's review API. | `addPullRequestReview` and the REST review route are refused on every session. A tenant closes the bot path with `repositoryAutomation`. |
+| Prompt-injected agent on Alice's session | Create, edit, close, retarget, and comment on pull requests as Alice on a session repository, including Bob's. Read what the child token reads. Waste Alice's rate limit up to the session's quota. Write text a repository's bot treats as a command. Use a new operation with merge or review power that the preset does not yet name. | Use an operation the preset names, unless a tenant cleared it. Act outside the session's repositories under a narrowing template. Read the token under `inject`. | Request rules refuse, the host limits the child, and `inject` keeps the token in `netagent`. Deny mode's bypass analysis ran on the stub **[measured]**, which proves forwarding only. |
+| Two injected sessions, Alice's and Bob's | Each opens a pull request as its user. Each can comment on the other's, which reaches any comment-driven approval bot a tenant has not addressed. | Approve the other's pull request through the review operations the preset names. | The preset names `addPullRequestReview` and the REST review route. A tenant adds `bodyPatterns` or denies `addComment` for its bots. |
 | Compromised `netagent` on Alice's pod | Use the child token and any App token it holds until they expire, including approving within the session's repositories, because GitHub has no permission narrower than `pull_requests: write` for this. | Obtain the parent or refresh token. Reach repositories outside the child's list on GitHub or GHES. Mint after the pod is quarantined or the binding ends. | UP-1 and UP-2. "Residual risks" states this plainly. |
 | Alice herself, against review | Link a second account, have her agent author under it, and approve as herself. | Do so when the link provider sets an `identityBinding`, since the flow refuses an account that is not hers. | UP-9. Under `unverified` she can, and posture says so. |
-| Prompt-injected agent calling a connector tool | Reach a GitHub MCP server through a tenant's connector. | Reach it on a host with a token-holding link provider, where such a connector is refused. | UP-10. A connector to another service that holds its own repository credential is out of reach of this design, as a residual states. |
-| Prompt-injected agent using git push options | Ask GitLab to create and auto-merge a merge request, or skip CI and secret scanning, on a push that passes ref checks. | Send any push option. | `netagent` refuses them at `git-receive-pack`, under a requested change. |
-| Compromised `lenny-egress-authz` | Misdecide a CONNECT or a scope decision. | Mint, or remove the Token Service's own check and its filter requirement. | The egress design's two gates, and `handling` coming from the Token Service on I8. |
+| Prompt-injected agent calling a connector tool | Reach a GitHub MCP server through a tenant's connector, where one is allowed, and call its tools under that connector's token. | Reach it with a token from a link. | UP-10. Decision 3 refuses a connector on these hosts when a pool on the host is `required`. |
+| Prompt-injected agent using git push options | Ask GitLab to create and auto-merge a merge request, or skip CI and secret scanning, on a push that passes ref checks. | Send a push option on a covered host. | `netagent` refuses them at `git-receive-pack`, under a requested change. |
+| Compromised `lenny-egress-authz` | Misdecide a CONNECT or a scope decision, or remove a host from the covered set, so git to it goes as an opaque tunnel and a token the agent holds reaches it, with no mint on that path, as the egress design states. | Mint, or remove the Token Service's own check and its rules. | The egress design's two gates, and `handling` and resolved rules coming from the Token Service on I8. |
 | Attacker who tricks Bob into completing a link flow | Send Bob an authorization URL or a start URL. | Bind Bob's GitHub account to the attacker's Lenny user, or the attacker's account to Bob's Lenny user. | The start page requires a browser login matching the flow's subject, and the callback checks a cookie bound to that login. |
-| Prompt-injected agent crafting bytes for a parser difference | Send documents and JSON that the filter and a host read differently. | Have those bytes reach the host. | `netagent` forwards a document and body it generated from the checked structure. See "What reaches the host". |
+| Prompt-injected agent crafting bytes for a parser difference | Send documents and JSON that a rule evaluator and a host read differently. | Have those bytes reach the host while rules are in force. | `netagent` forwards a document and body it generated from the checked structure. See "What reaches the host". |
+| Prompt-injected agent holding a `file` token | Everything that token permits, from anywhere. | Be limited by anything in this table. | A tenant chose this under `user-credential-delivery-design.md`'s opt-in, and a `required` pool refuses it unless flagged. |
 | Hostile tenant registering a host | Run a fake GHES or GitLab that answers checks and token calls as it likes, for its own users. Return hostile bodies and redirects to the Token Service. | Affect another tenant. Shadow a platform-reserved host. Receive another tenant's client secret, token, or cached verdict. | The egress design's mint path bounds, connector C8 and C9, and tenant-keyed caches. |
-| Tenant admin of a shared App | Delete links in the tenant and read their metadata. | Read a token. | T4 envelope encryption, and no read route returns a token. |
+| Tenant admin | Delete links in the tenant and read their metadata. Edit a token trust record, which makes every stored token under it unusable. **Trick a user past the page into granting a new token to a host she runs.** Change a runtime and read a `file` token. | Read a link's stored token through any change to the record, because a mismatched token is sent nowhere. | T4 envelope encryption, no read route, and UCP-5 of that document. The future grant has no per-field fix, because she configures the tenant. That document's decision 4 records the owner's settlement, and `tokenTrust.allowedRecords` is the enforcing control. |
 
 ## Capture results
+
+**This section is history.** It records what was measured against revision 3's allowlist, and the measurements stand. Revision 4 replaced that allowlist with the preset model. Where a row below names the filter, it describes that filter. Deny mode's bypass analysis ran later on the stub, under S19 **[measured]**.
 
 A capture ran on 2026-11-03: `gh` 2.103.3 and `glab` 1.127.0, against a recording stub on a Docker `--internal` network, through a Go `netagent` prototype with `filter.go` and gqlparser 2.5.33, on a laptop under other load. Results and raw output are in the session scratchpad under `spike-gh/RESULTS.md`. The github.com flavour used `api.github.com` as a network alias for the stub.
 
@@ -108,15 +118,24 @@ A capture ran on 2026-11-03: `gh` 2.103.3 and `glab` 1.127.0, against a recordin
 - **Revision 1's bounds were wrong.** Its 256 KiB document bound admitted a document that measured 40 MB, and streaming REST bodies cannot carry the body-key check `merge_when_pipeline_succeeds` needs. See "Bounds and cost".
 - **The first filter had a bypass, and a second stays open in the prototype.** See "What reaches the host".
 
+### Why the allowlist was replaced
+
+The owner's conditions for keeping a GitHub-specific injection were that it survive `gh` updates and work for all `gh` commands. Both were measured false for the allowlist.
+
+- **All commands.** 25 of 42 `gh` cases exited 0 under the prototype's policy and 17 failed, including `pr comment`, `pr edit`, `pr ready`, and `pr close` by policy **[captured]**.
+- **Headers.** On a Debian image `gh` sent `Time-Zone`, and the forwarded-header allowlist refused every GraphQL request with 403 **[captured]**. The earlier capture ran on Alpine only.
+- **Updates.** Of 68 `gh` releases since 2024-10-01, 4 changed the mutation set. v2.73.0 added `replaceActorsForAssignable` and `deleteIssueComment`, v2.83.0 added `revertPullRequest`, v2.87.0 added `requestReviewsByLogin`, and v2.94.0 added the discussions and sub-issue set. 16 of the 66 mutations in `gh` 2.103.3 were on the old table and 50 were off **[source]**. Those are names only and a lower bound on drift, read from source and not run.
+- **The server side.** GitHub's schema went from 122 mutations (2021-01) to 278 (now), and in one reading about one a year needs only `pull_requests: write` and carries merge or review power **[source]**. That reading is what the owner accepted as the deny preset's cost.
+
 ### What the capture did not test
 
-It used plain git remotes. Under the egress design's `insteadOf` config, `gh` and `glab` stop earlier, which was reproduced afterwards (see "Git remotes and client tools"). It also ran no `git push`.
+It used plain git remotes. Under the prior `insteadOf` config, `gh` and `glab` stopped earlier, which was reproduced afterwards (see "Git remotes and client tools"). It also ran no `git push`.
 
 ### What the capture cannot show
 
 These stay **[stub cannot show]** and are spike S15 unless noted:
 
-- Whether `pull_requests: write` permits approval on a provider-issued token. The permission table says yes **[documented]**, which is why the filter is required.
+- Whether `pull_requests: write` permits approval on a provider-issued token. The permission table says yes **[documented]**, which is why the preset names approval.
 - Whether merging fails without `contents: write`. The table says it needs that permission for REST **[documented]**. The GraphQL mutations' checks are unknown.
 - Whether a child's repository limit binds node-ID mutations, since `createPullRequest` takes an opaque `repositoryId` and others take node IDs. The filter checks operations and leaves targets to the host.
 - Whether GitHub honours batches, GET queries, form bodies, or method overrides, and which GraphQL parser it runs.
@@ -126,7 +145,7 @@ These stay **[stub cannot show]** and are spike S15 unless noted:
 
 ## Review of revision 2
 
-An independent review made these findings. Each was checked against the code, the specification, and provider documentation, and none was rejected. Where this design went further than the reviewer's suggestion, the row says so.
+An independent review made these findings. Each was checked against the code, the specification, and provider documentation, and none was rejected. Where this design went further than the reviewer's suggestion, the row says so. Resolutions are as of revision 3. Revision 4 changed the connector and comment rows, as decision 3 and "Comment-triggered actions" state.
 
 | Finding | Result | Resolution |
 | :-- | :-- | :-- |
@@ -152,7 +171,7 @@ Each finding was checked against the code and the documents. The table states wh
 | 3 | Holds as a question. GitHub says the push must be approved "by someone other than the person who pushed it" and does not say how an App's push with a requesting user is treated **[documented]**. **One proposal premise is wrong:** `allowedRefPatterns` and path enforcement sit in `netagent` and read the plain git request, so they do not depend on the push using an App token. | "Git pushes and the most recent push rule", S3 |
 | 4 | Holds in full. The cache paragraph sits under "Egress decision service" directly before **The I8 listener**, and the mint cache key is under "Credentials", **Minting**. The egress design already has a Token-Service-assigned cache lifetime for stored secrets (15 minutes), which is the precedent the fix generalizes. | "Revocation" |
 | 5 | Holds. Recycled pods add a stronger case: §5.2 says the scrub "is **best-effort** and is not a security boundary", and on a `keep` pod the runtime process survives it **[source]**. | "Pod models" |
-| 6 | Holds for today's tree: `Materializer.Available` returns false when `credential.UserProxyDialect` has no dialect, which covers `github`, and `credential_preclaim.go` then takes the pool path **[source]**. In the target design, VCS tokens come from I8 and never pass that router, so the larger fact is different: **the App token is the default on I8 rather than a fallback.** A requirement has to be stated on the VCS pool, and the `usercreds` change in the proposal is the wrong place. A further defect: `POST /v1/credentials` accepts `provider: github`, which is a known provider, stores it, and never delivers it. | "UG-2", "Single store" |
+| 6 | Holds for today's tree: `Materializer.Available` returns false when `credential.UserProxyDialect` has no dialect, which covers `github`, and `credential_preclaim.go` then takes the pool path **[source]**. In the target design, VCS tokens come from I8 and never pass that router, so the larger fact is different: **the App token is the default on I8 rather than a fallback.** A requirement has to be stated on the VCS pool, and the `usercreds` change in the proposal is the wrong place. A further defect: `POST /v1/credentials` accepts `provider: github`, which is a known provider, stores it, and never delivers it. | "UG-2", "User tokens on a VCS host" |
 | 7 | Partly already holds. `requireCreatingBearerAllowed` refuses an impersonation bearer on session create, derive, create-and-start, and replay **[source]**. `handleMessages` and `handleResume` have no such check, so an impersonator can drive an existing session. That is the case to close. | "Identity cases" |
 | 8 | Holds, including GitLab **[documented]**. In the tree, `RefreshAccessToken` has no non-test caller and `Invoker.bearerFor` returns the stored token with no refresh, so §9.3 connector refresh is absent today **[source]**. | "Refresh" |
 | 9 | Agreed. Recorded as decision 16. | "Delivery" |
@@ -192,24 +211,40 @@ The design reuses the `pkg/connectoroauth` library (PKCE, signed state, the Redi
 - Connector refresh has no caller, and no store has a refresh lease.
 - The callback is open to the account-link attack in "Defects found while verifying".
 
-### Single store
+### User tokens on a VCS host
 
-A host has one store of user tokens per tenant.
+Revision 3 said a host has one store of user tokens per tenant and refused VCS providers on `/v1/credentials`. The owner's generic mechanism must not be tied to or excluded from GitHub, so this is reworked.
 
-- `POST /v1/credentials` refuses `provider: github` and any other VCS provider with `VALIDATION_ERROR` once UG-1 lands, since [§4.9 Pre-Authorized Credential Flow](../spec/04_system-components.md#pre-authorized-credential-flow) cannot deliver them and the registration otherwise appears to work.
-- **A connector on a token-holding link provider's hosts is refused.** A connector's `tokenEndpoint`, `authorizationEndpoint`, or `mcpServerUrl` host falling in the provider kind's host set (on GitHub: `github.com`, `api.github.com`, and `mcp.github.com`) is refused at connector write, and a link provider holding tokens is refused at write while such a connector is active, with the refusal naming each one. No connector is grandfathered.
+- **The defect stays refused.** `provider: github` on `POST /v1/credentials` can never deliver, so it is refused with `VALIDATION_ERROR`, as are `aws_bedrock` and `vault_transit`, which have the same defect **[source]**. `user-credential-delivery-design.md` does this in UC-1.
+- **A tenant-defined type on a GitHub host is possible.** Under that design, a tenant can define type `gh-pat` with `source: registered` and bind it to `api.github.com` or `github.com`, subject to the refusals "Other tokens on these hosts" states. A type's hosts, rather than a binding's, are what every rule evaluates. Its `file` delivery needs `userCredentialDelivery`, a ceiling of `file`, and a binding opt-in. "What a `required` pool still gives" in that document states the result, and the summary is under "Other tokens on these hosts" here.
+- **The check names one account.** A `required` pool's check uses its link provider and no other row, so a `registered` token on the same host never satisfies UG-2.
 
-The reason is control rather than storage. A connector's token lives on the gateway path (`connectorinvoke`), and a tool call on `CH-MCP-CONNECTOR` reaches the host with no request filter, repository list, pod model check, sweep, or `cacheUntil`. An injected agent calling a review tool on a GitHub MCP server would approve through it, which breaks UR-6 and UP-2 and UP-3. Revision 2's `hostLink` connector made this worse, because the token would come from the link. It is withdrawn, and a later design that gives a connector these controls can bring it back. A link provider in UG-4's identifier-only mode holds no token, so it does not trigger this rule.
+**Connectors.** Revision 3 refused a connector on a token-holding link provider's hosts because a connector's token reaches the host with "no request filter, repository list, pod model check, sweep, or `cacheUntil`". Part of that reason has weakened and part has not:
+
+| Reason | Status now |
+| :-- | :-- |
+| No request filter on the connector path | Weaker. The filter is now an optional preset that a tenant can clear on the pod path, and §10.6's `connectorSelector` already filters a connector's tools by capability, with `deniedCapabilities`, inferred from MCP `ToolAnnotations`, plus `PreConnectorRequest` interceptors **[source]**. Whether those annotations mark a review tool as write is not established. |
+| No repository list | Holds. A connector's token is not narrowed per session. |
+| No user authorization check or sweep | Holds, against UR-2, wherever the pool is `required`. |
+| No `cacheUntil` | Holds, and §9.3's refresh has no caller at all **[source]**. |
+| No pod model check | No longer a reason. The connector path is on the gateway, which attributes each call to its session. |
+
+Revision 2's `hostLink`, which would have given a connector a link's token, stays withdrawn, because it is the one version of this that breaks UP-1. **The owner settled decision 3: a connector is refused on a link provider's host set only when a pool on that host is `required`,** since UR-2 is the property a connector skips.
 
 ### Data model
 
-**`link_providers`** (tenant object, written through EG-9's single write path, with an optional TS-1 `environments` list):
+**`link_providers`** (tenant object, written through EG-9's single write path, with an optional TS-1 `environments` list). `user-credential-delivery-design.md` generalizes this to any OAuth2 provider with `kind: oauth2`, and a user credential type names a link provider through `source: oauth2Link`. The fields below are those of the VCS kinds.
 
 | Field | Meaning |
 | :-- | :-- |
-| `host` | The canonical host, which must be covered by one of the tenant's VCS pools. Unique per tenant. |
-| `kind` | `github`, `github-enterprise`, or `gitlab`. The kind fixes the endpoint paths, so a tenant supplies no OAuth URL. |
-| `clientId`, `clientSecretRef` | The GitHub App's or GitLab application's client. The secret sits in `lenny-credentials`. |
+| `name` | The key, unique per tenant. Links and routes name it, from UG-1 onward, so UC-2 reworks no stored key or route. |
+| `host` | On a VCS kind, the canonical host, covered by one of the tenant's VCS pools, and unique per tenant among VCS kinds. |
+| `delivery` | The delivery ceiling, in the token trust record: `identifier`, which keeps the identity and discards the token, for UG-4; `none`, which keeps the token for a check; `inject`; or `file`. The pages show it. A `required` pool needs `none` or above, and `prAuthoring: user` needs `inject` or above. |
+| `apiHosts` | The hosts a type on this provider can reach. On a VCS kind the table in `user-credential-delivery-design.md`, "Selecting the flavour", fixes them. |
+| `attach` | In the token trust record. On a VCS kind the kind fixes it. |
+| `narrowing` | A platform-shipped template, with `permissions` as the one tenant override. Required on a VCS kind that delivers. |
+| `kind` | `github`, `github-enterprise`, or `gitlab` here. The kind fixes the endpoint paths, so a tenant supplies no OAuth URL. |
+| `clientId`, `clientSecret` | The tenant's own GitHub App or GitLab application. `clientSecret` is a write-only value the Token Service stores under a tenant-scoped key and re-checks at read, so no tenant can name another's. It is sealed with the provider's record digest, so any record change leaves it unusable until a write re-supplies it, and a revert restores it. |
 | `allowedAccounts` | The organizations, GitLab groups, or login patterns a linked account must belong to. Empty means any account the OAuth client admits. |
 | `identityBinding` | `directory`, `claim`, `verifiedEmail`, or `unverified`. No default: a link provider write must set it. See "Identity binding". |
 | `scopes` | GitLab only: `read_api` and `read_user` by default. |
@@ -218,16 +253,17 @@ The reason is control rather than storage. A connector's token lives on the gate
 
 | Column | Meaning |
 | :-- | :-- |
-| `tenant_id`, `user_id`, `host` | The primary key. |
+| `tenant_id`, `user_id`, `link_provider` | The primary key. |
 | `link_ref` | A random identifier, regenerated on each link, used in evidence. It carries no meaning outside this row. |
-| `provider_user_id`, `provider_login`, `provider_is_admin` | From the provider's user endpoint. Bounded in length and limited to the provider's login syntax, because a registered host is hostile input. Unique on tenant, host, and `provider_user_id`. |
+| `provider_user_id`, `provider_login`, `provider_is_admin` | From the provider's user endpoint. Bounded in length and limited to the provider's login syntax, because a registered host is hostile input. Unique on tenant, link provider, and `provider_user_id`. |
+| `trust_digest` | The digest of the provider's token trust record at link time, sealed as additional data on each envelope with tenant, role, user, provider name, and the fields written with the value, under the encoding that document states. A mismatch makes the row unusable and sends it nowhere. |
 | `access_token_ct`, `refresh_token_ct`, `scopes` | Envelope-encrypted tokens. |
 | `access_expires_at`, `refresh_expires_at`, `generation` | Expiry, and a counter that changes on refresh and relink. |
-| `state` | `active`, `relink_required`, `suspended`, or `revoking`. |
+| `state` | `active`, `user_act_required`, `suspended`, or `revoking`. A mismatch reports `user_act_required` with no write. |
 | `refresh_lease_holder`, `refresh_lease_until` | The refresh lease. |
 | `verified_at`, `last_used_at`, `created_at` | Times. |
 
-A user with accounts on two hosts holds two rows, and Lenny draws no connection between them. A user who wants a different account on one host relinks, which revokes the old grant first.
+A user with accounts on two hosts holds two rows, and Lenny draws no connection between them. A user who wants a different account on one provider relinks, which revokes the old grant first.
 
 Two Lenny users cannot link one provider account within a tenant. The unique index refuses the second with `409 LINK_ACCOUNT_IN_USE`, naming neither user, and the tenant admin can remove the first. A shared account makes `credential.mint` attribution false and gives one person a way around two-person review. The same account in two tenants is permitted, since the tenants are unrelated.
 
@@ -237,12 +273,12 @@ Nothing else proves that a linked account belongs to the Lenny user. Alice can l
 
 | `identityBinding` | How the link flow decides | Cost |
 | :-- | :-- | :-- |
-| `directory` | A tenant's sync worker or admin writes the expected `provider_user_id` for a user through `PUT /v1/admin/users/{userId}/provider-identities/{host}`, under `manage_user_lifecycle`. The link commits only when the provider's numeric identifier matches. | The tenant runs a mapping. The directory must hold provider accounts. |
+| `directory` | A tenant's sync worker or admin writes the expected `provider_user_id` for a user through `PUT /v1/admin/users/{userId}/provider-identities/{provider}`, under `manage_user_lifecycle`. The link commits only when the provider's numeric identifier matches. | The tenant runs a mapping. The directory must hold provider accounts. |
 | `claim` | The link provider names an OIDC claim, such as `github_login`. The start page reads it from the browser login in step 3, and the provider's login must match. The broker contract gains that mapping. | A broker mapper, and login renames need the mapping to follow. After the first match, the numeric identifier is the key. |
 | `verifiedEmail` | The provider's verified email must equal the `email` claim of the browser login. GitHub: `GET /user/emails`, which has `verified` and `primary` fields **[documented]**. Its permission for an App token is not stated, and neither is uniqueness across accounts (S6). GitLab: `GET /api/v4/user`. | It needs an authoritative IdP email, and the App gains an email permission. Self-managed instances can change a user's email by administrator. |
 | `unverified` | No check. | UP-9 and part of UR-4 do not hold against the user. It still stops a prompt-injected agent, which needs no identity claim, and posture reports the value. |
 
-Each binding re-evaluates on the sweep: when a directory row or claim source changes, the link moves to `relink_required`. Lenny reads the claim at the start page alone and does not store it. `Principal` gains nothing **[source]**.
+Each binding re-evaluates on the sweep: when a directory row or claim source changes, the link moves to `user_act_required`. Lenny reads the claim at the start page alone and does not store it. `Principal` gains nothing **[source]**.
 
 Binding covers the account Lenny uses. It does not cover who approves at the host. A person with a second account in the organization can still approve from it, and an organization's single sign-on and managed-user settings address that. "Residual risks" states it.
 
@@ -250,21 +286,21 @@ Binding covers the account Lenny uses. It does not cover who approves at the hos
 
 A link provider's App need not be the App in the VCS pool, because the check needs only the user's access. A tenant that wants UG-2 alone should register a separate App with `metadata: read` and no other permission, installed on the same organizations, which leaves the stored parent token with no write power at all. UG-3 needs an App with `pull_requests: write` and `contents: read`. GitHub limits a user token to the App's permissions and to accounts where the App is installed **[documented]**, so a repository the linking App cannot see answers as `refused`. The App's user token expiry must stay on. A token response with no `expires_in` or `refresh_token` is refused at link with `LINK_TOKEN_NON_EXPIRING`, because GitHub lets an App opt out **[documented]**.
 
-A tenant-owned App is the recommended arrangement. An operator's shared App across tenants works with two differences: `DELETE /applications/{client_id}/grant` would end the same person's link in another tenant, so a shared App revokes by token, and the ten-token limit is shared by the same person across tenants.
+A link provider's client belongs to its tenant. An operator's App shared across tenants is out of scope: the only write path is the tenant's own, so each tenant admin would hold a client other tenants' users rely on, and the record's sealed secret would need a platform-only path. Decision 45 records this.
 
 ### Flow
 
 The user experience follows Coder's: a named provider instance per host, self-hosted URLs, and an authorization step before the workspace exists.
 
-1. Alice calls `POST /v1/sessions` with a plan under a VCS pool that requires user authorization and has no link. The gateway answers `403 USER_LINK_REQUIRED` with `details.linkUrl`, before any pod claim. MCP clients receive the same URL as a URL-mode elicitation. She can also call `POST /v1/user-links` with `{"host": "github.com"}` from the playground or `lenny-ctl`.
+1. Alice calls `POST /v1/sessions` with a plan under a VCS pool that requires user authorization and has no link. The gateway answers `403 USER_LINK_REQUIRED` with `details.linkUrl`, before any pod claim. MCP clients receive the same URL as a URL-mode elicitation. She can also call `POST /v1/user-links` with `{"provider": "github-acme"}` from the playground or `lenny-ctl`.
 2. `linkUrl` is a Lenny URL holding a random one-time flow identifier, with a 10-minute lifetime, naming the subject that requested it.
-3. The browser opens it. The start page requires an OIDC login at `auth.oidc.issuerUrl` through the path §27.3.1 uses, and it refuses the flow when the logged-in tenant and subject differ from the flow's. This defeats an attacker who sends a victim a start URL.
+3. The browser opens it. The start page requires an OIDC login at `auth.oidc.issuerUrl` through the path §27.3.1 uses, and it refuses the flow when the logged-in tenant and subject differ from the flow's. This defeats an attacker who sends a victim a start URL. **Before any redirect**, the page names every endpoint host and the delivery ceiling, and after a token trust record change it states that they changed, naming the old and new hosts. The flow records the current digest, and step 6 refuses if it has moved.
 4. The page sets a `__Host-` cookie, `HttpOnly`, `Secure`, and `SameSite=Lax`, holding a random nonce, and redirects to the provider with PKCE and a `state` that signs the flow identifier and the nonce's hash. A `SameSite=Lax` cookie is sent on the provider's top-level redirect back.
-5. The provider redirects to `GET /v1/user-links/callback`. The gateway verifies the signature, consumes the flow once, and requires the cookie's nonce to match. A missing or mismatched cookie aborts the flow. This defeats a victim's browser completing an attacker's flow, in either direction.
-6. The gateway passes the code and verifier to the Token Service over mTLS and never sees a token. The Token Service exchanges them through the mint path, reads the provider's user endpoint, applies `identityBinding`, and applies `allowedAccounts`: GitHub through `GET /user/installations` **[documented]**, and GitLab through group membership with `read_api`. A refused binding answers `403 LINK_IDENTITY_MISMATCH`, and the token is revoked at the provider at once.
-7. The browser shows a confirmation page naming the provider login and the Lenny user. Alice confirms, and the row commits. An audit event, `user_link.created`, carries the tenant, user, host, `link_ref`, and provider login, and it is delivered to Alice as a notification.
+5. The provider redirects to `GET /v1/user-links/callback/{provider}`, a path per provider, and `iss` is checked where the provider returns it (RFC 9207). The gateway verifies the signature, consumes the flow once, and requires the cookie's nonce to match. A missing or mismatched cookie aborts the flow. This defeats a victim's browser completing an attacker's flow, in either direction.
+6. The gateway passes the code and verifier to the Token Service over mTLS and never sees a token. The Token Service compares the digest, exchanges them through the mint path, reads the provider's user endpoint, applies `identityBinding`, and applies `allowedAccounts`: GitHub through `GET /user/installations` **[documented]**, and GitLab through group membership with `read_api`. A refused binding answers `403 LINK_IDENTITY_MISMATCH`, and the token is revoked at the provider at once.
+7. The browser shows a confirmation page naming the provider login, the Lenny user, the endpoint hosts, and the delivery ceiling. Alice confirms, and the row commits with its `trust_digest`. An audit event, `user_link.created`, carries the tenant, user, provider name, `link_ref`, and provider login, and it is delivered to Alice as a notification.
 
-`DELETE /v1/user-links/{host}` lets Alice remove her link, and a tenant admin holding `manage_user_links` can remove anyone's. Neither route returns a token. Impersonation bearers are refused on every link route, using the same check as session create.
+`DELETE /v1/user-links/{provider}` lets Alice remove her link, and a tenant admin holding `manage_user_links` can remove anyone's. Neither route returns a token. Impersonation bearers are refused on every link route, using the same check as session create.
 
 | Step | GitHub and GHES **[documented]** | GitLab **[documented]** |
 | :-- | :-- | :-- |
@@ -279,22 +315,22 @@ The user experience follows Coder's: a named provider instance per host, self-ho
 
 GitHub says: "Once you use a refresh token, that refresh token and the old user access token will no longer work." GitLab refresh "Invalidates the existing `access_token` and `refresh_token`" **[documented]**. Refresh therefore has one writer per link, and it is a state change rather than a cache fill.
 
-- **Trigger.** A check or mint that finds fewer than 15 minutes on the parent, or a 401 from the host with the parent, requests a refresh. Refresh is on demand, so an idle link costs nothing. A refresh token that lapses (6 months idle on GitHub) moves the link to `relink_required`.
+- **Trigger.** A check or mint that finds fewer than 15 minutes on the parent, or a 401 from the host with the parent, requests a refresh. Refresh is on demand, so an idle link costs nothing. A refresh token that lapses (6 months idle on GitHub) moves the link to `user_act_required`.
 - **Lease.** A conditional update sets `refresh_lease_holder` and `refresh_lease_until` (30 seconds) when the lease is free. Session-level advisory locks are unavailable through the §12 transaction-mode pooler, and a transaction open across a provider call would hold a connection, so the lease is a row rather than a lock. Other replicas wait up to 5 seconds by re-reading the row, and otherwise answer `unavailable`.
 - **Commit.** The holder calls the provider with a 10-second bound and writes the new tokens and the incremented `generation` before anything else. A store failure after the provider's answer is retried from memory for the lease's remainder.
-- **A lost response.** A timeout or a crash between the provider's rotation and the commit loses both tokens. A retry of the old refresh token that the provider refuses moves the link to `relink_required`. Neither provider's page describes an idempotent refresh, so this cost cannot be designed out. Decision 6 records it, and a metric and alert report the relink rate.
-- **Sessions.** A session holds a child token on GitHub and GHES, and nothing on GitLab under the first version. The parent never reaches a pod, so rotating it cannot break a tool mid-request except through the unknown in S1. If S1 shows a child dies with its parent, `netagent` sees a 401, flushes, and asks I8 once under the `reauth-on-401` handling. A 401 means the host did not act, so one retry of the request is safe, including a mutation. The Token Service also caps `cacheUntil` so a child is re-requested before the parent's scheduled refresh.
-- **`relink_required`** refuses new sessions with `USER_LINK_REQUIRED` and moves running sessions as a refused verdict does, with the reason `relink_required`.
+- **A lost response.** A timeout or a crash between the provider's rotation and the commit loses both tokens. A retry of the old refresh token that the provider refuses moves the link to `user_act_required`. Neither provider's page describes an idempotent refresh, so this cost cannot be designed out. Decision 6 records it, and a metric and alert report the relink rate.
+- **Sessions.** A session holds a child token on GitHub and GHES, and on GitLab whatever the configuration under "GitLab" selects. The parent never reaches a pod, so rotating it cannot break a tool mid-request except through the unknown in S1. If S1 shows a child dies with its parent, `netagent` sees a 401, flushes, and asks I8 once under the `reauth-on-401` handling. A 401 means the host did not act, so one retry of a buffered request is safe, including a mutation. A streamed write's 401 goes back to the client. The Token Service also caps `cacheUntil` so a child is re-requested before the parent's scheduled refresh.
+- **`user_act_required`** refuses new sessions with `USER_LINK_REQUIRED` and moves running sessions as a refused verdict does, with the reason `user_act_required`.
 
 ### Hostile hosts
 
 A self-managed host is tenant-registered input, as `tenant-outbound-connector-design.md` states in C9.
 
 - The kind fixes endpoint paths, so a tenant supplies a host and no OAuth URL. The authorization redirect targets that host over HTTPS only, and the §9.2 URL domain check applies.
-- Every Token Service call goes through the egress design's mint path: `lenny-egress` for a host whose route is not `direct`, with the tenant asserted, its CA, and bounds on time, response size, and redirects. The provider's declared mint endpoints gain the token path on `github.com`, since today they name `api.github.com` **[design]**.
+- Every Token Service call to a link provider endpoint goes through `lenny-egress`, with the tenant asserted, its CA, and the mint path's bounds on time, response size, and redirects. The egress design's direct dial excepts these endpoints. The provider's declared mint endpoints gain the token path on `github.com`, since today they name `api.github.com` **[design]**.
 - Connector C8 holds: a registered host cannot shadow a platform-reserved one, so a tenant cannot register `github.com` behind its own network.
 - The provider login and identifier are syntax-limited before they are stored or shown, and a hostile host that answers `allowed` to everything harms only that tenant.
-- Verdict caches, child caches, and refresh leases all key on tenant and host, following the egress design's mint cache rule.
+- Verdict caches, child caches, and refresh leases all key on tenant and `link_ref`, following the egress design's mint cache rule.
 
 ### Lifecycle and revocation at the provider
 
@@ -305,9 +341,10 @@ A self-managed host is tenant-registered input, as `tenant-outbound-connector-de
 | `soft_disable`, `hard_disable`, or `full_revoke` ([§11.4](../spec/11_policy-and-controls.md#114-user-invalidation), TS-4) | At once. A new step in §11.4 sets `state = revoking` and pushes binding changes for the user's sessions. | Yes. Reinstate restores no link, and the user relinks. |
 | [§12.8](../spec/12_storage-architecture.md#128-compliance-interfaces) erasure, or `DeleteByTenant` | The Article 18 restriction and the drain stop use | Yes, then the row is deleted |
 | App or application removed by the user at the provider | At the next check, as a 401 that refresh cannot cure | Already done |
-| Link provider deleted | At once for its links | Yes, for each link |
+| Link provider deleted | At once for its links. The provider enters `deleting`, keeping it and its record until links drain or `linkProviderDrainSeconds` ends, and a recreate under that name is refused. | Yes, for each link, through the durable record below, under the ordinary comparison. At the bound, or after a mismatch, each remaining row ends with an audit event and a user notification saying its grant was not revoked. |
+| A token trust record changes, by any field | At once, by digest comparison at I8 and at each provider call. | **No.** Lenny sends the stored tokens to neither the old nor the new endpoint, and the audit event and the user's notification say so. A revert to the identical record restores use. |
 
-Revocation runs through a durable record retried with backoff, following the egress design's pending-revocation record for GitLab project tokens, because a host can be unreachable. Erasure has a limit: T4 data must be erased within 1 hour under [§12.9](../spec/12_storage-architecture.md#129-data-classification). The job retries for up to 30 minutes, then destroys the ciphertext regardless, and the erasure receipt records `provider_revocation_failed`. Lenny then holds no copy, and the access token lapses by its own expiry at the host. The tenant admin is told, so the user can revoke the authorization at the provider.
+Each "Yes" above applies when the row's digest matches, because a mismatched token is sent nowhere. Revocation runs through a durable record retried with backoff, following the egress design's pending-revocation record for GitLab project tokens, because a host can be unreachable. Erasure has a limit: T4 data must be erased within 1 hour under [§12.9](../spec/12_storage-architecture.md#129-data-classification). The job retries for up to 30 minutes, then destroys the ciphertext regardless, and the erasure receipt records `provider_revocation_failed`. Lenny then holds no copy, and the access token lapses by its own expiry at the host. The tenant admin is told, so the user can revoke the authorization at the provider.
 
 ## UG-2: Repository authorization
 
@@ -337,7 +374,7 @@ Classification, which every caller uses:
 - `allowed`: the provider answered and the level holds.
 - `refused`: 404, 403 without a rate-limit or SSO header, or a level below the declared one.
 - `unavailable`: 5xx, 429, a 403 with a rate-limit header, a timeout, a CONNECT failure, a connector being offline, or a refresh lease not obtained.
-- A 401 attempts refresh once and then counts as `refused` with the reason `relink_required`.
+- A 401 attempts refresh once and then counts as `refused` with the reason `user_act_required`.
 - A 403 with GitHub's SSO header is `refused` with the reason `sso_required`, which the error shows so Alice can start a SAML session and retry (S4).
 
 A provider `refused` is `USER_REPOSITORY_ACCESS_DENIED`, naming the repository Alice declared. It reveals nothing she did not name.
@@ -358,7 +395,7 @@ The order on the mint path is fixed: verify pod, read the session, run the check
 
 Mid-session revocation needs a writer and a route. The route exists: `netagent` flushes on every I7 binding change, and a binding push makes each decision service replica re-read the session row. This design adds the writer and closes the paths that skip it.
 
-**Entry state.** Writable entries are already records with a `state`. Readable entries become records too (see the requested changes). A new state, `userRefused`, is read only by both gates and `netagent`, as the hook already provides for unknown states. Each entry records `verifiedAt`, the time of its last `allowed`. A value per session would let one repository's success mask another's `unavailable`.
+**Entry state.** Writable entries are already records with a `state`. Readable entries become records too (see the requested changes). A new state, `userRefused`, on a writable entry denies both writes and reads of that repository, at both gates and in `netagent`, and an unknown state on a readable entry denies access, as the egress design's hook states. Each entry records `verifiedAt`, the time of its last `allowed`. A value per session would let one repository's success mask another's `unavailable`.
 
 **Sweep.** §4.3 has the gateway calling the Token Service, and the Token Service has no route to gateway replicas, so a gateway background job does this, as orphan cleanup does. Every `recheckIntervalSeconds` (300 by default, with up to 10% jitter) it calls the Token Service for each distinct link and repository among bound sessions, bypassing the verdict cache. A `refused` writes `userRefused` on the matching entries in the row's transaction and pushes a binding change. `allowed` updates that entry's `verifiedAt`, and every update for a session is one write to its row. Deduplication makes the provider load per link and repository rather than per session, and conditional requests lower it further.
 
@@ -397,7 +434,7 @@ Once an entry is refused, `onAccessLost` on the VCS pool decides what happens to
 
 ### Pod models
 
-UP-5 refuses a user-sourced binding, and a `required` VCS pool's repositories, on these pods. The gateway refuses at session create with `422 USER_AUTHORIZATION_UNSUPPORTED_POD`, and the binding validator refuses a definition that can only reach such pods.
+UP-5 refuses a `userCredential` binding, with `422 USER_CREDENTIAL_UNSUPPORTED_POD` as `user-credential-delivery-design.md` states for every type, and a `required` VCS pool's repositories, with `422 USER_AUTHORIZATION_UNSUPPORTED_POD`, on these pods. The binding validator refuses a definition that can only reach such pods. That document's `retireOnRelease` keeps a pod's eligibility from following a later pool edit, and I8 refuses a release without it. It applies to these repositories too, and UC-3 builds it.
 
 | Pod | Why |
 | :-- | :-- |
@@ -405,6 +442,7 @@ UP-5 refuses a user-sourced binding, and a `required` VCS pool's repositories, o
 | Service mode | One process serves several sessions, and §5.2 gives it no session binding. |
 | `recycle.enabled: true` | §5.2 states the scrub is best-effort and "is not a security boundary". On a `keep` pod the runtime process, and any state an injected agent planted in it, runs into the next session, whose user's token then answers on `netagent`'s unauthenticated loopback port. Residue from Alice's repositories would also reach Bob. |
 | A binding with `scope: always` | Its cache keys on the tenant pin and it attaches to every session. A user source is refused at write. |
+| A pod that has served a session | The same reason as `recycle.enabled`. It catches a pool edited back to `false` with used pods in it. |
 
 SDK-warm pods remain allowed, because the process that exists before bind runs deployer image code and no earlier agent session. The refusal costs concurrent and recycled pools their efficiency for these tenants, which decision 14 records. Service-mode runtimes cannot use a user identity at all under this design.
 
@@ -412,9 +450,9 @@ SDK-warm pods remain allowed, because the process that exists before bind runs d
 
 The requesting user is read from the session row by both gates, through `pkg/binding`, and never from a token or a pod. A running session does not depend on its creator's bearer.
 
-- **Impersonation.** A bearer whose `issued_tokens` row is an impersonation row already cannot create, derive, replay, or create-and-start. The gateway adds the same check to `handleMessages`, `handleResume`, interaction resolution, and any other route that gives a running session input, for a session on a `required` pool or holding a user-sourced binding. The refusal is `403 FORBIDDEN` with the reason `impersonation_user_token`, so an operator can read the session and cannot drive it into using Alice's token. SO-4a's `impersonated_by` claim is the same signal once it exists. A running session is otherwise unaffected by an impersonation that reads it.
-- **Delegated children.** A child carries its parent's user on its row, so the same link and check apply to its own declared set. Its pod must pass the same pod model test. `credential.mint` records its `sessionId`, and the session row gives its `root_session_id`.
-- **Detached orphans.** An orphan "carries the originating user's identity" ([§8.10](../spec/08_recursive-delegation.md#810-delegation-tree-recovery)), keeps being swept, and ends at `cascadeTimeoutSeconds`, 3600 by default. It keeps authorization and keeps PR authoring, because `detach` is what the client asked for, and §11.4's listing by owner reaches it. Decision 18 records this.
+- **Impersonation.** A bearer whose `issued_tokens` row is an impersonation row already cannot create, derive, replay, or create-and-start. For a session on a `required` pool or holding a `userCredential` binding, `user-credential-delivery-design.md`'s session input check refuses it at `executor.Executor.Send`, `sessioninbox.Inbox.Enqueue`, and the non-message session routes, with `403 FORBIDDEN` and the reason `impersonation_user_credential`, and memory writes refuse it on every session. A test covers every mounted mux. An operator can read the session and cannot drive it into using Alice's token. SO-4a's `impersonated_by` claim is the same signal once it exists.
+- **Delegated children.** A child carries its parent's user on its row, so the same link and check apply to its own declared set for App tokens. It receives the pool's `userCredential` binding only when the delegation lease names it, and `poolAttach` does not bypass that, under `user-credential-delivery-design.md`. A child with no lease entry has no API token, and no App binding stands in for it, so its identity does not change silently. Its pod must pass the same pod model test. `credential.mint` records its `sessionId`, and the session row gives its `root_session_id`.
+- **Detached orphans.** An orphan "carries the originating user's identity" ([§8.10](../spec/08_recursive-delegation.md#810-delegation-tree-recovery)), keeps being swept, and ends at `cascadeTimeoutSeconds`, 3600 by default. It keeps authorization and keeps what it was granted, because `detach` is what the client asked for, and §11.4's listing by owner reaches it. Decision 18 records this.
 - **Disabled users.** Each gate reads the user's invalidation level and `processing_restricted` through `pkg/binding`. Any of `soft_disable`, `hard_disable`, or `full_revoke` refuses every user-derived mint and every App mint under a `required` pool, including the running sessions §11.4 otherwise leaves up on the lesser levels. A store error fails closed, as TS-4 does.
 - **Cross-Environment.** Under `tenant-scoping-identity-design.md` decision 14's recommended option, a child stays in its parent's Environment, so `visible(bindings, E)` and `visible(VCS pools, E)` need no new rule. Under the alternative there, a user-sourced binding survives a crossing only when the bound's `bindings` names it, and the child is checked against its own Environment's pools. The link itself has no Environment, so neither option needs a link per team.
 - **Environment-less pods.** The refused pod models above cover what TS decision 15 addresses.
@@ -423,24 +461,24 @@ The requesting user is read from the session row by both gates, through `pkg/bin
 
 An automated session has no person to check. A `required` VCS pool lists `serviceIdentities`, each with a `subject`, its own repository allowlist, and its own `allowWrite`. A session uses that path only when all of these hold:
 
-- The caller's `caller_type` is `service`, which [§13.3](../spec/13_security-model.md#133-credential-flow) makes impossible to elevate on exchange.
+- The caller's `caller_type` is `service`, which [§13.3](../spec/13_security-model.md#133-credential-flow) makes impossible to elevate on exchange, and which the session row now records, so both gates read it through `pkg/binding`.
 - The bearer's `sub` is listed on the pool.
-- The session is a root session under that subject. A human's delegated child stays under the human.
+- The session is a root session under that subject. A human's delegated child stays under the human, and its row copies the human's `caller_type`.
 
 Who may hold one: a system principal authenticating through the client credentials path of §10.2, whose credential no person handles as a routine. A `tenant-admin` writes the list through EG-9's path, each write emits an audit event, and a `security-admin` can restrict or forbid the list through a new `userAuthorization.serviceIdentities` guardrail. A person cannot move onto this path by presenting a token with a chosen `caller_type`, because the subject must be listed. Lenny cannot detect a person holding a listed client secret, which "Residual risks" states.
 
-A service session's pull requests have the App as author, under the egress design's existing binding. The filter applies to that binding too, because `pull_requests: write` on an App token can approve any human's pull request.
+A listed service session takes the App binding on that host, under "The attach rule", so its pull requests have the App as author. Any other root session whose `caller_type` is not `human` is refused on a `required` pool, with no check to run. The flavour's preset applies to that binding too, because `pull_requests: write` on an App token can approve any human's pull request.
 
 ### Attribution
 
 `credential.mint` carries "a session identifier and no user identifier", and §12.8 treats it accordingly: `DeleteByUser` deletes nothing from it. This design keeps that.
 
-- `credential.mint` gains `tokenSource` (`app`, `userChild`, or `userCheck`) and `linkRef`. It carries no login, email, or `user_id`.
+- `credential.mint` gains `tokenSource` and `linkRef`. `tokenSource` is one of `app`, `userRegistered`, `userOauth2`, `userChild`, and `userCheck`, as `user-credential-delivery-design.md` defines. It carries no login, email, or `user_id`.
 - `linkRef` is a pseudonym in the same class as the session identifier. Its join lives in `user_links`, which erasure deletes, so a stored record stops resolving to a person, and the erasure statement in "Evidence streams" stays true once it says so. The class statement needs that one sentence when UG-2 lands.
 - The token hash field stays. For a child token, the hash also joins to the provider's audit log, which GitHub describes as listing the user with "`programmatic_access_type`" of "GitHub App user-to-server token" **[documented]**. That join lies with the customer's provider log rather than a Lenny store.
 - The provider login appears only in `user_links` and in §11.7 audit events, whose treatment §12.8 already defines through step 13 and step 14.
 - A tenant's security team asks "who" by joining `sessionId` to the session row while it exists.
-- A filter refusal goes to `egress.local` with the decision identifier and the operation name, with no variables or body. Repeated refusals on one session raise a `user_token_filter_refusals` alert, because an agent trying to approve is a prompt injection signal. These records are `self_reported`, as the stream's table says.
+- A request rule refusal goes to `egress.local` with the decision identifier and the operation name, with no variables or body. Repeated refusals on one session raise a `user_credential_rule_refusals` alert, because an agent trying to approve is a prompt injection signal. These records are `self_reported`, as the stream's table says.
 
 ### Failure behaviour
 
@@ -450,86 +488,139 @@ A service session's pull requests have the App as author, under the egress desig
 | Provider `unavailable` at bind | `USER_AUTHORIZATION_UNAVAILABLE`, retryable. |
 | Token Service down | As the egress design states, and bind also fails with the retryable error. |
 | Postgres down | Bind fails. Running reads continue until `verdictMaxAgeSeconds`, the existing §12 behaviour applies, and no new mint happens. |
-| Refresh token rejected | `relink_required`. |
+| Refresh token rejected | `user_act_required`. |
 | Rate limited at the provider | `unavailable`. The sweep backs off per link. A metric reports it. |
 
 ## UG-3: Pull request authoring
 
-### Binding source
+### The binding
 
-A credential binding's `secret` gains a third kind, `userLink`, naming a link provider. It has these limits, each enforced at write and again by the Token Service:
+Revision 3 had a third `secret` kind, `userLink`, with a filter a tenant could not clear. **`userLink` is now the `oauth2Link` source of a `userCredential` binding**, and `prAuthoring: user` on the pool writes this record:
 
-- `hosts` is exactly the host's API hostname: `api.github.com` on GitHub, and the GHES host on GHES. On GHES, the same hostname serves git and the web, and the filter's default denial covers the rest.
-- `delivery` is `inject` and no other value.
-- `permissions` is `pull_requests: write` and `contents: read` at most. `workflows` and `contents: write` are refused.
-- `scope` is `onRequest`, or an implicit attach when the pool sets `prAuthoring: user`.
-- `requestFilter` is `vcs-authoring`, which a tenant cannot clear on this kind. The filter's per-binding inputs are the session's repository list and slug, and the pool's `repositoryAutomation` and `commandPatterns`.
+```yaml
+userCredentialTypes:
+  - {name: github-user, source: oauth2Link, linkProvider: github-acme}
+---
+secret: { kind: userCredential, type: github-user }
+hosts: [api.github.com]
+delivery: inject
+scope: poolAttach
+# no attach: the kind fixes it, in the token trust record
+# no preset key: resolved at I8 from the flavour of the pool's provider and host
+```
 
-A session holds at most one `inject` binding per host, or an App-sourced binding on `api.github.com` would answer in its place. The egress design has no rule for two bindings on one host, so this is a requested change.
+- `prAuthoring: user` requires `userAuthorization: required`, and a link provider on that host with a ceiling of `inject` or above. A write without them is refused, so the check, the namespace, and `USER_LINK_REQUIRED` always hold on such a pool. Decision 44 records the cost. A `required` write with no link provider on the host is refused too.
+- `hosts` is the API host from the flavour table: `api.github.com` on GitHub, `api.<name>.ghe.com` on `ghe.com`, and the host itself on GHES and GitLab. On GHES, the same hostname serves git and the web, and a smart HTTP path there takes the egress design's git path rather than this binding.
+- The link provider names the template `github-scoped`, whose `permissions` is `pull_requests: write` and `contents: read` by default. That is data a tenant can widen, which the owner settled under decision 42.
+- The preset resolves at I8 from the flavour of the VCS pool's provider and host, and a tenant can change it. A `security-admin` can require it through `requestRules.requiredPresets`. See `user-credential-delivery-design.md`, "Who can change a preset".
+- `netagent` holds no provider code for this.
+
+### The attach rule
+
+This is the one place the attach is defined, and the egress design's `scope`, `user-credential-delivery-design.md`, and `tenant-scoping-identity-design.md` point here.
+
+- **The trigger.** A human root session that declares at least one writable repository under a pool with `prAuthoring: user` receives that pool's binding, with `scope: poolAttach`, without naming it. The binding has `required: true`, so a missing link gives `USER_LINK_REQUIRED`. A session declaring only read-only repositories there does not attach.
+- **It replaces a same-host App binding, on that host alone, for that session.** A tenant-wide App binding on `api.github.com` can exist beside it, because service sessions need one. It keeps its other hosts, such as `uploads.github.com`. Replacement holds whatever the user binding's state, so a `suspendedBy` user binding restores no App binding (UP-6). It also holds when the session's other entries sit under a pool with `prAuthoring: off` on that host. A session naming a second `inject` binding on that host explicitly is refused at bind under the one-binding rule.
+- **A listed service session** takes the App binding on that host, and never the pool's. Any other caller that is not `human` is refused on such a pool.
+- **A delegated child** receives the pool's binding only when the lease names it, as "Identity cases" states.
+
+### Other tokens on these hosts
+
+Under `user-credential-delivery-design.md`, a tenant can also define a type of its own on these hosts, and rules evaluate that type's hosts. **What follows is by host, for every session of the tenant.** On the API host of a `required` pool, the only permitted bindings under `inject` are an App-sourced binding, which the check governs, and the pool's link. A stored secret has no check, so it is refused at write, setting `required` on a pool suspends one that exists, and `userAuthorization.require` makes that hold whatever a tenant admin writes. **The owner also adopted this rule: a `file` binding whose type hosts include a covered host is refused unless every pool covering that host sets `allowRuntimeHeldCredentials`, whatever the pool's mode,** because on an `off` pool the push would otherwise silently act as the App. A pool added later without the flag, or the flag cleared later, suspends the binding, and a running session that named it gets a 401 on git rather than the App. On a host covered by a git route alone, the binding is admitted, the held token is dropped on the git path, and a push is refused. A platform warm-up asset covers its host only until bind, except on a `restricted` pool with `gitAccess`, so it does not bring this rule to a tenant with no pool there. A plan naming a suspended `file` binding is rejected at create with `422 USER_CREDENTIAL_BINDING_SUSPENDED`. `user-credential-delivery-design.md` states these, and UC-5 owns them.
+
+| On a `required` pool's hosts | Result |
+| :-- | :-- |
+| A stored secret binding, under either delivery | Refused at write. |
+| Any other `userCredential` type under `inject` on the API host, `registered` or `kind: oauth2` | Refused at write. |
+| A `file` binding whose type hosts include these hosts, with no flag | Refused at write. |
+| That binding with `allowRuntimeHeldCredentials: true`, on a pool with no `prAuthoring: user`, every pool covering the host flagged, and no App binding on the API host for that session | **UP-4 still holds for App tokens: no App token without a verdict. UP-9, UR-2 for what the agent's token reaches, UR-4, and UR-6 do not hold for that session,** since its token leaves every Lenny control. Posture reports the pool, and the session is marked `agentHeldCredential`. **Other sessions on the pool are unchanged:** the attach applies to a session naming that binding, whatever its release or suspension state, and with no current value the host answers 401. The pin exception needs a release, and suspension ends it. With no flag a held token is dropped for git and the mint is used **[measured]**. With the flag, `netagent` attaches the current value it holds on every git request and no mint is used to `netagent` for that host, under UC-5, and with no current value the host answers 401 **[measured]**. |
+| That binding on a pool with `prAuthoring: user`, or with an App binding on the API host | Refused at bind by the one-binding rule. |
+| A `file` binding on a type this pool's link provider serves | Refused unless the flag applies and the record's ceiling is `file`. |
+
+A `registered` type can lie, by declaring an innocent host and holding a GitHub token. That passes the checks above, and the enforcing control is the pin on the host the token works on, which waits on EG-12.
+
+**A smuggled token.** A client can also place a token through `inlineFile`, through `env` under a name the blocklist does not match, or in a message **[source]**, and input checks cannot recognize one. Under a `required` pool this is a bypass of the check on any unpinned host, and revision 3 pinned nothing. **The rule, which the owner settled under decision 40: when any `required` pool covers a host, that host and the kind's API hosts are `credentialPinned` for every session of the tenant, once EG-12 has landed.** A token reaching that host reaches the pool's repositories whichever pool the session is on, so the pin source reads every VCS pool of the tenant, unfiltered by Environment. UG-2 carries the wiring, and EG-12's pin takes a VCS pool as a source. A pinned host strips other credentials and refuses a host with no binding. `pinHosts: false` opts out, and posture reports it. An `internet` pool's raw sockets bypass `netagent`, so its sessions stay outside the pin, and posture reports that too. Until EG-12 lands, under the opt-out, or on an `internet` pool, this is a stated residual. Under T, a held token on a covered host is dropped for git and the mint is used **[measured]**, so the residual there is the API host. Decision 40 records the costs.
 
 ### Child token and the session's repositories
 
-The Token Service holds the parent and mints one child for each session's use.
+The Token Service holds the parent and mints one child for each session's use, through the `github-scoped` narrowing template of `user-credential-delivery-design.md`. These steps are that template's run on this provider.
 
 1. `netagent` asks on I8 for the binding, on its first request to that host.
 2. The Token Service verifies the pod and session, rejects a refused pod model or an impersonated session, runs the check for each repository, and asks I3.
-3. It selects the session's `granted` writable entries. Per `security-oversight-design.md` decision 25, a `pendingApproval` entry is absent, so SP11 holds, and a repository the session declared read-only is absent too, because one token has one permission set.
+3. It selects the session's `granted` writable entries. Per `security-oversight-design.md` decision 25, a `pendingApproval` entry is absent, so SP11 holds, and a repository the session declared read-only is absent too, because one token has one permission set. **An empty set mints no child:** `netagent` answers the request with 403, a decision identifier, and the reason `no_granted_repositories`.
 4. It calls `POST /applications/{client_id}/token/scoped` through the mint path with Basic authentication using the client ID and secret, `access_token`, `target_id`, `repository_ids`, and `permissions` **[documented]**.
-5. It answers with the secret, `expiresAt` from the response's `expires_at`, `cacheUntil`, the authoritative `hosts` and `attach`, the session's repository list for the filter, and `handling: [vcs-authoring-filter, reauth-on-401]`.
+5. It answers with the secret, `expiresAt` from the response's `expires_at`, `cacheUntil`, the authoritative `hosts` and `attach`, the resolved request rules, and `handling` naming the rule evaluator's minimum version and `reauth-on-401`.
 
-A token has one `target`, so a session whose `granted` entries span two owners is refused on the second owner's binding with `USER_TOKEN_MULTI_OWNER`. `gh pr create --head alice:feature` still works when that head already exists, because it sends `headRefName: "alice:feature"` to `createPullRequest` on the base **[captured]**, and the child needs only the base. `gh` offers an automatic fork at an interactive prompt alone, and a non-interactive run stops with "you must first push the current branch to a remote, or use the --head flag" **[source]**, so `POST .../forks` stays refused.
+A token has one `target`, so a session whose `granted` entries span two owners is refused on the second owner's binding with `USER_TOKEN_MULTI_OWNER`. `gh pr create --head alice:feature` still works when that head already exists, because it sends `headRefName: "alice:feature"` to `createPullRequest` on the base **[captured]**, and the child needs only the base. A branch pushed to a `fork` remote produced a head of `alice:<branch>` under T and P **[measured]**. `gh` offers an automatic fork at an interactive prompt alone, and a non-interactive run stops with "you must first push the current branch to a remote, or use the --head flag" **[source]**, and whether a child permits a fork is not established (S15).
 
 ### Child token cache and budget
 
 The cache exists for one reason: the limits on token creation are unknown for this endpoint (S2). If the "ten tokens per user, application, and scope" rule applies, a token per session means Alice's eleventh session silently revokes one of her older sessions' tokens, and a new one past ten per hour hits a browser prompt no server can answer.
 
-- **Key.** Tenant, `link_ref`, `generation`, sorted repository identifiers, permissions, and target. Two of Alice's sessions with the same repositories share a child. They have the same user and the same limits, so sharing widens nothing. Stored as §4.3 caches access tokens, encrypted in Redis, so replicas share it.
+- **Key.** Tenant, `link_ref`, `generation`, sorted repository identifiers, permissions, and target. Two of Alice's sessions with the same repositories share a child. They have the same user and the same limits, so sharing widens nothing. Stored as §4.3 caches access tokens, encrypted in Redis, so replicas share it, and sealed with the full key and the record digest as additional data, so a replica copying an entry to another key produces a value that fails to open.
 - **Budget.** A per-link counter over a rolling hour, 8 mints by default, and a cap on live children, also 8, counted from the cache rows until their expiry, since a child outlives the hour. Both have Helm overrides that S2 sets. Past the budget a mint returns a retryable `USER_TOKEN_RATE_LIMITED`. The Token Service also counts token requests per App against GitHub's 2,000 per hour and alerts near it, beside the egress design's counter.
 - **Revocation.** Session end revokes the child only when no other live session holds that key, and only once S5 shows that a child's revocation leaves siblings and the parent intact. Until then a child lives to its own expiry in `netagent`'s flushed memory and the Token Service's cache.
 - **On 401.** A child revoked by the ten-token rule appears as a 401, which `reauth-on-401` covers once, then surfaces as a 503 with a decision identifier and an alert naming the rule.
 
-### The request filter
+### Request rules on VCS hosts
 
-The filter is required from the first version of PR authoring. It is an allowlist over REST method and path, and over GraphQL mutation fields with their input keys, and a request it cannot classify is refused. The owner's requirement is that `gh` works, so every `gh pr` command except review, merge, and branch updates stays on the list.
+`user-credential-delivery-design.md` defines request rules, presets, and who can change them. This section states what they mean here.
 
-**Placement.** It is a stage between the authority check and the attach step in `inject`, reached by both transports (the terminated connection and the absolute-form plain HTTP request), so one code path decides. The prototype ran it there, and a request naming a filtered host is checked wherever it arrives **[captured]**. Because the egress design says `metadata` is a provider plugin in `netagent` with a stated interface, the filter is the same kind of plugin, one per provider. This is a stated departure, for these bindings alone, from "it knows hosts, headers, and files, and nothing about git, GitHub, or any other product". A generic mechanism cannot tell a pull request creation from an approval, because GitHub puts both under `pull_requests: write`.
+**The model.** `github-deny` and `gitlab-deny` are data, with paths per API flavour and request forms. The flavour of the VCS pool's provider and host selects the preset at I8. A binding that adds rules keeps the preset, and only `preset: none` clears it. The preset body is the extended preset, which the owner settled under that document's decision 24. A request matching no rule passes, so a new `gh` release keeps working, and `gh pr comment`, `edit`, `ready`, `close`, `reopen`, and `edit --base` all pass the rules by default. What the preset refuses stays refused unless a tenant changes it.
 
-**Refusal.** `netagent` answers with JSON `{"message": "refused by the egress operation allowlist: ...", "lenny": {"decisionId": "..."}}`. `gh` prints the status and message **[captured]**, for example `pull request create failed: HTTP 413: refused by the egress operation allowlist: body of 393568 bytes is over the 262144 byte bound`. It sends nothing upstream and attaches nothing.
+**Passing the rules is not the same as working.** The host then refuses what the token does not permit, and this table separates the two.
 
-**Request rules:**
+| Command | Rules under `github-deny` | The host then, under the default child | Evidence |
+| :-- | :-- | :-- | :-- |
+| `pr create` | Passes **[measured]** for the flags the 103 commands use, which exclude `--project` | Documented as permitted. `--project` needs a projects permission the child lacks. | The host is S15. |
+| `pr view`, `pr list`, `auth status`, and `gh api` reads | Pass **[measured]** | Within `contents: read` and `pull_requests`. Fields on `pr view` are likely refused or partial. | The host is S15. |
+| `pr status`, `checks`, `diff`, `repo view`, and `issue view` | Pass, as they name no denied operation. **[captured]** under the allowlist, and `issue view` in the earlier capture alone. Not run under deny mode. | Within `contents: read` and `pull_requests`. `pr checks` and `issue view` are likely refused or partial. | The host is S15. |
+| `pr comment`, `edit`, `ready`, `close`, and `reopen` | Pass **[measured]** | Documented under `pull_requests: write` for PR routes. | The host is S15. |
+| `issue create`, `run`, `release`, `gist`, and other commands outside the child's permissions | Pass **[measured]**. `release upload` goes to `uploads.github.com`, which needs a binding, and on GHES to the flavour's uploads path, which passes **[measured]**. | Refused, until `permissions` is widened | The host is S15. |
+| `secret set --env`, `secret delete --env`, `variable set --env`, and `variable delete --env` | Pass **[measured]** | As the token permits | |
+| `issue develop`, `repo sync`, `repo deploy-key add` and `delete`, `ssh-key add` and `delete`, `gpg-key add`, `gh api` contents writes, and `gh api` branch protection writes | Refused **[measured]** under the extended preset, and passing under the earlier smaller one (decision 24 there). `gpg-key delete` did not confirm, because the stub has no key to list, and its raw `DELETE` is refused. | Refused under `contents: read`, as documented | The host is S15. |
+| `pr review` with any event | Refused by `addPullRequestReview` **[measured]** | Would permit it, as documented | The stub proves forwarding only. |
+| `pr merge`, `--auto`, merge queue, and `--disable-auto` | Refused by `mergePullRequest`, `enablePullRequestAutoMerge`, and `disablePullRequestAutoMerge` | Merge needs `contents: write`, as documented for REST | **[measured]**, on all 14 merge rows across versions and flavours. |
+| `pr merge --delete-branch` | Refused at the mutation first **[captured]** under the allowlist | Not reached | Not run under deny mode. |
+| `pr update-branch`, `pr revert` | Refused by `updatePullRequestBranch` and `revertPullRequest` | Not reached | **[source]**. |
+| `gh api graphql` with an aliased refused mutation | Refused **[measured]** | Not reached | |
+| A new `gh` command using a mutation the preset does not name | Passes | As the token permits | **[design]**. This is the accepted cost. |
 
-| Rule | Value |
-| :-- | :-- |
-| Path handling | Raw path segments. Refused: any `%` outside GitLab's project segment, doubled slashes, dot segments, a trailing slash, `;`, `#`, backslash, and control bytes. Fixed parts match exactly and case-sensitively. The filter also refuses a request whose forwarded target would differ from the checked text. |
-| GitLab project segment | `{project}` accepts one encoded form. It is decoded once and must equal a project on the session's list from I8, or be that project's numeric identifier. Revision 2 replaces the prototype's refusal of route words with this comparison. `acme%2Fwidgets%2Fmerge_requests%2F7%2Fapprove` and `acme%2F..%2Fwidgets` reached the stub on the first pass and were closed **[captured]**. Under the list comparison neither can match. How GitLab would route them is **[stub cannot show]**, and the rule no longer depends on it. |
-| Prefix | `/` on github.com, `/api/v3/` and `/api/graphql` on GHES, and `/api/v4/` and `/api/graphql` on GitLab, from the provider kind. Everything else on the host is refused, including `/login/`, web routes, and git paths. `gh pr merge --delete-branch` also runs `git`, and on GHES the API and git share a host name **[captured]**. Pod git goes to the local git endpoint under the egress design's rewrite, so this stage does not see it, and option 3 of "Git remotes and client tools" would give git its own path on the terminated connection. No git request ran under the filter. |
-| Method override | `X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override`, and a `_method` query parameter are refused **[captured]**. |
-| Upgrades | `Upgrade`, `h2c`, WebSocket, extended CONNECT, and trailers are refused. |
-| Headers | Forwarded headers are an allowlist per provider, and `netagent` drops others. GitHub: `Accept`, `Accept-Encoding`, `Authorization`, `Content-Type`, `Content-Length`, `User-Agent`, `X-Github-Api-Version`, `Graphql-Features`, and `X-Gh-Cache-Ttl`, which is `gh`'s cache hint and reaches the origin **[captured]**. GitLab: `Accept`, `Accept-Encoding`, `Private-Token`, `User-Agent`, `Content-Type`, and `Content-Length` **[captured]**. |
-| Credentials | `netagent` overwrites the binding's attach header, which is `Authorization` for `gh` and `Private-Token` for `glab` **[captured]**. A request with `?access_token=` or `?private_token=` is refused, so a query cannot select another identity. |
-| Repository scope | A `/repos/{owner}/{repo}` or `/projects/{project}` path must name a repository on the list from I8, compared in canonical form. GraphQL mutations take node IDs, so the host's limit on the child binds their targets (S15). |
-| REST writes | A listed write has a body-key allowlist, and its JSON body passes the same strict decode and re-encoding as GraphQL. It takes `Content-Type: application/json` alone and **no query string**, because GitLab's page shows `POST .../notes?body=note` and a parameter in the query would skip the key list and the guard **[documented]**. No captured write used one **[captured]**. `GET` and `HEAD` with a body are refused. |
+**Command result [measured].** Under the final preset, 103 `gh` commands on each of Alpine and Debian, GHES and github.com: **63 forwarded, 23 denied actions refused, 0 denied actions missed, 6 others refused, and 11 with no write at the stub**, of which 4 are reads and 7 are stub limits (6 `project` commands and `discussion create`). The 6 are `gh issue develop`, `gh repo sync`, `gh repo deploy-key add`, `gh repo deploy-key delete`, `gh api -X PUT .../contents/...`, and `gh api -X DELETE .../branches/main/protection`. The earlier smaller preset gave 69, 23, 0, 0, and 11. Coverage is of the commands listed rather than every flag. **The stub proves forwarding only.**
 
-**GraphQL rules.** The endpoint admits `POST` alone, with one `Content-Type: application/json`, no query string, and no `Content-Encoding`. No `gh` request in 314 carried `Content-Encoding` **[captured]**. `netagent` applies these in order, and any failure refuses the request:
+**Version drift [measured].** Under the final preset, all 7 versions on Alpine and Debian, on both flavours, 12 rows each: 8 writes forwarded, merge refused, and 0 others refused at every version. The only non-zero exit other than merge is `pr edit` with metadata on 2.86.0 and 2.87.0 on github.com, on a stub limit with no refusal. An earlier run against the allowlist, on the Alpine client:
 
-1. Read the whole body up to the body bound before anything goes upstream. A body past the bound gets 413, whether stated by length or reached by chunking **[captured]**.
-2. Decode JSON at the token level, at every depth. Reject an array (a batch), any top-level key other than `query`, `variables`, and `operationName`, a duplicate key anywhere, a key whose exact spelling differs, invalid UTF-8, a lone surrogate, and nesting past the JSON depth bound. Numbers keep their literal text. `encoding/json` is unusable here: it matches struct fields case-insensitively and keeps the last duplicate.
-3. Apply the lexical rule to `query`: refuse a bare CR, any other control character except tab and LF, and U+0085, U+2028, U+2029, and U+FEFF **[captured]**. The CRLF pair is normalized.
-4. Parse with gqlparser's `ParseQueryWithTokenLimit`, under the token bound. A parser panic is recovered and refuses the request.
-5. Check depth by an iterative walk before anything recurses over the tree.
-6. Require exactly one operation. No `gh` document in the capture had more than one **[captured]**, and this removes the `operationName` differential. A present `operationName` must equal it.
-7. An operation is a query (including the shorthand) or a mutation. `subscription` is refused. A query's root fields are not listed: a query cannot write, the child limits its reach, and `gh api graphql` reads roots such as `rateLimit` that a list would break. The prototype held a root list. This revision drops it, and S8 reruns the attack table without it.
-8. A mutation may have several root selections up to the bound, and each must be a field. A fragment spread or inline fragment at the root is refused, so `... on Mutation` and `fragment F on Mutation` cannot hide a field. Directives at the root are refused.
-9. Each field's **name** must be on the list. Its alias is ignored, so `createPullRequest: addPullRequestReview(...)` reads as `addPullRequestReview` **[captured]**.
-10. Each field's only argument is `input`. Its value is a variable, as every `gh` subcommand sends, or an object literal, as `gh api graphql -f query='mutation { addComment(input: {...}) ... }'` sends **[captured]**. The filter resolves it, including variables nested in a literal, into one object and applies the field's input-key list.
-11. Apply the text rules to every string in that object ("Comment-triggered actions").
-12. Generate the forwarded body ("What reaches the host").
+| `gh` | Deny: refused other than merge | Allowlist: refused other than merge |
+| :-- | :-- | :-- |
+| 2.72.0, 2.73.0 | 0 | 8, including `pr create --reviewer --assignee` |
+| 2.86.0, 2.87.0, 2.93.0, 2.94.0, 2.103.3 | 0 | 6 (`pr edit`, `pr comment`) |
 
-`gh api` falls under the same filter because it sends through the same proxy to the same paths, and `gh api graphql --input` reaches step 1 like anything else **[captured]**.
+Two rows on github.com, 2.86.0 and 2.87.0 `pr edit` with metadata, exit 1 on a stub limit with no filter refusal. The allowlist here includes the `Time-Zone` fix. 
+
+**Widening `permissions`.** A tenant that wants `gh issue` or `gh run` widens the template. **Once `contents: write` is granted, the host no longer refuses merges, `PUT contents`, `createCommitOnBranch`, or ref writes, and the deny preset alone stands between an agent and those operations.** The same holds for `actions: write`, and any new operation in those families passes until the preset names it. The owner settled decision 42 with this stated.
+
+**What went away.** Owner decision D1 accepted these:
+
+- A new GitHub mutation that can approve or merge passes until the preset is updated.
+- The input-key check is gone, so `updatePullRequest` with `baseRefName` or `state` passes. `gh pr edit --base` works, and it can move an approved pull request onto another branch. Whether GitHub keeps approvals across a base change is S16.
+- The target check is gone. A REST path naming a repository outside the session is forwarded, and under `github-scoped` the host answers 404 (S15). A VCS kind that delivers must name a template.
+- `pr edit`'s partial writes no longer arise from the rules, since its mutations all pass.
+
+**Headers.** The forwarded-header allowlist is gone. `netagent` strips credential headers only, which `Time-Zone` required on any image with `/etc/localtime` **[measured]**. With it fixed, 10 images and `TZ` and `LANG` variants gave 0 refusals **[measured]**.
+
+**What remains unbound.** Targets, reads (`repository`, `node`, and `search` read whatever the token reads), free text, and git, which sits under the egress design's rules, "Git pushes and the most recent push rule", and the push option refusal.
+
+### Keeping presets current
+
+An unlisted operation passes under `default: allow`, so a new `gh` release breaks nothing. The risk moves to the server side and to presets.
+
+- A CI job diffs GitHub's public GraphQL schema and REST OpenAPI description, and GitLab's quick action page and fine-grained tables, on a schedule. A new name in the review, merge, queue, content, ref, deployment, or policy families raises a preset change for review. The preset names REST twins and policy mutations that exist today, which the accepted loss does not cover. The rate is about one a year on GitHub, in one reading **[source]**.
+- Rules reach `netagent` resolved on I8, so a preset update reaches a pod at its next `cacheUntil` with no image change.
+- The window in which a new mutation with that power passes is the schedule, the review, and `cacheUntil`. "Residual risks" states it.
 
 ### What reaches the host
 
-The first filter parsed the client's bytes and forwarded those same bytes. A parser difference then becomes a bypass, and one was found. This document passed the filter and reached the stub with the injected token, on both protocols **[captured]**:
+This rule carries over to inspected requests, on any binding with rules: a listed GraphQL path, and a write under `bodyPatterns` or `denyBodyKeys`. Other writes stream as `user-credential-delivery-design.md` states. The first filter parsed the client's bytes and forwarded those same bytes. A parser difference then becomes a bypass, and one was found. This document passed the filter and reached the stub with the injected token, on both protocols **[captured]**:
 
 ```
 # x\rquery{viewer(a:"""\nmutation{addPullRequestReview(...){clientMutationId}} #"""){login}}
@@ -537,33 +628,36 @@ The first filter parsed the client's bytes and forwarded those same bytes. A par
 
 gqlparser, graphql-go, graphql-js 17.0.2, and graphql-ruby's C parser read one query. graphql-ruby 2.6.14's default lexer ends a comment only at LF and reads one mutation, `addPullRequestReview` **[captured]**, because its reading of the bare CR differs. Which parser GitHub runs is **[stub cannot show]**. The corpus also shows other disagreements, including a NUL and a BOM between definitions. A design that has to know the host's parser is the failure here, because that parser is unknown and can change.
 
-**The rule: the host receives bytes that `netagent` generated from the checked structure. No byte of the client's document, JSON envelope, or JSON body reaches the host's parser.**
+**The rule: on an inspected request, the host receives bytes that `netagent` generated from the checked structure. No byte of the client's document, JSON envelope, or JSON body reaches the host's parser.**
 
-- **Document.** `query` is the filter's own printing of the parsed tree, which removes comments and odd whitespace. `netagent` parses the printed text again and requires the same operation kind and root field names. If that fails, it refuses the request. Printed documents read the same under gqlparser and graphql-ruby on all 24 corpus documents **[captured]**. `gh` kept the same exit codes and operations with the printer on, on GHES **[captured]**, and the attack table passed with it on **[captured]**.
+- **Document.** `query` is `netagent`'s own printing of the parsed tree, which removes comments and odd whitespace. `netagent` parses the printed text again and requires the same operation kind and root field names. If that fails, it refuses the request. Printed documents read the same under gqlparser and graphql-ruby on all 24 corpus documents **[captured]**, and the 159 documents of the later corpus were all idempotent under printing, with 0 differences under graphql-js and definitions reordered in 6 **[measured]**. `gh` kept the same exit codes and operations with the printer on, on GHES **[captured]**, and the attack table passed with it on **[captured]**.
 - **Lexical rule.** It stays beside the printer, because it refuses a suspicious document with a clear message rather than transforming it, and it is cheap. Either one closes the bare CR **[captured]**.
-- **Envelope.** `netagent` writes a new JSON object holding `query` and `variables`. It drops `operationName`, which step 6 has made redundant. `Content-Type` and `Content-Length` are its own.
-- **Variables and REST bodies.** The prototype copied `variables` verbatim, and that left the open defect: `{"i":{"pullRequestId":"P","state":"CLOSED"},"i":{"pullRequestId":"P"}}` passed the `updatePullRequest` input check and reached the stub, because the filter read the last value **[captured]**. A first-wins origin would close the pull request. Ruby's standard JSON reads the last value **[captured]**, and GitHub's reader is **[stub cannot show]**. The effect stops at a listed mutation's fields, so it never reached approval or merge. This revision closes it twice: step 2 refuses a duplicate key at every depth, and `netagent` re-encodes the decoded tree with sorted keys, so the host sees one value whatever it would have chosen. **[design]**. The re-encoding has not run, so S8 repeats the matrix with it on.
-- **URL and query string.** The path is forwarded as checked. A write has no query string. On `GET` and `HEAD`, a query string is rebuilt from parsed pairs.
+- **Envelope.** It must be an object, with `query` a string and `variables` an object or null. `netagent` writes a new JSON object holding them. It drops `operationName`, which the one-operation rule makes redundant. `Content-Type` and `Content-Length` are its own.
+- **Variables and REST bodies.** The input-key check described here is gone with the allowlist, and the duplicate-key rule stays, because `bodyPatterns` read those values. The prototype copied `variables` verbatim, and that left the open defect: `{"i":{"pullRequestId":"P","state":"CLOSED"},"i":{"pullRequestId":"P"}}` passed the `updatePullRequest` input check and reached the stub, because the filter read the last value **[captured]**. A first-wins origin would close the pull request. Ruby's standard JSON reads the last value **[captured]**, and GitHub's reader is **[stub cannot show]**. The effect stops at a listed mutation's fields, so it never reached approval or merge. The JSON rule now refuses a duplicate key at every depth, and `netagent` re-encodes the decoded tree, so the host sees one value whatever it would have chosen **[measured]**: `{ "a" : 1e2 , "b" : "A\/x" }` reached the stub as `{"a":1e2,"b":"A/x"}`, with number text preserved.
+- **URL and query string.** `netagent` forwards the canonical path, so a host never decodes what a rule did not. Any escape outside a declared encoded segment is refused on every method, empty segments and trailing slashes are dropped, the final segment is also compared with anything after its first `.` removed for a refusal, and under a preset an unmatched `/api/*` or `/graphql*` path is refused **[measured]**. That design states the rule. A preset's write form has no query string. On `GET` and `HEAD`, a query string is rebuilt from parsed pairs.
 - **Framing.** `netagent` writes its own HTTP/1.1 or HTTP/2 upstream.
 
 Canonical forwarding costs 1.9 µs on `pr create`, 44 µs on the largest `gh` document, and 14 ms on the token document **[captured]**. Printing is also what the first out-of-memory kill came from, so the bounds below come first.
 
+**Check cost under the final preset [measured],** at 2 CPUs and 200 iterations, so noisier than the earlier table: `pr create`, 353 B, 19.6 µs and 11 KB; the `largest` case, 2,388 B, 120 µs and 106 KB; a 65 KB PR body, 600 µs and 584 KB; 258 KB of `<`, 2.7 ms and 1.7 MB; 4,096 tokens, 1.09 ms and 1.4 MB; a 512 KiB body, 3.65 ms and 5.2 MB; 40,000 JSON nodes in variables, 10.5 ms and 7.5 MB; and REST `GET`, 2.1 µs. An earlier run gave a 24% to 49% rise over the allowlist on `gh` documents, and paired end-to-end, a p50 difference from an unfiltered host of 0.50 ms at 209 B, 1.48 ms at 2,388 B, and 2.45 ms at 65,784 B, with `memory.peak` at 41.7 MB under a 15,000 token limit. `memory.peak` under the final bounds has not run. A separate result stands: 65,536 `<` characters print to more than 256 KiB, and 512 KiB admits them.
+
 ### Bounds and cost
 
-Every one of these came from a defect or a measurement in the capture.
+Every one of these came from a defect or a measurement in the capture. The size and depth bounds each passed at their limit and were refused one past it on GHES, github.com, and GitLab, and the fragment chain ran 15 plus 15 against 20 plus 20. Body read, concurrency, the check budget, and head read ran on github.com, with no one-past row **[measured]**. They are now data defaults on any binding with rules, within platform ceilings, under `user-credential-delivery-design.md`.
 
 | Bound | Value | Why |
 | :-- | :-- | :-- |
-| Body, `/graphql` and listed REST writes | 512 KiB | `gh` JSON-encodes with HTML escaping, so `<` costs 6 bytes. The prototype's 256 KiB bound refused 44,000 `<` (264,352 bytes), 65,536 `<` (393,568 bytes), and 65,536 emoji (262,496 bytes) **[captured]**. 65,536 characters is GitHub's body limit as recalled, unverified (S15). 512 KiB admits the worst `gh` encoding of that limit. |
+| Body, inspected requests | 512 KiB | `gh` JSON-encodes with HTML escaping, so `<` costs 6 bytes. The prototype's 256 KiB bound refused 44,000 `<` (264,352 bytes), 65,536 `<` (393,568 bytes), and 65,536 emoji (262,496 bytes) **[captured]**. 65,536 characters is GitHub's body limit as recalled, unverified (S15). 512 KiB admits the worst `gh` encoding of that limit. |
 | Document, within the body | 64 KiB | The largest `gh` body in the capture is 2,388 bytes **[captured]**. A PR body travels in variables, so this bound does not limit it. |
-| Tokens | 4,096 | The largest `gh` document has about 608 by a regex count **[captured]**. The prototype had no token limit, and a 256 KiB document of tokens cost 36 ms and 40 MB. |
-| GraphQL depth | 32 | The deepest `gh` document has 14 levels **[captured]**. An 80 KB document nested 40,000 levels killed the prototype's printer at a 256 MiB limit, which stops egress for the whole pod **[captured]**. |
-| JSON depth | 32 | The same defect class, through `variables`. **[design]** |
-| Root fields per mutation | 16 | `gh`'s project batch sends one per project change. **[design]** |
-| Head read | 10 s, with a bare LF refused at once with 400 | A request with bare LF line endings got no answer, and the prototype held the connection for 20 s with no deadline **[captured]**. |
-| Body read | 30 s | A slow client must not hold a buffer. **[design]** |
-| Concurrent checks per pod | 4, then 429 with `Retry-After` | Holds buffered bytes to 2 MiB. **[design]** |
-| Check time | 100 ms budget, refused with 503 past it | The parser cannot be preempted, so the bounds above are what limit it, and this catches a defect. **[design]** |
+| Tokens | 4,096 | The largest of 166 corpus documents has 698 by the parser's lexer **[measured]**. The prototype had no token limit, and a 256 KiB document of tokens cost 36 ms and 40 MB. |
+| GraphQL selection depth | 32, with fragment spreads followed and a cycle refused | The deepest corpus document has 14 levels **[measured]**. An 80 KB document nested 40,000 levels killed the prototype's printer at a 256 MiB limit, which stops egress for the whole pod **[captured]**. |
+| GraphQL value depth | 32, counting the leaf | The deepest corpus document has 2 **[measured]**. |
+| JSON depth | 32 | The same defect class, through `variables`. 33 and 40,000 were refused **[measured]**. |
+| Root fields per mutation | 16 | The corpus has 1, and `gh`'s project batch sends one per project change. A query has no root bound, and 200 passed **[measured]**. |
+| Head read, on `netagent`'s listeners rather than per rule set | 10 s, with a bare LF refused at once with 400 | A request with bare LF line endings got no answer, and the prototype held the connection for 20 s with no deadline **[captured]**. A partial head got 400 at 10.0 s **[measured]**. A bare LF head also waited 10.0 s, because the prototype does not implement "at once", so that part is **[design]**. |
+| Body read | 30 s | A body at 2 KB/s got 408 **[measured]**. |
+| Concurrent checks per pod | 4 inspected requests, then 429 with `Retry-After` | Holds buffered bytes to 2 MiB. With 6 slow bodies, 4 got 200 and 2 got 429 **[measured]**. |
+| Check time | 100 ms budget, refused with 503 past it | The parser cannot be preempted, so the bounds above are what limit it, and this catches a defect. It was never reached at 100 ms, and the worst case benchmarked is 10.5 ms **[measured]**. |
 
 **Against `netagent`'s memory.** The egress design's example request is 64 Mi. Measured `memory.peak` was 15.5 MiB after `pr create`, 17.9 after the largest `gh` document, and 18.9 after a 258 KB body **[captured]**, cumulative in that order on one process. The 256 KiB token document took it to 74.9 MiB **[captured]**, past that request, which is the case the token and document bounds remove. With a linear extrapolation from the measured 5.5 ms and 1.7 MB at 258 KB, a 512 KiB body costs about 11 ms and 3.4 MB, about double that with printing and re-encoding, and four at once stay under 30 MiB of transient allocation. Scaling the measured costs by token count puts a document at the token bound near 1 ms and under 2 MB. These figures are estimates **[design]**, and S9 measures them. The chart sets `GOMEMLIMIT` on `netagent`, so the collector works before the limit.
 
@@ -577,167 +671,111 @@ Every one of these came from a defect or a measurement in the capture.
 
 All of these are **[captured]** on a laptop under other load, so small differences are not resolved. The binary grew from 10.87 MB to 11.41 MB.
 
-**What the user sees past a bound.** `gh` exits non-zero with `HTTP 413: refused by the egress operation allowlist: body of N bytes is over the 524288 byte bound` and nothing is written **[captured for the format]**. An ordinary body stays far under it. Past the host's own limit the host's error applies.
-
-### Bypass analysis
-
-| Route | Result | Why |
-| :-- | :-- | :-- |
-| HTTP/2 | Filtered **[captured]** | `gh` and `glab` both speak it. Each stream is one request. Six attack rows ended in protocol errors from the server library, with nothing at the stub. |
-| HTTP/1.1 framing and pipelining | Filtered **[captured]** | `netagent` writes its own upstream request, so conflicting framing cannot reach the host. |
-| Absolute-form | Filtered **[captured]** | One authority is derived, and it enters the same stage. A differing `Host` is refused. |
-| Another bound host, and reuse after an allowed request | Refused **[captured]** | A filtered connection refuses any other authority, and each request is checked. |
-| `uploads.github.com` or `github.com` | No token | Neither is bound. On GHES a single host exists and the prefix rule applies. |
-| Opaque tunnel | No credential **[captured]** | 2 rows reached the stub with no credential, and 1 did not connect. |
-| Another binding on the host | Refused | One `inject` binding per host and session. |
-| HTTP/3 | Absent | `netagent` offers `h2` and `http/1.1` in ALPN, and the proxy carries CONNECT only. |
-| GET, form, `application/graphql`, gzip, zstd, and deflate | Refused **[captured]** | The endpoint admits one form. |
-| Parser or JSON differences | Closed by the rule | "What reaches the host". |
-| Reflection of the token | Scrubbed | The egress design's scrub covers the bound host's responses, with its stated re-encoding limit. |
-| Compromised `netagent` | Filter is absent | See "Residual risks". UP-2 still limits it on GitHub and GHES. |
-
-### Allowlists
-
-The operation names below come from the capture of `gh` 2.103.3. **The prototype's policy listed only the first six fields, so the rest are [captured] as operations and have not run through a filter that lists them.** S8 runs that matrix, and it must show that `gh pr comment`, `edit`, `ready`, `close`, and `reopen` exit 0.
-
-**GitHub and GHES mutations:**
-
-| Field | `gh` operation and command | `gh` uses it on | Input keys |
-| :-- | :-- | :-- | :-- |
-| `createPullRequest` | `PullRequestCreate`, `pr create` | Both | `repositoryId`, `title`, `body`, `draft`, `baseRefName`, `headRefName`, `maintainerCanModify` |
-| `updatePullRequest` | `PullRequestCreateMetadata`, `PullRequestUpdate`, `pr create` and `pr edit` | Both | `pullRequestId`, `title`, `body`, `assigneeIds`, `labelIds`, `milestoneId`, `projectIds`. `baseRefName` and `state` are refused. |
-| `requestReviews` | `PullRequestCreateRequestReviews`, `--reviewer` | GHES | `pullRequestId`, `userIds`, `teamIds`, `union` |
-| `requestReviewsByLogin` | `RequestReviewsByLogin`, `--reviewer` and `pr edit` | github.com | `pullRequestId`, `userLogins`, `botLogins`, `teamSlugs`, `union` |
-| `replaceActorsForAssignable` | `ReplaceActorsForAssignable`, `--assignee` and `pr edit` | github.com | `assignableId`, `actorLogins` |
-| `addProjectV2ItemById` | `UpdateProjectV2Items`, `--project` and `pr edit` | Both | `contentId`, `projectId` |
-| `deleteProjectV2Item` | `UpdateProjectV2Items`, `pr edit --remove-project` **[source]** | Both | `itemId`, `projectId` |
-| `addLabelsToLabelable`, `removeLabelsFromLabelable` | `LabelAdd` **[captured]**, and label removal, which S8 confirms | Both | `labelableId`, `labelIds` |
-| `markPullRequestReadyForReview`, `convertPullRequestToDraft` | `pr ready` | Both | `pullRequestId` |
-| `closePullRequest`, `reopenPullRequest` | `pr close`, `pr reopen` | Both | `pullRequestId` |
-| `addComment` | `CommentCreate`, `pr comment` | Both | `subjectId`, `body`. Under `repositoryAutomation`. |
-| `updateIssueComment`, `deleteIssueComment` | `CommentUpdate`, `CommentDelete`, `pr comment --edit-last` and `--delete-last` **[source]** | Both | `id`, `body`. Under `repositoryAutomation`. |
-
-The filter admits these on both flavours, whichever one `gh` uses today. Neither form grants more than the other, and `gh`'s own source says the ID-based path "can be removed once GHES supports requestReviewsByLogin", so a GHES upgrade can change the selection through `__type`. A table split by flavour would break `gh` on that upgrade. Prefixes and `GET meta` differ by flavour, as stated.
-
-The permissions on the child are `pull_requests: write` and `contents: read`, so a field needing more fails at the host. `addProjectV2ItemById` needs a projects permission the child lacks, and `gh pr create --project` then creates the pull request and reports the project failure. That is the App's configuration to decide, and it is **[stub cannot show]**.
-
-**Refused.** Every other mutation, with no list needed. `gh` commands this stops, all **[captured]** refused: `pr review` with each event (`addPullRequestReview`, the same document for all three), `pr merge` with `--merge`, `--rebase`, `--squash`, and `--admin` (`mergePullRequest`), `pr merge --auto` and merge-queue pull requests (`enablePullRequestAutoMerge`), and `pr merge --disable-auto` (`disablePullRequestAutoMerge`). Also refused: `submitPullRequestReview`, `dismissPullRequestReview`, `addPullRequestReviewThread`, `enqueuePullRequest`, `dequeuePullRequest`, `updatePullRequestBranch`, `revertPullRequest`, `createCommitOnBranch`, `mergeBranch`, and `deleteRef`.
-
-**Why review comments stay refused.** `gh pr review --comment` differs from an approval only in the `event` variable, so the filter can check `event: COMMENT` now that variables are decoded strictly. It refuses that too, because a review with no event becomes a pending review, and each adjacent mutation would then need its own reasoning. An agent uses `gh pr comment` instead, which loses inline comments.
-
-**`pr edit`.** `gh pr edit` runs its mutations concurrently **[source]**, so a refused one left others applied: on GHES, `updatePullRequest` and `addProjectV2ItemById`, and on github.com also `requestReviewsByLogin` and `replaceActorsForAssignable` **[captured]**. Listing the whole set above removes the partial write for every flag except `--base`. `--base` is refused as `baseRefName`, since retargeting can move an approved pull request onto a protected branch. Whether GitHub keeps approvals across a base change is S16, and a pass there lets this key onto the list. Until then `gh pr edit --base main --title x` fails with the title unwritten if they share one mutation, and with others applied if not.
-
-**`pr close --delete-branch`** closes the pull request and then fails on `DELETE .../git/refs/...`. The close stays.
-
-**GitHub and GHES REST (below the provider's prefix):**
-
-| Method | Path | From | Tag |
-| :-- | :-- | :-- | :-- |
-| `GET`, `HEAD` | The root path, `user`, `rate_limit`, and on GHES `meta` | `auth status`, feature detection | **[captured]** for root, `user`, and `meta` |
-| `GET`, `HEAD` | `repos/{owner}/{repo}` and below, for a listed repository | `pr diff` with a diff `Accept`, `repo view` through `readme`, `gh api` | **[captured]** for the routes `gh` used |
-| `POST` | `repos/{owner}/{repo}/pulls`, for a listed repository, with `title`, `body`, `head`, `base`, `draft`, and `maintainer_can_modify` | `gh api`, and other tools | **[captured]** as a route |
-| `POST`, `DELETE` | `repos/{owner}/{repo}/pulls/{n}/requested_reviewers`, with `reviewers` and `team_reviewers` | `pr edit` on GHES | **[captured]** |
-| `POST` | `repos/{owner}/{repo}/issues/{n}/comments`, with `body`, under `repositoryAutomation` | `gh api` | **[design]** |
-
-Refused and named because the review asked: `POST .../pulls/{n}/reviews` and `.../events`, `PUT .../pulls/{n}/merge`, `PUT .../pulls/{n}/update-branch`, `PATCH .../pulls/{n}`, `POST .../merges`, `POST .../forks`, `PATCH` and `DELETE .../git/refs/...`, all **[captured]** refused where tried. `GET` passes through a broad path because the child limits what it can read, and `gh` reads many routes. The prototype listed exact `GET` routes and listed query keys, and this revision widens that for `gh api` **[design]**.
-
-**GitLab REST (below `/api/v4/`), with `{project}` as above.** `glab` used REST alone for the commands captured **[captured]**, and `/api/graphql` admits queries and no mutation:
-
-| Method | Path | From | Tag |
-| :-- | :-- | :-- | :-- |
-| `GET`, `HEAD` | `user`, `users`, `version` | `mr create` with metadata | **[captured]** for `user` and `users` |
-| `GET`, `HEAD` | `projects/{project}` and below | `mr create`, `mr view`, `mr view --comments`, `mr list` | **[captured]** |
-| `POST` | `projects/{project}/merge_requests`, with `title`, `description`, `source_branch`, `target_branch`, `labels`, `assignee_ids`, `reviewer_ids`, `target_project_id`, `milestone_id`, `squash`, and `remove_source_branch` | `mr create` | **[captured]** for the first nine keys. A `merge_when_pipeline_succeeds` field passed the prototype, which had no body-key list, and this list closes it. |
-| `PUT` | `projects/{project}/merge_requests/{n}`, with `title`, `description`, `labels`, `add_labels`, `remove_labels`, `assignee_ids`, `reviewer_ids`, `milestone_id`, and `state_event` | `mr update`, `mr close`, `mr reopen` | **[design]**. S10 captures them. `target_branch` is refused, as `baseRefName` is. |
-| `POST` | `projects/{project}/merge_requests/{n}/notes`, with `body` | `mr note` | **[design]**. S10 captures it. |
-
-Refused and named: `POST .../approve` and `.../unapprove`, `PUT .../merge`, `PUT .../rebase`, `PUT .../reset_approvals`, `POST .../cancel_merge_when_pipeline_succeeds`, and every mutation (`mergeRequestAccept`, `mergeRequestSetDraft`), **[captured]** where tried. `glab mr create --auto-merge` creates the merge request and then fails on `PUT .../merge`, and `--create-source-branch` fails on `POST .../repository/branches` **[source]**.
+**What the user sees past a bound.** `gh` exits non-zero with `HTTP 413: refused by request rules: body of N bytes is over the 524288 byte bound` and nothing is written **[captured for the format, under the allowlist's wording]**. An ordinary body stays far under it. Past the host's own limit the host's error applies.
 
 ### Comment-triggered actions
 
-Allowing comments reopens a path the route filter cannot see: an input that something else treats as a command, carrying Alice's identity. The body of `createPullRequest` and `updatePullRequest` carries the same risk, as a PR body also reaches bots, so **refusing comments never closed this path**, and it cost `gh pr comment`.
+An input something else treats as a command carries Alice's identity. The body of `createPullRequest` and `updatePullRequest` carries the same risk as a comment, so refusing comments never closed this path, and revision 3's capture showed that it cost `gh pr comment` **[captured]**.
 
 **GitHub and GHES.** The host has no native comment commands. Repositories run bots that do: Prow's `/lgtm` and `/approve`, merge bots such as Mergify and Bors, Atlantis's `atlantis apply`, and `issue_comment` workflows that gate on `author_association`. (Dependabot retired its merge commands in January 2026 **[documented]**.) A single injected agent commenting `/approve` on Bob's pull request produces an approval under Alice's name wherever such a bot trusts her. Lenny cannot detect these bots, and no regular expression covers their grammars.
 
-Text is not the only trigger. Kodiak merges a pull request carrying its automerge label once branch protection passes, and `labeled` is a documented `pull_request` activity type that a workflow can select **[documented]**.
+Text is not the only trigger. Kodiak merges a pull request carrying its automerge label once branch protection passes, and `labeled` is a documented `pull_request` activity type a workflow can select **[documented]**. `ready_for_review`, `review_requested`, `assigned`, `closed`, and `edited` are selectable too **[documented]**.
 
-The tenant knows its automation, so the design has it say. **`repositoryAutomation` has no default, and a write of `prAuthoring: user` or `bot` must set it:**
+**Under the preset model.** Revision 3's required `repositoryAutomation` statement is retired, along with its label-key logic, because those were allowlist input checks. A tenant with such automation adds rules:
 
-| Value | `addComment` and friends | Label keys | Text checks |
-| :-- | :-- | :-- | :-- |
-| `none` | Allowed on the session's repositories | Allowed | None. The tenant states no automation reads these inputs. |
-| `present` | Allowed on the session's repositories | Refused | `commandPatterns` is required: RE2 patterns the tenant writes for its bots, applied per line to comment bodies, PR bodies, and titles. A match refuses with 403, naming the pattern. |
-| `refuse` | Refused | Refused | The patterns still apply to PR bodies and titles when listed. |
+- `graphql.denyMutations: [addComment, addLabelsToLabelable, ...]` refuses an operation outright.
+- `bodyPatterns` with the bot's grammar refuses per line on comments, PR bodies, and titles, including every string and block string literal in a GraphQL document, such as `createNote(input: {body: "ok\n/merge"})`, a variable default, or a directive argument **[measured]**. A pattern is a deny list over free text, which the capture found weak: refusing every `/word` line also refused `/usr/bin/env` **[captured]**. It is offered because the tenant's list targets a grammar it controls.
+- The stronger control sits with the bot: a comment made through a GitHub App user token carries a non-null `performed_via_github_app` in the REST schema **[documented]**, and the UI shows the App's badge, so a bot or workflow can refuse commands from it. The tenant page recommends that first, and whether bots see that field in webhook payloads is S15.
 
-Label keys are `labelIds` on `updatePullRequest`, `addLabelsToLabelable`, and `removeLabelsFromLabelable` on GitHub, and `labels`, `add_labels`, and `remove_labels` on GitLab, with `/label`, `/unlabel`, and `/relabel` added to the guard. On GitHub a label is an opaque node ID, so the filter cannot allow some names and refuse others. Under these values `gh pr create --label` creates the pull request and exits non-zero on the label step, because `gh` sends them as separate mutations **[captured]**.
+The owner settled decision 35: `repositoryAutomation` is retired, and the setup flow and posture prompt a tenant about bots.
 
-A `security-admin` can force `refuse` or `present` through an SO-2 guardrail. Text patterns are weak evidence, as the capture found: free-text refusal is a deny list over free text. They are offered because the tenant's list targets a grammar it controls. The stronger control sits with the bot: a comment made through a GitHub App user token carries a non-null `performed_via_github_app` in the REST schema **[documented]**, and the UI shows the App's badge, so a bot or workflow can refuse commands from it. The tenant page recommends that first. Whether bots see that field in their webhook payloads is S15.
+**CI.** A pushed branch triggers the repository's existing workflows. GitHub's page says secrets are withheld "when a workflow is triggered from a forked repository" **[documented]**, and it describes no such withholding for a branch in the same repository, which is what the namespace rule produces. The default token omits `workflows: write`, so an agent cannot edit a workflow file, and a workflow still runs the branch's build scripts. Whether an App token's push triggers these is not stated on that page (S15). GitLab behaves the same way for unprotected variables, and it has no permission like `workflows: write`, so an agent can also push a `.gitlab-ci.yml`, as the egress design states. A tenant limits this with required reviewers on environments and protected variables, and the repository setting that lets Actions approve pull requests stays off. This exists under the egress design's App-token pushes today, and "Residual risks" states it.
 
-**Other events.** `ready_for_review`, `review_requested`, `assigned`, `closed`, and `edited` are events a workflow or bot can also select **[documented]**, and the design leaves those mutations allowed under every value, since refusing them breaks `gh` for a risk the tenant's bot configuration decides. `repositoryAutomation` covers comments, text, and labels. It does not cover these.
+**GitLab.** GitLab itself runs quick actions, whatever the tenant has installed: "Run automatically when you save descriptions or comments" **[documented]**. `glab mr create --description /merge` carries a merge inside an allowed route, and a route-only policy sent it to the stub with the injected token **[captured]**. Whether GitLab would execute it for that token is **[stub cannot show]**, and it is S17.
 
-**CI.** A pushed branch triggers the repository's existing workflows. GitHub's page says secrets are withheld "when a workflow is triggered from a forked repository" **[documented]**, and it describes no such withholding for a branch in the same repository, which is what the namespace rule produces. The default token omits `workflows: write`, so an agent cannot edit a workflow file, and a workflow still runs the branch's build scripts. Whether an App token's push triggers these is not stated on that page (S15). GitLab behaves the same way for unprotected variables. A tenant limits this with required reviewers on environments and protected variables, and the repository setting that lets Actions approve pull requests stays off. This exists under the egress design's App-token pushes today, and "Residual risks" states it.
+The prototype refused every line starting with `/word`, which caught `/merge`, a following-line `/approve`, and a CR-separated `/merge`, and also refused an ordinary `/usr/bin/env` line **[captured]**. That breaks legitimate descriptions. `gitlab-deny` carries a narrower `bodyPatterns` set: lines split on LF, CR, VT, FF, U+0085, U+2028, and U+2029, and refused when, after ASCII whitespace, they name `approve`, `lgtm`, `unapprove`, `merge`, `rebase`, `submit_review`, `target_branch`, or `run_pipeline`, compared case-insensitively and regardless of code fences **[documented for the names, apart from `lgtm`]**. `/usr/bin/env` passes. A write with a query string is refused, because GitLab's page shows `POST .../notes?body=note`, and quick actions run on notes **[documented]**. The pattern with those eight names ran **[measured]**: it refused `/merge` and `/approve` in JSON, escaped, CR-separated, query, form, note, and GraphQL forms, also refused prose in a line starting `/merge the two lists` and a `/merge` inside a code block, and left `/usr/bin` and `/assign_reviewer` alone. `/target_branch` and a commit comment are refused too, because the pattern applies to every write, and ` /merge` after a non-ASCII space passes, because RE2's `\s` is ASCII. Whether GitLab would execute any of these is unknown. The alias list is unverified.
 
-**GitLab.** GitLab itself runs quick actions, whatever the tenant has installed: "Run automatically when you save descriptions or comments" **[documented]**. `glab mr create --description /merge` carries a merge inside an allowed route, and a route-only policy sent it to the stub with the injected token **[captured]**. Whether GitLab would execute it for that token is **[stub cannot show]**.
+This list is a deny list, so a future GitLab command with merge power fails open until the preset changes. S17 tests each spelling against a live instance. On the bot path, a tenant lowers the risk further with a project token whose role cannot merge the target branch.
 
-The prototype refused every line starting with `/word`, which caught `/merge`, a following-line `/approve`, and a CR-separated `/merge`, and also refused an ordinary `/usr/bin/env` line **[captured]**. That breaks legitimate descriptions. This revision narrows it:
+### History: the revision 3 filter
 
-- On GitLab, the filter decodes every string in a write body and splits it into lines on LF, CR, VT, FF, U+0085, U+2028, and U+2029.
-- A line is refused when, after any Unicode whitespace, it is `/` plus a name from a table of commands that reach review or merge state, compared case-insensitively: `approve`, `unapprove`, `merge`, `rebase`, `submit_review`, `target_branch`, and `run_pipeline`, with their documented aliases **[documented for the names]**. The page does not say whether command names are case-sensitive, or how code blocks behave, so the filter assumes the worst on both, and refuses inside a fence.
-- Other commands (`close`, `reopen`, `draft`, `ready`, `label`, `assign`, `title`, and so on) pass, because their routes are allowed anyway. `/usr/bin/env` passes, since `usr` is no command. The tenant's `commandPatterns` also apply.
-- `gitlabTextGuard: strict` keeps the prototype's behaviour, refusing any `/word` line, for a tenant that prefers that cost.
-- The message names the line, so an agent can put the text in inline code or rephrase.
+This is superseded and kept because it records what was measured. Nothing below is a requirement.
 
-This table is a deny list, so a future GitLab command with merge power fails open until the table changes. The docs page is diffed per GitLab release under "Tracking releases", and S17 tests each spelling against a live instance. On the bot path, a tenant lowers the risk further with a project token whose role cannot merge the target branch.
+**Bypass analysis under the allowlist.** These results are **[captured]** against the allowlist with the printer on. **The deny-mode run is under "Validation owed" as S19 [measured].**
 
-### Tracking releases
+| Route | Result under the allowlist | Why |
+| :-- | :-- | :-- |
+| HTTP/2 | Filtered | `gh` and `glab` both speak it. Each stream is one request. Six attack rows ended in protocol errors from the server library, with nothing at the stub. |
+| HTTP/1.1 framing and pipelining | Filtered | `netagent` writes its own upstream request, so conflicting framing cannot reach the host. |
+| Absolute-form | Filtered | One authority is derived, and it enters the same stage. A differing `Host` is refused. |
+| Another bound host, and reuse after an allowed request | Refused | A filtered connection refuses any other authority, and each request is checked. |
+| Opaque tunnel | No credential | 2 rows reached the stub with no credential, and 1 did not connect. |
+| GET, form, `application/graphql`, gzip, zstd, and deflate | Refused | The endpoint admits one form. |
 
-An unlisted operation fails closed with an error naming it, so a new `gh` release cannot widen anything. It can break something, and the owner's requirement is that `gh` works, so this needs a process:
+Three routes do not depend on the rules: `uploads.github.com` or `github.com` carry no token because neither is bound, another binding on the host is refused, and `netagent` offers `h2` and `http/1.1` alone in ALPN with the proxy carrying CONNECT only. Reflection of a token is scrubbed under the egress design's stated limit, and a compromised `netagent` applies no rules.
 
-- **Per `gh` and `glab` release.** A CI job reruns the capture harness against the new tag and diffs the set of mutation fields, routes, and input keys against the table. A static grep over cli/cli's `mutation ` strings and `graphql:"` tags flags new names sooner. A new field on the review, merge, or auto-merge family fails the job. Any other new field gets a table change in the next `netagent` release, with its reasoning recorded.
-- **Per server version.** `gh` selects documents from `__type` answers, and the stub answers as if every field exists. The harness replays with `__type` answers derived from the schema of each supported GHES release and of github.com, and tier 6 runs against one live GHES where a deployer offers one. ghe.com takes the login-based paths **[source]** and was not captured (S8).
-- **Per GitLab release.** The quick actions page and fine-grained permission tables are diffed.
-- **Run time.** `filter_unlisted_operation_total` with the field name and `User-Agent` shows operators which release broke what, before a ticket does. The table ships in the `netagent` image, so a change reaches a pod when a new pod starts. `handling` can name a minimum table version, such as `vcs-authoring:v7`, so the Token Service can stop releasing tokens to an image with a known defect.
-- **Runtime images** pin their `gh` and `glab`, and tier 3 runs the plugin against those pinned versions.
+**Operations `gh` 2.103.3 sends [captured].** These are facts about the client, and they feed the preset's tests.
 
-### What the allowlist does not bind
+| Field | `gh` operation and command | `gh` uses it on |
+| :-- | :-- | :-- |
+| `createPullRequest` | `PullRequestCreate`, `pr create` | Both |
+| `updatePullRequest` | `PullRequestCreateMetadata`, `PullRequestUpdate`, `pr create` and `pr edit` | Both |
+| `requestReviews` | `PullRequestCreateRequestReviews`, `--reviewer` | GHES |
+| `requestReviewsByLogin` | `RequestReviewsByLogin`, `--reviewer` and `pr edit` | github.com |
+| `replaceActorsForAssignable` | `ReplaceActorsForAssignable`, `--assignee` and `pr edit` | github.com |
+| `addProjectV2ItemById` | `UpdateProjectV2Items`, `--project` and `pr edit` | Both |
+| `addLabelsToLabelable` | `LabelAdd`, `pr edit` | Both |
+| `markPullRequestReadyForReview` | `pr ready` | Both |
+| `closePullRequest` | `pr close` | Both |
+| `addComment` | `CommentCreate`, `pr comment` | Both |
+| `addPullRequestReview` | `PullRequestReviewAdd`, `pr review` with all three events, the same document | Both |
+| `mergePullRequest` | `PullRequestMerge`, `pr merge` | Both |
+| `enablePullRequestAutoMerge`, `disablePullRequestAutoMerge` | `pr merge --auto`, merge queue, and `--disable-auto` | Both |
 
-- **Targets.** `updatePullRequest`, `closePullRequest`, `addComment`, and the others take node IDs, so on a session repository they apply to Bob's pull request as readily as Alice's. The child limits them to the session's repositories (S15). A later change can limit them to IDs `createPullRequest` returned in the session, at the cost of response parsing and state in `netagent`, and of breaking the agent-as-reviewer use of `gh pr comment`.
-- **Reads.** `repository`, `node`, and `search` read whatever the child reads.
-- **Free text.** A body can carry anything for a person or a reviewer's agent.
-- **Git.** It sits outside this filter, under the egress design's rules, "Git pushes and the most recent push rule", and the push option refusal.
-- **Events.** Allowed mutations and pushes raise events that automation can act on ("Comment-triggered actions").
+Inline `input` literals through `gh api`, and `$input_000` variables, both appeared **[captured]**. No `gh` document held more than one operation **[captured]**. REST routes `gh` used: `GET /` and `/user`, `GET /meta` on GHES, `GET /repos/{o}/{r}/pulls/{n}` with a diff `Accept`, `GET /repos/{o}/{r}/readme`, `POST` and `DELETE .../pulls/{n}/requested_reviewers` on GHES, and `DELETE /repos/{o}/{r}/git/refs/heads%2F...` **[captured]**.
+
+**`glab` 1.127.0 [captured].** REST alone for `mr create`, `mr view`, `mr list`, `mr approve`, and `mr merge`. `Private-Token` carries the token, on all 234 requests. A body with `title`, `description`, `source_branch`, `target_branch`, `labels`, `assignee_ids`, `reviewer_ids`, `target_project_id`, and `milestone_id`. `acme%2Fwidgets%2Fmerge_requests%2F7%2Fapprove` and `acme%2F..%2Fwidgets` reached the stub on the first pass, and `merge_when_pipeline_succeeds` passed a policy with no body-key list.
+
+**The allowlist's position.** Revision 3 listed 12 mutation rows with input keys, per-flavour notes, a required `repositoryAutomation` statement, and `gitlabTextGuard`. Its reasoning on `pr review --comment` stays: the preset refuses `addPullRequestReview` for every event, and a tenant can change that with its own rules.
 
 ### Git remotes and client tools
 
-**The problem.** The egress design's rendered git config rewrites every remote with `insteadOf`, and `git remote -v` prints the rewritten URL. `gh` and `glab` read their host from those remotes, so they see `127.0.0.1:3129` and stop. Reproduced in a no-network container with `gh` 2.103.3, `glab` 1.127.0, and the config's rule for `https://` **[captured]**:
+**The owner settled the git path as T, with the bundle, on VCS-covered hosts. `egress-and-git-design.md`, "Git on covered hosts", states it.** Git keeps its remote URLs, so `gh` and `glab` read the upstream host. UR-5 is met on a stub, and live hosts are owed.
 
-| Command, in a repository with the rewrite | Result |
-| :-- | :-- |
-| `gh pr create --head ...`, github.com | `none of the git remotes configured for this repository point to a known GitHub host` |
-| The same with `GH_HOST` set, GHES | `none of the git remotes configured for this repository correspond to the GH_HOST environment variable` |
-| `glab mr create ...` with `GITLAB_HOST` | `none of the git remotes configured for this repository correspond to the GITLAB_HOST environment variable` |
-| `gh pr view 1` | The first message above |
-| `gh pr create` with `GH_REPO=acme/web`, or `--repo acme/web` | Reaches the network step |
-| `glab mr create -R acme/web ...` | Reaches the network step |
-| The first command with no rewrite | Reaches the network step |
+**The problem T closes.** The prior config rewrote every remote with `insteadOf`, and `git remote -v` printed the rewritten URL. `gh` and `glab` read their host from those remotes, so they saw `127.0.0.1:3129` and stopped.
 
-The owner's requirement is that these tools work unchanged, and they do not. The capture missed this because it used plain remotes. Every worked example below depends on the resolution.
+**Evidence [measured].** Only the T column is the design. L, the prior path, and P stay as the evidence for the decision. The origin ran stock `git http-backend` behind a recording stub, so git behaviour is that of stock git, and **the stub proves forwarding only**. Clients had a route to `netagent` alone.
 
-**Options:**
+| | T: `http.proxy` at `netagent`, VCS hosts terminated, and `http.sslCAInfo` at the per-pod CA and public roots | L: `insteadOf` to the loopback endpoint, as a control | P: `https://` to `http://`, with a loopback `http.proxy` |
+| :-- | :-- | :-- | :-- |
+| Git on OpenSSL and GnuTLS: clone, fetch, shallow, partial, push, 64 MiB pushes, LFS on a separate host, and submodules | Passes. With the per-pod CA alone, LFS and the unbound-host submodule fail. | Passes | Passes |
+| `gh pr create`, `view`, `list`, `status`, `checks`, `checkout`, `repo view`, `clone`, and `set-default`, and `glab mr create`, `view`, and `list`, on Alpine and Debian, GHES and github.com | Exit 0, with the placeholder replaced at the stub | Every `gh` command reading remotes stops with "none of the git remotes". `glab mr create` and `list` fail, and `mr view` and `repo view` exit 0. | Exit 0. `git remote -v` prints `http://host/o/r`. `gh` and `glab` store and print `https://`. |
+| Other clients | go-git, JGit, and libgit2 with a proxy clone. libgit2 hangs on a CA constraint mismatch, where git, `gh`, and go-git return an error. JGit does not enforce constraints. | go-git and JGit refused, libgit2 clones by default | go-git and JGit refused, libgit2 fails on DNS |
+| Git in `golang:1.26`, `node:20`, `maven`, and `gradle` images | Clones | Clones | Clones |
+| `http.proxy` unset | No route | Still loopback, refused | No route |
+| Config removed, VCS host with an API binding | Enforced | Refused | Refused |
+| Config removed, VCS host with no API binding | Enforced | An opaque tunnel, with an agent's token reaching the origin | **Opaque: an agent's token reached the origin, and a push to `main` was accepted** |
+| Outside the set, a read-only push, a ref outside patterns, deletion, a push cert, gzip, and path spellings | Refused | Refused | Refused |
+| A held token on a covered host, for git | **Dropped, the mint is used, and patterns hold** | Replaced by the mint in the evasion rows | Same as T, on the rewrite path |
+| A held token on an uncovered host | **Reaches the host in an opaque tunnel.** The run's push ended non-fast-forward, so a push completing is inferred from P. | Dropped on the rewrite path, in the evasion rows | Dropped on the rewrite path |
+| After a 401 on a covered host | git asks twice, and the origin sees only the mint | The same | The same |
+| `netagent` CPU per block | 689 to 714 ms | 520 to 541 ms | 515 to 517 ms |
+| 10 `ls-remote` | 115 to 116 ms | 87 to 101 ms | 87 to 90 ms |
+| `memory.peak` | 28.7 to 29.1 MB | 27.9 to 30.4 MB | 27.9 MB |
 
-| Option | `gh` and `glab` unchanged | Cost |
-| :-- | :-- | :-- |
-| 1. Keep the rewrite and set `GH_REPO` | No. It names one repository, is fixed in the environment, and `glab` has no equivalent shown here. | A session with two repositories fails on one. Agents must add `-R`. |
-| 2. Keep the rewrite and ship a wrapper or a patched tool | No | A Lenny-specific binary in every image, against "Lenny adds no platform tool". |
-| 3. Remote URLs untouched: git reaches `netagent` through `http.proxy` as CONNECT, `netagent` terminates TLS for git with the per-pod CA named by `http.sslCAInfo` in the rendered config, and it reads smart HTTP on the terminated connection with the same enforcement as the local endpoint | Yes, by construction **[pending]** | Reverses the egress design's refusal of smart HTTP on the egress endpoint for this case, and adds the VCS hosts to what `netagent` terminates, with the name constraint consequences that design states. The mirror route, `sshForms`, the adapter's Unix socket path, and LFS need restating. `http.sslCAInfo` replaces git's trust, so a host left as an opaque tunnel needs public roots in the same bundle. |
+The egress design states the remote forms, CA coverage, and the loss on uncovered hosts. **`allowRuntimeHeldCredentials`, which UC-5 owns, attaches the current value on every git request with no mint [measured].** With no current value the host answers 401 **[measured]**, on a suspended, flag-cleared, or unreleased session, with 0 pushes succeeding.
 
-**Recommendation: option 3, pending the owner's test.** Revision 3 records it as the intended resolution and writes nothing that relies on it. If the test fails, UR-5 stands unmet and decision 36 returns to the owner, because options 1 and 2 are not "unchanged". The egress design's validation of the local git endpoint (protocol v2, partial clone, a 64 MiB chunked push) does not carry over, so option 3 owes that rerun. The enforcement this design relies on stays the same under any option: path enforcement, `allowedRefPatterns`, and the push option refusal.
+**Alternatives that keep the loopback endpoint** did not work unchanged: `GH_REPO`, `gh repo set-default`, a wrapper with no git config, `pushInsteadOf` alone, and a loopback fetch URL with the upstream on the push line **[measured]**. A hostname with a port passes `gh`'s parser, and git against that form did not run. A hybrid of T on covered hosts and the prior path elsewhere did not run, and the design has none.
+
+**Client requirements.** `gh pr create` needs git in the image even with `-R`, and 6 of the 10 images tried have none. `gh release upload` goes to `uploads.github.com`, which needs a binding, and `gh browse` sends `HEAD`. macOS, Windows, and amd64 did not run. A wrapper or patched tool stays rejected, because it is a Lenny-specific binary, against "Lenny adds no platform tool".
+
+Path enforcement, `allowedRefPatterns`, and the push option refusal hold on covered hosts.
 
 ### Git push options
 
 `git push -o` reaches GitLab inside `git-receive-pack`, past everything else here. Under option D of "GitLab", git uses the project token and `netagent` reads only ref commands, so `git push -o merge_request.create -o merge_request.auto_merge -o merge_request.target=main` requests a bot-authored merge request with auto-merge, and Erin can approve a bot's merge request. `merge_request.description` also carries text past the guard. GitLab's page lists these along with `ci.skip`, `ci.no_pipeline`, `ci.variable`, `ci.input`, `integrations.skip_ci`, `secret_push_protection.skip_all`, and `security_policy.bypass_reason` **[documented]**.
 
-The rule, on every host: **`netagent` refuses a `git-receive-pack` request that uses the `push-options` capability, and strips that capability from the ref advertisement, so git reports the failure before sending a pack.** A named allowlist on the VCS pool can admit a specific option, and it is empty by default. An agent using `-o ci.skip` is refused. The capture did not examine `git push`, and the worked `gh pr create` and `glab mr create` flows need no push option. Because a push option's section sits between the ref commands and the pack, `netagent` needs bounded parsing past the commands it reads today, and that is a requested change on EG-3. **[design]**
+The rule, on every covered host: **`netagent` refuses a `git-receive-pack` request that uses the `push-options` capability, and strips that capability from the ref advertisement, so git reports the failure before sending a pack.** A named allowlist on the VCS pool can admit a specific option, and it is empty by default. An agent using `-o ci.skip` is refused. The capture did not examine `git push`, and the worked `gh pr create` and `glab mr create` flows need no push option. Because a push option's section sits between the ref commands and the pack, `netagent` needs bounded parsing past the commands it reads today, and that is a requested change on EG-3. **[design]**
 
 ### Git pushes and the most recent push rule
 
@@ -747,7 +785,7 @@ The rule, on every host: **`netagent` refuses a `git-receive-pack` request that 
 
 1. Git stays on repository-limited App tokens in the first version, as the proposal says, for a different reason from the one it gives: a host-side limit per operation, and no write power in the user-derived token. `allowedRefPatterns` and path enforcement would hold under either token.
 2. **A session pushes only to its user's branch namespace.** Under a `required` pool with PR authoring on, the gateway writes the session's writable entries with `allowedRefPatterns: refs/heads/lenny/<slug>/*`, where the slug derives from `provider_login`, and `netagent` enforces it on `git-receive-pack`, so Alice's agent cannot reach Bob's branch and Bob's agent cannot reach hers. The 403 message states the required prefix. A tenant can widen the pattern per pool, and a widened pool must turn on UG-4, because the rule alone no longer holds.
-3. The filter also refuses a create whose head branch, after any `owner:` prefix, lies under `lenny/` in another user's namespace, using the session's slug from I8, so a colluding agent cannot adopt a branch Alice's agent pushes to. This covers `headRefName` on `createPullRequest`, `head` on `POST .../pulls`, and `source_branch` on GitLab.
+3. Revision 3 had the filter refuse a create whose head branch lay in another user's namespace. That was an input check, and it went with the allowlist, so **a colluding agent can open a pull request adopting a branch Alice's agent pushes to**. Two such agents need two injected sessions, and UG-4 catches it where a tenant runs that check.
 4. S3 tests the actual rule. If GitHub treats a user-token push as Alice's and a scoped user token works for git, a tenant can set `pushIdentity: user` to get GitHub's native enforcement, using a separate child with `contents: write` alone. That option is additive, and decision 10 records why it is second.
 
 An agent asked to fix Bob's pull request opens a pull request against Bob's branch or asks Bob to take the commit. That is the cost of step 2.
@@ -758,16 +796,18 @@ These fields are text the agent can change with `git -c`, and `netagent` does no
 
 ### Delivery
 
-`file` delivery behind `agentReadableDelivery` is dropped from the first version. A token in a file readable by the agent UID can leave the pod through any allowed host and stay valid for up to 8 hours, the parent's lifetime and the upper figure until S1 settles the child's, and unlike a `federation` JWT it has no trust condition binding it to an address. Its value would be tools that reject the placeholder, and `gh` and `glab` accept it **[measured]** (rounds 3 and 10) **[captured]**. Decision 16 records this. `metadata` and `federation` do not apply.
+`prAuthoring: user` uses `inject`, and its provider's ceiling is `inject` or `file`. A runtime that needs its token as a file uses `delivery: file` under `user-credential-delivery-design.md`, behind the `userCredentialDelivery` grant and a binding opt-in. Revision 3 dropped `file` from the first version here. The owner's direction now is that the mechanism exists, generically, because Lenny "can't possibly handle all injection scenarios". Decision 16 records the change. `gh` and `glab` accept a placeholder **[measured]** (rounds 3 and 10) **[captured]**, so this configuration does not need it.
 
-**Why Coder's delivery does not fit.** Coder exposes the token inside the workspace through `GIT_ASKPASS` and `coder external-auth access-token` **[documented]**. For a person at a workspace, the person is the principal, and handing them a token they could get anyway removes nothing. An autonomous agent reads untrusted content, so any process it starts can run that command and send the result to any allowed host, after which no filter applies and no later revocation reaches it. Lenny keeps Coder's linking experience and replaces the delivery: the placeholder stays in the pod and the token stays in `netagent`, and `gh` runs with `GH_TOKEN=lenny-injected` as the egress design validated.
+A token in a file readable by the agent UID can leave the pod through any allowed host and stay valid for up to 8 hours, the parent's lifetime and the upper figure until S1 settles the child's, and unlike a `federation` JWT it has no trust condition binding it to an address.
+
+**Why Coder's delivery does not fit as a default.** Coder exposes the token inside the workspace through `GIT_ASKPASS` and `coder external-auth access-token` **[documented]**. For a person at a workspace, the person is the principal, and handing them a token they could get anyway removes nothing. An autonomous agent reads untrusted content, so any process it starts can run that command and send the result to any allowed host, after which no rule applies and no later revocation reaches it. Lenny keeps Coder's linking experience and defaults to a different delivery: the placeholder stays in the pod and the token stays in `netagent`, and `gh` runs with `GH_TOKEN=lenny-injected` as the egress design validated.
 
 ### Repository rules
 
-Security oversight decision 25 and SP11 apply as written:
+`security-oversight-design.md` decision 25 and SP11 apply as written:
 
-- A child token is a `mint-scoped` binding mint, so it names only `granted` entries, and a rule added during a session moves the entry and flushes the cache by binding change.
-- A GitLab project token or any non-`mint-scoped` binding on a rule's API host is refused or suspended under `approvals.repositoryWrites`. A per-session fine-grained token is narrower than those, but its permission set does not follow entry state per mint until UG-5 is settled, so it is treated as non-`mint-scoped` for now. PR authoring on GitLab is therefore absent on a host with a rule, which that decision's cost already names.
+- A child token from a platform-shipped template with `followsEntryState`, which is `github-scoped` today, is a `mint-scoped` binding mint, so it names only `granted` entries, and a rule added during a session moves the entry and flushes the cache by binding change.
+- A GitLab project token or any non-`mint-scoped` binding on a rule's API host is refused or suspended under `approvals.repositoryWrites`. `gitlab-fine-grained` is narrower than those, and it does not set `followsEntryState` until UG-5 is settled, so it is treated as non-`mint-scoped` for now. PR authoring on GitLab is therefore absent on a host with a rule, which that decision's cost already names.
 - Pushes follow SO-5b unchanged.
 - A child already minted stays valid at the host until it expires or S5 lets Lenny revoke it. SP11's residual covers this.
 
@@ -779,7 +819,7 @@ UG-2 on GitLab uses `read_api` and `read_user`, which grant no write **[document
 
 ### What PR authoring has to face
 
-GitLab describes `api` as "complete read/write access to the API, including all groups and projects", and no OAuth scope limits a token to a project **[documented]**. **A user's `api` token under `inject` gives the agent the user's full power across every project and group if `netagent`'s filter is its only limit, and a compromised `netagent` holds that token.** On self-managed, an administrator's token holds administrator power over the instance.
+GitLab describes `api` as "complete read/write access to the API, including all groups and projects", and no OAuth scope limits a token to a project **[documented]**. **A user's `api` token under `inject` gives the agent the user's full power across every project and group if `netagent`'s request rules are its only limit, and a compromised `netagent` holds that token.** On self-managed, an administrator's token holds administrator power over the instance.
 
 `glab` needs nothing unusual: REST alone for the commands captured, `Private-Token` carrying the placeholder on all 234 requests, and no `Content-Encoding` **[captured]**. With default settings it also opened one `CONNECT gitlab.com:443` **[captured]**, and the profile's `GLAB_CHECK_UPDATE=false` and `GLAB_SEND_TELEMETRY=false` stopped it **[captured]**.
 
@@ -787,14 +827,14 @@ GitLab describes `api` as "complete read/write access to the API, including all 
 
 | Option | `glab` unchanged | MR author | What a compromised `netagent` holds | Approve and merge stopped by |
 | :-- | :-- | :-- | :-- | :-- |
-| A. Filtered `api` OAuth token under `inject` | Yes | User | The user's full API power, for up to 2 hours | The filter and the quick action guard, alone |
+| A. `api` OAuth token under `inject`, with request rules | Yes | User | The user's full API power, for up to 2 hours | Request rules alone |
 | B. `write_repository` with `merge_request.create` on push | No. `glab mr create` needs the API. | Unstated by the docs (S11), and the pusher is expected | Read and write on every repository the user reaches, with no API | The token lacks API access. It relies on `merge_request.*` push options, which every other option refuses, so it would need its own allowlist entry, and then `netagent` must read `merge_request.description` for quick actions and refuse `merge_request.auto_merge`. |
 | C. A or B behind a tenant opt-in, off by default | As chosen | As chosen | As chosen | As chosen |
-| D. Project access token bots, as the egress design has today | Yes **[captured]** with a stub | The bot | One project's token, at that project's role | The filter and the guard, since a Developer-level project token can approve |
-| E. A per-session fine-grained token from a parent held in the Token Service | Yes, if `glab`'s routes fit (S13) | **User** | One session's projects, with `Read` and `Create` and optionally `Update` on merge requests | **On routes, the host**, because the permission table separates `Approve` and `Merge` from `Create` and `Update` **[documented]**, then the filter. **On quick actions, the filter and the guard**, until S13 shows whether the host applies the token's permissions to a command in a description. |
-| F. A fine-grained token the user creates and registers | Yes, if the same fit holds | **User** | The user's selected projects and permissions, for up to 365 days by default | As E |
+| D. Project access token bots, as the egress design has today | Yes **[captured]** with a stub | The bot | One project's token, at that project's role | Request rules and `gitlab-deny`'s `bodyPatterns`, since a Developer-level project token can approve |
+| E. A per-session fine-grained token from a parent held in the Token Service | Yes, if `glab`'s routes fit (S13) | **User** | One session's projects, with `Read` and `Create` and optionally `Update` on merge requests | **On routes, the host**, because the permission table separates `Approve` and `Merge` from `Create` and `Update` **[documented]**, then request rules. **On quick actions, `gitlab-deny`'s `bodyPatterns`**, until S13 shows whether the host applies the token's permissions to a command in a description. |
+| F. A fine-grained token the user creates and registers, as a `registered` type. **Withdrawn in revision 5.** | Yes, if the same fit holds | **User** | The user's selected projects and permissions, for up to 365 days by default | The egress design refuses a stored token under `inject` on a git host a VCS pool covers, and GitLab serves API and git on one host. An exception would read cleanly in none of the three texts, and a `file` delivery of the same token is available under the flag. |
 
-Facts behind E and F:
+Facts behind E:
 
 - Fine-grained tokens are generally available from GitLab 19.2 on every tier and offering **[documented]**.
 - `POST /user/personal_access_tokens` accepts `granular_scopes` from 19.2, with `selected_memberships` and `project_ids` **[documented]**. "You must be authenticated" is the only stated prerequisite, and the page does not say whether an OAuth token can call it or which scope it needs.
@@ -804,9 +844,11 @@ Facts behind E and F:
 
 ### Recommendation
 
+**LFS is refused on GitLab until a live run passes.** GitLab's project tokens and stored tokens are `mint-coarse` and `stored`, so the egress design refuses `info/lfs` on them, and `git push` of an LFS object fails there **[measured]**. GitLab's form ran on a stub **[measured]**, and the one live object tried returned an error rather than an action **[live]**, so no live GitLab action has been read.
+
 User attribution was half of the request, and revision 1's answer left GitLab users with a bot author. With fine-grained tokens at 19.2, that no longer needs to be the answer.
 
-**On GitLab 19.2 and later, the target is E: user-authored merge requests from a per-session fine-grained token, with no `api` token in any pod.** S13 settles it, and it needs a free account and an hour rather than any Lenny code, so it runs before UG-3 starts. The token holds `selected_memberships` with the session's `granted` projects, and `Read` on the project and merge requests, `Create` on merge requests, and `Update` when `edit` is on. `Approve` and `Merge` are never in the set.
+**On GitLab 19.2 and later, the target is E: user-authored merge requests from a per-session fine-grained token, with no `api` token in any pod.** S13 settles it, and it needs a free account and an hour rather than any Lenny code, so it runs before UG-3 starts. The token holds `selected_memberships` with the session's `granted` projects, and `Read` on the project and merge requests, and `Create` and `Update` on merge requests, all as the template's `permissions` data. `Approve` and `Merge` are never in the default set.
 
 The outcome of S13 selects the parent:
 
@@ -814,18 +856,18 @@ The outcome of S13 selects the parent:
 | :-- | :-- | :-- |
 | An OAuth token with a low scope can create the child | The link's OAuth token | The link needs that scope, and users relink once |
 | An OAuth token needs `api` | The link's `api` OAuth token, on the tenant's opt-in. `provider_is_admin` refuses a link for an instance administrator. | `api` in the Token Service for those links, which widens Token Service compromise and never touches a pod |
-| No OAuth token can, and a fine-grained parent can | A fine-grained token the user registers, holding only that create permission | A manual step per user, up to 365 days |
-| No programmatic path | F, behind a platform grant in the `storedTokenPush` class and a P2 exception, with a project list the user chose and no per-session narrowing | Manual, long-lived, wider than a session, and user-chosen |
+| No OAuth token can, and a fine-grained parent can | A fine-grained token the user registers with the Token Service as the link's parent, holding only that create permission, and never delivered | A manual step per user, up to 365 days |
+| No programmatic path | D remains, and the MR author stays the bot. A tenant that accepts `file`'s limits can use it under `allowRuntimeHeldCredentials`. | UR-4 stays unmet on GitLab |
 
-On Free, GitLab's approval settings are absent **[documented]**, so E gives attribution there and the filter gives the rest.
+On Free, GitLab's approval settings are absent **[documented]**, so E gives attribution there and the preset gives the rest.
 
 **D remains for GitLab below 19.2 and for `prAuthoring: bot`.** There the MR author is the bot, and two-person review rests on the commit author and a paid setting, as "Residual risks" states, or on UG-4.
 
-**A never ships.** Its residual is the user's whole account, and E or F reaches the same `glab` with a token whose power GitLab limits. B stays unused, since it breaks `glab` and E has a smaller reach.
+**A is not this configuration's recommendation, and the pool's `prAuthoring: user` never selects it.** Its residual is the user's whole account, and E reaches the same `glab` with a token whose power GitLab limits. A tenant can still define an `oauth2Link` type with `api` scope under `user-credential-delivery-design.md`, whose documentation says "no template means full reach". Revision 3 said A never ships. Under the generic mechanism, Lenny can no longer refuse that by provider without tying the mechanism to GitLab. B stays unused, since it breaks `glab` and E has a smaller reach.
 
-Whichever token is in use, the filter, the quick action guard, and the push option refusal are required, because S13 has not shown that a command in a description is limited by the token rather than by the user's own permissions. Commit author and committer follow "Git pushes and the most recent push rule", and git itself stays on the project token under the branch namespace until S13 shows a fine-grained `Git` permission works per session.
+Whichever token is in use, `gitlab-deny` stays on by default and the push option refusal applies, because S13 has not shown that a command in a description is limited by the token rather than by the user's own permissions. Commit author and committer follow "Git pushes and the most recent push rule", and git itself stays on the project token under the branch namespace until S13 shows a fine-grained `Git` permission works per session.
 
-Under decision 25, these tokens are refused on the API host of a repository rule for now.
+Under `security-oversight-design.md` decision 25, these tokens are refused on the API host of a repository rule for now.
 
 ## UG-4: Independent approval check
 
@@ -855,6 +897,8 @@ On GitLab, external status checks are the corresponding feature, on the tiers Gi
 | Setting | Scope | Who sets it | Default |
 | :-- | :-- | :-- | :-- |
 | `link_providers` rows | Tenant, with optional TS-1 Environments | `tenant-admin` | None |
+| `delivery`, `apiHosts`, `clientSecret`, `narrowing`, and its `permissions` | Link provider | `tenant-admin`, with shipped templates alone on a VCS kind | `none`. A delivering VCS provider must name a shipped template. Any change to the token trust record makes stored tokens unusable. |
+| `tokenTrust.allowedRecords` guardrail | Tenant security record | `security-admin`, under SO-2's delay | Absent |
 | `allowedAccounts` | Link provider | `tenant-admin` | Empty |
 | `identityBinding` | Link provider | `tenant-admin`, and SO-2 can forbid `unverified` | None. A write must set it. |
 | `allowedPushOptions` | VCS pool | `tenant-admin` | Empty |
@@ -863,21 +907,18 @@ On GitLab, external status checks are the corresponding feature, on the tiers Gi
 | `userAuthorization.serviceIdentities` guardrail | Tenant security record | `security-admin` | Absent |
 | `serviceIdentities` on a VCS pool | Tenant | `tenant-admin` | Empty |
 | `onAccessLost` | VCS pool | `tenant-admin` | `deny` |
-| `prAuthoring` (`off`, `user`, or `bot`) | VCS pool | `tenant-admin` | `off`. On GitLab, `user` needs UG-5 and a host at 19.2 or later. |
-| `repositoryAutomation` (`none`, `present`, or `refuse`) | VCS pool | `tenant-admin`, and SO-2 can force it | None. A write enabling `prAuthoring` must set it. |
-| `commandPatterns` | VCS pool | `tenant-admin` | Empty, and required under `present` |
-| `gitlabTextGuard` (`commands` or `strict`) | VCS pool | `tenant-admin` | `commands` |
-| Filter bounds | Helm | Platform | As under "Bounds and cost", with the depth and token bounds tunable within a ceiling. |
-| `disabledOperations` (`edit`, `lifecycle`) | Credential binding | `tenant-admin` | Empty. It narrows the table and cannot add to it. |
+| `prAuthoring` (`off`, `user`, or `bot`) | VCS pool | `tenant-admin` | `off`. `user` requires `userAuthorization: required` and a delivering link provider. On GitLab, `user` needs UG-5 and a host at 19.2 or later. `bot` selects option D on GitLab, and on GitHub it behaves as `off`. |
+| `requestRules` on the binding | Binding | `tenant-admin`, and SO-2 can require a preset | Resolved at I8 from the flavour of the VCS pool's provider and host, unless `preset: none` |
+| `pinHosts` | VCS pool, when `required` | `tenant-admin` | `true`, once EG-12 lands |
+| `allowRuntimeHeldCredentials` | VCS pool, on every pool covering the host, whatever its mode | `tenant-admin`, and SO-2 can forbid it. UC-5 owns it. | `false` |
 | `allowedRefPatterns` widening | VCS pool, requires UG-4 | `tenant-admin` | Namespace |
 | `pushIdentity` (`app`, or `user` once S3 passes) | VCS pool | `tenant-admin` | `app` |
 | `recheckIntervalSeconds` | Helm, with a VCS pool narrowing | Platform and `tenant-admin` | 300, with a floor of 60 |
 | `verdictCacheSeconds` | Helm | Platform | 60 |
 | `verdictMaxAgeSeconds` | Helm, with a VCS pool narrowing | Platform and `tenant-admin` | 900, with a ceiling of 3600 |
 | `childTokensPerLinkPerHour`, `liveChildTokensPerLink` | Helm | Platform | 8 each, until S2 |
-| `userTokens.grant` | Per tenant, under the egress design's per-class gates | `platform-admin` | Absent. It gates `userLink` bindings, because the token enters `netagent` memory. |
 
-Every non-spec default is operator-tunable and documented as such. A pool with `userAuthorization: off` and no `userLink` binding behaves as the egress design says, with no check, link, or extra call.
+Every non-spec default is operator-tunable and documented as such. Request rule bounds, types, link provider generalization, and the `userCredentialDelivery` grant are under `user-credential-delivery-design.md`. A pool with `userAuthorization: off` and no `userCredential` binding behaves as the egress design says, with no check, link, or extra call.
 
 ## Worked examples
 
@@ -885,15 +926,15 @@ Every non-spec default is operator-tunable and documented as such. A pool with `
 
 Tenant `acme`, App `acme-lenny` installed on the `acme` organization, VCS pool `github.com/acme/` with `userAuthorization: required` and `prAuthoring: user`. Pool `coding` has `maxConcurrentSessions: 1` and no recycling.
 
-1. Alice calls `POST /v1/sessions` with `acme/web` declared writable. She has no link, so she receives `403 USER_LINK_REQUIRED` and a `linkUrl`, and no pod is claimed. **[design]**
+1. Alice calls `POST /v1/sessions` with `acme/web` declared writable. The pool's binding attaches, by "The attach rule", and it replaces the tenant's App binding on that host for her session. She has no link, so she receives `403 USER_LINK_REQUIRED` and a `linkUrl`, and no pod is claimed. **[design]**
 2. Her browser opens the URL, logs in through the broker, and receives the cookie. The link provider sets `identityBinding: directory`, and `acme`'s worker has recorded her provider identifier. It goes to `github.com/login/oauth/authorize` and returns. The gateway hands the code to the Token Service, which exchanges it and reads `GET /user`, and it checks `GET /user/installations` against `allowedAccounts`. The identifier matches, and she confirms `@alice-acme`. **[design]**, on **[documented]** endpoints
 3. Alice retries. The Token Service runs `GET /repos/acme/web` with the parent. `permissions.push` is true, and the identifier matches. The gateway writes a `granted` entry with `allowedRefPatterns: refs/heads/lenny/alice-acme/*`, then runs `ls-refs` and claims a pod. **[design]**
 4. The adapter clones through `netagent`. On a mirror route, I3 reads the entry and allows. A mint-scoped read token comes from I8, with the check before the cache lookup. **[design]**
-5. The agent runs `git checkout -b lenny/alice-acme/fix-login`, commits as Alice's noreply address, and runs `git push`. `netagent` reads the ref update, the pattern matches, I8 mints `contents: write` for `acme/web`, and the push goes through `lenny-egress`. A `git.operation` record is written. **[design]**, and the push path is **[measured]** by egress rounds with no user check
-6. The agent runs `gh pr create --title ... --body ... --head lenny/alice-acme/fix-login`. **Under the egress design's rendered config this stops with `none of the git remotes ... point to a known GitHub host` [captured]. The rest of this example assumes "Git remotes and client tools" is resolved, so the remote reads `https://github.com/acme/web.git` [pending].** `gh` runs because `GH_TOKEN=lenny-injected` **[measured]** **[captured]**. `netagent` terminates TLS for `api.github.com`. Its first I8 call mints a child with `repository_ids: [acme/web]` and `pull_requests: write, contents: read`, and `handling` names the filter. **[design]**
-7. `gh`'s traffic **[captured]**: over HTTP/2, `POST /graphql` with queries `RepositoryInfo` and `PullRequestForBranch`, and on GHES also `GET /api/v3/meta` and `Issue_fields` (`__type` feature detection). Each query passes. Then `mutation PullRequestCreate($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { id url } } }` has one root field, on the list, with `input` as a variable, and the input keys are all on the list, so it passes. `netagent` forwards its own printing and re-encoding, with `Authorization` overwritten. The stub received the injected token and no placeholder **[captured]**, and the printing and token overwrite left `gh`'s exit code and operations unchanged **[captured]**. That GitHub creates the pull request with Alice's avatar and the App's badge is **[documented]** and **[stub cannot show]**.
+5. The agent runs `git checkout -b lenny/alice-acme/fix-login`, commits as Alice's noreply address, and runs `git push`. `netagent` reads the ref update, the pattern matches, I8 mints `contents: write` for `acme/web`, and the push goes through `lenny-egress`. A `git.operation` record is written. **[design]**, and the push path is **[measured]** under T on a stub, with no user check
+6. The agent runs `gh pr create --title ... --body ... --head lenny/alice-acme/fix-login`. The remote reads `https://github.com/acme/web.git`, as T leaves it. `gh` runs because `GH_TOKEN=lenny-injected` **[measured]** **[captured]**. `netagent` terminates TLS for `api.github.com`. Its first I8 call mints a child with `repository_ids: [acme/web]` and `pull_requests: write, contents: read`, and it returns `github-deny` resolved. **[design]**
+7. `gh`'s traffic **[captured]**: over HTTP/2, `POST /graphql` with queries `RepositoryInfo` and `PullRequestForBranch`, and on GHES also `GET /api/v3/meta` and `Issue_fields` (`__type` feature detection). Each query passes. Then `mutation PullRequestCreate($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { id url } } }` has one root field the preset does not name, so it passes **[measured]**. `netagent` forwards its own printing and re-encoding, with `Authorization` overwritten. The stub received the injected token and no placeholder **[captured]**, and the printing and token overwrite left `gh`'s exit code and operations unchanged **[captured]**. That GitHub creates the pull request with Alice's avatar and the App's badge is **[documented]** and **[stub cannot show]**.
 8. `credential.mint` records `tokenSource: userChild`, the `linkRef`, and the hash. **[design]**
-9. Alice tries to approve in the GitHub UI, and GitHub refuses because she is the author (S3 confirms). Bob approves as a person. The most recent push came from the App, and Bob is neither, so `require_last_push_approval` passes (S3 confirms). Bob merges. Two people took part in this merge, because no agent can approve and Alice cannot.
+9. Alice tries to approve in the GitHub UI, and GitHub refuses because she is the author (S3 confirms). Bob approves as a person. The most recent push came from the App, and Bob is neither, so `require_last_push_approval` passes (S3 confirms). Bob merges. Two people took part in this merge, because the preset refuses the agent's approval and Alice cannot approve her own.
 
 ### Alice's access revoked in the middle of a session
 
@@ -911,31 +952,33 @@ The workspace still holds what was already cloned. Under `onAccessLost: terminat
 
 ### A prompt-injected agent
 
-A web page tells Alice's agent to approve PR 7 and merge it. These refusals are **[captured]** for the `gh` binary on both flavours, with nothing written at the stub. What the provider would do without the filter is **[stub cannot show]**.
+A web page tells Alice's agent to approve PR 7 and merge it. Results under `github-deny` are **[measured]** on the stub, on both flavours and on `ghe.com`, except as marked. What the provider would do without a rule is **[stub cannot show]**.
 
-- `gh pr review 7 --approve`. `gh` reads the PR with a query, which passes. It sends `mutation PullRequestReviewAdd($input: AddPullRequestReviewInput!) { addPullRequestReview(input: $input) { clientMutationId } }`, with the event in variables. Step 9 finds the field off the list, and `gh` exits 1 with the refusal text. Nothing goes upstream, and `egress.local` records the operation name.
+- `gh pr review 7 --approve`. `gh` reads the PR with a query, which passes. It sends `mutation PullRequestReviewAdd($input: AddPullRequestReviewInput!) { addPullRequestReview(input: $input) { clientMutationId } }`, with the event in variables. The name is on the preset, and `gh` exits 1 with the refusal text. Nothing goes upstream, and `egress.local` records the operation name.
 - `gh pr merge 7`, with any mode, sends `PullRequestMerge` with `mergePullRequest`, which is refused the same way. `--auto` and a merge-queue pull request send `enablePullRequestAutoMerge`, which is refused. As documented, the host would also refuse REST merge, since it needs `contents: write` and the child has `contents: read` (S15 tests that and the GraphQL equivalent).
-- `gh api graphql -f query='mutation { ok: addPullRequestReview(input: {pullRequestId: "PR_x", event: APPROVE}) { clientMutationId } }'`. The alias is ignored at step 9. An alias named `createPullRequest` is ignored the same way. Variants the attack table refused:
-  - `mutation A { ...F } fragment F on Mutation { addPullRequestReview(...) }` at step 8.
-  - Two operations with `operationName` on either one at step 6.
-  - `[{"query": "..."}]` and `{"query": "query{viewer{login}}", "QUERY": "mutation{...}"}` at step 2.
+- `gh api graphql -f query='mutation { ok: addPullRequestReview(input: {pullRequestId: "PR_x", event: APPROVE}) { clientMutationId } }'`. The alias is ignored, and an alias named `createPullRequest` is ignored the same way. These variants carry over from the allowlist's rules:
+  - `mutation A { ...F } fragment F on Mutation { addPullRequestReview(...) }`, because a mutation's root selections must be fields.
+  - Two operations with `operationName` on either one, because a document holds one operation.
+  - `[{"query": "..."}]` and `{"query": "query{viewer{login}}", "QUERY": "mutation{...}"}`, on the JSON rules.
   - Gzip, zstd, deflate, form, and `application/graphql` bodies, by the endpoint's single form.
   - `GET /graphql?query=mutation...`, and `query` as a URL parameter on POST.
-  - `POST /graphql/` and `POST //graphql`, on path handling.
-- The bare CR document from "What reaches the host". Step 3 refuses it, and were it to pass, the printer would forward the query alone **[captured]**.
-- `gh api -X POST repos/acme/payments/pulls -f title=x -f head=y -f base=main`. `acme/payments` is not on the I8 list, so the filter answers 403 **[design]**, since the prototype's owner and repo names were free. Without the filter, GitHub would answer 404, because the child covers only `acme/web` (S15).
-- `gh api -X POST repos/acme/web/pulls/7/reviews -f event=APPROVE`. The path is off the REST list, and the filter answers 403 **[captured]**.
-- `gh pr comment 7 --body "/approve"` on a repository running an approval bot. Under `repositoryAutomation: present` with a matching pattern, the filter refuses it **[design]**. Under `none`, the comment posts under Alice's name, and the bot acts if it trusts her. That is what the tenant stated could not happen.
-- `gh pr close 7` on Bob's pull request succeeds. The action is attributed to Alice with the App's badge, and Bob can reopen it.
-- Repeated refusals raise `user_token_filter_refusals`, which Dave's subscription receives.
+  - `POST /graphql/`, `POST //graphql`, `POST /graphq%6C`, `POST /graphql.json`, and `POST /graphql/x`: a trailing slash and a doubled slash normalize to the listed path and the document is parsed, the escape is refused, and an unmatched `/graphql*` path is refused under the preset. Each row with a denied mutation was refused, under the strict matcher.
+- The bare CR document from "What reaches the host". The lexical rule refuses it, and were it to pass, the printer would forward the query alone **[captured]**.
+- `gh api -X POST repos/acme/payments/pulls -f title=x -f head=y -f base=main` is forwarded, since target checks are gone. GitHub answers 404, because the child covers only `acme/web` (S15). **Under no template, this would succeed.**
+- `gh api -X POST repos/acme/web/pulls/7/reviews -f event=APPROVE`. The preset's REST rule refuses it, `r%65views` is refused on the escape, and `reviews.json` and `reviews.x` are caught by the first-dot stem **[measured]**.
+- `gh api graphql` with `createCommitOnBranch`, and `PUT contents` through `gh api`: named by the extended preset, and refused by the host under `contents: read`.
+- `gh pr comment 7 --body "/approve"` on a repository running an approval bot posts under Alice's name, unless the tenant added a rule. The bot acts if it trusts her.
+- `gh pr close 7` on Bob's pull request succeeds. The action is attributed to Alice with the App's badge, and Bob can reopen it. `gh pr edit 7 --base release` succeeds too, which is what input-key checks used to refuse.
+- A mutation GitHub adds next year with merge power passes until the preset names it.
+- Repeated refusals raise `user_credential_rule_refusals`, which Dave's subscription receives.
 
 ### The same on GHES behind an outbound connector
 
 Tenant `acme` runs `ghes.acme.internal` behind connector `acme-dc1`. The link provider has `kind: github-enterprise`, and the outbound host has Acme's CA and no `allowMirror`.
 
 - Alice's browser reaches GHES on Acme's network, and the provider's redirect comes back to Lenny's public URL, so no inbound rule is needed. The Token Service exchanges the code through `lenny-egress` with `acme` asserted, under a grant, and validates against the CA before it sends the client secret. **[design]**, on connector C6 and C9
-- `GH_HOST=ghes.acme.internal` and `GH_ENTERPRISE_TOKEN=lenny-injected` are set through the client proxy profile on a tenant-owned pool. With a rewritten remote `gh` stops on the `GH_HOST` message **[captured]**, so this example assumes the same resolution **[pending]**. `gh` posts to `https://<host>/api/graphql` and `/api/v3/...` **[captured]**, uses `requestReviews` rather than the login form, and sends `GET /api/v3/meta` **[captured]**. The stub was no connector, so the connector leg is **[design]**.
-- The binding's single host also serves the web and git, so the filter's prefix rule is what keeps the token on API paths. `POST /acme/web/pull/7/reviews` and `/login/oauth/access_token` are refused by default, and smart HTTP paths are refused as the egress design states.
+- The VCS pool's host makes it GHES, with the API on the host under `/api/v3/`. `GH_HOST=ghes.acme.internal` and `GH_ENTERPRISE_TOKEN=lenny-injected` are set through the client proxy profile on a tenant-owned pool, and the remote stays `https://ghes.acme.internal/...`. `gh` posts to `https://<host>/api/graphql` and `/api/v3/...` **[captured]**, uses `requestReviews` rather than the login form, and sends `GET /api/v3/meta` **[captured]**. The stub was no connector, so the connector leg is **[design]**.
+- The binding's single host also serves the web and git, so under `default: allow` the token attaches to every path on it, including web routes, whose behaviour with that token is not established (S15). Smart HTTP paths take the egress design's git path, which reaches the host through the connector. The flavour names the API prefixes, and `/graphql`, `/api/foo`, and `/api/v3/graphql` are refused on it **[measured]**.
 - `gh pr review`, the aliased mutation, and the REST calls behave as above. The scoped endpoint exists on GHES 3.22 **[documented]**, and S14 fixes the oldest supported version.
 - **Connector offline.** Sweep and mints answer `unavailable`. New sessions get the retryable error, and running sessions have no store reads, since `allowMirror` is off and a connector host's git stops anyway. Links are untouched. No traffic takes the default route (C10).
 - GHES disables rate limits by default per the egress design, so the ten-token rule is the remaining unknown there.
@@ -946,77 +989,76 @@ Tenant `initech` runs `gitlab.initech.internal` at 19.4, Premium, and S13 has pa
 
 - Linking uses the OAuth application with the scopes S13 settled. The link holds `provider_user_id`, the verified email, and `is_admin`. The token stays in the Token Service. **[design]**
 - Bind: `GET /api/v4/projects/:id` and the access level check pass. **[design]**, S11
-- The agent runs `git push` under the project token and the branch namespace, subject to "Git remotes and client tools" for how git reaches `netagent`. The commit author is Erin's verified email. `git push -o merge_request.create -o merge_request.auto_merge` is refused **[design]**.
+- The agent runs `git push` under the project token and the branch namespace. The commit author is Erin's verified email. `git push -o merge_request.create -o merge_request.auto_merge` is refused **[design]**.
 - On its first API request, `netagent` asks I8. The Token Service creates a fine-grained token with `selected_memberships` on the session's project, `Read` and `Create` on merge requests, and tomorrow's `expires_at`. **[design]**, S13
-- `glab mr create` with `GITLAB_HOST` and `GITLAB_TOKEN=lenny-injected`, once its remote resolves as "Git remotes and client tools" requires, sends `GET /api/v4/projects/initech%2Fweb?license=true&with_custom_attributes=true` and `POST /api/v4/projects/initech%2Fweb/merge_requests` over HTTP/2 **[captured]** with a body whose keys are on the list. `netagent` re-encodes the body and overwrites `Private-Token`. The stub received the injected value **[captured]**. On GitLab the MR's author is Erin, and GitLab's creator rule stops her approving **[documented]**, **[stub cannot show]**.
-- `glab mr approve` sends `GET .../merge_requests/{n}` and `POST .../approve`, and `glab mr merge` sends `PUT .../merge`. Both are refused and exit 1 with nothing written **[captured]**. Under the token, the host refuses too **[documented]** (S13).
-- `glab mr create --description $'Fix login\n/merge'`, and `/approve` on a following line or after a bare CR, are refused by the guard **[captured under the prototype's wider pattern]**. `--description $'See /usr/bin/env\n/usr/bin/env'` passes **[design]**, where the prototype's pattern refused it **[captured]**.
-- `glab api graphql -f query='mutation { mergeRequestAccept(...) }'`, an aliased form, and `glab api` with each refused route are refused **[captured]**.
+- `glab mr create` with `GITLAB_HOST` and `GITLAB_TOKEN=lenny-injected` sends `GET /api/v4/projects/initech%2Fweb?license=true&with_custom_attributes=true` and `POST /api/v4/projects/initech%2Fweb/merge_requests` over HTTP/2 **[captured]** with a body the preset's `denyBodyKeys` admits. `netagent` re-encodes the body when `gitlab-deny`'s patterns apply, and it overwrites `Private-Token`. The stub received the injected value **[captured]**. On GitLab the MR's author is Erin, and GitLab's creator rule stops her approving **[documented]**, **[stub cannot show]**.
+- `glab mr approve` sends `GET .../merge_requests/{n}` and `POST .../approve`, and `glab mr merge` sends `PUT .../merge`. Both are on `gitlab-deny`, and they were refused with nothing written under the allowlist **[captured]**. Under the token, the host refuses too **[documented]** (S13).
+- `glab mr create --description $'Fix login\n/merge'`, and `/approve` on a following line or after a bare CR, are refused by the preset's `bodyPatterns` **[captured under the prototype's wider pattern]**. `--description $'See /usr/bin/env\n/usr/bin/env'` passes **[measured]**, where the earlier wider pattern refused it **[captured]**.
+- `glab api graphql -f query='mutation { mergeRequestAccept(...) }'` and an aliased form are refused by the preset. `glab api` with each refused route is refused in every spelling tried **[measured]**.
 - `glab api -X POST 'projects/initech%2Fweb/merge_requests/7/notes?body=%2Fmerge'` is refused, since a write takes no query string. **[design]**
-- `glab api -X POST 'projects/initech%2Fweb%2Fmerge_requests%2F7%2Fapprove/merge_requests'` is refused, since that decoded segment is on no list. **[design]**, on a case **[captured]** closed differently in the prototype.
+- `glab api -X POST 'projects/initech%2Fweb%2Fmerge_requests%2F7%2Fapprove/merge_requests'` is refused by `projects/{encoded}`, whose `refuseDecoded` holds route words **[design]**, while `initech%2Fweb`, nested groups, and lower-case `%2f` pass **[measured]**.
 - Erin leaves the project: the sweep refuses, the binding change flushes, and the Token Service revokes the session's token through the durable record.
-- On GitLab 18.x or under `prAuthoring: bot`, the same `glab` commands run under a project token, and the MR author is the bot. There the filter and guard alone stop approval and merge, and Erin can approve the bot's MR unless "Prevent approvals by users who add commits" excludes her through a commit author the agent can edit.
+- On GitLab 18.x or under `prAuthoring: bot`, the same `glab` commands run under a project token, and the MR author is the bot. There the preset alone stops approval and merge, and Erin can approve the bot's MR unless "Prevent approvals by users who add commits" excludes her through a commit author the agent can edit.
 
 ## Changes requested of egress-and-git-design.md
 
-All of these are additive and do nothing until a UG proposal lands. Each must land early because the egress proposal it names ships a stored record format, a wire contract, or an enforcement point that adding it later would force to change.
+`egress-and-git-design.md` revision 51 applied these, adjusted for the preset model, and lists them under "Reserved for other designs". They remain additive, and they do nothing until a UG or UC proposal lands.
 
-| Request | Proposal | Why now |
-| :-- | :-- | :-- |
-| I8 responses carry `cacheUntil`, and `netagent` re-requests at the earlier of it and `expiresAt`. Absent means `expiresAt`. | EG-2 and EG-4 | I8 is a wire contract, and the cache rule is in `netagent`. An image that ignores the field would hold a token past revocation with no error, across a rollout. |
-| I8 responses carry `handling`, a list of names, each with an optional minimum version, and `netagent` refuses a credential naming anything it does not implement at that version. Empty today. | EG-4 | A `netagent` built before this field would attach a user token with no filter, silently. The refusal has to exist in the first shipped image. This makes the filter itself a later, additive change. |
-| A request inspection stage in `inject`, between the authority check and the attach step, reached by both the terminated and absolute-form transports, receiving method, raw path, headers, and a bounded body reader. **It can replace the forwarded body, query string, and header set**, and `netagent`'s upstream request is written from what it returns. It admits everything unchanged until a plugin is registered. | EG-4 | `inject` is a shipped enforcement point, and streaming bodies on both transports would need rework to hold a request back. Revision 2 adds replacement, because canonical forwarding is what closes the parser differential the capture found. A stage that can only admit or refuse would have to be rebuilt. The `metadata` plugin interface is the precedent. |
-| A session holds at most one `inject` binding per host, refused at bind. | EG-4 | Which binding attaches on a shared host is unspecified today. Fixing it after tenants have bindings changes a shipped decision and could expose an unfiltered App binding beside a filtered one. |
-| `secret` on a credential binding is a typed union with a `kind`, and an unknown kind is treated as absent by the Token Service, `netagent`, and the decision service, as `suspendedBy` is. | EG-4 | Stored record format. Typed route targets are the precedent. |
-| The Token Service mint path runs a pre-mint step before its cache lookup, taking the verified session and returning allow, refuse, or unavailable. It is empty until UG-2. | EG-1 and EG-2 | The order of the check and the cache is a shipped enforcement point, and a check placed after the lookup is the defect finding 4 describes. |
-| Readable and writable set entries are records with a `state`, optional `expiresAt`, and an optional `verifiedAt` the gates compare when present, in the binding record and feed. The readable formula gains a per-VCS-pool input that a `required` pool sets to declared-only. Its default keeps today's formula. | EG-2, EG-3, and EG-9 | The binding record and feed are stored and on the wire. |
-| The mirror's second-gate I3 check names the repository, and the decision reads that entry's state. | EG-5 and EG-2 | The mirror is a shipped enforcement point, and it is the path with no mint. TS-1's mirror filter needs the same field. |
-| `pkg/binding` returns the session's user, root session, caller type, and the user's invalidation level. | EG-2 | The same enforcement points and the same reason as the Environment hook already reserved. |
-| The provisional resume binding excludes a `userLink` binding, until `running`, and treats it as a write token. | EG-2 | The §7.3 edit is staged in that proposal and enumerates what the provisional state grants. |
-| **Git remotes.** A client tool in the pod must see the upstream URL from `git remote -v`, so the rendered git config and the path git takes to `netagent` have to change. Decision 36 selects how, and option 3 of "Git remotes and client tools" is **pending** the owner's test. | EG-3, and EG-4 for the terminated hosts | The rendered config, the local git endpoint, and the smart HTTP refusal on the egress endpoint are a shipped enforcement point and on-disk layout in every pod image. Round 3's `gh` and `glab` results did not use a rewritten remote. |
-| **Push options.** `netagent` refuses `git-receive-pack` using `push-options` and strips that capability from the ref advertisement, with a per-pool allowlist, empty by default. It parses the section between the ref commands and the pack, bounded. | EG-3 | `netagent` reads only ref commands today, and the push path is a shipped enforcement point. Without this a `required` or filtered pool is open to `merge_request.auto_merge`, and any GitLab pool can skip CI or secret scanning from the pod, with or without this design. |
-| `netagent`'s proxy listeners set a head read deadline and refuse a bare LF in a request head at once, on every `inject` and plain-HTTP path. | EG-2 and EG-4 | Revision 2 adds this. The egress design has `netagent` read absolute-form heads directly, and the prototype held a bare-LF request for 20 s with no deadline **[captured]**. It is a defect of the shipped listener with or without a filter, and a pod-wide connection budget is at stake. |
+| Applied request | Proposal |
+| :-- | :-- |
+| I8 responses carry `cacheUntil` | EG-2 and EG-4 |
+| I8 responses carry `handling`, and `netagent` refuses a credential naming anything it does not implement at that version | EG-4 |
+| A request inspection stage in `inject`, reached by both transports, that can replace the forwarded path, headers, body, and query string. Under the preset model it evaluates `requestRules` from I8, with no provider code, and strips credential headers rather than holding a header allowlist. | EG-4 |
+| A session holds at most one `inject` binding per host, extended to refuse a `file` and an `inject` binding on one host, evaluated on type hosts | EG-4 |
+| `scope: poolAttach` under "The attach rule", and a stored token refusal with its one `file` exception | EG-4 |
+| `caller_type` on the session row, through `pkg/binding`, copied to a child, and a VCS pool as a source of pins, unfiltered by Environment | EG-2 and EG-12 |
+| A refusal of differing flavours on one host, an expected route asserted on the CONNECT and in the level 2 contract, and a covered set read unfiltered | EG-1, EG-2, EG-3, and EG-4 |
+| A `handling` value and a mint refusal for a session under `allowRuntimeHeldCredentials`, which UC-5 owns | EG-3 and EG-4 |
+| A stored secret refused on a `required` pool's hosts, and an unknown or `userRefused` state denying reads | EG-2, EG-3, and EG-9 |
+| `secret` is a typed union, with `userCredential` | EG-4 |
+| A pre-mint step before the mint cache lookup | EG-1 and EG-2 |
+| Readable and writable entries as records, with `verifiedAt`, and a declared-only input on the readable formula | EG-2, EG-3, and EG-9 |
+| The mirror's second-gate I3 check names the repository | EG-5 and EG-2 |
+| `pkg/binding` returns the session's user, root session, caller type, and the user's invalidation level | EG-2 |
+| The provisional resume binding excludes a `userCredential` binding until `running` | EG-2 |
+| Push option refusal on `git-receive-pack`, on the terminated connection | EG-3 |
+| Head read deadline and bare LF refusal | EG-2 and EG-4 |
 
-Not requested, because each is additive with no rework:
+**Also applied:** a client tool sees the upstream URL from `git remote -v`, because egress revision 51 states T in its mechanism text.
 
-- `tokenSource` and `linkRef` on `credential.mint`, since the envelope states that payloads change by adding fields. The sentence in **Erasure and holds** is restated when UG-2 lands.
-- P2 and P3 text naming the child token, and the sentence that `netagent` needs no knowledge of provider paths, when UG-3 lands.
-- The token path on `github.com` among the provider's declared mint endpoints.
-- Validators refusing a `userLink` binding on refused pod models, and the refusals in "Pod models".
-- The `prAuthoring`, `userAuthorization`, and `onAccessLost` fields, through EG-9's write path.
-
-`netagent` running out of memory stops egress for the whole pod, which the egress design accepts under P6. The filter's bounds keep it clear of that, and nothing further is requested.
-
-The GitHub rate limit sentence under **Minting** says the 2,000-per-hour limit is "documented for user access tokens". The page now says "for GitHub Apps and OAuth apps". This is a text correction for the owner of that document.
+Not requested, because each is additive with no rework: `tokenSource` and `linkRef` on `credential.mint`, restated in **Erasure and holds** when UG-2 lands, the token path on `github.com` among declared mint endpoints, and the `prAuthoring`, `userAuthorization`, and `onAccessLost` fields through EG-9's write path.
 
 ## Dependencies
 
 | Proposal | Depends on | Why |
 | :-- | :-- | :-- |
-| UG-1 (linking) | EG-1, EG-9. EG-2's mint path for private hosts, and OC-1 for hosts behind a connector. | VCS pool hosts, the single write path, and the route to a private token endpoint. GitHub.com linking needs no pod-side component. |
-| UG-2 (authorization) | UG-1, EG-1, EG-2, EG-3, and EG-5 for mirror rules. TS-4 for the lifecycle hook. | The mint path, `pkg/binding`, I8, writable entries, and the mirror. |
-| UG-3 (PR authoring on GitHub and GHES, and the filter on every host) | UG-2, EG-3 and EG-4 with the requests above, S1, S2, S3, S8, and S15 passing, and the owner's test of decision 36. | Child tokens need the link, the filter needs the stage, and `gh` needs its remotes. |
+| UG-1 (linking) | UC-1, EG-1, EG-2, EG-9, and OC-1 and OC-2 for hosts behind a connector. | The digest format and `token_trust_records`, VCS pool hosts, the single write path, and the route to every link provider endpoint. It keys on a provider name, so UC-2 generalizes it with no rework. |
+| UG-2 (authorization) | UG-1, UC-3, EG-1, EG-2, EG-3, and EG-5 for mirror rules. TS-4 for the lifecycle hook. | The session input check and `retireOnRelease`, the mint path, `pkg/binding`, I8, writable entries, and the mirror. |
+| UG-2's pin wiring | EG-12 | A `required` pool as a source of pins. UG-2 does not wait for it, and the residual stands until then. |
+| UG-3 (PR authoring on GitHub and GHES) | UG-2, UC-2, UC-3, and UC-4 with its presets. S1, S2, S3, and S15 passing, and EG-3 with T. | The binding, the template, the rules, and `gh`'s remotes. |
 | UG-4 (approval check) | UG-1 in identifier-only mode, EG-3, EG-10 | `git.operation` and `credential.mint`. Independent of UG-3. |
-| UG-5 (GitLab user authorship) | UG-3, and S13 and S17 passing. S13 runs before UG-3 starts, so UG-5 lands with UG-3 when it passes. | The token path and the guard's behaviour on a live host. |
+| UG-5 (GitLab user authorship) | UG-3, and S13 and S17 passing. S13 runs before UG-3 starts, so UG-5 lands with UG-3 when it passes. | The token path and the preset's behaviour on a live host. |
 
 | Other design | Interaction |
 | :-- | :-- |
-| `security-oversight-design.md` | SO-2 gains the guardrail rows above. SO-1's role reads `user_link.*` audit. SO-4a's `impersonated_by` feeds "Identity cases". SO-5b and decision 25 apply unchanged. |
-| `tenant-scoping-identity-design.md` | TS-1 scopes `link_providers` and `userLink` bindings. TS-4's upsert and refusal apply, and §11.4 gains the revocation step. |
-| `tenant-outbound-connector-design.md` | OR-3 covers the Token Service's calls, and the GHES example follows C6, C8, C9, and C10. This adds the token and scoped endpoints to what a connector carries, with no design change. |
-| `forensics-evidence-preservation-design.md` | The `quarantined` state stops child mints with no new work. FE-5's "Rotate credentials" step gains revoking child tokens by hash through the App's client, and FE-4 can add a rule pairing `userChild` mints with a live link. That design's owner adds these when UG-3 lands. |
+| `security-oversight-design.md` | SO-2 gains the guardrail rows for `userAuthorization`, and `user-credential-delivery-design.md` adds `requestRules.requiredPresets`, `tokenTrust.allowedRecords`, `userCredential.file`, and `allowRuntimeHeldCredentials`. SO-4a's `impersonated_by` feeds "Identity cases". SO-5b and decision 25 apply unchanged, and it now states them for this design. |
+| `tenant-scoping-identity-design.md` | TS-1 scopes `link_providers`, types, and `userCredential` bindings. TS-4's upsert and refusal apply, and §11.4 gains the revocation step. It now cross-references this. |
+| `tenant-outbound-connector-design.md` | OR-3 covers the Token Service's calls, and the GHES example follows C6, C8, C9, and C10. This adds the token and scoped endpoints to what a connector carries, with no design change. It now states the OAuth link case. |
+| `forensics-evidence-preservation-design.md` | The `quarantined` state stops child mints with no new work. FE-5's "Rotate credentials" step gains removing a user's link, which revokes its grant, because revoking a child needs the token value and no route takes a hash. FE's rule R-USER-CREDENTIAL-POD compares mints with the pod model. It now states these, with delivered tokens in evidence. |
+| `user-credential-delivery-design.md` | The mechanism this document configures. It owns the binding, the sources, `file`, request rules, and presets. |
 
 No proposal in the egress design depends on one here.
 
 ## Specification sections affected
 
 - [§4.3 Token Service](../spec/04_system-components.md#43-token-service): a third credential category, and "Pods never hold downstream OAuth tokens" gains a stated exception for a child token in `netagent` memory.
-- [§4.9 Pre-Authorized Credential Flow](../spec/04_system-components.md#pre-authorized-credential-flow): VCS providers refused on `POST /v1/credentials`.
+- [§4.9 Pre-Authorized Credential Flow](../spec/04_system-components.md#pre-authorized-credential-flow): providers with no delivery refused, and the `type` field, under `user-credential-delivery-design.md`.
 - [§9.3 OAuth/OIDC Flow](../spec/09_mcp-integration.md#oauthoidc-flow): the host-overlap refusal, and the browser binding on the callback.
 - [§10.2 Authentication](../spec/10_gateway-internals.md#102-authentication): the permission matrix gains link rows and `manage_user_links`, and the broker contract gains the provider identity claim.
 - [§11.4 User Invalidation](../spec/11_policy-and-controls.md#114-user-invalidation): the revocation step at every level.
 - [§12.8 Compliance Interfaces](../spec/12_storage-architecture.md#128-compliance-interfaces): `TokenStore` deletion gains provider revocation with the 30-minute limit, and the erasure statement names `linkRef`. [§12.9 Data Classification](../spec/12_storage-architecture.md#129-data-classification) classifies `user_links` as T4.
-- [§13.3 Credential Flow](../spec/13_security-model.md#133-credential-flow): "Pod never receives: client tokens, downstream OAuth tokens" gains the same exception, with `netagent` named. Session input routes refuse an impersonation bearer on affected sessions.
+- [§13.3 Credential Flow](../spec/13_security-model.md#133-credential-flow): "Pod never receives: client tokens, downstream OAuth tokens" gains the same exception, with `netagent` named. Session input refuses an impersonation bearer on affected sessions.
+- [§4.2 Session Manager](../spec/04_system-components.md#42-session-manager): `caller_type` on the session row, under `user-credential-delivery-design.md`.
 - [§14](../spec/14_workspace-plan-schema.md): `readableRepositories`. [§15.1](../spec/15_external-api-surface.md#151-rest-api): the link routes and new error codes. [§16.5](../spec/16_observability.md#165-alerting-rules-and-slos) and [§16.7](../spec/16_observability.md#167-section-25-audit-events): alerts and audit events.
 - [§5.2](../spec/05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes): the refused pod models. §7.1 and [§7.3 Retry and Resume](../spec/07_session-lifecycle.md#73-retry-and-resume): checks at bind and resume.
 
@@ -1026,16 +1068,18 @@ These exist today and are recorded here because this document edits nothing else
 
 - **Account linking in §9.3.** `handleAuthorizeConnector` returns an authorization URL and state to any authenticated caller, and `handleConnectorOAuthCallback` carries no bearer and no cookie. An attacker sends the URL to a victim, who approves, and the victim's token lands under the attacker's tenant, connector, and user. The specification's "bound to the initiating session ID and connector ID" also differs from the code, which binds tenant, user, Environment, and session. Severity is High wherever a confidential connector is registered. The fix is this document's browser binding.
 - **Refresh absent.** `connectoroauth.RefreshAccessToken` has no caller, and `Invoker.bearerFor` returns an expired token, so a GitHub or GitLab connector stops working at its expiry.
-- **Inert registration.** `POST /v1/credentials` stores `provider: github`, which can never be delivered.
-- **Session input under impersonation.** `handleMessages` and `handleResume` admit an impersonation bearer, and §13.3 limits only mints. This matters beyond this design.
+- **User-scoped credentials decrypted in the gateway.** `credentialpg.New(w.pgPool, w.kmsProvider)` runs in `cmd/lenny-gateway/credentialsurface.go`, against §4.3's reservation of KMS decrypt for the Token Service and §4.9's "Token Service stores it" **[source]**.
+- **Inert registration.** `POST /v1/credentials` stores `provider: github`, `aws_bedrock`, or `vault_transit`, which can never be delivered.
+- **Session input under impersonation.** `handleMessages`, `handleResume`, `handleMemoryWrite`, `lenny/send_message`, `lenny/memory_write`, and the `/v1/responses` and `/v1/chat/completions` translators admit an impersonation bearer, and §13.3 limits only mints. This matters beyond this design.
+- **Connector client secret resolution.** A connector's `clientSecretRef` is `namespace/name`, and `connectorsecret.KubeResolver` resolves it with no tenant check **[source]**. Every `/v1/admin/connectors` route uses `requireAdmin`, which admits only `platform-admin` (`pkg/gateway/externalapi/admin/routes.go` and `tenants.go`), and the outbound connector design's tenant-admin routes are a different resource, so this is no tenant-to-tenant escalation in today's tree. **The defect is that the resolver cannot read there.** The chart gives the gateway's service account `create`, `update`, `delete`, and `deletecollection` on Secrets in the credentials namespace (`lenny-gateway-credential-writer`), and `get` on one named admin token Secret in its release namespace (`lenny-gateway-admin-token`). The resolver uses an uncached client, so under the chart's defaults a `Get` on §9.3's own example, `lenny-system/github-client-secret`, is forbidden, and a confidential connector's token exchange fails at the callback. This comes from reading the chart and has not run.
 
 ## Documentation
 
 - A new operator page for link providers, covering App registration for each host, the callback URL, and the recommended read-only App for UG-2.
-- A tenant admin page for `userAuthorization`, `prAuthoring`, and the refused pod models, stating the revocation bound and the outage rule.
-- A runtime author section stating the branch namespace, the filter's refusal format, and which `gh` and `glab` operations are refused.
+- A tenant admin page for `userAuthorization`, `prAuthoring`, and the refused pod models, stating the revocation bound and the outage rule, and how to add rules for its own bots.
+- A runtime author section stating the branch namespace, the refusal format, and which `gh` and `glab` operations the presets refuse.
 - A security page stating the residual risks below in the same words.
-- Doc tests pin each error code to its page, and tier 11 keeps the allowlist page generated from the plugin's table.
+- Doc tests pin each error code to its page, and tier 11 keeps the preset page generated from the data.
 
 ## Tests
 
@@ -1043,20 +1087,18 @@ Every test carries a `// spec:` annotation once the specification sections land.
 
 ### Tier 0: static
 
-The filter table is data with a schema check. A lint refuses a `userLink` binding source outside the Token Service's mint path, and refuses `user_links` access outside the Token Service.
+Presets pass a schema check. A lint refuses `user_links` access outside the Token Service.
 
 ### Tier 1: unit
 
-- Filter path handling: dot segments, doubled and encoded slashes, method overrides, each prefix on each provider, and GitLab's project segment compared against the list.
-- GraphQL: the capture's attack table as a fixture, covering aliases, multiple operations, `operationName` mismatch, root fragments, inline fragments, shorthand, batches, duplicate and case-variant keys at every depth, a BOM, a bare CR, NUL, comments, block strings, Unicode escapes in names, deep nesting, oversized input, and parser panics. Fuzz targets on the JSON and GraphQL stages run under tier 9.
+- `github-deny` and `gitlab-deny`: each named operation refused on each spelling, and an unnamed operation passing. Rule evaluation itself is tested under `user-credential-delivery-design.md`.
+- The capture's attack rows as a fixture under deny mode, including aliases, multiple operations, root fragments, batches, duplicate keys at every depth, a bare CR, and deep nesting.
 - Canonical forwarding: the printed document re-parses to the same operation and fields, the variables re-encode to one value per key, and the corpus documents read the same under gqlparser and graphql-ruby after printing.
 - Each bound, at its limit and one past it, including the 40,000-level document and a bare-LF head.
-- Quick action guard: each command, alias, case, whitespace prefix, line separator, and fence, with `/usr/bin/env` admitted. `commandPatterns` on comment bodies, PR bodies, and titles. Label keys under each `repositoryAutomation` value.
-- A REST write with any query string, including `?body=`, and with a form body, refused.
+- `gitlab-deny`'s `bodyPatterns`: each command, alias, case, whitespace prefix, line separator, and fence, with `/usr/bin/env` admitted, and a write with a query string refused. `glab`'s `%2F` project paths pass.
 - `git-receive-pack` with each push option refused, and the capability stripped from the advertisement.
-- Input key restriction on `updatePullRequest`, and `headRefName` in another namespace.
 - Verdict classification for each status and header.
-- Budget and cache key behaviour, and link state transitions.
+- Budget and cache key behaviour, link state transitions, and the page before the redirect naming changed hosts.
 
 ### Tier 2: component
 
@@ -1066,20 +1108,24 @@ The tests run the sweep job against a fake Token Service, including a stall and 
 
 - I8 with `cacheUntil` and `handling`, including an old `netagent` stand-in refusing an unknown handling.
 - The Token Service link API.
-- Plugin tables replayed against recorded `gh` and `glab` traffic per pinned version, on both GitHub flavours and with `__type` answers per supported GHES, with the capture of 2026-11-03 as the first fixture.
-- A test that fails when a field of the review, merge, or auto-merge family appears on the list.
-- `gh` and `glab` commands run in a repository under the rendered git config, on each flavour. This is the case the capture missed.
-- `gh pr edit` with every flag leaves no partial write under the listed set.
+- Presets replayed against recorded `gh` and `glab` traffic per pinned version, on both GitHub flavours, on Alpine and Debian images, and with `__type` answers per supported GHES, with the capture of 2026-11-03 as the first fixture.
+- A test that fails when a schema diff adds a name in the review, merge, queue, or ref families with no decision recorded.
+- `gh` and `glab` commands run in a repository under the rendered git config, on each flavour, with unchanged remotes. This is the case the capture missed.
+- `gh pr edit` with every flag leaves no partial write under the preset.
 - `credential.mint` with the new fields.
 
 ### Tier 4: integration
 
-- Each `identityBinding` value, with a second account refused and a directory change moving a link to `relink_required`.
-- Connector writes on a link provider's hosts refused in both orders, and a filtered session's connector tool absent.
+- Each `identityBinding` value, with a second account refused and a directory change moving a link to `user_act_required`.
+- A connector write refused on a link provider's host set when a pool on the host is `required`, and accepted otherwise.
+- "The attach rule": a human session with a writable repository replacing an App binding on that host alone, a read-only session not attaching, a suspended user binding restoring nothing, a listed service session taking the App binding, an unlisted `agent` caller refused, and a child with and without a lease entry.
+- `prAuthoring: user` refused with `userAuthorization: off`, with no provider, or with a ceiling of `none`.
+- An empty `granted` set minting no child.
+- A session on a `required` pool under each row of "Other tokens on these hosts", and a `required` pool's hosts pinned.
 - Link flow against a fake provider, with a mismatched browser login, a missing cookie, a replayed state, a second user on one account, and a refused `allowedAccounts`.
 - Bind, resume, and mint refusals. No link never reaches an App token.
 - Mid-session revocation against the fake provider: flush, tunnel close, I8 refusal, mirror refusal, and each bound in "Latency, by path".
-- Refresh: a race across replicas produces one provider call, a lost response moves to `relink_required`, and a store failure after the response recovers.
+- Refresh: a race across replicas produces one provider call, a lost response moves to `user_act_required`, and a store failure after the response recovers.
 - Provider revocation for each row of the lifecycle table, including a host unreachable during erasure, with the destroyed ciphertext and the receipt.
 - An impersonation bearer on each session input route.
 - Warm fill on a `required` pool.
@@ -1090,11 +1136,11 @@ The pod model refusals on Kind pods, the mirror path, and `gh` and `glab` binari
 
 ### Tier 6: end to end on cloud
 
-Against a test GitHub organization, GHES, and GitLab: a link, a child token, `gh pr create`, GitHub's enforcement of the child's limits, and refusal of review and merge at the filter.
+Against a test GitHub organization, GHES, and GitLab: a link, a child token, `gh pr create`, GitHub's enforcement of the child's limits, and refusal of review and merge by the preset.
 
 ### Tier 7: load
 
-The tests measure sweep cost at 10,000 sessions, including deduplication and the entry `verifiedAt` write rate, refresh lease contention, and filter latency and memory at the concurrency cap with bodies at the bound, with `-race`.
+The tests measure sweep cost at 10,000 sessions, including deduplication and the entry `verifiedAt` write rate, refresh lease contention, and rule evaluation latency and memory at the concurrency cap with bodies at the bound, with `-race`.
 
 ### Tier 8: chaos
 
@@ -1102,9 +1148,10 @@ The tests cover a host outage with `required` pools, with new sessions refused a
 
 ### Tier 9: security
 
-- Every example under "A prompt-injected agent", the 522-row attack table, and the bypass table, against shipped `netagent` builds.
-- Fuzzing of the filter, with a corpus differential across gqlparser, graphql-go, graphql-js, and graphql-ruby in both lexers on each parser upgrade.
+- Every example under "A prompt-injected agent", and the 522-row attack table and the bypass table re-derived for deny mode, against shipped `netagent` builds.
+- Fuzzing of the rule evaluator, with a corpus differential across gqlparser, graphql-go, graphql-js, and graphql-ruby in both lexers on each parser upgrade.
 - A token never appears in a log, span, or record.
+- `acme` cannot name `globex`'s client secret, and a change to any token trust record field, including a route or CA, sends no old token anywhere.
 - Cross-tenant: a fake GHES copying another tenant's identifiers receives no cached verdict or child.
 - A hostile host: redirects, oversized bodies, hostile logins, and an SSRF target at registration.
 - Account-link attacks in both directions.
@@ -1115,11 +1162,11 @@ Adapter contracts do not change. The runtime battery gains `gh` and `glab` cases
 
 ### Tier 11: documentation
 
-The tier checks error codes, alert runbooks, and the generated allowlist page.
+The tier checks error codes, alert runbooks, and the generated preset page.
 
 ## Validation owed
 
-No live spike has run. The capture answered what a client sends and what a filter does with it, on plain remotes. S1, S2, S3, S8, S15, and the owner's test of decision 36 must pass before UG-3 starts, and S13 runs before it as well.
+No live spike has run. The capture answered what a client sends and what the allowlist did with it, on plain remotes. S1, S2, S3, and S15 must resolve before UG-3 starts, and S13 runs before it as well.
 
 | Spike | Question | Decides | State |
 | :-- | :-- | :-- | :-- |
@@ -1129,39 +1176,48 @@ No live spike has run. The capture answered what a client sends and what a filte
 | S4 | SAML-enforced organizations: does a user token need an active SAML session, does a child inherit that, and what does expiry of that session look like to the check? GitHub says to "start an active SAML session" before reauthorizing **[documented]**. | The `sso_required` handling | Open, live |
 | S5 | Does deleting a child leave its parent and siblings valid? | Child revocation | Open, live |
 | S6 | What do `permissions` fields report for an App user token with a restricted App? Do org base permissions and teams appear? Which App permission reads `GET /user/emails`, and can one verified email sit on two accounts? | The check, and `verifiedEmail` | Open, live |
-| S7 | Is `gqlparser` suitable? | Parser choice | **Done for the filter** **[captured]** at 2.5.33. A black-box test sending the corpus to a scratch repository on GitHub would name its parser, and the design no longer depends on the answer. |
-| S8 | Correct the allowlist against `gh`. | The tables | **Done for `gh` 2.103.3 on GHES and github.com** **[captured]**. Owed: rerun with the final table, which adds `comment`, `edit`, `ready`, `close`, `reopen`, and label and project removal; with printing and variable re-encoding on both flavours, since the printed run was GHES with verbatim variables; with `__type` answers per GHES version; and on ghe.com. |
-| S9 | `netagent` memory with the filter at its bounds. | The concurrency cap and `GOMEMLIMIT` | Partly **[captured]**, up to 258 KB and with no token limit. Owed: rerun at the final bounds with a filter-off baseline. |
-| S10 | The same capture for `glab`. | The GitLab table | **Done for `mr create`, `mr view`, `mr list`, `mr approve`, and `mr merge`** **[captured]**. Owed: `mr note`, `mr update`, `mr close`, and `mr reopen`, the body-key list, and the narrowed guard. |
+| S7 | Is `gqlparser` suitable? | Parser choice | **Done for the rule evaluator's parsing** **[captured]** at 2.5.33. A black-box test sending the corpus to a scratch repository on GitHub would name its parser, and the design no longer depends on the answer. |
+| S8 | What does `gh` send? | Preset tests | **Done for `gh` 2.103.3 on GHES and github.com** **[captured]**, and for `ghe.com`, 7 versions, and both clients **[measured]**. The history of 68 releases is **[source]**, names only. Owed: `__type` answers per GHES version, since the stub selects `gh`'s newest code paths. |
+| S9 | `netagent` memory at the rule bounds. | The concurrency cap and `GOMEMLIMIT` | **[measured]** to 41.7 MB `memory.peak`, under a 15,000 token limit. Check allocation at the final bounds is **[measured]**, and `memory.peak` under them is owed. |
+| S10 | What does `glab` send? | Preset tests | **Done** for `mr create`, `view`, `list`, `note`, `update`, `close`, `revoke`, `approve`, `merge`, `rebase`, and `issue create` **[measured]**. 67 rows gave 8 forwarded, 37 denied refused, 20 refused beyond the expected list, and 2 with no write. Owed: `mr reopen`, a fork flow, and whether `glab` names a `lenny/<slug>/` branch with `%2F`, which `repository/branches/{encoded}` admits. |
 | S11 | GitLab: which field reports effective access including shared groups, and who authors a merge request from `merge_request.create`? | The check, and option B's record | Open, live |
 | S12 | GitLab: how does the committer rule match a commit's author, and on which tiers are external status checks offered? | Commit authorship and UG-4 on GitLab | Open, live |
 | S13 | Can an OAuth token call `POST /user/personal_access_tokens` with `granular_scopes`, and with which scope? Can a fine-grained token create one? Does each creation notify the user? Does `glab mr create` run under `Read` and `Create` alone, and `mr note` and `mr update` under which additions? **Under a `Create`-only token, does a description holding `/approve` or `/merge` execute?** | The GitLab recommendation and UG-5 | Open, live. Needs a free account and no Lenny code. |
 | S14 | The oldest GHES release with the scoped endpoint and each endpoint this design uses. | The support statement | Open, live |
-| S15 | With a provider-issued token against a scratch repository: does a child approve, and does `pull_requests: write` alone merge, through REST and GraphQL? Does the child's repository limit bind node-ID mutations? Does GitHub honour batches, GET queries, form bodies, or method overrides? What is the true PR body limit? Which fields fail under a narrow child on `gh pr view`? Do bots see `performed_via_github_app`? Does an App token's or child's push trigger `pull_request` workflows, with which secrets? | Whether the filter has a second layer, what `gh` needs beyond the table, and the CI residual | Open, live |
-| S16 | Does GitHub keep approvals when a pull request's base changes? | Whether `baseRefName` joins the list | Open, live |
-| S17 | On a live GitLab: do descriptions and notes created through the API run quick actions, under which permissions, with what case and whitespace rules, inside fences, and after a bare CR? How is an encoded project path routed? | The guard's table and `gitlabTextGuard` | Open, live |
-| S18 | Option 3 of "Git remotes and client tools", with the local git endpoint's rerun: protocol v2, partial clone, a large chunked push, LFS, submodules, and `gh` and `glab` in a repository under the config. | Decision 36 | **Pending**, under the owner's test |
+| S15 | With a provider-issued token against a scratch repository: does a child approve, and does `pull_requests: write` alone merge, through REST and GraphQL? Does the child's repository limit bind node-ID mutations? Does GitHub honour batches, GET queries, form bodies, or method overrides? What is the true PR body limit? Which fields fail under a narrow child on `gh pr view`? What does the host do with an empty repository list, which this design never sends? Do bots see `performed_via_github_app`? Does an App token's or child's push trigger `pull_request` workflows, with which secrets? | Whether request rules have a second layer at the host, and the CI residual | Open, live |
+| S16 | Does GitHub keep approvals when a pull request's base changes? | How serious `baseRefName` passing is, and whether a tenant should add a pattern for it | Open, live |
+| S17 | On a live GitLab: do descriptions and notes created through the API run quick actions, under which permissions, with what case and whitespace rules, inside fences, and after a bare CR? How is an encoded project path routed? | `gitlab-deny`'s patterns | Open, live |
+| S18 | The git path: candidates L, T, and P | UR-5 | **Closed on the stub [measured], and T is settled**, as "Git remotes and client tools" lists. Not run: macOS, Windows, amd64, the .NET SDK image, a `glab` fork flow, read after push, git against `ghe.com` beyond the stub, a T and P hybrid, and and a decision service, which ran as a stand-in. |
+| S19 | The attack table and bypass analysis under `default: allow`, spellings, literals, REST twins, `gh` and `glab` under the presets, and override headers | UR-5's "any command" within the token, UR-6, and whether deny mode needs more refusals | **Closed on the stub [measured].** Under the final preset, 1,230 rows on each flavour: 1,069 refused, 160 reached with no denied action, 0 denied actions with the credential, and 1 with no credential through an opaque tunnel. 3,033 of 3,045 predicted rows matched, and the 12 were harness errors. **The stub proves forwarding only.** Host decoding has evidence for GitLab's framework alone: Grape routed `appr%6Fve`, a trailing slash, `//`, and `approve.json` to the handler and answered 404 for `merge.foo`, and a generic Rails router routed a trailing slash, `//`, `.json`, and `merge.foo`. GitHub's stack is unknown. Owed: every provider's behaviour. |
 
 ## Residual risks
 
-- **Compromised `netagent` on GitHub and GHES.** It holds a child with `pull_requests: write`, and GitHub has no narrower permission. It can approve other users' pull requests on the session's repositories until the child expires or is revoked. It also holds App tokens, including write. The filter is `netagent` code, so it provides nothing here. Compromise of `netagent` remains the boundary where two-person review ends, for those repositories.
-- **Compromised `netagent` on GitLab.** It holds one session's fine-grained token under E, or one project's token under D. `api` tokens are absent from pods, so a user's power over other projects is out of reach. Under F it holds a token that lives up to 365 days by default until the user or Lenny revokes it.
+- **Compromised `netagent` on GitHub and GHES.** It holds a child with `pull_requests: write`, and GitHub has no narrower permission. It can approve other users' pull requests on the session's repositories until the child expires or is revoked. It also holds App tokens, including write. Request rules are enforced in `netagent`, so they provide nothing here. Compromise of `netagent` remains the boundary where two-person review ends, for those repositories.
+- **Compromised `netagent` on GitLab.** It holds one session's fine-grained token under E, or one project's token under D. `api` tokens are absent from pods, so a user's power over other projects is out of reach. 
 - **Token Service compromise.** It holds parent tokens, and refresh tokens, for every linked user. It already holds every App's private key and every stored secret. On GitHub a parent is limited by the App, which a read-only App narrows to nothing, and on GitLab with `read_api` a parent cannot write. Under UG-5, if S13 requires it, it holds `api` parents, which widens what its compromise exposes and is why that case needs a tenant opt-in.
 - **The revocation window.** A revoked user keeps git access through an honest pod for up to 6 minutes, and for up to 15 minutes of reads during a host outage.
 - **Workspace content.** What a session has cloned stays in the workspace, and in its checkpoints and artifacts, after access is lost. `onAccessLost: terminate` ends the session and leaves stored artifacts under the owner's existing access.
-- **Allowed mutations on other people's work.** On a session repository, Alice's agent can change the title or body of Bob's pull request, close it, comment on it, and request reviewers, because the filter cannot see authorship and the host allows it. These are attributed and reversible, and they do not touch approvals.
+- **Allowed mutations on other people's work.** On a session repository, Alice's agent can change the title, body, base, or state of Bob's pull request, close it, comment on it, and request reviewers, because rules do not see authorship or input keys and the host allows it. These are attributed, and most are reversible. A base change can move an approved pull request onto another branch (S16).
+- **New operations.** Under `default: allow`, a new GitHub or GitLab operation with approval or merge power passes until the preset names it. The owner accepted this. About one a year needs only `pull_requests: write` on GitHub, in one reading **[source]**.
+- **`permissions` widened.** With `contents: write` or `actions: write` on the child, merges, content writes, and ref writes rest on the preset alone.
+- **Adopted branches.** With the head-branch input check gone, an agent can open a pull request whose head is another user's namespace branch, so a colluding session can reach UR-4's exception.
+- **A cleared preset.** A tenant admin can clear a preset, audited and in posture, unless a `security-admin` requires it.
+- **Future grants.** A tenant admin who controls configuration can trick a user, past the page, into granting a new token to a host she runs. `tokenTrust.allowedRecords` under a separate `security-admin` is the enforcing control. Tokens stored before her edit are unusable and sent nowhere.
+- **`file` tokens on these hosts.** Under `allowRuntimeHeldCredentials: true`, a session holding that binding has a token that leaves every control here. A `registered` type can also lie about its hosts, which the pin addresses on the host the token works on.
+- **Uncovered hosts.** Under T a token the agent holds reaches an uncovered git host in an opaque tunnel, and a push is not refused, as the egress design states.
+- **A smuggled token** reaches an unpinned host through an opaque tunnel, until EG-12 lands, under `pinHosts: false`, or on an `internet` pool.
 - **PR content.** An agent's pull request body or comment can carry anything, including text aimed at a human reviewer or at a reviewer's agent.
-- **Parsers.** The rule under "What reaches the host" closes differences in how the client's bytes are read. It rests on gqlparser's printer emitting text the host reads as printed, which 24 corpus documents show under graphql-ruby **[captured]** and nothing shows on a live host.
-- **Filter-only limits.** Against a Developer-level GitLab project token, the filter and guard are all that stop approval and merge. Against a GitHub child, nothing at the host distinguishes creating a pull request from approving one.
+- **Parsers.** The rule under "What reaches the host" closes differences in how the client's bytes are read. It rests on gqlparser's printer emitting text the host reads as printed, which the corpus shows under graphql-ruby and graphql-js **[measured]** and nothing shows on a live host.
+- **Preset-only limits.** Against a Developer-level GitLab project token, `gitlab-deny` is all that stops approval and merge, and its route families are unmeasured beyond approve, unapprove, merge, rebase, `reset_approvals`, and `cancel_merge_when_pipeline_succeeds`. Against a GitHub child, nothing at the host distinguishes creating a pull request from approving one.
 - **Service identities.** A person holding a listed client secret can start App-authored work and then approve it. Lenny cannot distinguish that person from the system. The audit trail shows the subject, and UG-4 cannot name a person who is absent from the session.
 - **GitLab under D.** Below 19.2 or under `prAuthoring: bot`, the MR author is a bot, and two-person review rests on an agent-editable commit author and a paid setting, so an injected agent defeats it, and Free has no such setting. UG-4 covers this where a tenant runs it.
-- **GitLab quick actions.** The guard is a deny list over free text. A command it does not name, or a spelling GitLab accepts and the guard does not, runs under whatever permissions GitLab applies (S13, S17).
-- **Comment-driven and other automation.** A comment, PR body, label, or other allowed event acts with Alice's standing on any bot that reads it. If a tenant states `none` wrongly, or its `commandPatterns` miss a grammar, or its bot acts on an event the setting does not gate, a single injected agent can approve or merge through such a bot wherever it trusts her. The filter cannot close this, and only the tenant's statement, its patterns, and the bot's own check of `performed_via_github_app` bear on it.
+- **GitLab quick actions.** `gitlab-deny`'s patterns are a deny list over free text. A command they do not name, or a spelling GitLab accepts and they miss, runs under whatever permissions GitLab applies (S13, S17).
+- **Comment-driven and other automation.** A comment, PR body, label, or other allowed event acts with Alice's standing on any bot that reads it. If a tenant adds no rule, or its `bodyPatterns` miss a grammar, or its bot acts on an event no rule gates, a single injected agent can approve or merge through such a bot wherever it trusts her. Request rules cannot close this, and only the tenant's rules and the bot's own check of `performed_via_github_app` bear on it.
 - **CI on pushed branches.** An agent's branch runs the repository's existing workflows or pipelines with the secrets they get for a same-repository branch, and its build scripts are agent-written. This allows secret exfiltration and anything those secrets can do, including a workflow token permitted to approve. It exists wherever pods can push, under App tokens too.
-- **Connectors elsewhere.** A connector to an MCP server outside the provider's host set, which holds its own credential to the same repositories, is undetectable here and skips these controls.
+- **Connectors.** Under decision 3, a connector on a host with no `required` pool has no narrowing, and an injected agent can call whatever tools `connectorSelector` admits. A connector to an MCP server outside the provider's host set, which holds its own credential to the same repositories, is undetectable here under any option.
 - **A second account as approver.** Identity binding covers the linked account. A person with a second account in the organization can approve from it unless the organization's sign-on rules prevent that.
 - **`identityBinding: unverified`.** UP-9 does not hold, and a user can author under another account of their own.
-- **Provider and client behaviour.** The tables and checks depend on behaviour listed under "Validation owed". A new `gh` or `glab` release can break a command until the table catches up, by the process under "Tracking releases". The filter fails closed in that window.
+- **Provider and client behaviour.** The presets and checks depend on behaviour listed under "Validation owed". A new `gh` or `glab` release passes rather than breaks, which is the reverse of revision 3's failure mode.
 - **A lost refresh response** forces Alice to relink.
 - **Identifier-only linking under UG-4** proves an identity at one time. An account later transferred at the provider is not noticed.
 
@@ -1171,43 +1227,157 @@ No live spike has run. The capture answered what a client sends and what a filte
 | :-- | :-- | :-- | :-- | :-- |
 | 1 | Separating the features | UG-1, UG-2, and UG-3 as separate proposals in that order | UR-4 waits for UG-2, and tenants see partial value in between. | One proposal, which ties low-risk authorization to the pod-exposed token. |
 | 2 | §9.3 reuse | Reuse `pkg/connectoroauth`, with a new record in the Token Service | A second table and flow beside §9.3, and new routes. | Rows in `connector_credentials`, which brings the MCP requirement, Environment key, gateway decryption, and the callback defect. |
-| 3 | Connectors and one store per host | Refuse a connector on a token-holding link provider's host set, in both write orders, and refuse VCS providers on `/v1/credentials`. `hostLink` is withdrawn. | A tenant with a GitHub MCP connector must remove it to use `required` or `prAuthoring`, and agents lose that server's tools. | Revision 2's `hostLink`, which reaches the host with no filter, list, or sweep. Or leave `oauth2` connectors in place, which gives an injected agent the same path. Or carry the filter to the gateway's connector path, which is new work and a separate design. |
-| 4 | Link key and App | Tenant, user, and host, with one link provider per host | A tenant with two Apps on a host must install the linking App wherever `required` pools point. | Add the client to the key, which makes a person link once per App and adds selection logic. |
+| 3 | Connectors on link hosts | **Settled by the owner.** Refuse a connector on a link provider's host set only when a pool on that host is `required`, since UR-2 is the property a connector skips, in both write orders: setting `required` suspends a connector that exists there. §9.3 connectors are written on the platform-admin route, outside EG-9, so UG-2 adds a suspended field to `connectorstore`, and the invoker refuses a suspended connector. `hostLink` stays withdrawn. | A connector's token on such a host reaches the provider with no narrowing, and an injected agent can call whatever tools `connectorSelector` admits, on pools that are not `required`. | Refuse on every token-holding link provider's hosts, as revision 3 did, which costs a tenant its GitHub MCP tools wherever a link exists. Or allow everywhere, which leaves `required` bypassable through a tool. |
+| 4 | Link key and App | Tenant, user, and link provider name, with one VCS link provider per host | A tenant with two Apps on a host must install the linking App wherever `required` pools point. | Add the client to the key, which makes a person link once per App and adds selection logic. |
 | 5 | Account sharing | Refuse two Lenny users on one provider account within a tenant | A team with a shared account cannot link it, and a first linker holds it until removed. | Allow it, which makes attribution false and gives a route around two-person review. |
 | 6 | Refresh | One refresh at a time per link through a row lease, parent in the Token Service, on demand | A lost response forces a relink, and a waiting replica can answer `unavailable`. | A long transaction with a lock, which holds a pooled connection across a provider call. Neither provider offers an idempotent refresh to avoid this. |
 | 7 | Scoped tokens | A child per session's repository set, shared across a user's sessions with the same set, with a budget of 8 per hour until S2 | Sessions with many distinct sets per user hit `USER_TOKEN_RATE_LIMITED`. A child outlives a session unless S5 allows revocation. | One child per session, which hits any ten-token limit sooner. Or a user-wide child, which fails finding 1. |
-| 8 | Filter | Required from the first version: an allowlist with strict decoding, parsed GraphQL, input-key lists, and canonical forwarding | A provider plugin in `netagent`, one parser dependency (0.54 MB of binary **[captured]**), buffering of write bodies, and a `netagent` release for each new operation. Costs are under "Bounds and cost". | Accept approval as a risk, which the review rejected. Or a block list, which fails open on the next mutation. |
-| 9 | Comment, edit, ready, and close | Allow all of them on the session's repositories, refuse reviews, merges, auto-merge, and branch updates, with `edit` lacking `baseRefName` and `state`. Comments follow a required `repositoryAutomation` statement. | Revision 1 had these off, which broke `gh` and left `pr edit` with partial writes **[captured]**. On is the cost of `gh` working: an injected agent can edit, close, and comment on Bob's pull request, and a comment acts on any bot that trusts Alice, up to what the tenant stated. | Off by default, which breaks `gh` and does not close the bot path, since a PR body reaches bots too. Or limit them to pull requests the session created, which breaks `gh pr comment` on Bob's and adds response parsing and state. Or comment under the App's identity, which sidesteps most bots and needs a second token selected per operation, and loses attribution to Alice. |
+| 8 | Request rules | **Settled by the owner (D1), revision 4.** Generic rules as data, with the GitHub deny preset on by default, replacing the allowlist. Strict decoding, parsed GraphQL, and canonical forwarding stay. | A new mutation with approve or merge power passes until the preset is updated, and input-key and target checks are gone. A parser dependency (0.54 MB of binary **[captured]**) and buffering of inspected bodies stay. | The allowlist, which failed both of the owner's conditions: 17 of 42 `gh` cases failed under it **[captured]**, and 50 of 66 current mutations were off it **[source]**. |
+| 9 | Comment, edit, ready, and close | Superseded in revision 4 by decision 8. All pass the rules, on the session's repositories under a template. Reviews, merges, auto-merge, and branch updates are refused by name. | An injected agent can edit, retarget, close, and comment on Bob's pull request, and a comment acts on any bot that trusts Alice. | Revision 3's allowlist, which held `baseRefName` and `state` back, at the cost in decision 8. |
 | 10 | Push identity | App tokens with a per-user branch namespace, and `pushIdentity: user` as an option if S3 passes | The namespace blocks an agent from pushing to another user's branch, and agents must use the prefix. GitHub's rule keeps seeing the App. | User-token pushes by default, which gets native enforcement. It waits on S3, and it puts `contents: write` from a person's identity in `netagent` next to `pull_requests: write`. |
 | 11 | Commit author | The linked user as author, and the pool's identity as committer | A user's address appears in history for work an agent did, and it is agent-editable. | The pool's identity alone, which is simple and loses GitLab's committer rule. |
 | 12 | Recheck interval | 300 s, with `cacheUntil` of 300 s and a 60-s verdict cache | A 6-minute window, and provider calls per link and repository. | Webhooks, which shorten it and require a public ingress and organization-level configuration. Or 60 s, at five times the calls. |
 | 13 | After access is lost | `deny`, with an event, and `terminate` as a tenant choice | An agent keeps the content it already has until the session ends. | `terminate` by default, which loses a user's work on a transient provider error that survives classification. |
 | 14 | Pod models | Refuse concurrent, service-mode, recycled, and `always` | These tenants pay for one session per pod on affected repositories, and service-mode runtimes have no user identity. | Allow recycling with `restart`, which still rests on a scrub the specification calls no security boundary. |
 | 15 | Mirror outage | New sessions, resumes, and mints fail closed, and running reads continue for 15 minutes | A host outage stops new sessions on `required` pools despite the mirror, which withdraws the 6-hour promise for them. | Honour 6 hours, which gives a revoked user 6 hours of reads during an outage. |
-| 16 | `file` delivery | Dropped from the first version | A tool that rejects a placeholder and needs a token file cannot author pull requests. | Offer it behind `agentReadableDelivery`, which places an 8-hour user token within reach of a prompt-injected process. |
+| 16 | `file` delivery | Changed in revision 4. Not used by `prAuthoring`. Available generically under `user-credential-delivery-design.md`, behind `userCredentialDelivery` and a binding opt-in, and refused on a `required` pool unless flagged. | A person's token reaches a prompt-injected process on any pool that opts in, and every limit that document lists applies. | Dropped, as revision 3 had it, which leaves the cases injection cannot serve with no mechanism, against the owner's direction. |
 | 17 | Attribution | `tokenSource` and an erasable `linkRef` on `credential.mint`, with logins in `user_links` and the audit log | A reader joins through a row that erasure removes, so old records stop naming a person, which is the intent. | The login on the record, which changes the §12.8 basis for every stream. Or a new stream, which adds volume for one field. |
-| 18 | Detached orphans | Keep authorization and PR authoring, swept, until `cascadeTimeoutSeconds` | A child can open a pull request as Alice up to an hour after her session ended. | Refuse user tokens once an ancestor is terminal, which breaks the purpose of `detach` for these tenants. |
-| 19 | Impersonation | Refuse session input routes on affected sessions | An operator cannot reproduce a support case by messaging the user's session, and must start one under its own identity. | Taint the session and stop its user tokens for the rest of its life, which leaves the session running and adds state. |
-| 20 | Service identities | A pool-level list of subjects, with `caller_type: service`, admin-written and guardrail-limited | Each automation is registered per pool. A person holding a listed secret stays undetectable. | Trust `caller_type` alone, which lets a mapping error or a person skip the check. |
+| 18 | Detached orphans | Keep authorization, swept, and keep a user token only when the delegation lease named it, until `cascadeTimeoutSeconds` | A child holding one can open a pull request as Alice up to an hour after her session ended. | Refuse user tokens once an ancestor is terminal, which breaks the purpose of `detach` for these tenants. |
+| 19 | Impersonation | Refuse session input on affected sessions at the session input layer, and memory writes on every session | An operator cannot reproduce a support case by messaging the user's session or writing her memory, and must start one under its own identity. | Taint the session and stop its user tokens for the rest of its life, which leaves the session running and adds state. |
+| 20 | Service identities | A pool-level list of subjects, with `caller_type: service`, admin-written and guardrail-limited. Other callers that are not `human` are refused on such a pool. | Each automation is registered per pool. A person holding a listed secret stays undetectable. | Trust `caller_type` alone, which lets a mapping error or a person skip the check. |
 | 21 | Disables | Stop use and revoke at the provider at every level | A mistaken `soft_disable` forces relinking after reinstate. | Revoke only at `full_revoke`, which leaves a live grant for a disabled person. |
 | 22 | Undeclared repositories | Declared-only under a `required` pool, with a new `readableRepositories` field | An agent cannot fetch a repository it discovers mid-session, and a plan must list dependencies. | On-demand checks through I8 at first access, which adds a mid-session store write, a binding change per repository, and a hot path. |
 | 23 | Sessions across owners | Refuse the second owner on the binding | A session cannot author pull requests in two organizations. | One child per target, with `netagent` selecting by request path, which adds path parsing to the attach step. |
-| 24 | Read-only repositories on the child | Absent, per decision 25's reasoning | `gh pr view` on a read-only declared repository gets 404 from GitHub. | A second read-only child selected by path, at the cost decision 25 names. |
-| 25 | Filter on App-sourced bindings | Apply `vcs-authoring` to any binding with PR write on a `required` or `prAuthoring` pool, including service sessions | Those App bindings lose approval and merge through the agent, and a tenant workflow relying on that breaks. | Leave App bindings unfiltered, which lets an agent approve any human's pull request. |
-| 26 | GitLab | E on 19.2 and later, per-session fine-grained tokens, with S13 selecting the parent and F as the last fallback. D below 19.2 and under `prAuthoring: bot`. Authorization ships regardless. A never ships. | UG-5 waits on S13, and depending on it the Token Service holds `api` parents, or users take a manual step. Each session mints and revokes a token, and S13 decides whether each one notifies the user. Older instances keep the bot author. | D for everyone, which is what revision 1 chose and gives up user attribution, half of the request. A behind an opt-in, which meets UR-4 and places full user power in `netagent`. B, which breaks `glab`. |
+| 24 | Read-only repositories on the child | Absent, per `security-oversight-design.md` decision 25's reasoning | `gh pr view` on a read-only declared repository gets 404 from GitHub. | A second read-only child selected by path, at the cost that decision names. |
+| 25 | Preset on App-sourced bindings | Resolve the flavour's preset at I8 on any binding on the pool's API host, including service sessions | Those App bindings lose approval and merge through the agent, and a tenant workflow relying on that clears the preset. | Leave App bindings without it, which lets an agent approve any human's pull request. |
+| 26 | GitLab | E on 19.2 and later, per-session fine-grained tokens, with S13 selecting the parent. D below 19.2, under `prAuthoring: bot`, and if S13 finds no programmatic path. F is withdrawn. Authorization ships regardless. `prAuthoring` never selects A. | UG-5 waits on S13, and depending on it the Token Service holds `api` parents, or users take a manual step. Each session mints and revokes a token, and S13 decides whether each one notifies the user. Older instances keep the bot author. A tenant can still build A itself under the generic mechanism. | D for everyone, which gives up user attribution, half of the request. B, which breaks `glab`. F, which three texts refuse. |
 | 27 | Status check | An option (UG-4) for tenants refusing user tokens, and required for a widened namespace | A webhook ingress, App permissions, repository configuration by the tenant, and merges blocked during a Lenny outage. | The default for everyone, which removes user tokens from pods and leaves the App as author everywhere, against the request. |
 | 28 | Sweep owner | A gateway background job calling the Token Service | The gateway needs a new job with per-tenant sharding, and it writes each session's entry `verifiedAt` values each interval. | A Token Service worker, which needs a new route to gateway replicas and a write to the session row from a component that reads it today. |
-| 29 | Parser differences | Forward a document and body `netagent` generated from the checked structure, with the lexical rule beside it | A printing step, a second parse, and a body that differs in bytes from what the client sent. A printer defect becomes a refusal or a wrong request, which the re-parse narrows. | Forward the client's bytes after checking, which is the design that the bare CR bypassed **[captured]**. Or identify the host's parser, which cannot be done from outside and can change. |
+| 29 | Parser differences | Forward a document and body `netagent` generated from the checked structure, with the lexical rule beside it, for each inspected request | A printing step, a second parse, and a body that differs in bytes from what the client sent, in 6 of 159 corpus documents **[measured]**. A printer defect becomes a refusal or a wrong request, which the re-parse narrows. | Forward the client's bytes after checking, which is the design that the bare CR bypassed **[captured]**. Or identify the host's parser, which cannot be done from outside and can change. |
 | 30 | Bounds | 512 KiB body, 64 KiB document, 4,096 tokens, depth 32, 10 s head, and 4 concurrent checks per pod | A `gh api graphql` query past these fails with a named bound. Concurrent large writes wait or get 429. | The prototype's 256 KiB body, which refuses a legal PR body. Or no token limit, which measured 74.9 MiB against a 64 Mi example request **[captured]**. |
-| 31 | Quick actions | Decode bodies and refuse lines naming commands that reach review or merge state, whatever the context, with `strict` as an option | It is a deny list that fails open on a new command, and a literal `/merge` line in a code block is refused. | The prototype's refusal of every `/word` line, which rejects `/usr/bin/env` **[captured]**. Or no check, relying on the token, which S13 has not shown to bind quick actions. |
+| 31 | Quick actions | `gitlab-deny`'s `bodyPatterns` refuse lines naming commands that reach review or merge state, whatever the context. A tenant's rules can tighten them. | It is a deny list that fails open on a new command, and a literal `/merge` line in a code block is refused. | The prototype's refusal of every `/word` line, which rejects `/usr/bin/env` **[captured]**. Or no check, relying on the token, which S13 has not shown to bind quick actions. |
 | 32 | Query root fields | Admit any query, within the bounds | A query can read whatever the child reads, under any root field. | A root list, as the prototype had, which breaks `gh api graphql` on roots such as `rateLimit` and adds no write protection. |
-| 33 | Flavours | One mutation list on both GitHub flavours, with prefixes and `meta` per flavour | Each flavour admits mutations `gh` does not currently send there. | A list per flavour, which breaks `gh` when a GHES upgrade flips its feature detection. |
-| 34 | Review comments | `gh pr review --comment` stays refused | An agent loses inline review comments, and `gh pr comment` is the substitute. | Admit `event: COMMENT`, which the strict decoding makes checkable, at the cost of reasoning about pending reviews and their submission. |
-| 35 | `repositoryAutomation` | Required, with no default, when `prAuthoring` is written | A tenant admin must answer a question at setup and can answer it wrongly, and it covers comments, text, and labels alone. | Default to `none`, which silently exposes tenants with bots. Default to `refuse`, which breaks `gh pr comment` for the common tenant with none. |
-| 36 | Git remotes and client tools | Option 3, `http.proxy` with `http.sslCAInfo` and termination for git, **pending the owner's test** | Reverses part of EG-3 and widens what `netagent` terminates, and the local endpoint's validation reruns. | `GH_REPO` or `-R`, which is not unchanged and names one repository. A wrapper or patched tool, which is a Lenny-specific binary in each image. |
+| 33 | Flavours | Superseded in revision 4. With a deny list there is no per-flavour mutation list to keep, and prefixes come from the preset's flavour, which the VCS pool's provider and host select. | A preset names mutations on both flavours whether or not a release has them. | A list per flavour, which only the allowlist needed. |
+| 34 | Review comments | `gh pr review --comment` stays refused by default, because the preset names `addPullRequestReview` | An agent loses inline review comments, and `gh pr comment` is the substitute. A tenant can change that by dropping the name and accepting approval with it, since rules no longer read the event. | Have the preset read `event: COMMENT`, which needs an input check of the kind D1 removed. |
+| 35 | Required statement on automation | **Settled by the owner.** Retire `repositoryAutomation` with the allowlist's label and comment checks. The setup flow and posture prompt a tenant about bots, with `bodyPatterns` and `denyMutations` as the tools. | A tenant that says nothing gets comments on, with no required answer in the API. | Keep it required when `prAuthoring` is written, setting rules from the answer. |
+| 36 | Git remotes and client tools | **Settled by the owner: T with the bundle on VCS-covered hosts.** Applied in egress revision 47. T is the only candidate where `gh`, `glab`, go-git, JGit, and proxied libgit2 all work, and its enforcement on covered hosts holds with the config removed and for a held token **[measured]**. | About 35% more `netagent` CPU on git, public roots in git's trust, CA coverage before a warm fill, a libgit2 hang on a constraint mismatch, and no enforcement on uncovered hosts, where an agent's token reaches the host. | P, which gives `gh` and `glab` the same results, holds enforcement only with a second CONNECT rule that needs the CA anyway, and fails go-git, JGit, and libgit2. L, which leaves `gh` stopped. `GH_REPO`, a wrapper, and the others listed, none of which worked unchanged. |
 | 37 | Identity binding | A required `identityBinding` on each link provider, with `directory` or `claim` recommended and `unverified` reported in posture | A tenant runs a mapping or a broker claim, and a user cannot link until it exists. | No binding, which lets a user author under a second account and approve as themselves. A fixed email match, which needs an authoritative IdP email everywhere. |
-| 38 | Push options | Refuse every push option on every host, with a per-pool allowlist | An agent or tool using `-o ci.skip` or `merge_request.*` breaks, and `netagent` parses further into the push. | Refuse `merge_request.*` alone, which leaves `secret_push_protection.skip_all` and `ci.skip`. Or read options per provider, which adds provider knowledge to the git path. |
-| 39 | Labels under stated automation | Refuse label keys under `present` and `refuse` | `gh pr create --label` exits non-zero after creating the pull request, on those pools. | Allow labels and rely on patterns, which cannot see an opaque node ID. Or resolve IDs to names by read, which adds a request and state per label. |
+| 38 | Push options | Refuse every push option on every covered host, with a per-pool allowlist | An agent or tool using `-o ci.skip` or `merge_request.*` breaks, and `netagent` parses further into the push. | Refuse `merge_request.*` alone, which leaves `secret_push_protection.skip_all` and `ci.skip`. Or read options per provider, which adds provider knowledge to the git path. |
+| 39 | Labels under stated automation | Retired with `repositoryAutomation` under decision 35. Labels pass by default, and a tenant can deny the mutation. | Kodiak and label-triggered workflows act on an agent's label, wherever a tenant has not added a rule. | Revision 3's refusal of label keys, which needs an input check of the kind D1 removed. |
+| 40 | Hosts of a `required` pool | **Settled by the owner.** Pin the git host and API hosts for every session of the tenant, unfiltered by Environment, whenever a `required` pool covers that host, once EG-12 lands, with `pinHosts: false` as a recorded opt-out, and a stated residual until then | An API host with no binding is refused, so a `required` pool without `prAuthoring` loses unauthenticated API reads unless it adds a read-only App binding. A pin on `github.com` with no binding also refuses public release and archive downloads for every session of the tenant. Other pools on that host are pinned too, and `internet` pools stay outside. EG-12 becomes a dependency for this guarantee. | Pin only that pool's sessions, which leaves a session on another pool holding a token that reaches these repositories. A stated residual alone, which leaves `required` bypassable by anyone who can place a token through `inlineFile`, `env`, or a message. |
+| 41 | Tokens beside a `required` pool | By host: refuse a stored secret outright, and, as the owner adopted, a `file` binding whose type hosts include a covered host unless every pool covering it sets `allowRuntimeHeldCredentials`, whatever its mode. The attach rule applies to a session naming that binding, whatever its state, and the pin exception needs a release. Report it in posture. | The flag removes most of what `required` promised, for sessions holding the binding. A session whose binding has no current value gets a 401 on git. A `registered` type can lie, and the pin is the enforcing control. | No flag, which excludes GitHub from the generic mechanism. Or allowed on an `off` pool, where the push silently acts as the App. |
+| 42 | The child's permissions | **Settled by the owner.** `permissions` is template data a tenant can widen, defaulting to `pull_requests: write` and `contents: read` | At the default, `gh issue`, `gh run`, and more are refused by the host, so "all `gh` commands", the owner's condition, holds only within the token. Once widened to `contents: write`, merges and content writes rest on the deny preset alone, with no host check behind it. | Fix the default wider, which makes `gh` work out of the box and removes the host's limit by default. Or fix permissions as revision 3 did, which keeps the limit and fails the condition. |
+| 43 | A same-host App binding beside the attach | Replace it per session: a human session takes the user binding, and a service session takes the App binding | Two bindings exist on one host at the tenant level, and a reader of a session's list sees the effective one. | Refuse at write, which leaves service sessions on that host with no binding. |
+| 44 | `prAuthoring: user` without `required` | Refused | A tenant wanting user authorship with no read limits on its repositories cannot have it, and it takes the declared-only rule too. | Define the unchecked case, which needs its own namespace, error, and residuals for a token with no check. |
+| 45 | Shared App across tenants | Removed. A link provider's client belongs to one tenant. | An operator cannot offer one App to many tenants, and each tenant registers its own. | A platform-only write with fixed endpoints, which is a second write path and a record no tenant admin can touch. |
+
+## Review of revision 4
+
+Two independent reviews read revision 4, one adversarial on `user-credential-delivery-design.md` with this document's related parts, and one for consistency across documents. Each finding was verified against the text and the tree. Those on the mechanism are recorded in that document's "Review of revision 1", and these concern this one.
+
+| Finding | Outcome | Resolution |
+| :-- | :-- | :-- |
+| H1, link key and routes | Holds. | Keyed on the provider name from UG-1. |
+| H3, implicit attach | Holds. | "The attach rule", with replacement chosen. |
+| H4, H5, M16, and S11, presets | Holds. | Flavours, rule kinds, and resolution at I8, by provider kind. |
+| M1, M2, M3 | Hold. | One code per case, one reason, and one `tokenSource` list. |
+| M4 and S19 | Hold. | Only the pool's named link on a `required` API host. |
+| M5, option F | Holds. | **Withdrawn.** An exception would have to read cleanly in egress P2, its `hosts` rule, and "Other tokens", and it read cleanly in none. |
+| M6 | Holds. | `followsEntryState`. |
+| M7 and S7, UP-1 and UP-10 | Hold. | Both corrected, and `delivery` added. |
+| M8 | Holds. | Rows limited, with the refusal stated. |
+| M12 | Holds. | Lease rule stated. |
+| M17 and S4 | Hold as a gap. | Fail closed on spelling. Rows are **[pending]**. |
+| M18 | Holds. | UR-5 reworded, the table separates rules from the host, `permissions` is data, and decision 42 asks the owner. |
+| S2 | Holds. | Lifecycle row and origin binding. |
+| S3 | Holds. | Type hosts. |
+| S5 | Holds. | Default-deny gate. |
+| S8 | Holds. | Per session. |
+| S9 | Holds. | Literals scanned. |
+| Minors | Hold. | Stale step references, the retired list, "filter", the `edit` setting, the bare "decision 25", `Single store`, UR-1 and UR-4, and `OC-1 and OC-2`. |
+
+None was rejected. New while verifying: a connector's `clientSecretRef` has the same flaw in today's code, under "Defects found while verifying".
+
+## Review of revision 9
+
+A final regression review and a further run read revision 9. Minor 9, the warm-up asset's `restricted` exception, holds, and "Other tokens" has it. N3 holds, and the plan rejection is stated. The 401 states moved to **[measured]** on stand-ins, and the stub proves forwarding only. None was rejected.
+
+## Review of revision 8
+
+Round 5 of the reviews and the revision 5 run read revision 8, and each finding was verified against the text and the raw output. Those on the mechanism are in `user-credential-delivery-design.md`, "Review of revision 5", and these concern this document.
+
+| Finding | Outcome | Resolution |
+| :-- | :-- | :-- |
+| Security M2 | Holds. The run has a suspended binding push as the App. | The attach rule and its 401 state, in "Other tokens" and decision 41. |
+| Sync M1, LFS on GitLab | Holds. | "GitLab" states the loss. |
+| m3, m4, m9, m12, m14, m16 | Hold. | Corrected. m9: UG-2 carries a suspended field on connectors. |
+| m19 | Holds. | The bound claim is limited to the size and depth bounds. |
+| m20 | Holds. | `gpg-key delete` did not confirm. |
+| m21 | Holds. | Eight names ran, `lgtm` is named, and the whitespace is ASCII. The alias list is the unverified part. |
+
+None was rejected.
+
+**Revision 5 run folded in.** S19 and "Request rules on VCS hosts" hold its numbers, and the GHES uploads path and the `--env` commands pass. Live reads are **[live]**: GitHub's one anonymous download action is on `github-cloud.githubusercontent.com` with no `header` key, and GitLab's one object returned an error.
+
+## Review of revision 7
+
+Round 4 of the reviews and the spike follow-up read revision 7, and each finding was verified against the text, the tree, and the raw output. Those on the mechanism are in `user-credential-delivery-design.md`, "Review of revision 4", and these concern this document.
+
+| Finding | Outcome | Resolution |
+| :-- | :-- | :-- |
+| R4-1, the child cache | Holds. | Sealed with the full key and the digest. |
+| R4-6, deleted provider | Holds. | The lifecycle row states `deleting` and the bound. |
+| M4, flag owner | Holds. | UC-5 is named, with the attach rule. |
+| m3, push options on every host | Holds. | Covered hosts. |
+| m8, m9, m10, m22, m23 | Hold. | Corrected. m10: setting `required` suspends a connector. m22: the push on an uncovered host is inferred from P. m23: `t4/table.txt` shows L's tunnel. |
+
+None was rejected.
+
+**Spike follow-up folded in.** "Request rules on VCS hosts", "What reaches the host", "Bounds and cost", S8, S9, S10, and S19 hold its numbers. The re-encoding that S8 owed ran. A bare LF refused at once did not run as stated, because the prototype waits for the deadline, and that part is **[design]**. Not run: any GitHub or GitLab host, permission check, or quick action; `gh` on amd64, macOS, or Windows; a second pod's `cacheUntil` timing; a pin exception, a guardrail, posture, and `required` pool write refusals; `memory.peak` under the new bounds; and this revision's added rules.
+
+## Review of revision 6
+
+Round 3 of the reviews read revision 6, and each finding was verified against the text and the tree. Those on the mechanism are in `user-credential-delivery-design.md`, "Review of revision 3", and these concern this document.
+
+| Finding | Outcome | Resolution |
+| :-- | :-- | :-- |
+| R3-5, `attach` | Holds. | The binding has none, and the kind fixes it. |
+| R3-6, revocation after deletion | Holds. | The lifecycle row and the durable record. Deletion after a mismatch revokes nothing. |
+| R3-7 and M1, `apiFlavour` | Holds. | Removed, and the flavour derives. |
+| R3-8, delegation tree | Holds. | UP-7 follows. |
+| M3 and M4, UG-1's row | Hold. | UC-1 and an unconditional EG-2, and the "no pod-side component" sentence is gone. |
+| M5, `userRefused` | Holds. | The sentence now states the egress rule. |
+| m1, stale deny-mode text | Holds. | The capture section and example step 7. |
+| m2, m4 | Hold. | The request row and the residual's list of measured routes. |
+| m12, L cells | Holds. `raw/gitopt/t11/` holds T and P alone. | The push to `main` is attributed to P, and L is marked as inferred. |
+| m13, retags | Holds. The deny-mode scripts cover `pr view`, `pr list`, and `auth status`, and no `--project`. | Those rows now state what ran. `status`, `checks`, `diff`, `repo view`, and `issue view` are **[captured]** under the allowlist. |
+| m15, unlabelled preset | Holds. | "Command result" labels both. |
+| m16, settled wording | Closed by the owner's decisions. | Decisions 3, 35, 36, 40, and 42 read as settled. |
+
+None was rejected.
+
+**Owner's decisions applied.** Decision 36 is settled as T, and egress revision 47 applies it. UR-5 reads as met on a stub with live hosts owed.
+
+## Review of revision 5
+
+Two independent reviews read revision 5's design, and each finding was verified against the text and the tree. "H" and "M" are the security review, and "N" the sync review. Those on the mechanism are in `user-credential-delivery-design.md`, "Review of revision 2", and these concern this document.
+
+| Finding | Outcome | Resolution |
+| :-- | :-- | :-- |
+| H2, relink before the confirmation page | Holds. Step 7 named no host, and the login comes from an endpoint she controls. | A page before the redirect, and a recorded digest step 6 compares. |
+| H4 | Holds. | "Identity cases" follows the session input layer. |
+| M8, N5, N38, attach | Hold. | The trigger is a declared writable repository, service paths need a listing, and replacement holds per host whatever the state. |
+| M9, shared App | Holds. | Removed, which reworks less than a platform-only write. Decision 45. |
+| N3, link key | Holds. | Terms, decision 4, caches, and the audit event. |
+| N6, empty set | Holds. | No child, and a stated answer. |
+| N11, gate and dependency | Holds. | UG-2 depends on UC-3, with no cycle. |
+| N15, forwarding | Holds. | The rule is limited to inspected requests, and decision 29 follows. |
+| N21, N23, N25, N28, N31, N37, N39, N40 | Hold. | Corrected. `identifier` is a ceiling for UG-4, `bot` is defined, and decision 40 states the download cost. |
+| N26 and the connector defect | **The earlier entry was wrong.** | Restated. The route admits only `platform-admin`, so it is no tenant escalation, and the resolver's missing `get` is the defect. |
+
+None was rejected.
+
+**Spike results folded in.** S18 and S19 close on the stub, and S8, S9, and S10 advance. "Request rules on VCS hosts", "What reaches the host", and "Git remotes and client tools" hold the rows. Not run: any GitHub or GitLab host, permission check, or quick action; `gh` on amd64, macOS, or Windows, the .NET SDK image, and drift on the Debian client; a `glab` fork flow, read after push, and git against `ghe.com` beyond the stub; a T and P hybrid, and a GitLab route inventory.
 
 ## Sources
 
@@ -1217,4 +1387,5 @@ Read on 2026-11-02 and 2026-11-03. These pages were read and their behaviour was
 - GitLab: [OAuth 2.0 API](https://docs.gitlab.com/api/oauth2/), [OAuth provider and scopes](https://docs.gitlab.com/integration/oauth_provider/), [fine-grained tokens post](https://about.gitlab.com/blog/fine-grained-pats/), [fine-grained tokens](https://docs.gitlab.com/auth/tokens/fine_grained_access_tokens/), [fine-grained REST permissions](https://docs.gitlab.com/auth/tokens/fine_grained_access_tokens_rest/), [user tokens API](https://docs.gitlab.com/api/user_tokens/), [push options](https://docs.gitlab.com/topics/git/commit/#push-options-for-merge-requests), [approval settings](https://docs.gitlab.com/user/project/merge_requests/approvals/settings/), [notes API](https://docs.gitlab.com/api/notes/), and [quick actions](https://docs.gitlab.com/user/project/quick_actions/).
 - Coder: [external authentication](https://coder.com/docs/admin/external-auth.md). Kodiak: [config reference](https://kodiakhq.com/docs/config-reference), read through search results.
 - Capture: `spike-gh/RESULTS.md` in the session scratchpad, with `raw/`, of `gh` 2.103.3 (cli/cli tag v2.103.3) and `glab` 1.127.0, gqlparser 2.5.33, graphql-go, graphql-js 17.0.2, graphql-ruby 2.6.14, and `graphql-c_parser` 1.1.4. It should move into the repository's validation records if this design proceeds, because the scratchpad does not persist.
+- `gh` release history: `gh-history/out/` in the session scratchpad, read from cli/cli source across 68 releases and from GitHub's public schema. It carries the same caveat about persistence.
 - Client source for revision 1: [cli/cli](https://github.com/cli/cli) at `c4513d446bf98cfcbe72ed83f17cd3220174d88f`, in `api/queries_pr.go`, `api/queries_pr_review.go`, `api/queries_user.go`, `pkg/cmd/pr/create/create.go`, `pkg/cmd/pr/merge/http.go`, `pkg/cmd/api/http.go`, `internal/featuredetection/feature_detection.go`, and `internal/ghinstance/host.go`. [gitlab-org/cli](https://gitlab.com/gitlab-org/cli) on `main`, in `internal/commands/mr/create/mr_create.go` and `internal/commands/mr/approve/mr_approve.go`.

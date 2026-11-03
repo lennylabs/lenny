@@ -1,6 +1,6 @@
 # Forensics and evidence preservation
 
-Status: design for owner review, revision 3, 2026-11-03, after two independent reviews, against `egress-and-git-design.md` revision 40. Nothing in this document is built, staged, or validated. No spike, test, or benchmark has run for it, and every number under "Volume and cost" is a planning assumption. Claims about Lenny were checked against the specification and the tree on 2026-11-02 and 2026-11-03. Claims about external products come from the pages listed under "Sources" and were read rather than tested. Proposals carry the label FE-n.
+Status: design for owner review, revision 11, 2026-11-03, after two independent reviews, against `egress-and-git-design.md` revision 51, `user-credential-delivery-design.md` revision 8, and `user-git-identity-design.md` revision 11. Revision 4 added delivered user tokens, and revision 5 corrects that text after review. Nothing in this document is built, staged, or validated. No spike, test, or benchmark has run for it, and every number under "Volume and cost" is a planning assumption. Claims about Lenny were checked against the specification and the tree on 2026-11-02 and 2026-11-03. Claims about external products come from the pages listed under "Sources" and were read rather than tested. Proposals carry the label FE-n. This revision followed independent security and consistency reviews whose final stop check found no Major or higher issue. That check traced the last round's changes and was not an end-to-end read, and no production component or live provider write has run.
 
 ## Problem
 
@@ -113,6 +113,7 @@ The label and the row are both read, so either outage leaves one path. `pkg/bind
 | Control | Enforced by | Mechanism |
 | :-- | :-- | :-- |
 | New egress, mints, and mirror reads | Decision service, Token Service, and mirror | The `quarantined` state in `pkg/binding`, each instance reading independently (EG-2). A compromised decision service cannot release the Token Service gate. |
+| Release of a user's token | Token Service and decision service | The `quarantined` state stops a `userCredential` release on I8 from each instance's own read, with no new work (see "Delivered user tokens"). |
 | Raw network paths | CNI | Every allow policy selecting agent pods gains `lenny.dev/quarantine DoesNotExist` in its pod selector, so the namespace's `default-deny-all` applies. Today that means `allow-gateway-ingress`, `allow-pod-egress-base`, `allow-pod-egress-llm-proxy`, `allow-pod-egress-otlp`, `allow-pod-egress-provider-direct` until EG-2 removes it, `allow-pod-egress-internet`, `allow-pod-egress-kube-dns`, and `allow-pod-egress-objectstore` (`charts/lenny/templates/agent-network-policies.yaml`), plus the policies EG-2 adds for `proxied` and `gitAccess`. A tier 0 test enumerates every rendered policy in agent namespaces, so a later policy without the exclusion fails. Network policies are additive, so a deny policy cannot express this. |
 | Open tunnels | `netagent` and the pool's tunnel cap | `netagent` closes tunnels at the binding change. A compromised `netagent` keeps them until the pool's `max_stream_duration`, the residual the egress design states. Kubernetes leaves it to the network plugin whether a policy change affects an existing connection, so the policy change is no guarantee either. FE-5 gives the reset procedure. |
 | New sessions and claims | Gateway, `lenny-sandboxclaim-guard`, and the service-mode router | The phase leaves inventory, the webhook refuses a claim whose pod carries the label, and `tenantaffinity.Router` never selects a labelled pod. |
@@ -317,7 +318,7 @@ A compromised decision service writes `egress.decision` and receives Envoy's acc
 | R-QUARANTINE-BREACH | Any allow, mint, or mirror read after a quarantine's set time plus the 30-second bound | An enforcement point did not apply the state. Critical. |
 | R-MINT-NO-SCOPE | `credential.mint` with the decision service's scope decisions | One gate lacks a record of the other. |
 | R-MINT-WRONG-TENANT | `credential.mint` tenant with the binding's owning tenant | A tenant's credential reached another tenant's pod (P4). Critical. |
-| R-GIT-CLAIM | `netagent`'s `git.operation` with the mirror's record, the access log, and any provider log | A self-reported operation has no enforced counterpart, or the reverse. |
+| R-GIT-CLAIM | `netagent`'s `git.operation` with the mirror's record, the access log, and any provider log | A self-reported operation has no enforced counterpart, or the reverse. Git on an uncovered host is an opaque tunnel and writes no `git.operation`, so a missing record there does not mean no push, and `egress.tunnel` is the only trace. |
 | R-LOCAL-CLAIM | `egress.local` tunnel closes with the access log's end times | `netagent` reported a close that Envoy never saw. |
 | R-SEQUENCE | Sequence gaps, incarnations without a closing record, compaction anchors, and §11.7 chain state | Loss or tampering, using the detection the egress design specifies. A gap alone is a low-severity finding. |
 | R-EDGE | The access log's byte counts with NAT or flow logs, per replica and time bucket | Traffic left the cluster outside the proxy, or the proxy under-reported. |
@@ -355,7 +356,7 @@ The runbook `docs/runbooks/forensic-capture.md` follows the §25.7 format, and t
 4. Copy tmpfs volumes (`/sessions`, `/tmp`, and `/run/lenny` for the credential file), then `/workspace` and `/artifacts`, then container logs. The Job hashes each file.
 5. Register each capture.
 6. Reset open tunnels if R-TUNNEL-AFTER-END fires or `netagent` is suspect. Envoy has no per-tunnel kill, so the procedure runs the chart's graceful drain against the replicas named in `egress.accesslog`, which interrupts other tenants' tunnels on those replicas until they reconnect. On a shared replica set, an investigator weighs that against the pool's remaining tunnel cap.
-7. Rotate credentials. `credential.mint` lists every token and secret version the pod received. Revoke direct-mode LLM credentials through `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke`.
+7. Rotate credentials. `credential.mint` lists every token and secret version the pod received. Revoke direct-mode LLM credentials through `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke`. For a `userCredential` binding, follow the limits under "Delivered user tokens": remove the user's link for an `oauth2Link` token or child, which revokes its grant when its token trust record still matches, and for a `registered` value act on the exposure rows through the tenant's backend. Changing a record because it was compromised is not enough, because replaying the record restores its tokens, so the case revokes at the provider or deletes the rows.
 8. If a container escape is suspected, cordon the node and keep the pods running, so evidence is preserved before workloads move, as Wiz's guidance states. Drain only after collection.
 9. Release the quarantine.
 
@@ -522,6 +523,21 @@ For comparison, §16.4 estimates about 10 KB of audit and 50 KB of logs per sess
 
 `GET /v1/agent-activity` takes `sessionId`, `stream`, `kind`, a binary or path prefix, and a time range, and it needs the stream's permission. `GET /v1/admin/evidence/{stream}` is the platform form. Export uses the egress design's cursor path, with OCSF translation at delivery: Process Activity (class 1007) for `exec` and File System Activity (class 1001) for `file`, both read from the OCSF v1.1.0 schema, and `exec.args` in `unmapped.lenny.*` only when the subscription holds its permission. A SIEM copy is outside key destruction, so the export subscription states this and §12.8 lists it as a sink to notify.
 
+### Delivered user tokens
+
+`user-credential-delivery-design.md` can place a person's token in a pod. `delivery: inject` keeps it in `netagent` memory, and `delivery: file` writes it to `/run/netagent/credentials/<name>/value`, readable by any process at the agent UID.
+
+- **Quarantine.** `quarantined` in `pkg/binding` stops release on I8 from each instance's own read, so a held pod receives no new token and no refreshed one. It does not depend on `netagent`.
+- **What a held pod keeps.** Two cases differ. An honest `netagent` removes the file on the binding change, so the held pod has no file, and any copy the agent made remains. A compromised `netagent`, or one frozen or stopped before the change, leaves the file in an emptyDir that `keepalive` keeps with the pod. In that case, and for any copy, the token stays valid at the provider, so **a quarantined pod can hold a live credential for a person**. The capture commands in FE-5 do not copy `/run/netagent` by default, and a capture that includes it is T4 and needs its own case entry. The identifier in `binding.json` and the hash in `credential.mint` serve most investigations with no copy.
+- **Rotation limits.**
+  - `oauth2Link`: remove the user's link, which revokes its grant at the provider's endpoint when one exists. Revoking one child needs the token value, and no route takes a hash, so the case works by link. That can break the user's other sessions.
+  - `registered`: Lenny holds no way to revoke. The case states this, and the tenant's backend acts, from the durable exposure rows, which name each generation and the writer's `tokenId`, or on the investigator's notice.
+  - Copies: nothing Lenny does reaches a copy the agent made. A token that reached a provider through an opaque tunnel shows in that provider's logs and not in Lenny's.
+- **Where the token can be in evidence.** Under `file`, an agent can print it or store it, so it can reach a transcript, an LLM request, a workspace, a checkpoint, an export, or an `agent.activity` record. Sessions holding such a binding are marked `agentHeldCredential`. For these sessions, investigators treat captures and transcripts as T4 regardless of `workspaceTier`, and a report to a tenant names the session rather than quoting. Under `inject` the agent cannot read the token, except through a reflection the egress design's scrub misses.
+- **Redaction.** FE-6's structural and entropy layers apply, and they miss a token with no recognizable form. Known values do not reach FE-6's collector or adapter, because the collector is a node-level process shared across tenants, and `leakScan` works in the gateway's interceptors instead. An investigator holding a leaked value tests it pod by pod through `forensics.query`, as FE-6 states.
+- **Attribution.** `credential.mint` carries `tokenSource` and an opaque `credentialRef` or `linkRef`, with no user identifier, a token hash for an OAuth2 token or child, and `generation` with a per-tenant keyed hash for a `registered` value, which keeps its §12.8 treatment. That join lives in rows erasure deletes, so an investigation that needs the person after erasure works from a security hold, under FE-3's rules.
+- **Reconciler.** FE-4 can add R-USER-CREDENTIAL-POD, comparing a `userCredential` mint with the pod's model, since a release to a pod that can serve another session is a defect.
+
 ## Configuration by scope
 
 | Setting | Description | Applies to | Managed by | Notes |
@@ -611,9 +627,36 @@ Carol, a tenant admin at `acme`, submits `POST /v1/admin/users/alice/erase` whil
 
 If `acme` asks for tenant deletion instead, Phase 3.5 waits for the hold to finish materializing, escrows held evidence and rewraps its keys, and continues, so Phase 4a can destroy the tenant key within the T4 deadline. A quarantined pod keeps tenant data on its node's disk past that deadline, which the case states, and which the operator's agreement has to allow.
 
+## Review of revision 7
+
+Round 4 of the reviews raised m7: git on an uncovered host produces no `git.operation`. It holds, and R-GIT-CLAIM states it. None was rejected.
+
+## Review of revision 6
+
+Round 3 of the reviews raised the revert case on `user-credential-delivery-design.md`: a record replayed after an incident restores old tokens. It holds, and step 7 now states it. None was rejected.
+
+## Review of revision 5
+
+Round 2 of the reviews raised N29 on this document: step 7 said to revoke a child through its link provider, against this design's own limit. It holds, and step 7 now removes the link for `oauth2Link` and acts on exposure rows for `registered`. None was rejected.
+
+## Review of revision 4
+
+Two independent reviews of the user credential designs raised these on this document, each verified against the text.
+
+| Finding | Outcome | Resolution |
+| :-- | :-- | :-- |
+| Known values reaching FE-6's redaction | Holds. FE-6 redacts in the collector and adapter, and that design gave them no such value. | They do not reach it. `leakScan` stays in the gateway. |
+| "Revoking child tokens by hash" | Holds. Revocation needs the token value. | The case removes the link. |
+| A held pod's file, stated two ways | Holds | Two cases, stated. |
+| Exposure events are best effort | Holds | Durable rows, in that design. |
+
+None was rejected.
+
 ## Residual risks
 
 - **Lost before quarantine.** Memory and tmpfs state from before the first alert are gone unless the pod is still running, and the default pod lifetime is one session (§6.1). Many investigations start from records alone. A pool can extend `retentionClass` evidence, and nothing extends a pod's life in advance.
+- **A person's token in a held pod.** A quarantined pod under `delivery: file`, whose `netagent` did not remove the file, holds a token valid at its provider until someone revokes it there, and Lenny cannot revoke a `registered` one. A copy an agent made is out of reach.
+- **Tokens in evidence.** Redaction misses a token with no recognizable form, so stored evidence can hold one for its retention, under its T3 or T4 class.
 - **Eviction and node loss.** The kubelet's eviction ignores PodDisruptionBudgets and grace periods, and a hard threshold terminates immediately, so a quarantined pod can be lost. An unfrozen agent can trigger this itself by filling the workspace past its `sizeLimit`, so on embedded pods the volumes last only until the agent chooses otherwise or the node-side freeze lands. A quarantined pod needs capturing at once, and the loss is recorded.
 - **A compromised runtime destroys its own state.** Nothing stops a process from exiting or from overwriting its workspace before the quarantine lands, or on an embedded pod before a node-side freeze. The freeze is best effort in the pod. A compromised `netagent` restarts on exit, which loses its memory. `keepalive` protects volumes against container exit, and it does not protect them against eviction or a compromised guest or Sentry.
 - **Open tunnels.** Quarantine does not end an open tunnel through a compromised `netagent` until the pool's cap or a replica drain, because Envoy has no per-tunnel kill. A drain interrupts other tenants. Exfiltration can continue in that window, and `egress.accesslog` records it.
@@ -691,10 +734,12 @@ The egress design's table lists FE-1 to FE-6 with their EG dependencies, and the
 | SO-4 | SO-4 must exclude the `forensics.*` prefix from what it mirrors to a tenant, unless a case discloses it. If SO-4 lands first, FE-0 adds the exclusion. |
 | SO-7 | FE-5 adds no right to `lenny-ops`, so it does not conflict with SO-7's narrowing. |
 | `tenant-scoping-identity-design.md` TS-1 | Holds and streams use the tenant, and an Environment filter can be added to reads later. No dependency. |
+| `user-credential-delivery-design.md` | Its `quarantined` handling needs nothing here. FE-6 takes nothing from `leakScan`. |
+| `user-git-identity-design.md` | `link_ref` and child tokens follow "Delivered user tokens". No dependency in either direction. |
 
 ## Changes requested of egress-and-git-design.md
 
-Revisions 38 to 40 of that document applied every request this design made: `egress.accesslog`, `netagent`'s local client port, `sequenceEnd`, the pod-incarnation key in `payloadKeyRef`, the per-node producer identity with `spec.nodeName`, the marker in `EvidenceStore.DeleteByTenant` with its escrow operation, the persisted fetch UIDs, store generations, the `quarantined` inputs and precedence, a quarantined pod's records under the platform prefix, a refresh against the current generation, and the manifest bound. This design consumes them as fixed inputs, and it requests nothing further.
+Revisions 38 to 40 of that document applied every request this design made: `egress.accesslog`, `netagent`'s local client port, `sequenceEnd`, the pod-incarnation key in `payloadKeyRef`, the per-node producer identity with `spec.nodeName`, the marker in `EvidenceStore.DeleteByTenant` with its escrow operation, the persisted fetch UIDs, store generations, the `quarantined` inputs and precedence, a quarantined pod's records under the platform prefix, a refresh against the current generation, and the manifest bound. This design consumes them as fixed inputs, and it requests nothing further. Revisions 44 to 51 of that document add the `userCredential` kind, which reaches this design through `quarantined` with no change.
 
 The local client port in `egress.local` gives no exact join on gVisor, because `Connect` has no local port (see FE-6). This design keeps the field for a sensor that can supply the port.
 
