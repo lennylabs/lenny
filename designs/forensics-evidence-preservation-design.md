@@ -640,6 +640,8 @@ The egress design's table lists FE-1 to FE-6 with their EG dependencies, and the
 
 ## Changes requested of egress-and-git-design.md
 
+Revision 37 of `egress-and-git-design.md` applied the items below that had to land before its proposals, so they are history here rather than open requests.
+
 These are requests. This design does not edit that document, and it treats its hooks as fixed. Each item would be rework if added after EG-2, EG-5, or EG-10 ship.
 
 | Change | In | Why it would be rework later |

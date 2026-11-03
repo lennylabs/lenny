@@ -544,6 +544,8 @@ The hooks in its "Reserved for other designs" are inputs here, and the items bel
 
 ## Changes requested of egress-and-git-design.md
 
+Revision 37 of `egress-and-git-design.md` applied the items below that had to land before its proposals, so they are history here rather than open requests.
+
 These are requests. This design does not edit that file.
 
 1. **Widen the objects on the one write path (EG-9).** Its hook lists bindings, gates, tenant upstreams, session-requestable hosts, and the shadow policy. Guardrails also need VCS pool writes (`allowStoredTokenPush`, `allowWrite`, and `allowWorkflowEdits`), tenant always-allowed hosts and warm-up additions, tenant-registered git endpoints, egress and git routes, tenant client config files, and tenant pool overlays that extend a ceiling or add a CA. Reason: `storedTokenPush` and `hostPatterns` cannot act on an object that skips the check, and moving each handler onto the path after it ships repeats work the hook exists to avoid. Gates stay on the path for audit, and the policy check does not apply to a platform grant.

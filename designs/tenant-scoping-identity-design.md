@@ -381,6 +381,8 @@ These exist independent of this design. They are for filing in `BUILD-GAPS.md` u
 
 ## Changes requested of egress-and-git-design.md
 
+Revision 37 of `egress-and-git-design.md` applied the items below that had to land before its proposals, so they are history here rather than open requests.
+
 This document does not edit that design. Each request names why adding it later would be rework.
 
 | Request | Proposal | Why now |

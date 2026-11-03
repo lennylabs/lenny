@@ -501,6 +501,8 @@ SO-2's guardrails and SO-3's export apply through EG-9 and EG-10 with no connect
 
 ## Changes requested of egress-and-git-design.md
 
+Revision 37 of `egress-and-git-design.md` applied the items below that had to land before its proposals, so they are history here rather than open requests.
+
 This design does not edit that document. Each item says when it must land to avoid rework.
 
 | Where | Change | Why | When |
